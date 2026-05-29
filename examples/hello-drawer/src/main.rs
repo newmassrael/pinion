@@ -77,9 +77,12 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
+use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::button::{use_hover_progress, view_button, ButtonColors, ButtonStyle};
+use pinion_widget_paint::button::{
+    button_a11y_state, read_button_focused, read_button_state, use_hover_progress, view_button,
+    ButtonColors, ButtonStyle,
+};
 use pinion_widget_paint::drawer::{view_drawer, DrawerStyle};
 use std::rc::Rc;
 
@@ -190,29 +193,6 @@ struct DrawerViewState {
     items: [ButtonState; NAV_N],
     trigger_focused: bool,
     items_focused: [bool; NAV_N],
-}
-
-/// Read a [`ButtonExternal`]'s [`ButtonState`] out of the state scene by
-/// tag. Defaults to [`ButtonState::Idle`] when the tag is absent.
-fn read_button_state(scene: &Scene, tag: &str) -> ButtonState {
-    scene
-        .find_external_with_tag(tag)
-        .and_then(|node| node.handle.introspect())
-        .and_then(|intro| intro.query("state"))
-        .map_or(ButtonState::Idle, |v| match v {
-            pinion_core::external::IntrospectValue::Text(s) => ButtonState::from_name_or_default(&s),
-            _ => ButtonState::Idle,
-        })
-}
-
-/// R694 §5.39 — read a [`ButtonExternal`]'s keyboard-focus posture (the
-/// `focused` introspect slot the shell mirrors via `on_focus_change`).
-fn read_button_focused(scene: &Scene, tag: &str) -> bool {
-    scene
-        .find_external_with_tag(tag)
-        .and_then(|node| node.handle.introspect())
-        .and_then(|intro| intro.query("focused"))
-        .is_some_and(|v| matches!(v, pinion_core::external::IntrospectValue::Bool(true)))
 }
 
 /// Render one button via the [`pinion_widget_paint::button`] substrate.
@@ -473,19 +453,6 @@ impl WidgetA11y for DrawerView {
             );
         }
         nodes
-    }
-}
-
-/// Map a [`ButtonState`] + shell-focus flag onto the a11y interaction
-/// flags (mirrors the `#[widget(role = Button, state_flags(...))]`
-/// derive hello-button uses).
-fn button_a11y_state(state: ButtonState, focused: bool) -> pinion_a11y::AccessState {
-    pinion_a11y::AccessState {
-        focused,
-        hovered: matches!(state, ButtonState::Hover),
-        pressed: matches!(state, ButtonState::Pressed),
-        disabled: matches!(state, ButtonState::Disabled),
-        checked: None,
     }
 }
 

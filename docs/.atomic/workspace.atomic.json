@@ -23038,6 +23038,50 @@
         "Phase B widget-catalog breadth continues R703+: Table (Model/View + virtualization, substrate-first or documented row-limit), DatePicker (calendar grid + date types, zero substrate today), ColorPicker (2D pad + HSV math)."
       ]
     },
+    "R703": {
+      "decision_summary": "R703 SSOT debt-clearance — lift the duplicated modal scrim primitive + composite-button binding helpers surfaced by the R702 self-audit, before resuming widget breadth.",
+      "changes_bullets": [
+        "Audit finding (user-triggered textbook/SSOT review): R702 introduced two verbatim duplications. (a) The modal scrim backdrop was independently reimplemented in dialog.rs + drawer.rs (the 0x66 alpha, scrim_color() derivation, and absolute-full-window dim-container construction). (b) Four composite-button helpers (button_a11y_state IDENTICAL, read_button_state / read_button_focused / button_scene IDENTICAL) were copied between hello-dialog + hello-drawer. A modal scrim + an a11y mapping are framework primitives; 2 verbatim copies violate SSOT once a 2nd consumer exists.",
+        "Scrim lift: new crates/pinion-widget-paint/src/scrim.rs — M3_SCRIM_ALPHA const (SSOT for the 0x66 default), scrim_fill(alpha) (one home for the black-at-alpha derivation), and scrim_backdrop(tag, fill, viewport, flex, align, justify, panel) (the absolute-full-window backdrop construction). DialogStyle/DrawerStyle scrim_alpha defaults + scrim_color() now delegate; view_dialog + view_drawer call scrim_backdrop (dialog centres its panel, drawer pins it edge-anchored full-height). 4 new scrim tests; existing dialog/drawer scene-shape tests unchanged (bit-identical output).",
+        "Button-helper lift (SSOT-critical subset): read_button_state, read_button_focused, and button_a11y_state moved into pinion_widget_paint::button (the crate already deps pinion-a11y, so the ButtonState->AccessState mapping can live there). button_a11y_state is now the single home mirroring what the #[widget] derive emits for single-node buttons — an a11y mapping with two copies is an a11y bug waiting to happen. hello-dialog + hello-drawer import them; their local copies + the now-unused WidgetStateName import removed. 2 new button-helper tests.",
+        "Principled deferral (documented, not lazy): button_scene (paint-compose convenience baking the M3 filled-tonal palette + hover spring) stays per-example. It is a button PAINT helper at 2 consumers; the precedent for button paint lifts is Rule-of-Three (use_hover_progress lifted at 3 consumers, R686.C), and lifting a styled compose helper at 2 risks baking a style opinion into the substrate. Carry: lift to pinion_widget_paint::button at the 3rd consumer. The SSOT-critical mapping (a11y) and pure introspection were lifted now; the opinionated paint-compose waits for its trigger."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 75 suites green (pinion-widget-paint 347 = +4 scrim +2 button-helper tests; hello-dialog + hello-drawer unit tests unchanged and passing).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean (scrim_backdrop at the 7-arg limit; removed unused Rect/WidgetStateName imports).",
+        "Behaviour-preserving confirmed end-to-end: tools/demos/r693_dialog.py PASS (2.86s) + tools/demos/r702_drawer.py PASS (2.63s) against rebuilt release binaries — the scrim + button-helper lift changed no runtime behaviour (bit-identical scenes)."
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "button_scene paint-compose helper duplicated across hello-dialog + hello-drawer (2 consumers) — lift to pinion_widget_paint::button at the 3rd consumer (Rule-of-Three for button paint, per the R686.C use_hover_progress precedent). Our-code debt, justly deferred (not hidden), [[abstraction-needs-second-consumer]].",
+        "scrim=ButtonExternal reuse for light-dismiss stays a 1-consumer pattern (drawer; dialog opts out); extract a dedicated DismissExternal only if a 2nd light-dismiss consumer appears AND the button-semantics reuse bites.",
+        "Phase B widget-catalog breadth resumes R704+: Table (Model/View + virtualization substrate-first or documented row-limit), DatePicker (calendar grid + date types, zero substrate today), ColorPicker (2D pad + HSV math)."
+      ],
+      "publishable_decision_summary": "R703 SSOT debt-clearance — lift the duplicated modal scrim primitive + composite-button binding helpers surfaced by the R702 self-audit, before resuming widget breadth.",
+      "publishable_changes_bullets": [
+        "Audit finding (user-triggered textbook/SSOT review): R702 introduced two verbatim duplications. (a) The modal scrim backdrop was independently reimplemented in dialog.rs + drawer.rs (the 0x66 alpha, scrim_color() derivation, and absolute-full-window dim-container construction). (b) Four composite-button helpers (button_a11y_state IDENTICAL, read_button_state / read_button_focused / button_scene IDENTICAL) were copied between hello-dialog + hello-drawer. A modal scrim + an a11y mapping are framework primitives; 2 verbatim copies violate SSOT once a 2nd consumer exists.",
+        "Scrim lift: new crates/pinion-widget-paint/src/scrim.rs — M3_SCRIM_ALPHA const (SSOT for the 0x66 default), scrim_fill(alpha) (one home for the black-at-alpha derivation), and scrim_backdrop(tag, fill, viewport, flex, align, justify, panel) (the absolute-full-window backdrop construction). DialogStyle/DrawerStyle scrim_alpha defaults + scrim_color() now delegate; view_dialog + view_drawer call scrim_backdrop (dialog centres its panel, drawer pins it edge-anchored full-height). 4 new scrim tests; existing dialog/drawer scene-shape tests unchanged (bit-identical output).",
+        "Button-helper lift (SSOT-critical subset): read_button_state, read_button_focused, and button_a11y_state moved into pinion_widget_paint::button (the crate already deps pinion-a11y, so the ButtonState->AccessState mapping can live there). button_a11y_state is now the single home mirroring what the #[widget] derive emits for single-node buttons — an a11y mapping with two copies is an a11y bug waiting to happen. hello-dialog + hello-drawer import them; their local copies + the now-unused WidgetStateName import removed. 2 new button-helper tests.",
+        "Principled deferral (documented, not lazy): button_scene (paint-compose convenience baking the M3 filled-tonal palette + hover spring) stays per-example. It is a button PAINT helper at 2 consumers; the precedent for button paint lifts is Rule-of-Three (use_hover_progress lifted at 3 consumers, R686.C), and lifting a styled compose helper at 2 risks baking a style opinion into the substrate. Carry: lift to pinion_widget_paint::button at the 3rd consumer. The SSOT-critical mapping (a11y) and pure introspection were lifted now; the opinionated paint-compose waits for its trigger."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 75 suites green (pinion-widget-paint 347 = +4 scrim +2 button-helper tests; hello-dialog + hello-drawer unit tests unchanged and passing).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean (scrim_backdrop at the 7-arg limit; removed unused Rect/WidgetStateName imports).",
+        "Behaviour-preserving confirmed end-to-end: tools/demos/r693_dialog.py PASS (2.86s) + tools/demos/r702_drawer.py PASS (2.63s) against rebuilt release binaries — the scrim + button-helper lift changed no runtime behaviour (bit-identical scenes)."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "button_scene paint-compose helper duplicated across hello-dialog + hello-drawer (2 consumers) — lift to pinion_widget_paint::button at the 3rd consumer (Rule-of-Three for button paint, per the R686.C use_hover_progress precedent). Our-code debt, justly deferred (not hidden), [[abstraction-needs-second-consumer]].",
+        "scrim=ButtonExternal reuse for light-dismiss stays a 1-consumer pattern (drawer; dialog opts out); extract a dedicated DismissExternal only if a 2nd light-dismiss consumer appears AND the button-semantics reuse bites.",
+        "Phase B widget-catalog breadth resumes R704+: Table (Model/View + virtualization substrate-first or documented row-limit), DatePicker (calendar grid + date types, zero substrate today), ColorPicker (2D pad + HSV math)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

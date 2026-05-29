@@ -83,6 +83,7 @@ pub mod dialog;
 pub mod dock;
 pub mod drawer;
 pub mod menu;
+pub mod scrim;
 pub mod scrollbar;
 pub mod splitter;
 pub mod tabs;

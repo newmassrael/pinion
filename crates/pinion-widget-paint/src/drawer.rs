@@ -75,9 +75,9 @@ impl DrawerEdge {
 /// the widget catalog presents a uniform `Style` surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DrawerStyle {
-    /// Scrim (backdrop) opacity over black, 0–255. Matches the
-    /// [`crate::dialog::DialogStyle`] `0x66` (≈ 40 %) so the dimmed
-    /// background reads identically across the two modal widgets.
+    /// Scrim (backdrop) opacity over black, 0–255. Defaults to the
+    /// shared [`crate::scrim::M3_SCRIM_ALPHA`] so the dimmed background
+    /// reads identically across every modal widget.
     pub scrim_alpha: u8,
     /// Panel width in logical pixels (M3 modal nav drawer ≈ 360 max;
     /// 280 is a comfortable navigation-rail default).
@@ -103,7 +103,7 @@ impl DrawerStyle {
     #[must_use]
     pub const fn m3_default() -> Self {
         Self {
-            scrim_alpha: 0x66,
+            scrim_alpha: crate::scrim::M3_SCRIM_ALPHA,
             panel_width: 280,
             panel_padding: 12,
             item_gap: 4,
@@ -120,10 +120,11 @@ impl DrawerStyle {
         self
     }
 
-    /// The scrim fill: black at [`Self::scrim_alpha`].
+    /// The scrim fill: black at [`Self::scrim_alpha`]. Delegates to the
+    /// shared [`crate::scrim::scrim_fill`] so the derivation has one home.
     #[must_use]
     pub const fn scrim_color(self) -> Color {
-        Color::rgba(0, 0, 0, self.scrim_alpha)
+        crate::scrim::scrim_fill(self.scrim_alpha)
     }
 }
 
@@ -172,7 +173,7 @@ pub fn view_drawer(
     theme: &Theme,
     style: &DrawerStyle,
 ) -> Scene {
-    let (win_w, win_h) = viewport;
+    let win_h = viewport.1;
     let mut panel_children: Vec<Scene> = Vec::with_capacity(items.len() + 1);
     if !title.is_empty() {
         panel_children.push(Scene::Text(TextNode::styled(
@@ -213,18 +214,16 @@ pub fn view_drawer(
             ),
     );
 
-    Scene::Container(
-        ContainerNode::new(vec![panel])
-            .with_tag(scrim_tag)
-            .with_style(BoxStyle::filled(style.scrim_color()))
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(0, 0)
-                    .with_size(Size::px(win_w, win_h))
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Stretch)
-                    .with_justify(style.edge.justify()),
-            ),
+    // R703 — shared scrim backdrop; the drawer pins its panel full-
+    // height against `style.edge`.
+    crate::scrim::scrim_backdrop(
+        scrim_tag,
+        style.scrim_color(),
+        viewport,
+        FlexDirection::Row,
+        AlignItems::Stretch,
+        style.edge.justify(),
+        panel,
     )
 }
 

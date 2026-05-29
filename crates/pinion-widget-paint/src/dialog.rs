@@ -64,9 +64,9 @@ use pinion_core::{Color, Scene};
 /// surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DialogStyle {
-    /// Scrim (backdrop) opacity over black, 0–255. M3 scrim ≈ 32 %
-    /// (`0x52`); pinion uses a slightly heavier `0x66` (≈ 40 %) so the
-    /// dimmed background reads clearly against light surfaces.
+    /// Scrim (backdrop) opacity over black, 0–255. Defaults to the
+    /// shared [`crate::scrim::M3_SCRIM_ALPHA`]; see that constant for the
+    /// M3 token rationale.
     pub scrim_alpha: u8,
     /// Panel width in logical pixels (M3 dialog min-width ≈ 280, max
     /// ≈ 560; 360 is a comfortable confirm-dialog default).
@@ -91,7 +91,7 @@ impl DialogStyle {
     #[must_use]
     pub const fn m3_default() -> Self {
         Self {
-            scrim_alpha: 0x66,
+            scrim_alpha: crate::scrim::M3_SCRIM_ALPHA,
             panel_width: 360,
             panel_radius: 28,
             panel_padding: 24,
@@ -102,10 +102,11 @@ impl DialogStyle {
         }
     }
 
-    /// The scrim fill: black at [`Self::scrim_alpha`].
+    /// The scrim fill: black at [`Self::scrim_alpha`]. Delegates to the
+    /// shared [`crate::scrim::scrim_fill`] so the derivation has one home.
     #[must_use]
     pub const fn scrim_color(self) -> Color {
-        Color::rgba(0, 0, 0, self.scrim_alpha)
+        crate::scrim::scrim_fill(self.scrim_alpha)
     }
 }
 
@@ -162,7 +163,6 @@ pub fn view_dialog(
     theme: &Theme,
     style: &DialogStyle,
 ) -> Scene {
-    let (win_w, win_h) = viewport;
     let mut panel_children: Vec<Scene> = Vec::with_capacity(3);
     if !content.title.is_empty() {
         panel_children.push(Scene::Text(TextNode::styled(
@@ -215,18 +215,15 @@ pub fn view_dialog(
             ),
     );
 
-    Scene::Container(
-        ContainerNode::new(vec![panel])
-            .with_tag(scrim_tag)
-            .with_style(BoxStyle::filled(style.scrim_color()))
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(0, 0)
-                    .with_size(Size::px(win_w, win_h))
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Center)
-                    .with_justify(JustifyContent::Center),
-            ),
+    // R703 — shared scrim backdrop; the dialog centres its panel.
+    crate::scrim::scrim_backdrop(
+        scrim_tag,
+        style.scrim_color(),
+        viewport,
+        FlexDirection::Column,
+        AlignItems::Center,
+        JustifyContent::Center,
+        panel,
     )
 }
 

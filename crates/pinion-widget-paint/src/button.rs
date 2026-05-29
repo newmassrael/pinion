@@ -63,6 +63,9 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::button::ButtonState;
+use pinion_core::external::IntrospectValue;
+use pinion_core::WidgetStateName;
+use pinion_a11y::AccessState;
 
 /// (R686.B §5.16) Material 3 hover state-layer opacity — the cursor-
 /// over overlay fraction lerped from the resting fill toward the
@@ -387,6 +390,68 @@ pub fn use_hover_progress(is_hover: bool, anim_key: &'static str) -> f32 {
     anim.value()
 }
 
+/// R703 §5.16 §5.40 — read a
+/// [`ButtonExternal`](pinion_core::widgets::button::ButtonExternal)'s
+/// [`ButtonState`] out of the state scene by tag (via the §5.15
+/// introspect `"state"` slot). Defaults to [`ButtonState::Idle`] when
+/// the tag is absent or carries no introspect handle.
+///
+/// Lifted from the verbatim helper `hello-dialog` + `hello-drawer` each
+/// carried for their composite multi-`ButtonExternal` bindings (R703
+/// SSOT lift, 2nd consumer). Composite bindings (real `ButtonExternal`s
+/// addressed by tag) cannot use the single-node `#[widget]` derive, so
+/// they read posture through these helpers instead.
+#[must_use]
+pub fn read_button_state(scene: &Scene, tag: &str) -> ButtonState {
+    scene
+        .find_external_with_tag(tag)
+        .and_then(|node| node.handle.introspect())
+        .and_then(|intro| intro.query("state"))
+        .map_or(ButtonState::Idle, |v| match v {
+            IntrospectValue::Text(s) => ButtonState::from_name_or_default(&s),
+            _ => ButtonState::Idle,
+        })
+}
+
+/// R703 §5.16 §5.39 — read a
+/// [`ButtonExternal`](pinion_core::widgets::button::ButtonExternal)'s
+/// keyboard-focus posture (the `"focused"` introspect slot the shell
+/// mirrors via [`External::on_focus_change`](pinion_core::external::External)),
+/// so a composite binding paints the focus ring on whichever button
+/// holds shell focus. `false` when the tag is absent. R703 SSOT lift —
+/// see [`read_button_state`].
+#[must_use]
+pub fn read_button_focused(scene: &Scene, tag: &str) -> bool {
+    scene
+        .find_external_with_tag(tag)
+        .and_then(|node| node.handle.introspect())
+        .and_then(|intro| intro.query("focused"))
+        .is_some_and(|v| matches!(v, IntrospectValue::Bool(true)))
+}
+
+/// R703 §5.40 — canonical [`ButtonState`] + shell-focus flag ⇒
+/// [`AccessState`] interaction-flag mapping for composite
+/// `ButtonExternal` bindings.
+///
+/// The single source of truth that mirrors what the
+/// `#[widget(role = Button, state_flags(...))]` derive emits for
+/// single-node button bindings — composite bindings (`hello-dialog`,
+/// `hello-drawer`) that hand-build their `access_node` route through
+/// here so the `ButtonState → AccessState` mapping never diverges
+/// between them (R703 SSOT lift: an a11y mapping with two copies is an
+/// a11y bug waiting to happen, so it gets one home regardless of the
+/// paint Rule-of-Three count).
+#[must_use]
+pub fn button_a11y_state(state: ButtonState, focused: bool) -> AccessState {
+    AccessState {
+        focused,
+        hovered: matches!(state, ButtonState::Hover),
+        pressed: matches!(state, ButtonState::Pressed),
+        disabled: matches!(state, ButtonState::Disabled),
+        checked: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! R686.B §5.16 — button paint substrate tests. Pin the M3
@@ -394,15 +459,16 @@ mod tests {
     //! + the composition shape the 3 migrated consumers rely on.
 
     use super::{
-        m3_button_fill, use_hover_progress, view_button, ButtonColors, ButtonStyle,
-        DISABLED_STATE_LAYER, HOVER_STATE_LAYER, PRESSED_STATE_LAYER,
+        button_a11y_state, m3_button_fill, read_button_focused, read_button_state,
+        use_hover_progress, view_button, ButtonColors, ButtonStyle, DISABLED_STATE_LAYER,
+        HOVER_STATE_LAYER, PRESSED_STATE_LAYER,
     };
     use pinion_core::animation::Animation;
     use pinion_core::reactive::Owner;
-    use pinion_core::scene::{Rect, Scene};
+    use pinion_core::scene::{ExternalNode, Rect, Scene};
     use pinion_core::style::{Color, Size};
     use pinion_core::theme::{ColorRole, Theme};
-    use pinion_core::widgets::button::ButtonState;
+    use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 
     fn explicit_colors() -> ButtonColors {
         ButtonColors::new(
@@ -413,6 +479,33 @@ mod tests {
             Color::rgb(180, 180, 180),
             Color::rgb(103, 80, 164),
         )
+    }
+
+    // ── R703 §5.16 §5.40 — lifted composite-button binding helpers ──
+
+    #[test]
+    fn r703_button_a11y_state_maps_interaction_flags() {
+        let hover = button_a11y_state(ButtonState::Hover, false);
+        assert!(hover.hovered && !hover.pressed && !hover.disabled && !hover.focused);
+        assert_eq!(hover.checked, None, "a button carries no aria-checked");
+        let pressed = button_a11y_state(ButtonState::Pressed, true);
+        assert!(pressed.pressed && pressed.focused);
+        let disabled = button_a11y_state(ButtonState::Disabled, false);
+        assert!(disabled.disabled);
+        let idle = button_a11y_state(ButtonState::Idle, false);
+        assert!(!idle.hovered && !idle.pressed && !idle.disabled && !idle.focused);
+    }
+
+    #[test]
+    fn r703_read_button_state_and_focused_from_scene() {
+        // A single ButtonExternal tagged "b"; default posture is Idle,
+        // unfocused. Absent tags fall back to Idle / false.
+        let scene =
+            Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())).with_tag("b"));
+        assert_eq!(read_button_state(&scene, "b"), ButtonState::Idle);
+        assert!(!read_button_focused(&scene, "b"));
+        assert_eq!(read_button_state(&scene, "absent"), ButtonState::Idle);
+        assert!(!read_button_focused(&scene, "absent"));
     }
 
     #[test]
