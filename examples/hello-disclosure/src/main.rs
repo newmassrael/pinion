@@ -139,15 +139,11 @@ impl DisclosureView {
     }
 
     fn event_name(event: DisclosureEvent) -> &'static str {
-        match event {
-            DisclosureEvent::PointerEnter => "PointerEnter",
-            DisclosureEvent::PointerLeave => "PointerLeave",
-            DisclosureEvent::PointerDown => "PointerDown",
-            DisclosureEvent::PointerUp => "PointerUp",
-            DisclosureEvent::Disable => "Disable",
-            DisclosureEvent::Enable => "Enable",
-            _ => "__internal__",
-        }
+        // R699 §5.16 — route the forward Event->name mapping through the
+        // WidgetEventName SSOT (`as_name`), retiring the hand-written
+        // match table. `as_name` is total over internal variants too;
+        // only external events reach this path via `ShellCore::forward`.
+        pinion_core::WidgetEventName::as_name(&event)
     }
 
     fn keybinding(key: &str) -> Option<DisclosureEvent> {

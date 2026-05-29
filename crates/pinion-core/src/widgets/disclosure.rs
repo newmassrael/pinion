@@ -50,6 +50,21 @@ use sm::DisclosurePolicy;
 crate::widget_state_name!(DisclosureState, default = Idle, [
     Idle, Hover, Pressed, Disabled,
 ]);
+// R699 §5.16 — DisclosureEvent <-> SCXML-name mapping through the
+// `WidgetEventName` SSOT primitive, replacing `parse_disclosure_event`.
+crate::widget_event_name!(DisclosureEvent,
+    external = [
+        PointerEnter,
+        PointerLeave,
+        PointerDown,
+        PointerUp,
+        PointerCancel,
+        KeyboardActivate,
+        Disable,
+        Enable,
+    ],
+    internal = [DisclosureActivate, Null],
+);
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
@@ -58,7 +73,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// Disclosure widget state machine + collapsed/expanded sidecar.
 /// Statechart identical to [`crate::widgets::Checkbox`]; divergence is
@@ -295,7 +310,8 @@ impl ExternalIntrospect for DisclosureExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = parse_disclosure_event(name).ok_or(InvokeError::Rejected)?;
+                    let ev = DisclosureEvent::from_name(name)
+                        .ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
@@ -303,23 +319,6 @@ impl ExternalIntrospect for DisclosureExternal {
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-fn parse_disclosure_event(name: &str) -> Option<DisclosureEvent> {
-    match name {
-        "PointerEnter" => Some(DisclosureEvent::PointerEnter),
-        "PointerLeave" => Some(DisclosureEvent::PointerLeave),
-        "PointerDown" => Some(DisclosureEvent::PointerDown),
-        "PointerUp" => Some(DisclosureEvent::PointerUp),
-        // §5.35 — touch-cancel sibling of PointerUp; does not flip
-        // expanded or fire an `"expanded"` intent.
-        "PointerCancel" => Some(DisclosureEvent::PointerCancel),
-        // §5.39 — ARIA Space / Enter keyboard activation.
-        "KeyboardActivate" => Some(DisclosureEvent::KeyboardActivate),
-        "Disable" => Some(DisclosureEvent::Disable),
-        "Enable" => Some(DisclosureEvent::Enable),
-        _ => None,
     }
 }
 
@@ -332,6 +331,23 @@ mod tests {
         let d = Disclosure::new();
         assert_eq!(d.state(), DisclosureState::Idle);
         assert!(!d.is_expanded());
+    }
+
+    #[test]
+    fn r699_event_name_round_trip() {
+        // External-drivable variants round-trip; internal raise + Null
+        // + unknown reject; `as_name` is total over internal variants.
+        assert_eq!(
+            DisclosureEvent::from_name("KeyboardActivate"),
+            Some(DisclosureEvent::KeyboardActivate)
+        );
+        assert_eq!(DisclosureEvent::from_name("DisclosureActivate"), None);
+        assert_eq!(DisclosureEvent::from_name("Null"), None);
+        assert_eq!(DisclosureEvent::from_name("Bogus"), None);
+        assert_eq!(
+            DisclosureEvent::DisclosureActivate.as_name(),
+            "DisclosureActivate"
+        );
     }
 
     #[test]

@@ -1444,16 +1444,11 @@ impl WidgetCore for SettingsPanelView {
     }
 
     fn event_name(event: TextFieldEvent) -> &'static str {
-        match event {
-            TextFieldEvent::Focus => "Focus",
-            TextFieldEvent::Blur => "Blur",
-            TextFieldEvent::BeginEdit => "BeginEdit",
-            TextFieldEvent::CommitEdit => "CommitEdit",
-            TextFieldEvent::CancelEdit => "CancelEdit",
-            TextFieldEvent::Disable => "Disable",
-            TextFieldEvent::Enable => "Enable",
-            _ => "__internal__",
-        }
+        // R699 §5.16 — route the forward Event->name mapping through the
+        // WidgetEventName SSOT (`as_name`), retiring the hand-written
+        // match table. `as_name` is total over internal variants too;
+        // only external events reach this path via `ShellCore::forward`.
+        pinion_core::WidgetEventName::as_name(&event)
     }
 
     fn title() -> &'static str {

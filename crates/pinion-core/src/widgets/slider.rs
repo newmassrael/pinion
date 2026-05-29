@@ -51,17 +51,18 @@ use sm::SliderPolicy;
 crate::widget_state_name!(SliderState, default = Idle, [
     Idle, Hover, Dragging, Disabled,
 ]);
-crate::widget_event_name!(SliderEvent, [
-    Disable,
-    Enable,
-    PointerCancel,
-    PointerDown,
-    PointerEnter,
-    PointerLeave,
-    PointerUp,
-    SliderActivate,
-    Null,
-]);
+crate::widget_event_name!(SliderEvent,
+    external = [
+        PointerEnter,
+        PointerLeave,
+        PointerDown,
+        PointerUp,
+        PointerCancel,
+        Disable,
+        Enable,
+    ],
+    internal = [SliderActivate, Null],
+);
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
@@ -70,7 +71,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// R51.39 §5.38 — Slider track orientation. `Horizontal` (the
 /// default) places the value progression along the X axis with `0.0`
@@ -449,7 +450,8 @@ impl ExternalIntrospect for SliderExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = parse_slider_event(name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        SliderEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
                         self.state().as_name().to_string(),
@@ -471,23 +473,6 @@ fn slider_axis_name(axis: SliderAxis) -> &'static str {
     match axis {
         SliderAxis::Horizontal => "horizontal",
         SliderAxis::Vertical => "vertical",
-    }
-}
-
-fn parse_slider_event(name: &str) -> Option<SliderEvent> {
-    match name {
-        "PointerEnter" => Some(SliderEvent::PointerEnter),
-        "PointerLeave" => Some(SliderEvent::PointerLeave),
-        "PointerDown" => Some(SliderEvent::PointerDown),
-        "PointerUp" => Some(SliderEvent::PointerUp),
-        // R51.93 §5.35 — touch-cancel sibling of PointerUp; drops
-        // `dragging → idle` without firing `"value_committed"`.
-        // The drag's last in-flight `set_value` keeps whatever
-        // value it landed on, but no commit signal is raised.
-        "PointerCancel" => Some(SliderEvent::PointerCancel),
-        "Disable" => Some(SliderEvent::Disable),
-        "Enable" => Some(SliderEvent::Enable),
-        _ => None,
     }
 }
 
@@ -544,9 +529,15 @@ mod tests {
     #[test]
     fn r51_93_parse_pointer_cancel_event_name() {
         assert_eq!(
-            parse_slider_event("PointerCancel"),
+            SliderEvent::from_name("PointerCancel"),
             Some(SliderEvent::PointerCancel)
         );
+        // R699 §5.16 — slider has no KeyboardActivate; internal raise +
+        // Null + unknown all reject from the external-drivable set.
+        assert_eq!(SliderEvent::from_name("KeyboardActivate"), None);
+        assert_eq!(SliderEvent::from_name("SliderActivate"), None);
+        assert_eq!(SliderEvent::from_name("Null"), None);
+        assert_eq!(SliderEvent::SliderActivate.as_name(), "SliderActivate");
     }
 
     #[test]

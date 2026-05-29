@@ -59,6 +59,21 @@ pub use sm::{ToggleEvent, ToggleState};
 crate::widget_state_name!(ToggleState, default = Idle, [
     Idle, Hover, Pressed, Disabled,
 ]);
+// R699 §5.16 — ToggleEvent <-> SCXML-name mapping through the
+// `WidgetEventName` SSOT primitive, replacing `parse_toggle_event`.
+crate::widget_event_name!(ToggleEvent,
+    external = [
+        PointerEnter,
+        PointerLeave,
+        PointerDown,
+        PointerUp,
+        PointerCancel,
+        KeyboardActivate,
+        Disable,
+        Enable,
+    ],
+    internal = [ToggleActivate, Null],
+);
 use sm::TogglePolicy;
 
 use crate::external::{
@@ -68,7 +83,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// Toggle widget state machine + Off/On value sidecar. R51.4 §5.38
 /// refactor: the engine wrapping moves into the shared
@@ -354,7 +369,8 @@ impl ExternalIntrospect for ToggleExternal {
             // follow-up query.
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = parse_toggle_event(name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        ToggleEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(format!(
                         "state={}, value={}",
@@ -454,26 +470,6 @@ impl ExternalIntrospect for ToggleStateSnapshot {
 }
 
 
-/// Parse a `ToggleEvent` variant from its name (e.g. `"PointerEnter"`).
-/// `None` if the name is not a known variant — bidirectional RPC
-/// callers see this as `InvokeError::Rejected`.
-fn parse_toggle_event(name: &str) -> Option<ToggleEvent> {
-    match name {
-        "PointerEnter" => Some(ToggleEvent::PointerEnter),
-        "PointerLeave" => Some(ToggleEvent::PointerLeave),
-        "PointerDown" => Some(ToggleEvent::PointerDown),
-        "PointerUp" => Some(ToggleEvent::PointerUp),
-        // R51.93 §5.35 — touch-cancel sibling of PointerUp; does
-        // not flip the value sidecar or fire a `"toggle"` intent.
-        "PointerCancel" => Some(ToggleEvent::PointerCancel),
-        // R51.55 §5.39 — ARIA Space keyboard activation.
-        "KeyboardActivate" => Some(ToggleEvent::KeyboardActivate),
-        "Disable" => Some(ToggleEvent::Disable),
-        "Enable" => Some(ToggleEvent::Enable),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,9 +508,14 @@ mod tests {
     #[test]
     fn r51_93_parse_pointer_cancel_event_name() {
         assert_eq!(
-            parse_toggle_event("PointerCancel"),
+            ToggleEvent::from_name("PointerCancel"),
             Some(ToggleEvent::PointerCancel)
         );
+        // R699 §5.16 — internal raise + Null + unknown all reject.
+        assert_eq!(ToggleEvent::from_name("ToggleActivate"), None);
+        assert_eq!(ToggleEvent::from_name("Null"), None);
+        assert_eq!(ToggleEvent::from_name("Bogus"), None);
+        assert_eq!(ToggleEvent::ToggleActivate.as_name(), "ToggleActivate");
     }
 
     #[test]

@@ -39,6 +39,22 @@ pub use sm::{RadioEvent, RadioState};
 crate::widget_state_name!(RadioState, default = Idle, [
     Idle, Hover, Pressed, Disabled,
 ]);
+// R699 §5.16 — RadioEvent <-> SCXML-name mapping through the
+// `WidgetEventName` SSOT primitive, replacing `parse_radio_event`.
+// radio_group.rs drives selection through `RadioEvent::from_name` too.
+crate::widget_event_name!(RadioEvent,
+    external = [
+        PointerEnter,
+        PointerLeave,
+        PointerDown,
+        PointerUp,
+        PointerCancel,
+        KeyboardActivate,
+        Disable,
+        Enable,
+    ],
+    internal = [RadioActivate, Null],
+);
 use sm::RadioPolicy;
 
 use crate::external::{
@@ -48,7 +64,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// Radio widget state machine + selection value sidecar. Activate
 /// (`Pressed → Hover`) sets the value to `true` unconditionally;
@@ -297,7 +313,8 @@ impl ExternalIntrospect for RadioExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = parse_radio_event(name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        RadioEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
                         self.state().as_name().to_string(),
@@ -310,22 +327,6 @@ impl ExternalIntrospect for RadioExternal {
     }
 }
 
-pub(crate) fn parse_radio_event(name: &str) -> Option<RadioEvent> {
-    match name {
-        "PointerEnter" => Some(RadioEvent::PointerEnter),
-        "PointerLeave" => Some(RadioEvent::PointerLeave),
-        "PointerDown" => Some(RadioEvent::PointerDown),
-        "PointerUp" => Some(RadioEvent::PointerUp),
-        // R51.93 §5.35 — touch-cancel sibling of PointerUp; does
-        // not set selected = true or fire the `"selected"` intent.
-        "PointerCancel" => Some(RadioEvent::PointerCancel),
-        // R51.55 §5.39 — ARIA Space keyboard activation.
-        "KeyboardActivate" => Some(RadioEvent::KeyboardActivate),
-        "Disable" => Some(RadioEvent::Disable),
-        "Enable" => Some(RadioEvent::Enable),
-        _ => None,
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -363,9 +364,14 @@ mod tests {
     #[test]
     fn r51_93_parse_pointer_cancel_event_name() {
         assert_eq!(
-            parse_radio_event("PointerCancel"),
+            RadioEvent::from_name("PointerCancel"),
             Some(RadioEvent::PointerCancel)
         );
+        // R699 §5.16 — internal raise + Null + unknown all reject.
+        assert_eq!(RadioEvent::from_name("RadioActivate"), None);
+        assert_eq!(RadioEvent::from_name("Null"), None);
+        assert_eq!(RadioEvent::from_name("Bogus"), None);
+        assert_eq!(RadioEvent::RadioActivate.as_name(), "RadioActivate");
     }
 
     #[test]

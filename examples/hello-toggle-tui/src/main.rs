@@ -165,17 +165,11 @@ impl WidgetCore for HelloToggleTui {
     }
 
     fn event_name(event: Self::Event) -> &'static str {
-        match event {
-            ToggleEvent::PointerEnter => "PointerEnter",
-            ToggleEvent::PointerLeave => "PointerLeave",
-            ToggleEvent::PointerDown => "PointerDown",
-            ToggleEvent::PointerUp => "PointerUp",
-            ToggleEvent::PointerCancel => "PointerCancel",
-            ToggleEvent::KeyboardActivate => "KeyboardActivate",
-            ToggleEvent::Disable => "Disable",
-            ToggleEvent::Enable => "Enable",
-            _ => "__internal__",
-        }
+        // R699 §5.16 — route the forward Event->name mapping through the
+        // WidgetEventName SSOT (`as_name`), retiring the hand-written
+        // match table. `as_name` is total over internal variants too;
+        // only external events reach this path via `ShellCore::forward`.
+        pinion_core::WidgetEventName::as_name(&event)
     }
 
     fn title() -> &'static str {

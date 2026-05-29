@@ -59,6 +59,22 @@ pub use sm::{ListboxItemEvent, ListboxItemState};
 crate::widget_state_name!(ListboxItemState, default = Idle, [
     Idle, Hover, Pressed, Disabled,
 ]);
+// R699 §5.16 — ListboxItemEvent <-> SCXML-name mapping through the
+// `WidgetEventName` SSOT primitive, replacing `parse_listbox_item_event`.
+// listbox.rs drives selection through `ListboxItemEvent::from_name` too.
+crate::widget_event_name!(ListboxItemEvent,
+    external = [
+        PointerEnter,
+        PointerLeave,
+        PointerDown,
+        PointerUp,
+        PointerCancel,
+        KeyboardActivate,
+        Disable,
+        Enable,
+    ],
+    internal = [ListboxItemActivate, Null],
+);
 use sm::ListboxItemPolicy;
 
 use crate::external::{
@@ -68,7 +84,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// `ListBoxItem` widget state machine + selection value sidecar.
 /// Activate (`Pressed → Hover` from pointer release, or
@@ -323,7 +339,7 @@ impl ExternalIntrospect for ListBoxItemExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = parse_listbox_item_event(name)
+                    let ev = ListboxItemEvent::from_name(name)
                         .ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
@@ -334,23 +350,6 @@ impl ExternalIntrospect for ListBoxItemExternal {
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-pub(crate) fn parse_listbox_item_event(name: &str) -> Option<ListboxItemEvent> {
-    match name {
-        "PointerEnter" => Some(ListboxItemEvent::PointerEnter),
-        "PointerLeave" => Some(ListboxItemEvent::PointerLeave),
-        "PointerDown" => Some(ListboxItemEvent::PointerDown),
-        "PointerUp" => Some(ListboxItemEvent::PointerUp),
-        // R51.93 §5.35 — touch-cancel sibling of PointerUp; does
-        // not set selected = true or fire the `"selected"` intent.
-        "PointerCancel" => Some(ListboxItemEvent::PointerCancel),
-        // R51.55 §5.39 — ARIA Space / Enter keyboard activation.
-        "KeyboardActivate" => Some(ListboxItemEvent::KeyboardActivate),
-        "Disable" => Some(ListboxItemEvent::Disable),
-        "Enable" => Some(ListboxItemEvent::Enable),
-        _ => None,
     }
 }
 
@@ -530,10 +529,17 @@ mod tests {
             "Enable",
         ] {
             assert!(
-                parse_listbox_item_event(name).is_some(),
+                ListboxItemEvent::from_name(name).is_some(),
                 "round-trip {name:?}"
             );
         }
-        assert!(parse_listbox_item_event("Bogus").is_none());
+        assert!(ListboxItemEvent::from_name("Bogus").is_none());
+        // R699 §5.16 — internal raise + Null reject; `as_name` total.
+        assert!(ListboxItemEvent::from_name("ListboxItemActivate").is_none());
+        assert!(ListboxItemEvent::from_name("Null").is_none());
+        assert_eq!(
+            ListboxItemEvent::ListboxItemActivate.as_name(),
+            "ListboxItemActivate"
+        );
     }
 }

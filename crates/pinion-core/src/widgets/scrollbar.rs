@@ -274,6 +274,21 @@ pub use sm::{ScrollBarEvent, ScrollBarState};
 crate::widget_state_name!(ScrollBarState, default = Idle, [
     Idle, Hover, Dragging, Disabled,
 ]);
+// R699 §5.16 — ScrollBarEvent <-> SCXML-name mapping through the
+// `WidgetEventName` SSOT primitive, replacing `parse_scroll_bar_event`.
+// No KeyboardActivate (the scrollbar has no ARIA Space/Enter activate).
+crate::widget_event_name!(ScrollBarEvent,
+    external = [
+        PointerEnter,
+        PointerLeave,
+        PointerDown,
+        PointerUp,
+        PointerCancel,
+        Disable,
+        Enable,
+    ],
+    internal = [ScrollbarActivate, Null],
+);
 
 // ─────────────────────────────────────────────────────────────────
 // R660 §5.45 — reactive interaction-state mirror
@@ -432,7 +447,7 @@ use crate::external::{
 use crate::intent::Intent;
 use crate::widgets::scroll::ScrollState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// `ScrollBar` widget state machine + orientation sidecar.
 ///
@@ -965,7 +980,7 @@ impl ExternalIntrospect for ScrollBarExternal {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
                     let ev =
-                        parse_scroll_bar_event(name).ok_or(InvokeError::Rejected)?;
+                        ScrollBarEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
                         self.state().as_name().to_string(),
@@ -988,19 +1003,6 @@ fn scroll_bar_orientation_name(orientation: ScrollBarOrientation) -> &'static st
     match orientation {
         ScrollBarOrientation::Vertical => "vertical",
         ScrollBarOrientation::Horizontal => "horizontal",
-    }
-}
-
-fn parse_scroll_bar_event(name: &str) -> Option<ScrollBarEvent> {
-    match name {
-        "PointerEnter" => Some(ScrollBarEvent::PointerEnter),
-        "PointerLeave" => Some(ScrollBarEvent::PointerLeave),
-        "PointerDown" => Some(ScrollBarEvent::PointerDown),
-        "PointerUp" => Some(ScrollBarEvent::PointerUp),
-        "PointerCancel" => Some(ScrollBarEvent::PointerCancel),
-        "Disable" => Some(ScrollBarEvent::Disable),
-        "Enable" => Some(ScrollBarEvent::Enable),
-        _ => None,
     }
 }
 
@@ -1180,11 +1182,10 @@ mod r55_d2_tests {
     //! orientation immutability.
 
     use super::{
-        parse_scroll_bar_event, scroll_bar_orientation_name,
-        ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation,
-        ScrollBarState,
+        scroll_bar_orientation_name, ScrollBar, ScrollBarEvent,
+        ScrollBarExternal, ScrollBarOrientation, ScrollBarState,
     };
-    use crate::WidgetStateName;
+    use crate::{WidgetEventName, WidgetStateName};
     use crate::external::{
         Backend, External, ExternalIntrospect, InterveneError, IntrospectValue,
         InvokeError, RepaintOwner, ThreadOwnership,
@@ -1521,11 +1522,18 @@ mod r55_d2_tests {
             ("Enable", ScrollBarEvent::Enable),
         ];
         for (name, expected) in cases {
-            let got = parse_scroll_bar_event(name);
-            assert_eq!(got, Some(expected), "parse_scroll_bar_event({name:?})");
+            let got = ScrollBarEvent::from_name(name);
+            assert_eq!(got, Some(expected), "from_name({name:?})");
         }
         // Unknown name returns None.
-        assert_eq!(parse_scroll_bar_event("PointerWheel"), None);
+        assert_eq!(ScrollBarEvent::from_name("PointerWheel"), None);
+        // R699 §5.16 — internal raise + Null reject; `as_name` total.
+        assert_eq!(ScrollBarEvent::from_name("ScrollbarActivate"), None);
+        assert_eq!(ScrollBarEvent::from_name("Null"), None);
+        assert_eq!(
+            ScrollBarEvent::ScrollbarActivate.as_name(),
+            "ScrollbarActivate"
+        );
     }
 
     #[test]

@@ -35,18 +35,19 @@ use sm::ButtonPolicy;
 crate::widget_state_name!(ButtonState, default = Idle, [
     Idle, Hover, Pressed, Disabled,
 ]);
-crate::widget_event_name!(ButtonEvent, [
-    ButtonActivate,
-    Disable,
-    Enable,
-    KeyboardActivate,
-    PointerCancel,
-    PointerDown,
-    PointerEnter,
-    PointerLeave,
-    PointerUp,
-    Null,
-]);
+crate::widget_event_name!(ButtonEvent,
+    external = [
+        PointerEnter,
+        PointerLeave,
+        PointerDown,
+        PointerUp,
+        PointerCancel,
+        KeyboardActivate,
+        Disable,
+        Enable,
+    ],
+    internal = [ButtonActivate, Null],
+);
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
@@ -55,7 +56,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// R12 Button widget. R51.4 §5.38 refactor: a type alias over the
 /// shared [`Widget<P>`] facade — Button has no value sidecar, so the
@@ -280,7 +281,8 @@ impl ExternalIntrospect for ButtonExternal {
             // outcome in a single round-trip.
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = parse_button_event(name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        ButtonEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
                         self.state().as_name().to_string(),
@@ -390,31 +392,6 @@ impl ExternalIntrospect for ButtonStateSnapshot {
     }
 }
 
-/// Parse a `ButtonEvent` variant from its name (e.g. `"PointerEnter"`).
-/// `None` if the name is not a known variant — bidirectional RPC
-/// callers see this as `InvokeError::Rejected`.
-fn parse_button_event(name: &str) -> Option<ButtonEvent> {
-    match name {
-        "PointerEnter" => Some(ButtonEvent::PointerEnter),
-        "PointerLeave" => Some(ButtonEvent::PointerLeave),
-        "PointerDown" => Some(ButtonEvent::PointerDown),
-        "PointerUp" => Some(ButtonEvent::PointerUp),
-        // R51.93 §5.35 — winit `TouchPhase::Cancelled` sibling of
-        // PointerUp. Routes `pressed → idle` without raising the
-        // activate event so a touch revoked by an OS-side gesture
-        // does not fire a `"click"` intent.
-        "PointerCancel" => Some(ButtonEvent::PointerCancel),
-        // R51.54 §5.39 — ARIA Space / Enter keyboard activation,
-        // wired via shell's `WidgetView::apply_key` → invoke('send',
-        // 'KeyboardActivate'). The SCXML template fires the activate
-        // event raise without changing visual state.
-        "KeyboardActivate" => Some(ButtonEvent::KeyboardActivate),
-        "Disable" => Some(ButtonEvent::Disable),
-        "Enable" => Some(ButtonEvent::Enable),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,9 +477,15 @@ mod tests {
     #[test]
     fn r51_93_parse_pointer_cancel_event_name() {
         assert_eq!(
-            parse_button_event("PointerCancel"),
+            ButtonEvent::from_name("PointerCancel"),
             Some(ButtonEvent::PointerCancel)
         );
+        // R699 §5.16 — internal raise + Null + unknown all reject.
+        assert_eq!(ButtonEvent::from_name("ButtonActivate"), None);
+        assert_eq!(ButtonEvent::from_name("Null"), None);
+        assert_eq!(ButtonEvent::from_name("Bogus"), None);
+        // R699 — `as_name` is total over internal variants too.
+        assert_eq!(ButtonEvent::ButtonActivate.as_name(), "ButtonActivate");
     }
 
     #[test]
@@ -808,7 +791,7 @@ mod tests {
     #[test]
     fn keyboard_activate_via_invoke_send_emits_click() {
         // Same path the shell's `WidgetView::apply_key` uses: the
-        // event-name string round-trips through `parse_button_event`.
+        // event-name string round-trips through `ButtonEvent::from_name`.
         let mut bx = ButtonExternal::new();
         let _ = bx
             .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))

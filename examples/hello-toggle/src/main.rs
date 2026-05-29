@@ -336,16 +336,11 @@ impl ToggleView {
     }
 
     fn event_name(event: ToggleEvent) -> &'static str {
-        match event {
-            ToggleEvent::PointerEnter => "PointerEnter",
-            ToggleEvent::PointerLeave => "PointerLeave",
-            ToggleEvent::PointerDown => "PointerDown",
-            ToggleEvent::PointerUp => "PointerUp",
-            ToggleEvent::Disable => "Disable",
-            ToggleEvent::Enable => "Enable",
-            // Internal SCXML variants — route through a sentinel.
-            _ => "__internal__",
-        }
+        // R699 §5.16 — route the forward Event->name mapping through the
+        // WidgetEventName SSOT (`as_name`), retiring the hand-written
+        // match table. `as_name` is total over internal variants too;
+        // only external events reach this path via `ShellCore::forward`.
+        pinion_core::WidgetEventName::as_name(&event)
     }
 
     fn keybinding(key: &str) -> Option<ToggleEvent> {

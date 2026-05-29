@@ -14295,6 +14295,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R699 — R699 widget_event_name! from_name extension + parse_*_event SSOT retirement (event-side mirror of R698)
+
+**Changes**:
+- pinion-core/src/widget_core.rs: extend WidgetEventName trait with fallible from_name(&str)->Option<Self> (+ : Sized bound); rewrite widget_event_name! macro to a two-group form `external = [..], internal = [..]` emitting the total as_name over both groups + a from_name restricted to the external-drivable subset (rejecting internal *Activate raise events + the SCXML 3.13 Null sentinel, exactly matching the pre-R699 parse_*_event contract)
+- Adopt widget_event_name! across all 9 SCE-emitted Event enums: button + slider migrated from the old flat single-list form; checkbox/radio/toggle/disclosure/scrollbar/listbox_item/text_field newly add it (variant lists derived from each widget's generated *_sm.rs; scrollbar/slider have no KeyboardActivate, text_field's external set is Focus/Blur/BeginEdit/CommitEdit/CancelEdit/Disable/Enable)
+- Retire all 9 hand-written parse_*_event fns; replace every invoke('send', name) call site with <Event>::from_name(name) (incl. cross-module importers radio_group.rs -> RadioEvent::from_name, listbox.rs -> ListboxItemEvent::from_name; removed the pub(crate) parse fns + their use-imports). Each widget's unit test updated to assert from_name external round-trip + internal/Null/unknown rejection + as_name totality over internal variants
+- Route 14 example bindings' forward fn event_name through the as_name SSOT (pinion_core::WidgetEventName::as_name(&event)), retiring duplicated match tables with `_ => "__internal__"`: hello-radio/-checkbox/-toggle/-disclosure/-slider-vertical/-textfield/-theme/-commands/-button-tui/-textfield-tui/-toggle-tui/-commands-tui + settings-panel + todomvc. ()-stub event_name (menu/toolbar/tooltip/dialog/tabs/accordion/listbox/listbox-multi/radio-group) left unchanged (no SCE event); figma-button-m3 already routed via state_name_derive (stale comment corrected)
+
+
+
+**Verification**:
+- cargo test --workspace -j2: 73 suites green, 0 failed (pinion-core 1502, +1 vs R698 1501)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2: clean under -D pedantic
+- RPC demo sweep (touched-bin pre-rebuilt release): hello_button_r641 + hello_toggle_activate + hello_listbox_row_click + settings_panel_r669 (20 assert: checkbox/radio/slider/toggle) + todomvc_r666 (12+ step: textfield/radio/scrollbar) + r696_disclosure + r697_accordion all PASS — proves invoke('send',name)=from_name path + introspect=as_name path behaviour-identical
+- behaviour-preserving: from_name accepts the same external string set parse_*_event did and rejects the same internal/Null names; forward event_name only ever receives external events via ShellCore::forward so the dropped `__internal__` catch-all is unreachable (the 3 pre-routed examples dock-panels/tree-view/multi-window already proved the pattern)
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- parse_pointer_event duplicated byte-identically in menu.rs + toolbar.rs (command-widget local PointerEvent enum where wire-name != variant-name, e.g. "PointerEnter" -> Enter, so NOT a widget_event_name!/stringify candidate). 2 consumers today; Rule-of-Three -> lift to a shared command-pointer-event module at the 3rd consumer. Our code debt, deferred by the 2-consumer rule, not hidden
+- widget_event_name! internal group currently only ever holds {<Widget>Activate, Null}; if a future SCE template adds an internal-only variant the exhaustive as_name match forces the author to classify it (compile-time safety net, intended)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

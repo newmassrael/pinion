@@ -88,6 +88,22 @@ pub use sm::{TextFieldEvent, TextFieldState};
 crate::widget_state_name!(TextFieldState, default = Idle, [
     Idle, Focused, Editing, Disabled,
 ]);
+// R699 §5.16 — TextFieldEvent <-> SCXML-name mapping through the
+// `WidgetEventName` SSOT primitive, replacing `parse_text_field_event`.
+// The external set is focus/edit-lifecycle (not pointer); `TextfieldCommit`
+// (internal raise) + `Null` stay out of `from_name`.
+crate::widget_event_name!(TextFieldEvent,
+    external = [
+        Focus,
+        Blur,
+        BeginEdit,
+        CommitEdit,
+        CancelEdit,
+        Disable,
+        Enable,
+    ],
+    internal = [TextfieldCommit, Null],
+);
 use sm::TextFieldPolicy;
 
 use std::rc::Rc;
@@ -103,7 +119,7 @@ use crate::scene::Rect;
 use crate::widgets::caret_blink::CaretBlink;
 use crate::widgets::text_edit::TextEditState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// R56.1.b §5.38 §5.21 — closed-form caret rectangle derivation.
 ///
@@ -1227,7 +1243,7 @@ impl ExternalIntrospect for TextFieldExternal {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
                     let ev =
-                        parse_text_field_event(name).ok_or(InvokeError::Rejected)?;
+                        TextFieldEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
                         self.state().as_name().to_string(),
@@ -1625,23 +1641,6 @@ fn parse_composition_invoke_json(value: &serde_json::Value) -> Option<Compositio
     }
 }
 
-/// External-introspect [`InvokeError::Rejected`] guard. Lowercase /
-/// snake-case event aliases are not accepted — the AI client passes
-/// the `PascalCase` variant name verbatim, mirroring the
-/// `parse_scroll_bar_event` / `parse_slider_event` convention.
-fn parse_text_field_event(name: &str) -> Option<TextFieldEvent> {
-    match name {
-        "Focus" => Some(TextFieldEvent::Focus),
-        "Blur" => Some(TextFieldEvent::Blur),
-        "BeginEdit" => Some(TextFieldEvent::BeginEdit),
-        "CommitEdit" => Some(TextFieldEvent::CommitEdit),
-        "CancelEdit" => Some(TextFieldEvent::CancelEdit),
-        "Disable" => Some(TextFieldEvent::Disable),
-        "Enable" => Some(TextFieldEvent::Enable),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! R56.1.a §5.38 — `TextField` widget binding regression battery.
@@ -1650,14 +1649,13 @@ mod tests {
     //! commit-on-blur path, introspect surface.
 
     use super::{
-        parse_text_field_event, TextField, TextFieldEvent,
-        TextFieldExternal, TextFieldState,
+        TextField, TextFieldEvent, TextFieldExternal, TextFieldState,
     };
     use crate::external::{
         Backend, External, ExternalIntrospect, InterveneError, IntrospectValue,
         InvokeError, RepaintOwner, ThreadOwnership,
     };
-    use crate::WidgetStateName;
+    use crate::{WidgetEventName, WidgetStateName};
 
     // ─────────────────────────────────────────────────────────────
     // SCXML state machine — transition graph
@@ -2031,38 +2029,45 @@ mod tests {
     #[test]
     fn event_parser_covers_every_input_variant() {
         // Every externally-dispatchable event resolves. The internal
-        // `TextfieldCommit` raise event is NOT in the parser table
-        // (consumers do not drive raised events directly).
+        // `TextfieldCommit` raise event is NOT in `from_name`'s
+        // external set (consumers do not drive raised events directly).
         assert!(matches!(
-            parse_text_field_event("Focus"),
+            TextFieldEvent::from_name("Focus"),
             Some(TextFieldEvent::Focus),
         ));
         assert!(matches!(
-            parse_text_field_event("Blur"),
+            TextFieldEvent::from_name("Blur"),
             Some(TextFieldEvent::Blur),
         ));
         assert!(matches!(
-            parse_text_field_event("BeginEdit"),
+            TextFieldEvent::from_name("BeginEdit"),
             Some(TextFieldEvent::BeginEdit),
         ));
         assert!(matches!(
-            parse_text_field_event("CommitEdit"),
+            TextFieldEvent::from_name("CommitEdit"),
             Some(TextFieldEvent::CommitEdit),
         ));
         assert!(matches!(
-            parse_text_field_event("CancelEdit"),
+            TextFieldEvent::from_name("CancelEdit"),
             Some(TextFieldEvent::CancelEdit),
         ));
         assert!(matches!(
-            parse_text_field_event("Disable"),
+            TextFieldEvent::from_name("Disable"),
             Some(TextFieldEvent::Disable),
         ));
         assert!(matches!(
-            parse_text_field_event("Enable"),
+            TextFieldEvent::from_name("Enable"),
             Some(TextFieldEvent::Enable),
         ));
-        assert_eq!(parse_text_field_event("textfield_commit"), None);
-        assert_eq!(parse_text_field_event(""), None);
+        assert_eq!(TextFieldEvent::from_name("textfield_commit"), None);
+        assert_eq!(TextFieldEvent::from_name(""), None);
+        // R699 §5.16 — internal raise + Null reject; `as_name` total.
+        assert_eq!(TextFieldEvent::from_name("TextfieldCommit"), None);
+        assert_eq!(TextFieldEvent::from_name("Null"), None);
+        assert_eq!(
+            TextFieldEvent::TextfieldCommit.as_name(),
+            "TextfieldCommit"
+        );
     }
 }
 

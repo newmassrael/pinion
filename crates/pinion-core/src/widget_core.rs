@@ -595,25 +595,47 @@ pub trait WidgetStateName: Sized {
     fn from_name_or_default(name: &str) -> Self;
 }
 
-/// R643 §5.16 — `Self → &'static str` mapping for
+/// R643 §5.16 — bidirectional `Self ↔ &'static str` mapping for
 /// [`WidgetCore::Event`] enums.
 ///
-/// Mirror of [`WidgetStateName`] for the event side, currently
-/// forward-only (`as_name`).
+/// Mirror of [`WidgetStateName`] for the event side, but the two
+/// directions cover *different* variant sets — the asymmetry that kept
+/// the reverse off the trait until R699:
 ///
-/// R698.A honesty correction: a reverse `name -> event` parse IS
-/// needed in practice — the RPC `invoke("send", name)` path drives the
-/// statechart by event name, so every widget still hand-writes a
-/// fallible `parse_*_event` (string -> `Option<Event>`, rejecting
-/// internal / `Null` SCXML 3.13 variants). Unifying those through this
-/// trait needs a fallible `from_name(&str) -> Option<Self>` over the
-/// *externally-drivable* variant subset — distinct from the total
-/// `from_name_or_default` on the state side, which is why R698 left the
-/// event axis untouched. Tracked as the R699 event-name SSOT round.
-pub trait WidgetEventName {
+/// * [`as_name`](Self::as_name) is **total** — every variant emitted
+///   by the SCE template (including the internal-only `*Activate`
+///   raise events the winit handler never produces, plus the SCXML
+///   3.13 `Null` sentinel) maps to its canonical `PascalCase` name so
+///   AI-side introspection observes the full event surface.
+/// * [`from_name`](Self::from_name) is **fallible + partial** — it
+///   accepts only the *externally-drivable* variant subset (the names
+///   the RPC `invoke("send", name)` path is allowed to inject), and
+///   returns `None` for unknown names *and* for the internal /`Null`
+///   variants. This matches the pre-R699 hand-written `parse_*_event`
+///   contract exactly (rejecting an internal name as
+///   `InvokeError::Rejected`), so an AI agent cannot drive a widget
+///   into a state the real winit/keyboard handler would never reach.
+///
+/// The split is why the event side cannot reuse the state side's
+/// total [`WidgetStateName::from_name_or_default`] — there is no
+/// "default event", and silently coercing an unknown event name to
+/// some fallback would let RPC callers desync the statechart. The
+/// [`widget_event_name!`](crate::widget_event_name) macro therefore
+/// takes two variant groups (`external` / `internal`) and emits the
+/// total `as_name` over both while restricting `from_name` to the
+/// `external` group.
+pub trait WidgetEventName: Sized {
     /// Map `self` to its `PascalCase` SCXML event name (1:1 with the
     /// `<transition event="...">` attribute in the source `.scxml`).
+    /// Total over every variant (external + internal + `Null`).
     fn as_name(&self) -> &'static str;
+
+    /// Parse `name` back to the corresponding **externally-drivable**
+    /// variant. Returns `None` when `name` is unknown or names an
+    /// internal-only / `Null` variant — the RPC `invoke("send", …)`
+    /// path surfaces that `None` as `InvokeError::Rejected`, exactly
+    /// as the pre-R699 hand-written `parse_*_event` did.
+    fn from_name(name: &str) -> Option<Self>;
 }
 
 /// R643 §5.16 — declarative impl emitter for [`WidgetStateName`].
@@ -648,31 +670,54 @@ macro_rules! widget_state_name {
     };
 }
 
-/// R643 §5.16 — declarative impl emitter for [`WidgetEventName`].
+/// R643 §5.16 / R699 §5.16 — declarative impl emitter for
+/// [`WidgetEventName`].
 ///
 /// Invoke once next to each vendor/sce-generated `pub use sm::<Event>;`
-/// re-export inside `pinion-core/src/widgets/<widget>.rs`. Variant
-/// list must enumerate every variant (the macro's match is
-/// exhaustive); the `Null` SCXML 3.13 sentinel + every internal-only
-/// variant are included so derived `event_name` produces canonical
-/// names instead of the pre-R643 `__internal__` catch-all (which
-/// every binding's `parse_X_event` rejected anyway — losing nothing,
-/// gaining AI-side observability for the previously-hidden variants).
+/// re-export inside `pinion-core/src/widgets/<widget>.rs`. The two
+/// variant groups partition every variant the SCE template emits:
+///
+/// * `external` — the names the RPC `invoke("send", name)` path may
+///   inject (pointer / keyboard / enable-disable events the real
+///   winit handler also produces). These appear in **both**
+///   [`WidgetEventName::as_name`] and [`WidgetEventName::from_name`].
+/// * `internal` — the `*Activate` raise events the statechart fires
+///   internally + the SCXML 3.13 `Null` sentinel. These appear in
+///   `as_name` only (so AI-side introspection sees their canonical
+///   names), and `from_name` rejects them — an RPC caller cannot
+///   forge an internal raise.
+///
+/// Together the groups must enumerate **every** variant: the
+/// `as_name` match is exhaustive, so a missing variant is a
+/// compile error at macro-expansion time (the safety net that
+/// catches a stale list after an SCE template change).
 ///
 /// ```rust,ignore
-/// widget_event_name!(ButtonEvent, [
-///     ButtonActivate, Disable, Enable, KeyboardActivate,
-///     PointerCancel, PointerDown, PointerEnter, PointerLeave,
-///     PointerUp, Null,
-/// ]);
+/// widget_event_name!(ButtonEvent,
+///     external = [
+///         PointerEnter, PointerLeave, PointerDown, PointerUp,
+///         PointerCancel, KeyboardActivate, Disable, Enable,
+///     ],
+///     internal = [ButtonActivate, Null],
+/// );
 /// ```
 #[macro_export]
 macro_rules! widget_event_name {
-    ($ty:ident, [$($variant:ident),+ $(,)?]) => {
+    ($ty:ident,
+     external = [$($ext:ident),+ $(,)?],
+     internal = [$($int:ident),* $(,)?] $(,)?) => {
         impl $crate::WidgetEventName for $ty {
             fn as_name(&self) -> &'static str {
                 match self {
-                    $($ty::$variant => stringify!($variant),)+
+                    $($ty::$ext => stringify!($ext),)+
+                    $($ty::$int => stringify!($int),)*
+                }
+            }
+            fn from_name(name: &str) -> ::core::option::Option<Self> {
+                match name {
+                    $(stringify!($ext)
+                        => ::core::option::Option::Some($ty::$ext),)+
+                    _ => ::core::option::Option::None,
                 }
             }
         }

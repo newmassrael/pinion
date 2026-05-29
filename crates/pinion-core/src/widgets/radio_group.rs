@@ -44,9 +44,9 @@ use crate::external::{
     ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::radio::{Radio, RadioEvent, RadioState, parse_radio_event};
+use crate::widgets::radio::{Radio, RadioEvent, RadioState};
 use crate::widgets::{IntentEmitter, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// Logical group of N Radio widgets with framework-owned mutual
 /// exclusion. See module docs for the full design rationale.
@@ -541,7 +541,7 @@ impl ExternalIntrospect for RadioGroupExternal {
                     if idx >= self.count() {
                         return Err(InvokeError::Rejected);
                     }
-                    let ev = parse_radio_event(event_name)
+                    let ev = RadioEvent::from_name(event_name)
                         .ok_or(InvokeError::Rejected)?;
                     self.send(idx, ev);
                     Ok(match self.selected_index() {

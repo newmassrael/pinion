@@ -494,9 +494,10 @@ mod tests {
 
     // ─────────────────────────────────────────────────────────────
     // event_name — every variant the shell's `InputRouter` produces
-    // must map to a recognised SCXML transition. Pins the
-    // bidirectional wire so a future `parse_button_event` rename
-    // surfaces here, not as a silent input-routing dead-end.
+    // must map to a recognised SCXML transition. `state_name_derive`
+    // routes this through `ButtonEvent::as_name` (R699 SSOT); the test
+    // pins the forward wire so a template drift surfaces here, not as
+    // a silent input-routing dead-end.
     // ─────────────────────────────────────────────────────────────
 
     #[test]

@@ -40,6 +40,25 @@ use sm::CheckboxPolicy;
 crate::widget_state_name!(CheckboxState, default = Idle, [
     Idle, Hover, Pressed, Disabled,
 ]);
+// R699 §5.16 — route the CheckboxEvent <-> SCXML-name mapping through
+// the `WidgetEventName` SSOT primitive (two-group macro emits the total
+// `as_name` + the external-only fallible `from_name`), replacing the
+// hand-written `parse_checkbox_event`. `CheckboxActivate` (internal
+// raise) + `Null` (SCXML 3.13) stay out of `from_name` so an RPC
+// `invoke("send", …)` cannot forge them.
+crate::widget_event_name!(CheckboxEvent,
+    external = [
+        PointerEnter,
+        PointerLeave,
+        PointerDown,
+        PointerUp,
+        PointerCancel,
+        KeyboardActivate,
+        Disable,
+        Enable,
+    ],
+    internal = [CheckboxActivate, Null],
+);
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
@@ -48,7 +67,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
-use crate::WidgetStateName;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// Checkbox widget state machine + Off/On value sidecar. Statechart
 /// identical to [`crate::widgets::Toggle`]; divergence is the
@@ -289,7 +308,8 @@ impl ExternalIntrospect for CheckboxExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
-                    let ev = parse_checkbox_event(name).ok_or(InvokeError::Rejected)?;
+                    let ev =
+                        CheckboxEvent::from_name(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
                         self.state().as_name().to_string(),
@@ -299,23 +319,6 @@ impl ExternalIntrospect for CheckboxExternal {
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-fn parse_checkbox_event(name: &str) -> Option<CheckboxEvent> {
-    match name {
-        "PointerEnter" => Some(CheckboxEvent::PointerEnter),
-        "PointerLeave" => Some(CheckboxEvent::PointerLeave),
-        "PointerDown" => Some(CheckboxEvent::PointerDown),
-        "PointerUp" => Some(CheckboxEvent::PointerUp),
-        // R51.93 §5.35 — touch-cancel sibling of PointerUp; does
-        // not flip checked or fire a `"checked"` intent.
-        "PointerCancel" => Some(CheckboxEvent::PointerCancel),
-        // R51.55 §5.39 — ARIA Space keyboard activation.
-        "KeyboardActivate" => Some(CheckboxEvent::KeyboardActivate),
-        "Disable" => Some(CheckboxEvent::Disable),
-        "Enable" => Some(CheckboxEvent::Enable),
-        _ => None,
     }
 }
 
@@ -355,9 +358,16 @@ mod tests {
     #[test]
     fn r51_93_parse_pointer_cancel_event_name() {
         assert_eq!(
-            parse_checkbox_event("PointerCancel"),
+            CheckboxEvent::from_name("PointerCancel"),
             Some(CheckboxEvent::PointerCancel)
         );
+        // R699 §5.16 — internal raise + Null + unknown all reject.
+        assert_eq!(CheckboxEvent::from_name("CheckboxActivate"), None);
+        assert_eq!(CheckboxEvent::from_name("Null"), None);
+        assert_eq!(CheckboxEvent::from_name("Bogus"), None);
+        // R699 — `as_name` is total: internal variants get canonical
+        // names (not the pre-R643 `__internal__` catch-all).
+        assert_eq!(CheckboxEvent::CheckboxActivate.as_name(), "CheckboxActivate");
     }
 
     #[test]
