@@ -48,7 +48,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::{Color, Frame, Owner, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Owner, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -211,7 +211,7 @@ impl WidgetCore for ListBoxMultiView {
         };
         for (i, slot) in out.rows.iter_mut().enumerate() {
             let state = match intro.query(&format!("state.{i}")) {
-                Some(IntrospectValue::Text(name)) => parse_listbox_item_state(&name),
+                Some(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
                 _ => ListboxItemState::Idle,
             };
             // Multi-mode: per-row selected bool (selected_index is
@@ -491,15 +491,6 @@ fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bo
         return false;
     };
     set_focus(node, idx)
-}
-
-fn parse_listbox_item_state(name: &str) -> ListboxItemState {
-    match name {
-        "Hover" => ListboxItemState::Hover,
-        "Pressed" => ListboxItemState::Pressed,
-        "Disabled" => ListboxItemState::Disabled,
-        _ => ListboxItemState::Idle,
-    }
 }
 
 fn listbox_state_short(state: ListboxItemState) -> &'static str {

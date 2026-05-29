@@ -268,6 +268,13 @@ mod sm {
 
 pub use sm::{ScrollBarEvent, ScrollBarState};
 
+// R698 §5.16 — route ScrollBarState <-> SCXML-id mapping through the
+// R643 `WidgetStateName` SSOT primitive, replacing the hand-written
+// `scroll_bar_state_name` fn (mirrors the R696.A Disclosure adoption).
+crate::widget_state_name!(ScrollBarState, default = Idle, [
+    Idle, Hover, Dragging, Disabled,
+]);
+
 // ─────────────────────────────────────────────────────────────────
 // R660 §5.45 — reactive interaction-state mirror
 //
@@ -425,6 +432,7 @@ use crate::external::{
 use crate::intent::Intent;
 use crate::widgets::scroll::ScrollState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+use crate::WidgetStateName;
 
 /// `ScrollBar` widget state machine + orientation sidecar.
 ///
@@ -921,7 +929,7 @@ impl ExternalIntrospect for ScrollBarExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                scroll_bar_state_name(self.state()).to_string(),
+                self.state().as_name().to_string(),
             )),
             "orientation" => Some(IntrospectValue::Text(
                 scroll_bar_orientation_name(self.orientation()).to_string(),
@@ -960,22 +968,13 @@ impl ExternalIntrospect for ScrollBarExternal {
                         parse_scroll_bar_event(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
-                        scroll_bar_state_name(self.state()).to_string(),
+                        self.state().as_name().to_string(),
                     ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-fn scroll_bar_state_name(state: ScrollBarState) -> &'static str {
-    match state {
-        ScrollBarState::Idle => "Idle",
-        ScrollBarState::Hover => "Hover",
-        ScrollBarState::Dragging => "Dragging",
-        ScrollBarState::Disabled => "Disabled",
     }
 }
 
@@ -1181,10 +1180,11 @@ mod r55_d2_tests {
     //! orientation immutability.
 
     use super::{
-        parse_scroll_bar_event, scroll_bar_orientation_name, scroll_bar_state_name,
+        parse_scroll_bar_event, scroll_bar_orientation_name,
         ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation,
         ScrollBarState,
     };
+    use crate::WidgetStateName;
     use crate::external::{
         Backend, External, ExternalIntrospect, InterveneError, IntrospectValue,
         InvokeError, RepaintOwner, ThreadOwnership,
@@ -1533,10 +1533,10 @@ mod r55_d2_tests {
         // RPC scene/query "state" returns one of these four strings
         // verbatim. The §2 #2 RPC introspection layer relies on the
         // mapping being stable across SCXML codegen rebuilds.
-        assert_eq!(scroll_bar_state_name(ScrollBarState::Idle), "Idle");
-        assert_eq!(scroll_bar_state_name(ScrollBarState::Hover), "Hover");
-        assert_eq!(scroll_bar_state_name(ScrollBarState::Dragging), "Dragging");
-        assert_eq!(scroll_bar_state_name(ScrollBarState::Disabled), "Disabled");
+        assert_eq!(ScrollBarState::Idle.as_name(), "Idle");
+        assert_eq!(ScrollBarState::Hover.as_name(), "Hover");
+        assert_eq!(ScrollBarState::Dragging.as_name(), "Dragging");
+        assert_eq!(ScrollBarState::Disabled.as_name(), "Disabled");
     }
 
     #[test]

@@ -47,7 +47,9 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{Color, ColorRole, Command, Frame, Scene, ThemeMode, WidgetCore, use_theme};
+use pinion_core::{
+    Color, ColorRole, Command, Frame, Scene, ThemeMode, WidgetCore, WidgetStateName, use_theme,
+};
 #[cfg(test)]
 use pinion_core::Theme;
 #[cfg(test)]
@@ -238,7 +240,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     ));
     let status_str = format!(
         "{} | {}",
-        toggle_state_name(state),
+        state.as_name(),
         if on { "On" } else { "Off" },
     );
     let status = Scene::Text(TextNode::styled(
@@ -314,7 +316,7 @@ impl ToggleView {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
                 let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    parse_toggle_state(&name)
+                    ToggleState::from_name_or_default(&name)
                 } else {
                     ToggleState::Idle
                 };
@@ -401,28 +403,9 @@ impl ToggleView {
     fn fmt_state_log(state: (ToggleState, bool)) -> String {
         format!(
             "{} / {}",
-            toggle_state_name(state.0),
+            state.0.as_name(),
             if state.1 { "On" } else { "Off" },
         )
-    }
-}
-
-fn parse_toggle_state(name: &str) -> ToggleState {
-    match name {
-        "Hover" => ToggleState::Hover,
-        "Pressed" => ToggleState::Pressed,
-        "Disabled" => ToggleState::Disabled,
-        // "Idle" + anything unexpected — defensive default.
-        _ => ToggleState::Idle,
-    }
-}
-
-fn toggle_state_name(state: ToggleState) -> &'static str {
-    match state {
-        ToggleState::Idle => "Idle",
-        ToggleState::Hover => "Hover",
-        ToggleState::Pressed => "Pressed",
-        ToggleState::Disabled => "Disabled",
     }
 }
 

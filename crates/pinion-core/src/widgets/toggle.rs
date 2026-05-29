@@ -52,6 +52,13 @@ mod sm {
 }
 
 pub use sm::{ToggleEvent, ToggleState};
+
+// R698 §5.16 — route ToggleState <-> SCXML-id mapping through the R643
+// `WidgetStateName` SSOT primitive, replacing the hand-written
+// `toggle_state_name` fn (mirrors the R696.A Disclosure adoption).
+crate::widget_state_name!(ToggleState, default = Idle, [
+    Idle, Hover, Pressed, Disabled,
+]);
 use sm::TogglePolicy;
 
 use crate::external::{
@@ -61,6 +68,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+use crate::WidgetStateName;
 
 /// Toggle widget state machine + Off/On value sidecar. R51.4 §5.38
 /// refactor: the engine wrapping moves into the shared
@@ -301,7 +309,7 @@ impl ExternalIntrospect for ToggleExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                toggle_state_name(self.state()).to_string(),
+                self.state().as_name().to_string(),
             )),
             "value" => Some(IntrospectValue::Bool(self.is_on())),
             _ => None,
@@ -350,7 +358,7 @@ impl ExternalIntrospect for ToggleExternal {
                     self.send(ev);
                     Ok(IntrospectValue::Text(format!(
                         "state={}, value={}",
-                        toggle_state_name(self.state()),
+                        self.state().as_name(),
                         self.is_on(),
                     )))
                 }
@@ -421,7 +429,7 @@ impl ExternalIntrospect for ToggleStateSnapshot {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                toggle_state_name(self.state).to_string(),
+                self.state.as_name().to_string(),
             )),
             "value" => Some(IntrospectValue::Bool(self.value)),
             _ => None,
@@ -445,14 +453,6 @@ impl ExternalIntrospect for ToggleStateSnapshot {
     }
 }
 
-fn toggle_state_name(state: ToggleState) -> &'static str {
-    match state {
-        ToggleState::Idle => "Idle",
-        ToggleState::Hover => "Hover",
-        ToggleState::Pressed => "Pressed",
-        ToggleState::Disabled => "Disabled",
-    }
-}
 
 /// Parse a `ToggleEvent` variant from its name (e.g. `"PointerEnter"`).
 /// `None` if the name is not a known variant — bidirectional RPC

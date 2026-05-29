@@ -51,6 +51,14 @@ mod sm {
 }
 
 pub use sm::{ListboxItemEvent, ListboxItemState};
+
+// R698 §5.16 — route ListboxItemState <-> SCXML-id mapping through the
+// R643 `WidgetStateName` SSOT primitive, replacing the hand-written
+// `listbox_item_state_name` fn (mirrors the R696.A Disclosure adoption).
+// listbox.rs calls `self.state(idx).as_name()` via the trait too.
+crate::widget_state_name!(ListboxItemState, default = Idle, [
+    Idle, Hover, Pressed, Disabled,
+]);
 use sm::ListboxItemPolicy;
 
 use crate::external::{
@@ -60,6 +68,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+use crate::WidgetStateName;
 
 /// `ListBoxItem` widget state machine + selection value sidecar.
 /// Activate (`Pressed → Hover` from pointer release, or
@@ -281,7 +290,7 @@ impl ExternalIntrospect for ListBoxItemExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                listbox_item_state_name(self.state()).to_string(),
+                self.state().as_name().to_string(),
             )),
             "selected" => Some(IntrospectValue::Bool(self.is_selected())),
             _ => None,
@@ -318,22 +327,13 @@ impl ExternalIntrospect for ListBoxItemExternal {
                         .ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
-                        listbox_item_state_name(self.state()).to_string(),
+                        self.state().as_name().to_string(),
                     ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-pub(crate) fn listbox_item_state_name(state: ListboxItemState) -> &'static str {
-    match state {
-        ListboxItemState::Idle => "Idle",
-        ListboxItemState::Hover => "Hover",
-        ListboxItemState::Pressed => "Pressed",
-        ListboxItemState::Disabled => "Disabled",
     }
 }
 

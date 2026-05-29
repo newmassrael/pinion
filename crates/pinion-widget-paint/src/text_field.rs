@@ -28,9 +28,9 @@
 //! - [`use_text_field_layout_cache`] — Owner-cache hook returning
 //!   the shared `Rc<RefCell<LayoutCache>>` both helpers resolve
 //!   through.
-//! - [`text_field_state_name`] / [`parse_text_field_state`] —
-//!   bidirectional SCXML state name <-> enum lookup the
-//!   `read_state` + status-line paths both call.
+//! - [`read_text_field_state`] — extracts `(TextFieldState, caret)`
+//!   from the scene-root External's introspect surface, routing the
+//!   state-name lookup through the `WidgetStateName` SSOT (R698 §5.16).
 //!
 //! ## What does NOT live here
 //!
@@ -61,7 +61,7 @@ use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
-use pinion_core::{Color, Scene};
+use pinion_core::{Color, Scene, WidgetStateName};
 use pinion_text::{caret_rect_for_byte_offset, CaretRect, LayoutCache};
 
 /// (R657 §5.16) Owner-cache key for the shared
@@ -565,34 +565,6 @@ pub fn ime_caret_rect_for(
     )
 }
 
-/// (R657 §5.16) SCXML state name → enum. Defensive default
-/// (`Idle`) on any unexpected token guards against a future SCXML
-/// rename leaking a silent crash. Lifted from the pre-R657 binding
-/// duplicate per the [[abstraction-needs-second-consumer]] gate.
-#[must_use]
-pub fn parse_text_field_state(name: &str) -> TextFieldState {
-    match name {
-        "Focused" => TextFieldState::Focused,
-        "Editing" => TextFieldState::Editing,
-        "Disabled" => TextFieldState::Disabled,
-        _ => TextFieldState::Idle,
-    }
-}
-
-/// (R657 §5.16) Inverse of [`parse_text_field_state`] — used by the
-/// status-line + transition-log path. Could be auto-derived through
-/// `WidgetStateName` (R643) but kept hand-written to stay
-/// vendor/sce-rename-resistant per [[sce-priority-over-pinion]].
-#[must_use]
-pub const fn text_field_state_name(state: TextFieldState) -> &'static str {
-    match state {
-        TextFieldState::Idle => "Idle",
-        TextFieldState::Focused => "Focused",
-        TextFieldState::Editing => "Editing",
-        TextFieldState::Disabled => "Disabled",
-    }
-}
-
 /// (R657 §5.16) Convenience helper extracting `(TextFieldState,
 /// u32)` from the scene-root External's introspect surface. Lifted
 /// from the duplicate `read_state` body both bindings carried. The
@@ -611,8 +583,13 @@ pub fn read_text_field_state(scene: &Scene, tag: &str) -> (TextFieldState, u32) 
     let Some(intro) = node.handle.introspect() else {
         return (TextFieldState::Idle, 0);
     };
+    // R698 §5.16 — route through the `WidgetStateName` SSOT primitive
+    // (R643) instead of a paint-side duplicate match table; unknown /
+    // missing tokens still collapse to `Idle` via `from_name_or_default`.
     let interaction = match intro.query("state") {
-        Some(IntrospectValue::Text(name)) => parse_text_field_state(&name),
+        Some(IntrospectValue::Text(name)) => {
+            TextFieldState::from_name_or_default(&name)
+        }
         _ => TextFieldState::Idle,
     };
     let caret = match intro.query("caret") {
@@ -659,20 +636,28 @@ mod tests {
 
     #[test]
     fn state_name_round_trips() {
+        // R698 §5.16 — the round-trip now exercises the `WidgetStateName`
+        // SSOT primitive (R643) that `read_text_field_state` routes through.
         for s in [
             TextFieldState::Idle,
             TextFieldState::Focused,
             TextFieldState::Editing,
             TextFieldState::Disabled,
         ] {
-            assert_eq!(parse_text_field_state(text_field_state_name(s)), s);
+            assert_eq!(TextFieldState::from_name_or_default(s.as_name()), s);
         }
     }
 
     #[test]
     fn parse_unknown_token_defaults_to_idle() {
-        assert_eq!(parse_text_field_state("__bogus__"), TextFieldState::Idle);
-        assert_eq!(parse_text_field_state(""), TextFieldState::Idle);
+        assert_eq!(
+            TextFieldState::from_name_or_default("__bogus__"),
+            TextFieldState::Idle
+        );
+        assert_eq!(
+            TextFieldState::from_name_or_default(""),
+            TextFieldState::Idle
+        );
     }
 
     #[test]

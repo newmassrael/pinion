@@ -55,7 +55,7 @@ use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
-use pinion_core::{style, Color, Frame, WidgetCore};
+use pinion_core::{style, Color, Frame, WidgetCore, WidgetStateName};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
 
@@ -261,7 +261,7 @@ impl WidgetCore for HelloTextFieldTui {
             return (TextFieldState::Idle, 0);
         };
         let interaction = match intro.query("state") {
-            Some(IntrospectValue::Text(name)) => parse_text_field_state(&name),
+            Some(IntrospectValue::Text(name)) => TextFieldState::from_name_or_default(&name),
             _ => TextFieldState::Idle,
         };
         let caret = match intro.query("caret") {
@@ -458,7 +458,7 @@ impl WidgetCore for HelloTextFieldTui {
         };
         let status_str = format!(
             "state: {} | caret: {}{}{} | text: \"{}\"",
-            text_field_state_name(interaction),
+            interaction.as_name(),
             caret_byte,
             selection_status,
             preedit_status,
@@ -536,7 +536,7 @@ impl WidgetCore for HelloTextFieldTui {
     fn fmt_state_log(state: &Self::State) -> String {
         format!(
             "{} / caret={}",
-            text_field_state_name(state.0),
+            state.0.as_name(),
             state.1,
         )
     }
@@ -571,24 +571,6 @@ impl WidgetViewTui for HelloTextFieldTui {
     type Renderer = TuiRenderer<CrosstermBackend<Stdout>>;
 }
 
-fn parse_text_field_state(name: &str) -> TextFieldState {
-    match name {
-        "Focused" => TextFieldState::Focused,
-        "Editing" => TextFieldState::Editing,
-        "Disabled" => TextFieldState::Disabled,
-        _ => TextFieldState::Idle,
-    }
-}
-
-fn text_field_state_name(state: TextFieldState) -> &'static str {
-    match state {
-        TextFieldState::Idle => "Idle",
-        TextFieldState::Focused => "Focused",
-        TextFieldState::Editing => "Editing",
-        TextFieldState::Disabled => "Disabled",
-    }
-}
-
 fn main() {
     if let Err(e) = pinion_tui::run::<HelloTextFieldTui>() {
         eprintln!("hello-textfield-tui: shell error: {e}");
@@ -603,15 +585,12 @@ mod tests {
     //! the view fn's paint into a ratatui [`Buffer`] without a real
     //! terminal, then asserts on per-cell glyphs.
 
-    use super::{
-        parse_text_field_state, text_field_state_name, HelloTextFieldTui, CURSOR_GLYPH,
-        TF_TAG,
-    };
+    use super::{HelloTextFieldTui, CURSOR_GLYPH, TF_TAG};
     use pinion_a11y::{AccessValue, AriaRole, WidgetA11y};
     use pinion_core::reactive::Owner;
     use pinion_core::widgets::text_edit::use_text_edit_state;
     use pinion_core::widgets::text_field::TextFieldState;
-    use pinion_core::WidgetCore;
+    use pinion_core::{WidgetCore, WidgetStateName};
 
     /// Reactive scope wrapper — `render_one_frame` does not wrap
     /// `V::view` in `root_owner.run` (the runtime shell does), so
@@ -633,7 +612,7 @@ mod tests {
             TextFieldState::Editing,
             TextFieldState::Disabled,
         ] {
-            assert_eq!(parse_text_field_state(text_field_state_name(s)), s);
+            assert_eq!(TextFieldState::from_name_or_default(s.as_name()), s);
         }
     }
 

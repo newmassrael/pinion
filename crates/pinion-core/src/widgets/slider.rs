@@ -70,6 +70,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+use crate::WidgetStateName;
 
 /// R51.39 §5.38 — Slider track orientation. `Horizontal` (the
 /// default) places the value progression along the X axis with `0.0`
@@ -396,7 +397,7 @@ impl ExternalIntrospect for SliderExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                slider_state_name(self.state()).to_string(),
+                self.state().as_name().to_string(),
             )),
             "value" => Some(IntrospectValue::Float(f64::from(self.value()))),
             "orientation" => Some(IntrospectValue::Text(
@@ -451,22 +452,13 @@ impl ExternalIntrospect for SliderExternal {
                     let ev = parse_slider_event(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
-                        slider_state_name(self.state()).to_string(),
+                        self.state().as_name().to_string(),
                     ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-fn slider_state_name(state: SliderState) -> &'static str {
-    match state {
-        SliderState::Idle => "Idle",
-        SliderState::Hover => "Hover",
-        SliderState::Dragging => "Dragging",
-        SliderState::Disabled => "Disabled",
     }
 }
 

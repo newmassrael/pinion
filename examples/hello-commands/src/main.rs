@@ -79,7 +79,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Command, Frame, Intent, Scene, WidgetCore};
+use pinion_core::{Color, Command, Frame, Intent, Scene, WidgetCore, WidgetStateName};
 use pinion_derive::widget;
 use pinion_runtime::{Handler, HandlerFuture, HandlerRegistry};
 use pinion_shell::vello_renderer_impl;
@@ -184,7 +184,7 @@ impl CommandsView {
             && let Some(intro) = node.handle.introspect()
             && let Some(IntrospectValue::Text(name)) = intro.query("state")
         {
-            return parse_button_state(&name);
+            return ButtonState::from_name_or_default(&name);
         }
         ButtonState::Idle
     }
@@ -248,15 +248,6 @@ impl CommandsView {
             }
             _ => Vec::new(),
         }
-    }
-}
-
-fn parse_button_state(name: &str) -> ButtonState {
-    match name {
-        "Hover" => ButtonState::Hover,
-        "Pressed" => ButtonState::Pressed,
-        "Disabled" => ButtonState::Disabled,
-        _ => ButtonState::Idle,
     }
 }
 

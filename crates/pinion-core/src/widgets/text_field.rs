@@ -80,6 +80,14 @@ mod sm {
 }
 
 pub use sm::{TextFieldEvent, TextFieldState};
+
+// R698 §5.16 — route TextFieldState <-> SCXML-id mapping through the
+// R643 `WidgetStateName` SSOT primitive, replacing the hand-written
+// `text_field_state_name` fn (mirrors the R696.A Disclosure adoption).
+// The pinion-widget-paint read path uses `from_name_or_default` too.
+crate::widget_state_name!(TextFieldState, default = Idle, [
+    Idle, Focused, Editing, Disabled,
+]);
 use sm::TextFieldPolicy;
 
 use std::rc::Rc;
@@ -95,6 +103,7 @@ use crate::scene::Rect;
 use crate::widgets::caret_blink::CaretBlink;
 use crate::widgets::text_edit::TextEditState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+use crate::WidgetStateName;
 
 /// R56.1.b §5.38 §5.21 — closed-form caret rectangle derivation.
 ///
@@ -1053,7 +1062,7 @@ impl ExternalIntrospect for TextFieldExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                text_field_state_name(self.state()).to_string(),
+                self.state().as_name().to_string(),
             )),
             // R56.1.b §5.38 — text + caret read through the attached
             // [`TextEditState`]. `None` when no handle is attached;
@@ -1221,7 +1230,7 @@ impl ExternalIntrospect for TextFieldExternal {
                         parse_text_field_event(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
-                        text_field_state_name(self.state()).to_string(),
+                        self.state().as_name().to_string(),
                     ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -1296,25 +1305,25 @@ impl ExternalIntrospect for TextFieldExternal {
                         Some(CompositionAction::Start) => {
                             self.apply_composition_start();
                             Ok(IntrospectValue::Text(
-                                text_field_state_name(self.state()).to_string(),
+                                self.state().as_name().to_string(),
                             ))
                         }
                         Some(CompositionAction::Update(data)) => {
                             self.apply_composition_update(&data);
                             Ok(IntrospectValue::Text(
-                                text_field_state_name(self.state()).to_string(),
+                                self.state().as_name().to_string(),
                             ))
                         }
                         Some(CompositionAction::End(data)) => {
                             self.apply_composition_commit(&data);
                             Ok(IntrospectValue::Text(
-                                text_field_state_name(self.state()).to_string(),
+                                self.state().as_name().to_string(),
                             ))
                         }
                         Some(CompositionAction::Cancel) => {
                             self.apply_composition_cancel();
                             Ok(IntrospectValue::Text(
-                                text_field_state_name(self.state()).to_string(),
+                                self.state().as_name().to_string(),
                             ))
                         }
                         None => Err(InvokeError::TypeMismatch),
@@ -1341,15 +1350,6 @@ impl ExternalIntrospect for TextFieldExternal {
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-fn text_field_state_name(state: TextFieldState) -> &'static str {
-    match state {
-        TextFieldState::Idle => "Idle",
-        TextFieldState::Focused => "Focused",
-        TextFieldState::Editing => "Editing",
-        TextFieldState::Disabled => "Disabled",
     }
 }
 
@@ -1650,13 +1650,14 @@ mod tests {
     //! commit-on-blur path, introspect surface.
 
     use super::{
-        parse_text_field_event, text_field_state_name, TextField, TextFieldEvent,
+        parse_text_field_event, TextField, TextFieldEvent,
         TextFieldExternal, TextFieldState,
     };
     use crate::external::{
         Backend, External, ExternalIntrospect, InterveneError, IntrospectValue,
         InvokeError, RepaintOwner, ThreadOwnership,
     };
+    use crate::WidgetStateName;
 
     // ─────────────────────────────────────────────────────────────
     // SCXML state machine — transition graph
@@ -2018,13 +2019,13 @@ mod tests {
 
     #[test]
     fn state_name_helper_covers_every_variant() {
-        // Guard the parse_text_field_event ↔ text_field_state_name
-        // string round-trip — every state's name must be stable so
-        // RPC consumers can build assertions against it.
-        assert_eq!(text_field_state_name(TextFieldState::Idle), "Idle");
-        assert_eq!(text_field_state_name(TextFieldState::Focused), "Focused");
-        assert_eq!(text_field_state_name(TextFieldState::Editing), "Editing");
-        assert_eq!(text_field_state_name(TextFieldState::Disabled), "Disabled");
+        // Guard the WidgetStateName `as_name` mapping (R698 §5.16) —
+        // every state's name must be stable so RPC consumers can build
+        // assertions against it.
+        assert_eq!(TextFieldState::Idle.as_name(), "Idle");
+        assert_eq!(TextFieldState::Focused.as_name(), "Focused");
+        assert_eq!(TextFieldState::Editing.as_name(), "Editing");
+        assert_eq!(TextFieldState::Disabled.as_name(), "Disabled");
     }
 
     #[test]

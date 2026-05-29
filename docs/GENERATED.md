@@ -14245,6 +14245,32 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R698 — R698 retires the per-widget hand-written *_state_name / parse_*_state duplicates across 8 core widgets, the paint crate, and ~16 examples by routing all SCXML state-id to/from enum mapping through the R643 WidgetStateName SSOT primitive (behaviour-preserving cleanup of the R696.A cross-widget carry).
+
+**Changes**:
+- pinion-core: added widget_state_name! to checkbox/radio/scrollbar/toggle/text_field/listbox_item (button+slider already carried it from R643/R645 with the local fn as dead duplication); removed all 8 local *_state_name fns; External introspect query/invoke now call self.state().as_name(); cross-module importers (listbox.rs, radio_group.rs) route through the trait; in-crate tests assert via XState::as_name().
+- pinion-widget-paint/text_field.rs: removed the duplicate const text_field_state_name + parse_text_field_state match tables; read_text_field_state now routes through TextFieldState::from_name_or_default; the roundtrip test exercises the SSOT; module doc updated.
+- ~16 examples: replaced local parse_*_state / *_state_name fns and tf_paint::text_field_state_name / parse_text_field_state calls with XState::from_name_or_default(...) and state.as_name() plus use pinion_core::WidgetStateName (hello-checkbox/radio/toggle/toggle-tui/theme/slider-vertical/textfield-tui/commands/commands-tui/listbox/listbox-multi/button-tui/radio-group/textfield, settings-panel 4 widgets, todomvc).
+- Net effect: ~30 duplicated state-id match-arm tables collapse to single per-widget variant lists; Disclosure (R696.A) is no longer the only fully-routed widget.
+
+
+
+**Verification**:
+- cargo test --workspace -j2: all green (pinion-core 1501 lib tests plus all crate/example unit tests, 0 failed).
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2 (-D pedantic): clean.
+- Representative RPC demo sweep proving byte-identical scene/query state introspect: settings_panel_r669 (20 assertions, checkbox/radio/slider/toggle), todomvc_r666 (12+ step E2E, textfield/radio/scrollbar), hello_listbox_row_click, hello_button_r641, hello_toggle_activate -- all PASS; covers every one of the 8 touched widgets. Touched example release bins rebuilt fresh before the run (no stale-binary artefact).
+
+
+
+**Impact**: §5.16
+
+
+**Carry forward**:
+- widget_event_name! adoption plus parse_*_event retirement is a distinct deeper axis: widget_event_name! emits only forward as_name(), no from_name reverse mapping, so the per-widget parse_*_event fns (including Disclosure own) cannot be retired without extending the macro. Low-cost follow-up round once the macro grows a from_name_or_default arm.
+- Accordion single-open exclusive variant plus widget-catalogue visual focus-ring (R694 carry) remain open.
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

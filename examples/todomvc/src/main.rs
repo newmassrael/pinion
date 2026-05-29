@@ -61,7 +61,7 @@ use pinion_core::widgets::scrollbar::{use_scrollbar_interaction, ScrollBarExtern
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_a11y::{AccessAction, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_text::CaretRect;
@@ -392,17 +392,6 @@ impl Default for FilterRadioStates {
     }
 }
 
-/// Parse `RadioGroup`'s `state.<i>` slot text back into typed enum.
-/// Mirror of hello-radio-group; substrate lift is the 3rd consumer.
-fn parse_filter_radio_state(name: &str) -> RadioState {
-    match name {
-        "Hover" => RadioState::Hover,
-        "Pressed" => RadioState::Pressed,
-        "Disabled" => RadioState::Disabled,
-        _ => RadioState::Idle,
-    }
-}
-
 /// `apply_key` `TF_TAG` arm: R655 Enter → submit + clear, else delegate
 /// to [`TextFieldExternal::invoke`]`("key", Text(key))`. Trim guard
 /// per `TasteJS` — blank entries never land.
@@ -609,7 +598,7 @@ fn read_filter_radio_states(scene: &Scene) -> FilterRadioStates {
     let mut states = [RadioState::Idle; 3];
     for (i, slot) in states.iter_mut().enumerate() {
         if let Some(IntrospectValue::Text(name)) = intro.query(&format!("state.{i}")) {
-            *slot = parse_filter_radio_state(&name);
+            *slot = RadioState::from_name_or_default(&name);
         }
     }
     let focused = match intro.query("focused_index") {
@@ -1293,7 +1282,7 @@ fn view(state: (TextFieldState, u32, FilterRadioStates, TextFieldState, u32), _f
     };
     let status_str = format!(
         "{} | caret={} | text=\"{}\"{}",
-        tf_paint::text_field_state_name(interaction),
+        interaction.as_name(),
         caret_byte,
         text,
         preedit_status,
@@ -2506,9 +2495,9 @@ impl WidgetCore for TodoMvcView {
         };
         format!(
             "{} / caret={} / filter[{radios}]{focused} / edit={} caret={}",
-            tf_paint::text_field_state_name(state.0),
+            state.0.as_name(),
             state.1,
-            tf_paint::text_field_state_name(state.3),
+            state.3.as_name(),
             state.4,
         )
     }
@@ -2829,9 +2818,10 @@ impl WidgetView for TodoMvcView {
     }
 }
 
-// R657 §5.16 §5.38 — parse_text_field_state / text_field_state_name
-// lifted to `pinion_widget_paint::text_field` and reached via
-// `tf_paint::parse_text_field_state` / `tf_paint::text_field_state_name`.
+// R698 §5.16 §5.38 — TextField state <-> SCXML id mapping now routes
+// through the `pinion_core::WidgetStateName` trait
+// (`TextFieldState::as_name` / `TextFieldState::from_name_or_default`),
+// retiring the local + paint-crate helpers.
 
 fn main() {
     pinion_shell::run::<TodoMvcView>();

@@ -76,6 +76,7 @@ use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{use_scrollbar_interaction, ScrollBarExternal};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::WidgetStateName;
 // R659 §5.45 — `build_scrollbar_visual` lifted to
 // `pinion_widget_paint::scrollbar` after the 2nd-consumer signal
 // fired with the R659 todomvc scrollbar peer wire. The local helper
@@ -493,7 +494,7 @@ impl WidgetCore for ListBoxView {
         };
         for (i, slot) in out.rows.iter_mut().enumerate() {
             let state = match intro.query(&format!("state.{i}")) {
-                Some(IntrospectValue::Text(name)) => parse_listbox_item_state(&name),
+                Some(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
                 _ => ListboxItemState::Idle,
             };
             let selected = matches!(
@@ -866,15 +867,6 @@ fn active_option_index(state: ListState) -> usize {
         return idx;
     }
     state.rows.iter().position(|(_, sel)| *sel).unwrap_or(0)
-}
-
-fn parse_listbox_item_state(name: &str) -> ListboxItemState {
-    match name {
-        "Hover" => ListboxItemState::Hover,
-        "Pressed" => ListboxItemState::Pressed,
-        "Disabled" => ListboxItemState::Disabled,
-        _ => ListboxItemState::Idle,
-    }
 }
 
 fn listbox_state_short(state: ListboxItemState) -> &'static str {

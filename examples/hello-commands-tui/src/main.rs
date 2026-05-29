@@ -63,7 +63,7 @@ use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::{Color, Command, Frame, Intent, WidgetCore, style};
+use pinion_core::{Color, Command, Frame, Intent, WidgetCore, WidgetStateName, style};
 use pinion_runtime::{Handler, HandlerFuture, HandlerRegistry};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
@@ -105,7 +105,7 @@ impl WidgetCore for HelloCommandsTui {
             && let Some(intro) = node.handle.introspect()
             && let Some(IntrospectValue::Text(name)) = intro.query("state")
         {
-            return parse_button_state(&name);
+            return ButtonState::from_name_or_default(&name);
         }
         ButtonState::Idle
     }
@@ -229,15 +229,6 @@ impl WidgetA11y for HelloCommandsTui {
 
 impl WidgetViewTui for HelloCommandsTui {
     type Renderer = TuiRenderer<CrosstermBackend<Stdout>>;
-}
-
-fn parse_button_state(name: &str) -> ButtonState {
-    match name {
-        "Hover" => ButtonState::Hover,
-        "Pressed" => ButtonState::Pressed,
-        "Disabled" => ButtonState::Disabled,
-        _ => ButtonState::Idle,
-    }
 }
 
 /// R51.164 §5.23 — application-supplied [`Handler`] for `demo.echo`.

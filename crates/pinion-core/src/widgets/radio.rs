@@ -31,6 +31,14 @@ mod sm {
 }
 
 pub use sm::{RadioEvent, RadioState};
+
+// R698 §5.16 — route RadioState <-> SCXML-id mapping through the R643
+// `WidgetStateName` SSOT primitive, replacing the hand-written
+// `radio_state_name` fn (mirrors the R696.A Disclosure adoption).
+// radio_group.rs calls `self.state(idx).as_name()` via the trait too.
+crate::widget_state_name!(RadioState, default = Idle, [
+    Idle, Hover, Pressed, Disabled,
+]);
 use sm::RadioPolicy;
 
 use crate::external::{
@@ -40,6 +48,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+use crate::WidgetStateName;
 
 /// Radio widget state machine + selection value sidecar. Activate
 /// (`Pressed → Hover`) sets the value to `true` unconditionally;
@@ -255,7 +264,7 @@ impl ExternalIntrospect for RadioExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                radio_state_name(self.state()).to_string(),
+                self.state().as_name().to_string(),
             )),
             "selected" => Some(IntrospectValue::Bool(self.is_selected())),
             _ => None,
@@ -291,22 +300,13 @@ impl ExternalIntrospect for RadioExternal {
                     let ev = parse_radio_event(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
-                        radio_state_name(self.state()).to_string(),
+                        self.state().as_name().to_string(),
                     ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-pub(crate) fn radio_state_name(state: RadioState) -> &'static str {
-    match state {
-        RadioState::Idle => "Idle",
-        RadioState::Hover => "Hover",
-        RadioState::Pressed => "Pressed",
-        RadioState::Disabled => "Disabled",
     }
 }
 

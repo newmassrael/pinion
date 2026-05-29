@@ -34,7 +34,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::radio::{RadioEvent, RadioExternal, RadioState};
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_derive::widget;
@@ -191,7 +191,7 @@ impl RadioView {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
                 let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    parse_radio_state(&name)
+                    RadioState::from_name_or_default(&name)
                 } else {
                     RadioState::Idle
                 };
@@ -260,27 +260,9 @@ impl RadioView {
     fn fmt_state_log(state: (RadioState, bool)) -> String {
         format!(
             "{} / {}",
-            radio_state_name(state.0),
+            state.0.as_name(),
             if state.1 { "selected" } else { "unselected" },
         )
-    }
-}
-
-fn parse_radio_state(name: &str) -> RadioState {
-    match name {
-        "Hover" => RadioState::Hover,
-        "Pressed" => RadioState::Pressed,
-        "Disabled" => RadioState::Disabled,
-        _ => RadioState::Idle,
-    }
-}
-
-fn radio_state_name(state: RadioState) -> &'static str {
-    match state {
-        RadioState::Idle => "Idle",
-        RadioState::Hover => "Hover",
-        RadioState::Pressed => "Pressed",
-        RadioState::Disabled => "Disabled",
     }
 }
 

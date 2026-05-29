@@ -55,6 +55,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+use crate::WidgetStateName;
 
 /// R12 Button widget. R51.4 §5.38 refactor: a type alias over the
 /// shared [`Widget<P>`] facade — Button has no value sidecar, so the
@@ -245,7 +246,7 @@ impl ExternalIntrospect for ButtonExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                button_state_name(self.state()).to_string(),
+                self.state().as_name().to_string(),
             )),
             // R694 §5.39 — keyboard-focus posture for the focus-ring read.
             "focused" => Some(IntrospectValue::Bool(self.focused)),
@@ -282,7 +283,7 @@ impl ExternalIntrospect for ButtonExternal {
                     let ev = parse_button_event(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
-                        button_state_name(self.state()).to_string(),
+                        self.state().as_name().to_string(),
                     ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -363,7 +364,7 @@ impl ExternalIntrospect for ButtonStateSnapshot {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                button_state_name(self.state).to_string(),
+                self.state.as_name().to_string(),
             )),
             _ => None,
         }
@@ -386,15 +387,6 @@ impl ExternalIntrospect for ButtonStateSnapshot {
         // Snapshot has no action channel — the live `ButtonExternal`
         // is where transitions land.
         Err(InvokeError::Rejected)
-    }
-}
-
-fn button_state_name(state: ButtonState) -> &'static str {
-    match state {
-        ButtonState::Idle => "Idle",
-        ButtonState::Hover => "Hover",
-        ButtonState::Pressed => "Pressed",
-        ButtonState::Disabled => "Disabled",
     }
 }
 

@@ -32,6 +32,15 @@ mod sm {
 pub use sm::{CheckboxEvent, CheckboxState};
 use sm::CheckboxPolicy;
 
+// R698 §5.16 — route the CheckboxState <-> SCXML-id mapping through the
+// R643 `WidgetStateName` SSOT primitive (one variant list emits both
+// `as_name` and `from_name_or_default`), replacing the hand-written
+// `checkbox_state_name` fn. Mirrors the R696.A Disclosure adoption; the
+// introspect path below calls `self.state().as_name()`.
+crate::widget_state_name!(CheckboxState, default = Idle, [
+    Idle, Hover, Pressed, Disabled,
+]);
+
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
@@ -39,6 +48,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
+use crate::WidgetStateName;
 
 /// Checkbox widget state machine + Off/On value sidecar. Statechart
 /// identical to [`crate::widgets::Toggle`]; divergence is the
@@ -246,7 +256,7 @@ impl ExternalIntrospect for CheckboxExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
             "state" => Some(IntrospectValue::Text(
-                checkbox_state_name(self.state()).to_string(),
+                self.state().as_name().to_string(),
             )),
             "checked" => Some(IntrospectValue::Bool(self.is_checked())),
             _ => None,
@@ -282,22 +292,13 @@ impl ExternalIntrospect for CheckboxExternal {
                     let ev = parse_checkbox_event(name).ok_or(InvokeError::Rejected)?;
                     self.send(ev);
                     Ok(IntrospectValue::Text(
-                        checkbox_state_name(self.state()).to_string(),
+                        self.state().as_name().to_string(),
                     ))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-fn checkbox_state_name(state: CheckboxState) -> &'static str {
-    match state {
-        CheckboxState::Idle => "Idle",
-        CheckboxState::Hover => "Hover",
-        CheckboxState::Pressed => "Pressed",
-        CheckboxState::Disabled => "Disabled",
     }
 }
 

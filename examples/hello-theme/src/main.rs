@@ -36,7 +36,7 @@ use pinion_core::style::{
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{
-    Command, ColorRole, Frame, Scene, Theme, ThemeMode, WidgetCore, use_theme,
+    Command, ColorRole, Frame, Scene, Theme, ThemeMode, WidgetCore, WidgetStateName, use_theme,
 };
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
@@ -392,7 +392,7 @@ impl HelloThemeView {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
                 let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    parse_toggle_state(&name)
+                    ToggleState::from_name_or_default(&name)
                 } else {
                     ToggleState::Idle
                 };
@@ -480,27 +480,9 @@ impl HelloThemeView {
     fn fmt_state_log(state: (ToggleState, bool)) -> String {
         format!(
             "{} / {}",
-            toggle_state_name(state.0),
+            state.0.as_name(),
             if state.1 { "On" } else { "Off" },
         )
-    }
-}
-
-fn parse_toggle_state(name: &str) -> ToggleState {
-    match name {
-        "Hover" => ToggleState::Hover,
-        "Pressed" => ToggleState::Pressed,
-        "Disabled" => ToggleState::Disabled,
-        _ => ToggleState::Idle,
-    }
-}
-
-fn toggle_state_name(state: ToggleState) -> &'static str {
-    match state {
-        ToggleState::Idle => "Idle",
-        ToggleState::Hover => "Hover",
-        ToggleState::Pressed => "Pressed",
-        ToggleState::Disabled => "Disabled",
     }
 }
 

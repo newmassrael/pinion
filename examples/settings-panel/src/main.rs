@@ -61,6 +61,7 @@ use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFi
 use pinion_core::widgets::toggle::{ToggleExternal, ToggleState};
 use pinion_core::{
     intent_tag, scale_normalized_to_px, Color, Command, Frame, Scene, WidgetCore,
+    WidgetStateName,
 };
 use pinion_core::InMemoryClipboard;
 use pinion_platform_storage::open_app_storage;
@@ -597,15 +598,6 @@ impl Default for NavRadioStates {
     }
 }
 
-fn parse_radio_state(name: &str) -> RadioState {
-    match name {
-        "Hover" => RadioState::Hover,
-        "Pressed" => RadioState::Pressed,
-        "Disabled" => RadioState::Disabled,
-        _ => RadioState::Idle,
-    }
-}
-
 fn read_nav_radio_states(scene: &Scene) -> NavRadioStates {
     let mut out = NavRadioStates::default();
     let Some(node) = scene.find_external_with_tag(NAV_TAG) else {
@@ -622,22 +614,13 @@ fn read_nav_radio_states(scene: &Scene) -> NavRadioStates {
     for (i, slot) in out.states.iter_mut().enumerate() {
         let key = format!("state.{i}");
         if let Some(IntrospectValue::Text(s)) = intro.query(&key) {
-            *slot = parse_radio_state(&s);
+            *slot = RadioState::from_name_or_default(&s);
         }
     }
     out
 }
 
 // ─── theme toggle walker ──────────────────────────────────────────
-
-fn parse_toggle_state(name: &str) -> ToggleState {
-    match name {
-        "Hover" => ToggleState::Hover,
-        "Pressed" => ToggleState::Pressed,
-        "Disabled" => ToggleState::Disabled,
-        _ => ToggleState::Idle,
-    }
-}
 
 fn read_theme_toggle(scene: &Scene) -> (ToggleState, bool) {
     let Some(node) = scene.find_external_with_tag(THEME_TOGGLE_TAG) else {
@@ -649,7 +632,7 @@ fn read_theme_toggle(scene: &Scene) -> (ToggleState, bool) {
     let state = intro
         .query("state")
         .and_then(|v| match v {
-            IntrospectValue::Text(s) => Some(parse_toggle_state(&s)),
+            IntrospectValue::Text(s) => Some(ToggleState::from_name_or_default(&s)),
             _ => None,
         })
         .unwrap_or(ToggleState::Idle);
@@ -658,15 +641,6 @@ fn read_theme_toggle(scene: &Scene) -> (ToggleState, bool) {
 }
 
 // ─── slider walker ────────────────────────────────────────────────
-
-fn parse_slider_state(name: &str) -> SliderState {
-    match name {
-        "Hover" => SliderState::Hover,
-        "Dragging" => SliderState::Dragging,
-        "Disabled" => SliderState::Disabled,
-        _ => SliderState::Idle,
-    }
-}
 
 #[allow(
     clippy::cast_possible_truncation,
@@ -682,7 +656,7 @@ fn read_font_slider(scene: &Scene) -> (SliderState, f32) {
     let state = intro
         .query("state")
         .and_then(|v| match v {
-            IntrospectValue::Text(s) => Some(parse_slider_state(&s)),
+            IntrospectValue::Text(s) => Some(SliderState::from_name_or_default(&s)),
             _ => None,
         })
         .unwrap_or(SliderState::Idle);
@@ -1100,7 +1074,7 @@ fn read_notification_states(
         if let Some(node) = scene.find_external_with_tag(tag) {
             if let Some(intro) = node.handle.introspect() {
                 if let Some(IntrospectValue::Text(s)) = intro.query("state") {
-                    out[i] = parse_checkbox_state(&s);
+                    out[i] = CheckboxState::from_name_or_default(&s);
                 }
             }
         }
@@ -1133,15 +1107,6 @@ fn read_notification_checked(
         }
     }
     out
-}
-
-fn parse_checkbox_state(name: &str) -> CheckboxState {
-    match name {
-        "Hover" => CheckboxState::Hover,
-        "Pressed" => CheckboxState::Pressed,
-        "Disabled" => CheckboxState::Disabled,
-        _ => CheckboxState::Idle,
-    }
 }
 
 fn view_actions_section(theme: &Theme) -> Scene {

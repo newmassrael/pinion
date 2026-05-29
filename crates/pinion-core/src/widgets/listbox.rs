@@ -70,10 +70,11 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::listbox_item::{
-    listbox_item_state_name, parse_listbox_item_event, ListBoxItem,
+    parse_listbox_item_event, ListBoxItem,
     ListboxItemEvent, ListboxItemState,
 };
 use crate::widgets::{IntentEmitter, WidgetTransition};
+use crate::WidgetStateName;
 
 /// Logical group of N `ListBoxItem` widgets with framework-owned
 /// mutual exclusion. See module docs for the full design rationale
@@ -726,7 +727,7 @@ impl ExternalIntrospect for ListBoxExternal {
                         return None;
                     }
                     return Some(IntrospectValue::Text(
-                        listbox_item_state_name(self.state(idx)).to_string(),
+                        self.state(idx).as_name().to_string(),
                     ));
                 }
                 if let Some(idx_str) = path.strip_prefix("selected.") {

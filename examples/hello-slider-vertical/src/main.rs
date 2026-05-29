@@ -36,7 +36,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::slider::{SliderAxis, SliderEvent, SliderExternal, SliderState};
-use pinion_core::{scale_normalized_to_px, Color, Frame, Scene, WidgetCore};
+use pinion_core::{scale_normalized_to_px, Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
@@ -171,7 +171,7 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
     ));
     let status_str = format!(
         "{} | {value_clamped:.2}",
-        slider_state_name(state),
+        state.as_name(),
     );
     let status = Scene::Text(TextNode::styled(
         status_str,
@@ -217,7 +217,7 @@ impl WidgetCore for SliderVerticalView {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
                 let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    parse_slider_state(&name)
+                    SliderState::from_name_or_default(&name)
                 } else {
                     SliderState::Idle
                 };
@@ -301,7 +301,7 @@ impl WidgetCore for SliderVerticalView {
     }
 
     fn fmt_state_log(state: &(SliderState, f32)) -> String {
-        format!("{} / {:.2}", slider_state_name(state.0), state.1)
+        format!("{} / {:.2}", state.0.as_name(), state.1)
     }
 }
 
@@ -332,24 +332,6 @@ impl WidgetView for SliderVerticalView {
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
         pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
-    }
-}
-
-fn parse_slider_state(name: &str) -> SliderState {
-    match name {
-        "Hover" => SliderState::Hover,
-        "Dragging" => SliderState::Dragging,
-        "Disabled" => SliderState::Disabled,
-        _ => SliderState::Idle,
-    }
-}
-
-fn slider_state_name(state: SliderState) -> &'static str {
-    match state {
-        SliderState::Idle => "Idle",
-        SliderState::Hover => "Hover",
-        SliderState::Dragging => "Dragging",
-        SliderState::Disabled => "Disabled",
     }
 }
 

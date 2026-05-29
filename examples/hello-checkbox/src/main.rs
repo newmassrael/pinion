@@ -22,7 +22,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 #[cfg(test)]
 use pinion_core::theme::Theme;
 use pinion_core::widgets::checkbox::{CheckboxEvent, CheckboxExternal, CheckboxState};
-use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 #[cfg(test)]
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_derive::widget;
@@ -104,7 +104,7 @@ impl CheckboxView {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
                 let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    parse_checkbox_state(&name)
+                    CheckboxState::from_name_or_default(&name)
                 } else {
                     CheckboxState::Idle
                 };
@@ -171,27 +171,9 @@ impl CheckboxView {
     fn fmt_state_log(state: (CheckboxState, bool)) -> String {
         format!(
             "{} / {}",
-            checkbox_state_name(state.0),
+            state.0.as_name(),
             if state.1 { "checked" } else { "unchecked" },
         )
-    }
-}
-
-fn parse_checkbox_state(name: &str) -> CheckboxState {
-    match name {
-        "Hover" => CheckboxState::Hover,
-        "Pressed" => CheckboxState::Pressed,
-        "Disabled" => CheckboxState::Disabled,
-        _ => CheckboxState::Idle,
-    }
-}
-
-fn checkbox_state_name(state: CheckboxState) -> &'static str {
-    match state {
-        CheckboxState::Idle => "Idle",
-        CheckboxState::Hover => "Hover",
-        CheckboxState::Pressed => "Pressed",
-        CheckboxState::Disabled => "Disabled",
     }
 }
 

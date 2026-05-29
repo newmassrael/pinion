@@ -43,7 +43,7 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y,
 };
@@ -253,7 +253,7 @@ impl WidgetCore for RadioGroupView {
         // the same value the view fn renders.
         for (i, slot) in out.rows.iter_mut().enumerate() {
             let state = match intro.query(&format!("state.{i}")) {
-                Some(IntrospectValue::Text(name)) => parse_radio_state(&name),
+                Some(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
                 _ => RadioState::Idle,
             };
             let selected = matches!(
@@ -559,15 +559,6 @@ fn active_radio_index(state: GroupState) -> usize {
         return idx;
     }
     state.rows.iter().position(|(_, sel)| *sel).unwrap_or(0)
-}
-
-fn parse_radio_state(name: &str) -> RadioState {
-    match name {
-        "Hover" => RadioState::Hover,
-        "Pressed" => RadioState::Pressed,
-        "Disabled" => RadioState::Disabled,
-        _ => RadioState::Idle,
-    }
 }
 
 fn radio_state_short(state: RadioState) -> &'static str {

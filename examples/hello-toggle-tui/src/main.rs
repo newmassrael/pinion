@@ -56,7 +56,7 @@ use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{Border, BoxStyle};
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
-use pinion_core::{Color, Frame, WidgetCore, style};
+use pinion_core::{Color, Frame, WidgetCore, WidgetStateName, style};
 use pinion_tui::ratatui::backend::CrosstermBackend;
 use pinion_tui::{TuiRenderer, WidgetViewTui};
 
@@ -85,7 +85,7 @@ impl WidgetCore for HelloToggleTui {
             && let Some(intro) = node.handle.introspect()
         {
             let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                parse_toggle_state(&name)
+                ToggleState::from_name_or_default(&name)
             } else {
                 ToggleState::Idle
             };
@@ -142,7 +142,7 @@ impl WidgetCore for HelloToggleTui {
         let mut status = TextNode::default();
         let status_str = format!(
             "state: {} | value: {}",
-            toggle_state_name(interaction),
+            interaction.as_name(),
             if on { "On" } else { "Off" },
         );
         status_str.clone_into(&mut status.content);
@@ -225,24 +225,6 @@ impl WidgetA11y for HelloToggleTui {
 
 impl WidgetViewTui for HelloToggleTui {
     type Renderer = TuiRenderer<CrosstermBackend<Stdout>>;
-}
-
-fn parse_toggle_state(name: &str) -> ToggleState {
-    match name {
-        "Hover" => ToggleState::Hover,
-        "Pressed" => ToggleState::Pressed,
-        "Disabled" => ToggleState::Disabled,
-        _ => ToggleState::Idle,
-    }
-}
-
-fn toggle_state_name(state: ToggleState) -> &'static str {
-    match state {
-        ToggleState::Idle => "Idle",
-        ToggleState::Hover => "Hover",
-        ToggleState::Pressed => "Pressed",
-        ToggleState::Disabled => "Disabled",
-    }
 }
 
 fn main() {
