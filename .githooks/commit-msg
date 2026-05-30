@@ -8,8 +8,9 @@
 #   2. Line 2: blank (separator).
 #   3. Body lines: max 72 bytes each; no multi-line bullet wrap
 #      (one bullet = one line). Body is `- ` bullets ONLY — no prose
-#      lead paragraph — and at most 3 bullets (COMMIT_FORMAT.md §3:
-#      "Bullet points only", "1-3 items, fewer is better").
+#      lead paragraph, no blank line between bullets (contiguous) —
+#      and at most 3 bullets (COMMIT_FORMAT.md §3: "Bullet points
+#      only", "contiguous", "1-3 items, fewer is better").
 #   4. Style: English only (ASCII U+0020-U+007E plus the small
 #      typographic whitelist §, –, —, •, …, →); no `Co-Authored-By`;
 #      no `Generated with Claude Code`; no emoji (Unicode pictograph
@@ -76,9 +77,11 @@ for ((i=2; i<=last_nonempty; i++)); do
     line="${lines[i]:-}"
     line_num=$((i+1))
 
-    # Blank lines inside the body are legal separators — skip the
-    # bullet-only / count checks for them, but reset the bullet state.
-    if [[ -z "$line" ]]; then
+    # No blank / whitespace-only line inside the body — the bullets
+    # must be contiguous (a blank "enter" between bullets is rejected).
+    # COMMIT_FORMAT.md §3.
+    if [[ "$line" =~ ^[[:space:]]*$ ]]; then
+        errors+=("Line $line_num: blank line inside body — bullets must be contiguous, no blank separators (COMMIT_FORMAT.md §3)")
         prev_was_bullet=0
         continue
     fi

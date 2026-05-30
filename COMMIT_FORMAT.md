@@ -45,9 +45,11 @@ Pinion specific scopes:
 ### 3. Body
 - One blank line after subject
 - Bullet points (`- ` prefix) only — no prose lead paragraph
+- Bullets must be **contiguous** — no blank line between bullets
 - **1-3 items** — focus on key changes (fewer is better)
-- The `commit-msg` hook enforces bullet-only + the 1-3 cap (a prose
-  body line or a 4th bullet is rejected, not just discouraged)
+- The `commit-msg` hook enforces bullet-only + contiguity + the 1-3
+  cap (a prose body line, a blank line between bullets, or a 4th
+  bullet is rejected, not just discouraged)
 - **One bullet = one line, max 72 bytes total (incl. `- ` prefix)**
   - No continuation / indented wrap lines. If a bullet does not fit in
     72 bytes, rewrite it tighter or split into a separate bullet.
