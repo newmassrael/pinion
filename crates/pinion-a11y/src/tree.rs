@@ -430,6 +430,14 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.push_described_by(tag_to_node_id(desc_tag));
     }
 
+    // R714 §5.40 — WAI-ARIA `aria-controls` (combobox → listbox). The
+    // controlled tag is hashed through the same `tag_to_node_id` so the
+    // AT resolves the popup through a NodeId already present in this
+    // frame's tree. Omitted when absent (non-combobox roles).
+    if let Some(controls_tag) = &access.controls {
+        node.push_controlled(tag_to_node_id(controls_tag));
+    }
+
     add_actions_for_role(&mut node, access.role);
     node
 }
@@ -473,6 +481,15 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // announce "cell, selected, N of M") but the action set matches
         // ListBoxOption / Tab.
         | AriaRole::GridCell
+        // R714 §5.40 — `ComboBox` (the select-only trigger) is
+        // commit-class atomic at the AT-action surface: Click opens /
+        // toggles the listbox popup, Focus moves the AT cursor (the
+        // active option surfaces as the combobox's
+        // `aria-activedescendant`). Mirrors the Button / Disclosure
+        // action set — the role identity (`Role::ComboBox` → screen
+        // readers announce "combo box, collapsed/expanded") stays
+        // distinct while the actions match.
+        | AriaRole::ComboBox
         | AriaRole::Switch => {
             node.add_action(Action::Click);
             node.add_action(Action::Focus);
@@ -882,6 +899,24 @@ mod tests {
                 .with_expanded(false),
         );
         assert_eq!(closed.build(None).nodes.len(), 2); // root + header
+    }
+
+    #[test]
+    fn r714_combobox_controls_listbox_lowers() {
+        // Smoke test: a ComboBox trigger controlling a Listbox popup
+        // (the WAI-ARIA §4.5 combobox pairing). AccessKit node internals
+        // are opaque from outside the crate, so we verify the build
+        // succeeds with both nodes present (root + combobox + listbox).
+        let mut b = AccessTreeBuilder::new();
+        b.add(
+            &AccessNode::new("size_combo", AriaRole::ComboBox)
+                .with_name("Size")
+                .with_expanded(true)
+                .with_controls("size_options"),
+        );
+        b.add(&AccessNode::new("size_options", AriaRole::Listbox).with_name("Size options"));
+        let update = b.build(None);
+        assert_eq!(update.nodes.len(), 3);
     }
 
     #[test]

@@ -165,6 +165,24 @@ pub struct AccessNode {
     /// [`AccessState::checked`]: crate::node::AccessState::checked
     /// [`AriaRole::TreeItem`]: crate::role::AriaRole::TreeItem
     pub expanded: Option<bool>,
+    /// R714 §5.40 — WAI-ARIA 1.2 §6.6.3 `aria-controls`: the tag of
+    /// another [`AccessNode`] whose presence / content *this* node
+    /// governs. The tree builder resolves the tag into the target's
+    /// `accesskit::NodeId` and lowers it via
+    /// `accesskit::Node::push_controlled`. `None` omits the relation.
+    ///
+    /// The canonical first consumer is the WAI-ARIA §4.5 combobox
+    /// pattern: a [`AriaRole::ComboBox`] trigger points its `controls`
+    /// at the [`AriaRole::Listbox`] popup it opens, so AT announces the
+    /// trigger/popup pairing even though they are sibling nodes. Single
+    /// tag (not a list) per the [`Self::described_by`] precedent — a
+    /// multi-target `aria-controls` waits for a 2nd consumer
+    /// (`[[abstraction-needs-second-consumer]]`).
+    ///
+    /// Placed on [`AccessNode`] (the R674 / R693 / R695 / R696
+    /// additive-axis convention) so it defaults absent without forcing
+    /// every hand-written node literal to enumerate it.
+    pub controls: Option<String>,
 }
 
 impl AccessNode {
@@ -189,6 +207,7 @@ impl AccessNode {
             modal: false,
             described_by: None,
             expanded: None,
+            controls: None,
         }
     }
 
@@ -301,6 +320,15 @@ impl AccessNode {
     #[must_use]
     pub fn with_expanded(mut self, expanded: bool) -> Self {
         self.expanded = Some(expanded);
+        self
+    }
+
+    /// R714 §5.40 — set the WAI-ARIA `aria-controls` relation to the
+    /// node tagged `tag` (the combobox → listbox pairing). See
+    /// [`Self::controls`] for the semantic axis.
+    #[must_use]
+    pub fn with_controls(mut self, tag: impl Into<String>) -> Self {
+        self.controls = Some(tag.into());
         self
     }
 }

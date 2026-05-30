@@ -14997,6 +14997,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R714 — R714 select-only ComboBox widget as pure composition (ButtonExternal trigger + ListBoxExternal popup + transparent-scrim click-outside barrier); new AriaRole::ComboBox + aria-controls a11y axis
+
+**Changes**:
+- pinion-a11y: new AriaRole::ComboBox (Role::ComboBox lowering, "combobox" aria-name, Click+Focus actions)
+- pinion-a11y: new AccessNode.controls + with_controls (aria-controls via accesskit push_controlled)
+- examples/hello-combobox: select-only combobox = trigger value+chevron + ListBox popup + transparent barrier
+- click-outside dismiss reuses R702/R703 scrim_backdrop at scrim_fill(0) alpha 0, non-modal (no focus trap)
+- WAI-ARIA keyboard: ArrowDown/Enter/Space open; arrows+Home/End rove active descendant; Enter commits; Escape closes
+- single Tab stop trigger + roving aria-activedescendant; no new coordinator (composition per Rule of Three)
+
+
+
+**Verification**:
+- cargo test --workspace green (pinion-a11y +3 combobox role/controls, hello-combobox 17)
+- cargo clippy --workspace --all-targets -D pedantic clean
+- tools/demos/r714_combobox.py 44 assertions PASS (open/commit/click-outside/Escape/keyboard roving + live-pixel)
+- PINION_SCREENSHOT live-pixel: closed trigger field renders as a distinct opaque tonal surface vs page bg
+- full demo sweep 67/67; mnemosyne validate-workspace clean (T1 reject 0, round-trip 1/1, new orphan +0)
+
+
+
+**Impact**: §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- aria-controls single-tag (multi-target awaits a 2nd consumer per abstraction-needs-second-consumer)
+- trigger keyboard focus-ring deferred (inherits the R690 shared shell-focus-paint carry)
+- ComboBoxExternal coordinator + pinion_widget_paint::combobox chrome lift at 2nd combobox-class consumer
+- editable combobox (Role::EditableComboBox, typed value + filtered listbox) future additive axis
+- R691 Menu click-outside: transparent-barrier substrate now proven; Menu retrofit a mechanical follow-up
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

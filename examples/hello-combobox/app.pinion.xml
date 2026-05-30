@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R714 §5.16 select-only combobox: pinion-forge renderer manifest for
+  hello-combobox. Same single-source-of-truth template that emits the
+  other hello-* renderers; only the struct name diverges. backend=vello
+  + default Area antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloComboBoxRenderer"
+        backend="vello"/>

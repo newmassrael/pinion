@@ -48,6 +48,21 @@ pub enum AriaRole {
     /// ([`pinion_core::widgets::listbox_item`]) shares the
     /// button-like statechart with `Radio` / `Toggle` / `Checkbox`.
     ListBoxOption,
+    /// R714 §5.40 — WAI-ARIA 1.2 §4.5 `combobox` role: the focusable
+    /// control that displays the current value and opens a popup
+    /// ([`Self::Listbox`] of [`Self::ListBoxOption`]s) for selection.
+    /// Pairs with the `hello-combobox` composition (a `ButtonExternal`
+    /// trigger + `ListBoxExternal` popup + transparent-scrim
+    /// light-dismiss barrier). The collapsed-vs-open state is carried by
+    /// [`crate::AccessNode::expanded`] (`aria-expanded`); the controlled
+    /// popup by [`crate::AccessNode::controls`] (`aria-controls`); the
+    /// active option by `aria-activedescendant` (the composite
+    /// `access_focus_target`). Distinct from [`Self::Listbox`]: the
+    /// combobox is the *trigger* surface, the listbox is the *popup*.
+    /// This first slice is the WAI-ARIA "select-only" combobox (the
+    /// value is chosen from the list, not typed); an editable
+    /// combobox would lower to `Role::EditableComboBox` additively.
+    ComboBox,
     /// R56.1.b.1 §5.40 — WAI-ARIA 1.2 §4.3 `textbox` role
     /// (single-line input). Pairs with the §5.38 `TextField` widget
     /// primitive ([`pinion_core::widgets::text_field`]). The role
@@ -296,6 +311,10 @@ impl AriaRole {
             Self::RadioGroup => Role::RadioGroup,
             Self::Listbox => Role::ListBox,
             Self::ListBoxOption => Role::ListBoxOption,
+            // R714 §5.40 — AccessKit carries `combobox` one-to-one
+            // (the select-only variant; `EditableComboBox` is the
+            // typed-value future axis).
+            Self::ComboBox => Role::ComboBox,
             Self::TextInput => Role::TextInput,
             Self::List => Role::List,
             Self::ListItem => Role::ListItem,
@@ -336,6 +355,7 @@ impl AriaRole {
             Self::RadioGroup => "radiogroup",
             Self::Listbox => "listbox",
             Self::ListBoxOption => "option",
+            Self::ComboBox => "combobox",
             // WAI-ARIA 1.2 spec literal — the single-line text input
             // role is `textbox` regardless of AccessKit's internal
             // single/multiline split.
@@ -426,6 +446,18 @@ mod tests {
             AriaRole::ListBoxOption.to_accesskit(),
             Role::ListBoxOption
         );
+    }
+
+    // R714 §5.40 — ComboBox role lowering + aria literal.
+
+    #[test]
+    fn combobox_lowers_to_accesskit_combobox() {
+        assert_eq!(AriaRole::ComboBox.to_accesskit(), Role::ComboBox);
+    }
+
+    #[test]
+    fn combobox_aria_name_is_combobox() {
+        assert_eq!(AriaRole::ComboBox.aria_name(), "combobox");
     }
 
     // R56.1.b.1 §5.40 — TextInput role lowering.
