@@ -14684,6 +14684,26 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R707.3 — R707.3 live-pixel verification + permanent regression guard: a new r707_table_pixel.py drives the live hello-table window, reads real screen pixels, and asserts the focus ring sits on the active-descendant cell (column 0 absolute = no R706 static offset) and tracks the 2-D cursor (~2 column pitches for two ArrowRights), confirming the R706 fragment-cache fix holds for the table's Grid->Row->cell paint nesting
+
+**Changes**:
+- tools/demos/r707_table_pixel.py: live-pixel verification + permanent regression guard — drives the live hello-table window, captures the screen with ffmpeg, and reads real pixels off it
+- asserts (1) ABSOLUTE: the col-0 active-descendant ring sits in column 0 (clean panel-edge walk, no data text to the left) = no R706-class static column rasterization offset
+- asserts (2) DELTA: two ArrowRights move the ring ~2 column pitches = the ring tracks the 2-D cursor (catches a stuck / mis-tracking ring), needing no panel anchor
+- graceful skip (exit 0) when display / ffmpeg / Pillow is unavailable, mirroring the r706 pixel guard
+
+
+
+**Verification**:
+- 3 consecutive runs stable: col-0 ring offset 28px (round(28/123)=column 0), two ArrowRights moved the ring 1.95 columns
+- confirms the R706 fragment-cache direct-draw-after-append fix holds for the table's distinct Grid->Row->cell paint nesting (different from the date picker's flat 6x7 grid)
+
+
+
+**Impact**: §5.39, §5.16
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
