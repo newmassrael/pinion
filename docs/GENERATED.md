@@ -14568,6 +14568,32 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R706 — R706 root-causes and fixes the fragment-cache direct-draw-after-append rasterization defect
+
+**Changes**:
+- pinion-runtime paint_adapter.rs: to_vello_cached_inner rewritten so `out` receives appends only; every directly-drawn node (non-cacheable container fill, Box/Text/Scroll/ImmediateMode leaf) encodes into a fresh sub-scene that is then appended, so direct draws are always first in their own scene and never follow an append
+- root cause: vello 0.6 Encoding::append copies the appended child force-transform/style flags (self.flags = other.flags) and extends the transform stream, so a direct fill/stroke issued after an append re-uses stale encoder state; R705's focus-ring overlay Box stroked right after the cached grid append rendered one grid column off (visible on screen, invisible to scene/snapshot from:paint because the scene carried the correct rect)
+- pinion-shell app.rs: PINION_SCREENSHOT headless capture switched from to_vello to to_vello_cached so the AI headless pixel view uses the same rasterizer as the live window (producer parity)
+- pinion-shell headless_screenshot.rs: ignore-gated wgpu smoke test for cached headless overlay placement
+- tools/demos/r706_focus_ring_pixel.py: authoritative live-window pixel guard (ffmpeg x11grab; asserts the ring sits on the focused day column; skips cleanly without display/ffmpeg/PIL)
+
+
+
+**Verification**:
+- live pixel capture: ring center measured on cell#3 column 0; to_vello_cached buggy path drew column 1, to_vello immune, fix restores column 0
+- cargo test --workspace 76 suites green; clippy --workspace --all-targets --features pinion-runtime/vello clean; full demo sweep 60/60 pass
+
+
+
+**Impact**: §5.16, §5.39
+
+
+**Carry forward**:
+- the one-grid-column shift only reproduces against the full live datepicker paint scene, not a hand-built scene; the headless smoke test guards general cached-overlay placement while r706_focus_ring_pixel.py is the faithful live guard
+- mnemosyne MCP append_changelog_entry_v2 tool is broken in this environment (it shells to a nonexistent CLI append-changelog-entry-v2; the source at R370 provides only v1 append-changelog-entry); these entries were added via the v1 audit-half primitive
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

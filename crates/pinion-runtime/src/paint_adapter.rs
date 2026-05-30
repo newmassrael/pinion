@@ -562,8 +562,12 @@ fn to_vello_cached_inner<F>(
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
-    // Container cache check — only at identity transform AND when
-    // the subtree contains no immediate-mode / external descendants.
+    // Cacheable-container fast path — only at identity transform AND
+    // when the subtree contains no immediate-mode / external
+    // descendants. A hit appends the stored fragment; a miss encodes
+    // the subtree into a fresh sub-scene and appends + caches it. Either
+    // way `out` receives an `append`, never a direct draw (see the
+    // R706 invariant below).
     if let Scene::Container(c) = scene
         && transform == Affine::IDENTITY
         && scene.is_cacheable_for_paint()
@@ -572,8 +576,8 @@ fn to_vello_cached_inner<F>(
         if fragment_cache.try_hit(hash, out) {
             return;
         }
-        // Cache miss: encode the entire subtree into a fresh
-        // sub-scene under IDENTITY transform, then append + cache.
+        // Cache miss: encode the entire subtree into a fresh sub-scene
+        // under IDENTITY transform, then append + cache.
         let mut sub = VelloScene::new();
         fill_rect(
             &mut sub,
@@ -597,34 +601,50 @@ fn to_vello_cached_inner<F>(
         return;
     }
 
-    // Non-cached path: mirror to_vello_inner's match shape but
-    // recurse via this function so nested cacheable subtrees can
-    // still hit the cache.
+    // R706 §5.16 — "out receives appends only" invariant.
+    //
+    // Every node that is NOT served by the cacheable fast path above
+    // encodes its own contribution into a FRESH sub-scene which is then
+    // appended to `out`. This guarantees `out` only ever receives
+    // `vello::Scene::append`s and never a direct `fill` / `stroke` /
+    // `draw_glyphs` issued *after* an append.
+    //
+    // Why it matters: `vello_encoding::Encoding::append` copies the
+    // appended child's force-transform/style flags (`self.flags =
+    // other.flags`) and extends the transform stream, so the encoder's
+    // "current transform" after an append is the child fragment's last
+    // transform. A direct draw issued into the same scene afterwards
+    // re-uses that stale transform-stream state and renders at the wrong
+    // position. Before R706 the §5.39 keyboard focus-ring overlay
+    // (a top-level `Scene::Box` injected as the last sibling of a root
+    // whose earlier children were cached fragments) drew exactly one
+    // grid column off because its `stroke` followed the cached grid's
+    // `append`. Encoding each contribution into a clean sub and
+    // appending sidesteps the hazard: within every sub the direct draws
+    // come first and any child appends follow.
+    let mut sub = VelloScene::new();
     match scene {
         Scene::Container(c) => {
-            // Non-cacheable container (either non-identity transform
-            // or contains immediate-mode / external descendant).
-            // Paint own fill, recurse into children directly.
-            fill_rect(out, c.rect, c.style.fill, c.style.corner_radius, transform);
+            fill_rect(&mut sub, c.rect, c.style.fill, c.style.corner_radius, transform);
             for child in &c.children {
                 to_vello_cached_inner(
                     child,
                     fill_hook,
                     text_cache,
                     fragment_cache,
-                    out,
+                    &mut sub,
                     transform,
                 );
             }
         }
         Scene::Box(b) => {
             let fill = fill_hook(b).unwrap_or(b.style.fill);
-            fill_rect(out, b.rect, fill, b.style.corner_radius, transform);
+            fill_rect(&mut sub, b.rect, fill, b.style.corner_radius, transform);
             if let Some(border) = b.style.border {
-                stroke_rect(out, b.rect, border, transform);
+                stroke_rect(&mut sub, b.rect, border, transform);
             }
         }
-        Scene::Text(t) => paint_text(out, t, text_cache, transform),
+        Scene::Text(t) => paint_text(&mut sub, t, text_cache, transform),
         Scene::Scroll(s) => {
             let viewport_clip = KurboRect::new(
                 f64::from(s.viewport.x),
@@ -632,7 +652,7 @@ fn to_vello_cached_inner<F>(
                 f64::from(s.viewport.x.saturating_add(s.viewport.w)),
                 f64::from(s.viewport.y.saturating_add(s.viewport.h)),
             );
-            out.push_clip_layer(transform, &viewport_clip);
+            sub.push_clip_layer(transform, &viewport_clip);
             let dx = f64::from(s.viewport.x) - f64::from(s.offset_x);
             let dy = f64::from(s.viewport.y) - f64::from(s.offset_y);
             let child_transform = transform * Affine::translate((dx, dy));
@@ -641,18 +661,19 @@ fn to_vello_cached_inner<F>(
                 fill_hook,
                 text_cache,
                 fragment_cache,
-                out,
+                &mut sub,
                 child_transform,
             );
-            out.pop_layer();
+            sub.pop_layer();
         }
         Scene::ImmediateModeNode(node) => {
-            paint_immediate_mode_node(out, node, transform);
+            paint_immediate_mode_node(&mut sub, node, transform);
         }
         // External / Effect / Path / Image: no-op (matches
         // to_vello_inner's `_ => {}` arm).
         _ => {}
     }
+    out.append(&sub, None);
 }
 
 /// R681 §2 #4 atomic 1 — paint one [`ImmediateModeNode`] into the

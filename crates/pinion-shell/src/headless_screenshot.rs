@@ -437,6 +437,142 @@ mod tests {
         assert_eq!(rgba8.len(), 64 * 32 * 4);
     }
 
+    /// R706 §5.16 — cached headless-render overlay smoke test.
+    ///
+    /// Renders a datepicker-shaped scene — a non-cacheable root (a
+    /// no-op `Scene::External` makes it so, mirroring the live paint
+    /// scene), a nested CACHEABLE "grid row" of rounded cells carrying
+    /// glyph runs, and a TOP-LEVEL bordered overlay `Box` (the §5.39
+    /// focus-ring stand-in) drawn as a later sibling — through
+    /// `to_vello_cached` (the path the live winit render loop drives, and
+    /// since R706 the path the `PINION_SCREENSHOT` headless capture
+    /// drives too) and asserts the overlay border rasterizes at its
+    /// declared rect.
+    ///
+    /// This guards the R706 "out receives appends only" rewrite of
+    /// [`pinion_runtime::paint_adapter::to_vello_cached`] and the headless
+    /// screenshot's switch onto that cached path against a gross
+    /// mis-placement of an overlay that follows a cached fragment append.
+    /// It is NOT a faithful reproduction of the original
+    /// one-grid-column focus-ring shift — that defect only surfaced
+    /// against the full live datepicker paint scene (deep nested grid +
+    /// the real `compute_layout` rects), not a hand-built scene, so the
+    /// authoritative regression check is the live-window pixel demo
+    /// `tools/demos/r706_focus_ring_pixel.py`.
+    ///
+    /// `#[ignore]` for the same reason as
+    /// [`renders_solid_fill_to_unpadded_rgba8`] — wgpu cold-boot is too
+    /// slow for the default suite; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r706_cached_headless_render_places_overlay_at_declared_rect() {
+        use pinion_core::external::StubExternal;
+        use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect, Scene, TextNode};
+        use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, TextStyle};
+        use pinion_runtime::paint_adapter::{to_vello_cached, FragmentCache};
+        use pinion_text::LayoutCache;
+
+        const W: u32 = 220;
+        const H: u32 = 140;
+        // Overlay declared geometry — pure-blue border, transparent fill.
+        const OVERLAY_X: u32 = 24;
+        const OVERLAY_W: u32 = 44;
+
+        // Helper: a cacheable cell — a coloured box containing a glyph
+        // run (the day-number stand-in; the glyph draw is what sets the
+        // encoder's force-transform flag the defect rode on).
+        fn cell(x: u32, label: &str) -> Scene {
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                    label.to_string(),
+                    Rect::new(x + 12, 92, 24, 24),
+                    TextStyle::new().with_size_px(16).with_fg(Color::rgb(0, 0, 0)),
+                ))])
+                .with_style(
+                    BoxStyle::filled(Color::rgb(225, 225, 230)).with_corner_radius(20),
+                )
+                .with_layout(LayoutStyle::new()),
+            )
+        }
+
+        // A nested cacheable "grid row" of cells (mirrors the datepicker
+        // row → cell → text nesting so the appended fragment is deep).
+        let mut row = ContainerNode::new(vec![
+            cell(20, "10"),
+            cell(70, "11"),
+            cell(120, "12"),
+            cell(170, "13"),
+        ]);
+        row.rect = Rect::new(20, 88, 192, 40);
+        for (i, ch) in row.children.iter_mut().enumerate() {
+            if let Scene::Container(c) = ch {
+                let col = u32::try_from(i).expect("test cell index fits u32");
+                c.rect = Rect::new(20 + col * 50, 88, 40, 40);
+            }
+        }
+        let grid = Scene::Container(row);
+
+        // The overlay box: bordered, transparent fill — the ring stand-in,
+        // a TOP-LEVEL sibling drawn AFTER the cached grid fragment.
+        let overlay = Scene::Box(BoxNode::new(
+            Rect::new(OVERLAY_X, 60, OVERLAY_W, 36),
+            BoxStyle::filled(Color::TRANSPARENT)
+                .with_border(Border::new(Color::rgb(0, 0, 255), 3))
+                .with_corner_radius(22),
+        ));
+
+        // A no-op External makes the ROOT non-cacheable (mirrors the live
+        // datepicker paint scene), so the overlay's stroke is issued into
+        // the MAIN scene directly after the grid's append — the exact
+        // pre-R706 hazard.
+        let stub = Scene::External(ExternalNode::new(Box::new(StubExternal)).with_tag("state"));
+        let mut root = ContainerNode::new(vec![stub, grid, overlay])
+            .with_style(BoxStyle::filled(Color::rgb(255, 255, 255)));
+        root.rect = Rect::new(0, 0, W, H);
+        let root = Scene::Container(root);
+
+        let mut text_cache = LayoutCache::new();
+        let mut cache = FragmentCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(&root, &|_| None, &mut text_cache, &mut cache, &mut vello);
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let rgba8 = shot
+            .render_to_rgba8(&vello, W, H, PenikoColor::from_rgba8(255, 255, 255, 255))
+            .expect("render");
+
+        // Collect the x of every strongly-blue pixel (the overlay border).
+        let mut blue_xs = Vec::new();
+        for y in 0..H {
+            for x in 0..W {
+                let i = ((y * W + x) * 4) as usize;
+                let (r, g, b) = (rgba8[i], rgba8[i + 1], rgba8[i + 2]);
+                if b > 180 && r < 90 && g < 90 {
+                    blue_xs.push(x);
+                }
+            }
+        }
+        assert!(
+            !blue_xs.is_empty(),
+            "overlay border must be visible in the rasterized output",
+        );
+        let min_x = *blue_xs.iter().min().unwrap();
+        let max_x = *blue_xs.iter().max().unwrap();
+        // The border left edge must sit at the declared OVERLAY_X (±3 for
+        // the 3-px stroke + AA), NOT one ~42-px column to the right.
+        assert!(
+            min_x.abs_diff(OVERLAY_X) <= 4,
+            "overlay border left edge at x={min_x}, expected ~{OVERLAY_X} \
+             (a column-shift regression would land it near {})",
+            OVERLAY_X + 42,
+        );
+        assert!(
+            max_x.abs_diff(OVERLAY_X + OVERLAY_W) <= 4,
+            "overlay border right edge at x={max_x}, expected ~{}",
+            OVERLAY_X + OVERLAY_W,
+        );
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]

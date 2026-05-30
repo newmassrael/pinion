@@ -2302,10 +2302,25 @@ fn try_headless_screenshot<V: WidgetView>() -> bool {
     };
     let base = paint_adapter::root_background(&paint_scene);
     let mut vello_scene = VelloScene::new();
-    paint_adapter::to_vello(
+    // R706 §5.16 — rasterize through `to_vello_cached`, the SAME path the
+    // live winit render loop drives (`AppShell::render_window`), so the
+    // headless screenshot the AI introspects is pixel-faithful to the
+    // live window. The previous `to_vello` (uncached) call rasterized
+    // through a different code path than the live render, so a
+    // cache-path-only rasterization defect (R706: the focus-ring overlay
+    // drawing one grid column off through `to_vello_cached`) was visible
+    // on screen yet ABSENT from the headless screenshot — defeating the
+    // introspection-parity this hook exists to provide
+    // ([[introspection-from-paint-not-screen]]). A fresh per-capture
+    // `FragmentCache` makes every subtree a first-paint miss; the output
+    // matches `to_vello` when both are correct and tracks `to_vello_cached`
+    // when they would diverge.
+    let mut fragment_cache = paint_adapter::FragmentCache::new();
+    paint_adapter::to_vello_cached(
         &paint_scene,
         &|_b: &BoxNode| None,
         core.text_cache_mut(),
+        &mut fragment_cache,
         &mut vello_scene,
     );
     let mut shot = match crate::HeadlessScreenshot::new() {
