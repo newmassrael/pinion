@@ -16,6 +16,14 @@
 #        Rust-touching commits fast once the workspace has been linted
 #        once.
 #
+#   3. `mnemosyne-cli validate-code-refs`
+#      - hallucination-class citation gate: a source comment citing a
+#        dead `§<id>` section or an unknown `Round NNN` entry fails the
+#        commit (severity_missing = "reject" in mnemosyne.toml).
+#      - runs only when staged files include `*.rs` / `*.scxml`; output
+#        captured and surfaced only on failure (Path B binding axis is
+#        info-level and verbose, so success stays silent).
+#
 # Install via:
 #   git config core.hooksPath .githooks
 # (one-time per clone; `.githooks/` is tracked, `.git/hooks/` is not)
@@ -37,4 +45,19 @@ mnemosyne-cli validate-workspace
 if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     echo "pre-commit: cargo clippy --workspace --all-targets --features pinion-runtime/vello ..." >&2
     cargo clippy --workspace --all-targets --features pinion-runtime/vello
+fi
+
+# 3. mnemosyne-cli validate-code-refs — hallucination-class citation gate
+#    (dead §-section / unknown Round-id in source comments). severity_missing
+#    is "reject" in mnemosyne.toml; Path B binding violations stay info.
+#    Runs only when source citations could have changed (`.rs` / `.scxml`).
+#    Output is captured and surfaced only on failure (the info-level binding
+#    axis is verbose); success is silent.
+if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.(rs|scxml)$'; then
+    echo "pre-commit: mnemosyne-cli validate-code-refs ..." >&2
+    if ! cr_out="$(mnemosyne-cli validate-code-refs 2>&1)"; then
+        printf '%s\n' "$cr_out" | grep -E '\[(missing|section_missing)\]|violations: total' >&2 || true
+        echo "pre-commit: validate-code-refs found hallucination-class citations" >&2
+        exit 1
+    fi
 fi

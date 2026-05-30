@@ -24,7 +24,12 @@ locale = "en"
 [plugins.set_equality_validator]
 paths = ["crates/", "examples/"]
 comment_only = true
-severity_missing = "warn"
+# Hallucination-class (dead §-section / unknown Round-id citation) is now a
+# hard gate — pinion's source is at zero such violations (MNEMO-GAP-001
+# closed via R379/R380 matcher + pinion citation hygiene). Path B
+# (spec<->code implementation binding) stays info: pinion has not adopted
+# add-section-implementation bindings, so citation_unbound is expected.
+severity_missing = "reject"
 severity_binding = "info"
 # Numeric form `<PREFIX> <doc-number> §<id>`. R379 added `#N` doc-numbers
 # (UAX #9) and multi-word prefixes matched as a token-boundary suffix
