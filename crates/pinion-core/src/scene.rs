@@ -1391,6 +1391,20 @@ impl BoxNode {
 /// (every pre-R713 node): the shaper takes the `push_default`-only
 /// path and the cache key omits run data. The field defaults to an
 /// empty `Vec`, so every existing `TextNode` constructor is unchanged.
+///
+/// # Run-level vs paragraph-level style fields
+///
+/// A `StyleRun` carries a whole [`TextStyle`] for self-describing
+/// scene-as-data introspection (§2 #7), but only the **run-level**
+/// fields take effect per range — `font_size_px`, `fg_color`,
+/// `font_weight`, `font_style`, `letter_spacing`, `line_height`,
+/// `decoration`, `font_family`. The **paragraph-level** fields
+/// (`text_align`, `overflow`) are resolved once for the whole node
+/// from [`TextNode::style`]; a per-run value for them is ignored. This
+/// mirrors CSS, where block properties (`text-align`) set on an inline
+/// span have no effect. Authoring convention: build each run's style
+/// from the node's base style so it inherits the paragraph-level
+/// fields and overrides only the run-level ones.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct StyleRun {
