@@ -110,16 +110,18 @@ const ROWS: [[&str; 4]; 6] = [
 const NROWS: usize = ROWS.len();
 const NCOLS: usize = HEADERS.len();
 
-/// Maximum rows in the per-row interaction array, so [`TableState`] stays
-/// `Copy` (the [`pinion_core::WidgetCore::State`] bound) instead of
-/// carrying a heap `Vec`. Sized for the fixed dataset with headroom.
-const MAX_ROWS: usize = 16;
-
 /// Cached projection of the table: the selected row, the 2-D roving
 /// active descendant `(focused_row, focused_col)`, and one [`RadioState`]
 /// per row. Read from the single [`TableExternal`]'s introspect slots.
 /// `Copy` (fixed-size array) so the shell hands the snapshot into the
 /// `paint_producer` closure without lifetime gymnastics.
+///
+/// The per-row array is sized exactly to [`NROWS`]: the dataset is
+/// immutable (data lives in the [`ROWS`] const), so unlike the date
+/// picker's variable-length month (which needs a `MAX_DAYS` upper
+/// bound), the row count is a compile-time constant with no headroom or
+/// silent-truncation slack. Dynamic / editable rows are a deferred axis
+/// (they would move the data to a signal-backed model anyway).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 struct TableState {
     /// The selected row (0-based), or `None`.
@@ -129,9 +131,8 @@ struct TableState {
     focused_row: Option<usize>,
     /// R707 §5.51 — the roving active-descendant column (0-based).
     focused_col: usize,
-    /// Per-row interaction state, indexed by row; rows beyond the
-    /// dataset stay [`RadioState::Idle`].
-    row_states: [RadioState; MAX_ROWS],
+    /// Per-row interaction state, indexed by row (exactly [`NROWS`]).
+    row_states: [RadioState; NROWS],
 }
 
 impl TableState {
@@ -140,7 +141,7 @@ impl TableState {
             selected_row: None,
             focused_row: None,
             focused_col: 0,
-            row_states: [RadioState::Idle; MAX_ROWS],
+            row_states: [RadioState::Idle; NROWS],
         }
     }
 
@@ -270,7 +271,7 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
         PRIMARY_TAG,
         TableData { headers: &HEADERS, rows: &rows },
         state.selected_row,
-        &state.row_states[..NROWS],
+        &state.row_states,
         &theme,
         &style,
     );

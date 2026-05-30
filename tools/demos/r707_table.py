@@ -114,6 +114,15 @@ def body() -> None:
             assert_eq(_q(d, "selected.2"), False, "row 2 deselected (exclusion)")
             assert_eq(_q(d, "focused_row"), 4, "active descendant follows to row 4")
             assert_eq(_q(d, "focused_col"), 0, "active descendant col 0")
+            # Click a different cell in the SAME (already-selected) row:
+            # selection is unchanged but the cursor must follow the click
+            # (WAI-ARIA "clicking a cell moves focus to it").
+            d.click(path=f"{T}#4_2")
+            assert_eq(_q(d, "selected_row"), 4, "selection unchanged on same-row click")
+            assert_eq(_q(d, "focused_col"), 2, "cursor follows click within selected row")
+            # Restore the cursor to (4,0) for the keyboard-roving section.
+            d.click(path=f"{T}#4_0")
+            assert_eq(_q(d, "focused_col"), 0, "cursor back to col 0")
 
             # ── 6. 2-D keyboard roving (single Tab stop + roving) ───
             assert_eq(_focus_set(d, T), T, "focus set on grid root")

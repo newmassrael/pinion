@@ -14644,6 +14644,26 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R707.1 — R707.1 audit-driven correctness fixes: the table active descendant follows a click's PointerUp regardless of selection change (textbook WAI-ARIA 2-D cursor), and the per-row interaction array is sized exactly to NROWS (removing the arbitrary MAX_ROWS cap over-mirrored from DatePicker's justified variable-month bound)
+
+**Changes**:
+- crates/pinion-core/src/widgets/table.rs: send_cell now syncs focused_row/focused_col on the PointerUp edge unconditionally so the active descendant follows a click even within the already-selected row (was selection-coupled, mirrored from DatePicker where re-click only re-targets the same day); new regression test click_moves_cursor_within_already_selected_row
+- examples/hello-table/src/main.rs: TableState.row_states sized [RadioState; NROWS] exact-fit; arbitrary MAX_ROWS=16 cap removed (immutable data => compile-time-fixed row count, unlike DatePicker's variable-month MAX_DAYS bound which has no such slack)
+- tools/demos/r707_table.py: same-row click-moves-cursor assertion + cursor restore
+
+
+
+**Verification**:
+- cargo test --workspace -j2: 77 ok-suites, 0 failed (incl. new table regression test)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean under -D pedantic
+- demo r707_table.py PASS with the new same-row click assertions; sweep unaffected
+
+
+
+**Impact**: §5.40
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

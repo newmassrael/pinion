@@ -138,9 +138,12 @@ impl Table {
     }
 
     /// Drive `event` to the cell at `(row, col)`. If the event activates
-    /// that row (`false → true` selected), every other row is deselected,
-    /// `selected_row` snaps to `row`, and the active descendant syncs to
-    /// `(row, col)` (WAI-ARIA "activation moves focus").
+    /// that row (`false → true` selected), every other row is deselected
+    /// and `selected_row` snaps to `row`. Independently, the `PointerUp`
+    /// edge of a click syncs the active descendant to `(row, col)` —
+    /// WAI-ARIA "clicking a cell moves focus to it", whether or not the
+    /// selection changed (so clicking a different cell in the already-
+    /// selected row still moves the keyboard cursor there).
     ///
     /// Out-of-range `(row, col)` is a silent no-op (the router rejects
     /// bad composite sub-indices upstream; this guards the model path).
@@ -158,9 +161,12 @@ impl Table {
                 }
             }
             self.selected_row = Some(row);
-            // R707 §5.51 — WAI-ARIA "activation moves focus": the
-            // activate edge syncs the active descendant to the chosen
-            // cell (mirror of `DatePicker::send` R704).
+        }
+        // R707 §5.51 — the active descendant follows the click's
+        // `PointerUp` regardless of whether the selection changed (the
+        // 2-D data-grid refinement of `DatePicker`'s selection-coupled
+        // focus sync, which only ever re-targets the same day).
+        if matches!(event, RadioEvent::PointerUp) {
             self.focused_row = Some(row);
             self.focused_col = col;
         }
@@ -627,6 +633,23 @@ mod tests {
         // activated cell.
         assert_eq!(t.focused_row(), Some(2));
         assert_eq!(t.focused_col(), 1);
+    }
+
+    #[test]
+    fn click_moves_cursor_within_already_selected_row() {
+        let mut t = sample();
+        activate(&mut t, 1, 0);
+        assert_eq!(t.selected_row(), Some(1));
+        assert_eq!((t.focused_row(), t.focused_col()), (Some(1), 0));
+        // Click a different cell in the SAME (already-selected) row: the
+        // selection is unchanged but the active descendant must follow.
+        activate(&mut t, 1, 1);
+        assert_eq!(t.selected_row(), Some(1), "selection unchanged");
+        assert_eq!(
+            (t.focused_row(), t.focused_col()),
+            (Some(1), 1),
+            "cursor follows the click within the selected row",
+        );
     }
 
     #[test]
