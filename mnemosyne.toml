@@ -34,9 +34,13 @@ external_section_prefixes = [
   "UAX", "UTS", "UTR", "CSS Color",
 ]
 # Bare form `<PREFIX> §<id>` (no doc-number) — pinion cites WAI-ARIA both
-# as "WAI-ARIA 1.2 §3.5" (numeric) and "WAI-ARIA §4.5" (bare); plus the
-# multi-word "Unicode Standard §3.12" and "UCD §…".
-external_section_prefixes_bare = ["WAI-ARIA", "Unicode Standard", "UCD"]
+# as "WAI-ARIA 1.2 §3.5" (numeric) and "WAI-ARIA §4.5" (bare); the
+# multi-word "Unicode Standard §3.12" and "UCD §…"; and the vendored SCE
+# design docs, which cite themselves bare ("SCE_ERROR_CONTRACT.md §3.2",
+# and the SCE RFC as "RFC §6.5" — SCE's own convention, cf. SCE_MESH.md).
+external_section_prefixes_bare = [
+  "WAI-ARIA", "Unicode Standard", "UCD", "SCE_ERROR_CONTRACT.md", "RFC",
+]
 
 # Round 9 — privacy redaction of third-party identifiers from publishable
 # half of changelog entries. audit_* half retains the original frozen body

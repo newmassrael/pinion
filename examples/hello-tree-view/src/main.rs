@@ -605,9 +605,10 @@ impl WidgetA11y for TreeViewBinding {
     ) -> Vec<AccessNode> {
         // R674 §5.40 — root advertises Tree role + lists every
         // visible row as a child so the AT-side topology mirrors the
-        // paint topology. Each child row carries WAI-ARIA 1.2
-        // hierarchical axes (level / posinset / setsize) per §6.6.8
-        // / §6.6.9 / §6.6.10 — required for custom-widget roles
+        // paint topology. Each child row carries hierarchical axes
+        // (level / posinset / setsize) per
+        // WAI-ARIA 1.2 §6.6.8 / §6.6.9 / §6.6.10 — required for
+        // custom-widget roles
         // because AT does NOT infer hierarchy from DOM nesting on
         // `role="treeitem"`.
         let tree_state = use_tree_state();

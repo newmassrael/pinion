@@ -94,7 +94,7 @@ fn decomposed_recompose(c: &mut Criterion) {
 fn hangul_jamo_compose(c: &mut Criterion) {
     // L+V jamo pairs (U+1100..U+1112 + U+1161..U+1175). UAX #15 §16
     // algorithmic composition path — no UCD binary_search per char,
-    // only the §16 arithmetic. Quick-check returns No for conjoining
+    // only the UAX #15 §16 arithmetic. Quick-check returns No for conjoining
     // jamo, so the compose path runs.
     let input: String = concat!(
         "\u{1100}\u{1161}\u{1102}\u{1163}\u{1103}\u{1165}",

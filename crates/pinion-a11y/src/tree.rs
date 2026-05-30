@@ -395,7 +395,7 @@ fn lower_access_node(access: &AccessNode) -> Node {
     // collapse `aria-level` to bare `level`; the per-attribute
     // setters mirror the WAI-ARIA literals 1:1 otherwise. Custom-
     // widget roles (`role="treeitem"`, etc.) require these from the
-    // author per WAI-ARIA 1.2 §6.6.8/§6.6.9/§6.6.10 — AT does NOT
+    // author per WAI-ARIA 1.2 §6.6.8 / §6.6.9 / §6.6.10 — AT does NOT
     // infer them from DOM nesting on `non-native` roles. Pinion's
     // paint scenes are flat row sequences (composite-tag stamped per
     // row), so the binding is the sole source of truth.
@@ -504,8 +504,8 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // letting `active_descendant` surface the focused option).
         // Mirrors `RadioGroup`'s container-action set.
         //
-        // R656 §5.40 — `List` and `ListItem` (WAI-ARIA 1.2 §5.3.5 /
-        // §5.3.6) are passive AT containers. They share the `Focus`-
+        // R656 §5.40 — `List` and `ListItem` (WAI-ARIA 1.2 §5.3.5 / §5.3.6)
+        // are passive AT containers. They share the `Focus`-
         // only action set with `Generic` / `RadioGroup` / `Listbox`:
         // AT cursor can land on the container/item to read its name,
         // but interactive children (delete buttons, edit handles)
@@ -557,8 +557,8 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // `Focus` (Tab into the field) and `Click` (place caret on
         // press). Edit actions (insert / delete / set-value) are
         // dispatched as `AccessAction::SetValue` events on R56.1.f+
-        // accessibility carry — the action set here matches WAI-ARIA
-        // 1.2 §4.3 textbox baseline.
+        // accessibility carry — the action set here matches
+        // WAI-ARIA 1.2 §4.3 textbox baseline.
         AriaRole::TextInput => {
             node.add_action(Action::Focus);
             node.add_action(Action::Click);

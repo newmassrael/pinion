@@ -1495,8 +1495,8 @@ pub struct TextNode {
     /// skips it.
     ///
     /// R51.86 §5.40 — the enum is `#[non_exhaustive]`; future
-    /// variants (e.g. an explicit `Label` carrier for the WAI-ARIA
-    /// 1.2 §5.2.6 labelling axis) land additively when a concrete
+    /// variants (e.g. an explicit `Label` carrier for the
+    /// WAI-ARIA 1.2 §5.2.6 labelling axis) land additively when a concrete
     /// consumer arrives. Pre-R51.86 carried a `Label` placeholder
     /// without a consumer; strict-YAGNI removed it so the enum
     /// surfaces only roles the pipeline actually honours.

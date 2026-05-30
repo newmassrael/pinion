@@ -74,8 +74,8 @@ pub struct AccessNode {
     /// `hello-listbox` emitted `aria-checked` via `state.checked` for
     /// `ListBox` options; R51.98 corrects that.
     pub selected: Option<bool>,
-    /// R51.98 §5.40 — WAI-ARIA `aria-multiselectable` per WAI-ARIA
-    /// 1.2 §6.6.6. `true` lowers to
+    /// R51.98 §5.40 — WAI-ARIA `aria-multiselectable` per
+    /// WAI-ARIA 1.2 §6.6.6. `true` lowers to
     /// `accesskit::Node::set_multiselectable` (the AT then announces
     /// the container as "list, multi-selectable" instead of "list").
     /// Default `false` omits the attribute. Only meaningful on

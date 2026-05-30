@@ -3582,7 +3582,7 @@ mod tests {
     }
 
     /// R51.24.1 smoke: walk the first 100 vectors of
-    /// `BidiCharacterTest.txt`. UCD groups its early rows by §3.3.5
+    /// `BidiCharacterTest.txt`. UCD groups its early rows by UAX #9 §3.3.5
     /// canonical examples + Unicode 8.0 algorithm change cases — a
     /// healthy P→X→W→N→I→L1→L2 implementation must clear them all.
     /// The full ~96 K-vector sweep is gated behind `#[ignore]` to
