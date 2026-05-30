@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion §5.38 R709 — ColorArea (2-D saturation/value pad) statechart.
+
+     A ColorArea is a two-axis slider: one drag thumb that moves
+     freely in 2-D over a colour square, writing a normalised
+     (x, y) = (saturation, value) pair. The interaction grammar is
+     identical to the §5.38 Slider (idle / hover / dragging /
+     disabled with the same closed-core pointer/enable events), but
+     it owns its own statechart for the same reason every catalog
+     widget does (button / toggle / checkbox / radio all re-declare
+     the hover/press grammar rather than sce:use a shared template):
+     the state vocabulary must read in the widget's own name at the
+     RPC introspect surface (`scene/query "state"` → "Dragging") and
+     a future ColorArea-specific transition must not be forced to
+     fork a shared file. This is *not* the R51.7 abstraction leak —
+     there is no semantic reinterpretation; dragging means dragging
+     in both, exactly as "pressed" means pressed in both button and
+     toggle.
+
+     The two f32 value sidecars (x, y, each 0.0..=1.0) live entirely
+     in the Rust binding (color_area.rs), mutated via
+     [`ColorArea::set_xy`] during drag (continuous "value_changing"
+     intents) and committed on drag-end (single "value_committed"
+     intent). SCXML owns the interaction state; the binding owns the
+     typed value — the same "null datamodel + typed Rust sidecar"
+     split the Slider uses.
+
+     The dragging → hover transition on pointer_up raises
+     `color_area.activate`; the binding listens for that to emit the
+     `"value_committed"` intent. pointer_leave / pointer_cancel from
+     dragging drop to idle without raising activate (W3C drag
+     cancel-on-leave; touch cancel is the leave analog) — the value
+     stays wherever the last pointer_move set it, but no commit
+     signal fires.
+
+     States: idle / hover / dragging / disabled.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <state id="idle">
+    <transition event="pointer_enter" target="hover"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="hover">
+    <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_cancel" target="idle"/>
+    <transition event="pointer_down" target="dragging"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="dragging">
+    <transition event="pointer_up" target="hover">
+      <raise event="color_area.activate"/>
+    </transition>
+    <transition event="pointer_leave" target="idle"/>
+    <transition event="pointer_cancel" target="idle"/>
+    <transition event="disable" target="disabled"/>
+  </state>
+
+  <state id="disabled">
+    <transition event="enable" target="idle"/>
+  </state>
+
+</scxml>

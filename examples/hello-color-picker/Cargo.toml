@@ -1,0 +1,35 @@
+[package]
+name = "hello-color-picker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R709 §5.38 ColorPicker — the gradient-fill substrate's first real consumer: a 2-D saturation/value ColorArea pad (new widget) layered from white->transparent + transparent->black gradients over a pure-hue base, beside a linear hue bar (SliderExternal); the live HSV->RGB preview is Color::from_hsv; introspectable via scene/query x/y + verifiable by live-pixel sampling of the SV corners"
+publish = false
+
+[[bin]]
+name = "hello-color-picker"
+path = "src/main.rs"
+
+[dependencies]
+# R709 §5.38 — new ColorArea 2-D pad widget + §5.38 Slider (hue bar) +
+# §5.50 Color::from_hsv preview math + gradient-fill substrate.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the `HelloColorPickerRenderer` struct emitted by
+# `build.rs` names `::vello::*` directly; the `vello_renderer_impl!`
+# expansion also names `::vello::Scene` / `::vello::peniko::Color`.
+vello = { workspace = true }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the `HelloColorPickerRenderer`
+# Vello wrapper. Identical pattern to hello-gradient.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

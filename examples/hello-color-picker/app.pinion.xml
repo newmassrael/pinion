@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R709 §5.38 ColorPicker consumer: pinion-forge renderer manifest for
+  hello-color-picker. Emits `HelloColorPickerRenderer` (Vello-backed
+  RenderContext + RenderSurface + Renderer wrapper). Identical manifest
+  shape to hello-gradient's `HelloGradientRenderer` — single-source-of-
+  truth emit template, only the struct name diverges. `aa` attribute
+  omitted -> defaults to Area per R46.2.1 (UI-canonical mode).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloColorPickerRenderer"
+        backend="vello"/>

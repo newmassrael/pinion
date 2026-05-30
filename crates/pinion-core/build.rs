@@ -12,6 +12,7 @@ fn main() {
         "widgets/radio.scxml",
         "widgets/listbox_item.scxml",
         "widgets/slider.scxml",
+        "widgets/color_area.scxml",
         "widgets/scroll_bar.scxml",
         "widgets/text_field.scxml",
         "app.scxml",

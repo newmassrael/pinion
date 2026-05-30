@@ -2,6 +2,7 @@ pub mod aria;
 pub mod button;
 pub mod caret_blink;
 pub mod checkbox;
+pub mod color_area;
 pub mod datepicker;
 pub mod disclosure;
 pub mod disclosure_group;

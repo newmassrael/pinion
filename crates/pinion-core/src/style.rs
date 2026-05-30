@@ -452,6 +452,35 @@ impl Color {
             linear_alpha_encode(v.w),
         )
     }
+
+    /// (R709 §5.50) HSV (hue / saturation / value) → opaque sRGB.
+    ///
+    /// `h` is a degree value (wrapped into `[0, 360)` via
+    /// `rem_euclid`, so `-30.0` and `330.0` agree and a `360.0 *
+    /// hue_fraction` caller never special-cases the wrap); `s` and
+    /// `v` are unit fractions clamped to `[0, 1]`. Alpha is always
+    /// `255` — HSV has no alpha channel.
+    ///
+    /// This is the canonical hexcone formula (Foley & van Dam): the
+    /// chroma `c = v * s` ramp is positioned in one of six hue
+    /// sextants and lifted by `m = v - c`. The bytes are
+    /// gamma-encoded sRGB (the conventional colour-picker output
+    /// space), matching [`Color::from_hsl_function`]'s quantization —
+    /// **not** the linear-light path of [`Color::lerp`]. HSV is the
+    /// colour-picker model (a 2-D saturation/value square under a 1-D
+    /// hue bar); HSL ([`Self::from_hsl_function`]) is the CSS model.
+    /// The two differ: HSV `v = 1` is the fully-saturated hue, HSL
+    /// `l = 0.5` is.
+    #[must_use]
+    #[allow(
+        clippy::many_single_char_names,
+        reason = "h/s/v + r/g/b are the canonical HSV→RGB channel names"
+    )]
+    pub fn from_hsv(h: f32, s: f32, v: f32) -> Self {
+        let (r, g, b) =
+            hsv_to_srgb_bytes(h.rem_euclid(360.0), s.clamp(0.0, 1.0), v.clamp(0.0, 1.0));
+        Self::rgb(r, g, b)
+    }
 }
 
 /// sRGB EOTF: 8-bit channel → linear-light `f32` in `[0, 1]`.
@@ -733,6 +762,50 @@ fn hsl_to_srgb_bytes(h: f32, s: f32, l: f32) -> (u8, u8, u8) {
     )
 }
 
+/// R709 §5.50 — canonical hexcone HSV → sRGB conversion (Foley &
+/// van Dam). `h` is a degree value in `[0, 360)`; `s` and `v` are
+/// unit fractions in `[0, 1]`. Returns three gamma-encoded sRGB
+/// bytes (pinion's internal storage form), the colour-picker output
+/// space — distinct from [`hsl_to_srgb_bytes`] (the CSS HSL model).
+///
+/// Chroma `c = v * s` is positioned in one of six 60° hue sextants
+/// via the `x` interpolant and lifted to the final value by the
+/// match-lightness `m = v - c`, so `v` always drives the brightest
+/// channel and `s = 0` collapses to the grey `(v, v, v)`.
+#[allow(
+    clippy::many_single_char_names,
+    reason = "Foley & van Dam canonical HSV->RGB hexcone variable names (c/x/m)"
+)]
+fn hsv_to_srgb_bytes(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    let c = v * s;
+    // [0, 6): h is already wrapped to [0, 360) by the caller, so h / 60
+    // lands in [0, 6); rem_euclid keeps the h == 360 → 0 boundary exact.
+    let h_prime = (h / 60.0).rem_euclid(6.0);
+    let x = c * (1.0 - (h_prime.rem_euclid(2.0) - 1.0).abs());
+    let m = v - c;
+    // Truncation toward zero == floor for the non-negative h_prime, so
+    // the sextant index is exactly 0..=5 (no `_` mis-paint risk).
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "h_prime is in [0, 6); truncation is the intended floor to a 0..=5 sextant"
+    )]
+    let sextant = h_prime as u8;
+    let (r1, g1, b1) = match sextant {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    (
+        quantize_unit_byte((r1 + m) * 255.0),
+        quantize_unit_byte((g1 + m) * 255.0),
+        quantize_unit_byte((b1 + m) * 255.0),
+    )
+}
+
 /// R630 §5.50 — W3C HSL → sRGB hue-segment piecewise helper
 /// (CSS Color 4 §6.2). `t` is a unit-circle position; the three
 /// `hue_to_rgb` calls in [`hsl_to_srgb_bytes`] each shift `t` by
@@ -843,6 +916,43 @@ mod color_linear_tests {
         let over = AnimVec4::new(2.0, -0.5, 1.5, 1.2);
         let c = Color::from_linear(over);
         assert_eq!(c, Color::rgba(255, 0, 255, 255));
+    }
+
+    // R709 §5.50 — Color::from_hsv hexcone conversion. Pins the six
+    // pure-hue sextant boundaries, the achromatic (s == 0) collapse,
+    // and the value/alpha contract so the ColorPicker SV-pad preview
+    // stays anchored.
+    #[test]
+    fn r709_from_hsv_primary_hues() {
+        // Full saturation + full value at each 60° sextant edge.
+        assert_eq!(Color::from_hsv(0.0, 1.0, 1.0), Color::rgb(255, 0, 0)); // red
+        assert_eq!(Color::from_hsv(60.0, 1.0, 1.0), Color::rgb(255, 255, 0)); // yellow
+        assert_eq!(Color::from_hsv(120.0, 1.0, 1.0), Color::rgb(0, 255, 0)); // green
+        assert_eq!(Color::from_hsv(180.0, 1.0, 1.0), Color::rgb(0, 255, 255)); // cyan
+        assert_eq!(Color::from_hsv(240.0, 1.0, 1.0), Color::rgb(0, 0, 255)); // blue
+        assert_eq!(Color::from_hsv(300.0, 1.0, 1.0), Color::rgb(255, 0, 255)); // magenta
+    }
+
+    #[test]
+    fn r709_from_hsv_achromatic_and_value() {
+        // s == 0 → grey ramp driven by v, hue-independent.
+        assert_eq!(Color::from_hsv(0.0, 0.0, 0.0), Color::rgb(0, 0, 0));
+        assert_eq!(Color::from_hsv(123.0, 0.0, 1.0), Color::rgb(255, 255, 255));
+        assert_eq!(Color::from_hsv(300.0, 0.0, 0.5), Color::from_hsv(0.0, 0.0, 0.5));
+        // v == 0 → black regardless of hue/saturation (SV-pad bottom).
+        assert_eq!(Color::from_hsv(200.0, 1.0, 0.0), Color::rgb(0, 0, 0));
+        // Always opaque (HSV has no alpha).
+        assert_eq!(Color::from_hsv(200.0, 0.7, 0.7).a, 255);
+    }
+
+    #[test]
+    fn r709_from_hsv_wraps_and_clamps() {
+        // rem_euclid wrap: -60° == 300° (magenta), 360° == 0° (red).
+        assert_eq!(Color::from_hsv(-60.0, 1.0, 1.0), Color::from_hsv(300.0, 1.0, 1.0));
+        assert_eq!(Color::from_hsv(360.0, 1.0, 1.0), Color::rgb(255, 0, 0));
+        // Out-of-range s/v saturate, never wrap.
+        assert_eq!(Color::from_hsv(0.0, 5.0, 5.0), Color::rgb(255, 0, 0));
+        assert_eq!(Color::from_hsv(120.0, -1.0, 1.0), Color::rgb(255, 255, 255));
     }
 
     // R628 §5.50 — quantize_unit_byte single-helper lift unit tests.

@@ -14804,6 +14804,35 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R709 — R709 ColorPicker: new §5.38 ColorArea 2-D pad widget + §5.50 Color::from_hsv, the first real consumer of the R708 gradient-fill substrate
+
+**Changes**:
+- Color::from_hsv (§5.50): canonical hexcone HSV->sRGB, the colour-picker preview constructor, beside the existing HSL machinery
+- New ColorArea widget (§5.38): a 2-D drag pad with its own color_area.scxml (idle/hover/dragging/disabled drag grammar) and a 2-float saturation/value sidecar
+- ColorAreaExternal writes both axes from one pointer_move, emits value_changing/value_committed JSON intents, and exposes x/y over the §5.15 introspect channel
+- hello-color-picker example: ColorArea SV pad (pure-hue base + white->transparent + transparent->black gradient overlays) over a SliderExternal hue bar (7-stop rainbow) with a from_hsv preview swatch
+- ColorArea owns its statechart (not a slider sce:use) per the per-widget-statechart canon; the shared drag grammar is honest reuse, not a reinterpretation
+
+
+
+**Verification**:
+- cargo test --workspace green (incl. 8 ColorArea widget + 8 hello-color-picker + 3 from_hsv tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)
+- tools/demos/r709_color_picker.py PASS: ~60 RPC assertions (gradient-overlay structure, hue/saturation/value intervene+drag+keyboard readback, from_hsv base/preview re-key) + PINION_SCREENSHOT live-pixel SV corners (white/pure-hue/black) and hue-bar primary stops
+- full demo sweep 64/64
+
+
+
+**Impact**: §5.38, §5.50
+
+
+**Carry forward**:
+- sweep/conic GradientKind + image/pattern Brush + gradient on PathStyle remain deferred (no consumer yet; GradientKind exhaustive so a new variant compile-breaks every backend = correct signal)
+- 2-D ARIA refinement (two-thumb / per-axis aria-valuetext) deferred to a 2nd ColorArea consumer; the SV pad reports role=slider + aria-valuetext hex today
+- M3 elevation shadow remains a separate shadow/blur primitive, not a gradient (R708 honest correction holds)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
