@@ -8,7 +8,7 @@
 //! (a translucent black fill) and **traps** (it is the full-window
 //! topmost hit target, swallowing every background interaction while a
 //! dialog / drawer is up). A dismiss barrier is its non-modal sibling —
-//! **invisible** (`scrim_fill(0)`, zero opacity, no dim) and **passive**
+//! **invisible** ([`Color::TRANSPARENT`], no fill at all) and **passive**
 //! (its only job is to catch the *outside* click that dismisses the
 //! popup; the rest of the UI keeps painting and reading normally behind
 //! it). This is the desktop "popup grab" layer: `Qt::Popup`'s mouse
@@ -20,11 +20,13 @@
 //!
 //! R714 `hello-combobox` introduced the transparent barrier by reusing
 //! the modal scrim at zero opacity — clever, but semantically a *modal
-//! scrim pretending to be a dismiss barrier* (it dims by 0 and "traps"
-//! a popup that is not modal). R715 `hello-menu` is the 2nd consumer
-//! (click-outside-to-dismiss for the menubar), so per
-//! `[[abstraction-needs-second-consumer]]` the shared shape lifts to one
-//! home: a transparent, tagged, absolutely-positioned region container.
+//! scrim pretending to be a dismiss barrier* (it dimmed by 0 and routed
+//! through the scrim's fill helper for a popup that is not modal). R715
+//! `hello-menu` is the 2nd consumer (click-outside-to-dismiss for the
+//! menubar), so per `[[abstraction-needs-second-consumer]]` the shared
+//! shape lifts to one home that owns its own transparency — a
+//! [`Color::TRANSPARENT`], tagged, absolutely-positioned region
+//! container with **no dependency on the scrim module**.
 //!
 //! Only the **paint construction** is shared — *dispatch* stays
 //! per-binding. `ComboBox` tags its barrier with an extra `ButtonExternal`
@@ -46,16 +48,14 @@
 
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{BoxStyle, LayoutStyle, Size};
-use pinion_core::Scene;
-
-use crate::scrim::scrim_fill;
+use pinion_core::{Color, Scene};
 
 /// R715 §5.16 — build a non-modal **dismiss barrier**: a transparent
 /// [`Scene::Container`] tagged `tag`, absolutely positioned at `origin`
 /// and sized to `size`, with no children. The barrier is a passive
-/// click-catcher — it carries a fully transparent fill (`scrim_fill(0)`,
-/// so it paints nothing) and exists only to be the topmost hit target
-/// over its region.
+/// click-catcher — it carries a fully transparent fill
+/// ([`Color::TRANSPARENT`], so it paints nothing) and exists only to be
+/// the topmost hit target over its region.
 ///
 /// # Arguments
 ///
@@ -81,7 +81,7 @@ pub fn dismiss_barrier(tag: &'static str, origin: (u32, u32), size: (u32, u32)) 
     Scene::Container(
         ContainerNode::new(vec![])
             .with_tag(tag)
-            .with_style(BoxStyle::filled(scrim_fill(0)))
+            .with_style(BoxStyle::filled(Color::TRANSPARENT))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(left, top)
@@ -94,7 +94,6 @@ pub fn dismiss_barrier(tag: &'static str, origin: (u32, u32), size: (u32, u32)) 
 mod tests {
     use super::*;
     use pinion_core::style::SizeValue;
-    use pinion_core::Color;
 
     #[test]
     fn r715_barrier_is_transparent_tagged_and_childless() {
@@ -105,8 +104,8 @@ mod tests {
         assert_eq!(c.tag.as_deref(), Some("combo_barrier"));
         assert_eq!(
             c.style.fill,
-            Color::rgba(0, 0, 0, 0),
-            "dismiss barrier is fully transparent (non-modal, no dim)"
+            Color::TRANSPARENT,
+            "dismiss barrier owns its transparency directly (no scrim dependency)"
         );
         assert!(c.children.is_empty(), "barrier is a passive click-catcher");
     }

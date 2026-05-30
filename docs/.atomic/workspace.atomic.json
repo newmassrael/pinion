@@ -23905,6 +23905,44 @@
         "focus-loss dismiss still an additive MenuBarExternal axis once a real consumer needs it"
       ]
     },
+    "R715.1": {
+      "decision_summary": "R715.1 audit fix: decouple dismiss_barrier from the scrim module — fill with Color::TRANSPARENT instead of scrim_fill(0), so the barrier owns its transparency and the lift matches its stated intent (stop being a modal-scrim-at-zero-opacity)",
+      "changes_bullets": [
+        "Decouple dismiss_barrier from the scrim module: fill with Color::TRANSPARENT not scrim_fill(0)",
+        "barrier.rs no longer imports crate::scrim; only prose cross-references the modal sibling remain",
+        "aligns code with R715 stated design intent (lift was to STOP being a scrim-at-zero-opacity)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-widget-paint barrier green (3/3; fill assert now Color::TRANSPARENT)",
+        "cargo clippy -p pinion-widget-paint --all-targets -D pedantic clean (redundant Color import dropped)",
+        "r715_dismiss_barrier.py 36 assert green: TRANSPARENT == rgba(0,0,0,0) so output bit-identical",
+        "self-audit (verify-seed-claims-audit-first): module doc criticised scrim-coupling yet code kept it"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "none new; R715 carry items (combobox coordinator, empty-strip-click, pass-through barrier) unchanged"
+      ],
+      "publishable_decision_summary": "R715.1 audit fix: decouple dismiss_barrier from the scrim module — fill with Color::TRANSPARENT instead of scrim_fill(0), so the barrier owns its transparency and the lift matches its stated intent (stop being a modal-scrim-at-zero-opacity)",
+      "publishable_changes_bullets": [
+        "Decouple dismiss_barrier from the scrim module: fill with Color::TRANSPARENT not scrim_fill(0)",
+        "barrier.rs no longer imports crate::scrim; only prose cross-references the modal sibling remain",
+        "aligns code with R715 stated design intent (lift was to STOP being a scrim-at-zero-opacity)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-widget-paint barrier green (3/3; fill assert now Color::TRANSPARENT)",
+        "cargo clippy -p pinion-widget-paint --all-targets -D pedantic clean (redundant Color import dropped)",
+        "r715_dismiss_barrier.py 36 assert green: TRANSPARENT == rgba(0,0,0,0) so output bit-identical",
+        "self-audit (verify-seed-claims-audit-first): module doc criticised scrim-coupling yet code kept it"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "none new; R715 carry items (combobox coordinator, empty-strip-click, pass-through barrier) unchanged"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
