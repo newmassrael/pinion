@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- pinion §5.38 Round 51.5 — Checkbox widget statechart.
+<!-- pinion §5.38 R51.5 — Checkbox widget statechart.
 
      Same shared interaction body as Button R12 and Toggle R51.2
      (idle / hover / pressed / disabled) via the

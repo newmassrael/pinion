@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- pinion §5.16 Round 12.0 — Button widget statechart.
+<!-- pinion §5.38 R12.0 — Button widget statechart.
 
      R51.3 §5.38 refactor: the four-state interaction body lives in
      `standard_button.sce-template.xml` (shared with Toggle and

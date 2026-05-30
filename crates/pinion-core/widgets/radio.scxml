@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- pinion §5.38 Round 51.6 — Radio widget statechart.
+<!-- pinion §5.38 R51.6 — Radio widget statechart.
 
      Same shared interaction body as Button/Toggle/Checkbox via the
      `standard_button.sce-template.xml` template. Selects the
