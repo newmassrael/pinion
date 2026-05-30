@@ -1042,19 +1042,12 @@ impl<V: WidgetView> ShellCore<V> {
         let focused = self.focus.focused().map(str::to_owned);
         if let Some(tail) = self.core.apply_key(focused.as_deref(), key_str, self.modifiers) {
             self.revision.bump();
+            // R705.1 — `handle_tail` arms `redraw_requested` whenever the
+            // dispatch dirtied a view-subscribed `Signal` (the reactive
+            // `Owner::is_dirty()` bridge), so an arrow-key focused-row move
+            // with no SCXML `state_change` still repaints. No manual arm
+            // needed here.
             self.handle_tail(&tail);
-            // R705.1 §2 #7 — a widget that CONSUMED the key reacted, and
-            // that reaction is frequently a reactive-`Signal` change with
-            // no SCXML `state_change` (a listbox/tree focused-row move via
-            // arrow keys). `handle_tail` only arms `redraw_requested` on a
-            // `state_change`, so arm it here whenever the key was handled
-            // — otherwise the live window (and the stored paint scene
-            // `scene/snapshot from: paint` reads) would never repaint to
-            // show the moved focus. Same shape as [`Self::scroll_key`]'s
-            // "dispatched → request_redraw". A handled key that changed
-            // nothing visible just repaints an identical scene (cache
-            // hits, no churn).
-            self.request_redraw();
             true
         } else {
             false
@@ -1542,6 +1535,12 @@ impl<V: WidgetView> ShellCore<V> {
         {
             self.redraw_requested = true;
         }
+        // R705.1 §2 #7 — this paint just consumed the current reactive
+        // state (the `V::view` run above re-subscribed `root_owner` to
+        // every `Signal` it read). Reset the dirty flag so the NEXT
+        // `Signal::set` re-flags it — the `handle_tail` `is_dirty()` bridge
+        // then knows a real change occurred and a benign no-op did not.
+        self.core.root_owner().clear_dirty();
         self.apply_focus_ring(paint_scene)
     }
 
@@ -1684,6 +1683,10 @@ impl<V: WidgetView> ShellCore<V> {
             None => V::view(cached_state, &frame),
         });
         compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
+        // R705.1 §2 #7 — see `compute_paint_scene_internal`: this auxiliary
+        // (re-store / headless) render also consumed the current reactive
+        // state, so reset the dirty flag in lockstep.
+        self.core.root_owner().clear_dirty();
         self.apply_focus_ring(paint_scene)
     }
 
@@ -2485,15 +2488,22 @@ impl<V: WidgetView> ShellCore<V> {
             // input → drain → reducer arc.
             let _ = self.core.route_intent_through_update(intent);
         }
-        // R705.1 §2 #7 — a drained intent means a widget reacted, and its
-        // `V::update` reducer commonly writes a reactive `Signal` (a
-        // cross-window selection / hover Signal) with no SCXML
-        // `state_change`. Arm the redraw so the live window + the stored
-        // paint scene `scene/snapshot from: paint` reads both reflect the
-        // mutation; without this an RPC `scene/invoke` that only sets a
-        // Signal would leave `from: paint` stale (the cross-window
-        // selection drift R705 abolishes). No intents drained → no-op.
-        if !tail.intents.is_empty() {
+        // R705.1 §2 #7 — reactive-`Signal` dirty bridge (Solid.js style).
+        //
+        // `V::view` runs under `root_owner.run(...)`, so every
+        // `Signal::get()` it reads auto-subscribes `root_owner`. When a
+        // reducer / `External::invoke` later `Signal::set`s one of those —
+        // a listbox/tree focused-row Signal, a shared cross-window
+        // selection Signal — `root_owner.is_dirty()` flips true WITHOUT any
+        // SCXML `state_change`. Arming the redraw off that single reactive
+        // primitive is the textbook replacement for sprinkling manual
+        // `request_redraw` across every input handler: it catches EVERY
+        // signal-mutating path (keys, intents, `Effect`s) AND stays silent
+        // on a benign no-op (a click that hit nothing dirties nothing —
+        // the R682 fragment-cache warmup that a coarse OCC-revision gate
+        // churned). The flag is reset by `clear_dirty()` after each paint
+        // ([`compute_paint_scene_internal`] / `_pure_internal`).
+        if self.core.root_owner().is_dirty() {
             self.request_redraw();
         }
         if let Some(sc) = tail.state_change {

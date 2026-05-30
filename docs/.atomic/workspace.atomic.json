@@ -23174,6 +23174,40 @@
         "pinion-overlay::highlight shares the same top-level-vs-scroll-local latent gap (DevTools highlight of a scrolled node); consolidate onto Scene::rect_for_tag_absolute when a scrolled-highlight consumer appears."
       ]
     },
+    "R705.1": {
+      "decision_summary": "R705.1 clears two focus-ring review debts: reactive is_dirty redraw bridge and scroll-aware rect_for_tag SSOT",
+      "changes_bullets": [
+        "pinion-shell substrate.rs: the R705 manual request_redraw arming replaced by a reactive Owner::is_dirty() bridge (handle_tail redraws when root_owner.is_dirty(); compute_paint_scene clears the flag after re-subscribing), covering every Signal-change path and suppressing benign no-op churn",
+        "pinion-runtime input.rs: rect_for_tag was scroll-blind (Container-only recursion gave scrolled widgets a11y bounds=None and split the SSOT); it now delegates to Scene::rect_for_tag_absolute so a11y, the input router, and app code share one scroll-aware coordinate-translation authority"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green; clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "full demo sweep 60/60 pass; focus-ring placement grounded against independently recomputed window-absolute rects"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "none"
+      ],
+      "publishable_decision_summary": "R705.1 clears two focus-ring review debts: reactive is_dirty redraw bridge and scroll-aware rect_for_tag SSOT",
+      "publishable_changes_bullets": [
+        "pinion-shell substrate.rs: the R705 manual request_redraw arming replaced by a reactive Owner::is_dirty() bridge (handle_tail redraws when root_owner.is_dirty(); compute_paint_scene clears the flag after re-subscribing), covering every Signal-change path and suppressing benign no-op churn",
+        "pinion-runtime input.rs: rect_for_tag was scroll-blind (Container-only recursion gave scrolled widgets a11y bounds=None and split the SSOT); it now delegates to Scene::rect_for_tag_absolute so a11y, the input router, and app code share one scroll-aware coordinate-translation authority"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green; clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "full demo sweep 60/60 pass; focus-ring placement grounded against independently recomputed window-absolute rects"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "none"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

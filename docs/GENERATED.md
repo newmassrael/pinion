@@ -14546,6 +14546,28 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R705.1 — R705.1 clears two focus-ring review debts: reactive is_dirty redraw bridge and scroll-aware rect_for_tag SSOT
+
+**Changes**:
+- pinion-shell substrate.rs: the R705 manual request_redraw arming replaced by a reactive Owner::is_dirty() bridge (handle_tail redraws when root_owner.is_dirty(); compute_paint_scene clears the flag after re-subscribing), covering every Signal-change path and suppressing benign no-op churn
+- pinion-runtime input.rs: rect_for_tag was scroll-blind (Container-only recursion gave scrolled widgets a11y bounds=None and split the SSOT); it now delegates to Scene::rect_for_tag_absolute so a11y, the input router, and app code share one scroll-aware coordinate-translation authority
+
+
+
+**Verification**:
+- cargo test --workspace green; clippy --workspace --all-targets --features pinion-runtime/vello clean
+- full demo sweep 60/60 pass; focus-ring placement grounded against independently recomputed window-absolute rects
+
+
+
+**Impact**: §5.45, §5.39
+
+
+**Carry forward**:
+- none
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -967,33 +967,27 @@ fn tag_matches(node_tag: Option<&str>, target: &str) -> bool {
     matches!(node_tag, Some(t) if t == target)
 }
 
-/// R51.34 §5.35 — depth-first walk for the post-layout rect of the
-/// tagged primitive named by `target_tag`. Returns the first match
-/// in declaration order (mirrors [`find_external_by_tag`]'s walk).
-/// `EffectNode` carries no tag so the walk skips it implicitly via
-/// [`Scene::tag`]. `None` when no node in the paint tree matches.
+/// R51.34 §5.35 — the **window-absolute** post-layout rect of the tagged
+/// primitive named by `target_tag`. `None` when no node carries the tag
+/// or it is scrolled fully out of view.
 ///
-/// R51.62 §5.40 — promoted to `pub` so `pinion-shell` can resolve
-/// post-layout widget bounds when lowering [`pinion_a11y::AccessNode`]
-/// into `accesskit::TreeUpdate`. The walk is identical to the private
-/// `focus_rect_for_tag` in `paint_adapter`; consolidation is carry —
-/// keeping two callsites independent for now avoids cross-module
-/// coupling.
+/// R51.62 §5.40 — `pub` so `pinion-shell` can resolve post-layout widget
+/// bounds when lowering [`pinion_a11y::AccessNode`] into
+/// `accesskit::TreeUpdate`; also used by the router's pointer-capture
+/// move ([`InputRouter::dispatch_pointer_move_to`]).
+///
+/// R705.1 §5.45 §2 #7 — delegates to the single coordinate-translation
+/// authority [`Scene::rect_for_tag_absolute`]. Pre-R705.1 this was a
+/// scroll-BLIND walk (recursed `Container` but not `Scroll`), so a
+/// widget inside a [`Scene::Scroll`] (a listbox row, a tree row)
+/// returned `None` — silently denying it AccessKit bounds (AT could not
+/// locate it) and breaking pointer-capture normalization. The delegate
+/// now translates by the enclosing scroll offsets + clips to the
+/// viewport stack, exactly like the focus-ring overlay and the RPC
+/// click resolver — one walker, no scroll-blind divergence.
 #[must_use]
 pub fn rect_for_tag(scene: &Scene, target_tag: &str) -> Option<Rect> {
-    if let Some(tag) = scene.tag() {
-        if tag == target_tag {
-            return Some(scene.rect());
-        }
-    }
-    if let Scene::Container(c) = scene {
-        for child in &c.children {
-            if let Some(rect) = rect_for_tag(child, target_tag) {
-                return Some(rect);
-            }
-        }
-    }
-    None
+    scene.rect_for_tag_absolute(target_tag)
 }
 
 /// R51.34 §5.35 — normalise a winit cursor `(f64, f64)` into
