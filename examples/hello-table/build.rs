@@ -1,4 +1,4 @@
-//! R707 §5.51 pinion-forge codegen entrypoint for hello-table.
+//! R707 §5.38 pinion-forge codegen entrypoint for hello-table.
 //! Identical shape to the other hello-* binary build scripts — the
 //! renderer manifest in `app.pinion.xml` is the only divergence
 //! (struct name = `HelloTableRenderer`).

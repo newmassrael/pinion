@@ -14664,6 +14664,26 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R707.2 — R707.2 SSOT doc-label fix: R707 Table code referenced a nonexistent §5.51 design-doc section (dangling, broke the convention every other catalog widget follows); corrected to the existing umbrella sections §5.38 (widget catalog) / §5.40 (a11y tree) / §5.50 (theming-paint) so every code §-reference resolves in GENERATED.md
+
+**Changes**:
+- crates/pinion-core/src/widgets/table.rs: module header -> §5.38 (widget catalog), roving active-descendant labels -> §5.40 (a11y tree)
+- crates/pinion-widget-paint/src/table.rs: -> §5.50 (theming / paint composition, the section every catalog widget paint reuses)
+- examples/hello-table (main.rs/build.rs/app.pinion.xml/Cargo.toml): §5.38 widget + §5.40 a11y methods + §5.50 paint dep, matching the hello-datepicker scaffolding convention
+- no behaviour change: doc-comment / string labels only
+
+
+
+**Verification**:
+- grep: zero remaining §5.51 in source (vendor/sce SVG-path false match excluded)
+- cargo build -p hello-table -j2: clean (label-only edits, no codegen impact)
+
+
+
+**Impact**: §5.38, §5.40, §5.50
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R707 §5.51 interactive data Table — WAI-ARIA grid (row/columnheader/gridcell roles, the 2nd consumer of the R704 grid-role family and first to exercise the row role) over a single TableExternal coordinator at the composite paint root 'table'; cells via composite '#' tags + APG data-grid 2-D roving active descendant (arrows/Home/End/PageUp/Down/Enter), single-row selection enforced by the framework coordinator"
+description = "R707 §5.38 interactive data Table — WAI-ARIA grid (row/columnheader/gridcell roles, the 2nd consumer of the R704 grid-role family and first to exercise the row role) over a single TableExternal coordinator at the composite paint root 'table'; cells via composite '#' tags + APG data-grid 2-D roving active descendant (arrows/Home/End/PageUp/Down/Enter), single-row selection enforced by the framework coordinator"
 publish = false
 
 [[bin]]
@@ -17,7 +17,7 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 # R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
-# R707 §5.51 — data-table paint composition (`view_table`).
+# R707 §5.50 — data-table paint composition (`view_table`).
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 vello = { workspace = true }
 

@@ -1,7 +1,7 @@
-//! `hello-table` — R707 §5.51 interactive **data table**: the GUI
+//! `hello-table` — R707 §5.38 interactive **data table**: the GUI
 //! consumer of the R707
 //! [`Table`](pinion_core::widgets::table::Table) single-row-selection
-//! coordinator + the §5.51 [`pinion_widget_paint::table`] data-grid
+//! coordinator + the §5.50 [`pinion_widget_paint::table`] data-grid
 //! paint.
 //!
 //! A data table presents tabular data as a grid (the WAI-ARIA `grid`
@@ -126,10 +126,10 @@ const NCOLS: usize = HEADERS.len();
 struct TableState {
     /// The selected row (0-based), or `None`.
     selected_row: Option<usize>,
-    /// R707 §5.51 — the roving active-descendant row (0-based), or
+    /// R707 §5.40 — the roving active-descendant row (0-based), or
     /// `None` before any navigation.
     focused_row: Option<usize>,
-    /// R707 §5.51 — the roving active-descendant column (0-based).
+    /// R707 §5.40 — the roving active-descendant column (0-based).
     focused_col: usize,
     /// Per-row interaction state, indexed by row (exactly [`NROWS`]).
     row_states: [RadioState; NROWS],
@@ -352,7 +352,7 @@ impl WidgetCore for TableView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-table (R707 §5.51 interactive data grid)"
+        "pinion hello-table (R707 §5.38 interactive data grid)"
     }
 
     /// WAI-ARIA APG data-grid focus model: the grid is a **single Tab
@@ -451,7 +451,7 @@ impl WidgetCore for TableView {
 }
 
 impl WidgetA11y for TableView {
-    /// R707 §5.51 — composite AccessKit tree contribution. Emits the
+    /// R707 §5.40 — composite AccessKit tree contribution. Emits the
     /// `grid` root, a header `row` of `columnheader` nodes, one data
     /// `row` per dataset row (carrying `aria-selected` + position/size in
     /// set), and one `gridcell` per cell. The single-row-selection
@@ -520,7 +520,7 @@ impl WidgetA11y for TableView {
         nodes
     }
 
-    /// R707 §5.51 — composite focus model (mirror of `hello-datepicker`).
+    /// R707 §5.40 — composite focus model (mirror of `hello-datepicker`).
     /// When the grid owns shell focus, focus stays on the grid root
     /// ([`PRIMARY_TAG`]) and the active-descendant cell is reported as the
     /// `aria-activedescendant`. Any other focused tag passes through
@@ -537,7 +537,7 @@ impl WidgetA11y for TableView {
         }
     }
 
-    /// R707 §5.51 — composite child action dispatch. A cell carries a
+    /// R707 §5.40 — composite child action dispatch. A cell carries a
     /// composite tag (`"table#<r>_<c>"`), so an AT `Click` / `Default` on
     /// a cell splits at `'#'` and arrives here with the `"<r>_<c>"`
     /// sub-tag. Activation runs the pointer cycle against the

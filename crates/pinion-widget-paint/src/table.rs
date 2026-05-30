@@ -1,4 +1,4 @@
-//! R707 §5.51 — backend-agnostic data-table paint composition.
+//! R707 §5.50 — backend-agnostic data-table paint composition.
 //!
 //! Composes the data-grid visual: a header band (one
 //! [`columnheader`](pinion_core::scene) cell per column) above a body of
@@ -36,7 +36,7 @@ use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::Scene;
 
-/// R707 §5.51 — Material-3 data-table paint dimensions. Mirrors the
+/// R707 §5.50 — Material-3 data-table paint dimensions. Mirrors the
 /// [`crate::datepicker::DatePickerStyle`] carrier pattern so binding
 /// callers see a uniform `Style` surface across the widget catalog.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,7 +68,7 @@ pub struct TableStyle {
 }
 
 impl TableStyle {
-    /// R707 §5.51 — Material-3 data-table defaults.
+    /// R707 §5.50 — Material-3 data-table defaults.
     #[must_use]
     pub const fn m3() -> Self {
         Self {
@@ -90,7 +90,7 @@ impl Default for TableStyle {
     }
 }
 
-/// R707 §5.51 — the tabular data a [`view_table`] call renders.
+/// R707 §5.50 — the tabular data a [`view_table`] call renders.
 ///
 /// Groups the column headers and the row-major cell text into one unit
 /// so the paint signature stays under the readable argument budget
@@ -105,7 +105,7 @@ pub struct TableData<'a> {
     pub rows: &'a [&'a [&'a str]],
 }
 
-/// R707 §5.51 — row-strip fill for `state` + `selected` + zebra parity
+/// R707 §5.50 — row-strip fill for `state` + `selected` + zebra parity
 /// via the M3 state-layer overlay matrix.
 ///
 /// A selected row washes [`ColorRole::Surface`] toward
@@ -240,7 +240,7 @@ fn row_fg(theme: &Theme, state: RadioState) -> Color {
     }
 }
 
-/// R707 §5.51 — compose the M3 data-table paint scene fragment.
+/// R707 §5.50 — compose the M3 data-table paint scene fragment.
 ///
 /// # Arguments
 ///

@@ -1,4 +1,4 @@
-//! R707 §5.51 — `Table` widget: an interactive data grid with
+//! R707 §5.38 — `Table` widget: an interactive data grid with
 //! single-row selection and 2-D keyboard navigation.
 //!
 //! A table presents tabular data as a grid of rows and columns (the
@@ -75,14 +75,14 @@ pub struct Table {
     row_radios: Vec<Radio>,
     /// The selected row (0-based), retained until another row activates.
     selected_row: Option<usize>,
-    /// R707 §5.51 — the WAI-ARIA roving active-descendant **row** (the
+    /// R707 §5.40 — the WAI-ARIA roving active-descendant **row** (the
     /// row of the keyboard cursor's cell), or `None` before any
     /// navigation. Independent of `selected_row` — arrow keys move it
     /// without committing a selection (the data-grid mirror of the date
     /// picker's `focused_day`). Activation syncs it to the activated
     /// cell per the WAI-ARIA "activation moves focus" rule.
     focused_row: Option<usize>,
-    /// R707 §5.51 — the roving active-descendant **column** (0-based).
+    /// R707 §5.40 — the roving active-descendant **column** (0-based).
     /// Always valid (defaults to column 0); paired with `focused_row` to
     /// address the active-descendant cell.
     focused_col: usize,
@@ -162,7 +162,7 @@ impl Table {
             }
             self.selected_row = Some(row);
         }
-        // R707 §5.51 — the active descendant follows the click's
+        // R707 §5.40 — the active descendant follows the click's
         // `PointerUp` regardless of whether the selection changed (the
         // 2-D data-grid refinement of `DatePicker`'s selection-coupled
         // focus sync, which only ever re-targets the same day).
@@ -172,20 +172,20 @@ impl Table {
         }
     }
 
-    /// R707 §5.51 — the roving active-descendant row (0-based), or `None`
+    /// R707 §5.40 — the roving active-descendant row (0-based), or `None`
     /// before any navigation. See [`Self::focused_row`].
     #[must_use]
     pub fn focused_row(&self) -> Option<usize> {
         self.focused_row
     }
 
-    /// R707 §5.51 — the roving active-descendant column (0-based).
+    /// R707 §5.40 — the roving active-descendant column (0-based).
     #[must_use]
     pub fn focused_col(&self) -> usize {
         self.focused_col
     }
 
-    /// R707 §5.51 — set the roving active-descendant row. `None` clears
+    /// R707 §5.40 — set the roving active-descendant row. `None` clears
     /// it; `Some(r)` is stored as-is (callers validate against
     /// [`Self::row_count`]). Independent of selection — this neither
     /// activates the row nor fires the `"selected"` intent (the
@@ -194,7 +194,7 @@ impl Table {
         self.focused_row = row;
     }
 
-    /// R707 §5.51 — set the roving active-descendant column. Stored
+    /// R707 §5.40 — set the roving active-descendant column. Stored
     /// as-is (callers validate against [`Self::col_count`]).
     pub fn set_focused_col(&mut self, col: usize) {
         self.focused_col = col;
@@ -314,13 +314,13 @@ impl TableExternal {
         self.em.inner.is_selected(row)
     }
 
-    /// R707 §5.51 — the roving active-descendant row (0-based), or `None`.
+    /// R707 §5.40 — the roving active-descendant row (0-based), or `None`.
     #[must_use]
     pub fn focused_row(&self) -> Option<usize> {
         self.em.inner.focused_row()
     }
 
-    /// R707 §5.51 — the roving active-descendant column (0-based).
+    /// R707 §5.40 — the roving active-descendant column (0-based).
     #[must_use]
     pub fn focused_col(&self) -> usize {
         self.em.inner.focused_col()
@@ -480,7 +480,7 @@ impl ExternalIntrospect for TableExternal {
         value: IntrospectValue,
     ) -> Result<(), InterveneError> {
         match path {
-            // R707 §5.51 — the 2-D roving active descendant is the
+            // R707 §5.40 — the 2-D roving active descendant is the
             // writable surface: AT `Focus` actions + the binding's
             // arrow-key roving land here (mirror of the date picker's
             // `focused_day` intervene). It moves the cursor only — no
