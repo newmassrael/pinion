@@ -26,7 +26,7 @@
 - `@docs/SEED_PROMPT.md 읽고 R<현재 라운드> 자동 진행`
 - 단순 `R<현재 라운드> 진행`
 
-세션 진입 시: (1) 위 R709 land 블록 + 다음 라운드(R710) plan + watch-out + lessons 읽고, (2) 사용자가 "교과서적/SSOT/북극성?" 감사 요청하면 `[[verify-seed-claims-audit-first]]` 대로 grep+read 독립 감사 → smell 발견 시 feature 전 inline 청산 라운드부터, (3) 그렇지 않으면 R710 plan(진입 시 widget class 분류 + substrate 전제 grep) 부터 자동 진행. 이전 commit/변경은 git log + GENERATED.md 가 source of truth.
+세션 진입 시: (1) 위 R713 land 블록 + 다음 라운드(R714) plan + watch-out + lessons 읽고, (2) 사용자가 "교과서적/SSOT/북극성?" 감사 요청하면 `[[verify-seed-claims-audit-first]]` 대로 grep+read 독립 감사 → smell 발견 시 feature 전 inline 청산 라운드부터, (3) 그렇지 않으면 R714 plan(진입 시 widget class 분류 + substrate 전제 grep) 부터 자동 진행. 이전 commit/변경은 git log + GENERATED.md 가 source of truth.
 
 【진입 시 필독 순서】
 1. `docs/SEED_PROMPT.md` (이 파일 — single-command entry point)
@@ -57,7 +57,7 @@
 2. **RPC verify demo 의무**: ≥ 30 assertion (R660 baseline)
 3. **inline 부채 청산 mandatory**: 이전 라운드 honest 약점 → 다음 라운드 mandatory 인라인 청산. 외부 의존만 carry 정당
 4. **doc compression baseline (R661)**: target ≤ 1.5x base LOC; 압축 density 유지
-5. **검증 3종**: `cargo test --workspace` + `cargo clippy --workspace --all-targets --features pinion-runtime/vello` (`-D pedantic`) + 전체 demo sweep (현재 64개, R709 기준). 모두 green 일 때만 commit. visual 위젯 라운드는 live-pixel guard 추가(R706/R707.3/R708/R709 선례)
+5. **검증 3종**: `cargo test --workspace` + `cargo clippy --workspace --all-targets --features pinion-runtime/vello` (`-D pedantic`) + 전체 demo sweep (현재 66개, R713 기준). 모두 green 일 때만 commit. visual 위젯 라운드는 live-pixel guard 추가(R706/R707.3/R708/R709/R713 선례)
 6. **Mnemosyne**: validate_workspace baseline → append_changelog_entry_v2 R<NNN> → validate_workspace 재확인 (T1 reject=0 / round-trip 1/1 / 새 orphan +0). atomic JSON / GENERATED.md 직접 편집 금지
 7. **2-commit 패턴**: 코드 commit (`refactor/feat(scope): R<NNN> ...` + atomic JSON + GENERATED.md) → meta commit (`docs(meta): R<NNN> SEED record <hash> + R<next> next`, SEED 만)
 
