@@ -1,6 +1,6 @@
 # GENERATED.md — atomic store derived view
 
-this file `mnemosyne-cli generate-docs` output — direct no edit. atomic store (`docs/.atomic/workspace.atomic.json`) in mutate primitive (`set-section-*` / `append-changelog-entry-v2`) pass and then re-generate.
+this file `mnemosyne-cli generate-docs` output — direct no edit. atomic store (`docs/.atomic/workspace.atomic.json`) in mutate primitive (`set-section-*` / `append-changelog-entry`) pass and then re-generate.
 
 Source: `docs/.atomic/workspace.atomic.json`
 
@@ -9,6 +9,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 ## Sections
 
 ### §1. Vision
+
 
 
 **Intent**: AI-native GUI framework progressing through 4 phases (Foundation, Professional GUI, Game engine substrate per §2 #4 dual execution, AAA editor self-hosted), AI-introspection 1st-class throughout.
@@ -51,6 +52,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 ### §2. Settled invariants
+
 
 
 **Intent**: v1 invariants: structured scene mandatory; RPC headless; dry_run; mode toggle; SCE-managed state; GUI/TUI dual; scene-as-data; SCE meta = universal cross-framework pattern authoring surface
@@ -102,6 +104,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 ### §3. Capability boundaries
 
 
+
 **Intent**: Two opaque escape hatches recognized: Effect(shader) and External(content); scope excludes WebEngine and codec embed
 
 
@@ -133,6 +136,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 ### §4. First dogfood: target application requirements
+
 
 
 **Intent**: First dogfood must validate framework on real-world non-trivial GUI surface; autonomous schedule, no external deadline; widget catalogue criteria
@@ -167,6 +171,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 ### §5. Open implementation axes (Round 2 decomposition)
+
 
 
 **Intent**: Open implementation axes formally decomposed: 10 sub-sections enumerate option sets, dependencies, and trade-offs deferred from Round 1 §5.X carry-forward
@@ -207,6 +212,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 ### §5.1. Strategic kickoff direction (framework-first vs dogfood-slice-first)
+
 
 
 **Intent**: Decision: framework-first kickoff; common substrate (scene/RPC/dry_run) before first widget; ratified Round 3
@@ -254,6 +260,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 ### §5.10. Mode toggle API surface (runtime flag vs build feature vs per-view)
 
 
+
 **Intent**: Decision: runtime flag for immediate vs retained mode toggle; single binary; ratified Round 3
 
 
@@ -299,6 +306,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 ### §5.11. Scene primitive variant shape (minimal vs CSS-rich vs layered)
+
 
 
 **Intent**: Decision: layered primitive shape (core variant + Style trait + Modifier composition); ratified Round 5
@@ -354,6 +362,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 ### §5.12. RPC method shape (generic query vs typed-per-action vs hybrid)
+
 
 
 **Intent**: Decision: hybrid RPC shape (7 typed methods: query/click/dry_run/snapshot/rewind/waitFor/screenshot + path/filter sub-args); ratified Round 5, extended Round 7
@@ -445,6 +454,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 ### §5.13. Event model (closed enum vs open registry vs core+opaque)
 
 
+
 **Intent**: Decision: closed core Event + opaque External event + logical DPI-aware coords; ratified Round 5
 
 
@@ -497,6 +507,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 ### §5.14. State containment topology (single root vs per-widget vs hierarchical)
 
 
+
 **Intent**: Decision: hierarchical SCE topology (root + scoped child SCEs); ratified Round 5
 
 
@@ -542,6 +553,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 ### §5.15. External primitive integration contract
+
 
 
 **Intent**: Decision: 8-point integration contract for External primitives (backend/repaint/thread/lifecycle/input/DPI/async/introspection); ratified Round 7
@@ -610,6 +622,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 ### §5.16. GPU renderer architecture (runtime abstraction vs build-time codegen)
+
 
 
 **Intent**: Decision (supersede Round 10 codegen): SCE Forge structural skeleton (SCXML state + Forge codec/buffer-pool/worker) + pinion thin RHI + naga; ratified Round 11
@@ -707,6 +720,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 ### §5.17. Window topology (SCE-driven app statechart vs runtime registry)
 
 
+
 **Intent**: Decision: app.scxml declares window topology; SCE Forge build-time emits WindowId/routing/lifecycle; single vs multi auto-branches from SCXML state count; zero runtime registry cost; ratified Round 15
 
 
@@ -759,6 +773,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 ### §5.18. Multi-window RPC addressing (path prefix vs implicit first window)
 
 
+
 **Intent**: Decision: RPC path optional /window[id]/ prefix; id matches SCE-emit const enum via perfect-hash; absent prefix routes to first SCE-declared window; single-window apps short-circuit; ratified Round 15
 
 
@@ -808,6 +823,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 ### §5.19. app.scxml convention (file location, declaration shape, build-time discovery)
+
 
 
 **Intent**: app.scxml lives at consumer crate root; SCXML state set declares window topology; build.rs invokes sce_build at compile time
@@ -884,6 +900,7 @@ fn main() {
 ### §5.2. Scene primitive type set (closed-form vs extensible)
 
 
+
 **Intent**: Decision: closed-form primitive type set (Box/Text/Path/Image/Container/Effect/External); slot ratified Round 3
 
 
@@ -935,6 +952,7 @@ fn main() {
 
 
 ### §5.20. Intent system & bidirectional event flow
+
 
 
 **Intent**: Bidirectional symbolic event channel: widgets emit Intent (tag+payload), runtime queue drains to app and RPC subscriber per-frame; one channel for human + AI input.
@@ -1006,6 +1024,7 @@ fn main() {
 ### §5.21. Layout system (taffy auto-layout, flex v0)
 
 
+
 **Intent**: Auto-layout via taffy flexbox: ContainerNode + every leaf node carries LayoutStyle sidecar; pinion-runtime computes final Rect per node each frame before paint.
 
 
@@ -1065,6 +1084,7 @@ fn main() {
 
 
 ### §5.22. Reactive primitives (Signal / Computed / Resource)
+
 
 
 **Intent**: Signal/Computed/Resource fine-grained reactive primitives; pinion-forge DSL (.pinion.xml + <pinion> root) emits Rust struct + Owner-rooted constructor; AI reads via scene/query
@@ -1200,6 +1220,7 @@ fn main() {
 
 
 ### §5.23. Effect model (Effect / Command / handler)
+
 
 
 **Intent**: Two-layer effects: Effect = reactive scope subscribing to Signals; Command<Intent> = declarative async/IO; Handler = dispatch impl. dry_run collects Commands without executing.
@@ -1362,6 +1383,7 @@ fn main() {
 ### §5.24. Semantic tree (role / state / actions)
 
 
+
 **Intent**: Semantic sidecar on every Scene node: role (button/text/list), state (enabled/focused), actions (invokable). Absorbs §5.20 tag; AccessKit/AT-SPI/UIA bridge target; AI agent 1st-class.
 
 
@@ -1422,6 +1444,7 @@ fn main() {
 
 
 ### §5.25. Modifier composition (chain pattern)
+
 
 
 **Intent**: Modifier = ordered chain of closed ModifierOp variants per Scene node. Compose/SwiftUI pattern. Replaces R20 Modifier struct; carries event handlers + reactive overlays + ad-hoc styles.
@@ -1486,6 +1509,7 @@ fn main() {
 ### §5.26. Incremental layout + damage tracking
 
 
+
 **Intent**: Layout cache by node identity + Signal dep dirty tracking; subtree-only reflow; damage rect to paint; optional off-thread compute. Refines §5.21 full-recompute for AAA perf.
 
 
@@ -1545,6 +1569,7 @@ fn main() {
 
 
 ### §5.27. Virtualization (VirtualList Scene variant + windowed render)
+
 
 
 **Intent**: VirtualList = planned windowed-render Scene variant for 10K+ datasets. DEFERRED, not implemented (see R690.A caveat); the R32 8th-variant / 14th-RPC numbering is stale.
@@ -1612,6 +1637,7 @@ fn main() {
 
 
 ### §5.28. Animation (spring physics + interruptible)
+
 
 
 **Intent**: Spring-physics animation over Signals; Animated<T> wraps a Signal value with stiffness/damping/mass; interruptible (new target preserves velocity). SwiftUI Animation pattern.
@@ -1715,6 +1741,7 @@ fn main() {
 ### §5.29. Structured concurrency (Owner scope + Tokio + SyncSignal)
 
 
+
 **Intent**: Structured concurrency: Owner scope (§5.22) + Tokio task scopes + SyncSignal cross-thread. Cancellation propagates on Owner drop; no orphan tasks. Compose/Swift industry standard.
 
 
@@ -1771,6 +1798,7 @@ fn main() {
 
 
 ### §5.3. DSL surface form (file-based vs macro vs view-fn)
+
 
 
 **Intent**: Decision: view function literal (Xilem-style); plain Rust functions, no separate DSL surface; ratified Round 3
@@ -1842,6 +1870,7 @@ fn main() {
 ### §5.30. Accessibility (AccessKit bridge from SemanticProps)
 
 
+
 **Intent**: AccessKit bridge derives platform AT delegates (AT-SPI / UIA / NSAccessibility) from §5.24 SemanticProps. Focus management + keyboard nav 1st-class. No hand-written AT code.
 
 
@@ -1897,6 +1926,7 @@ fn main() {
 
 
 ### §5.31. Hot reload (Signal serialization protocol)
+
 
 
 **Intent**: Hot reload via Signal<T: Serialize> snapshot/restore: code swap preserves state; new view-fn applies to existing Signals. Flutter hot reload + Compose Live Edit pattern.
@@ -1955,6 +1985,7 @@ fn main() {
 
 
 ### §5.32. AI scene introspection: spatial-semantic locate
+
 
 
 **Intent**: xy → element path + region → element set + path → bbox 역방향 RPC. 스크린샷-OCR 없이 시각 선택을 semantic identity 로 변환, AI scene reasoning first-class input.
@@ -2037,6 +2068,7 @@ fn main() {
 ### §5.33. AI overlay UX: event capture + highlight rendering
 
 
+
 **Intent**: pinion-overlay crate: AI mode event capture + scene-level highlight injection. §5.32 introspection 위에 user-facing surface 구축, 시각 선택과 AI 응답 highlight 의 first-class layer.
 
 
@@ -2109,6 +2141,7 @@ fn main() {
 
 
 ### §5.34. AI scene change proposal: prepare/preview/apply/cancel lifecycle
+
 
 
 **Intent**: AI 가 typed change 제안 → stable preview_id 발급 → dry_run 결정성으로 미리보기 → apply/cancel/timeout 으로 완료; §2#3 invariant 의 명시적 RPC lifecycle 층.
@@ -2222,6 +2255,7 @@ fn main() {
 
 
 ### §5.35. Input dispatch — cursor/key → widget routing primitive
+
 
 
 **Intent**: input event → framework hit-test/focus → widget dispatch; application routing 0줄, §5.20 intent (output) 의 input 대칭 axis
@@ -2347,6 +2381,7 @@ router.pointer_down(&mut state_scene);
 ### §5.36. Text shaping & glyph cache — Linebender parley + glyph atlas primitive
 
 
+
 **Intent**: 모든 backend(Vello/Headless/TUI/미래) 공유 backend-orthogonal text layout+shaping+glyph cache framework primitive — 위젯 카탈로그 universal prereq
 
 
@@ -2424,6 +2459,7 @@ router.pointer_down(&mut state_scene);
 ### §5.37. Self-hosted text engine — full OpenType to GPU rasterization stack
 
 
+
 **Intent**: pinion 의 모든 text 동작 자체 구현 — parley/swash/fontique/ttf-parser 모두 제거, OpenType parser 부터 GPU rasterization 까지 full stack. lifetime canonical.
 
 
@@ -2479,6 +2515,7 @@ router.pointer_down(&mut state_scene);
 
 
 ### §5.37.1. OpenType binary parser — sfnt foundation (R50.1 sub-scope)
+
 
 
 **Intent**: R50.1 OpenType binary parser sub-scope — sfnt Offset Table + 6 mandatory tables + glyf/loca + name. Latin-first foundation for §5.37 자체 text engine; CFF/variable/color/WOFF2 후속 sub-section.
@@ -2560,6 +2597,7 @@ router.pointer_down(&mut state_scene);
 
 
 ### §5.37.2. Text engine RPC channel — AI-first font/text introspect (R50.X sub-scope)
+
 
 
 **Intent**: §5.37 text engine 의 RPC channel sub-scope — pinion-rpc 가 §5.37.1 parser 결과 + 후속 text layer (Unicode/BIDI/shape/layout) 를 JSON-RPC 2.0 로 AI agent 에게 노출, §2 invariant #2 (RPC AI-first) 의 text 영역 첫 적용.
@@ -2644,6 +2682,7 @@ router.pointer_down(&mut state_scene);
 
 
 ### §5.37.3. Unicode self-hosted normalization — UAX #15 NFC/NFD/NFKC/NFKD (R50.2 sub-scope)
+
 
 
 **Intent**: §5.37 text engine 의 Unicode codepoint normalization sub-scope — UAX #15 NFC/NFD/NFKC/NFKD 4 form 자체 구현. UCD decomposition + canonical combining class 직접 embed. 외부 lib 0.
@@ -2743,6 +2782,7 @@ router.pointer_down(&mut state_scene);
 ### §5.37.4. BIDI directional resolution (UAX #9)
 
 
+
 **Intent**: Self-hosted text engine 의 directional resolution layer: NFC codepoint 시퀀스 → 각 character 의 paragraph-relative embedding level + visual reorder mapping, external lib 0 + UAX #9 full conformance.
 
 
@@ -2834,6 +2874,7 @@ router.pointer_down(&mut state_scene);
 ### §5.37.5. Script analysis (UCD Script property) — carry placeholder
 
 
+
 **Intent**: §5.37.5 script analysis sub-layer placeholder — UCD Script property 기반 segmentation. shape engine input (run splitting). ratify 는 multi-session carry, BIDI 이후 자연 순서
 
 
@@ -2848,6 +2889,7 @@ router.pointer_down(&mut state_scene);
 ### §5.37.6. Shape (OpenType GSUB/GPOS execution) — carry placeholder
 
 
+
 **Intent**: §5.37.6 shape sub-layer placeholder — OpenType GSUB/GPOS execution (glyph substitution + positioning). parley/swash 대체. R51.1 line_count semantic forward-reference. ratify 는 multi-session carry
 
 
@@ -2860,6 +2902,7 @@ router.pointer_down(&mut state_scene);
 
 
 ### §5.37.7. Line break (UAX #14) — carry placeholder
+
 
 
 **Intent**: §5.37.7 line break sub-layer placeholder — UAX #14 algorithm. R51.1 §5.12 forward-reference 정합용. self-hosted text engine 의 line breaking step, ratify 는 multi-session carry
@@ -2879,6 +2922,7 @@ router.pointer_down(&mut state_scene);
 
 
 ### §5.38. Widget catalog — Tier 1 primitive widgets
+
 
 
 **Intent**: §5.38 Tier-1 widget primitive 카탈로그 axis ratify — Button R12 시작, Toggle/Checkbox/Slider/TextInput/Menu 등 후속, framework-side 책임 (R47-class lesson 적용)
@@ -3090,6 +3134,7 @@ fn create_external() -> Box<dyn External> {
 ### §5.39. Focus model — keyboard navigation + activation primitive
 
 
+
 **Intent**: focused widget = key dispatch single target + Tab traversal + ARIA Space/Enter activation; pinion-runtime FocusManager 가 focused_tag 소유, broadcast key dispatch 폐기
 
 
@@ -3185,6 +3230,7 @@ fn create_external() -> Box<dyn External> {
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
+
 **Intent**: Decision: embed SCE Forge Rust emit directly via vendor/sce submodule; slot ratified Round 3
 
 
@@ -3233,6 +3279,7 @@ fn create_external() -> Box<dyn External> {
 
 
 ### §5.40. Accessibility semantic tree — AccessKit integration for WCAG 4.1.2 (Name, Role, Value)
+
 
 
 **Intent**: AccessKit 통합으로 widget name/role/state/value 를 OS AT API (UIA/AX/AT-SPI/Android) 노출, WCAG 4.1.2 충족, AI introspect 와 직교 공존
@@ -3436,6 +3483,7 @@ fn create_external() -> Box<dyn External> {
 ### §5.41. TUI 백엔드 — cell-based render mode + crossterm 입력 + WidgetRenderer trait 추출
 
 
+
 **Intent**: §2 #6 GUI/TUI dual invariant 의 spec 구체화 — Scene→cell 매핑, crossterm key/mouse → §5.13 Event 변환, WidgetRenderer trait 추출 substrate evolution plan
 
 
@@ -3610,6 +3658,7 @@ fn create_external() -> Box<dyn External> {
 ### §5.45. Scroll axis (R55)
 
 
+
 **Intent**: Establish scroll container axis: ScrollNode scene primitive + offset state + input mapping + clipping render + composite widget integration.
 
 
@@ -3738,6 +3787,7 @@ pub struct ScrollNode {
 ### §5.49. AI-first RPC self-verification harness (R59)
 
 
+
 **Intent**: Claude-side RPC dogfood harness: every visual round ends with a typed scene/query|invoke|snapshot demo that proves observable state without humans narrating screenshots.
 
 
@@ -3815,6 +3865,7 @@ if __name__ == "__main__":
 ### §5.5. MCU v1 backend scope (AP-only vs MCU-included)
 
 
+
 **Intent**: Decision: AP-only v1 (Linux/Mac/Win); MCU deferred to v2+; ratified Round 3
 
 
@@ -3857,6 +3908,7 @@ if __name__ == "__main__":
 
 
 ### §5.50. Theming substrate (R57)
+
 
 
 **Intent**: Establish theming substrate: ColorRole enum (Material 3 / W3C mirror) + Theme palette + ThemeProvider reactive wrapper + use_theme hook so widgets resolve semantic roles instead of RGB literals.
@@ -4048,6 +4100,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 ### §5.6. Reuse path (early cascade-emit vs Rust-native then port)
 
 
+
 **Intent**: Decision: Rust-native MVP first, SCE-Forge-style cascade-emit layer added after canonical kind settles; ratified Round 3
 
 
@@ -4090,6 +4143,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 ### §5.7. RPC headless protocol (MCP-native vs JSON-RPC vs gRPC)
+
 
 
 **Intent**: Decision: JSON-RPC 2.0 transport; MCP and other AI tooling wrap on top; ratified Round 3
@@ -4145,6 +4199,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 ### §5.8. dry_run hook site (engine-level vs scene snapshot vs view rewind)
 
 
+
 **Intent**: Decision: SCE engine-level hook for dry_run (intercept step function before commit); ratified Round 3
 
 
@@ -4193,6 +4248,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 ### §5.9. GUI/TUI renderer split (trait-based vs separate pipelines)
 
 
+
 **Intent**: Decision: trait-based Renderer abstraction (one scene → GUI/TUI via dispatch); ratified Round 3
 
 
@@ -4236,6 +4292,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 ### §6. Bootstrap implementation choices (Tier 1 auto-ratified)
 
 
+
 **Intent**: Tier 1 implementation choices auto-ratified Round 4 without axis split (ceremonial bloat avoidance); D/E/F/G handled as §5.11-§5.14 axes
 
 
@@ -4268,6 +4325,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 ### §6.1. Crate workspace structure
+
 
 
 **Intent**: Decision: Cargo workspace with initial 4 crates (pinion-core, pinion-runtime, pinion-rpc, pinion-cli); pinion-* prefix; ratified Round 4
@@ -4313,6 +4371,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 ### §6.2. Rust toolchain (MSRV + edition)
 
 
+
 **Intent**: Decision: stable Rust, MSRV 1.85.0, edition 2024; ratified Round 4
 
 
@@ -4352,6 +4411,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 ### §6.3. Async model
+
 
 
 **Intent**: Decision: view-fn sync (purity invariant), RPC and IO async via tokio; ratified Round 4
@@ -4404,6 +4464,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 ### §6.4. Ecosystem default deps (winit, taffy, cosmic-text, accesskit, image, lyon, kurbo)
+
 
 
 **Intent**: Decision: auto-ratify ecosystem default crates for window, layout, text, a11y, image, path, math; ratified Round 10
@@ -14428,6 +14489,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - button_scene paint-compose helper duplicated across hello-dialog + hello-drawer (2 consumers) — lift to pinion_widget_paint::button at the 3rd consumer (Rule-of-Three for button paint, per the R686.C use_hover_progress precedent). Our-code debt, justly deferred (not hidden), [[abstraction-needs-second-consumer]].
 - scrim=ButtonExternal reuse for light-dismiss stays a 1-consumer pattern (drawer; dialog opts out); extract a dedicated DismissExternal only if a 2nd light-dismiss consumer appears AND the button-semantics reuse bites.
 - Phase B widget-catalog breadth resumes R704+: Table (Model/View + virtualization substrate-first or documented row-limit), DatePicker (calendar grid + date types, zero substrate today), ColorPicker (2D pad + HSV math).
+
+
+
+### R705 — R705 producer-parity - scene/snapshot from:paint serializes the stored last_paint_scene (the exact frame painted to GPU) so introspection == screen by construction, replacing the query-time re-render; and the focus-ring overlay is placed at the scroll-translated window-absolute rect via the new SSOT Scene::rect_for_tag_absolute, fixing misplacement for any focused widget inside a Scroll.
+
+**Changes**:
+- pinion-core: new Scene::rect_for_tag_absolute - single scroll-offset-translation + viewport-clip authority (lifts find_rect_by_tag_with_offset + translate_rect_into_clip out of pinion-rpc::dispatch); pinion_rpc::find_rect_by_tag now delegates to it.
+- pinion-rpc: DispatchContext.last_paint_scene + with_last_paint_scene; handle_scene_snapshot from:paint serializes the stored scene when present, falls back to the producer only for never-painted (headless) windows.
+- pinion-runtime: InputRouter::last_paint_scene getter; CoreShell::scene_mut_and_last_paint_for_window (disjoint split borrow), last_paint_scene_for_window, painted_window_sizes.
+- pinion-overlay: inject_focus_ring resolves the ring rect through Scene::rect_for_tag_absolute (window-absolute) instead of the raw scroll-local rect; regression unit test for a scrolled row.
+- pinion-shell: dispatch threads the stored paint scene via the split borrow; dirty-on-mutation re-stores the paint scene of EVERY painted window when a handled apply_key (try_apply_key) or any drained intent (handle_tail) armed the redraw - covering reactive-Signal-only changes (listbox/tree focused-row, cross-window selection) the SCXML state_change arm misses.
+- tools: grounded rpc_verify.abs_rects_of + assert_focus_ring_concentric (independent window-absolute recompute) + r705_focus_ring_placement.py catalogue sweep + r705_focus_ring_introspect.py.
+
+
+
+**Verification**:
+- cargo test --workspace (76 suites green) + clippy --all-targets --features pinion-runtime/vello clean; demo sweep 58/58 (R704 datepicker excluded as WIP).
+- Grounded focus-ring sweep: 31 rings across 24 GUI examples + a non-zero-offset scrolled-listbox row verified concentric against independently-recomputed window-absolute rects (non-tautological, unlike the prior same-coordinate-space assertions).
+- Live ffmpeg x11grab cross-check: dialog Cancel ring + scrolled listbox Fig-row ring match scene/snapshot from:paint exactly, confirming introspection == screen; same paint_scene object is both to_vello_cached(&scene) to GPU and finalize_frame(scene) to the router.
+
+
+
+**Impact**: §5.12, §5.16, §5.39, §5.45
+
+
+**Carry forward**:
+- R704 datepicker (WIP, separate round): simulate final-projection RollbackFailed + click does not move active-descendant; month-crossing arrow nav.
+- pinion-overlay::highlight shares the same top-level-vs-scroll-local latent gap (DevTools highlight of a scrolled node); consolidate onto Scene::rect_for_tag_absolute when a scrolled-highlight consumer appears.
 
 
 

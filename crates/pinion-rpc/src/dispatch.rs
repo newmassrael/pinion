@@ -256,6 +256,17 @@ pub struct DispatchContext<'a> {
     /// rendered the first frame — `scene/layout {viewport: null}`
     /// errors with `NoLastPaintLayout` in that window.
     pub last_paint_layout: Option<&'a LayoutNode>,
+    /// (R705 §5.12 §2 #7) The named window's most recently painted
+    /// scene — the exact tree that produced the pixels on screen.
+    /// `scene/snapshot from: paint` serializes THIS borrow when present
+    /// so introspection equals the displayed frame by construction,
+    /// rather than re-running the paint producer at query time (the
+    /// §2 #7 violation R705 closes: a re-render reflects current state
+    /// while the screen may still show a pre-mutation frame —
+    /// [[introspection-from-paint-not-screen]]). `None` falls back to
+    /// the [`Self::paint_producer`] (headless bootstrap, never-painted
+    /// window). Non-snapshot methods ignore the field.
+    pub last_paint_scene: Option<&'a Scene>,
     /// R50.X.1 §5.37.2 — text engine font handle store. AI agents
     /// register OpenType binaries through `font/parse` and address
     /// them by `font_id` in follow-up `font/*` calls. `None` causes
@@ -475,6 +486,7 @@ impl<'a> DispatchContext<'a> {
             paint_producer: None,
             resize_request: None,
             last_paint_layout: None,
+            last_paint_scene: None,
             font_registry: None,
             focus_manager: None,
             runtime_owner: None,
@@ -520,6 +532,21 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_last_paint_layout(mut self, snapshot: &'a LayoutNode) -> Self {
         self.last_paint_layout = Some(snapshot);
+        self
+    }
+
+    /// Builder: attach the named window's most recently painted scene
+    /// (R705 §5.12 §2 #7). `scene/snapshot from: paint` serializes this
+    /// borrow — the exact tree on screen — instead of re-rendering at
+    /// query time, so introspection equals the displayed frame by
+    /// construction. The embedder threads the borrow from
+    /// [`pinion_runtime::CoreShell::scene_mut_and_last_paint_for_window`]
+    /// (disjoint from the `&mut scene` the dispatcher holds). Omit it
+    /// (or pass `None`) for a never-painted window so the snapshot
+    /// handler falls back to the paint producer.
+    #[must_use]
+    pub fn with_last_paint_scene(mut self, paint_scene: &'a Scene) -> Self {
+        self.last_paint_scene = Some(paint_scene);
         self
     }
 
@@ -730,6 +757,11 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // R47.7.5 — snapshot read-only; safe to copy the &LayoutNode out
     // of the context for the dispatch lifetime.
     let last_paint_layout = ctx.last_paint_layout;
+    // R705 §5.12 §2 #7 — the stored paint scene (displayed frame).
+    // `scene/snapshot from: paint` serializes this instead of
+    // re-rendering at query time. Copied out for the dispatch lifetime
+    // (read-only borrow, same shape as `last_paint_layout`).
+    let last_paint_scene = ctx.last_paint_scene;
     // R51.161 §5.23 — substrate's root Owner. Read-only borrow:
     // `scene/commands` snapshots the pending queue;
     // `scene/theme_tokens` (R598 §5.50) reads the cached
@@ -855,7 +887,12 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
-                handle_scene_snapshot(scene, producer, request.params.as_ref()),
+                handle_scene_snapshot(
+                    scene,
+                    producer,
+                    last_paint_scene,
+                    request.params.as_ref(),
+                ),
                 HandlerKind::Read,
             )
         }
@@ -1481,162 +1518,20 @@ where
     Ok((cx, cy))
 }
 
-/// R51.201 / R51.200 / R55.G.7 §5.49 — depth-first walk of the scene
-/// tree for the first node with `tag == target_tag`. Descends through
-/// `Container.children` and `Scroll.content`; returns `None` when no
-/// node carries the tag *or* when the matched node lies entirely
-/// outside the active Scroll viewport stack.
+/// R51.201 / R51.200 / R55.G.7 §5.49 — window-absolute, viewport-clipped
+/// rect of the node tagged `target_tag`.
 ///
-/// **Coordinate translation** (R51.200): rects inside a
-/// `Scene::Scroll.content` are scroll-local, while everything else
-/// is window-absolute. This walker accumulates `(viewport.x -
-/// offset_x, viewport.y - offset_y)` on each Scroll boundary so the
-/// returned rect is *always* window-absolute.
-///
-/// **Viewport clipping** (R55.G.7 carry-of-R51.200): the walker also
-/// tracks the intersection of every enclosing Scroll's window-abs
-/// viewport. The matched rect gets clipped against this stack —
-/// content rows that overflow the viewport in width or height return
-/// only their visible portion, so the click target lands on the
-/// pixels the user actually sees. A row fully scrolled off returns
-/// `None` (explicit "tag not visible") instead of a degenerate (0,0)
-/// origin saturation; the upstream RPC handler then surfaces a
-/// proper `invalid_params` error rather than dispatching a phantom
-/// click at the window corner.
+/// R705.1 §5.45 — delegates to the single coordinate-translation
+/// authority [`pinion_core::scene::Scene::rect_for_tag_absolute`].
+/// Pre-R705.1 this scroll-offset / viewport-clip walk lived here as
+/// `find_rect_by_tag_with_offset` + `translate_rect_into_clip`; R705.1
+/// lifted it into `pinion-core` so the §5.39 focus-ring overlay
+/// (`pinion_overlay`) draws its ring at the same window-absolute
+/// position this resolver lands clicks on — one resolver, no drift
+/// between where input goes and where the ring paints
+/// ([[introspection-from-paint-not-screen]]).
 fn find_rect_by_tag(scene: &Scene, target_tag: &str) -> Option<pinion_core::scene::Rect> {
-    find_rect_by_tag_with_offset(scene, target_tag, 0, 0, None)
-}
-
-/// R55.G.7 §5.49 carry-of-R51.200 — translate a current-frame rect
-/// into window-absolute coords via the accumulated `(x_off, y_off)`
-/// shift, intersect with `clip` (the Scroll viewport stack), and
-/// saturate back to `u32`. Returns `None` when the result is empty
-/// (rect lies fully outside the clip, e.g. scrolled off-viewport).
-#[allow(
-    clippy::cast_possible_wrap,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_truncation,
-    reason = "u32 ↔ i64 ↔ u32 round-trip on bounded scene coords; saturate at 0 below"
-)]
-fn translate_rect_into_clip(
-    rect: pinion_core::scene::Rect,
-    x_off: i64,
-    y_off: i64,
-    clip: Option<pinion_core::scene::Rect>,
-) -> Option<pinion_core::scene::Rect> {
-    use pinion_core::scene::Rect;
-    let rect_left = i64::from(rect.x) + x_off;
-    let rect_top = i64::from(rect.y) + y_off;
-    let rect_right = rect_left + i64::from(rect.w);
-    let rect_bottom = rect_top + i64::from(rect.h);
-    let (clip_left, clip_top, clip_right, clip_bottom) = match clip {
-        Some(c) => {
-            let cl = i64::from(c.x);
-            let ct = i64::from(c.y);
-            (cl, ct, cl + i64::from(c.w), ct + i64::from(c.h))
-        }
-        None => (i64::MIN, i64::MIN, i64::MAX, i64::MAX),
-    };
-    let visible_left = rect_left.max(clip_left);
-    let visible_top = rect_top.max(clip_top);
-    let visible_right = rect_right.min(clip_right);
-    let visible_bottom = rect_bottom.min(clip_bottom);
-    if visible_right <= visible_left || visible_bottom <= visible_top {
-        return None;
-    }
-    let out_x = visible_left.max(0) as u32;
-    let out_y = visible_top.max(0) as u32;
-    let out_w = (visible_right - i64::from(out_x)) as u32;
-    let out_h = (visible_bottom - i64::from(out_y)) as u32;
-    Some(Rect::new(out_x, out_y, out_w, out_h))
-}
-
-fn find_rect_by_tag_with_offset(
-    scene: &Scene,
-    target_tag: &str,
-    x_off: i64,
-    y_off: i64,
-    clip: Option<pinion_core::scene::Rect>,
-) -> Option<pinion_core::scene::Rect> {
-    use std::borrow::Cow;
-    let tag_matches = |t: &Option<Cow<'static, str>>| -> bool {
-        t.as_deref() == Some(target_tag)
-    };
-    match scene {
-        Scene::Box(n) => {
-            if tag_matches(&n.tag) {
-                translate_rect_into_clip(n.rect, x_off, y_off, clip)
-            } else {
-                None
-            }
-        }
-        Scene::Text(n) => {
-            if tag_matches(&n.tag) {
-                translate_rect_into_clip(n.rect, x_off, y_off, clip)
-            } else {
-                None
-            }
-        }
-        Scene::Path(n) => {
-            if tag_matches(&n.tag) {
-                translate_rect_into_clip(n.rect, x_off, y_off, clip)
-            } else {
-                None
-            }
-        }
-        Scene::Image(n) => {
-            if tag_matches(&n.tag) {
-                translate_rect_into_clip(n.rect, x_off, y_off, clip)
-            } else {
-                None
-            }
-        }
-        Scene::Container(n) => {
-            if tag_matches(&n.tag) {
-                translate_rect_into_clip(n.rect, x_off, y_off, clip)
-            } else {
-                n.children.iter().find_map(|c| {
-                    find_rect_by_tag_with_offset(c, target_tag, x_off, y_off, clip)
-                })
-            }
-        }
-        Scene::External(n) => {
-            if tag_matches(&n.tag) {
-                translate_rect_into_clip(n.rect, x_off, y_off, clip)
-            } else {
-                None
-            }
-        }
-        Scene::Scroll(n) => {
-            if tag_matches(&n.tag) {
-                translate_rect_into_clip(n.viewport, x_off, y_off, clip)
-            } else {
-                // Compute this scroll's window-abs viewport intersected
-                // with the inherited clip — that becomes the tightened
-                // clip window for the content recursion. Nested Scroll
-                // stacks fold their viewports correctly via the chain.
-                // `translate_rect_into_clip` does exactly this work for
-                // the viewport rect itself, so reuse it to derive the
-                // new clip in one call.
-                let new_clip = translate_rect_into_clip(
-                    n.viewport,
-                    x_off,
-                    y_off,
-                    clip,
-                )?;
-                let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
-                let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
-                find_rect_by_tag_with_offset(
-                    n.content.as_ref(),
-                    target_tag,
-                    x_off + dx,
-                    y_off + dy,
-                    Some(new_clip),
-                )
-            }
-        }
-        _ => None,
-    }
+    scene.rect_for_tag_absolute(target_tag)
 }
 
 /// R55.F §5.45 — `scene/scroll` programmatic scroll mutation.
@@ -1885,16 +1780,28 @@ fn rewind_error_to_rpc(err: RewindError) -> RpcError {
 ///     wire (`DispatchContext::with_paint_producer`); fails with
 ///     `PaintProducerUnavailable` when absent.
 ///
-/// Paint-mode viewport resolution: `params.viewport = {w, h}` when
-/// present; otherwise defaults to 720×480 — a fixed fallback rather
-/// than the most-recent winit frame, because re-using the shell's
-/// frame size would create a hidden dependency between two RPC
-/// methods (`scene/resize` followed by `scene/snapshot from: paint`)
-/// that the v0 wire shape does not document. Demos pass an explicit
-/// viewport when they care.
+/// R705 §5.12 §2 #7 — paint-mode source resolution. When the embedder
+/// threaded the window's stored paint scene
+/// ([`DispatchContext::with_last_paint_scene`]), `from: paint`
+/// serializes THAT — the exact tree on screen — so introspection
+/// equals the displayed frame by construction. Pre-R705 this re-ran
+/// the paint producer at query time, which reflects current state even
+/// when the screen still shows a pre-mutation frame; the resulting
+/// drift between `scene/snapshot`, the live window, and the state value
+/// was a §2 #7 violation ([[introspection-from-paint-not-screen]]).
+///
+/// The `viewport` param is therefore IGNORED when a stored frame
+/// exists (the displayed frame has the window's real size, not a
+/// hypothetical one). It is honoured only in the producer fallback
+/// below — a never-painted window (headless bootstrap with no winit
+/// paint loop) has no displayed frame to mirror, so a fresh render at
+/// the requested (or default 720×480) viewport is the only available
+/// truth. Bindings driven by a real window observe the parity fix; the
+/// in-crate headless test harness keeps re-rendering exactly as before.
 fn handle_scene_snapshot<F>(
     scene: &Scene,
     paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -1912,12 +1819,17 @@ where
     let node = match from {
         "state" => snapshot(scene, path).map_err(snapshot_error_to_rpc)?,
         "paint" => {
-            let Some(producer) = paint_producer else {
+            // Prefer the displayed frame (§2 #7 parity); fall back to a
+            // query-time render only when no frame has been stored yet.
+            if let Some(painted) = last_paint_scene {
+                snapshot(painted, path).map_err(snapshot_error_to_rpc)?
+            } else if let Some(producer) = paint_producer {
+                let (w, h) = parse_snapshot_viewport(params)?;
+                let paint_scene = (producer)(w, h);
+                snapshot(&paint_scene, path).map_err(snapshot_error_to_rpc)?
+            } else {
                 return Err(RpcError::invalid_params("PaintProducerUnavailable"));
-            };
-            let (w, h) = parse_snapshot_viewport(params)?;
-            let paint_scene = (producer)(w, h);
-            snapshot(&paint_scene, path).map_err(snapshot_error_to_rpc)?
+            }
         }
         other => {
             return Err(RpcError::invalid_params(format!(

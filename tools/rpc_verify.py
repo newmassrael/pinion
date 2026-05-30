@@ -646,6 +646,91 @@ def node_center(node: dict) -> tuple[float, float]:
     return (cx, cy)
 
 
+# R705.1 §5.39 — the injected focus-ring overlay box tag (mirrors
+# `pinion_overlay::focus_ring::FOCUS_RING_TAG`).
+FOCUS_RING_TAG = "ai-overlay/focus-ring"
+
+
+def abs_rects_of(snap: Any) -> dict[str, tuple[int, int, int, int]]:
+    """Map every tagged node to its **window-absolute** rect `(x, y, w, h)`.
+
+    Independently re-implements the scroll-offset translation that
+    `pinion_core::scene::Scene::rect_for_tag_absolute` does in Rust: a
+    node inside a `Scroll` carries a scroll-LOCAL rect, and the renderer
+    paints it at `viewport_pos + (local - scroll_offset)`. Accumulating
+    `(viewport.x - offset_x, viewport.y - offset_y)` per Scroll boundary
+    yields the on-screen position. This is the GROUNDING that makes a
+    focus-ring assertion non-tautological: the ring rect (a top-level
+    overlay, already window-absolute) is checked against a *separately
+    computed* absolute position, so a ring drawn at a scroll-local rect
+    is caught (R705.1, [[introspection-from-paint-not-screen]]).
+    """
+    out: dict[str, tuple[int, int, int, int]] = {}
+
+    def walk(node: Any, xoff: int, yoff: int) -> None:
+        if not isinstance(node, dict):
+            return
+        tag = node.get("tag")
+        if node.get("type") == "Scroll":
+            vp = node.get("viewport") or {}
+            if tag:
+                out[tag] = (vp.get("x", 0) + xoff, vp.get("y", 0) + yoff,
+                            vp.get("w", 0), vp.get("h", 0))
+            nx = xoff + vp.get("x", 0) - node.get("offset_x", 0)
+            ny = yoff + vp.get("y", 0) - node.get("offset_y", 0)
+            walk(node.get("content"), nx, ny)
+            return
+        rect = node.get("rect")
+        if tag and isinstance(rect, dict):
+            out[tag] = (rect["x"] + xoff, rect["y"] + yoff, rect["w"], rect["h"])
+        for child in (node.get("children") or []):
+            walk(child, xoff, yoff)
+
+    walk(snap, 0, 0)
+    return out
+
+
+def assert_focus_ring_concentric(snap: Any, offset: int = 2) -> Optional[str]:
+    """Assert the focus ring is drawn **exactly** around a real node.
+
+    The ring overlay box (`FOCUS_RING_TAG`) is a top-level sibling, so its
+    rect is already window-absolute. This helper recomputes the
+    window-absolute rect of every *other* tagged node (scroll-translated,
+    via `abs_rects_of`) and asserts the ring is the saturating-inflate of
+    exactly one of them — i.e. the ring concentrically frames a node that
+    actually paints at that position on screen. A ring placed at a
+    scroll-local rect (the pre-R705.1 bug) frames no real absolute node
+    and raises here.
+
+    Returns the framed node's tag (for the caller to assert *which*
+    widget is framed), or `None` when no ring is present (nothing focused,
+    or the focused node is scrolled fully out of view — both legitimate,
+    the caller decides whether a ring was expected).
+    """
+    rects = abs_rects_of(snap)
+    ring = rects.get(FOCUS_RING_TAG)
+    if ring is None:
+        return None
+
+    def inflate_sat(r: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        # Mirrors `build_focus_ring_box`: saturating_sub on origin,
+        # saturating_add(2*offset) on size.
+        return (max(0, r[0] - offset), max(0, r[1] - offset),
+                r[2] + 2 * offset, r[3] + 2 * offset)
+
+    for tag, r in rects.items():
+        if tag == FOCUS_RING_TAG:
+            continue
+        if inflate_sat(r) == ring:
+            return tag
+    raise AssertionError(
+        f"focus ring {ring} is not concentric around any node's "
+        f"window-absolute rect — misplaced. candidates="
+        + ", ".join(f"{t}:{inflate_sat(r)}" for t, r in rects.items()
+                    if t != FOCUS_RING_TAG)
+    )
+
+
 @dataclass(frozen=True)
 class Png:
     """Decoded PNG framebuffer — row-major, top-left origin, RGBA8.

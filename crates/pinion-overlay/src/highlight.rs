@@ -149,12 +149,18 @@ fn build_highlight_box(bbox: Rect, tag: &str, style: HighlightStyle) -> BoxNode 
     let bstyle = BoxStyle::filled(Color::TRANSPARENT).with_border(border);
     let mut node = BoxNode::new(bbox, bstyle);
     node.tag = Some(tag.to_owned().into());
+    // R705 §5.39 — overlays are decorative: pointer-transparent so the
+    // highlighted widget keeps receiving input even when an overlay box
+    // is layered on top of it in the live (hit-tested) paint scene.
+    node.layout = node.layout.with_pointer_transparent(true);
     node
 }
 
 /// Ensure the scene is a `Container`, wrapping it if not. Returns the
-/// container variant ready for sibling injection.
-fn wrap_into_container(scene: Scene) -> Scene {
+/// container variant ready for sibling injection. `pub(crate)` so the
+/// §5.39 [`crate::focus_ring`] overlay (R705, the 2nd consumer of the
+/// inject-overlay-box pattern) shares the same wrap discipline.
+pub(crate) fn wrap_into_container(scene: Scene) -> Scene {
     if matches!(scene, Scene::Container(_)) {
         return scene;
     }
@@ -164,13 +170,13 @@ fn wrap_into_container(scene: Scene) -> Scene {
     Scene::Container(c)
 }
 
-fn push_top_level(scene: &mut Scene, child: Scene) {
+pub(crate) fn push_top_level(scene: &mut Scene, child: Scene) {
     if let Scene::Container(c) = scene {
         c.children.push(child);
     }
 }
 
-fn strip_tag(scene: &mut Scene, tag: &str) {
+pub(crate) fn strip_tag(scene: &mut Scene, tag: &str) {
     if let Scene::Container(c) = scene {
         c.children.retain(|child| child.tag() != Some(tag));
     }

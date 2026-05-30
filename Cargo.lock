@@ -3385,6 +3385,7 @@ dependencies = [
  "accesskit_winit",
  "pinion-a11y",
  "pinion-core",
+ "pinion-overlay",
  "pinion-rpc",
  "pinion-runtime",
  "pinion-shell",

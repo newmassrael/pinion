@@ -335,6 +335,28 @@ impl InputRouter {
         self.last_paint_scene.is_some()
     }
 
+    /// (R705 §5.12 §2 #7) Read-only borrow of the most recently
+    /// painted scene — the exact tree that produced the pixels on
+    /// screen (the winit paint loop stores it via
+    /// [`Self::update_paint_scene`] at the end of every frame; the
+    /// headless-RPC finalize stores it via [`Self::set_paint_scene`]).
+    ///
+    /// `scene/snapshot from: paint` serializes THIS borrow instead of
+    /// re-running `V::view` at query time, so introspection equals the
+    /// displayed frame *by construction* rather than by the two
+    /// renderers happening to agree. Re-rendering at query time was the
+    /// §2 #7 violation R705 closes: a state mutation that had not yet
+    /// repainted left the screen showing one frame while a query-time
+    /// re-render produced another ([[introspection-from-paint-not-screen]]).
+    ///
+    /// `None` until the router has received its first paint scene
+    /// (never-painted window); the snapshot handler falls back to the
+    /// paint producer in that bootstrap window.
+    #[must_use]
+    pub fn last_paint_scene(&self) -> Option<&Scene> {
+        self.last_paint_scene.as_ref()
+    }
+
     /// Update the retained paint scene after each render. Re-resolves
     /// `hover_targets` for every active pointer against the new
     /// layout — a window resize may move the button rect under a

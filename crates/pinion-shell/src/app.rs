@@ -715,20 +715,18 @@ impl<V: WidgetView> AppShell<V> {
         // walk). `&|_b| None` is the canonical no-override fill hook
         // every production shell call site passes — the cache's
         // structurally-derived contract holds trivially.
+        // R705 §5.39 — the focus ring is no longer stroked here. It is
+        // injected upstream as a pointer-transparent overlay
+        // `Scene::Box` by `Substrate::apply_focus_ring` (the final step
+        // of every paint-scene producer), so `to_vello_cached` paints it
+        // via the generic box path and `scene/snapshot from: paint`
+        // observes it (§2 #1 + #7). The pre-R705 opaque
+        // `paint_adapter::paint_focus_ring` vello stroke is retired.
         paint_adapter::to_vello_cached(
             &paint_scene,
             &|_b: &BoxNode| None,
             self.core.text_cache_mut(),
             &mut slot.fragment_cache,
-            &mut slot.vello_scene,
-        );
-        // R51.58 §5.39 — paint the ARIA focus ring on top of the
-        // widget visual. Runs after `to_vello` so the ring overlays
-        // its target; runs before `renderer.render` so it lands in
-        // the same frame submit. No-op when nothing is focused.
-        paint_adapter::paint_focus_ring(
-            &paint_scene,
-            self.core.focus().focused(),
             &mut slot.vello_scene,
         );
         // R51.109.1 §5.41 — call through the backend-agnostic

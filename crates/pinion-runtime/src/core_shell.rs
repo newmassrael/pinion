@@ -1296,6 +1296,62 @@ impl<V: WidgetCore> CoreShell<V> {
             .is_some_and(super::input::InputRouter::has_last_paint_scene)
     }
 
+    /// (R705 §5.12 §2 #7) Per-window read-only borrow of the stored
+    /// paint scene — the exact tree the named window last painted.
+    /// Forwards to [`InputRouter::last_paint_scene`](super::input::InputRouter::last_paint_scene).
+    /// `None` when the window has no router entry (never painted) or
+    /// its router holds no scene yet.
+    #[must_use]
+    pub fn last_paint_scene_for_window(&self, window_id: &str) -> Option<&Scene> {
+        self.routers
+            .get(window_id)
+            .and_then(super::input::InputRouter::last_paint_scene)
+    }
+
+    /// (R705.1 §5.16 §2 #7) Every window id that holds a stored paint
+    /// scene, paired with that scene's root size `(w, h)` (= the
+    /// window's paint viewport).
+    ///
+    /// The dirty-on-mutation re-store iterates this so a state change
+    /// driven by ONE window's RPC refreshes the stored paint scene of
+    /// EVERY window whose view reads the mutated reactive state — making
+    /// cross-window `scene/snapshot from: paint` reflect committed state
+    /// without waiting for each window's own winit repaint. A
+    /// never-painted window (no router entry) is absent and is left to
+    /// its first winit paint.
+    #[must_use]
+    pub fn painted_window_sizes(&self) -> Vec<(String, u32, u32)> {
+        self.routers
+            .iter()
+            .filter_map(|(id, r)| {
+                let rect = r.last_paint_scene()?.rect();
+                Some((id.clone(), rect.w, rect.h))
+            })
+            .collect()
+    }
+
+    /// (R705 §5.12 §2 #7) Disjoint split borrow yielding the mutable
+    /// state scene + the named window's stored paint scene together.
+    ///
+    /// The RPC dispatch context holds `&mut` state scene for the whole
+    /// call (`scene/invoke` / `scene/intervene` mutate it) AND needs
+    /// `&` paint scene so `scene/snapshot from: paint` can serialize the
+    /// displayed frame instead of re-rendering at query time. The two
+    /// scenes live in different fields (`scene` vs `routers`), so a
+    /// single split-borrow method hands out both without aliasing — the
+    /// borrow checker proves the disjointness through the destructure.
+    #[must_use]
+    pub fn scene_mut_and_last_paint_for_window(
+        &mut self,
+        window_id: &str,
+    ) -> (&mut Scene, Option<&Scene>) {
+        let Self { scene, routers, .. } = self;
+        let paint = routers
+            .get(window_id)
+            .and_then(super::input::InputRouter::last_paint_scene);
+        (scene, paint)
+    }
+
     /// R51.122 §5.41 — drain the post-dispatch bookkeeping artifacts
     /// (intents + optional state change) without running any input
     /// dispatch arm.

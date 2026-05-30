@@ -1950,6 +1950,25 @@ pub struct LayoutStyle {
     /// Slint's `flex-basis` property — both ecosystems carry the same
     /// field on their layout primitive for the same reasons.
     pub flex_basis: Option<SizeValue>,
+    /// (R705 §5.39 §2 #1/#7) Pointer-events transparency — mirrors CSS
+    /// `pointer-events: none`. When `true`, [`crate::Scene::hit_test`]
+    /// skips this node (and so the §5.35 input router never routes
+    /// hover / click to it), while the node stays fully present in the
+    /// scene tree for painting AND `scene/snapshot` introspection.
+    ///
+    /// This is the substrate that lets a decorative overlay — the
+    /// §5.39 focus ring, the §5.33 AI inspector highlight — live as a
+    /// real introspectable [`crate::Scene::Box`] sibling layered on top
+    /// of the widget it annotates WITHOUT shadowing that widget for
+    /// input. Before R705 the focus ring was stroked straight into the
+    /// `vello::Scene` after the tree walk (opaque paint, invisible to
+    /// `scene/snapshot` — a §2 #1 + #7 violation); promoting it to a
+    /// pointer-transparent overlay node clears that.
+    ///
+    /// `false` (the default) leaves every pre-R705 node hit-testable
+    /// exactly as before — additive, bit-identical for existing
+    /// bindings.
+    pub pointer_transparent: bool,
 }
 
 impl LayoutStyle {
@@ -1974,6 +1993,8 @@ impl LayoutStyle {
             // (R684 §5.21) `None` = taffy `Dimension::Auto` — intrinsic
             // content drives the basis. Pre-R684 layout preserved.
             flex_basis: None,
+            // (R705 §5.39) `false` = hit-testable, the pre-R705 default.
+            pointer_transparent: false,
         }
     }
 
@@ -1993,6 +2014,18 @@ impl LayoutStyle {
     #[must_use]
     pub const fn with_absolute_position(mut self, left: u32, top: u32) -> Self {
         self.absolute_position = Some((left, top));
+        self
+    }
+
+    /// (R705 §5.39) Builder: mark the node pointer-transparent (CSS
+    /// `pointer-events: none`). [`crate::Scene::hit_test`] skips it, so
+    /// the §5.35 input router never targets it, yet it still paints and
+    /// still appears in `scene/snapshot`. The substrate for decorative
+    /// overlays (focus ring §5.39, inspector highlight §5.33) that must
+    /// layer over a widget without intercepting its pointer input.
+    #[must_use]
+    pub const fn with_pointer_transparent(mut self, transparent: bool) -> Self {
+        self.pointer_transparent = transparent;
         self
     }
 
@@ -2103,6 +2136,9 @@ impl core::hash::Hash for LayoutStyle {
         // stays at its `None` default (R682 paint-fragment cache
         // bit-identical for every pre-R684 binding).
         self.flex_basis.hash(hasher);
+        // (R705 §5.39) `bool` hashes as a single byte; `false` default
+        // keeps the byte image bit-identical to pre-R705 cache keys.
+        self.pointer_transparent.hash(hasher);
     }
 }
 

@@ -457,6 +457,34 @@ impl<V: WidgetView> Default for ShellCore<V> {
     }
 }
 
+/// R705 §5.39 §5.40 — resolve the focus-ring target tag (SSOT).
+///
+/// A roving widget (`RadioGroup`, the datepicker grid, listbox) keeps
+/// shell focus on its CONTAINER tag while the *visible* focus moves to
+/// an aria-activedescendant cell. Resolve through the binding's
+/// `access_focus_target` — the same resolution the a11y tree lowers to
+/// `set_active_descendant` — so the focus ring frames the active cell
+/// (`datepicker#15`). Atomic widgets report no active descendant and
+/// resolve to the focused tag unchanged.
+///
+/// Single source of truth for BOTH paint-scene producers — the winit
+/// path ([`ShellCore::apply_focus_ring`]) and the RPC
+/// `scene/snapshot from: paint` produce closure. Keeping the two on one
+/// resolver is mandatory: when they diverged during R705 development
+/// the live window framed the active day while `scene/snapshot` still
+/// reported the container ring, defeating the very introspection the
+/// ring exists to serve ([[r670b-paint-scene-producer-parity]]).
+fn resolve_focus_ring_tag<V: WidgetView>(
+    state: &V::State,
+    focused: &str,
+    owner: &pinion_core::Owner,
+) -> String {
+    owner
+        .run(|| V::access_focus_target(state, Some(focused)))
+        .and_then(|af| af.active_descendant)
+        .unwrap_or_else(|| focused.to_owned())
+}
+
 impl<V: WidgetView> ShellCore<V> {
 
     /// R51.76 §5.40 — borrow the cached state projection. Tests
@@ -1015,6 +1043,18 @@ impl<V: WidgetView> ShellCore<V> {
         if let Some(tail) = self.core.apply_key(focused.as_deref(), key_str, self.modifiers) {
             self.revision.bump();
             self.handle_tail(&tail);
+            // R705.1 §2 #7 — a widget that CONSUMED the key reacted, and
+            // that reaction is frequently a reactive-`Signal` change with
+            // no SCXML `state_change` (a listbox/tree focused-row move via
+            // arrow keys). `handle_tail` only arms `redraw_requested` on a
+            // `state_change`, so arm it here whenever the key was handled
+            // — otherwise the live window (and the stored paint scene
+            // `scene/snapshot from: paint` reads) would never repaint to
+            // show the moved focus. Same shape as [`Self::scroll_key`]'s
+            // "dispatched → request_redraw". A handled key that changed
+            // nothing visible just repaints an identical scene (cache
+            // hits, no churn).
+            self.request_redraw();
             true
         } else {
             false
@@ -1502,7 +1542,36 @@ impl<V: WidgetView> ShellCore<V> {
         {
             self.redraw_requested = true;
         }
-        paint_scene
+        self.apply_focus_ring(paint_scene)
+    }
+
+    /// R705 §5.39 §2 #1/#7 — inject the keyboard focus ring as an
+    /// introspectable, pointer-transparent overlay [`Scene::Box`].
+    /// Applied as the final step of every paint-scene producer
+    /// ([`Self::compute_paint_scene_internal`],
+    /// [`Self::compute_paint_scene_pure_internal`], and the
+    /// `dispatch_rpc_inner` RPC produce closure) so the ring is
+    /// (a) painted by the generic box path rather than an opaque vello
+    /// stroke, (b) visible to `scene/snapshot from: paint` (§2 #7), and
+    /// (c) corner-radius-aware (concentric on rounded widgets). No-op
+    /// when nothing is focused. The injected box is pointer-transparent
+    /// (R705 §5.39 substrate) so it never shadows its widget for input,
+    /// even though the very scene returned here also feeds
+    /// [`pinion_runtime::InputRouter::last_paint_scene`] hit-testing.
+    fn apply_focus_ring(&self, scene: Scene) -> Scene {
+        let Some(focused) = self.focus.focused() else {
+            return scene;
+        };
+        // R705 §5.39 §5.40 — resolve through the active-descendant SSOT
+        // ([`resolve_focus_ring_tag`]) so a roving widget's ring tracks
+        // its active cell rather than wrapping the container.
+        let ring_tag =
+            resolve_focus_ring_tag::<V>(self.core.cached_state(), focused, self.core.root_owner());
+        pinion_overlay::inject_focus_ring(
+            scene,
+            Some(&ring_tag),
+            pinion_overlay::FocusRingStyle::default(),
+        )
     }
 
     /// R670.B §5.16 — per-window paint scene producer. Same pipeline
@@ -1615,7 +1684,7 @@ impl<V: WidgetView> ShellCore<V> {
             None => V::view(cached_state, &frame),
         });
         compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
-        paint_scene
+        self.apply_focus_ring(paint_scene)
     }
 
     /// R51.80 §5.40 — build the inputs to
@@ -2024,6 +2093,18 @@ impl<V: WidgetView> ShellCore<V> {
             // path still land on the binding's owner.
             let cached_state = *self.core.cached_state();
             let root_owner = self.core.root_owner().clone();
+            // R705 §5.39 §5.40 — resolve the focus-ring target the same
+            // way `apply_focus_ring` does for the winit paint path:
+            // through `access_focus_target` so a roving widget's ring
+            // tracks its aria-activedescendant cell (`datepicker#15`)
+            // rather than wrapping the container. Computed once here
+            // (focus is sampled pre-dispatch) and captured by the
+            // produce closure, keeping `scene/snapshot from: paint`
+            // byte-equal to the live winit frame (producer parity,
+            // [[r670b-paint-scene-producer-parity]]).
+            let ring_tag_for_paint: Option<String> = focus_before
+                .as_deref()
+                .map(|f| resolve_focus_ring_tag::<V>(&cached_state, f, &root_owner));
             // R51.162 §5.23 — grab the executor Arc-clone before
             // `scene_mut` reborrows `self.core` mutably. `Arc::clone`
             // is cheap (one atomic bump) and unblocks the borrow
@@ -2031,7 +2112,20 @@ impl<V: WidgetView> ShellCore<V> {
             // into the with_commands_executor builder below.
             let executor_for_rpc: Option<Arc<CommandExecutor>> =
                 self.core.executor().cloned();
-            let scene_ptr = self.core.scene_mut();
+            // R705 §5.12 §2 #7 — split borrow: the dispatcher mutates
+            // the authoritative state scene while `scene/snapshot
+            // from: paint` reads the addressed window's stored paint
+            // scene (the displayed frame). The two live in disjoint
+            // `CoreShell` fields (`scene` vs `routers`), so a single
+            // method hands out `&mut Scene` + `Option<&Scene>` without
+            // aliasing — replacing the pre-R705 query-time re-render
+            // that drifted from the on-screen pixels
+            // ([[introspection-from-paint-not-screen]]).
+            let paint_window_key =
+                window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+            let (scene_ptr, last_paint_scene_ref) = self
+                .core
+                .scene_mut_and_last_paint_for_window(paint_window_key);
             let previews = &self.previews;
             let revision = &self.revision;
             let focus_ptr = &mut self.focus;
@@ -2075,7 +2169,22 @@ impl<V: WidgetView> ShellCore<V> {
                     });
                     compute_layout(&mut paint, text_cache_ptr, w, h);
                 }
-                paint
+                // R705 §5.39 §2 #1/#7 — inject the focus ring as the
+                // final paint step so `scene/snapshot from: paint` (and
+                // the R684 post-dispatch InputRouter finalize, which
+                // re-runs this producer) observe the same introspectable
+                // pointer-transparent overlay the winit paint cycle does
+                // (producer parity, [[r670b-paint-scene-producer-parity]]).
+                // `focus_before` is the pre-dispatch focus sample; a
+                // focus-mutating method in THIS dispatch has not yet
+                // flushed when the produce closure runs for path
+                // resolution, so the ring reflects entry focus — which
+                // matches what the AI client addressed.
+                pinion_overlay::inject_focus_ring(
+                    paint,
+                    ring_tag_for_paint.as_deref(),
+                    pinion_overlay::FocusRingStyle::default(),
+                )
             };
             // R47.7.5 §5.12 — surface the most recent winit-rendered
             // frame to the dispatcher so `scene/layout {viewport: null}`
@@ -2087,6 +2196,15 @@ impl<V: WidgetView> ShellCore<V> {
                 .with_focus_manager(focus_ptr);
             if let Some(snapshot) = last_paint {
                 ctx = ctx.with_last_paint_layout(snapshot);
+            }
+            // R705 §5.12 §2 #7 — thread the addressed window's stored
+            // paint scene so `scene/snapshot from: paint` serializes the
+            // displayed frame rather than re-rendering. `None` (a
+            // never-painted window — headless bootstrap before the
+            // first paint cycle) leaves the handler on its producer
+            // fallback, preserving the in-crate headless test harness.
+            if let Some(paint) = last_paint_scene_ref {
+                ctx = ctx.with_last_paint_scene(paint);
             }
             // R670.B §5.16 — surface the resolved window id so future
             // RPC consumers can read it through `DispatchContext`.
@@ -2261,6 +2379,64 @@ impl<V: WidgetView> ShellCore<V> {
             self.notify_focus_change(focus_before.as_deref());
             self.request_redraw();
         }
+        // R705 §5.12 §2 #7 — dirty-on-mutation paint-scene re-store.
+        //
+        // When this windowed dispatch changed visible state (the
+        // `redraw_requested` flag was raised by `handle_tail`'s
+        // `state_change` arm, the deferred-input drain, or the focus
+        // shift above), re-render the canonical paint scene and re-store
+        // it into the addressed window's `InputRouter`. This makes a
+        // follow-up `scene/snapshot from: paint` reflect the just-
+        // committed state *immediately*, without waiting for the winit
+        // paint loop to catch up — closing the lag half of the §2 #7
+        // restoration (the readback half lives in the snapshot handler).
+        //
+        // Every painted window ALSO repaints live (the same
+        // `request_redraw` fan-out), producing a byte-identical scene
+        // because both paths run the one `compute_paint_scene_pure_*`
+        // pipeline at the same `cached_state` + viewport — so the
+        // transient "stored ahead of GPU" skew resolves to identical
+        // content. There is no second divergent renderer any more; that
+        // elimination is what restores introspection == screen
+        // ([[r670b-paint-scene-producer-parity]]).
+        //
+        // ## Why every window, not just the dispatched one
+        //
+        // A multi-window binding (DevTools inspector, dock editor) shares
+        // one reactive state scene across windows: an `scene/invoke` on
+        // the inspector window mutates a `Signal` the MAIN window's view
+        // reads (the "Selected: …" banner). Re-storing only the
+        // dispatched window would leave the other windows' stored paint
+        // scenes stale, so their `from: paint` would lag the committed
+        // state until their own winit repaint caught up — the exact
+        // cross-window drift R705 set out to abolish. Iterating
+        // `painted_window_sizes` re-renders each window's view at its own
+        // viewport so all of them reflect the mutation atomically.
+        //
+        // Gated on `redraw_requested` so pure reads (`focus/get`,
+        // `scene/query`, `scene/snapshot` itself) — which never raise it
+        // — pay nothing. Uses the storage-only publish primitive (no
+        // `refresh_hover`: the RPC did not move the cursor, only the
+        // layout shifted beneath it — the R660 `RadioGroup` regression
+        // origin). A never-painted window has no router entry yet and is
+        // left to its first winit paint (or the R684 first-paint finalize
+        // above for headless floating windows).
+        //
+        // `redraw_requested` is now raised for reactive-`Signal`-only
+        // changes too: a handled `apply_key` ([`Self::try_apply_key`]) and
+        // any drained intent ([`Self::handle_tail`]) both arm it, so a
+        // listbox/tree focused-row Signal or a shared cross-window
+        // selection Signal forces the repaint + re-store even with no
+        // SCXML `state_change`. A benign no-op input (a click that hits
+        // nothing, a pure read) arms nothing and pays zero — which keeps
+        // the R682 fragment-cache warmup stable (no spurious paints).
+        if self.redraw_requested {
+            for (id, w, h) in self.core.painted_window_sizes() {
+                let paint = self.compute_paint_scene_pure_for_window(&id, w.max(1), h.max(1));
+                let paint_layout = pinion_rpc::build_layout_node(&paint, "/0");
+                self.apply_paint_for_window_storage_only(&id, paint, paint_layout);
+            }
+        }
         resp
     }
 
@@ -2308,6 +2484,17 @@ impl<V: WidgetView> ShellCore<V> {
             // async-re-feed path uses. Closes the R27 dispatch loop's
             // input → drain → reducer arc.
             let _ = self.core.route_intent_through_update(intent);
+        }
+        // R705.1 §2 #7 — a drained intent means a widget reacted, and its
+        // `V::update` reducer commonly writes a reactive `Signal` (a
+        // cross-window selection / hover Signal) with no SCXML
+        // `state_change`. Arm the redraw so the live window + the stored
+        // paint scene `scene/snapshot from: paint` reads both reflect the
+        // mutation; without this an RPC `scene/invoke` that only sets a
+        // Signal would leave `from: paint` stale (the cross-window
+        // selection drift R705 abolishes). No intents drained → no-op.
+        if !tail.intents.is_empty() {
+            self.request_redraw();
         }
         if let Some(sc) = tail.state_change {
             eprintln!(

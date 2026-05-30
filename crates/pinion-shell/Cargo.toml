@@ -20,6 +20,10 @@ pinion-runtime = { path = "../pinion-runtime", version = "0.0.1", features = ["v
 # §5.12 bidirectional RPC dispatcher — every winit/RPC frame routes through
 # `dispatch` + `DispatchContext` here, never bypassed.
 pinion-rpc = { path = "../pinion-rpc", version = "0.0.1" }
+# §5.39 focus-ring overlay — `inject_focus_ring` injects the keyboard
+# focus ring as an introspectable pointer-transparent Scene::Box (R705),
+# applied as the final step of every paint-scene producer.
+pinion-overlay = { path = "../pinion-overlay", version = "0.0.1" }
 # §5.36 text shaping primitive — owned `LayoutCache` shared between
 # `compute_layout` (measure) and `paint_adapter::to_vello` (paint).
 pinion-text = { path = "../pinion-text", version = "0.0.1" }

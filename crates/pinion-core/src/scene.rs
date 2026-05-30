@@ -120,6 +120,29 @@ impl Scene {
         }
     }
 
+    /// (R705 §5.39) Pointer-events transparency — mirrors CSS
+    /// `pointer-events: none`. Reads the node's
+    /// [`crate::style::LayoutStyle::pointer_transparent`] flag.
+    /// [`Self::hit_test`] skips nodes for which this returns `true`, so
+    /// a decorative overlay (focus ring, inspector highlight) painted on
+    /// top of a widget does not shadow it for input while staying fully
+    /// present for `scene/snapshot` introspection. [`Scene::Effect`]
+    /// carries no layout sidecar and is never pointer-transparent.
+    #[must_use]
+    pub fn is_pointer_transparent(&self) -> bool {
+        match self {
+            Scene::Box(n) => n.layout.pointer_transparent,
+            Scene::Text(n) => n.layout.pointer_transparent,
+            Scene::Path(n) => n.layout.pointer_transparent,
+            Scene::Image(n) => n.layout.pointer_transparent,
+            Scene::Container(n) => n.layout.pointer_transparent,
+            Scene::External(n) => n.layout.pointer_transparent,
+            Scene::Scroll(n) => n.layout.pointer_transparent,
+            Scene::ImmediateModeNode(n) => n.layout.pointer_transparent,
+            Scene::Effect(_) => false,
+        }
+    }
+
     /// (R55.G.19 §5.49) Returns `true` when this scene tree contains
     /// at least one node tagged `target`. Walks depth-first matching
     /// [`Self::tag`] before descending into `Container.children` and
@@ -555,6 +578,13 @@ impl Scene {
         // is the deepest hit.
         if let Scene::Container(c) = self {
             for (idx, child) in c.children.iter().enumerate().rev() {
+                // R705 §5.39 — pointer-transparent overlays (focus ring,
+                // inspector highlight) layer on top in paint / snapshot
+                // order but are invisible to hit-testing, so the widget
+                // beneath them keeps receiving pointer input.
+                if child.is_pointer_transparent() {
+                    continue;
+                }
                 if let Some(mut child_hit) = child.hit_test(x, y) {
                     let seg = child
                         .tag()
@@ -656,6 +686,64 @@ impl Scene {
             (tag_match || index_match).then_some(child)
         })?;
         target.lookup_path(tail)
+    }
+
+    /// R705.1 §5.45 §2 #7 — depth-first walk for the **window-absolute**
+    /// post-layout rect of the node tagged `target`.
+    ///
+    /// This is the single coordinate-translation authority for "where on
+    /// screen does tag X paint": rects inside a [`Scene::Scroll`] content
+    /// tree are stored *scroll-local*, while everything else is
+    /// window-absolute. The walk accumulates `(viewport.x - offset_x,
+    /// viewport.y - offset_y)` on each Scroll boundary and intersects the
+    /// enclosing viewport stack as a clip, so the returned rect is always
+    /// window-absolute and bounded to the visible region. A node fully
+    /// scrolled out of view returns `None` (not a degenerate origin
+    /// rect).
+    ///
+    /// Used by the RPC click/drag path-resolver
+    /// (`pinion_rpc::dispatch`) to land synthetic input on the pixels the
+    /// user actually sees, and by the §5.39 focus-ring overlay
+    /// (`pinion_overlay::inject_focus_ring`) to draw the ring at the
+    /// widget's true on-screen position even when the widget lives inside
+    /// a scroll. Consolidating both on one resolver is what makes
+    /// `scene/snapshot from: paint` ring assertions verifiable against
+    /// the real geometry rather than tautologically
+    /// ([[introspection-from-paint-not-screen]]).
+    #[must_use]
+    pub fn rect_for_tag_absolute(&self, target: &str) -> Option<Rect> {
+        self.rect_for_tag_with_offset(target, 0, 0, None)
+    }
+
+    fn rect_for_tag_with_offset(
+        &self,
+        target: &str,
+        x_off: i64,
+        y_off: i64,
+        clip: Option<Rect>,
+    ) -> Option<Rect> {
+        if self.tag() == Some(target) {
+            // `Self::rect` returns the viewport rect for `Scene::Scroll`,
+            // matching the "scroll's own tag → viewport" convention.
+            return translate_rect_into_clip(self.rect(), x_off, y_off, clip);
+        }
+        match self {
+            Scene::Container(c) => c
+                .children
+                .iter()
+                .find_map(|child| child.rect_for_tag_with_offset(target, x_off, y_off, clip)),
+            Scene::Scroll(n) => {
+                // Tighten the clip to this scroll's window-abs viewport,
+                // then descend with the offset folded in. Nested scrolls
+                // chain their viewports through the recursion.
+                let new_clip = translate_rect_into_clip(n.viewport, x_off, y_off, clip)?;
+                let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
+                let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
+                n.content
+                    .rect_for_tag_with_offset(target, x_off + dx, y_off + dy, Some(new_clip))
+            }
+            _ => None,
+        }
     }
 
     /// (§5.34 R42) Immutable counterpart that returns `&Scene` at the
@@ -860,6 +948,48 @@ impl Scene {
             s.content.collect_intersections(translated, path, out);
         }
     }
+}
+
+/// R705.1 §5.45 — translate a scroll-local rect into window-absolute
+/// coords via the accumulated `(x_off, y_off)` shift, intersect with
+/// `clip` (the enclosing Scroll viewport stack), and saturate back to
+/// `u32`. Returns `None` when the result is empty (rect lies fully
+/// outside the clip — e.g. scrolled off-viewport). The single
+/// translation primitive behind [`Scene::rect_for_tag_absolute`];
+/// previously duplicated as a private helper in `pinion_rpc::dispatch`
+/// (R51.200 / R55.G.7) before R705.1 lifted it here next to the Scroll
+/// node it serves.
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    reason = "u32 <-> i64 <-> u32 round-trip on bounded scene coords; saturate at 0 below"
+)]
+fn translate_rect_into_clip(rect: Rect, x_off: i64, y_off: i64, clip: Option<Rect>) -> Option<Rect> {
+    let rect_left = i64::from(rect.x) + x_off;
+    let rect_top = i64::from(rect.y) + y_off;
+    let rect_right = rect_left + i64::from(rect.w);
+    let rect_bottom = rect_top + i64::from(rect.h);
+    let (clip_left, clip_top, clip_right, clip_bottom) = match clip {
+        Some(c) => {
+            let cl = i64::from(c.x);
+            let ct = i64::from(c.y);
+            (cl, ct, cl + i64::from(c.w), ct + i64::from(c.h))
+        }
+        None => (i64::MIN, i64::MIN, i64::MAX, i64::MAX),
+    };
+    let visible_left = rect_left.max(clip_left);
+    let visible_top = rect_top.max(clip_top);
+    let visible_right = rect_right.min(clip_right);
+    let visible_bottom = rect_bottom.min(clip_bottom);
+    if visible_right <= visible_left || visible_bottom <= visible_top {
+        return None;
+    }
+    let out_x = visible_left.max(0) as u32;
+    let out_y = visible_top.max(0) as u32;
+    let out_w = (visible_right - i64::from(out_x)) as u32;
+    let out_h = (visible_bottom - i64::from(out_y)) as u32;
+    Some(Rect::new(out_x, out_y, out_w, out_h))
 }
 
 /// Result of a successful [`Scene::hit_test`] (§5.32 R39 v0). Carries
@@ -2826,6 +2956,37 @@ mod tests {
         );
         let hit = s.hit_test(50, 50).expect("inside container");
         assert!(hit.segments.is_empty(), "container itself is the hit");
+    }
+
+    #[test]
+    fn hit_test_skips_pointer_transparent_overlay_child() {
+        // R705 §5.39 — a pointer-transparent overlay (focus ring)
+        // layered ON TOP of a tagged widget must not shadow it for
+        // input: hit_test walks topmost-first but skips the overlay,
+        // landing on the widget beneath.
+        let widget = tagged_box_at(0, 0, 100, 100, "btn");
+        let mut ring = BoxNode::filled(Rect::new(0, 0, 100, 100), Color::default());
+        ring.layout = ring.layout.with_pointer_transparent(true);
+        ring.tag = Some("ai-overlay/focus-ring".into());
+        let s = container_at(0, 0, 100, 100, vec![widget, Scene::Box(ring)]);
+        let hit = s.hit_test(50, 50).expect("inside");
+        assert_eq!(
+            hit.segments.first().map(String::as_str),
+            Some("btn"),
+            "overlay skipped — hit lands on the widget tag, not the ring",
+        );
+    }
+
+    #[test]
+    fn hit_test_pointer_transparent_lone_overlay_falls_through_to_container() {
+        // The overlay is the only child; skipping it leaves the
+        // container itself as the deepest hit (no phantom ring target).
+        let mut ring = BoxNode::filled(Rect::new(0, 0, 100, 100), Color::default());
+        ring.layout = ring.layout.with_pointer_transparent(true);
+        ring.tag = Some("ai-overlay/focus-ring".into());
+        let s = container_at(0, 0, 100, 100, vec![Scene::Box(ring)]);
+        let hit = s.hit_test(50, 50).expect("inside container");
+        assert!(hit.segments.is_empty(), "ring skipped → container is the hit");
     }
 
     #[test]

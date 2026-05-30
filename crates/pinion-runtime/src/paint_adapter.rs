@@ -825,83 +825,15 @@ pub fn root_background(scene: &Scene) -> PenikoColor {
     }
 }
 
-/// R51.58 §5.39 — paint an ARIA focus ring around the widget
-/// tagged `focused_tag`. WCAG 2.4.11 Focus Appearance asks for a
-/// ≥2px outline with ≥3:1 contrast against the surrounding pixels;
-/// the default ring is a 2px stroke offset 2px outside the widget
-/// rect in a neutral blue (`#1A73E8`, the Material default focus
-/// color), which clears the contrast bar against light and dark
-/// backgrounds alike.
-///
-/// No-op when:
-/// * `focused_tag` is `None` (`FocusManager` between Tab boundaries);
-/// * the paint scene has no tagged node matching `focused_tag` (the
-///   focused widget was removed by the view fn this frame — the
-///   [`crate::FocusManager`] also drops stale focus on
-///   `update_focusable_tags`, but defensive belt-and-suspenders).
-///
-/// Call after [`to_vello`] so the ring overlays the widget visual
-/// it indicates rather than being painted over.
-/// Focus ring stroke width in CSS pixels — WCAG 2.4.11 minimum.
-const FOCUS_RING_WIDTH: f64 = 2.0;
-/// Focus ring outer offset from the widget rect — Material / Fluent
-/// convention keeps the ring from overlapping the widget visual edge.
-const FOCUS_RING_OFFSET: f64 = 2.0;
-
-pub fn paint_focus_ring(
-    paint_scene: &Scene,
-    focused_tag: Option<&str>,
-    out: &mut VelloScene,
-) {
-    let Some(tag) = focused_tag else {
-        return;
-    };
-    let Some(rect) = focus_rect_for_tag(paint_scene, tag) else {
-        return;
-    };
-    let outer = KurboRect::new(
-        f64::from(rect.x) - FOCUS_RING_OFFSET,
-        f64::from(rect.y) - FOCUS_RING_OFFSET,
-        f64::from(rect.x.saturating_add(rect.w)) + FOCUS_RING_OFFSET,
-        f64::from(rect.y.saturating_add(rect.h)) + FOCUS_RING_OFFSET,
-    );
-    // Material Design / Google Sans default focus ring color
-    // `#1A73E8` = (26, 115, 232). The neutral blue satisfies WCAG
-    // 2.4.11 against the framework's default `BG_FILL` palette and
-    // the typical hello-* light backgrounds.
-    let color = PenikoColor::from_rgba8(26, 115, 232, 255);
-    out.stroke(
-        &Stroke::new(FOCUS_RING_WIDTH),
-        Affine::IDENTITY,
-        color,
-        None,
-        &outer,
-    );
-}
-
-/// Walk the paint scene's tagged Container / Box nodes and return the
-/// matching node's `rect`. Internal duplication of `input::rect_for_tag`
-/// kept on purpose — that one is gated on the `vello`-feature-agnostic
-/// `input` module (touch / non-vello backends use it too), while this
-/// one lives in the `vello`-gated `paint_adapter` so its scope is the
-/// focus ring renderer alone. The two share no state and the function
-/// body is eight lines — extracting a shared utility module would cost
-/// more in indirection than the duplication saves.
-fn focus_rect_for_tag(scene: &Scene, target_tag: &str) -> Option<Rect> {
-    if let Some(tag) = scene.tag() {
-        if tag == target_tag {
-            return Some(scene.rect());
-        }
-    }
-    if let Scene::Container(c) = scene {
-        for child in &c.children {
-            if let Some(rect) = focus_rect_for_tag(child, target_tag) {
-                return Some(rect);
-            }
-        }
-    }
-    None
-}
+// R705 §5.39 §2 #1/#7 — `paint_focus_ring` + its `focus_rect_for_tag`
+// walker were removed here. The focus ring is no longer an opaque vello
+// stroke painted after the Scene→Vello tree walk (which was invisible to
+// `scene/snapshot` and ignored the focused node's `corner_radius`). It is
+// now injected upstream as a pointer-transparent, corner-radius-aware
+// overlay `Scene::Box` by `pinion_overlay::inject_focus_ring`, applied as
+// the final step of every paint-scene producer in `pinion-shell`, so the
+// generic `to_vello` box path paints it and `scene/snapshot from: paint`
+// observes it. See `pinion_overlay::focus_ring`.
 
 /// Convert a pinion [`Color`] to a peniko `Color`, preserving every
 /// channel including alpha. The §5.3 R20 `Color::rgba(r, g, b, a)`
@@ -1395,66 +1327,9 @@ mod tests {
         }
     }
 
-    // ----- R51.58 §5.39 focus ring tests -----
-
-    /// Build a Container with a tagged Box child rooted at
-    /// `child_rect`. Mirrors the topology every hello-* example
-    /// paints — outer Container background + inner Box with the
-    /// widget tag.
-    fn tagged_scene(tag: &'static str, child_rect: Rect) -> Scene {
-        Scene::Container(
-            ContainerNode::new(vec![Scene::Box(
-                BoxNode::filled(child_rect, Color::rgb(0xff, 0, 0)).with_tag(tag),
-            )])
-            .with_style(BoxStyle::filled(Color::rgb(0, 0, 0))),
-        )
-    }
-
-    #[test]
-    fn focus_rect_for_tag_finds_tagged_child() {
-        let scene = tagged_scene("main_btn", Rect::new(10, 20, 100, 30));
-        assert_eq!(
-            focus_rect_for_tag(&scene, "main_btn"),
-            Some(Rect::new(10, 20, 100, 30)),
-        );
-    }
-
-    #[test]
-    fn focus_rect_for_tag_returns_none_for_unknown_tag() {
-        let scene = tagged_scene("main_btn", Rect::new(10, 20, 100, 30));
-        assert!(focus_rect_for_tag(&scene, "nope").is_none());
-    }
-
-    #[test]
-    fn paint_focus_ring_no_op_on_none() {
-        // FocusManager between Tab boundaries — paint_focus_ring
-        // must not push any encoding onto the Vello scene.
-        let scene = tagged_scene("main_btn", Rect::new(10, 20, 100, 30));
-        let mut vello = VelloScene::new();
-        paint_focus_ring(&scene, None, &mut vello);
-        // Hard to assert "empty encoding" from outside vello, but the
-        // call must not panic (no rect lookup, no stroke emit).
-    }
-
-    #[test]
-    fn paint_focus_ring_no_op_on_missing_tag() {
-        // FocusManager has a tag but the view fn removed that
-        // widget — paint_focus_ring stays silent (defensive, since
-        // FocusManager::update_focusable_tags also drops stale tags).
-        let scene = tagged_scene("main_btn", Rect::new(10, 20, 100, 30));
-        let mut vello = VelloScene::new();
-        paint_focus_ring(&scene, Some("gone"), &mut vello);
-    }
-
-    #[test]
-    fn paint_focus_ring_strokes_when_tag_resolves() {
-        // The matching path — exercise the full lookup + stroke
-        // emit, verifying the call lands without panic on a real
-        // tagged scene.
-        let scene = tagged_scene("main_btn", Rect::new(10, 20, 100, 30));
-        let mut vello = VelloScene::new();
-        paint_focus_ring(&scene, Some("main_btn"), &mut vello);
-    }
+    // R705 §5.39 — the focus-ring tests moved with the implementation
+    // to `pinion_overlay::focus_ring` (the ring is now an introspectable
+    // overlay Scene::Box, not an opaque vello stroke emitted here).
 
     // ----- R51.188 §5.45 R55.E.1 Vello paint clipping tests -----
 

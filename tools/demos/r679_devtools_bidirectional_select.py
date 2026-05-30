@@ -113,11 +113,22 @@ def _collect_borders(scene: Any) -> list[dict]:
     """Walk a paint snapshot for every node carrying a stroked
     border. Returns the border dict (`{"color": ..., "width": ...}`)
     of each. Empty list when no border is present.
+
+    R705 §5.39 — the keyboard focus ring is now an introspectable
+    `ai-overlay/focus-ring` Box overlay (it used to be an opaque vello
+    stroke invisible to `scene/snapshot`). Clicking a button in the
+    inspected window both *selects* it (the DevTools Error-red wrap this
+    demo measures) AND *focuses* it (the blue focus ring). The ring is
+    orthogonal to selection, so it is excluded here — the demo asserts
+    on selection wraps only. (See r705_focus_ring_introspect.py for the
+    ring's own coverage.)
     """
     out: list[dict] = []
 
     def walk(node: Any) -> None:
         if not isinstance(node, dict):
+            return
+        if node.get("tag") == "ai-overlay/focus-ring":
             return
         style = node.get("style")
         if isinstance(style, dict):

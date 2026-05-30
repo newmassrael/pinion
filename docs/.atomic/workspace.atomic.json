@@ -3,6 +3,7 @@
     "1": {
       "title": "Vision",
       "parent_doc": "docs/GENERATED.md",
+      "decision_status": "active",
       "intent": "AI-native GUI framework progressing through 4 phases (Foundation, Professional GUI, Game engine substrate per §2 #4 dual execution, AAA editor self-hosted), AI-introspection 1st-class throughout.",
       "rationale_bullets": [
         "Existing GUI frameworks treat AI debug as add-on; pinion makes it 1st-class through every phase",
@@ -28,12 +29,12 @@
         "AI-introspectable RPC headless API exposed to MCP-compatible clients",
         "Cascade-emit GUI/TUI/RPC backends from canonical scene structure",
         "SCE Forge second domain demo (after watching-zenoh Zenoh protocol)"
-      ],
-      "decision_status": "active"
+      ]
     },
     "2": {
       "title": "Settled invariants",
       "parent_doc": "docs/GENERATED.md",
+      "decision_status": "active",
       "intent": "v1 invariants: structured scene mandatory; RPC headless; dry_run; mode toggle; SCE-managed state; GUI/TUI dual; scene-as-data; SCE meta = universal cross-framework pattern authoring surface",
       "rationale_bullets": [
         "Structured scene enforced means AI introspect everywhere not pixel-blind",
@@ -65,12 +66,12 @@
         "R663.5: same binary — settings panel retained, 3D viewport immediate per-Container opt-in",
         "R663.5: ImmediateModeNode primitive lifts at Phase C entry (R1000+ axis)",
         "R663.5: northern-star = AAA game shippable + Unreal-class editor self-hosted in pinion"
-      ],
-      "decision_status": "active"
+      ]
     },
     "3": {
       "title": "Capability boundaries",
       "parent_doc": "docs/GENERATED.md",
+      "decision_status": "active",
       "intent": "Two opaque escape hatches recognized: Effect(shader) and External(content); scope excludes WebEngine and codec embed",
       "caveats_bullets": [
         "Effect(opaque) covers GPU shaders/blur/glow; pixel output excluded from introspection",
@@ -104,12 +105,12 @@
         {
           "file": "crates/pinion-platform-storage/src/lib.rs"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "4": {
       "title": "First dogfood: target application requirements",
       "parent_doc": "docs/GENERATED.md",
+      "decision_status": "active",
       "intent": "First dogfood must validate framework on real-world non-trivial GUI surface; autonomous schedule, no external deadline; widget catalogue criteria",
       "inputs_bullets": [
         "Designated first dogfood slide widget catalogue (Data Interp Viz Diag Util Sim)",
@@ -127,12 +128,12 @@
         "First dogfood autonomous; no delivery deadline binding framework cadence",
         "Framework MVP first then dogfood slice; not parallel deadline pressure",
         "Node graph widget largest single component; potentially 1-2 month sub-effort"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5": {
       "title": "Open implementation axes (Round 2 decomposition)",
       "parent_doc": "docs/GENERATED.md",
+      "decision_status": "active",
       "intent": "Open implementation axes formally decomposed: 10 sub-sections enumerate option sets, dependencies, and trade-offs deferred from Round 1 §5.X carry-forward",
       "rationale_bullets": [
         "Round 1 §1-§4 settled Vision/invariants/boundaries/dogfood; implementation form remains open",
@@ -159,13 +160,13 @@
         "2",
         "3",
         "4"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.1": {
       "title": "Strategic kickoff direction (framework-first vs dogfood-slice-first)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: framework-first kickoff; common substrate (scene/RPC/dry_run) before first widget; ratified Round 3",
       "rationale_bullets": [
         "§1/§2/§4 cover Vision/invariants/dogfood but do not bind MVP construction direction",
@@ -200,13 +201,13 @@
       "impact_scope": [
         "5.3",
         "5.6"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.10": {
       "title": "Mode toggle API surface (runtime flag vs build feature vs per-view)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: runtime flag for immediate vs retained mode toggle; single binary; ratified Round 3",
       "rationale_bullets": [
         "§2 commits to mode toggle but binding mechanism is unspecified",
@@ -242,13 +243,13 @@
       ],
       "impact_scope": [
         "2"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.11": {
       "title": "Scene primitive variant shape (minimal vs CSS-rich vs layered)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: layered primitive shape (core variant + Style trait + Modifier composition); ratified Round 5",
       "rationale_bullets": [
         "§5.2 chose 7 variants but did not fix per-variant field shape",
@@ -294,13 +295,13 @@
         "5.2",
         "5.3",
         "5.7"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.12": {
       "title": "RPC method shape (generic query vs typed-per-action vs hybrid)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: hybrid RPC shape (7 typed methods: query/click/dry_run/snapshot/rewind/waitFor/screenshot + path/filter sub-args); ratified Round 5, extended Round 7",
       "rationale_bullets": [
         "§2 names 6 methods; Round 7 adds 7th (screenshot) for pixel-level verification",
@@ -402,13 +403,13 @@
           "file": "crates/pinion-rpc/src/dispatch.rs",
           "symbol": "deserialize_nullable_present"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.13": {
       "title": "Event model (closed enum vs open registry vs core+opaque)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: closed core Event + opaque External event + logical DPI-aware coords; ratified Round 5",
       "rationale_bullets": [
         "§2 commits to event-with-input but variant set unspecified",
@@ -454,13 +455,13 @@
         "2",
         "5.8",
         "5.12"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.14": {
       "title": "State containment topology (single root vs per-widget vs hierarchical)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: hierarchical SCE topology (root + scoped child SCEs); ratified Round 5",
       "rationale_bullets": [
         "§5.4 chose SCE Forge Rust emit embedding; topology still open",
@@ -498,13 +499,13 @@
         "5.4",
         "5.8",
         "5.12"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.15": {
       "title": "External primitive integration contract",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: 8-point integration contract for External primitives (backend/repaint/thread/lifecycle/input/DPI/async/introspection); ratified Round 7",
       "rationale_bullets": [
         "§3 declared Effect/External as opaque escape but left integration contract unspecified",
@@ -589,13 +590,13 @@
           "file": "crates/pinion-platform-storage/src/lib.rs",
           "symbol": "open_app_storage"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.16": {
       "title": "GPU renderer architecture (runtime abstraction vs build-time codegen)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision (supersede Round 10 codegen): SCE Forge structural skeleton (SCXML state + Forge codec/buffer-pool/worker) + pinion thin RHI + naga; ratified Round 11",
       "rationale_bullets": [
         "Round 10 codegen-based decision technically incorrect — Futamura projection limit",
@@ -705,13 +706,13 @@
         {
           "file": "crates/pinion-shell/tests/smoke.rs"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.17": {
       "title": "Window topology (SCE-driven app statechart vs runtime registry)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: app.scxml declares window topology; SCE Forge build-time emits WindowId/routing/lifecycle; single vs multi auto-branches from SCXML state count; zero runtime registry cost; ratified Round 15",
       "rationale_bullets": [
         "GUI framework primary scope mandates multi-window; game-engine evolution path also viable",
@@ -760,13 +761,13 @@
         "5.13",
         "5.14",
         "5.16"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.18": {
       "title": "Multi-window RPC addressing (path prefix vs implicit first window)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: RPC path optional /window[id]/ prefix; id matches SCE-emit const enum via perfect-hash; absent prefix routes to first SCE-declared window; single-window apps short-circuit; ratified Round 15",
       "rationale_bullets": [
         "§5.7 JSON-RPC ratified but path scheme unspecified for multi-window scope",
@@ -811,13 +812,13 @@
         "5.7",
         "5.12",
         "5.17"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.19": {
       "title": "app.scxml convention (file location, declaration shape, build-time discovery)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "app.scxml lives at consumer crate root; SCXML state set declares window topology; build.rs invokes sce_build at compile time",
       "rationale_bullets": [
         "Convention over configuration: fixed filename eliminates discovery ambiguity",
@@ -875,13 +876,13 @@
           "language": "rust",
           "code": "// In your build.rs (consumer crate):\nfn main() {\n    sce_build::compile_scxml(&[\"app.scxml\"]);\n    // Apply the same inner-attr/inner-doc strip as button_sm.rs\n    // (see crates/pinion-core/build.rs precedent from R12).\n}"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.2": {
       "title": "Scene primitive type set (closed-form vs extensible)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: closed-form primitive type set (Box/Text/Path/Image/Container/Effect/External); slot ratified Round 3",
       "rationale_bullets": [
         "§2 commits to structured scene mandatory; §3 commits to 2 opaque escapes (Effect/External)",
@@ -925,13 +926,13 @@
         "2",
         "3",
         "5.3"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.20": {
       "title": "Intent system & bidirectional event flow",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Bidirectional symbolic event channel: widgets emit Intent (tag+payload), runtime queue drains to app and RPC subscriber per-frame; one channel for human + AI input.",
       "rationale_bullets": [
         "view-fn purity (§6.3) + dry_run (§2 #3) require Intent be data, not callback",
@@ -1021,13 +1022,13 @@
           "file": "examples/hello-theme/src/main.rs",
           "symbol": "TOGGLE_INTENT_TAG_FULL"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.21": {
       "title": "Layout system (taffy auto-layout, flex v0)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Auto-layout via taffy flexbox: ContainerNode + every leaf node carries LayoutStyle sidecar; pinion-runtime computes final Rect per node each frame before paint.",
       "rationale_bullets": [
         "§5.3 §5.11 v0 used absolute Rect coords — hello-button hardcodes BTN_RECT; not viable for real apps",
@@ -1090,13 +1091,13 @@
           "file": "examples/hello-button/src/main.rs",
           "symbol": "view"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.22": {
       "title": "Reactive primitives (Signal / Computed / Resource)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Signal/Computed/Resource fine-grained reactive primitives; pinion-forge DSL (.pinion.xml + <pinion> root) emits Rust struct + Owner-rooted constructor; AI reads via scene/query",
       "rationale_bullets": [
         "view-fn purity (§5.3) requires sync read — Signal.get() is canonical pure access",
@@ -1333,13 +1334,13 @@
           "file": "crates/pinion-core/src/widgets/text_edit.rs",
           "symbol": "use_text_edit_state"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.23": {
       "title": "Effect model (Effect / Command / handler)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Two-layer effects: Effect = reactive scope subscribing to Signals; Command<Intent> = declarative async/IO; Handler = dispatch impl. dry_run collects Commands without executing.",
       "rationale_bullets": [
         "Effect = reactive scope sibling of Computed; subscribes to Signal reads; closure on dep change",
@@ -1762,13 +1763,13 @@
           "file": "crates/pinion-core/src/test_fixtures.rs",
           "symbol": "EchoButtonFixture"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.24": {
       "title": "Semantic tree (role / state / actions)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Semantic sidecar on every Scene node: role (button/text/list), state (enabled/focused), actions (invokable). Absorbs §5.20 tag; AccessKit/AT-SPI/UIA bridge target; AI agent 1st-class.",
       "rationale_bullets": [
         "Scene IR is already a semantic tree de facto; §5.20 tag was the first hint",
@@ -1827,13 +1828,13 @@
           "alternative": "Separate semantic tree parallel to Scene",
           "reason": "two trees to sync; bug-prone"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.25": {
       "title": "Modifier composition (chain pattern)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Modifier = ordered chain of closed ModifierOp variants per Scene node. Compose/SwiftUI pattern. Replaces R20 Modifier struct; carries event handlers + reactive overlays + ad-hoc styles.",
       "rationale_bullets": [
         "Compose Modifier.padding(8).background(red).clickable{} chain is textbook canonical",
@@ -1889,13 +1890,13 @@
           "alternative": "HOC pattern (React)",
           "reason": "positional wrapping; not data-first"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.26": {
       "title": "Incremental layout + damage tracking",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Layout cache by node identity + Signal dep dirty tracking; subtree-only reflow; damage rect to paint; optional off-thread compute. Refines §5.21 full-recompute for AAA perf.",
       "rationale_bullets": [
         "§5.21 R24 full-recompute caps at ~1000 nodes; AAA perf needs subtree caching",
@@ -1950,13 +1951,13 @@
           "alternative": "Diff-based layout cache (React-style reconciliation)",
           "reason": "adds VDOM overhead"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.27": {
       "title": "Virtualization (VirtualList Scene variant + windowed render)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "VirtualList = planned windowed-render Scene variant for 10K+ datasets. DEFERRED, not implemented (see R690.A caveat); the R32 8th-variant / 14th-RPC numbering is stale.",
       "rationale_bullets": [
         "Compose LazyColumn / SwiftUI List / Flutter ListView.builder all virtualize — industry standard",
@@ -2020,13 +2021,13 @@
           "alternative": "Streaming Scene tree",
           "reason": "adds incremental API; over-engineered for v0"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.28": {
       "title": "Animation (spring physics + interruptible)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Spring-physics animation over Signals; Animated<T> wraps a Signal value with stiffness/damping/mass; interruptible (new target preserves velocity). SwiftUI Animation pattern.",
       "rationale_bullets": [
         "SwiftUI Animation + React Spring + Compose animateXxxAsState all use spring physics by default",
@@ -2223,13 +2224,13 @@
           "file": "crates/pinion-core/src/widgets/caret_blink.rs",
           "symbol": "CaretBlink"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.29": {
       "title": "Structured concurrency (Owner scope + Tokio + SyncSignal)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Structured concurrency: Owner scope (§5.22) + Tokio task scopes + SyncSignal cross-thread. Cancellation propagates on Owner drop; no orphan tasks. Compose/Swift industry standard.",
       "rationale_bullets": [
         "Compose coroutineScope + Swift structured concurrency 2020s+ industry standard",
@@ -2281,13 +2282,13 @@
           "alternative": "Custom executor",
           "reason": "3+ year work; tokio canonical"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.3": {
       "title": "DSL surface form (file-based vs macro vs view-fn)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: view function literal (Xilem-style); plain Rust functions, no separate DSL surface; ratified Round 3",
       "rationale_bullets": [
         "§1 mentions structured-scene DSL but surface form is unspecified",
@@ -2382,13 +2383,13 @@
           "file": "crates/pinion-core/src/style.rs",
           "symbol": "scale_normalized_to_px"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.30": {
       "title": "Accessibility (AccessKit bridge from SemanticProps)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "AccessKit bridge derives platform AT delegates (AT-SPI / UIA / NSAccessibility) from §5.24 SemanticProps. Focus management + keyboard nav 1st-class. No hand-written AT code.",
       "rationale_bullets": [
         "AccessKit is canonical Rust AT abstraction layer; egui/Druid/Slint adopt it",
@@ -2439,13 +2440,13 @@
           "alternative": "Custom AT abstraction",
           "reason": "duplicates AccessKit; reinvents wheel"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.31": {
       "title": "Hot reload (Signal serialization protocol)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Hot reload via Signal<T: Serialize> snapshot/restore: code swap preserves state; new view-fn applies to existing Signals. Flutter hot reload + Compose Live Edit pattern.",
       "rationale_bullets": [
         "Flutter hot reload (2017+) + Compose Live Edit (2022+) prove industry expectation",
@@ -2497,13 +2498,13 @@
           "alternative": "VM-level hot patching (Erlang/BEAM)",
           "reason": "not feasible for native Rust"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.32": {
       "title": "AI scene introspection: spatial-semantic locate",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "xy → element path + region → element set + path → bbox 역방향 RPC. 스크린샷-OCR 없이 시각 선택을 semantic identity 로 변환, AI scene reasoning first-class input.",
       "rationale_bullets": [
         "§2 #7 scene-as-data 의 RPC 구현 — scene/query 의 역방향 (xy → path)",
@@ -2606,13 +2607,13 @@
           "file": "crates/pinion-rpc/src/locate.rs",
           "symbol": "bbox"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.33": {
       "title": "AI overlay UX: event capture + highlight rendering",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "pinion-overlay crate: AI mode event capture + scene-level highlight injection. §5.32 introspection 위에 user-facing surface 구축, 시각 선택과 AI 응답 highlight 의 first-class layer.",
       "rationale_bullets": [
         "§5.32 RPC primitives 가 protocol-level — user-facing visible value layer 필요",
@@ -2710,13 +2711,13 @@
           "file": "crates/pinion-overlay/src/highlight.rs",
           "symbol": "HighlightStyle::with_stroke_width"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.34": {
       "title": "AI scene change proposal: prepare/preview/apply/cancel lifecycle",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "AI 가 typed change 제안 → stable preview_id 발급 → dry_run 결정성으로 미리보기 → apply/cancel/timeout 으로 완료; §2#3 invariant 의 명시적 RPC lifecycle 층.",
       "rationale_bullets": [
         "§2 #3 dry_run invariant 를 RPC lifecycle 로 표면화 — stable handle 위 prepare/finalize textbook",
@@ -2930,13 +2931,13 @@
           "file": "crates/pinion-rpc/src/path.rs",
           "symbol": "split_at_external"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.35": {
       "title": "Input dispatch — cursor/key → widget routing primitive",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "input event → framework hit-test/focus → widget dispatch; application routing 0줄, §5.20 intent (output) 의 input 대칭 axis",
       "rationale_bullets": [
         "Xilem/Druid/Slint/Qt/GTK/iced 모두 input dispatch = framework primitive (textbook)",
@@ -3068,13 +3069,13 @@
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
           "symbol": "ScrollBarExternal::pointer_move"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.36": {
       "title": "Text shaping & glyph cache — Linebender parley + glyph atlas primitive",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "모든 backend(Vello/Headless/TUI/미래) 공유 backend-orthogonal text layout+shaping+glyph cache framework primitive — 위젯 카탈로그 universal prereq",
       "rationale_bullets": [
         "R41 Vello (Linebender) 채택 = parley layout primary ecosystem 정통 가입",
@@ -3162,13 +3163,13 @@
           "file": "crates/pinion-text/src/caret.rs",
           "symbol": "CaretRect"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.37": {
       "title": "Self-hosted text engine — full OpenType to GPU rasterization stack",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "pinion 의 모든 text 동작 자체 구현 — parley/swash/fontique/ttf-parser 모두 제거, OpenType parser 부터 GPU rasterization 까지 full stack. lifetime canonical.",
       "rationale_bullets": [
         "외부 lib (parley/swash/fontique) 의존 = black box 동작 / 비결정 결과 / 진단 격차",
@@ -3224,13 +3225,13 @@
         "5.11",
         "5.3",
         "2"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.37.1": {
       "title": "OpenType binary parser — sfnt foundation (R50.1 sub-scope)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
+      "decision_status": "active",
       "intent": "R50.1 OpenType binary parser sub-scope — sfnt Offset Table + 6 mandatory tables + glyf/loca + name. Latin-first foundation for §5.37 자체 text engine; CFF/variable/color/WOFF2 후속 sub-section.",
       "rationale_bullets": [
         "R50.1 = §5.37 의 foundation layer — R50.2 Unicode 이후 모든 layer 가 parser 출력 의존",
@@ -3365,13 +3366,13 @@
           "file": "crates/pinion-text-font/src/tables/cmap/format12.rs",
           "symbol": "Format12"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.37.2": {
       "title": "Text engine RPC channel — AI-first font/text introspect (R50.X sub-scope)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
+      "decision_status": "active",
       "intent": "§5.37 text engine 의 RPC channel sub-scope — pinion-rpc 가 §5.37.1 parser 결과 + 후속 text layer (Unicode/BIDI/shape/layout) 를 JSON-RPC 2.0 로 AI agent 에게 노출, §2 invariant #2 (RPC AI-first) 의 text 영역 첫 적용.",
       "rationale_bullets": [
         "§2 invariant #2 (RPC AI-first) 의 §5.37 영역 첫 channel — parser 결과 AI introspect",
@@ -3518,13 +3519,13 @@
           "file": "crates/pinion-rpc/src/dispatch.rs",
           "symbol": "handle_text_normalize"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.37.3": {
       "title": "Unicode self-hosted normalization — UAX #15 NFC/NFD/NFKC/NFKD (R50.2 sub-scope)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
+      "decision_status": "active",
       "intent": "§5.37 text engine 의 Unicode codepoint normalization sub-scope — UAX #15 NFC/NFD/NFKC/NFKD 4 form 자체 구현. UCD decomposition + canonical combining class 직접 embed. 외부 lib 0.",
       "rationale_bullets": [
         "UAX #15 normalization = §5.37 text engine 의 input layer — BIDI/shape/break 모두 의존",
@@ -3715,13 +3716,13 @@
           "file": "crates/pinion-text-unicode/src/composition.rs",
           "symbol": "compose_pair_supplementary"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.37.4": {
       "title": "BIDI directional resolution (UAX #9)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
+      "decision_status": "active",
       "intent": "Self-hosted text engine 의 directional resolution layer: NFC codepoint 시퀀스 → 각 character 의 paragraph-relative embedding level + visual reorder mapping, external lib 0 + UAX #9 full conformance.",
       "rationale_bullets": [
         "Shape engine (§5.37.6) prerequisite: GSUB/GPOS 진입 전 character order 결정 필요",
@@ -3901,38 +3902,38 @@
           "file": "crates/pinion-text-unicode/src/bidi.rs",
           "symbol": "mirror_paired_brackets"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.37.5": {
       "title": "Script analysis (UCD Script property) — carry placeholder",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
-      "intent": "§5.37.5 script analysis sub-layer placeholder — UCD Script property 기반 segmentation. shape engine input (run splitting). ratify 는 multi-session carry, BIDI 이후 자연 순서",
-      "decision_status": "active"
+      "decision_status": "active",
+      "intent": "§5.37.5 script analysis sub-layer placeholder — UCD Script property 기반 segmentation. shape engine input (run splitting). ratify 는 multi-session carry, BIDI 이후 자연 순서"
     },
     "5.37.6": {
       "title": "Shape (OpenType GSUB/GPOS execution) — carry placeholder",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
-      "intent": "§5.37.6 shape sub-layer placeholder — OpenType GSUB/GPOS execution (glyph substitution + positioning). parley/swash 대체. R51.1 line_count semantic forward-reference. ratify 는 multi-session carry",
-      "decision_status": "active"
+      "decision_status": "active",
+      "intent": "§5.37.6 shape sub-layer placeholder — OpenType GSUB/GPOS execution (glyph substitution + positioning). parley/swash 대체. R51.1 line_count semantic forward-reference. ratify 는 multi-session carry"
     },
     "5.37.7": {
       "title": "Line break (UAX #14) — carry placeholder",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5.37",
+      "decision_status": "active",
       "intent": "§5.37.7 line break sub-layer placeholder — UAX #14 algorithm. R51.1 §5.12 forward-reference 정합용. self-hosted text engine 의 line breaking step, ratify 는 multi-session carry",
       "caveats_bullets": [
         "Carry placeholder — ratify TBD, §5.37.4 BIDI / §5.37.6 shape 이후 자연 순서",
         "decision_status 변경 primitive 부재 — 진짜 정정 = mnemosyne MCP RFC carry"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.38": {
       "title": "Widget catalog — Tier 1 primitive widgets",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "§5.38 Tier-1 widget primitive 카탈로그 axis ratify — Button R12 시작, Toggle/Checkbox/Slider/TextInput/Menu 등 후속, framework-side 책임 (R47-class lesson 적용)",
       "rationale_bullets": [
         "R47-class lesson: framework primitive 영역, application/example inline 금지",
@@ -4378,13 +4379,13 @@
           "file": "crates/pinion-shell/src/substrate.rs",
           "symbol": "ShellCore::notify_focus_change"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.39": {
       "title": "Focus model — keyboard navigation + activation primitive",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "focused widget = key dispatch single target + Tab traversal + ARIA Space/Enter activation; pinion-runtime FocusManager 가 focused_tag 소유, broadcast key dispatch 폐기",
       "rationale_bullets": [
         "ARIA WCAG 2.1.1 Keyboard / 2.4.3 Focus Order / 2.4.7 Focus Visible — framework primitive 기본 보장 필수",
@@ -4564,13 +4565,13 @@
           "file": "crates/pinion-shell/src/lib.rs",
           "symbol": "AppShell window_event WindowEvent::Focused"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.4": {
       "title": "SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: embed SCE Forge Rust emit directly via vendor/sce submodule; slot ratified Round 3",
       "rationale_bullets": [
         "§2 commits to SCE state but embedding form is unspecified",
@@ -4610,13 +4611,13 @@
       "impact_scope": [
         "2",
         "5.5"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.40": {
       "title": "Accessibility semantic tree — AccessKit integration for WCAG 4.1.2 (Name, Role, Value)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "AccessKit 통합으로 widget name/role/state/value 를 OS AT API (UIA/AX/AT-SPI/Android) 노출, WCAG 4.1.2 충족, AI introspect 와 직교 공존",
       "rationale_bullets": [
         "WCAG 4.1.2 Name/Role/Value Level A — focus/keyboard 만으로 미충족, AT 노출 필수",
@@ -5091,13 +5092,13 @@
           "file": "crates/pinion-a11y/src/widget_a11y.rs",
           "symbol": "WidgetA11y::access_child_invoke"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.41": {
       "title": "TUI 백엔드 — cell-based render mode + crossterm 입력 + WidgetRenderer trait 추출",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "§2 #6 GUI/TUI dual invariant 의 spec 구체화 — Scene→cell 매핑, crossterm key/mouse → §5.13 Event 변환, WidgetRenderer trait 추출 substrate evolution plan",
       "rationale_bullets": [
         "§2 #6 'GUI/TUI dual: one scene, two render dispatch paths' 는 settled invariant 인데 impl 0%",
@@ -5487,13 +5488,13 @@
           "file": "crates/pinion-tui/src/paint.rs",
           "symbol": "cell_to_buf_xy"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.45": {
       "title": "Scroll axis (R55)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Establish scroll container axis: ScrollNode scene primitive + offset state + input mapping + clipping render + composite widget integration.",
       "rationale_bullets": [
         "Current catalogue (ListBox, RadioGroup) implicitly clamps content to fixed viewport — limit",
@@ -5636,13 +5637,13 @@
           "file": "crates/pinion-shell/src/substrate.rs",
           "symbol": "ShellCore::compute_paint_scene"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.49": {
       "title": "AI-first RPC self-verification harness (R59)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Claude-side RPC dogfood harness: every visual round ends with a typed scene/query|invoke|snapshot demo that proves observable state without humans narrating screenshots.",
       "rationale_bullets": [
         "§2 #2 demands the framework prove its own state via typed RPC, not via screenshot prose.",
@@ -5717,13 +5718,13 @@
         {
           "file": "tools/README.md"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.5": {
       "title": "MCU v1 backend scope (AP-only vs MCU-included)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: AP-only v1 (Linux/Mac/Win); MCU deferred to v2+; ratified Round 3",
       "rationale_bullets": [
         "Round 1 carry-forward explicitly recommends AP-only first cut",
@@ -5753,12 +5754,12 @@
       ],
       "impact_scope": [
         "5.4"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.50": {
       "title": "Theming substrate (R57)",
       "parent_doc": "docs/GENERATED.md",
+      "decision_status": "active",
       "intent": "Establish theming substrate: ColorRole enum (Material 3 / W3C mirror) + Theme palette + ThemeProvider reactive wrapper + use_theme hook so widgets resolve semantic roles instead of RGB literals.",
       "rationale_bullets": [
         "Hard-coded RGB literals in every widget bind one palette at build time - no light/dark swap",
@@ -6008,13 +6009,13 @@
           "file": "crates/pinion-core/src/test_fixtures.rs",
           "symbol": "settle_owner_animations"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.6": {
       "title": "Reuse path (early cascade-emit vs Rust-native then port)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: Rust-native MVP first, SCE-Forge-style cascade-emit layer added after canonical kind settles; ratified Round 3",
       "rationale_bullets": [
         "§1 outputs mention cascade-emit GUI/TUI/RPC backends; timing unspecified",
@@ -6045,13 +6046,13 @@
       "impact_scope": [
         "1",
         "5.1"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.7": {
       "title": "RPC headless protocol (MCP-native vs JSON-RPC vs gRPC)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: JSON-RPC 2.0 transport; MCP and other AI tooling wrap on top; ratified Round 3",
       "rationale_bullets": [
         "§2 commits to RPC headless as AI primary path but protocol unspecified",
@@ -6098,13 +6099,13 @@
           "file": "crates/pinion-rpc/src/commands.rs",
           "symbol": "list_pending_commands"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.8": {
       "title": "dry_run hook site (engine-level vs scene snapshot vs view rewind)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: SCE engine-level hook for dry_run (intercept step function before commit); ratified Round 3",
       "rationale_bullets": [
         "§2 commits to dry_run via SCE determinism; mechanism unspecified",
@@ -6142,13 +6143,13 @@
       "impact_scope": [
         "2",
         "5.4"
-      ],
-      "decision_status": "active"
+      ]
     },
     "5.9": {
       "title": "GUI/TUI renderer split (trait-based vs separate pipelines)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
+      "decision_status": "active",
       "intent": "Decision: trait-based Renderer abstraction (one scene → GUI/TUI via dispatch); ratified Round 3",
       "rationale_bullets": [
         "§2 commits to GUI/TUI dual but structural split is unspecified",
@@ -6177,12 +6178,12 @@
       ],
       "impact_scope": [
         "2"
-      ],
-      "decision_status": "active"
+      ]
     },
     "6": {
       "title": "Bootstrap implementation choices (Tier 1 auto-ratified)",
       "parent_doc": "docs/GENERATED.md",
+      "decision_status": "active",
       "intent": "Tier 1 implementation choices auto-ratified Round 4 without axis split (ceremonial bloat avoidance); D/E/F/G handled as §5.11-§5.14 axes",
       "rationale_bullets": [
         "Tier 1 split into auto-ratified (A/B/C clear) vs axis-worthy (D/E/F/G genuinely open)",
@@ -6203,13 +6204,13 @@
         "5.1",
         "5.5",
         "5.7"
-      ],
-      "decision_status": "active"
+      ]
     },
     "6.1": {
       "title": "Crate workspace structure",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "6",
+      "decision_status": "active",
       "intent": "Decision: Cargo workspace with initial 4 crates (pinion-core, pinion-runtime, pinion-rpc, pinion-cli); pinion-* prefix; ratified Round 4",
       "rationale_bullets": [
         "Single crate would become monolith given §5.6 cascade-emit + §5.4 SCE embed scope",
@@ -6245,13 +6246,13 @@
         "5.6",
         "5.7",
         "5.10"
-      ],
-      "decision_status": "active"
+      ]
     },
     "6.2": {
       "title": "Rust toolchain (MSRV + edition)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "6",
+      "decision_status": "active",
       "intent": "Decision: stable Rust, MSRV 1.85.0, edition 2024; ratified Round 4",
       "rationale_bullets": [
         "Stable Rust required for production framework distribution to downstream users",
@@ -6280,13 +6281,13 @@
           "alternative": "Edition 2021",
           "reason": "older feature surface; less aligned with current Rust async story"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "6.3": {
       "title": "Async model",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "6",
+      "decision_status": "active",
       "intent": "Decision: view-fn sync (purity invariant), RPC and IO async via tokio; ratified Round 4",
       "rationale_bullets": [
         "view-fn purity enables dry_run/diff guarantees per §2 invariant and §5.8 engine-level hook",
@@ -6336,13 +6337,13 @@
           "file": "crates/pinion-core/src/frame.rs",
           "symbol": "Frame::with_dt"
         }
-      ],
-      "decision_status": "active"
+      ]
     },
     "6.4": {
       "title": "Ecosystem default deps (winit, taffy, cosmic-text, accesskit, image, lyon, kurbo)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "6",
+      "decision_status": "active",
       "intent": "Decision: auto-ratify ecosystem default crates for window, layout, text, a11y, image, path, math; ratified Round 10",
       "rationale_bullets": [
         "Each crate has near-no real alternative in Rust ecosystem (de-facto choice)",
@@ -6377,8 +6378,7 @@
       "impact_scope": [
         "6",
         "5.16"
-      ],
-      "decision_status": "active"
+      ]
     }
   },
   "changelog_entries": {
@@ -23080,6 +23080,56 @@
         "button_scene paint-compose helper duplicated across hello-dialog + hello-drawer (2 consumers) — lift to pinion_widget_paint::button at the 3rd consumer (Rule-of-Three for button paint, per the R686.C use_hover_progress precedent). Our-code debt, justly deferred (not hidden), [[abstraction-needs-second-consumer]].",
         "scrim=ButtonExternal reuse for light-dismiss stays a 1-consumer pattern (drawer; dialog opts out); extract a dedicated DismissExternal only if a 2nd light-dismiss consumer appears AND the button-semantics reuse bites.",
         "Phase B widget-catalog breadth resumes R704+: Table (Model/View + virtualization substrate-first or documented row-limit), DatePicker (calendar grid + date types, zero substrate today), ColorPicker (2D pad + HSV math)."
+      ]
+    },
+    "R705": {
+      "decision_summary": "R705 producer-parity - scene/snapshot from:paint serializes the stored last_paint_scene (the exact frame painted to GPU) so introspection == screen by construction, replacing the query-time re-render; and the focus-ring overlay is placed at the scroll-translated window-absolute rect via the new SSOT Scene::rect_for_tag_absolute, fixing misplacement for any focused widget inside a Scroll.",
+      "changes_bullets": [
+        "pinion-core: new Scene::rect_for_tag_absolute - single scroll-offset-translation + viewport-clip authority (lifts find_rect_by_tag_with_offset + translate_rect_into_clip out of pinion-rpc::dispatch); pinion_rpc::find_rect_by_tag now delegates to it.",
+        "pinion-rpc: DispatchContext.last_paint_scene + with_last_paint_scene; handle_scene_snapshot from:paint serializes the stored scene when present, falls back to the producer only for never-painted (headless) windows.",
+        "pinion-runtime: InputRouter::last_paint_scene getter; CoreShell::scene_mut_and_last_paint_for_window (disjoint split borrow), last_paint_scene_for_window, painted_window_sizes.",
+        "pinion-overlay: inject_focus_ring resolves the ring rect through Scene::rect_for_tag_absolute (window-absolute) instead of the raw scroll-local rect; regression unit test for a scrolled row.",
+        "pinion-shell: dispatch threads the stored paint scene via the split borrow; dirty-on-mutation re-stores the paint scene of EVERY painted window when a handled apply_key (try_apply_key) or any drained intent (handle_tail) armed the redraw - covering reactive-Signal-only changes (listbox/tree focused-row, cross-window selection) the SCXML state_change arm misses.",
+        "tools: grounded rpc_verify.abs_rects_of + assert_focus_ring_concentric (independent window-absolute recompute) + r705_focus_ring_placement.py catalogue sweep + r705_focus_ring_introspect.py."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace (76 suites green) + clippy --all-targets --features pinion-runtime/vello clean; demo sweep 58/58 (R704 datepicker excluded as WIP).",
+        "Grounded focus-ring sweep: 31 rings across 24 GUI examples + a non-zero-offset scrolled-listbox row verified concentric against independently-recomputed window-absolute rects (non-tautological, unlike the prior same-coordinate-space assertions).",
+        "Live ffmpeg x11grab cross-check: dialog Cancel ring + scrolled listbox Fig-row ring match scene/snapshot from:paint exactly, confirming introspection == screen; same paint_scene object is both to_vello_cached(&scene) to GPU and finalize_frame(scene) to the router."
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.16",
+        "5.39",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "R704 datepicker (WIP, separate round): simulate final-projection RollbackFailed + click does not move active-descendant; month-crossing arrow nav.",
+        "pinion-overlay::highlight shares the same top-level-vs-scroll-local latent gap (DevTools highlight of a scrolled node); consolidate onto Scene::rect_for_tag_absolute when a scrolled-highlight consumer appears."
+      ],
+      "publishable_decision_summary": "R705 producer-parity - scene/snapshot from:paint serializes the stored last_paint_scene (the exact frame painted to GPU) so introspection == screen by construction, replacing the query-time re-render; and the focus-ring overlay is placed at the scroll-translated window-absolute rect via the new SSOT Scene::rect_for_tag_absolute, fixing misplacement for any focused widget inside a Scroll.",
+      "publishable_changes_bullets": [
+        "pinion-core: new Scene::rect_for_tag_absolute - single scroll-offset-translation + viewport-clip authority (lifts find_rect_by_tag_with_offset + translate_rect_into_clip out of pinion-rpc::dispatch); pinion_rpc::find_rect_by_tag now delegates to it.",
+        "pinion-rpc: DispatchContext.last_paint_scene + with_last_paint_scene; handle_scene_snapshot from:paint serializes the stored scene when present, falls back to the producer only for never-painted (headless) windows.",
+        "pinion-runtime: InputRouter::last_paint_scene getter; CoreShell::scene_mut_and_last_paint_for_window (disjoint split borrow), last_paint_scene_for_window, painted_window_sizes.",
+        "pinion-overlay: inject_focus_ring resolves the ring rect through Scene::rect_for_tag_absolute (window-absolute) instead of the raw scroll-local rect; regression unit test for a scrolled row.",
+        "pinion-shell: dispatch threads the stored paint scene via the split borrow; dirty-on-mutation re-stores the paint scene of EVERY painted window when a handled apply_key (try_apply_key) or any drained intent (handle_tail) armed the redraw - covering reactive-Signal-only changes (listbox/tree focused-row, cross-window selection) the SCXML state_change arm misses.",
+        "tools: grounded rpc_verify.abs_rects_of + assert_focus_ring_concentric (independent window-absolute recompute) + r705_focus_ring_placement.py catalogue sweep + r705_focus_ring_introspect.py."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace (76 suites green) + clippy --all-targets --features pinion-runtime/vello clean; demo sweep 58/58 (R704 datepicker excluded as WIP).",
+        "Grounded focus-ring sweep: 31 rings across 24 GUI examples + a non-zero-offset scrolled-listbox row verified concentric against independently-recomputed window-absolute rects (non-tautological, unlike the prior same-coordinate-space assertions).",
+        "Live ffmpeg x11grab cross-check: dialog Cancel ring + scrolled listbox Fig-row ring match scene/snapshot from:paint exactly, confirming introspection == screen; same paint_scene object is both to_vello_cached(&scene) to GPU and finalize_frame(scene) to the router."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.16",
+        "5.39",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R704 datepicker (WIP, separate round): simulate final-projection RollbackFailed + click does not move active-descendant; month-crossing arrow nav.",
+        "pinion-overlay::highlight shares the same top-level-vs-scroll-local latent gap (DevTools highlight of a scrolled node); consolidate onto Scene::rect_for_tag_absolute when a scrolled-highlight consumer appears."
       ]
     },
     "Round 1": {
