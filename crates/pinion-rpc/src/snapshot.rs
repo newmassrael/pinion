@@ -109,6 +109,12 @@ pub struct TextSnapshot {
     pub tag: Option<String>,
     pub content: String,
     pub style: TextStyle,
+    /// R713 §5.36 — the styled-run spans (rich / multi-style text).
+    /// Empty for a single-style node. Mirrors `TextNode.runs` so an AI
+    /// client reads each span's byte range + resolved style as data
+    /// (§2 #7 scene-as-data) — `RichText` is introspectable without
+    /// OCR'ing per-colour glyphs off a screenshot.
+    pub runs: Vec<pinion_core::scene::StyleRun>,
 }
 
 /// `Path` payload of [`SnapshotNode::Path`] (R51.198 §5.49 + carry,
@@ -285,6 +291,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             tag: cow_to_owned(node.tag.as_ref()),
             content: node.content.clone(),
             style: node.style.clone(),
+            runs: node.runs.clone(),
         }),
         Scene::Path(node) => SnapshotNode::Path(PathSnapshot {
             rect: node.rect,

@@ -55,11 +55,19 @@ use taffy::style::{
 /// variants (image intrinsic / external opaque measure) extend this
 /// enum without changing the closure shape.
 pub enum NodeContext {
-    /// `Scene::Text` leaf measure source — content + style flow into
-    /// `LayoutCache::layout` to produce parley's intrinsic width /
-    /// height. The clone is necessary because the closure outlives the
+    /// `Scene::Text` leaf measure source — content + style + R713
+    /// styled-run spans flow into `LayoutCache::layout_with_runs` to
+    /// produce parley's intrinsic width / height. The styled runs
+    /// participate because per-run font size / weight changes the
+    /// shaped advances and line-break opportunities, so the measure
+    /// pass must shape the same multi-style layout the paint pass will.
+    /// The clones are necessary because the closure outlives the
     /// `&Scene` ref used during build.
-    Text { content: String, style: TextStyle },
+    Text {
+        content: String,
+        style: TextStyle,
+        runs: Vec<pinion_core::scene::StyleRun>,
+    },
 }
 
 /// Compute the layout of `scene` against the given viewport extents.
@@ -192,7 +200,7 @@ fn compute_layout_inner(
                 return TaffySize { width, height };
             }
             match node_context {
-                Some(NodeContext::Text { content, style }) => {
+                Some(NodeContext::Text { content, style, runs }) => {
                     // available_space.width.Definite → parley wrap point
                     // (multi-line); MinContent / MaxContent → no wrap
                     // (single line / unbounded), matching how taffy
@@ -204,7 +212,7 @@ fn compute_layout_inner(
                         }
                         _ => None,
                     };
-                    let layout = cache.layout(content, style, max_width);
+                    let layout = cache.layout_with_runs(content, style, runs, max_width);
                     // R51.1 §5.12 — capture line count on the last
                     // measure probe per node id; taffy may call this
                     // closure multiple times during flex resolution
@@ -367,6 +375,7 @@ fn build(scene: &Scene, tree: &mut TaffyTree<NodeContext>) -> LayoutShadow {
             NodeContext::Text {
                 content: t.content.clone(),
                 style: t.style.clone(),
+                runs: t.runs.clone(),
             },
         )
         .expect("taffy new_leaf_with_context failed")

@@ -1101,7 +1101,12 @@ fn paint_text(
     // shape pass, so static labels skip mirror recomputation entirely
     // on steady-state frames.
     let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
-    let layout = cache.layout(&t.content, &t.style, max_width);
+    // R713 §5.36 — shape with the styled-run spans so multi-style text
+    // paints each run's brush / weight / size. `t.runs.is_empty()` is
+    // the single-style fast path (byte-identical to the pre-R713
+    // `cache.layout` call). The per-run brush already flows here: the
+    // glyph-run loop below reads `run.style().brush` per parley run.
+    let layout = cache.layout_with_runs(&t.content, &t.style, &t.runs, max_width);
     // R51.188 §5.45 R55.E.1 — compose the inherited transform (e.g.
     // a parent `Scene::Scroll`'s shifted child transform) with the
     // text's own `(t.rect.x, t.rect.y)` translation. Pre-R51.188

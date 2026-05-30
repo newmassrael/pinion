@@ -386,6 +386,16 @@ impl Scene {
                 t.style.hash(&mut h);
                 t.layout.hash(&mut h);
                 t.line_count.hash(&mut h);
+                // R713 §5.36 — fold the styled-run spans into the paint
+                // hash so the R682 paint-cache re-keys when a run's
+                // range or style changes (e.g. a highlight toggling a
+                // span's weight). `StyleRun` derives `Hash` (TextStyle
+                // is already Hash); the length guards against a run
+                // being added / removed without any field changing.
+                (t.runs.len() as u64).hash(&mut h);
+                for run in &t.runs {
+                    run.hash(&mut h);
+                }
                 h.finish()
             }
             Scene::Path(p) => {
@@ -1351,6 +1361,55 @@ impl BoxNode {
     }
 }
 
+/// R713 §5.36 — a styled span over a sub-range of [`TextNode::content`].
+///
+/// The styled-run substrate (`RichText` / `Text.rich`): a [`TextNode`]
+/// carries a `style` that applies to the whole string *plus* an
+/// ordered list of `StyleRun`s, each fully restyling the bytes in
+/// `[start, end)`. This is the Qt `QTextLayout::FormatRange` / Flutter
+/// `TextSpan`-list model: each run carries a **fully resolved**
+/// [`TextStyle`] (not a partial override), so a run is unambiguous and
+/// the cache key (`pinion-text::LayoutCache`) stays a value comparison.
+///
+/// # Range semantics
+///
+/// * `start` / `end` are **UTF-8 byte offsets** into
+///   [`TextNode::content`] — the same units parley's `RangedBuilder`
+///   indexes. `end` is exclusive; `start == end` is an empty run
+///   (no-op). Offsets outside the content length are clamped by the
+///   shaper (parley ignores out-of-range pushes), but well-formed
+///   consumers keep runs in-bounds and non-overlapping.
+/// * Runs apply **in list order, after** the base `style`: the base
+///   `style` is pushed as the default, then each run's style is pushed
+///   over its range. Where runs overlap, a later run wins for the
+///   overlapping bytes (last-push-wins, matching parley's range
+///   resolution). Uncovered bytes keep the base `style`.
+///
+/// # Empty runs = single-style fast path
+///
+/// `TextNode::runs.is_empty()` is the canonical single-style text node
+/// (every pre-R713 node): the shaper takes the `push_default`-only
+/// path and the cache key omits run data. The field defaults to an
+/// empty `Vec`, so every existing `TextNode` constructor is unchanged.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StyleRun {
+    /// UTF-8 byte offset of the first styled byte (inclusive).
+    pub start: u32,
+    /// UTF-8 byte offset one past the last styled byte (exclusive).
+    pub end: u32,
+    /// The fully-resolved style for the bytes in `[start, end)`.
+    pub style: TextStyle,
+}
+
+impl StyleRun {
+    /// Construct a styled run over the UTF-8 byte range `[start, end)`.
+    #[must_use]
+    pub fn new(start: u32, end: u32, style: TextStyle) -> Self {
+        Self { start, end, style }
+    }
+}
+
 /// Styled text primitive.
 ///
 /// v0 §5.11 shape: `content: String` carries the raw string payload;
@@ -1358,6 +1417,10 @@ impl BoxNode {
 /// space as `BoxNode`; `style: TextStyle` carries font + colour per
 /// §5.3 R20. The cosmic-text rasterizer lands in a later R21 slice
 /// and consumes `style` directly.
+///
+/// R713 §5.36 — `runs` carries an optional ordered list of [`StyleRun`]
+/// spans for rich (multi-style) text; empty (the default) is the
+/// single-style fast path. See [`StyleRun`] for range semantics.
 ///
 /// `tag` is the §5.20 intent-system carrier (see [`BoxNode::tag`]).
 #[non_exhaustive]
@@ -1394,6 +1457,14 @@ pub struct TextNode {
     /// `LayoutNode.line_count` so AI clients verify single-line text
     /// without pixel inspection (Scene-as-data invariant §2 #7).
     pub line_count: u32,
+    /// R713 §5.36 — optional ordered styled-run spans for rich
+    /// (multi-style) text. Empty (the default) is the single-style
+    /// node: the whole string uses `style`. Non-empty applies each
+    /// [`StyleRun`] over its byte range on top of `style` (see
+    /// [`StyleRun`] for ordering / overlap semantics). The paint
+    /// adapter already emits one Vello glyph run per parley run, so a
+    /// multi-style node renders without any extra paint plumbing.
+    pub runs: Vec<StyleRun>,
     /// R51.81 §5.40 — WAI-ARIA-aligned role hint for the AT-side name
     /// enrichment pipeline.
     ///
@@ -1456,6 +1527,7 @@ impl TextNode {
             layout: LayoutStyle::new(),
             tag: None,
             line_count: 0,
+            runs: Vec::new(),
             role: None,
         }
     }
@@ -1492,6 +1564,17 @@ impl TextNode {
     #[must_use]
     pub fn with_role(mut self, role: TextRole) -> Self {
         self.role = Some(role);
+        self
+    }
+
+    /// R713 §5.36 — attach styled-run spans for rich (multi-style)
+    /// text (builder form). Each [`StyleRun`] fully restyles its UTF-8
+    /// byte range of `content` on top of the node's base `style`; see
+    /// [`StyleRun`] for ordering / overlap semantics. An empty `runs`
+    /// (the default) keeps the single-style fast path.
+    #[must_use]
+    pub fn with_runs(mut self, runs: Vec<StyleRun>) -> Self {
+        self.runs = runs;
         self
     }
 }

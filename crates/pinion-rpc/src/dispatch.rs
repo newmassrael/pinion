@@ -2052,6 +2052,11 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
             obj.insert("content".to_string(), Value::String(snap.content));
             obj.insert("style".to_string(), text_style_to_json(&snap.style));
+            // R713 §5.36 — styled-run spans (empty for single-style
+            // text). Each run reports its byte range + resolved style
+            // so AI clients read `RichText` structure as data.
+            let runs: Vec<Value> = snap.runs.iter().map(style_run_to_json).collect();
+            obj.insert("runs".to_string(), Value::Array(runs));
         }
         SnapshotNode::Path(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
@@ -2521,6 +2526,20 @@ fn text_overflow_to_json(o: pinion_core::style::TextOverflow) -> Value {
 /// letter-spacing, text-align, decoration, overflow) so AI clients
 /// can introspect every rendered typography knob without OCR
 /// (§2 #7 scene-as-data completeness).
+/// R713 §5.36 — serialize a [`StyleRun`] to wire JSON: its UTF-8 byte
+/// range plus the fully-resolved per-span [`TextStyle`]. Mirrors
+/// `text_style_to_json` for the `style` field so a styled-run span is
+/// introspected with the same shape as the base style.
+///
+/// [`StyleRun`]: pinion_core::scene::StyleRun
+fn style_run_to_json(run: &pinion_core::scene::StyleRun) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("start".to_string(), Value::Number(run.start.into()));
+    obj.insert("end".to_string(), Value::Number(run.end.into()));
+    obj.insert("style".to_string(), text_style_to_json(&run.style));
+    Value::Object(obj)
+}
+
 fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert(

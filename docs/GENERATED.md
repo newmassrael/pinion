@@ -14963,6 +14963,40 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R713 — R713 styled-run text substrate + first RichText (Text.rich) widget: TextNode gains an ordered StyleRun list so one TextNode paints inline multi-style runs (per-span colour/weight/italic/size); the paint adapter already emitted one Vello glyph run per parley run, so this added only the styled-run build path in pinion-text plus scene-as-data introspection of runs.
+
+**Changes**:
+- pinion-core: StyleRun{start,end,style} + TextNode.runs Vec<StyleRun> + with_runs builder
+- pinion-core: folded runs into manual Hash for Scene::Text so R682 paint-cache re-keys on run change
+- pinion-text: LayoutCache::layout_with_runs + runs in LayoutKey + style_properties helper (base push_default, per-run push over byte range)
+- pinion-text: layout() delegates layout_with_runs(.., &[], ..) so empty-runs is the byte-identical single-style fast path
+- pinion-runtime: NodeContext::Text carries runs; measure + paint both shape via layout_with_runs (per-run brush already flowed to paint)
+- pinion-rpc: TextSnapshot.runs + scene/snapshot Text "runs" array via style_run_to_json (scene-as-data introspection)
+- examples/hello-richtext: first RichText consumer (one TextNode, 3 inline StyleRun spans: bold purple / italic brown / larger fox); Toggle flips fox teal<->bold red
+- tools/demos/r713_richtext.py: 30+ snapshot assertions + live-pixel scan locating 3 distinct run inks
+
+
+
+**Verification**:
+- cargo test --workspace green (pinion-text +4 styled-run cases incl per-run brush/size split; hello-richtext 6 binding tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)
+- python3 tools/demos/r713_richtext.py PASS (structural introspection + PINION_SCREENSHOT live-pixel)
+- full release demo sweep green (66 demos; styled-run additive, empty-runs byte-identical to pre-R713 text path)
+- mnemosyne validate-workspace: T1 reject=0, new orphan +0, round-trip 1/1, GENERATED.md sync, sections 62
+
+
+
+**Impact**: §5.36, §5.2, §5.49
+
+
+**Carry forward**:
+- rich-text EDITING/selection over multi-style runs deferred — display RichText only (Text.rich); rich editor = future round, honest defer
+- partial-override run model (Flutter TextSpan inheritance) deferred — full-resolved-style-per-run is the unambiguous substrate; ergonomic span builder when 2nd consumer
+- LayoutKey fg_color over-specification (R57.X theme-fade) still latent and unchanged by R713 — multi-line styled editor would cross the visible re-shape threshold
+- gradient on PathStyle (R709) / inverseSurface ColorRole palette (R695) still open as separate additive axes
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

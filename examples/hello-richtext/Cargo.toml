@@ -1,0 +1,42 @@
+[package]
+name = "hello-richtext"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R713 §5.36 styled-run text substrate consumer — a single TextNode painting an inline multi-style paragraph (per-span colour / weight / italic / size via StyleRun), the first RichText (Text.rich) widget; the runs are introspectable via scene/snapshot and verifiable by live-pixel sampling"
+publish = false
+
+[[bin]]
+name = "hello-richtext"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Toggle widget reused as the fox-emphasis mode bit (the binding
+# paints styled runs; the Toggle is the RPC-drivable mode bit).
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the `HelloRichTextRenderer` struct emitted by `build.rs`
+# names `::vello::*` directly; the `vello_renderer_impl!` expansion also
+# names `::vello::Scene` / `::vello::peniko::Color`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the `HelloRichTextRenderer` Vello
+# wrapper. Identical pattern to hello-gradient / hello-toggle.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
