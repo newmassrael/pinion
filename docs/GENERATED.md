@@ -14616,6 +14616,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R707 — R707 interactive data Table: WAI-ARIA grid (row/columnheader/gridcell), the 2nd consumer of the R704 grid-role family and first to exercise the row role, over a single TableExternal coordinator with a 2-D roving active descendant + framework-owned single-row selection
+
+**Changes**:
+- crates/pinion-core/src/widgets/table.rs: Table coordinator (per-row Radio leaf for 1-of-N selection, immutable cell data, 2-D focused_row/focused_col roving active descendant independent of selection) + WidgetTransition (selected intent = row index) + TableExternal ExternalIntrospect surface (rows/cols/selected/selected_row/focused_row/focused_col/header.<c>/cell.<r>.<c>/state.<r>/selected.<r>; send wire <r>_<c>:<EventName>; focused_row/col the only writable slots)
+- crates/pinion-widget-paint/src/table.rs: view_table composes the header band (tag <t>_hrow + columnheader cells <t>_ch<c>) above data rows (<t>_row<r>) of gridcells (composite hit tag <t>#<r>_<c>); selected-row accent wash (Surface.lerp(Accent,0.16) since the palette has no secondaryContainer role) + SurfaceContainer zebra stripe + per-row state-layer overlay; TableStyle M3 carrier + TableData borrow carrier
+- examples/hello-table (Cargo.toml/build.rs/app.pinion.xml/main.rs): single TableExternal at composite root 'table'; Grid->Row->ColumnHeader/GridCell access tree (first AriaRole::Row consumer); single-Tab-stop + 2-D roving apply_key (arrows clamped, Home/End column, PageUp/Down row, Enter activates the active-descendant row); access_focus_target composite aria-activedescendant cell; access_child_invoke; fixed self-referential dataset (the pinion widget catalog)
+- tools/demos/r707_table.py: ~58-assertion RPC verify (cell-content query, click row selection + exclusion, activation-moves-focus, 2-D keyboard roving, Enter activation, send wire, scene/simulate rollback, negatives)
+- Registration: root Cargo.toml workspace member + pinion-core widgets/mod.rs + pinion-widget-paint/lib.rs
+
+
+
+**Verification**:
+- cargo test --workspace -j2: 77 ok-suites (table widget 10 + paint 5 + binding 9 new), 0 failed
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean under -D pedantic
+- demo sweep 61/61 pass including r707_table.py
+
+
+
+**Impact**: §5.40
+
+
+**Carry forward**:
+- Table deferred axes (our-code, evidence-first): row virtualization + scroll for large datasets; multi-row selection (AccessNode.multiselectable exists, no consumer yet); sortable columns (aria-sort additive a11y axis); column resize / per-column widths; editable / dynamic-data (insert/delete/Model-View signal binding). The grid-role family is the foundation for these follow-ups
+- aria-rowindex/colindex/rowcount/colcount additive a11y axis pairs with virtualization (deferred together; rowcount/colcount specifically convey full-set size when only a window renders)
+- ColorPicker remains gradient-fill-substrate-blocked: Scene has only solid-color Box / immediate-mode FillRect, no Brush/gradient primitive; a gradient rendering substrate is the prerequisite and also unblocks M3 elevation shadows
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

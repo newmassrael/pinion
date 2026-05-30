@@ -87,6 +87,7 @@ pub mod menu;
 pub mod scrim;
 pub mod scrollbar;
 pub mod splitter;
+pub mod table;
 pub mod tabs;
 pub mod text_field;
 pub mod toolbar;

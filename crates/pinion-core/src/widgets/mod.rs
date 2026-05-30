@@ -13,6 +13,7 @@ pub mod radio_group;
 pub mod scroll;
 pub mod scrollbar;
 pub mod slider;
+pub mod table;
 pub mod text_edit;
 pub mod text_field;
 pub mod toggle;
