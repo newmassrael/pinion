@@ -95,6 +95,9 @@ pub struct DrawerStyle {
     /// fn stays within the 7-argument `view_*` convention; a left nav
     /// rail and a right inspector differ only in this field.
     pub edge: DrawerEdge,
+    /// Material elevation level the panel casts its drop-shadow at
+    /// (R711 §5.50; MD3 modal nav drawer = Level 1). `0` = flat.
+    pub elevation: u8,
 }
 
 impl DrawerStyle {
@@ -109,6 +112,7 @@ impl DrawerStyle {
             item_gap: 4,
             title_font_px: 14,
             edge: DrawerEdge::Left,
+            elevation: crate::elevation::DRAWER_LEVEL,
         }
     }
 
@@ -189,7 +193,10 @@ pub fn view_drawer(
     let panel = Scene::Container(
         ContainerNode::new(panel_children)
             .with_tag(panel_tag)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
+                    .with_shadows(crate::elevation::elevation(style.elevation)),
+            )
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -362,6 +369,12 @@ mod tests {
         assert_eq!(panel.layout.size.width, SizeValue::Px(280), "fixed nav width");
         assert_eq!(panel.layout.size.height, SizeValue::Px(360), "full window height");
         assert_eq!(panel.style.fill, t.resolve(ColorRole::SurfaceContainerHigh));
+        // R711 — MD3 modal drawer = Level 1 elevation.
+        assert_eq!(
+            panel.style.shadows,
+            crate::elevation::elevation(crate::elevation::DRAWER_LEVEL),
+            "drawer panel carries the shared MD3 L1 elevation shadow",
+        );
     }
 
     #[test]

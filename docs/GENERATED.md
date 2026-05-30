@@ -14861,6 +14861,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R711 — R711 §5.50 elevation lift + 2nd consumers: pinion_widget_paint::elevation SSOT; dialog/menu/drawer panels cast MD3 elevation shadows; clears R710 per-binding-copy carry
+
+**Changes**:
+- Lift the key+ambient elevation ramp to pinion_widget_paint::elevation (MD3 level consts DIALOG=3 / MENU=2 / DRAWER=1); clears the R710 per-binding-copy carry
+- Add elevation: u8 to DialogStyle/MenuStyle/DrawerStyle (default = MD3 level) + .with_shadows(elevation(style.elevation)) on each panel BoxStyle
+- hello-elevation now consumes the shared elevation() (4th consumer); its local ramp + duplicate ramp tests removed
+- r693_dialog / r691_menu / r702_drawer demos assert each panel carries its MD3 elevation shadow via scene/snapshot read-back
+- widget-paint unit guards: dialog L3 / menu L2 / drawer L1 panels carry elevation() shadows
+
+
+
+**Verification**:
+- cargo test --workspace -j2 green incl new elevation module tests + 3 panel guards + repointed hello-elevation
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic
+- r693_dialog + r691_menu + r702_drawer + r710_elevation demos PASS with the new MD3 elevation snapshot assertions
+
+
+
+**Impact**: §5.50, §5.38
+
+
+**Carry forward**:
+- elevation() is now a multi-consumer SSOT; per-component tuning rides the overridable Style.elevation field (MD3 default)
+- no R711 live-pixel: dialog/menu/drawer panels are boot-closed RPC overlays (PINION_SCREENSHOT renders only the boot frame); cast pixel fidelity is R710 guard via shared rasterizer + helper
+- tooltip stays flat (MD3 Level 0) by design; an elevated tooltip variant would opt in via its own Style.elevation when a consumer needs it
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

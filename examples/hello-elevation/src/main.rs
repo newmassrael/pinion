@@ -19,11 +19,11 @@
 //!   paint-cache re-keys when a shadow changes (the manual
 //!   `Hash for BoxStyle` folds the shadow list in).
 //!
-//! The `m3_elevation` ramp is a *Material-style* key + ambient model
-//! parameterised by level — it is the consumer's design choice, not a
-//! claim of bit-exact MD3 dp tokens; the substrate under test is the
-//! generic [`BoxShadow`] primitive (cf. R708: `Gradient` is the
-//! substrate, the hue ramp is the binding's choice).
+//! The elevation ramp (`pinion_widget_paint::elevation`, R711 lift) is a
+//! *Material-style* key + ambient model parameterised by level — a
+//! design choice, not a claim of bit-exact MD3 dp tokens; the substrate
+//! under test is the generic [`BoxShadow`] primitive (cf. R708:
+//! `Gradient` is the substrate, the hue ramp is the consumer's choice).
 //!
 //! ## Why a Toggle
 //!
@@ -49,8 +49,7 @@
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxShadow, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
-    TextStyle,
+    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
@@ -58,6 +57,9 @@ use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_them
 use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
+// R711 §5.50 — the lifted shared elevation ramp (this binding is one of
+// four consumers: dialog / menu / drawer panels + this gallery).
+use pinion_widget_paint::elevation::elevation;
 
 // pinion-forge codegen output: `pub struct HelloElevationRenderer` +
 // `HelloElevationRendererError` + async `new<...>` + sync `render` /
@@ -103,35 +105,14 @@ const PRESSED_OVERLAY_T: f32 = 0.12;
 const DISABLED_OVERLAY_T: f32 = 0.50;
 
 // ── Material-style elevation ramp ──────────────────────────────────
-// A key (umbra) + ambient (penumbra) shadow pair whose offset and blur
-// scale with the elevation level. Both casts are a low-alpha black; the
-// key is sharper and offset further, the ambient softer and wider. This
-// is the binding's design choice (a Material-style ramp), not a claim of
-// exact MD3 dp tokens — the substrate under test is the generic
-// `BoxShadow` primitive.
-const KEY_SHADOW: Color = Color::rgba(0x00, 0x00, 0x00, 0x4d); // black @ ~30 %
-const AMBIENT_SHADOW: Color = Color::rgba(0x00, 0x00, 0x00, 0x26); // black @ ~15 %
-
-/// The §5.50 elevation shadow list for `level` — a key + ambient pair
-/// (empty for level 0). Offsets / blurs scale linearly with the level
-/// so a higher card casts a larger, darker shadow. This is the SSOT the
-/// demo + pixel guard assert against.
-fn m3_elevation(level: u8) -> Vec<BoxShadow> {
-    if level == 0 {
-        return Vec::new();
-    }
-    let l = f32::from(level);
-    let key = BoxShadow::new(KEY_SHADOW)
-        .with_offset(0.0, l)
-        .with_blur(l * 1.5);
-    let ambient = BoxShadow::new(AMBIENT_SHADOW)
-        .with_offset(0.0, l * 0.5)
-        .with_blur(l * 3.0);
-    vec![key, ambient]
-}
+// The per-level key + ambient shadow list now lives in the shared
+// `pinion_widget_paint::elevation` module (R711 lift). This gallery is
+// one of its four consumers (the others are the dialog / menu / drawer
+// panels), so the ramp has a single authoritative home rather than a
+// per-binding copy ([[abstraction-needs-second-consumer]]).
 
 /// One labelled elevation card: a rounded surface chip casting
-/// `m3_elevation(level)`. `tag` makes the card addressable for
+/// `elevation(level)`. `tag` makes the card addressable for
 /// `scene/snapshot` so the demo can read back its shadow list and rect.
 fn elevation_card(tag: &'static str, level: u8, label: &str, fill: Color, fg: Color) -> Scene {
     let text = Scene::Text(TextNode::styled(
@@ -145,7 +126,7 @@ fn elevation_card(tag: &'static str, level: u8, label: &str, fill: Color, fg: Co
             .with_style(
                 BoxStyle::filled(fill)
                     .with_corner_radius(CARD_RADIUS)
-                    .with_shadows(m3_elevation(level)),
+                    .with_shadows(elevation(level)),
             )
             .with_layout(
                 LayoutStyle::new()
@@ -207,7 +188,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
             .with_style(
                 BoxStyle::filled(raise_fill)
                     .with_corner_radius(CARD_RADIUS)
-                    .with_shadows(m3_elevation(raise_level)),
+                    .with_shadows(elevation(raise_level)),
             )
             .with_layout(
                 LayoutStyle::new()
@@ -344,23 +325,9 @@ mod tests {
         owner.run(|| view(state, on, &Frame::new()))
     }
 
-    #[test]
-    fn elevation_ramp_is_key_plus_ambient_and_empty_at_zero() {
-        assert!(m3_elevation(0).is_empty(), "level 0 casts nothing");
-        let one = m3_elevation(1);
-        assert_eq!(one.len(), 2, "key + ambient pair");
-        assert_eq!(one[0].color, KEY_SHADOW);
-        assert_eq!(one[1].color, AMBIENT_SHADOW);
-    }
-
-    #[test]
-    fn higher_level_casts_a_larger_shadow() {
-        let lo = m3_elevation(LEVEL_LOW);
-        let hi = m3_elevation(LEVEL_HIGH);
-        // Key-shadow blur + offset both grow with the level.
-        assert!(hi[0].blur > lo[0].blur, "blur scales with elevation");
-        assert!(hi[0].offset_y > lo[0].offset_y, "offset scales");
-    }
+    // The ramp internals (empty at 0, key+ambient pair, blur scales with
+    // level) are tested at the SSOT in `pinion_widget_paint::elevation`;
+    // this binding's tests focus on the consumer wiring.
 
     #[test]
     fn static_cards_carry_rising_shadow_lists() {
@@ -388,8 +355,8 @@ mod tests {
             "raising the card grows its key shadow",
         );
         // Both elevations are the documented endpoints.
-        assert_eq!(rest_card.style.shadows, m3_elevation(REST_LEVEL));
-        assert_eq!(raised_card.style.shadows, m3_elevation(RAISED_LEVEL));
+        assert_eq!(rest_card.style.shadows, elevation(REST_LEVEL));
+        assert_eq!(raised_card.style.shadows, elevation(RAISED_LEVEL));
     }
 
     #[test]

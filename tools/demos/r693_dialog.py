@@ -128,6 +128,23 @@ def body() -> None:
         scrim_alpha = int(((scrim.get("style") or {}).get("fill") or {}).get("a") or 0)
         assert scrim_alpha > 0, f"scrim paints a dim backdrop; alpha={scrim_alpha}"
 
+        # ── (B2) R711 MD3 elevation — panel casts a Level-3 drop-shadow ─
+        # The shared `pinion_widget_paint::elevation::elevation(3)` lowers
+        # to two BoxShadows (key + ambient); read them back as data so the
+        # AI client confirms the dialog floats above the scrim without
+        # sampling pixels (§2 #7; the cast's pixel fidelity is R710's
+        # guard — this boot-closed overlay has no boot-frame screenshot).
+        panel = find_by_tag(snap, PANEL)
+        shadows = (panel.get("style") or {}).get("shadows") or []
+        assert len(shadows) == 2, f"dialog panel casts key + ambient (MD3 L3); got {shadows}"
+        # MD3 dialog = Level 3 -> key blur = 3 * 1.5 = 4.5, offset.y = 3.
+        key = shadows[0]
+        assert abs(key["blur"] - 4.5) < 1e-3, f"L3 key blur 4.5; got {key['blur']}"
+        assert abs(key["offset"]["y"] - 3.0) < 1e-4, f"L3 key offset.y 3; got {key['offset']}"
+        assert (key["color"]["r"], key["color"]["g"], key["color"]["b"]) == (0, 0, 0), (
+            "shadow is black"
+        )
+
         # ── (C) auto-focus into the dialog ──────────────────────────
         assert_eq(_focused(tf), CANCEL, "open auto-focuses the cancel action")
         order = _tab_order(tf)

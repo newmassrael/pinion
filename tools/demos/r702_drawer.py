@@ -131,6 +131,16 @@ def body() -> None:
         scrim_alpha = int(((scrim.get("style") or {}).get("fill") or {}).get("a") or 0)
         assert scrim_alpha > 0, f"scrim paints a dim backdrop; alpha={scrim_alpha}"
 
+        # R711 MD3 elevation — the modal drawer panel floats at Level 1
+        # (key+ambient drop-shadow from the shared `elevation(1)`). Read it
+        # back as data (§2 #7); pixel fidelity is R710's guard.
+        panel = find_by_tag(snap, PANEL)
+        ps = (panel.get("style") or {}).get("shadows") or []
+        assert len(ps) == 2, f"drawer panel casts key + ambient (MD3 L1); got {ps}"
+        # MD3 modal drawer = Level 1 -> key blur = 1 * 1.5 = 1.5, offset.y = 1.
+        assert abs(ps[0]["blur"] - 1.5) < 1e-3, f"L1 key blur 1.5; got {ps[0]}"
+        assert abs(ps[0]["offset"]["y"] - 1.0) < 1e-4, "L1 key offset.y 1"
+
         # ── (C) auto-focus into the drawer ──────────────────────────
         assert_eq(_focused(tf), NAV[0], "open auto-focuses the first nav item")
         assert_eq(_tab_order(tf), NAV, "focus/get reports the trap enumeration")

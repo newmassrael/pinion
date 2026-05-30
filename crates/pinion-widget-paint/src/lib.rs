@@ -81,6 +81,7 @@ pub mod datepicker;
 pub mod devtools;
 pub mod disclosure;
 pub mod dialog;
+pub mod elevation;
 pub mod dock;
 pub mod drawer;
 pub mod menu;

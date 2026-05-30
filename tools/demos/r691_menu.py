@@ -133,6 +133,14 @@ def body() -> None:
         dd_text = _all_text(_find(snap, "menu_dropdown"))
         for item in ITEMS[0]:
             assert item in dd_text, f"item {item!r} must render; got {dd_text!r}"
+        # R711 MD3 elevation — the dropdown floats at Level 2 (key+ambient
+        # drop-shadow from the shared `elevation(2)`). Read it back as data
+        # (§2 #7); the cast's pixel fidelity is R710's guard.
+        dd_shadows = (_find(snap, "menu_dropdown").get("style") or {}).get("shadows") or []
+        assert len(dd_shadows) == 2, f"dropdown casts key + ambient (MD3 L2); got {dd_shadows}"
+        # MD3 menu = Level 2 -> key blur = 2 * 1.5 = 3.0, offset.y = 2.
+        assert abs(dd_shadows[0]["blur"] - 3.0) < 1e-3, f"L2 key blur 3.0; got {dd_shadows[0]}"
+        assert abs(dd_shadows[0]["offset"]["y"] - 2.0) < 1e-4, "L2 key offset.y 2"
 
         # ── (C) re-click the open title closes it ───────────────────
         tf.click(path="menu#t0")

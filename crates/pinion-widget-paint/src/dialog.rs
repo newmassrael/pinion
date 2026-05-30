@@ -83,6 +83,9 @@ pub struct DialogStyle {
     pub message_font_px: u32,
     /// Gap between adjacent action buttons.
     pub action_gap: u32,
+    /// Material elevation level the panel casts its drop-shadow at
+    /// (R711 §5.50; MD3 dialog = Level 3). `0` = flat.
+    pub elevation: u8,
 }
 
 impl DialogStyle {
@@ -99,6 +102,7 @@ impl DialogStyle {
             title_font_px: 22,
             message_font_px: 14,
             action_gap: 8,
+            elevation: crate::elevation::DIALOG_LEVEL,
         }
     }
 
@@ -197,7 +201,8 @@ pub fn view_dialog(
             .with_tag(panel_tag)
             .with_style(
                 BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
-                    .with_corner_radius(style.panel_radius),
+                    .with_corner_radius(style.panel_radius)
+                    .with_shadows(crate::elevation::elevation(style.elevation)),
             )
             .with_layout(
                 LayoutStyle::new()
@@ -350,6 +355,12 @@ mod tests {
         assert_eq!(panel.style.fill, t.resolve(ColorRole::SurfaceContainerHigh));
         assert_eq!(panel.style.corner_radius, 28);
         assert_eq!(panel.layout.size.width, SizeValue::Px(360));
+        // R711 — the panel literally casts the MD3 Level-3 drop-shadow.
+        assert_eq!(
+            panel.style.shadows,
+            crate::elevation::elevation(crate::elevation::DIALOG_LEVEL),
+            "dialog panel carries the shared MD3 L3 elevation shadow",
+        );
     }
 
     #[test]

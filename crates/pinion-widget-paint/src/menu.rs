@@ -92,6 +92,9 @@ pub struct MenuStyle {
     pub dropdown_v_padding: u32,
     /// Dropdown corner radius (M3 menu container ≈ 4 px).
     pub dropdown_radius: u32,
+    /// Material elevation level the dropdown casts its drop-shadow at
+    /// (R711 §5.50; MD3 menu = Level 2). `0` = flat.
+    pub elevation: u8,
 }
 
 impl MenuStyle {
@@ -109,6 +112,7 @@ impl MenuStyle {
             dropdown_width: 200,
             dropdown_v_padding: 8,
             dropdown_radius: 4,
+            elevation: crate::elevation::MENU_LEVEL,
         }
     }
 
@@ -279,7 +283,8 @@ pub fn view_menu_dropdown(
             .with_style(
                 BoxStyle::filled(surface)
                     .with_corner_radius(style.dropdown_radius)
-                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1))
+                    .with_shadows(crate::elevation::elevation(style.elevation)),
             )
             .with_layout(
                 LayoutStyle::new()
@@ -477,6 +482,27 @@ mod tests {
             ]
         );
         assert_eq!(all_text(&scene), vec!["New", "Open", "Save"]);
+    }
+
+    #[test]
+    fn r711_dropdown_carries_md3_l2_elevation() {
+        let scene = view_menu_dropdown(
+            "menu",
+            "menu_dropdown",
+            0,
+            &ITEMS,
+            None,
+            &theme(),
+            &MenuStyle::m3_default(),
+        );
+        let Scene::Container(dropdown) = &scene else {
+            panic!("dropdown root is a container");
+        };
+        assert_eq!(
+            dropdown.style.shadows,
+            crate::elevation::elevation(crate::elevation::MENU_LEVEL),
+            "dropdown carries the shared MD3 L2 elevation shadow",
+        );
     }
 
     #[test]
