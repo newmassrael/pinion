@@ -14492,6 +14492,32 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R704 — R704 inline month-calendar DatePicker lands as the first consumer of the WAI-ARIA grid role family
+
+**Changes**:
+- pinion-a11y: WAI-ARIA grid roles Grid/GridCell/ColumnHeader/Row added (to_accesskit + aria_name) as the a11y foundation Table will reuse; grid role stabilized before its second consumer
+- pinion-core widgets/datepicker.rs: DatePickerExternal coordinator + CivilDate; single-Tab-stop grid with roving active-descendant (focused_day slot), month nav with year rollover, fixed [RadioState; 31] max-bound per-day state (State: Copy)
+- pinion-widget-paint/datepicker.rs: 6x7 month-grid paint composition (prev/next nav header + weekday headers + day cells) mirroring the disclosure Style-carrier pattern
+- examples/hello-datepicker: WidgetView binding; Home/End/arrow roving + PageUp/PageDown month nav + click-to-select via composite hash-tag routing; access_focus_target reports the aria-activedescendant cell
+- tools/demos/r704_datepicker.py: RPC dogfood over selection, month nav, year rollover both directions, keyboard roving, scene/invoke send wire, and scene/simulate rollback
+
+
+
+**Verification**:
+- cargo test --workspace green; clippy --workspace --all-targets --features pinion-runtime/vello clean
+- r704_datepicker.py passes end to end (selection, prev/next with year rollover, Home/End/arrow roving, PageUp/Down, send wire, simulate rollback, negative rejects)
+
+
+
+**Impact**: §5.50, §5.38
+
+
+**Carry forward**:
+- month-crossing arrow nav (ArrowRight past the last day rolls to next month day 1) deferred; coordinator already supports step_month so this is a pure binding-side keyboard extension
+- DatePickerExternal exposes only focused_day as writable (intervene); displayed month and selection are send-wire only; a persisted-state restore consumer is absent and would be additive
+
+
+
 ### R705 — R705 producer-parity - scene/snapshot from:paint serializes the stored last_paint_scene (the exact frame painted to GPU) so introspection == screen by construction, replacing the query-time re-render; and the focus-ring overlay is placed at the scroll-translated window-absolute rect via the new SSOT Scene::rect_for_tag_absolute, fixing misplacement for any focused widget inside a Scroll.
 
 **Changes**:

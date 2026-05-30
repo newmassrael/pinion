@@ -77,6 +77,7 @@
 
 pub mod button;
 pub mod checkbox;
+pub mod datepicker;
 pub mod devtools;
 pub mod disclosure;
 pub mod dialog;

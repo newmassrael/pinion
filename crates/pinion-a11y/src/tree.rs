@@ -466,6 +466,13 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // item") but the action set matches Button / Tab — a base
         // `menuitem` is a one-shot command, not a selection.
         | AriaRole::MenuItem
+        // R704 §5.40 — `GridCell` (a date-picker day cell) is commit-
+        // class atomic: Click activates (selects the day), Focus moves
+        // the AT cursor for the grid's two-dimensional roving model. The
+        // role identity stays distinct (`Role::GridCell` → screen readers
+        // announce "cell, selected, N of M") but the action set matches
+        // ListBoxOption / Tab.
+        | AriaRole::GridCell
         | AriaRole::Switch => {
             node.add_action(Action::Click);
             node.add_action(Action::Focus);
@@ -509,6 +516,11 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // its `aria-activedescendant`, so it joins the focus-only
         // container set. Its command / toggle `Button` children land in
         // the commit-class arm above.
+        // R704 §5.40 — `Grid` is the date-picker calendar container. It
+        // owns the single Tab stop and surfaces the roving day cell as
+        // its `aria-activedescendant`, so it joins the focus-only
+        // container set (parallel to `Listbox` / `TabList` / `Tree`). Its
+        // `GridCell` children land in the commit-class arm above.
         AriaRole::RadioGroup
         | AriaRole::Listbox
         | AriaRole::List
@@ -520,6 +532,7 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         | AriaRole::Menu
         | AriaRole::Toolbar
         | AriaRole::Dialog
+        | AriaRole::Grid
         | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }
@@ -539,7 +552,13 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // trigger's `aria-describedby` relation (the trigger announces
         // the tooltip text as its description). So the node carries
         // zero actions — distinct from every other role.
-        AriaRole::Tooltip => {}
+        //
+        // R704 §5.40 — `ColumnHeader` (weekday header) and `Row` are
+        // structural grid roles: AT reads their names to describe the
+        // grid's column/row structure, but neither receives focus nor is
+        // clickable, so they carry zero actions (the same passive arm as
+        // `Tooltip`).
+        AriaRole::Tooltip | AriaRole::ColumnHeader | AriaRole::Row => {}
     }
 }
 

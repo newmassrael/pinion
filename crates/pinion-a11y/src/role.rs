@@ -232,6 +232,50 @@ pub enum AriaRole {
     /// and owns no keyboard model of its own — `Escape` dismisses it
     /// while focus stays on the trigger.
     Tooltip,
+    /// R704 §5.40 — WAI-ARIA 1.2 §3.3 `grid` role. An interactive
+    /// tabular container with a two-dimensional navigation model
+    /// (Arrow keys move between cells, the container owns a single Tab
+    /// stop). Pinion's first consumer is the §5.50
+    /// `pinion_widget_paint::datepicker` month calendar (R704
+    /// `hello-datepicker`), whose [`Self::GridCell`] children are the
+    /// day cells. Distinct from [`Self::Listbox`]: a `grid` navigates in
+    /// two dimensions (row × column) and its cells carry
+    /// `aria-posinset` / `aria-setsize`, while a `listbox` is a
+    /// one-dimensional option list. A future `Table` axis (non-
+    /// interactive tabular data) would land additively — WAI-ARIA
+    /// distinguishes `grid` (interactive widget) from `table` (static
+    /// data); AccessKit carries both
+    /// ([`accesskit::Role::Grid`] vs `Role::Table`), so the split is
+    /// preserved end to end.
+    Grid,
+    /// R704 §5.40 — WAI-ARIA 1.2 §3.3 `gridcell` role. A single cell of
+    /// a [`Self::Grid`] (one selectable day in the date picker).
+    /// Commit-class atomic at the AT-action surface (Click activates,
+    /// Focus moves the AT cursor) — the action set matches
+    /// [`Self::Button`] / [`Self::ListBoxOption`]. Carries
+    /// `aria-selected` (via [`AccessNode::with_selected`]) for the
+    /// chosen day, plus the WAI-ARIA 1.2 §6.6.9 / §6.6.10
+    /// `aria-posinset` / `aria-setsize` axes ("day N of M"). The truthy
+    /// axis is `aria-selected` (the cell is *selected*, not *checked* —
+    /// matching [`Self::ListBoxOption`] / [`Self::Tab`]).
+    ///
+    /// [`AccessNode::with_selected`]: crate::AccessNode::with_selected
+    GridCell,
+    /// R704 §5.40 — WAI-ARIA 1.2 §3.3 `columnheader` role. A header cell
+    /// labelling a [`Self::Grid`] column (the weekday headers Su..Sa in
+    /// the date picker). Structural / non-interactive: AT announces the
+    /// header name when reading a cell in that column, but the header
+    /// itself owns no keyboard model and no AT actions (matching
+    /// [`Self::Tooltip`]'s passive arm).
+    ColumnHeader,
+    /// R704 §5.40 — WAI-ARIA 1.2 §3.3 `row` role. A structural grouping
+    /// of [`Self::GridCell`] children in a [`Self::Grid`]. Non-
+    /// interactive (no keyboard model, no AT actions); present so AT can
+    /// expose the grid's row structure. Pinion's date picker paints its
+    /// grid as flex rows, so the binding may emit `row` nodes only when
+    /// a consumer needs explicit row grouping — the variant lands so the
+    /// role surface is complete for future tabular widgets.
+    Row,
     Generic,
 }
 
@@ -266,6 +310,14 @@ impl AriaRole {
             Self::Toolbar => Role::Toolbar,
             Self::Dialog => Role::Dialog,
             Self::Tooltip => Role::Tooltip,
+            // R704 §5.40 — AccessKit carries the interactive-grid roles
+            // one-to-one (distinct from the static `Role::Table` family),
+            // so the WAI-ARIA `grid` / `gridcell` / `columnheader` / `row`
+            // split is preserved end to end.
+            Self::Grid => Role::Grid,
+            Self::GridCell => Role::GridCell,
+            Self::ColumnHeader => Role::ColumnHeader,
+            Self::Row => Role::Row,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -301,6 +353,10 @@ impl AriaRole {
             Self::Toolbar => "toolbar",
             Self::Dialog => "dialog",
             Self::Tooltip => "tooltip",
+            Self::Grid => "grid",
+            Self::GridCell => "gridcell",
+            Self::ColumnHeader => "columnheader",
+            Self::Row => "row",
             Self::Generic => "generic",
         }
     }
@@ -457,5 +513,31 @@ mod tests {
     fn r695_tooltip_lowers_to_accesskit_tooltip() {
         assert_eq!(AriaRole::Tooltip.to_accesskit(), Role::Tooltip);
         assert_eq!(AriaRole::Tooltip.aria_name(), "tooltip");
+    }
+
+    // R704 §5.40 — Grid / GridCell / ColumnHeader / Row lowering + names.
+
+    #[test]
+    fn r704_grid_lowers_to_accesskit_grid() {
+        assert_eq!(AriaRole::Grid.to_accesskit(), Role::Grid);
+        assert_eq!(AriaRole::Grid.aria_name(), "grid");
+    }
+
+    #[test]
+    fn r704_grid_cell_lowers_to_accesskit_grid_cell() {
+        assert_eq!(AriaRole::GridCell.to_accesskit(), Role::GridCell);
+        assert_eq!(AriaRole::GridCell.aria_name(), "gridcell");
+    }
+
+    #[test]
+    fn r704_column_header_lowers_to_accesskit_column_header() {
+        assert_eq!(AriaRole::ColumnHeader.to_accesskit(), Role::ColumnHeader);
+        assert_eq!(AriaRole::ColumnHeader.aria_name(), "columnheader");
+    }
+
+    #[test]
+    fn r704_row_lowers_to_accesskit_row() {
+        assert_eq!(AriaRole::Row.to_accesskit(), Role::Row);
+        assert_eq!(AriaRole::Row.aria_name(), "row");
     }
 }
