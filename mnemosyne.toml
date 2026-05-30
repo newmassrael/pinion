@@ -13,6 +13,24 @@ entry_id_prefix = "Round "
 [style]
 locale = "en"
 
+# MNEMO-GAP-001 follow-up (R715 self-audit) — adopt the shipped
+# citation-refs validator (`validate-code-refs` /
+# `[plugins.set_equality_validator]`, already in Mnemosyne since R256/R277/
+# R284) over pinion's source comments. pinion was un-adopted, not un-served.
+# severity warn/info during baseline measurement; promote `severity_missing`
+# to "reject" + wire into pre-commit once the W3C-citation-shape
+# false-positives (`UAX #9`, `CSS Color 4`) are resolved upstream (the one
+# real matcher gap this PoC measures for the maintainer).
+[plugins.set_equality_validator]
+paths = ["crates/", "examples/"]
+comment_only = true
+severity_missing = "warn"
+severity_binding = "info"
+external_section_prefixes = ["WAI-ARIA", "WCAG", "ISO", "ISO/IEC", "RFC", "IEEE"]
+# Bare form `<PREFIX> §<id>` (no version number) — pinion cites WAI-ARIA
+# both as "WAI-ARIA 1.2 §3.5" (numeric, above) and "WAI-ARIA §4.5" (bare).
+external_section_prefixes_bare = ["WAI-ARIA"]
+
 # Round 9 — privacy redaction of third-party identifiers from publishable
 # half of changelog entries. audit_* half retains the original frozen body
 # per R294 schema design. Section side handled via set-section-* primitives
