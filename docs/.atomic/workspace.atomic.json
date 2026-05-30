@@ -23250,6 +23250,40 @@
         "mnemosyne MCP append_changelog_entry_v2 tool is broken in this environment (it shells to a nonexistent CLI append-changelog-entry-v2; the source at R370 provides only v1 append-changelog-entry); these entries were added via the v1 audit-half primitive"
       ]
     },
+    "R706.1": {
+      "decision_summary": "R706.1 adds a deterministic headless regression test reproducing the focus-ring offset against the real datepicker scene",
+      "changes_bullets": [
+        "pinion-shell headless_screenshot.rs: real-scene wgpu regression test replaces the R706 smoke test that did not reproduce the bug; it builds the actual view_datepicker focused paint scene (compute_layout + inject_focus_ring), rasterizes via to_vello_cached + HeadlessScreenshot, and asserts the focus-ring pixels frame the focused day cell, not the next grid column",
+        "pinion-shell Cargo.toml: pinion-widget-paint dev-dependency for view_datepicker (no dependency cycle; widget-paint depends only on core/text/a11y, all below shell)"
+      ],
+      "verification_bullets": [
+        "test FAILS on the pre-R706 direct-draw-after-append code (ring centre measured on the day-4 column x=96 vs the focused day-3 column x=54) and PASSES on the fix; ignore-gated for wgpu cold-boot, run with --ignored",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; pinion-shell default suite green"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "none"
+      ],
+      "publishable_decision_summary": "R706.1 adds a deterministic headless regression test reproducing the focus-ring offset against the real datepicker scene",
+      "publishable_changes_bullets": [
+        "pinion-shell headless_screenshot.rs: real-scene wgpu regression test replaces the R706 smoke test that did not reproduce the bug; it builds the actual view_datepicker focused paint scene (compute_layout + inject_focus_ring), rasterizes via to_vello_cached + HeadlessScreenshot, and asserts the focus-ring pixels frame the focused day cell, not the next grid column",
+        "pinion-shell Cargo.toml: pinion-widget-paint dev-dependency for view_datepicker (no dependency cycle; widget-paint depends only on core/text/a11y, all below shell)"
+      ],
+      "publishable_verification_bullets": [
+        "test FAILS on the pre-R706 direct-draw-after-append code (ring centre measured on the day-4 column x=96 vs the focused day-3 column x=54) and PASSES on the fix; ignore-gated for wgpu cold-boot, run with --ignored",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; pinion-shell default suite green"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "none"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

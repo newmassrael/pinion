@@ -14594,6 +14594,28 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R706.1 — R706.1 adds a deterministic headless regression test reproducing the focus-ring offset against the real datepicker scene
+
+**Changes**:
+- pinion-shell headless_screenshot.rs: real-scene wgpu regression test replaces the R706 smoke test that did not reproduce the bug; it builds the actual view_datepicker focused paint scene (compute_layout + inject_focus_ring), rasterizes via to_vello_cached + HeadlessScreenshot, and asserts the focus-ring pixels frame the focused day cell, not the next grid column
+- pinion-shell Cargo.toml: pinion-widget-paint dev-dependency for view_datepicker (no dependency cycle; widget-paint depends only on core/text/a11y, all below shell)
+
+
+
+**Verification**:
+- test FAILS on the pre-R706 direct-draw-after-append code (ring centre measured on the day-4 column x=96 vs the focused day-3 column x=54) and PASSES on the fix; ignore-gated for wgpu cold-boot, run with --ignored
+- clippy --workspace --all-targets --features pinion-runtime/vello clean; pinion-shell default suite green
+
+
+
+**Impact**: §5.16, §5.39
+
+
+**Carry forward**:
+- none
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

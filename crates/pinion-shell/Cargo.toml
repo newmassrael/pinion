@@ -104,6 +104,12 @@ tokio = { version = "1", default-features = false, features = ["rt", "rt-multi-t
 # build of this crate stays feature-free, the dev build adds the
 # fixture module.
 pinion-shell = { path = ".", features = ["test-fixtures"] }
+# R706.1 §5.16 §5.39 — the headless focus-ring regression test
+# (`headless_screenshot::tests`) builds the REAL `view_datepicker` paint
+# scene so it reproduces the fragment-cache direct-draw-after-append
+# offset against the production grid nesting. No dependency cycle:
+# pinion-widget-paint depends only on core/text/a11y, all below shell.
+pinion-widget-paint = { path = "../pinion-widget-paint", version = "0.0.1" }
 
 [lints]
 workspace = true
