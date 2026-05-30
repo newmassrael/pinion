@@ -1128,28 +1128,241 @@ impl Border {
     }
 }
 
+/// (R708 §5.50) A normalized colour stop on a [`Gradient`] ramp.
+///
+/// `offset` is the position along the gradient axis in `[0.0, 1.0]`
+/// (`0.0` = ramp start, `1.0` = ramp end); `color` is the sRGB colour
+/// at that offset. Mirrors `peniko::ColorStop`'s `(offset, color)`
+/// shape so the Vello `paint_adapter` lowering is 1:1. Stays `Copy`
+/// (the `Vec<ColorStop>` lives on [`Gradient`]).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ColorStop {
+    pub offset: f32,
+    pub color: Color,
+}
+
+impl ColorStop {
+    /// A stop at `offset` (clamped to `[0,1]` by the rasterizer) with
+    /// colour `color`.
+    #[must_use]
+    pub const fn new(offset: f32, color: Color) -> Self {
+        Self { offset, color }
+    }
+}
+
+/// (R708 §5.50) How a [`Gradient`] paints outside its `[0,1]` ramp.
+/// Mirrors `peniko::Extend` and the CSS gradient repeat semantics.
+#[non_exhaustive]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum Extend {
+    /// Clamp to the nearest edge stop (CSS default).
+    #[default]
+    Pad,
+    /// Tile the ramp end-to-end.
+    Repeat,
+    /// Tile the ramp, mirroring every other repetition.
+    Reflect,
+}
+
+/// (R708 §5.50) Geometry of a [`Gradient`], expressed in box-relative
+/// **UV** space: each coordinate is a fraction of the filled rect
+/// (`(0.0, 0.0)` = top-left, `(1.0, 1.0)` = bottom-right), so a
+/// gradient is resolution- and position-independent — the
+/// `paint_adapter` re-derives absolute coordinates from the node's
+/// `rect` at paint time, which keeps the §5.16 R682 paint-cache key
+/// stable when only the box's *position* moves.
+///
+/// Deliberately **not** `#[non_exhaustive]`: unlike [`Extend`] /
+/// `BorderPlacement` (which carry a conservative default), each gradient
+/// geometry needs bespoke rasterization in every backend, so adding a
+/// variant (e.g. a future sweep gradient) *must* surface as a compile
+/// error at each `match` — a silent `_` fallback would mis-paint.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum GradientKind {
+    /// Linear ramp from `start` to `end` (box-relative UV points).
+    Linear {
+        /// Ramp start, box-relative UV.
+        start: (f32, f32),
+        /// Ramp end, box-relative UV.
+        end: (f32, f32),
+    },
+    /// Radial ramp from `center` (box-relative UV) outward to `radius`,
+    /// a fraction of the rect's shorter side.
+    Radial {
+        /// Ramp origin, box-relative UV.
+        center: (f32, f32),
+        /// Outer radius as a fraction of `min(rect.w, rect.h)`.
+        radius: f32,
+    },
+}
+
+/// (R708 §5.50) A gradient fill — the first non-solid [`BoxStyle`]
+/// paint, the substrate a `ColorPicker` (R709) and richer M3 surface
+/// treatments build on. Geometry is box-relative UV ([`GradientKind`])
+/// and stops are an unbounded `Vec<ColorStop>` (an arbitrary stop cap
+/// would be the silent-truncation smell R707.1 retired). Heap- and
+/// float-bearing, so unlike the rest of the value-semantics style
+/// system it is `Clone`, not `Copy`; [`BoxStyle`] therefore hand-rolls
+/// `Hash` (see its impl) to stay a valid paint-cache key.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Gradient {
+    /// Linear / radial geometry, box-relative.
+    pub kind: GradientKind,
+    /// Colour ramp, ordered by ascending `offset` (the rasterizer
+    /// tolerates unsorted input but ascending is canonical).
+    pub stops: Vec<ColorStop>,
+    /// Out-of-`[0,1]` extend policy.
+    pub extend: Extend,
+}
+
+impl Gradient {
+    /// Linear gradient between two box-relative UV points, `Pad`
+    /// extend, no stops yet (chain [`Self::with_stop`]).
+    #[must_use]
+    pub fn linear(start: (f32, f32), end: (f32, f32)) -> Self {
+        Self {
+            kind: GradientKind::Linear { start, end },
+            stops: Vec::new(),
+            extend: Extend::Pad,
+        }
+    }
+
+    /// Horizontal left-to-right linear gradient — the common hue-bar /
+    /// progress-track case.
+    #[must_use]
+    pub fn horizontal() -> Self {
+        Self::linear((0.0, 0.0), (1.0, 0.0))
+    }
+
+    /// Vertical top-to-bottom linear gradient.
+    #[must_use]
+    pub fn vertical() -> Self {
+        Self::linear((0.0, 0.0), (0.0, 1.0))
+    }
+
+    /// Radial gradient centred at `center` (box-relative UV) out to
+    /// `radius` (fraction of the rect's shorter side), `Pad` extend.
+    #[must_use]
+    pub fn radial(center: (f32, f32), radius: f32) -> Self {
+        Self {
+            kind: GradientKind::Radial { center, radius },
+            stops: Vec::new(),
+            extend: Extend::Pad,
+        }
+    }
+
+    /// Builder: append a colour stop at `offset`.
+    #[must_use]
+    pub fn with_stop(mut self, offset: f32, color: Color) -> Self {
+        self.stops.push(ColorStop::new(offset, color));
+        self
+    }
+
+    /// Builder: replace the entire stop list.
+    #[must_use]
+    pub fn with_stops(mut self, stops: Vec<ColorStop>) -> Self {
+        self.stops = stops;
+        self
+    }
+
+    /// Builder: set the [`Extend`] policy.
+    #[must_use]
+    pub fn with_extend(mut self, extend: Extend) -> Self {
+        self.extend = extend;
+        self
+    }
+}
+
+/// Hash an `f32` into `state` with `-0.0` normalized to `0.0` so the
+/// result agrees with `PartialEq` (which treats `-0.0 == 0.0`). NaN is
+/// hashed by its canonical bit pattern; since `NaN != NaN`, an unequal
+/// hash collision there violates no `Hash`/`Eq` contract (the contract
+/// only binds *equal* values to equal hashes). Used by the manual
+/// `Hash for BoxStyle` over gradient geometry — the only float-bearing
+/// style data.
+fn hash_f32<H: core::hash::Hasher>(x: f32, state: &mut H) {
+    use core::hash::Hash;
+    let normalized = if x == 0.0 { 0.0_f32 } else { x };
+    normalized.to_bits().hash(state);
+}
+
+/// Hash a [`Gradient`] field-by-field (float-aware via [`hash_f32`]).
+fn hash_gradient<H: core::hash::Hasher>(gradient: &Gradient, state: &mut H) {
+    use core::hash::Hash;
+    match gradient.kind {
+        GradientKind::Linear { start, end } => {
+            0u8.hash(state);
+            hash_f32(start.0, state);
+            hash_f32(start.1, state);
+            hash_f32(end.0, state);
+            hash_f32(end.1, state);
+        }
+        GradientKind::Radial { center, radius } => {
+            1u8.hash(state);
+            hash_f32(center.0, state);
+            hash_f32(center.1, state);
+            hash_f32(radius, state);
+        }
+    }
+    (gradient.stops.len() as u64).hash(state);
+    for stop in &gradient.stops {
+        hash_f32(stop.offset, state);
+        stop.color.hash(state);
+    }
+    gradient.extend.hash(state);
+}
+
 /// Sidecar style for [`BoxNode`](crate::scene::BoxNode) per the §5.11
 /// "layered" decision (§5.3 R20 lock).
 ///
 /// `Default` produces a fully-transparent box with no border —
 /// drop-in compatible with the previous `BoxNode { fill: 0, .. }`
 /// shape.
+///
+/// R708 §5.50 added the optional [`Gradient`] overlay (the Flutter
+/// `BoxDecoration { color, gradient }` model — when `gradient` is
+/// `Some`, the rasterizer paints it *in place of* the solid `fill`;
+/// `fill` remains the solid fallback). Because a [`Gradient`] is heap-
+/// and float-bearing, `BoxStyle` is no longer `Copy`/`Eq` and hand-
+/// rolls `Hash` (below) so the §5.16 R682 paint-cache `b.style.hash()`
+/// stays a faithful key — a gradient change re-keys and re-paints.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct BoxStyle {
     pub fill: Color,
     pub border: Option<Border>,
     pub corner_radius: u32,
+    /// Optional gradient overlay. `Some` paints the gradient in place
+    /// of `fill`; `None` (default) keeps the solid `fill`.
+    pub gradient: Option<Gradient>,
+}
+
+impl core::hash::Hash for BoxStyle {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.fill.hash(state);
+        self.border.hash(state);
+        self.corner_radius.hash(state);
+        match &self.gradient {
+            None => 0u8.hash(state),
+            Some(gradient) => {
+                1u8.hash(state);
+                hash_gradient(gradient, state);
+            }
+        }
+    }
 }
 
 impl BoxStyle {
-    /// Solid-fill `BoxStyle` with no border and no rounding.
+    /// Solid-fill `BoxStyle` with no border, no rounding, no gradient.
     #[must_use]
     pub const fn filled(fill: Color) -> Self {
         Self {
             fill,
             border: None,
             corner_radius: 0,
+            gradient: None,
         }
     }
 
@@ -1172,6 +1385,14 @@ impl BoxStyle {
     #[must_use]
     pub const fn with_corner_radius(mut self, radius: u32) -> Self {
         self.corner_radius = radius;
+        self
+    }
+
+    /// Builder: attach a [`Gradient`] overlay (paints in place of the
+    /// solid `fill`). Not `const` — a [`Gradient`] is heap-backed.
+    #[must_use]
+    pub fn with_gradient(mut self, gradient: Gradient) -> Self {
+        self.gradient = Some(gradient);
         self
     }
 }
@@ -3266,5 +3487,96 @@ mod tests {
         let s = Size::px(50, 50).with_width(SizeValue::Px(100));
         assert_eq!(s.width, SizeValue::Px(100));
         assert_eq!(s.height, SizeValue::Px(50), "height untouched by with_width");
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R708 §5.50 — gradient-fill substrate.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r708_gradient_builders_set_kind_and_stops() {
+        let g = Gradient::horizontal()
+            .with_stop(0.0, Color::rgb(0xff, 0, 0))
+            .with_stop(1.0, Color::rgb(0, 0, 0xff))
+            .with_extend(Extend::Repeat);
+        assert!(matches!(
+            g.kind,
+            GradientKind::Linear {
+                start: (0.0, 0.0),
+                end: (1.0, 0.0)
+            }
+        ));
+        assert_eq!(g.stops.len(), 2);
+        assert!(g.stops[0].offset.abs() < f32::EPSILON);
+        assert_eq!(g.stops[1].color, Color::rgb(0, 0, 0xff));
+        assert_eq!(g.extend, Extend::Repeat);
+
+        let v = Gradient::vertical();
+        assert!(matches!(
+            v.kind,
+            GradientKind::Linear {
+                start: (0.0, 0.0),
+                end: (0.0, 1.0)
+            }
+        ));
+
+        let r = Gradient::radial((0.5, 0.5), 0.5);
+        assert!(matches!(
+            r.kind,
+            GradientKind::Radial {
+                center: (0.5, 0.5),
+                radius: 0.5
+            }
+        ));
+    }
+
+    #[test]
+    fn r708_box_style_hash_folds_gradient() {
+        // The §5.16 R682 paint-fragment cache keys on `b.style.hash()`;
+        // a gradient change must re-key, and two distinct gradients must
+        // not alias.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn h(style: &BoxStyle) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            style.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        let solid = BoxStyle::filled(Color::rgb(0x10, 0x20, 0x30));
+        let linear = solid
+            .clone()
+            .with_gradient(Gradient::horizontal().with_stop(0.0, Color::rgb(0xff, 0, 0)));
+        let radial = solid
+            .clone()
+            .with_gradient(Gradient::radial((0.5, 0.5), 0.5).with_stop(0.0, Color::rgb(0xff, 0, 0)));
+
+        assert_ne!(h(&solid), h(&linear), "adding a gradient must re-key");
+        assert_ne!(h(&linear), h(&radial), "linear vs radial must not alias");
+        // Determinism: identical styles hash identically.
+        assert_eq!(h(&linear), h(&linear.clone()));
+    }
+
+    #[test]
+    fn r708_hash_f32_normalizes_negative_zero() {
+        // `-0.0 == 0.0` in `PartialEq`, so the manual `Hash` must agree
+        // (equal values -> equal hashes). A gradient stop at `-0.0` and
+        // one at `0.0` must hash the same `BoxStyle`.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn h(style: &BoxStyle) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            style.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        let pos = BoxStyle::filled(Color::TRANSPARENT)
+            .with_gradient(Gradient::horizontal().with_stop(0.0, Color::rgb(1, 2, 3)));
+        let neg = BoxStyle::filled(Color::TRANSPARENT)
+            .with_gradient(Gradient::horizontal().with_stop(-0.0, Color::rgb(1, 2, 3)));
+        assert_eq!(pos, neg, "-0.0 and 0.0 offsets are PartialEq-equal");
+        assert_eq!(h(&pos), h(&neg), "and must hash equally");
     }
 }

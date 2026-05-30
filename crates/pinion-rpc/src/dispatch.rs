@@ -2246,10 +2246,77 @@ fn border_to_json(border: pinion_core::style::Border) -> Value {
     Value::Object(obj)
 }
 
+/// R708 §5.50 — wire serialization for `Extend`. The enum is
+/// `non_exhaustive`, so a wildcard arm collapses future variants to
+/// `"Unknown"` for forward-compat (mirrors the `BorderPlacement` shape).
+fn extend_to_json(extend: pinion_core::style::Extend) -> Value {
+    use pinion_core::style::Extend;
+    let name = match extend {
+        Extend::Pad => "Pad",
+        Extend::Repeat => "Repeat",
+        Extend::Reflect => "Reflect",
+        _ => "Unknown",
+    };
+    Value::String(name.to_string())
+}
+
+/// R708 §5.50 — wire serialization for a `Gradient`. Surfaces the
+/// geometry kind (`linear` start/end or `radial` center/radius, all in
+/// box-relative UV), the ordered `stops` (`offset` + `color`), and the
+/// `extend` mode so AI clients can read back the exact gradient ramp a
+/// box paints without inspecting pixels (§2 #7 scene-as-data).
+fn gradient_to_json(gradient: &pinion_core::style::Gradient) -> Value {
+    use pinion_core::style::GradientKind;
+    let mut obj = serde_json::Map::new();
+    let mut kind = serde_json::Map::new();
+    match gradient.kind {
+        GradientKind::Linear { start, end } => {
+            kind.insert("kind".to_string(), Value::String("linear".to_string()));
+            kind.insert("start".to_string(), uv_to_json(start));
+            kind.insert("end".to_string(), uv_to_json(end));
+        }
+        GradientKind::Radial { center, radius } => {
+            kind.insert("kind".to_string(), Value::String("radial".to_string()));
+            kind.insert("center".to_string(), uv_to_json(center));
+            kind.insert("radius".to_string(), f32_to_json(radius));
+        }
+    }
+    obj.insert("geometry".to_string(), Value::Object(kind));
+    let stops: Vec<Value> = gradient
+        .stops
+        .iter()
+        .map(|stop| {
+            let mut s = serde_json::Map::new();
+            s.insert("offset".to_string(), f32_to_json(stop.offset));
+            s.insert("color".to_string(), color_to_json(stop.color));
+            Value::Object(s)
+        })
+        .collect();
+    obj.insert("stops".to_string(), Value::Array(stops));
+    obj.insert("extend".to_string(), extend_to_json(gradient.extend));
+    Value::Object(obj)
+}
+
+/// R708 §5.50 — serialize a box-relative UV point `(u, v)` as
+/// `{"u": .., "v": ..}`.
+fn uv_to_json(uv: (f32, f32)) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("u".to_string(), f32_to_json(uv.0));
+    obj.insert("v".to_string(), f32_to_json(uv.1));
+    Value::Object(obj)
+}
+
+/// R708 §5.50 — serialize an `f32` as a JSON number, falling back to
+/// `null` for any non-finite value (`serde_json` rejects NaN/inf).
+fn f32_to_json(x: f32) -> Value {
+    serde_json::Number::from_f64(f64::from(x)).map_or(Value::Null, Value::Number)
+}
+
 /// R55.G.8 §5.49 — wire serialization for `BoxStyle`. Surfaces fill,
-/// optional border (null when absent), and `corner_radius` so AI
-/// clients can introspect the rendered look of any `BoxNode` or
-/// `ContainerNode` without OCR (§2 #7 scene-as-data).
+/// optional border (null when absent), `corner_radius`, and the R708
+/// optional `gradient` overlay (null when absent) so AI clients can
+/// introspect the rendered look of any `BoxNode` or `ContainerNode`
+/// without OCR (§2 #7 scene-as-data).
 fn box_style_to_json(style: &pinion_core::style::BoxStyle) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("fill".to_string(), color_to_json(style.fill));
@@ -2260,6 +2327,13 @@ fn box_style_to_json(style: &pinion_core::style::BoxStyle) -> Value {
     obj.insert(
         "corner_radius".to_string(),
         Value::Number(style.corner_radius.into()),
+    );
+    obj.insert(
+        "gradient".to_string(),
+        style
+            .gradient
+            .as_ref()
+            .map_or(Value::Null, gradient_to_json),
     );
     Value::Object(obj)
 }

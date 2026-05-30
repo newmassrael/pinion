@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R708 §5.50 gradient-fill substrate consumer: pinion-forge renderer
+  manifest for hello-gradient. Emits `HelloGradientRenderer` (Vello-
+  backed RenderContext + RenderSurface + Renderer wrapper). Identical
+  manifest shape to hello-toggle's `HelloToggleRenderer` — single-
+  source-of-truth emit template, only the struct name diverges. `aa`
+  attribute omitted -> defaults to Area per R46.2.1 (UI-canonical mode).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloGradientRenderer"
+        backend="vello"/>

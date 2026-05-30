@@ -14765,6 +14765,45 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R708 — R708 gradient-fill rendering substrate: BoxStyle gains an additive optional Gradient overlay (Flutter color+gradient model) lowered to peniko::Gradient on Box and Container; box-relative UV geometry keeps the R682 paint-cache key position-stable; substrate-first, ColorPicker (R709) is the consumer
+
+**Changes**:
+- pinion-core: add Gradient/GradientKind{Linear,Radial}/ColorStop/Extend
+- BoxStyle gains additive gradient: Option<Gradient> (Flutter model)
+- gradient geometry is box-relative UV so cache key is position-stable
+- unbounded Vec<ColorStop> stops; no arbitrary cap (R707.1 anti-cap)
+- BoxStyle drops Copy/Eq; manual Hash folds gradient (R682 cache key)
+- GradientKind is exhaustive (no non_exhaustive) so backends must update
+- paint_adapter lowers gradient to peniko::Gradient on Box + Container
+- scene/snapshot box_style_to_json emits gradient as structured data
+- new examples/hello-gradient: linear hue strip + linear/radial swatch
+
+
+
+**Verification**:
+- cargo test --workspace -j2 green (gradient builders, BoxStyle hash, wire)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean
+- r708_gradient.py PASS: 40+ snapshot assertions + live-pixel hue strip
+- pixel phase samples hue strip at green/cyan/blue stops via PINION_SCREENSHOT
+- toggle Off->On observed as swatch GradientKind linear->radial in snapshot
+- hello-gradient unit tests: hue strip stops, swatch kind, paint_hash re-key
+- full demo sweep green
+
+
+
+**Impact**: §5.11, §5.16, §5.50
+
+
+**Carry forward**:
+- R709 ColorPicker is the gradient consumer (2D SV pad + hue bar)
+- M3 elevation shadow still needs a separate shadow/blur primitive, not gradient
+- sweep/conic GradientKind deferred (peniko has it; no consumer yet)
+- image/pattern Brush deferred; unify fill into Brush enum at Phase C material
+- gradient brush_transform + per-stop interpolation color space not exposed yet
+- PathStyle.fill stays solid Color; gradient on Path deferred to first consumer
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

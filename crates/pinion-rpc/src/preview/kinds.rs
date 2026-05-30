@@ -153,7 +153,7 @@ impl Proposal for TypedProposal {
             }
             Self::SetStyle {
                 target_path, style, ..
-            } => apply_set_style(ctx.scene, target_path, *style),
+            } => apply_set_style(ctx.scene, target_path, style.clone()),
             Self::ReplaceView {
                 target_path,
                 replacement,

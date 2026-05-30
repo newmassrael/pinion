@@ -43,7 +43,9 @@ use pinion_core::Scene;
 use pinion_core::scene::{
     BoxNode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
 };
-use pinion_core::style::{Border, BorderPlacement, Color, TextOverflow};
+use pinion_core::style::{
+    Border, BorderPlacement, BoxStyle, Color, Gradient, GradientKind, TextOverflow,
+};
 use pinion_text::LayoutCache;
 use pinion_text::parley::PositionedLayoutItem;
 use vello::Glyph;
@@ -52,7 +54,10 @@ use vello::kurbo::{
     Affine, BezPath, Line, PathEl, Point as KurboPoint, Rect as KurboRect,
     RoundedRect as KurboRoundedRect, Stroke,
 };
-use vello::peniko::{Color as PenikoColor, Fill};
+use vello::peniko::{
+    Brush as PenikoBrush, Color as PenikoColor, Extend as PenikoExtend, Fill,
+    Gradient as PenikoGradient,
+};
 
 /// Build a Vello scene from a pinion [`Scene`] tree. `fill_hook` is
 /// consulted for each [`BoxNode`] visited; a `Some(color)` return
@@ -116,14 +121,14 @@ fn to_vello_inner<F>(
 {
     match scene {
         Scene::Container(c) => {
-            fill_rect(out, c.rect, c.style.fill, c.style.corner_radius, transform);
+            fill_box_bg(out, c.rect, &c.style, c.style.fill, transform);
             for child in &c.children {
                 to_vello_inner(child, fill_hook, text_cache, out, transform);
             }
         }
         Scene::Box(b) => {
             let fill = fill_hook(b).unwrap_or(b.style.fill);
-            fill_rect(out, b.rect, fill, b.style.corner_radius, transform);
+            fill_box_bg(out, b.rect, &b.style, fill, transform);
             if let Some(border) = b.style.border {
                 stroke_rect(out, b.rect, border, transform);
             }
@@ -579,13 +584,7 @@ fn to_vello_cached_inner<F>(
         // Cache miss: encode the entire subtree into a fresh sub-scene
         // under IDENTITY transform, then append + cache.
         let mut sub = VelloScene::new();
-        fill_rect(
-            &mut sub,
-            c.rect,
-            c.style.fill,
-            c.style.corner_radius,
-            Affine::IDENTITY,
-        );
+        fill_box_bg(&mut sub, c.rect, &c.style, c.style.fill, Affine::IDENTITY);
         for child in &c.children {
             to_vello_cached_inner(
                 child,
@@ -625,7 +624,7 @@ fn to_vello_cached_inner<F>(
     let mut sub = VelloScene::new();
     match scene {
         Scene::Container(c) => {
-            fill_rect(&mut sub, c.rect, c.style.fill, c.style.corner_radius, transform);
+            fill_box_bg(&mut sub, c.rect, &c.style, c.style.fill, transform);
             for child in &c.children {
                 to_vello_cached_inner(
                     child,
@@ -639,7 +638,7 @@ fn to_vello_cached_inner<F>(
         }
         Scene::Box(b) => {
             let fill = fill_hook(b).unwrap_or(b.style.fill);
-            fill_rect(&mut sub, b.rect, fill, b.style.corner_radius, transform);
+            fill_box_bg(&mut sub, b.rect, &b.style, fill, transform);
             if let Some(border) = b.style.border {
                 stroke_rect(&mut sub, b.rect, border, transform);
             }
@@ -907,6 +906,88 @@ fn fill_rect(
     } else {
         let rounded = KurboRoundedRect::new(x0, y0, x1, y1, f64::from(corner_radius));
         out.fill(Fill::NonZero, transform, peniko_fill, None, &rounded);
+    }
+}
+
+/// R708 §5.50 — paint a Box / Container background: the
+/// [`BoxStyle::gradient`] overlay when present, otherwise the solid
+/// `solid` colour. `solid` is the caller-resolved fill (a `Box`'s
+/// `fill_hook` override or `style.fill`; a `Container`'s `style.fill`),
+/// so a gradient takes precedence over the solid only when explicitly
+/// set — mirroring Flutter's `BoxDecoration { color, gradient }`.
+fn fill_box_bg(
+    out: &mut VelloScene,
+    r: Rect,
+    style: &BoxStyle,
+    solid: Color,
+    transform: Affine,
+) {
+    if let Some(gradient) = &style.gradient {
+        fill_rect_gradient(out, r, gradient, style.corner_radius, transform);
+    } else {
+        fill_rect(out, r, solid, style.corner_radius, transform);
+    }
+}
+
+/// R708 §5.50 — lower a pinion [`Gradient`] (box-relative UV geometry)
+/// onto `r` and fill the rect / rounded-rect with it. UV coordinates
+/// are mapped to absolute device coordinates using `r`'s origin + size
+/// (so `(0,0)` = top-left corner, `(1,1)` = bottom-right); a radial
+/// `radius` is taken as a fraction of the shorter side. Stops and the
+/// [`Extend`](pinion_core::style::Extend) mode map 1:1 onto peniko.
+fn fill_rect_gradient(
+    out: &mut VelloScene,
+    r: Rect,
+    gradient: &Gradient,
+    corner_radius: u32,
+    transform: Affine,
+) {
+    let x0 = f64::from(r.x);
+    let y0 = f64::from(r.y);
+    let w = f64::from(r.w);
+    let h = f64::from(r.h);
+    let uv = |u: f32, v: f32| KurboPoint::new(x0 + f64::from(u) * w, y0 + f64::from(v) * h);
+
+    let mut peniko_gradient = match gradient.kind {
+        GradientKind::Linear { start, end } => {
+            PenikoGradient::new_linear(uv(start.0, start.1), uv(end.0, end.1))
+        }
+        GradientKind::Radial { center, radius } => {
+            // Radius is a fraction of the shorter side, in device px.
+            #[allow(clippy::cast_possible_truncation)]
+            let radius_px = (f64::from(radius) * w.min(h)) as f32;
+            PenikoGradient::new_radial(uv(center.0, center.1), radius_px)
+        }
+    };
+    peniko_gradient = peniko_gradient.with_extend(to_peniko_extend(gradient.extend));
+    let stops: Vec<(f32, PenikoColor)> = gradient
+        .stops
+        .iter()
+        .map(|stop| (stop.offset, to_peniko(stop.color)))
+        .collect();
+    peniko_gradient = peniko_gradient.with_stops(stops.as_slice());
+    let brush = PenikoBrush::Gradient(peniko_gradient);
+
+    let x1 = x0 + w;
+    let y1 = y0 + h;
+    if corner_radius == 0 {
+        let rect = KurboRect::new(x0, y0, x1, y1);
+        out.fill(Fill::NonZero, transform, &brush, None, &rect);
+    } else {
+        let rounded = KurboRoundedRect::new(x0, y0, x1, y1, f64::from(corner_radius));
+        out.fill(Fill::NonZero, transform, &brush, None, &rounded);
+    }
+}
+
+/// R708 §5.50 — map a pinion [`Extend`](pinion_core::style::Extend) to
+/// peniko's `Extend` (1:1; the wildcard covers any future
+/// `#[non_exhaustive]` variant with the `Pad` default).
+fn to_peniko_extend(extend: pinion_core::style::Extend) -> PenikoExtend {
+    use pinion_core::style::Extend;
+    match extend {
+        Extend::Repeat => PenikoExtend::Repeat,
+        Extend::Reflect => PenikoExtend::Reflect,
+        Extend::Pad | _ => PenikoExtend::Pad,
     }
 }
 

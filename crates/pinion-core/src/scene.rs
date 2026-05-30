@@ -1764,8 +1764,12 @@ impl ContainerNode {
     /// Attach a §5.3 [`BoxStyle`] — the container paints its own fill /
     /// border before recursing into children. v0 covers fill +
     /// `corner_radius` via the same shape as `BoxNode`.
+    ///
+    /// Not `const`: R708 §5.50 made [`BoxStyle`] carry an optional heap
+    /// [`Gradient`], so assigning over `self.style` runs a destructor —
+    /// disallowed in `const fn`.
     #[must_use]
-    pub const fn with_style(mut self, style: BoxStyle) -> Self {
+    pub fn with_style(mut self, style: BoxStyle) -> Self {
         self.style = style;
         self
     }

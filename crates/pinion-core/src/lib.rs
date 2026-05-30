@@ -53,10 +53,10 @@ pub use revision::SceneRevision;
 pub use scene::{HitPath, Scene};
 pub use storage::{InMemoryStorage, Storage};
 pub use style::{
-    Align, AlignItems, Border, BoxStyle, Color, Display, Fit, FlexDirection, FontStyle,
-    FontWeight, ImageStyle, JustifyContent, LayoutStyle, LineHeight, PathStyle, Size, SizeValue,
-    Stroke, StrokeCap, TextAlign, TextDecoration, TextOverflow, TextStyle,
-    scale_normalized_to_px,
+    Align, AlignItems, Border, BoxStyle, Color, ColorStop, Display, Extend, Fit, FlexDirection,
+    FontStyle, FontWeight, Gradient, GradientKind, ImageStyle, JustifyContent, LayoutStyle,
+    LineHeight, PathStyle, Size, SizeValue, Stroke, StrokeCap, TextAlign, TextDecoration,
+    TextOverflow, TextStyle, scale_normalized_to_px,
 };
 pub use theme::{
     ColorRole, SystemColorScheme, THEME_FADE_SPRING, Theme, ThemeMode, ThemeProvider,

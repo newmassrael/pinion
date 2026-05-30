@@ -19,6 +19,7 @@ members = [
     "crates/pinion-widget-paint",
     "examples/hello-button",
     "examples/hello-button-tui",
+    "examples/hello-gradient",
     "examples/hello-commands",
     "examples/hello-commands-tui",
     "examples/hello-textfield",

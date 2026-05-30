@@ -1839,6 +1839,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-gradient"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-immediate-mode-canvas"
 version = "0.0.1"
 dependencies = [

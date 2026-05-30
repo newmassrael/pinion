@@ -278,7 +278,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
         Scene::Box(node) => SnapshotNode::Box(BoxSnapshot {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
-            style: node.style,
+            style: node.style.clone(),
         }),
         Scene::Text(node) => SnapshotNode::Text(TextSnapshot {
             rect: node.rect,
@@ -301,7 +301,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
         Scene::Container(node) => SnapshotNode::Container(ContainerSnapshot {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
-            style: node.style,
+            style: node.style.clone(),
             children: node.children.iter().map(snapshot_root).collect(),
         }),
         Scene::Effect(_) => SnapshotNode::Effect,

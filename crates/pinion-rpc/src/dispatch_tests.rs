@@ -4913,6 +4913,45 @@ fn dispatch_with_runtime_owner_and_revision(
     dispatch(&mut ctx, req)
 }
 
+// R708 §5.50 — gradient-fill wire serialization. `box_style_to_json`
+// must surface the optional `Gradient` overlay so AI clients can read a
+// box's gradient ramp as data (§2 #7 scene-as-data); `null` when absent.
+#[test]
+fn r708_box_style_to_json_emits_gradient() {
+    use pinion_core::style::{BoxStyle, Color, Gradient};
+
+    // No gradient -> the key is present and null (stable wire shape).
+    let solid = box_style_to_json(&BoxStyle::filled(Color::rgb(1, 2, 3)));
+    assert_eq!(solid["gradient"], serde_json::Value::Null);
+
+    // Linear gradient -> geometry kind + endpoints + stops + extend.
+    let style = BoxStyle::filled(Color::TRANSPARENT).with_gradient(
+        Gradient::horizontal()
+            .with_stop(0.0, Color::rgb(0xff, 0, 0))
+            .with_stop(1.0, Color::rgb(0, 0, 0xff)),
+    );
+    let json = box_style_to_json(&style);
+    let gradient = &json["gradient"];
+    assert_eq!(gradient["geometry"]["kind"], "linear");
+    assert_eq!(gradient["geometry"]["start"]["u"], 0.0);
+    assert_eq!(gradient["geometry"]["end"]["u"], 1.0);
+    assert_eq!(gradient["extend"], "Pad");
+    let stops = gradient["stops"].as_array().expect("stops array");
+    assert_eq!(stops.len(), 2);
+    assert_eq!(stops[0]["offset"], 0.0);
+    assert_eq!(stops[0]["color"]["r"], 0xff);
+    assert_eq!(stops[1]["color"]["b"], 0xff);
+
+    // Radial gradient -> center + radius geometry.
+    let radial = box_style_to_json(
+        &BoxStyle::filled(Color::TRANSPARENT)
+            .with_gradient(Gradient::radial((0.5, 0.5), 0.25)),
+    );
+    assert_eq!(radial["gradient"]["geometry"]["kind"], "radial");
+    assert_eq!(radial["gradient"]["geometry"]["center"]["v"], 0.5);
+    assert_eq!(radial["gradient"]["geometry"]["radius"], 0.25);
+}
+
 // R632 §5.7 — per-axis dispatch test sibling files.
 //
 // Pre-R632 the AI-first read/write matrix wire-integration tests
