@@ -2312,11 +2312,30 @@ fn f32_to_json(x: f32) -> Value {
     serde_json::Number::from_f64(f64::from(x)).map_or(Value::Null, Value::Number)
 }
 
+/// R710 §5.50 — wire serialization for a [`BoxShadow`]. Surfaces the
+/// cast colour, the `(offset.x, offset.y)` translation, the gaussian
+/// `blur` radius and the `spread`, so AI clients can read back a box's
+/// elevation without sampling pixels (§2 #7 scene-as-data).
+///
+/// [`BoxShadow`]: pinion_core::style::BoxShadow
+fn shadow_to_json(shadow: &pinion_core::style::BoxShadow) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("color".to_string(), color_to_json(shadow.color));
+    let mut offset = serde_json::Map::new();
+    offset.insert("x".to_string(), f32_to_json(shadow.offset_x));
+    offset.insert("y".to_string(), f32_to_json(shadow.offset_y));
+    obj.insert("offset".to_string(), Value::Object(offset));
+    obj.insert("blur".to_string(), f32_to_json(shadow.blur));
+    obj.insert("spread".to_string(), f32_to_json(shadow.spread));
+    Value::Object(obj)
+}
+
 /// R55.G.8 §5.49 — wire serialization for `BoxStyle`. Surfaces fill,
-/// optional border (null when absent), `corner_radius`, and the R708
-/// optional `gradient` overlay (null when absent) so AI clients can
-/// introspect the rendered look of any `BoxNode` or `ContainerNode`
-/// without OCR (§2 #7 scene-as-data).
+/// optional border (null when absent), `corner_radius`, the R708
+/// optional `gradient` overlay (null when absent), and the R710
+/// `shadows` list (empty array when none) so AI clients can introspect
+/// the rendered look of any `BoxNode` or `ContainerNode` without OCR
+/// (§2 #7 scene-as-data).
 fn box_style_to_json(style: &pinion_core::style::BoxStyle) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("fill".to_string(), color_to_json(style.fill));
@@ -2334,6 +2353,10 @@ fn box_style_to_json(style: &pinion_core::style::BoxStyle) -> Value {
             .gradient
             .as_ref()
             .map_or(Value::Null, gradient_to_json),
+    );
+    obj.insert(
+        "shadows".to_string(),
+        Value::Array(style.shadows.iter().map(shadow_to_json).collect()),
     );
     Value::Object(obj)
 }

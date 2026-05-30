@@ -23542,6 +23542,54 @@
         "M3 elevation shadow remains a separate shadow/blur primitive, not a gradient (R708 honest correction holds)"
       ]
     },
+    "R710": {
+      "decision_summary": "R710 §5.50 drop-shadow substrate: BoxStyle.shadows Vec<BoxShadow> lowered to vello draw_blurred_rounded_rect; hello-elevation first consumer",
+      "changes_bullets": [
+        "Add BoxShadow (CSS/Flutter box-shadow: color/offset/blur/spread) + BoxStyle.shadows Vec; manual Hash folds shadows so R682 paint-cache re-keys on shadow change",
+        "paint_adapter paint_box_shadows lowers each shadow to vello draw_blurred_rounded_rect (gaussian sigma = blur/2; spread inflates rect + corner radius) before fill at all 5 box/container sites; preserves R706 append-only invariant",
+        "box_style_to_json exposes a shadows array (color/offset/blur/spread) so scene/snapshot reads elevation without OCR per §2 #7",
+        "examples/hello-elevation: Material-style key+ambient elevation gallery (static cards L1/L3/L5 + Toggle-raised card) as first BoxStyle.shadows consumer",
+        "tools/demos/r710_elevation.py: 30+ snapshot assertions on per-card shadow lists plus a live-pixel monotone-darkening guard below each card"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green incl 9 new BoxShadow/hello-elevation unit tests (hash folds shadows, ramp scales, raise re-keys paint hash)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic",
+        "python3 tools/demos/r710_elevation.py PASS: snapshot shadow read-back + PINION_SCREENSHOT live-pixel cast darkening (high 546 < mid 618 < far 765 channel-sum)"
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.16",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "inset shadows / Flutter blurStyle / per-shadow corner override deferred until a consumer needs them (BoxShadow stays outset drop-shadow only)",
+        "Material-elevation key+ambient preset lives in the hello-elevation binding; lift to a shared elevation() helper on 2nd consumer (Dialog/Menu/Tooltip dropdown shadow) per abstraction-needs-second-consumer",
+        "spread is wired + unit-tested + snapshot-exposed but the elevation preset uses spread 0; first spread!=0 paint consumer is a future custom-shadow round"
+      ],
+      "publishable_decision_summary": "R710 §5.50 drop-shadow substrate: BoxStyle.shadows Vec<BoxShadow> lowered to vello draw_blurred_rounded_rect; hello-elevation first consumer",
+      "publishable_changes_bullets": [
+        "Add BoxShadow (CSS/Flutter box-shadow: color/offset/blur/spread) + BoxStyle.shadows Vec; manual Hash folds shadows so R682 paint-cache re-keys on shadow change",
+        "paint_adapter paint_box_shadows lowers each shadow to vello draw_blurred_rounded_rect (gaussian sigma = blur/2; spread inflates rect + corner radius) before fill at all 5 box/container sites; preserves R706 append-only invariant",
+        "box_style_to_json exposes a shadows array (color/offset/blur/spread) so scene/snapshot reads elevation without OCR per §2 #7",
+        "examples/hello-elevation: Material-style key+ambient elevation gallery (static cards L1/L3/L5 + Toggle-raised card) as first BoxStyle.shadows consumer",
+        "tools/demos/r710_elevation.py: 30+ snapshot assertions on per-card shadow lists plus a live-pixel monotone-darkening guard below each card"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green incl 9 new BoxShadow/hello-elevation unit tests (hash folds shadows, ramp scales, raise re-keys paint hash)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic",
+        "python3 tools/demos/r710_elevation.py PASS: snapshot shadow read-back + PINION_SCREENSHOT live-pixel cast darkening (high 546 < mid 618 < far 765 channel-sum)"
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.16",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "inset shadows / Flutter blurStyle / per-shadow corner override deferred until a consumer needs them (BoxShadow stays outset drop-shadow only)",
+        "Material-elevation key+ambient preset lives in the hello-elevation binding; lift to a shared elevation() helper on 2nd consumer (Dialog/Menu/Tooltip dropdown shadow) per abstraction-needs-second-consumer",
+        "spread is wired + unit-tested + snapshot-exposed but the elevation preset uses spread 0; first spread!=0 paint consumer is a future custom-shadow round"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

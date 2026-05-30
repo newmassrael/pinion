@@ -121,12 +121,14 @@ fn to_vello_inner<F>(
 {
     match scene {
         Scene::Container(c) => {
+            paint_box_shadows(out, c.rect, &c.style, transform);
             fill_box_bg(out, c.rect, &c.style, c.style.fill, transform);
             for child in &c.children {
                 to_vello_inner(child, fill_hook, text_cache, out, transform);
             }
         }
         Scene::Box(b) => {
+            paint_box_shadows(out, b.rect, &b.style, transform);
             let fill = fill_hook(b).unwrap_or(b.style.fill);
             fill_box_bg(out, b.rect, &b.style, fill, transform);
             if let Some(border) = b.style.border {
@@ -584,6 +586,7 @@ fn to_vello_cached_inner<F>(
         // Cache miss: encode the entire subtree into a fresh sub-scene
         // under IDENTITY transform, then append + cache.
         let mut sub = VelloScene::new();
+        paint_box_shadows(&mut sub, c.rect, &c.style, Affine::IDENTITY);
         fill_box_bg(&mut sub, c.rect, &c.style, c.style.fill, Affine::IDENTITY);
         for child in &c.children {
             to_vello_cached_inner(
@@ -624,6 +627,7 @@ fn to_vello_cached_inner<F>(
     let mut sub = VelloScene::new();
     match scene {
         Scene::Container(c) => {
+            paint_box_shadows(&mut sub, c.rect, &c.style, transform);
             fill_box_bg(&mut sub, c.rect, &c.style, c.style.fill, transform);
             for child in &c.children {
                 to_vello_cached_inner(
@@ -637,6 +641,7 @@ fn to_vello_cached_inner<F>(
             }
         }
         Scene::Box(b) => {
+            paint_box_shadows(&mut sub, b.rect, &b.style, transform);
             let fill = fill_hook(b).unwrap_or(b.style.fill);
             fill_box_bg(&mut sub, b.rect, &b.style, fill, transform);
             if let Some(border) = b.style.border {
@@ -906,6 +911,39 @@ fn fill_rect(
     } else {
         let rounded = KurboRoundedRect::new(x0, y0, x1, y1, f64::from(corner_radius));
         out.fill(Fill::NonZero, transform, peniko_fill, None, &rounded);
+    }
+}
+
+/// R710 §5.50 — paint every [`BoxStyle::shadows`] entry behind a box,
+/// in list order (back-to-front), via Vello's native gaussian-blurred
+/// rounded-rect. The shadow silhouette is `r` translated by the
+/// shadow's `(offset_x, offset_y)` and inflated by `spread`; the corner
+/// radius tracks the box's `corner_radius` grown by `spread`; the
+/// gaussian std-dev is `blur / 2` (the CSS `box-shadow` convention).
+///
+/// Called *before* [`fill_box_bg`] so the opaque fill composites over
+/// the shadow's interior. Like every other leaf draw it is issued into
+/// the caller's fresh sub-scene before any child `append`, preserving
+/// the R706 "out receives appends only" invariant.
+fn paint_box_shadows(out: &mut VelloScene, r: Rect, style: &BoxStyle, transform: Affine) {
+    for shadow in &style.shadows {
+        if shadow.color == Color::TRANSPARENT {
+            continue;
+        }
+        let spread = f64::from(shadow.spread);
+        let x0 = f64::from(r.x) + f64::from(shadow.offset_x) - spread;
+        let y0 = f64::from(r.y) + f64::from(shadow.offset_y) - spread;
+        let x1 = f64::from(r.x.saturating_add(r.w)) + f64::from(shadow.offset_x) + spread;
+        let y1 = f64::from(r.y.saturating_add(r.h)) + f64::from(shadow.offset_y) + spread;
+        // A spread more negative than half the box collapses the rect —
+        // nothing to cast.
+        if x1 <= x0 || y1 <= y0 {
+            continue;
+        }
+        let radius = (f64::from(style.corner_radius) + spread).max(0.0);
+        let std_dev = f64::from(shadow.blur) / 2.0;
+        let rect = KurboRect::new(x0, y0, x1, y1);
+        out.draw_blurred_rounded_rect(transform, rect, to_peniko(shadow.color), radius, std_dev);
     }
 }
 

@@ -1,0 +1,42 @@
+[package]
+name = "hello-elevation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R710 §5.50 drop-shadow rendering substrate consumer — a Material-style elevation gallery (static cards at rising levels plus an interactive card a Toggle raises) cast by BoxStyle.shadows, the first BoxShadow paint; substrate-first, each shadow is introspectable via scene/snapshot and verifiable by live-pixel sampling of the cast"
+publish = false
+
+[[bin]]
+name = "hello-elevation"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Toggle widget reused as the rest/raised elevation bit (the
+# binding paints shadows; the Toggle is the RPC-drivable mode bit).
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the `HelloElevationRenderer` struct emitted by `build.rs`
+# names `::vello::*` directly; the `vello_renderer_impl!` expansion also
+# names `::vello::Scene` / `::vello::peniko::Color`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the `HelloElevationRenderer` Vello
+# wrapper. Identical pattern to hello-gradient / hello-toggle.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

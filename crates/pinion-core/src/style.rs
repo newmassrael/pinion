@@ -1424,6 +1424,85 @@ fn hash_gradient<H: core::hash::Hasher>(gradient: &Gradient, state: &mut H) {
     gradient.extend.hash(state);
 }
 
+/// R710 §5.50 — one drop-shadow cast behind a [`BoxNode`] /
+/// [`ContainerNode`], the CSS `box-shadow` / Flutter `BoxShadow` model.
+///
+/// A shadow is the box's rounded silhouette, translated by
+/// `(offset_x, offset_y)`, inflated by `spread` (negative shrinks),
+/// blurred by a gaussian of radius `blur`, and painted in `color`
+/// *behind* the box fill. The Vello `paint_adapter` lowers it to the
+/// native `Scene::draw_blurred_rounded_rect` primitive (CSS convention:
+/// the gaussian std-dev is `blur / 2`).
+///
+/// All fields are POD (`Color` is `Copy`, the rest `f32`), so
+/// `BoxShadow` is `Copy`; it lives in [`BoxStyle::shadows`] as a `Vec`
+/// (the Flutter `List<BoxShadow>` model — Material elevation composes a
+/// key + ambient pair, so a single `Option` would not suffice).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoxShadow {
+    /// Shadow colour, including alpha (drop-shadows are typically a
+    /// low-alpha black; the alpha governs the cast's darkness).
+    pub color: Color,
+    /// Horizontal offset in px (positive = rightward).
+    pub offset_x: f32,
+    /// Vertical offset in px (positive = downward, the common
+    /// key-light direction).
+    pub offset_y: f32,
+    /// CSS blur-radius in px (`>= 0`); `0` is a crisp silhouette.
+    pub blur: f32,
+    /// CSS spread-radius in px; inflates (`> 0`) or contracts (`< 0`)
+    /// the shadow rect before blurring.
+    pub spread: f32,
+}
+
+impl BoxShadow {
+    /// A zero-offset, zero-blur, zero-spread shadow of `color` — the
+    /// builder seed; compose with [`Self::with_offset`] /
+    /// [`Self::with_blur`] / [`Self::with_spread`].
+    #[must_use]
+    pub const fn new(color: Color) -> Self {
+        Self {
+            color,
+            offset_x: 0.0,
+            offset_y: 0.0,
+            blur: 0.0,
+            spread: 0.0,
+        }
+    }
+
+    /// Builder: set the `(offset_x, offset_y)` translation in px.
+    #[must_use]
+    pub const fn with_offset(mut self, x: f32, y: f32) -> Self {
+        self.offset_x = x;
+        self.offset_y = y;
+        self
+    }
+
+    /// Builder: set the gaussian blur-radius in px.
+    #[must_use]
+    pub const fn with_blur(mut self, blur: f32) -> Self {
+        self.blur = blur;
+        self
+    }
+
+    /// Builder: set the spread-radius in px (negative contracts).
+    #[must_use]
+    pub const fn with_spread(mut self, spread: f32) -> Self {
+        self.spread = spread;
+        self
+    }
+}
+
+/// Hash a [`BoxShadow`] field-by-field (float-aware via [`hash_f32`]).
+fn hash_box_shadow<H: core::hash::Hasher>(shadow: &BoxShadow, state: &mut H) {
+    use core::hash::Hash;
+    shadow.color.hash(state);
+    hash_f32(shadow.offset_x, state);
+    hash_f32(shadow.offset_y, state);
+    hash_f32(shadow.blur, state);
+    hash_f32(shadow.spread, state);
+}
+
 /// Sidecar style for [`BoxNode`](crate::scene::BoxNode) per the §5.11
 /// "layered" decision (§5.3 R20 lock).
 ///
@@ -1434,10 +1513,13 @@ fn hash_gradient<H: core::hash::Hasher>(gradient: &Gradient, state: &mut H) {
 /// R708 §5.50 added the optional [`Gradient`] overlay (the Flutter
 /// `BoxDecoration { color, gradient }` model — when `gradient` is
 /// `Some`, the rasterizer paints it *in place of* the solid `fill`;
-/// `fill` remains the solid fallback). Because a [`Gradient`] is heap-
-/// and float-bearing, `BoxStyle` is no longer `Copy`/`Eq` and hand-
-/// rolls `Hash` (below) so the §5.16 R682 paint-cache `b.style.hash()`
-/// stays a faithful key — a gradient change re-keys and re-paints.
+/// `fill` remains the solid fallback). R710 §5.50 added the
+/// [`shadows`](Self::shadows) list (Flutter `List<BoxShadow>`) painted
+/// *behind* the box. Because a [`Gradient`] / [`BoxShadow`] list is
+/// heap- and float-bearing, `BoxStyle` is no longer `Copy`/`Eq` and
+/// hand-rolls `Hash` (below) so the §5.16 R682 paint-cache
+/// `b.style.hash()` stays a faithful key — a gradient or shadow change
+/// re-keys and re-paints.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct BoxStyle {
@@ -1447,6 +1529,9 @@ pub struct BoxStyle {
     /// Optional gradient overlay. `Some` paints the gradient in place
     /// of `fill`; `None` (default) keeps the solid `fill`.
     pub gradient: Option<Gradient>,
+    /// Drop-shadows painted behind the box, back-to-front in list
+    /// order (Flutter `List<BoxShadow>`). Empty (default) = no shadow.
+    pub shadows: Vec<BoxShadow>,
 }
 
 impl core::hash::Hash for BoxStyle {
@@ -1461,11 +1546,16 @@ impl core::hash::Hash for BoxStyle {
                 hash_gradient(gradient, state);
             }
         }
+        (self.shadows.len() as u64).hash(state);
+        for shadow in &self.shadows {
+            hash_box_shadow(shadow, state);
+        }
     }
 }
 
 impl BoxStyle {
-    /// Solid-fill `BoxStyle` with no border, no rounding, no gradient.
+    /// Solid-fill `BoxStyle` with no border, no rounding, no gradient,
+    /// no shadow.
     #[must_use]
     pub const fn filled(fill: Color) -> Self {
         Self {
@@ -1473,6 +1563,9 @@ impl BoxStyle {
             border: None,
             corner_radius: 0,
             gradient: None,
+            // `Vec::new` is `const` and allocates nothing — keeps
+            // `filled` usable in `const` contexts.
+            shadows: Vec::new(),
         }
     }
 
@@ -1503,6 +1596,23 @@ impl BoxStyle {
     #[must_use]
     pub fn with_gradient(mut self, gradient: Gradient) -> Self {
         self.gradient = Some(gradient);
+        self
+    }
+
+    /// Builder: append one [`BoxShadow`] behind the box. Multiple calls
+    /// stack back-to-front in call order (Material elevation = key +
+    /// ambient). Not `const` — `shadows` is a heap [`Vec`].
+    #[must_use]
+    pub fn with_shadow(mut self, shadow: BoxShadow) -> Self {
+        self.shadows.push(shadow);
+        self
+    }
+
+    /// Builder: replace the entire shadow list (Flutter
+    /// `BoxDecoration { boxShadow }`).
+    #[must_use]
+    pub fn with_shadows(mut self, shadows: Vec<BoxShadow>) -> Self {
+        self.shadows = shadows;
         self
     }
 }
@@ -3688,5 +3798,48 @@ mod tests {
             .with_gradient(Gradient::horizontal().with_stop(-0.0, Color::rgb(1, 2, 3)));
         assert_eq!(pos, neg, "-0.0 and 0.0 offsets are PartialEq-equal");
         assert_eq!(h(&pos), h(&neg), "and must hash equally");
+    }
+
+    #[test]
+    fn r710_box_style_hash_folds_shadows() {
+        // The §5.16 R682 paint-fragment cache keys on `b.style.hash()`;
+        // adding / changing a drop-shadow must re-key, and a shadow-count
+        // change (key vs key+ambient) must not alias.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        fn h(style: &BoxStyle) -> u64 {
+            let mut hasher = DefaultHasher::new();
+            style.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        let black = Color::rgb(0, 0, 0);
+        let none = BoxStyle::filled(Color::rgb(0x10, 0x20, 0x30));
+        let key = none
+            .clone()
+            .with_shadow(BoxShadow::new(black).with_offset(0.0, 2.0).with_blur(4.0));
+        let key_ambient = key
+            .clone()
+            .with_shadow(BoxShadow::new(black).with_blur(8.0).with_spread(1.0));
+
+        assert_ne!(h(&none), h(&key), "adding a shadow must re-key");
+        assert_ne!(h(&key), h(&key_ambient), "shadow count change must re-key");
+        assert_eq!(h(&key_ambient), h(&key_ambient.clone()), "deterministic");
+    }
+
+    #[test]
+    fn r710_box_shadow_builders_set_each_field() {
+        let s = BoxShadow::new(Color::rgb(1, 2, 3))
+            .with_offset(4.0, 5.0)
+            .with_blur(6.0)
+            .with_spread(-1.5);
+        assert_eq!(s.color, Color::rgb(1, 2, 3));
+        assert!((s.offset_x - 4.0).abs() < f32::EPSILON);
+        assert!((s.offset_y - 5.0).abs() < f32::EPSILON);
+        assert!((s.blur - 6.0).abs() < f32::EPSILON);
+        assert!((s.spread - (-1.5)).abs() < f32::EPSILON);
+        // `new` seeds all geometry to zero.
+        assert!(BoxShadow::new(Color::TRANSPARENT).blur.abs() < f32::EPSILON);
     }
 }
