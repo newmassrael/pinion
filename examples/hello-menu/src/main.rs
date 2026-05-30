@@ -41,12 +41,17 @@
 //!   jump, Arrow Right/Left switch to the adjacent menu, Enter/Space
 //!   activate the active item (command + close), Escape closes.
 //!
-//! ## Dismiss paths (R691 scope)
+//! ## Dismiss paths
 //!
-//! Escape, re-clicking the open title, and activating an item all
-//! dismiss the dropdown. *Click-outside-to-dismiss* is a cross-widget
-//! overlay-dismiss substrate axis (serves tooltips / popovers / combo
-//! boxes too) deferred until a 2nd overlay consumer surfaces it.
+//! Escape, re-clicking the open title, activating an item, and (R715)
+//! **clicking outside** the open dropdown all dismiss it. The
+//! click-outside path is the shared light-dismiss barrier
+//! ([`dismiss_barrier`]): a transparent, non-modal click-catcher painted
+//! over the area below the title strip and tagged `menu#barrier`, so its
+//! outside `PointerUp` routes to the one [`MenuBarExternal`] (R51.42),
+//! which closes the menu. The barrier leaves the title strip clickable
+//! above it, so a click on a sibling title switches menus instead of
+//! dismissing. ComboBox (R714) is the barrier's other consumer.
 //!
 //! ## AI clients
 //!
@@ -67,6 +72,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::menu::MenuBarExternal;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::menu::{
     composite_item_tag, composite_title_tag, view_menu_bar, view_menu_dropdown, MenuStyle,
 };
@@ -79,6 +85,11 @@ const WIN_H: u32 = 320;
 const THEME_TAG: &str = "app";
 const BAR_TAG: &str = "menu";
 const DROPDOWN_TAG: &str = "menu_dropdown";
+/// R715 §5.16 — the transparent click-outside dismiss barrier. The
+/// R51.42 composite form `<bar>#barrier` routes its outside `PointerUp`
+/// to the one [`MenuBarExternal`] (tag `menu`), whose barrier arm closes
+/// the open dropdown.
+const BARRIER_TAG: &str = "menu#barrier";
 const BODY_FONT_PX: u32 = 15;
 const FOOTER_FONT_PX: u32 = 12;
 
@@ -116,7 +127,8 @@ struct MenuState {
 /// per-title `menu#t<m>`); when a menu is open, [`view_menu_dropdown`]
 /// paints an absolutely-positioned floating command list (tagged
 /// `menu_dropdown`, per-item `menu#i<i>`) placed **last** so it paints
-/// over the body content.
+/// over the body content, behind which the R715 [`dismiss_barrier`]
+/// (tagged `menu#barrier`) catches the click-outside that closes it.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: MenuState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
@@ -154,8 +166,19 @@ fn view(state: MenuState, _frame: &Frame) -> Scene {
 
     let mut children = vec![menubar, content];
     if let Some(m) = state.open {
+        // R715 §5.16 — transparent click-outside dismiss barrier over
+        // the area *below* the title strip (origin `(0, bar_height)`),
+        // so the titles stay clickable above it and a sibling-title
+        // click switches menus instead of dismissing. Pushed before the
+        // dropdown so the dropdown hit-tests above the barrier; an
+        // outside click lands on `menu#barrier` -> close.
+        children.push(dismiss_barrier(
+            BARRIER_TAG,
+            (0, style.bar_height),
+            (WIN_W, WIN_H - style.bar_height),
+        ));
         // Placed last so the absolutely-positioned dropdown paints
-        // over the content container below the bar.
+        // over the content container (and the barrier) below the bar.
         children.push(view_menu_dropdown(
             BAR_TAG,
             DROPDOWN_TAG,
@@ -702,6 +725,51 @@ mod key_tests {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<MenuView>(
             MenuState::default(),
             &Frame::default(),
+        );
+    }
+
+    #[test]
+    fn r715_closed_view_omits_dismiss_barrier() {
+        let closed = MenuState::default();
+        let scene = pinion_core::Owner::new().run(|| view(closed, &Frame::new()));
+        assert!(
+            !scene.contains_tag(BARRIER_TAG),
+            "closed: no click-outside barrier painted"
+        );
+        assert!(!scene.contains_tag(DROPDOWN_TAG), "closed: no dropdown painted");
+    }
+
+    #[test]
+    fn r715_open_view_paints_dismiss_barrier_below_titles() {
+        let open = MenuState {
+            open: Some(0),
+            active: None,
+            bar_focus: 0,
+        };
+        let scene = pinion_core::Owner::new().run(|| view(open, &Frame::new()));
+        assert!(
+            scene.contains_tag(BARRIER_TAG),
+            "open: transparent click-outside barrier painted"
+        );
+        assert!(scene.contains_tag(DROPDOWN_TAG), "open: dropdown painted above barrier");
+        // The barrier leaves the title strip clickable: it is anchored at
+        // y = bar_height, not the window origin.
+        let bar_h = MenuStyle::m3_default().bar_height;
+        let Scene::Container(root) = &scene else {
+            panic!("root is a container");
+        };
+        let barrier = root
+            .children
+            .iter()
+            .find_map(|c| match c {
+                Scene::Container(n) if n.tag.as_deref() == Some(BARRIER_TAG) => Some(n),
+                _ => None,
+            })
+            .expect("barrier present when open");
+        assert_eq!(
+            barrier.layout.absolute_position,
+            Some((0, bar_h)),
+            "barrier starts below the title strip so titles stay clickable"
         );
     }
 }

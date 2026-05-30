@@ -66,12 +66,14 @@
 //!
 //! ## Dismiss paths + future axes (per [[abstraction-needs-second-consumer]])
 //!
-//! R691 dismisses an open menu via **Escape**, **re-clicking the open
-//! title**, or **activating an item**. *Click-outside-to-dismiss* and
-//! *focus-loss dismiss* are a cross-widget overlay-dismiss substrate
-//! axis (it also serves tooltips / popovers / context menus / combo
-//! boxes) — deferred until a 2nd overlay consumer surfaces the need
-//! rather than special-cased into the menubar now. Likewise *mouse
+//! An open menu dismisses via **Escape**, **re-clicking the open
+//! title**, **activating an item**, or (R715) a **click-outside** on the
+//! transparent dismiss barrier. The barrier is the shared light-dismiss
+//! layer ([`pinion_widget_paint::barrier`]); the binding paints it as a
+//! `<bar>#barrier` composite node behind the open dropdown and the
+//! R51.42 router feeds its `PointerUp` here as `send("barrier:…")`,
+//! which closes the menu. *Focus-loss dismiss* remains an additive axis
+//! once a real consumer surfaces it. Likewise *mouse
 //! hover-follow between top-level titles while a menu is open*,
 //! *`menuitemcheckbox` / `menuitemradio` stateful entries*, *submenus
 //! (nested menus)*, and *accelerator / mnemonic keys* are additive
@@ -461,11 +463,22 @@ impl MenuBarExternal {
     }
 
     /// Shared parse for the `send` wire payload `"<sub>:<EventName>"`
-    /// where `<sub>` is `t<m>` (title) or `i<i>` (item). Returns the
-    /// open index as the round-trip outcome.
+    /// where `<sub>` is `t<m>` (title), `i<i>` (item), or the literal
+    /// `barrier` (R715 click-outside dismiss). Returns the open index as
+    /// the round-trip outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
         let (sub, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
         let event = parse_pointer_event(event_name).ok_or(InvokeError::Rejected)?;
+        // R715 §5.16 — the transparent dismiss barrier (`<bar>#barrier`,
+        // painted behind an open dropdown over the area below the title
+        // strip): a `PointerUp` outside the menu closes it. Other pointer
+        // events over the barrier region are inert.
+        if sub == "barrier" {
+            if event == PointerEvent::Up {
+                self.em.inner.close();
+            }
+            return Ok(open_value(self.open_menu()));
+        }
         let mut chars = sub.chars();
         let kind = chars.next().ok_or(InvokeError::Rejected)?;
         let idx: usize = chars.as_str().parse().map_err(|_| InvokeError::Rejected)?;
@@ -917,6 +930,32 @@ mod tests {
         assert_eq!(e.open_menu(), Some(1));
         click_title(&mut e, 1);
         assert_eq!(e.open_menu(), None);
+    }
+
+    #[test]
+    fn r715_barrier_pointer_up_closes_open_menu() {
+        let mut e = ext();
+        click_title(&mut e, 2);
+        assert_eq!(e.open_menu(), Some(2), "menu 2 open");
+        // A click-outside on the transparent dismiss barrier closes it.
+        let out = e
+            .invoke("send", IntrospectValue::Text("barrier:PointerUp".to_string()))
+            .unwrap();
+        assert_eq!(e.open_menu(), None, "barrier PointerUp dismisses");
+        assert_eq!(out, IntrospectValue::Null, "send returns the (now None) open index");
+        // Barrier dismiss emits no command intent (it is not an activation).
+        assert!(!e.is_dirty(), "click-outside fires no command");
+    }
+
+    #[test]
+    fn r715_barrier_non_up_events_are_inert() {
+        let mut e = ext();
+        click_title(&mut e, 0);
+        for ev in ["PointerEnter", "PointerDown", "PointerLeave", "PointerCancel"] {
+            e.invoke("send", IntrospectValue::Text(format!("barrier:{ev}")))
+                .unwrap();
+            assert_eq!(e.open_menu(), Some(0), "{ev} over barrier does not dismiss");
+        }
     }
 
     #[test]

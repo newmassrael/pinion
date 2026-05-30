@@ -75,6 +75,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod barrier;
 pub mod button;
 pub mod checkbox;
 pub mod datepicker;

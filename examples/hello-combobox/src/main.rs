@@ -1,6 +1,6 @@
 // R714 §5.16 — example bindings tolerate looser doc-markdown lints than
 // substrate crates; the narrative carries many proper-noun identifiers
-// (WAI-ARIA, ListBoxExternal, ButtonExternal, scrim_backdrop, …).
+// (WAI-ARIA, ListBoxExternal, ButtonExternal, dismiss_barrier, …).
 #![allow(clippy::doc_markdown)]
 
 //! `hello-combobox` — R714 §5.38 §5.40 §5.50 select-only **combobox**
@@ -25,14 +25,13 @@
 //!   mutual exclusion, the `focused_index` active descendant (R51.87),
 //!   and the full `scene/query` / `intervene` / `invoke` RPC surface.
 //! * **dismiss barrier** — a click-only [`ButtonExternal`]
-//!   (`combo_barrier`, an extra external) bound to a **transparent**
-//!   [`scrim_backdrop`] (`scrim_fill(0)`). This is the click-outside
-//!   dismiss the R691 Menu carry described: the barrier reuses the R702
-//!   / R703 modal-scrim primitive at *zero* opacity and *without* a
-//!   focus trap — a click anywhere outside the popup emits
-//!   `combo_barrier.click` and the reducer closes the combobox. The
-//!   scrim module's doc already anticipated this "scrimmed popover"
-//!   consumer; R714 is the first transparent / non-modal one. (Qt's
+//!   (`combo_barrier`, an extra external) bound to the shared
+//!   [`dismiss_barrier`]: a **transparent**, non-modal click-catcher.
+//!   This is the click-outside dismiss — a click anywhere outside the
+//!   popup emits `combo_barrier.click` and the reducer closes the
+//!   combobox. R714 introduced the transparent barrier inline (as a
+//!   modal scrim at zero opacity); R715 lifted it to its own module with
+//!   `hello-menu` as the 2nd consumer. (Qt's
 //!   `Qt::Popup` grab, Flutter's transparent route barrier, and Compose's
 //!   focusable `Popup` are all this same full-window catch-the-outside
 //!   layer.)
@@ -87,7 +86,7 @@ use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{read_button_focused, read_button_state};
 use pinion_widget_paint::elevation::{elevation, MENU_LEVEL};
-use pinion_widget_paint::scrim::{scrim_backdrop, scrim_fill};
+use pinion_widget_paint::barrier::dismiss_barrier;
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -391,18 +390,15 @@ fn view(state: &ComboViewState, _frame: &Frame) -> Scene {
                         .with_padding(Rect::new(PANEL_PAD, PANEL_PAD, PANEL_PAD, PANEL_PAD)),
                 ),
         );
-        // Transparent full-window barrier (scrim at alpha 0) with the
-        // dropdown panel as its single absolutely-positioned child —
-        // the R702/R703 scrim primitive at zero opacity, no focus trap.
-        children.push(scrim_backdrop(
-            BARRIER_TAG,
-            scrim_fill(0),
-            (WIN_W, WIN_H),
-            FlexDirection::Column,
-            AlignItems::Start,
-            JustifyContent::Start,
-            panel,
-        ));
+        // R715 §5.16 — transparent full-window dismiss barrier (the
+        // shared light-dismiss layer, `[[abstraction-needs-second-consumer]]`
+        // lift of R714's inline transparent scrim; hello-menu is the
+        // other consumer). The trigger sits *under* the barrier, so
+        // re-clicking it while open also dismisses (toggle-close).
+        // Pushed before the panel so the absolutely-positioned dropdown
+        // hit-tests above the barrier.
+        children.push(dismiss_barrier(BARRIER_TAG, (0, 0), (WIN_W, WIN_H)));
+        children.push(panel);
     }
 
     Scene::Container(

@@ -15030,6 +15030,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R715 — R715 lift R714 transparent click-catcher to shared pinion_widget_paint::barrier::dismiss_barrier SSOT; hello-menu click-outside dismiss = 2nd consumer via MenuBarExternal barrier arm; hello-combobox retrofit onto shared barrier
+
+**Changes**:
+- Lift R714 inline transparent click-catcher to pinion_widget_paint::barrier::dismiss_barrier SSOT
+- dismiss_barrier(tag, origin, size): transparent childless absolutely-positioned hit-catcher
+- hello-menu 2nd consumer: click-outside dismiss via menu#barrier composite over below-bar region
+- MenuBarExternal.dispatch_send gains barrier arm: barrier:PointerUp closes; other events inert
+- hello-combobox retrofit: scrim_backdrop(scrim_fill(0)) replaced by shared dismiss_barrier + panel
+- barrier region-not-full-window for menubar so a sibling-title click switches menus not dismiss
+
+
+
+**Verification**:
+- cargo test --workspace green (4573; +2 MenuBarExternal arm, +2 hello-menu view, +3 barrier unit)
+- cargo clippy --workspace --all-targets -D pedantic clean (doc_markdown ComboBox backticked)
+- r715_dismiss_barrier.py 36 assert: open/click-outside tag+coord/menu-switch/substrate-arm/Escape
+- demo re-verifies combobox retrofit dismiss + boot-render live-pixel (title vs page background)
+- affected demos green: r691_menu, r714_combobox, r715 (additive barrier; retrofit behaviour-identical)
+- mnemosyne validate-workspace clean: T1 reject=0, round-trip 1/1, new orphan +0, GENERATED sync
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- ComboBoxExternal coordinator + combobox chrome lift deferred to 2nd combobox-class consumer
+- empty menubar strip click (not on a title) does not dismiss the open menu (APG-minor; region barrier)
+- background-live pass-through barrier (web Popover style) deferred until that consumer surfaces
+- focus-loss dismiss still an additive MenuBarExternal axis once a real consumer needs it
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
