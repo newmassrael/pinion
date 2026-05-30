@@ -1,7 +1,7 @@
 //! `scene/dry_run` RPC method dispatch (§5.12 method 3 of 7, R16 slice 14).
 //!
 //! v0 lives at the **External introspect level** rather than the
-//! §5.8-ratified SCE engine-level hook: the engine-side step-intercept
+//! SCE engine-level hook ratified in §5.8: the engine-side step-intercept
 //! is a separate slice gated on pinion-runtime wiring. Today we provide
 //! equivalent *test-and-rollback* semantics over the §5.15 item 8
 //! surface:

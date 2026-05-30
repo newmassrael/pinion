@@ -153,7 +153,7 @@ pub struct AccessNode {
     /// / `RadioButton`); `aria-expanded` is whether a *separate*
     /// element this control governs is revealed. The disclosure /
     /// accordion pattern (R696) is the first consumer; a submenu title
-    /// (`role.rs` §3.5 future axis) and a tree-row twisty
+    /// (WAI-ARIA §3.5; `role.rs` future axis) and a tree-row twisty
     /// ([`AriaRole::TreeItem`] future axis) are latent consumers.
     ///
     /// Placed on [`AccessNode`] (alongside [`Self::selected`] /

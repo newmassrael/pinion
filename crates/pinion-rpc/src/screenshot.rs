@@ -18,7 +18,7 @@ use pinion_core::Scene;
 use crate::path::{self, PathError};
 
 /// Raw pixel screenshot payload (§5.12 method 7 output, frozen by R16
-/// for §5.16-driven future fill).
+/// for future fill driven by §5.16).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Screenshot {

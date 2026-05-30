@@ -43,8 +43,8 @@
 /// bits cover the desktop-portable baseline (Shift / Control / Alt /
 /// Meta). Closed-form: future modifiers (`CapsLock` / `NumLock` /
 /// Hyper) are rare enough that a `SemVer` minor bump is the
-/// textbook extension path (rather than the §5.13-style
-/// `#[non_exhaustive]` hedge which only applies cleanly to enum
+/// textbook extension path (rather than the §5.13
+/// `#[non_exhaustive]`-style hedge which only applies cleanly to enum
 /// variants where a wildcard arm has a meaningful default).
 ///
 /// `clippy::struct_excessive_bools` lint is intentionally suppressed:
