@@ -4573,6 +4573,52 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### §7. Platform extension model (Phase B)
+
+
+
+**Intent**: How third parties extend pinion: heavy tier = native Rust (source crate now, abi_stable dylib later); light tier = existing JSON-RPC/AI channel; binary + WASM/script deferred evidence-first
+
+
+**Rationale**:
+- Rust has no stable ABI; engine-tier extension (render/physics/ECS) needs native shared memory
+- WASM Component Model is shared-nothing: cannot cheaply pass wgpu::Device or vertex buffers across
+- Unreal/Unity extend the core in native C++; scripting (Blueprint/C#) is reserved for gameplay only
+- abi_stable/stabby give stable-ABI trait-object dylibs: binary native plugins without full recompile
+- Light tier already exists: JSON-RPC headless + AI introspection = sandboxed language-agnostic path
+- Native baseline keeps the public API rich native traits: no serialization-boundary reshape needed
+
+
+
+
+
+**Caveats**:
+- 0 LOC this round: a decision-recording process round; baseline 4a is already the de-facto state
+- Standing constraint: keep plugin-seam traits abi_stable-wrappable (no leaked generics/lifetimes)
+- Defer trigger: first real second-party extension consumer promotes 4b/light-tier to a build round
+- Corrects the SEED 'make-or-break early spec round' framing: native baseline removes API-reshape risk
+- Not a §2 invariant: a Phase B direction, revisable when evidence (an actual plugin author) appears
+
+
+
+**Alternatives rejected**:
+- WASM Component Model: deferred — shared-nothing boundary unfit for per-frame engine data
+- Embedded script VM (Lua/Rhai/JS): deferred — too slow for hot paths; AI-RPC fills the soft niche
+- Hand-rolled C-ABI seam: same family as native (4c) — just the binary-shipping mechanism
+- Immediate binary shipping (abi_stable, 4b): deferred — no external plugin authors today = premature
+
+
+
+**Impact scope**: §2, §3
+
+
+
+**Implementations**:
+- crates/pinion-rpc/src/dispatch.rs:dispatch
+
+
+
+
 ## Changelog (atomic ledger)
 
 ### 408 — Round 40.8 — §5.34 ai-introspect-demo propose/apply visual dogfood — preview lifecycle end-to-end
@@ -14886,6 +14932,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - elevation() is now a multi-consumer SSOT; per-component tuning rides the overridable Style.elevation field (MD3 default)
 - no R711 live-pixel: dialog/menu/drawer panels are boot-closed RPC overlays (PINION_SCREENSHOT renders only the boot frame); cast pixel fidelity is R710 guard via shared rasterizer + helper
 - tooltip stays flat (MD3 Level 0) by design; an elevated tooltip variant would opt in via its own Style.elevation when a consumer needs it
+
+
+
+### R712 — R712 §7 platform extension model baseline: native Rust heavy tier (source crate now, abi_stable dylib later); existing JSON-RPC/AI = light tier; binary + WASM/script deferred evidence-first; corrects SEED early-spec-round framing
+
+**Changes**:
+- Mint §7 Platform extension model: native heavy tier (4a source crate now, abi_stable 4b dylib later)
+- Light tier = the existing JSON-RPC headless + AI introspection channel (no new mechanism)
+- WASM Component Model / embedded script VM / immediate binary shipping deferred evidence-first
+- Standing design constraint: keep future plugin-seam traits abi_stable-wrappable
+- 0 LOC decision-recording round; corrects SEED 'make-or-break early spec round' framing
+
+
+
+**Verification**:
+- mnemosyne validate-workspace clean: T1 reject=0, new orphan +0, sections 61->62, GENERATED.md sync
+- §7 carries intent + 6 rationale + 4 alternatives + 5 caveats + §2/§3 impact + pinion-rpc dispatch anchor
+- process/decision round (SEED visible-deliverable exception); R710/R711 were code rounds = non-consecutive
+
+
+
+**Impact**: §7, §2, §3
+
+
+**Carry forward**:
+- 4b binary shipping (abi_stable/stabby) + light-tier formalization land when first second-party consumer appears
+- design-constraint enforcement is manual now (no plugin seams exist); becomes lint/test once seams emerge
+- WASM revisit only if an untrusted/sandboxed light-tier need (plugin marketplace) appears; native heavy tier stands
 
 
 
