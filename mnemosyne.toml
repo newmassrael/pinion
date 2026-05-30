@@ -26,10 +26,17 @@ paths = ["crates/", "examples/"]
 comment_only = true
 severity_missing = "warn"
 severity_binding = "info"
-external_section_prefixes = ["WAI-ARIA", "WCAG", "ISO", "ISO/IEC", "RFC", "IEEE"]
-# Bare form `<PREFIX> §<id>` (no version number) — pinion cites WAI-ARIA
-# both as "WAI-ARIA 1.2 §3.5" (numeric, above) and "WAI-ARIA §4.5" (bare).
-external_section_prefixes_bare = ["WAI-ARIA"]
+# Numeric form `<PREFIX> <doc-number> §<id>`. R379 added `#N` doc-numbers
+# (UAX #9) and multi-word prefixes matched as a token-boundary suffix
+# (CSS Color matches "W3C CSS Color 4 §8.1").
+external_section_prefixes = [
+  "WAI-ARIA", "WCAG", "ISO", "ISO/IEC", "RFC", "IEEE",
+  "UAX", "UTS", "UTR", "CSS Color",
+]
+# Bare form `<PREFIX> §<id>` (no doc-number) — pinion cites WAI-ARIA both
+# as "WAI-ARIA 1.2 §3.5" (numeric) and "WAI-ARIA §4.5" (bare); plus the
+# multi-word "Unicode Standard §3.12" and "UCD §…".
+external_section_prefixes_bare = ["WAI-ARIA", "Unicode Standard", "UCD"]
 
 # Round 9 — privacy redaction of third-party identifiers from publishable
 # half of changelog entries. audit_* half retains the original frozen body
