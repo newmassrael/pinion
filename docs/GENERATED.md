@@ -51,6 +51,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+
 ### §2. Settled invariants
 
 
@@ -101,6 +102,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+
 ### §3. Capability boundaries
 
 
@@ -135,6 +137,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+
 ### §4. First dogfood: target application requirements
 
 
@@ -163,6 +166,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - First dogfood autonomous; no delivery deadline binding framework cadence
 - Framework MVP first then dogfood slice; not parallel deadline pressure
 - Node graph widget largest single component; potentially 1-2 month sub-effort
+
 
 
 
@@ -207,6 +211,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 **Impact scope**: §1, §2, §3, §4
+
 
 
 
@@ -257,6 +262,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+
 ### §5.10. Mode toggle API surface (runtime flag vs build feature vs per-view)
 
 
@@ -301,6 +307,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 **Impact scope**: §2
+
 
 
 
@@ -357,6 +364,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 **Impact scope**: §5.2, §5.3, §5.7
+
 
 
 
@@ -451,6 +459,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+
 ### §5.13. Event model (closed enum vs open registry vs core+opaque)
 
 
@@ -504,6 +513,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+
 ### §5.14. State containment topology (single root vs per-widget vs hierarchical)
 
 
@@ -548,6 +558,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 **Impact scope**: §5.4, §5.8, §5.12
+
 
 
 
@@ -618,6 +629,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 - crates/pinion-core/src/storage.rs:InMemoryStorage
 - crates/pinion-platform-storage/src/lib.rs:FileStorage
 - crates/pinion-platform-storage/src/lib.rs:open_app_storage
+
 
 
 
@@ -717,6 +729,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+
 ### §5.17. Window topology (SCE-driven app statechart vs runtime registry)
 
 
@@ -770,6 +783,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
+
 ### §5.18. Multi-window RPC addressing (path prefix vs implicit first window)
 
 
@@ -818,6 +832,7 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 **Impact scope**: §5.7, §5.12, §5.17
+
 
 
 
@@ -897,6 +912,7 @@ fn main() {
 
 
 
+
 ### §5.2. Scene primitive type set (closed-form vs extensible)
 
 
@@ -947,6 +963,7 @@ fn main() {
 
 
 **Impact scope**: §2, §3, §5.3
+
 
 
 
@@ -1021,6 +1038,7 @@ fn main() {
 
 
 
+
 ### §5.21. Layout system (taffy auto-layout, flex v0)
 
 
@@ -1080,6 +1098,7 @@ fn main() {
 - crates/pinion-core/src/style.rs:LayoutStyle
 - crates/pinion-runtime/src/layout.rs:compute_layout
 - examples/hello-button/src/main.rs:view
+
 
 
 
@@ -1216,6 +1235,7 @@ fn main() {
 - crates/pinion-runtime/src/core_shell.rs:CoreShell::apply_key
 - crates/pinion-core/src/widgets/text_edit.rs:TextEditState
 - crates/pinion-core/src/widgets/text_edit.rs:use_text_edit_state
+
 
 
 
@@ -1380,6 +1400,7 @@ fn main() {
 
 
 
+
 ### §5.24. Semantic tree (role / state / actions)
 
 
@@ -1437,6 +1458,7 @@ fn main() {
 - Platform-native AT only (UIA/AT-SPI directly) — locks to one OS; misses AI use
 - Compose Modifier.semantics chain — works but pinion uses field-on-node (simpler)
 - Separate semantic tree parallel to Scene — two trees to sync; bug-prone
+
 
 
 
@@ -1506,6 +1528,7 @@ fn main() {
 
 
 
+
 ### §5.26. Incremental layout + damage tracking
 
 
@@ -1562,6 +1585,7 @@ fn main() {
 - Manual dirty marking by user — error-prone; missed invalidations cause stale layout bugs
 - Constraint solver dirty propagation (Cassowary) — different algorithm; abandoned
 - Diff-based layout cache (React-style reconciliation) — adds VDOM overhead
+
 
 
 
@@ -1630,6 +1654,7 @@ fn main() {
 - Window via filter in app code — user-implemented; non-canonical; AI introspection lost
 - Lazy iterator pattern — functional but materialization timing unclear
 - Streaming Scene tree — adds incremental API; over-engineered for v0
+
 
 
 
@@ -1738,6 +1763,7 @@ fn main() {
 
 
 
+
 ### §5.29. Structured concurrency (Owner scope + Tokio + SyncSignal)
 
 
@@ -1791,6 +1817,7 @@ fn main() {
 - Thread-per-task — OS overhead unacceptable at AAA scale
 - async-std runtime — tokio more battle-tested + ecosystem
 - Custom executor — 3+ year work; tokio canonical
+
 
 
 
@@ -1867,6 +1894,7 @@ fn main() {
 
 
 
+
 ### §5.30. Accessibility (AccessKit bridge from SemanticProps)
 
 
@@ -1919,6 +1947,7 @@ fn main() {
 - Web-style ARIA (HTML attributes) — not applicable; pinion native
 - Ignore accessibility (egui historical) — not viable lifetime framework
 - Custom AT abstraction — duplicates AccessKit; reinvents wheel
+
 
 
 
@@ -1978,6 +2007,7 @@ fn main() {
 - Snapshot specific values (manual #[reload_save]) — error-prone; user must remember
 - Process-level checkpointing (CRIU) — too heavy; OS-coupled
 - VM-level hot patching (Erlang/BEAM) — not feasible for native Rust
+
 
 
 
@@ -2065,6 +2095,7 @@ fn main() {
 
 
 
+
 ### §5.33. AI overlay UX: event capture + highlight rendering
 
 
@@ -2137,6 +2168,7 @@ fn main() {
 - examples/ai-introspect-demo/src/main.rs
 - crates/pinion-overlay/src/highlight.rs:HighlightStyle::with_stroke
 - crates/pinion-overlay/src/highlight.rs:HighlightStyle::with_stroke_width
+
 
 
 
@@ -2251,6 +2283,7 @@ fn main() {
 - crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::ReplaceView
 - crates/pinion-core/src/scene.rs:Scene::lookup_path_ref
 - crates/pinion-rpc/src/path.rs:split_at_external
+
 
 
 
@@ -2378,6 +2411,7 @@ router.pointer_down(&mut state_scene);
 
 
 
+
 ### §5.36. Text shaping & glyph cache — Linebender parley + glyph atlas primitive
 
 
@@ -2456,6 +2490,7 @@ router.pointer_down(&mut state_scene);
 
 
 
+
 ### §5.37. Self-hosted text engine — full OpenType to GPU rasterization stack
 
 
@@ -2510,6 +2545,7 @@ router.pointer_down(&mut state_scene);
 
 
 **Impact scope**: §5.36, §5.16, §5.11, §5.3, §2
+
 
 
 
@@ -2596,6 +2632,7 @@ router.pointer_down(&mut state_scene);
 
 
 
+
 ### §5.37.2. Text engine RPC channel — AI-first font/text introspect (R50.X sub-scope)
 
 
@@ -2678,6 +2715,7 @@ router.pointer_down(&mut state_scene);
 - crates/pinion-rpc/src/font.rs:list
 - crates/pinion-rpc/src/text.rs:text_normalize
 - crates/pinion-rpc/src/dispatch.rs:handle_text_normalize
+
 
 
 
@@ -2779,6 +2817,7 @@ router.pointer_down(&mut state_scene);
 
 
 
+
 ### §5.37.4. BIDI directional resolution (UAX #9)
 
 
@@ -2871,11 +2910,13 @@ router.pointer_down(&mut state_scene);
 
 
 
+
 ### §5.37.5. Script analysis (UCD Script property) — carry placeholder
 
 
 
 **Intent**: §5.37.5 script analysis sub-layer placeholder — UCD Script property 기반 segmentation. shape engine input (run splitting). ratify 는 multi-session carry, BIDI 이후 자연 순서
+
 
 
 
@@ -2901,6 +2942,7 @@ router.pointer_down(&mut state_scene);
 
 
 
+
 ### §5.37.7. Line break (UAX #14) — carry placeholder
 
 
@@ -2914,6 +2956,7 @@ router.pointer_down(&mut state_scene);
 **Caveats**:
 - Carry placeholder — ratify TBD, §5.37.4 BIDI / §5.37.6 shape 이후 자연 순서
 - decision_status 변경 primitive 부재 — 진짜 정정 = mnemosyne MCP RFC carry
+
 
 
 
@@ -3131,6 +3174,7 @@ fn create_external() -> Box<dyn External> {
 
 
 
+
 ### §5.39. Focus model — keyboard navigation + activation primitive
 
 
@@ -3227,6 +3271,7 @@ fn create_external() -> Box<dyn External> {
 
 
 
+
 ### §5.4. SCE backend embedding (Forge-emit vs FFI vs sce-rust crate)
 
 
@@ -3274,6 +3319,7 @@ fn create_external() -> Box<dyn External> {
 
 
 **Impact scope**: §2, §5.5
+
 
 
 
@@ -3480,6 +3526,7 @@ fn create_external() -> Box<dyn External> {
 
 
 
+
 ### §5.41. TUI 백엔드 — cell-based render mode + crossterm 입력 + WidgetRenderer trait 추출
 
 
@@ -3655,6 +3702,7 @@ fn create_external() -> Box<dyn External> {
 
 
 
+
 ### §5.45. Scroll axis (R55)
 
 
@@ -3784,6 +3832,7 @@ pub struct ScrollNode {
 
 
 
+
 ### §5.49. AI-first RPC self-verification harness (R59)
 
 
@@ -3862,6 +3911,7 @@ if __name__ == "__main__":
 
 
 
+
 ### §5.5. MCU v1 backend scope (AP-only vs MCU-included)
 
 
@@ -3903,6 +3953,7 @@ if __name__ == "__main__":
 
 
 **Impact scope**: §5.4
+
 
 
 
@@ -4097,6 +4148,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+
 ### §5.6. Reuse path (early cascade-emit vs Rust-native then port)
 
 
@@ -4138,6 +4190,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 **Impact scope**: §1, §5.1
+
 
 
 
@@ -4196,6 +4249,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+
 ### §5.8. dry_run hook site (engine-level vs scene snapshot vs view rewind)
 
 
@@ -4245,6 +4299,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+
 ### §5.9. GUI/TUI renderer split (trait-based vs separate pipelines)
 
 
@@ -4289,6 +4344,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+
 ### §6. Bootstrap implementation choices (Tier 1 auto-ratified)
 
 
@@ -4320,6 +4376,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 **Impact scope**: §5.1, §5.5, §5.7
+
 
 
 
@@ -4368,6 +4425,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+
 ### §6.2. Rust toolchain (MSRV + edition)
 
 
@@ -4404,6 +4462,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 **Alternatives rejected**:
 - Nightly toolchain — blocks downstream stable users; not viable for framework distribution
 - Edition 2021 — older feature surface; less aligned with current Rust async story
+
 
 
 
@@ -4463,6 +4522,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+
 ### §6.4. Ecosystem default deps (winit, taffy, cosmic-text, accesskit, image, lyon, kurbo)
 
 
@@ -4508,6 +4568,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 **Impact scope**: §6, §5.16
+
 
 
 
