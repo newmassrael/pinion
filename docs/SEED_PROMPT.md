@@ -30,7 +30,7 @@
 - `@docs/SEED_PROMPT.md 읽고 R<현재 라운드> 자동 진행`
 - 단순 `R<현재 라운드> 진행`
 
-세션 진입 시: (1) 위 R689 land 블록 + 다음 라운드 plan + watch-out + lessons 읽고, (2) 사용자가 "교과서적/SSOT/북극성?" 감사 요청하면 `[[verify-seed-claims-audit-first]]` 대로 grep+read 독립 감사 → smell 발견 시 feature 전 inline 청산 라운드부터, (3) 그렇지 않으면 R690 atomic plan 첫 atomic 부터 자동 진행. 이전 commit/변경은 git log + GENERATED.md 가 source of truth.
+세션 진입 시: (1) 위 R708 land 블록 + 다음 라운드(R709 ColorPicker) plan + watch-out + lessons 읽고, (2) 사용자가 "교과서적/SSOT/북극성?" 감사 요청하면 `[[verify-seed-claims-audit-first]]` 대로 grep+read 독립 감사 → smell 발견 시 feature 전 inline 청산 라운드부터, (3) 그렇지 않으면 R709 ColorPicker plan(진입 시 widget class 분류 + substrate 전제 grep) 부터 자동 진행. 이전 commit/변경은 git log + GENERATED.md 가 source of truth.
 
 【진입 시 필독 순서】
 1. `docs/SEED_PROMPT.md` (이 파일 — single-command entry point)
