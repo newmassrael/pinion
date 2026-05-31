@@ -364,6 +364,19 @@ pub enum ColorRole {
     /// the legible body / icon color a tinted error surface should
     /// carry. Material 3 `onErrorContainer`.
     OnErrorContainer,
+    /// A surface tone *inverse* to the active scheme — dark on a light
+    /// theme, light on a dark theme. Material 3 `inverseSurface`; the
+    /// canonical container for plain tooltips and snackbars, which sit
+    /// "above" the UI and read against the opposite tone for emphasis.
+    InverseSurface,
+    /// Foreground rendered on top of an [`Self::InverseSurface`] fill —
+    /// paired for contrast against the inverted surface. Material 3
+    /// `inverseOnSurface`.
+    InverseOnSurface,
+    /// The [`Self::Accent`] tone re-toned to read against an
+    /// [`Self::InverseSurface`] fill — e.g. a snackbar's action label.
+    /// Material 3 `inversePrimary`.
+    InversePrimary,
 }
 
 impl ColorRole {
@@ -400,6 +413,9 @@ impl ColorRole {
             ColorRole::OnError,
             ColorRole::ErrorContainer,
             ColorRole::OnErrorContainer,
+            ColorRole::InverseSurface,
+            ColorRole::InverseOnSurface,
+            ColorRole::InversePrimary,
         ]
     }
 
@@ -434,6 +450,9 @@ impl ColorRole {
             ColorRole::OnError => "on_error",
             ColorRole::ErrorContainer => "error_container",
             ColorRole::OnErrorContainer => "on_error_container",
+            ColorRole::InverseSurface => "inverse_surface",
+            ColorRole::InverseOnSurface => "inverse_on_surface",
+            ColorRole::InversePrimary => "inverse_primary",
         }
     }
 
@@ -505,6 +524,9 @@ impl ColorRole {
             ColorRole::OnError => Color::rgb(0xff, 0xff, 0xff),
             ColorRole::ErrorContainer => Color::rgb(0xf9, 0xde, 0xdc),
             ColorRole::OnErrorContainer => Color::rgb(0x41, 0x0e, 0x0b),
+            ColorRole::InverseSurface => Color::rgb(0x32, 0x2f, 0x35),
+            ColorRole::InverseOnSurface => Color::rgb(0xf5, 0xef, 0xf7),
+            ColorRole::InversePrimary => Color::rgb(0x9e, 0xca, 0xff),
         }
     }
 }
@@ -561,6 +583,12 @@ pub struct Theme {
     pub error_container: Color,
     /// Resolves [`ColorRole::OnErrorContainer`].
     pub on_error_container: Color,
+    /// Resolves [`ColorRole::InverseSurface`].
+    pub inverse_surface: Color,
+    /// Resolves [`ColorRole::InverseOnSurface`].
+    pub inverse_on_surface: Color,
+    /// Resolves [`ColorRole::InversePrimary`].
+    pub inverse_primary: Color,
 }
 
 impl Theme {
@@ -615,6 +643,9 @@ impl Theme {
             on_error: Color::rgb(0xff, 0xff, 0xff),
             error_container: Color::rgb(0xf9, 0xde, 0xdc),
             on_error_container: Color::rgb(0x41, 0x0e, 0x0b),
+            inverse_surface: Color::rgb(0x32, 0x2f, 0x35),
+            inverse_on_surface: Color::rgb(0xf5, 0xef, 0xf7),
+            inverse_primary: Color::rgb(0x9e, 0xca, 0xff),
         }
     }
 
@@ -670,6 +701,9 @@ impl Theme {
             on_error: Color::rgb(0x60, 0x14, 0x10),
             error_container: Color::rgb(0x8c, 0x1d, 0x18),
             on_error_container: Color::rgb(0xf9, 0xde, 0xdc),
+            inverse_surface: Color::rgb(0xe6, 0xe1, 0xe5),
+            inverse_on_surface: Color::rgb(0x32, 0x2f, 0x35),
+            inverse_primary: Color::rgb(0x19, 0x76, 0xd2),
         }
     }
 
@@ -695,6 +729,9 @@ impl Theme {
             ColorRole::OnError => self.on_error,
             ColorRole::ErrorContainer => self.error_container,
             ColorRole::OnErrorContainer => self.on_error_container,
+            ColorRole::InverseSurface => self.inverse_surface,
+            ColorRole::InverseOnSurface => self.inverse_on_surface,
+            ColorRole::InversePrimary => self.inverse_primary,
         }
     }
 }
@@ -742,6 +779,9 @@ struct ThemeLinear {
     on_error: AnimVec4,
     error_container: AnimVec4,
     on_error_container: AnimVec4,
+    inverse_surface: AnimVec4,
+    inverse_on_surface: AnimVec4,
+    inverse_primary: AnimVec4,
 }
 
 impl ThemeLinear {
@@ -766,6 +806,9 @@ impl ThemeLinear {
             on_error: t.on_error.to_linear(),
             error_container: t.error_container.to_linear(),
             on_error_container: t.on_error_container.to_linear(),
+            inverse_surface: t.inverse_surface.to_linear(),
+            inverse_on_surface: t.inverse_on_surface.to_linear(),
+            inverse_primary: t.inverse_primary.to_linear(),
         }
     }
 
@@ -792,6 +835,9 @@ impl ThemeLinear {
             on_error: Color::from_linear(self.on_error),
             error_container: Color::from_linear(self.error_container),
             on_error_container: Color::from_linear(self.on_error_container),
+            inverse_surface: Color::from_linear(self.inverse_surface),
+            inverse_on_surface: Color::from_linear(self.inverse_on_surface),
+            inverse_primary: Color::from_linear(self.inverse_primary),
         }
     }
 }
@@ -813,6 +859,9 @@ impl Animatable for ThemeLinear {
             on_error: AnimVec4::zero(),
             error_container: AnimVec4::zero(),
             on_error_container: AnimVec4::zero(),
+            inverse_surface: AnimVec4::zero(),
+            inverse_on_surface: AnimVec4::zero(),
+            inverse_primary: AnimVec4::zero(),
         }
     }
 
@@ -840,6 +889,9 @@ impl Animatable for ThemeLinear {
             on_error_container: self
                 .on_error_container
                 .add(other.on_error_container),
+            inverse_surface: self.inverse_surface.add(other.inverse_surface),
+            inverse_on_surface: self.inverse_on_surface.add(other.inverse_on_surface),
+            inverse_primary: self.inverse_primary.add(other.inverse_primary),
         }
     }
 
@@ -867,6 +919,9 @@ impl Animatable for ThemeLinear {
             on_error_container: self
                 .on_error_container
                 .sub(other.on_error_container),
+            inverse_surface: self.inverse_surface.sub(other.inverse_surface),
+            inverse_on_surface: self.inverse_on_surface.sub(other.inverse_on_surface),
+            inverse_primary: self.inverse_primary.sub(other.inverse_primary),
         }
     }
 
@@ -886,6 +941,9 @@ impl Animatable for ThemeLinear {
             on_error: self.on_error.scale(factor),
             error_container: self.error_container.scale(factor),
             on_error_container: self.on_error_container.scale(factor),
+            inverse_surface: self.inverse_surface.scale(factor),
+            inverse_on_surface: self.inverse_on_surface.scale(factor),
+            inverse_primary: self.inverse_primary.scale(factor),
         }
     }
 
@@ -904,6 +962,9 @@ impl Animatable for ThemeLinear {
             && self.on_error.approx_zero(epsilon)
             && self.error_container.approx_zero(epsilon)
             && self.on_error_container.approx_zero(epsilon)
+            && self.inverse_surface.approx_zero(epsilon)
+            && self.inverse_on_surface.approx_zero(epsilon)
+            && self.inverse_primary.approx_zero(epsilon)
     }
 }
 
@@ -1670,16 +1731,19 @@ mod tests {
                 | ColorRole::Error
                 | ColorRole::OnError
                 | ColorRole::ErrorContainer
-                | ColorRole::OnErrorContainer => (),
+                | ColorRole::OnErrorContainer
+                | ColorRole::InverseSurface
+                | ColorRole::InverseOnSurface
+                | ColorRole::InversePrimary => (),
             };
         }
-        // Variant count = current Tier 1 + R590 error tier (14).
-        assert_eq!(ColorRole::all().len(), 14);
+        // Variant count = Tier 1 + R590 error tier + R723 inverse tier (17).
+        assert_eq!(ColorRole::all().len(), 17);
         // No duplicates — pure-set semantics.
         let mut names: Vec<_> = ColorRole::all().iter().map(|r| r.name()).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 14, "names must be unique");
+        assert_eq!(names.len(), 17, "names must be unique");
     }
 
     /// (R595 §5.50) `ColorRole::name()` returns the canonical

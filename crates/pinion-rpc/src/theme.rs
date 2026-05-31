@@ -716,6 +716,9 @@ fn theme_from_role_map(map: &std::collections::HashMap<ColorRole, Color>) -> The
         on_error: lookup(ColorRole::OnError),
         error_container: lookup(ColorRole::ErrorContainer),
         on_error_container: lookup(ColorRole::OnErrorContainer),
+        inverse_surface: lookup(ColorRole::InverseSurface),
+        inverse_on_surface: lookup(ColorRole::InverseOnSurface),
+        inverse_primary: lookup(ColorRole::InversePrimary),
     }
 }
 

@@ -49,7 +49,7 @@ include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloThemeRenderer, HelloThemeRendererError);
 
 const WIN_W: u32 = 360;
-const WIN_H: u32 = 240;
+const WIN_H: u32 = 300;
 
 const TRACK_W: u32 = 64;
 const TRACK_H: u32 = 32;
@@ -266,6 +266,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     ));
 
     let accent_banner = accent_banner(theme);
+    let inverse_banner = inverse_banner(theme);
     let outline_divider = outline_divider(theme);
     // R596 §5.50 — discoverability affordance for the R594 'r' / 'R'
     // shortcut. Without the hint a user has no way to discover the
@@ -292,6 +293,7 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
             status,
             outline_divider,
             accent_banner,
+            inverse_banner,
             hint,
         ])
         .with_style(
@@ -324,6 +326,39 @@ fn accent_banner(theme: Theme) -> Scene {
         ContainerNode::new(vec![label])
             .with_style(
                 BoxStyle::filled(theme.resolve(ColorRole::Accent))
+                    .with_corner_radius(ACCENT_RADIUS),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Center)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(ACCENT_W, ACCENT_H))
+                    .with_padding(Rect::new(ACCENT_PAD, ACCENT_PAD, ACCENT_PAD, ACCENT_PAD)),
+            ),
+    )
+}
+
+/// R723 §5.50 — 160×32 rounded swatch sourced through the paired
+/// [`ColorRole::InverseSurface`] / [`ColorRole::InverseOnSurface`]
+/// roles (the M3 inverse tier this round adds). Inverse-toned by
+/// design — dark-on-light in light mode, light-on-dark in dark mode —
+/// so it visibly *inverts* relative to the `accent_banner` above it,
+/// and the live-pixel guard reads the new role as data. Tagged
+/// `inverse_swatch` for `scene/snapshot` introspection.
+fn inverse_banner(theme: Theme) -> Scene {
+    let label = Scene::Text(TextNode::styled(
+        "Inverse surface",
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(ACCENT_LABEL_FONT_PX)
+            .with_fg(theme.resolve(ColorRole::InverseOnSurface)),
+    ));
+    Scene::Container(
+        ContainerNode::new(vec![label])
+            .with_tag("inverse_swatch")
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::InverseSurface))
                     .with_corner_radius(ACCENT_RADIUS),
             )
             .with_layout(

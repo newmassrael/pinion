@@ -90,7 +90,10 @@ impl TooltipStyle {
             h_padding: 10,
             v_padding: 6,
             font_px: 12,
-            border_width: 1,
+            // R723 — MD3 plain tooltip has no outline; the inverseSurface
+            // tone supplies the contrast. A rich/custom tooltip can set a
+            // non-zero width to opt back into an Outline hairline.
+            border_width: 0,
         }
     }
 
@@ -215,19 +218,25 @@ pub fn view_tooltip(
         Rect::default(),
         TextStyle::new()
             .with_size_px(style.font_px)
-            .with_fg(theme.resolve(ColorRole::OnSurface)),
+            .with_fg(theme.resolve(ColorRole::InverseOnSurface)),
     ));
+    // R723 §5.50 — Material 3 *plain* tooltip: `inverseSurface` fill +
+    // `inverseOnSurface` text, read against the opposite scheme tone for
+    // emphasis, and (per MD3) no container outline — the inverse tone
+    // supplies the contrast. A non-zero `border_width` (caller opt-in,
+    // e.g. a future rich tooltip) still draws an `Outline` hairline.
+    let mut box_style = BoxStyle::filled(theme.resolve(ColorRole::InverseSurface))
+        .with_corner_radius(style.corner_radius);
+    if style.border_width > 0 {
+        box_style = box_style.with_border(Border::new(
+            theme.resolve(ColorRole::Outline),
+            style.border_width,
+        ));
+    }
     Scene::Container(
         ContainerNode::new(vec![label])
             .with_tag(tag.into())
-            .with_style(
-                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
-                    .with_corner_radius(style.corner_radius)
-                    .with_border(Border::new(
-                        theme.resolve(ColorRole::Outline),
-                        style.border_width,
-                    )),
-            )
+            .with_style(box_style)
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -348,7 +357,8 @@ mod tests {
         assert_eq!(s.h_padding, 10);
         assert_eq!(s.v_padding, 6);
         assert_eq!(s.font_px, 12);
-        assert_eq!(s.border_width, 1);
+        // R723 — MD3 plain tooltip is borderless by default.
+        assert_eq!(s.border_width, 0);
     }
 
     #[test]
@@ -393,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn r695_view_tooltip_is_elevated_outlined_surface() {
+    fn r723_view_tooltip_is_plain_inverse_surface() {
         let t = theme();
         let scene = view_tooltip(
             "tip",
@@ -404,9 +414,29 @@ mod tests {
             &TooltipStyle::m3_default(),
         );
         let overlay = find_container(&scene, "tip").expect("overlay node");
-        assert_eq!(overlay.style.fill, t.resolve(ColorRole::SurfaceContainerHighest));
+        // R723 §5.50 — MD3 plain tooltip: inverseSurface fill, no outline.
+        assert_eq!(overlay.style.fill, t.resolve(ColorRole::InverseSurface));
         assert_eq!(overlay.style.corner_radius, 4);
-        let border = overlay.style.border.expect("outlined surface");
+        assert!(overlay.style.border.is_none(), "plain tooltip has no outline");
+    }
+
+    #[test]
+    fn r723_view_tooltip_opts_into_outline_when_border_width_set() {
+        let t = theme();
+        let style = TooltipStyle {
+            border_width: 1,
+            ..TooltipStyle::m3_default()
+        };
+        let scene = view_tooltip(
+            "tip",
+            "Help",
+            &place(Rect::new(40, 40, 80, 30), (60, 28), TooltipSide::Below),
+            (520, 360),
+            &t,
+            &style,
+        );
+        let overlay = find_container(&scene, "tip").expect("overlay node");
+        let border = overlay.style.border.expect("border_width>0 opts into outline");
         assert_eq!(border.color, t.resolve(ColorRole::Outline));
         assert_eq!(border.width, 1);
     }

@@ -15293,6 +15293,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R723 — R723 inverseSurface ColorRole tier (M3 inverse: surface/onSurface/primary) + plain-tooltip tone + hello-theme swatch
+
+**Changes**:
+- ColorRole gains InverseSurface/InverseOnSurface/InversePrimary (M3 inverse tier; R590 mirror)
+- Theme fields + ThemeLinear carrier extended (light/dark values + R57.X theme-fade)
+- tooltip retrofit: M3 plain tooltip = inverseSurface fill + inverseOnSurface text, no outline
+- TooltipStyle.border_width default 0; non-zero opts back into an Outline hairline
+- hello-theme: inverse_swatch (paired inverseSurface/inverseOnSurface) live-pixel consumer
+- clears R695 carry (plain-tooltip inverse tone was deferred to this inverse palette axis)
+
+
+
+**Verification**:
+- cargo test --workspace green; pinion-core 1579, widget-paint 365, rpc 772 unit tests
+- cargo clippy --workspace --all-targets (-D pedantic) clean
+- r723_theme_inverse.py 24+ assert: swatch inverseSurface/inverseOnSurface + light->dark swap
+- live-pixel: inverse swatch dark-grey #322F35 + panel surface white on light boot
+- tooltip unit tests: plain borderless inverse-surface default + border_width>0 outline opt-in
+- demo sweep 74/74 under Xvfb
+
+
+
+**Impact**: §5.50, §5.38
+
+
+**Carry forward**:
+- inversePrimary has no widget consumer yet (snackbar action label); palette-complete, unit-tested
+- Snackbar (inverseSurface/inversePrimary consumer) deferred: needs timed-auto-dismiss substrate
+- rich/elevated tooltip variant (R711): border_width>0 + Style.elevation opt-in ready, no consumer
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
