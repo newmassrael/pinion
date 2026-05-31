@@ -27,7 +27,7 @@
 - `@docs/SEED_PROMPT.md 읽고 R<현재 라운드> 자동 진행`
 - 단순 `R<현재 라운드> 진행`
 
-세션 진입 시: (1) 위 R719/R719.1 land 블록 + 다음 라운드(R720 = Xvfb 헤드리스 테스트 격리 인프라) plan + watch-out + lessons 읽고, (2) 사용자가 "교과서적/SSOT/북극성?" 감사 요청하면 `[[verify-seed-claims-audit-first]]` 대로 grep+read 독립 감사 → smell 발견 시 feature 전 inline 청산 라운드부터, (3) 그렇지 않으면 **R720 plan(Xvfb sweep 격리: `WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1 xvfb-run` 으로 전체 sweep green 재현 → tools/ 래퍼 스크립트로 통합)** 부터 자동 진행. 이전 commit/변경은 git log + GENERATED.md 가 source of truth.
+세션 진입 시 (라운드-무관 — 항상 이 파일 top 기준): (1) 위 **이번 세션 LANDED 블록 + 다음 라운드(`R<다음>`) plan + 【watch out】 carry + 【lessons】** 를 읽고, (2) 사용자가 "교과서적/SSOT/북극성?" 감사 요청하면 `[[verify-seed-claims-audit-first]]` 대로 grep+read 독립 감사(내 과거 lesson 준수 여부 포함) → smell 발견 시 feature 전 inline 청산 라운드부터, (3) 그렇지 않으면 top 의 **`R<다음>` plan 부터 자동 진행**(진입 시 widget class 분류 + substrate 전제 grep + 의무 3b 의 3rd-consumer self-grep). 이전 commit/변경은 `git log` + GENERATED.md 가 source of truth.
 
 【진입 시 필독 순서】
 1. `docs/SEED_PROMPT.md` (이 파일 — single-command entry point)
