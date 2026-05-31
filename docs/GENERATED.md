@@ -15387,6 +15387,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R726 — R726 indeterminate ProgressBar - IndeterminateSweep looping Tickable + indeterminate flag + a11y valuenow omit
+
+**Changes**:
+- ProgressBarExternal gains indeterminate flag (set_value clears it); introspect query + intervene
+- IndeterminateSweep repeating Tickable (0..1 sawtooth, period 1.8s); is_at_rest false while active
+- use_indeterminate_sweep hook (caret_blink/SnackbarTimer sibling, but looping not one-shot)
+- hello-progress: indeterminate=true paints a travelling accent segment via the sweep position
+- a11y omits aria-valuenow when indeterminate (WAI-ARIA "unknown progress"); R718 carry cleared
+- scene/tick advances the sweep; intervene("/external/indeterminate") toggles the mode
+
+
+
+**Verification**:
+- cargo test --workspace green; progress_bar 18 (indeterminate + sweep) + hello-progress 9 unit
+- cargo clippy --workspace --all-targets (-D pedantic) clean
+- r726 demo: determinate boot -> indeterminate (sweep + Working) -> tick moves segment -> back
+- looping sweep never settles (is_at_rest false); scene/tick drives bounded forward movement
+- r718 determinate demo unchanged (boot 40%); demo sweep 77/77 under Xvfb
+
+
+
+**Impact**: §5.28, §5.38, §5.40
+
+
+**Carry forward**:
+- sweep always-active while indeterminate; is_at_rest gates frames only when determinate (no pause)
+- M3 two-segment indeterminate easing approximated by one linear sawtooth segment; refine if needed
+- circular/buffer progress variants deferred (no consumer); additive paint + value slot
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

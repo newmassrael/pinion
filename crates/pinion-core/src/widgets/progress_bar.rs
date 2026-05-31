@@ -33,10 +33,15 @@
 //! (a `value: Option<f32>` widening + a looping driver) once that
 //! substrate exists; today the value is always present.
 
+use std::cell::Cell;
+use std::rc::Rc;
+
+use crate::animation::Tickable;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
 };
+use crate::reactive::{Owner, Signal};
 
 /// R718 §5.38 — determinate linear progress value holder.
 ///
@@ -48,14 +53,36 @@ use crate::external::{
 pub struct ProgressBarExternal {
     /// Normalized progress fraction in `0.0..=1.0`. `0.0` is an empty
     /// bar (task not started), `1.0` is a full bar (task complete).
+    /// Ignored for paint + a11y while [`Self::indeterminate`] is set.
     value: f32,
+    /// R726 §5.38 — when `true` the bar is *indeterminate* ("busy,
+    /// completion unknown"): the `value` is suppressed (WAI-ARIA omits
+    /// `aria-valuenow`) and the binding paints a looping sweep driven by
+    /// the [`IndeterminateSweep`] Tickable instead of a fraction fill.
+    indeterminate: bool,
 }
 
 impl ProgressBarExternal {
-    /// Construct an empty progress bar (`value = 0.0`).
+    /// Construct an empty determinate progress bar (`value = 0.0`).
     #[must_use]
     pub fn new() -> Self {
-        Self { value: 0.0 }
+        Self {
+            value: 0.0,
+            indeterminate: false,
+        }
+    }
+
+    /// Whether the bar is indeterminate (busy, completion unknown).
+    #[must_use]
+    pub fn indeterminate(&self) -> bool {
+        self.indeterminate
+    }
+
+    /// Set the indeterminate flag. Leaves `value` untouched (it is
+    /// simply suppressed while indeterminate), so toggling back to
+    /// determinate restores the last fraction.
+    pub fn set_indeterminate(&mut self, indeterminate: bool) {
+        self.indeterminate = indeterminate;
     }
 
     /// Construct a progress bar at a given starting fraction. The value
@@ -79,8 +106,11 @@ impl ProgressBarExternal {
     /// Set the normalized progress fraction, clamping into `0.0..=1.0`.
     /// `NaN` is treated as `0.0` (the clamp would otherwise propagate
     /// `NaN`), so a malformed wire payload can never poison the value.
+    /// Setting a fraction also clears [`Self::indeterminate`] — reporting
+    /// a concrete value *is* the determinate signal.
     pub fn set_value(&mut self, value: f32) {
         self.value = if value.is_nan() { 0.0 } else { value.clamp(0.0, 1.0) };
+        self.indeterminate = false;
     }
 }
 
@@ -130,6 +160,7 @@ impl ExternalIntrospect for ProgressBarExternal {
             ("value", "float"),
             ("min", "float"),
             ("max", "float"),
+            ("indeterminate", "bool"),
         ])
     }
 
@@ -141,6 +172,8 @@ impl ExternalIntrospect for ProgressBarExternal {
             // `AccessValue::Float` min/max the binding lowers).
             "min" => Some(IntrospectValue::Float(0.0)),
             "max" => Some(IntrospectValue::Float(1.0)),
+            // R726 §5.38 — busy/determinate flag, AI-readable as data.
+            "indeterminate" => Some(IntrospectValue::Bool(self.indeterminate)),
             _ => None,
         }
     }
@@ -164,6 +197,16 @@ impl ExternalIntrospect for ProgressBarExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
+            // R726 §5.38 — toggle busy mode. An AI client / the task
+            // driver flips this to switch the bar between a fraction
+            // fill and the looping indeterminate sweep.
+            "indeterminate" => match value {
+                IntrospectValue::Bool(b) => {
+                    self.set_indeterminate(b);
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
             // The range bounds are fixed (normalized), so they reject
             // intervene — the same read-only treatment a slider gives
             // its construction-time-fixed axes.
@@ -171,6 +214,117 @@ impl ExternalIntrospect for ProgressBarExternal {
             _ => Err(InterveneError::UnknownPath),
         }
     }
+}
+
+/// R726 §5.28 §5.38 — looping sweep driver for an *indeterminate*
+/// progress bar. Unlike the one-shot
+/// [`SnackbarTimer`](super::snackbar::SnackbarTimer) and the two-phase
+/// [`CaretBlink`](super::caret_blink::CaretBlink), this is a *repeating*
+/// [`Tickable`]: it advances a `0.0..1.0` sawtooth `position` forever
+/// while active, so `is_at_rest` is **always `false`** when active (an
+/// indeterminate bar never settles — that is the point). The binding
+/// reads [`Self::position`] to place the moving indicator segment.
+///
+/// `set_active(false)` parks it (the determinate bar has no sweep), at
+/// which point `is_at_rest` returns `true` so the backend releases
+/// frames — the [`CaretBlink::set_enabled`] gating pattern.
+#[derive(Debug)]
+pub struct IndeterminateSweep {
+    /// Sawtooth phase in `0.0..1.0` — auto-subscribes inside a view-fn
+    /// so the indicator re-paints every tick.
+    position: Signal<f32>,
+    /// Seconds elapsed within the current cycle.
+    elapsed: Cell<f32>,
+    /// Gate — `false` parks the sweep (determinate bar) so it reports
+    /// at-rest and the backend stops requesting frames.
+    active: Cell<bool>,
+}
+
+impl IndeterminateSweep {
+    /// One full sweep cycle in seconds (Material 3 linear indeterminate
+    /// cadence is ~2 s; pinion uses a single moving segment).
+    pub const PERIOD_SECS: f32 = 1.8;
+
+    /// Construct a parked sweep (`position = 0`, inactive).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            position: Signal::new(0.0),
+            elapsed: Cell::new(0.0),
+            active: Cell::new(false),
+        }
+    }
+
+    /// Current sawtooth phase in `0.0..1.0`. Auto-subscribes in a
+    /// view-fn so the indicator follows the sweep.
+    #[must_use]
+    pub fn position(&self) -> f32 {
+        self.position.get()
+    }
+
+    /// Whether the sweep is running.
+    #[must_use]
+    pub fn active(&self) -> bool {
+        self.active.get()
+    }
+
+    /// Gate the sweep. `true` starts looping from phase 0; `false` parks
+    /// it (and snaps the phase back to 0). Same-value is a no-op (Signal
+    /// equality-skip), so a view-fn can call it every frame safely.
+    pub fn set_active(&self, on: bool) {
+        if self.active.get() == on {
+            return;
+        }
+        self.active.set(on);
+        self.elapsed.set(0.0);
+        self.position.set(0.0);
+    }
+}
+
+impl Default for IndeterminateSweep {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Tickable for IndeterminateSweep {
+    fn tick(&self, dt: f32) {
+        if !self.active.get() {
+            return;
+        }
+        let elapsed = (self.elapsed.get() + dt) % Self::PERIOD_SECS;
+        self.elapsed.set(elapsed);
+        self.position.set(elapsed / Self::PERIOD_SECS);
+    }
+
+    fn is_at_rest(&self, _epsilon: f32) -> bool {
+        // A running indeterminate sweep is *never* at rest (it loops
+        // forever); a parked one is, so the backend releases frames.
+        !self.active.get()
+    }
+}
+
+/// R726 §5.28 §5.38 — resolve (or lazily initialize) an
+/// [`IndeterminateSweep`] for the current view scope and register it
+/// with the animation driver exactly once. Mirrors
+/// [`use_caret_blink`](super::caret_blink::use_caret_blink) /
+/// [`use_snackbar_timer`](super::snackbar::use_snackbar_timer).
+///
+/// # Panics
+///
+/// Panics outside a `root_owner.run(...)` wrap (no current [`Owner`]),
+/// or if the cache key was bound to a different type (see
+/// [`Owner::cache`]).
+#[must_use]
+pub fn use_indeterminate_sweep(key: &'static str) -> Rc<IndeterminateSweep> {
+    let owner = Owner::current().expect("use_indeterminate_sweep requires an active Owner scope");
+    let first_time = !owner.cache_contains::<IndeterminateSweep>(key);
+    let sweep = owner.cache(key, IndeterminateSweep::new);
+    if first_time {
+        let as_tickable: Rc<dyn Tickable> = Rc::clone(&sweep) as Rc<dyn Tickable>;
+        owner.register_animation(as_tickable);
+    }
+    sweep
 }
 
 #[cfg(test)]
@@ -262,5 +416,75 @@ mod tests {
             p.intervene("speed", IntrospectValue::Float(1.0)),
             Err(InterveneError::UnknownPath),
         );
+    }
+
+    // R726 §5.38 — indeterminate flag.
+
+    #[test]
+    fn determinate_by_default() {
+        assert!(!ProgressBarExternal::new().indeterminate());
+    }
+
+    #[test]
+    fn intervene_indeterminate_toggles_and_set_value_clears_it() {
+        let mut p = ProgressBarExternal::new();
+        p.intervene("indeterminate", IntrospectValue::Bool(true)).expect("bool accepted");
+        assert!(p.indeterminate());
+        assert_eq!(p.query("indeterminate"), Some(IntrospectValue::Bool(true)));
+        // Reporting a concrete fraction returns to determinate.
+        p.set_value(0.5);
+        assert!(!p.indeterminate());
+    }
+
+    #[test]
+    fn intervene_indeterminate_wrong_type_is_type_mismatch() {
+        let mut p = ProgressBarExternal::new();
+        assert_eq!(
+            p.intervene("indeterminate", IntrospectValue::Float(1.0)),
+            Err(InterveneError::TypeMismatch),
+        );
+    }
+
+    // R726 §5.28 — IndeterminateSweep looping Tickable.
+
+    #[test]
+    fn sweep_parked_until_activated() {
+        let s = IndeterminateSweep::new();
+        assert!(!s.active());
+        assert!(s.is_at_rest(0.0), "parked sweep is at rest");
+        s.tick(1.0);
+        assert!((s.position() - 0.0).abs() < f32::EPSILON, "parked sweep does not advance");
+    }
+
+    #[test]
+    fn active_sweep_loops_and_never_rests() {
+        let s = IndeterminateSweep::new();
+        s.set_active(true);
+        assert!(!s.is_at_rest(0.0), "an active sweep never settles");
+        s.tick(IndeterminateSweep::PERIOD_SECS / 2.0);
+        assert!((s.position() - 0.5).abs() < 1e-5, "half a period -> phase 0.5");
+        // Wraps past the period (sawtooth).
+        s.tick(IndeterminateSweep::PERIOD_SECS);
+        assert!(s.position() < 1.0, "phase stays in [0,1) after wrap");
+    }
+
+    #[test]
+    fn deactivate_parks_and_resets() {
+        let s = IndeterminateSweep::new();
+        s.set_active(true);
+        s.tick(IndeterminateSweep::PERIOD_SECS / 3.0);
+        s.set_active(false);
+        assert!(s.is_at_rest(0.0));
+        assert!((s.position() - 0.0).abs() < f32::EPSILON, "park snaps phase to 0");
+    }
+
+    #[test]
+    fn use_hook_registers_sweep_once_per_key() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let _a = use_indeterminate_sweep("pb");
+            let _b = use_indeterminate_sweep("pb");
+        });
+        assert_eq!(owner.registered_animation_count(), 1);
     }
 }
