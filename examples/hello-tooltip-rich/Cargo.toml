@@ -1,0 +1,26 @@
+[package]
+name = "hello-tooltip-rich"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R729 §5.38 §5.40 §5.50 Material 3 rich tooltip: 2nd consumer of TooltipExternal (R695) + the elevation ramp (R711) — surfaceContainer surface with elevation shadow + title + supporting paragraph; substrate-0 (reuses anchor_position + visibility statechart), clears the R711/R723/R724 elevated-tooltip carry"
+publish = false
+
+[[bin]]
+name = "hello-tooltip-rich"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

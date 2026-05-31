@@ -15479,6 +15479,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R729 — R729 Material 3 rich tooltip (hello-tooltip-rich): elevated surfaceContainer + title + supporting paragraph; 2nd consumer of TooltipExternal + 5th of the elevation ramp, substrate-0; clears the R711/R723/R724 elevated-tooltip carry
+
+**Changes**:
+- New example hello-tooltip-rich: Material 3 rich tooltip (elevated surfaceContainer + title + body)
+- 2nd consumer of TooltipExternal (R695) + 5th consumer of elevation ramp (R711); substrate-0
+- Reuses anchor_position positioner + visibility statechart; rich body paint inline (1st rich consumer)
+- Clears the R711/R723/R724 elevated-tooltip carry (plain = MD3 L0 flat, rich = elevated surface)
+- a11y: trigger Button + aria-describedby Tooltip node, explicit title+body name survives enrichment
+- Escape/RPC dismiss + hover/focus triggers (WCAG 1.4.13); workspace member + r729 demo
+
+
+
+**Verification**:
+- cargo test --workspace green (5 new unit tests in hello-tooltip-rich)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)
+- demo sweep 79/79 PASS under Xvfb software-GL (r729 = 28-assert RPC + boot trigger live-pixel)
+- rich overlay verified structurally (surfaceContainer fill + elevation(2) shadows + title/body)
+
+
+
+**Impact**: §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- rich-body paint inline (1st consumer); pinion_widget_paint::tooltip rich helper lift on 2nd consumer
+- optional MD3 action buttons deferred: nested interactive hover-posture in a hover-routed body = separate axis
+- RICH_TOOLTIP_LEVEL=2 is a Material-style choice (the elevation ramp disclaims exact MD3 dp)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

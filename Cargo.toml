@@ -62,6 +62,7 @@ members = [
     "examples/hello-combobox",
     "examples/hello-combobox-editable",
     "examples/hello-tooltip",
+    "examples/hello-tooltip-rich",
     "examples/hello-immediate-mode-canvas",
     "examples/hello-dock-panels",
     "examples/hello-dock-panels-editor",
