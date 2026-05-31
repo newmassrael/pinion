@@ -15569,6 +15569,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R732 — R732 SSOT-clearance (audit-triggered): lift the 3-consumer radio-composite binding mechanics to pinion_widget_paint::radio_composite; behaviour-preserving, -235 LOC; clears the R727-class miss where breadcrumb (R731) was the unlifted 3rd consumer of byte-identical roving/drive/read/child-invoke
+
+**Changes**:
+- Lift radio-composite binding mechanics to pinion_widget_paint::radio_composite (Rule-of-Three)
+- Shared: read_rows / focused_index / step / drive_activate / active_index / composite_focus / child_invoke
+- 3 bindings (radio-group/segmented/breadcrumb) -235 LOC net (287 del / 52 ins); byte-identical dups removed
+- Each binding keeps only opinionated parts: paint, a11y roles, key map, N, labels (mechanical vs opinionated)
+- audit-triggered (user hack/smell/SSOT review); R727-class miss caught — breadcrumb was the unlifted 3rd consumer
+
+
+
+**Verification**:
+- 8 new radio_composite unit tests; behaviour-preserving (radio-group 28 / segmented 23 / breadcrumb 9 unchanged)
+- cargo test --workspace green + cargo clippy --workspace --all-targets --features pinion-runtime/vello clean
+- demo sweep 81/81 PASS — r728/r731 + all byte-identical behaviour; no new demo (existing demos = regression net)
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- 4-event drive-cycle idiom still in ~8 other widgets (listbox/table/combobox/datepicker/tabs/...) — pre-existing broad cross-widget pattern, separate lift
+- radio_composite is binding-glue hosted in widget-paint (charter slightly extended; aria.rs apply_aria_activate precedent for shared binding helpers)
+- 2nd-consumer self-grep at round close is now doubly mandated (R727 + this) — catch Rule-of-Three at the round that crosses it
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -33,7 +33,7 @@
 //! tree (`navigation` > `link` with `aria-current`) all converge on the
 //! same `RadioGroupExternal` statechart.
 
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
@@ -41,11 +41,12 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::radio::{RadioEvent, RadioState};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
-use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
+use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, AccessState, AriaCurrent, AriaRole, WidgetA11y,
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_widget_paint::radio_composite as rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloBreadcrumbRenderer, HelloBreadcrumbRendererError);
@@ -185,21 +186,8 @@ impl WidgetCore for BreadcrumbView {
         let Some(intro) = node.handle.introspect() else {
             return out;
         };
-        for (i, slot) in out.rows.iter_mut().enumerate() {
-            let state = match intro.query(&format!("state.{i}")) {
-                Some(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
-                _ => RadioState::Idle,
-            };
-            let selected = matches!(
-                intro.query(&format!("selected.{i}")),
-                Some(IntrospectValue::Bool(true)),
-            );
-            *slot = (state, selected);
-        }
-        out.focused = match intro.query("focused_index") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
-            _ => None,
-        };
+        rc::read_rows(intro, &mut out.rows);
+        out.focused = rc::focused_index(intro);
         out
     }
 
@@ -237,14 +225,9 @@ impl WidgetCore for BreadcrumbView {
         let Some(intro) = node.handle.introspect_mut() else {
             return false;
         };
-        // Navigate to the target crumb through the composite wire format —
-        // the full pointer cycle (PointerUp activates; the trailing Leave
-        // returns interaction state to Idle). `RadioGroup::send` enforces
-        // single-current exclusion and fires the §5.20 `"selected"`
-        // (= navigated-to index) intent on the real change.
-        for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-            let _ = intro.invoke("send", IntrospectValue::Text(format!("{idx}:{ev}")));
-        }
+        // Navigate to the target crumb (1-of-N exclusion + `"selected"`
+        // intent) through the shared composite activation cycle.
+        rc::drive_activate(intro, idx);
         true
     }
 
@@ -264,7 +247,7 @@ impl WidgetA11y for BreadcrumbView {
     /// carries `aria-current="page"`. Link names come from [`CRUMBS`].
     fn access_node(state: &TrailState, focused: Option<&str>) -> Vec<AccessNode> {
         let nav_focused = focused == Some(<Self as WidgetCore>::tag());
-        let active_idx = active_crumb_index(*state);
+        let active_idx = rc::active_index(&state.rows, state.focused);
         let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
         let mut nav = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Navigation)
             .with_name("Breadcrumb");
@@ -297,11 +280,8 @@ impl WidgetA11y for BreadcrumbView {
     /// the module docs for the per-link-Tab alternative).
     fn access_focus_target(state: &TrailState, focused: Option<&str>) -> Option<AccessFocus> {
         if focused == Some(<Self as WidgetCore>::tag()) {
-            let idx = active_crumb_index(*state);
-            Some(AccessFocus::composite(
-                <Self as WidgetCore>::tag(),
-                format!("{PRIMARY_TAG}#{idx}"),
-            ))
+            let idx = rc::active_index(&state.rows, state.focused);
+            Some(rc::composite_focus(<Self as WidgetCore>::tag(), idx))
         } else {
             focused.map(AccessFocus::atomic)
         }
@@ -315,33 +295,13 @@ impl WidgetA11y for BreadcrumbView {
         sub_tag: &str,
         action: AccessAction,
     ) -> bool {
-        let Ok(idx) = sub_tag.parse::<usize>() else {
-            return false;
-        };
-        if idx >= N {
-            return false;
-        }
         let Scene::External(node) = scene else {
             return false;
         };
         let Some(intro) = node.handle.introspect_mut() else {
             return false;
         };
-        match action {
-            AccessAction::Click | AccessAction::Default => {
-                for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                    let _ = intro.invoke("send", IntrospectValue::Text(format!("{idx}:{ev}")));
-                }
-                true
-            }
-            AccessAction::Focus => {
-                if let Ok(i) = i64::try_from(idx) {
-                    let _ = intro.intervene("focused_index", IntrospectValue::Int(i));
-                }
-                true
-            }
-            AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => false,
-        }
+        rc::child_invoke(intro, sub_tag, action, N)
     }
 }
 
@@ -365,35 +325,10 @@ fn resolve_target_index(
     match key {
         "Home" => Some(0),
         "End" => Some(N - 1),
-        "ArrowRight" | "ArrowDown" => Some(step(intro, 1)),
-        "ArrowLeft" | "ArrowUp" => Some(step(intro, -1)),
+        "ArrowRight" | "ArrowDown" => Some(rc::step(intro, 1, N)),
+        "ArrowLeft" | "ArrowUp" => Some(rc::step(intro, -1, N)),
         _ => None,
     }
-}
-
-fn step(intro: Option<&dyn pinion_core::external::ExternalIntrospect>, direction: i32) -> usize {
-    let current: Option<usize> = intro
-        .and_then(|i| i.query("selected_index"))
-        .and_then(|v| match v {
-            IntrospectValue::Int(i) => usize::try_from(i).ok(),
-            _ => None,
-        });
-    match (current, direction) {
-        (Some(c), 1) => (c + 1) % N,
-        (Some(c), -1) => (c + N - 1) % N,
-        (None, 1) => 0,
-        (None, -1) => N - 1,
-        _ => 0,
-    }
-}
-
-/// §5.40 — the crumb reported as the active descendant: the AT-pinned
-/// `focused` index, else the current (selected) crumb, else 0.
-fn active_crumb_index(state: TrailState) -> usize {
-    if let Some(idx) = state.focused {
-        return idx;
-    }
-    state.rows.iter().position(|(_, sel)| *sel).unwrap_or(0)
 }
 
 fn main() {
@@ -403,6 +338,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::external::IntrospectValue;
     use pinion_core::scene::ExternalNode;
 
     fn selected_state(idx: usize) -> TrailState {

@@ -35,7 +35,7 @@
 //! `query("selected.<i>")` paths (R51.43), and the same `invoke
 //! "send" → "<i>:<EventName>"` wire format the keyboard path uses.
 
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::External;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -43,11 +43,12 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
-use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
+use pinion_core::{Color, Frame, Scene, WidgetCore};
 use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y,
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_widget_paint::radio_composite as rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloRadioGroupRenderer, HelloRadioGroupRendererError);
@@ -246,30 +247,13 @@ impl WidgetCore for RadioGroupView {
         let Some(intro) = node.handle.introspect() else {
             return out;
         };
-        // Each radio's interaction state + selected bit comes from
-        // the R51.43 per-radio query paths. The introspect channel
-        // is the single source of truth: an AI client running
-        // `scene/query /external/main_group/state.0` sees exactly
-        // the same value the view fn renders.
-        for (i, slot) in out.rows.iter_mut().enumerate() {
-            let state = match intro.query(&format!("state.{i}")) {
-                Some(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
-                _ => RadioState::Idle,
-            };
-            let selected = matches!(
-                intro.query(&format!("selected.{i}")),
-                Some(IntrospectValue::Bool(true)),
-            );
-            *slot = (state, selected);
-        }
-        // R51.87 §5.40 — AT-side active descendant. `Null` until a
-        // `Focus` action lands; the application's
-        // `access_focus_target` falls back to `selected || 0` when
-        // `focused` is `None`.
-        out.focused = match intro.query("focused_index") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
-            _ => None,
-        };
+        // The R51.43 per-radio query paths, via the shared R732 helper:
+        // the introspect channel is the single source of truth (an AI
+        // client running `scene/query /external/main_group/state.0` sees
+        // exactly the value the view fn renders). `focused_index` is the
+        // R51.87 §5.40 AT active descendant (`None` → `selected || 0`).
+        rc::read_rows(intro, &mut out.rows);
+        out.focused = rc::focused_index(intro);
         out
     }
 
@@ -320,23 +304,11 @@ impl WidgetCore for RadioGroupView {
         let Some(intro) = node.handle.introspect_mut() else {
             return false;
         };
-        // ARIA radio-group keyboard activation: the full PointerEnter
-        // / Down / Up / Leave cycle runs against the target radio
-        // through the composite's wire format. PointerUp is the
-        // edge that activates (Radio sets `selected = true` on
-        // `Pressed → Hover`); the trailing Leave returns the row's
-        // interaction state to `Idle` so the visual doesn't carry a
-        // phantom `Hover` under a cursor that isn't actually on the
-        // row. `RadioGroup::send` enforces mutual exclusion on the
-        // activate edge, deselecting whichever sibling was selected
-        // before; the `"selected"` intent fires on the actual
-        // selection-change transition only.
-        for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-            let _ = intro.invoke(
-                "send",
-                IntrospectValue::Text(format!("{idx}:{ev}")),
-            );
-        }
+        // ARIA radio-group keyboard activation through the shared R732
+        // composite cycle: `RadioGroup::send` enforces mutual exclusion
+        // on the activate edge and fires the `"selected"` intent only on
+        // the real selection-change transition.
+        rc::drive_activate(intro, idx);
         true
     }
 
@@ -382,7 +354,7 @@ impl WidgetA11y for RadioGroupView {
     /// override on the parent `AccessNode`.
     fn access_node(state: &GroupState, focused: Option<&str>) -> Vec<AccessNode> {
         let group_focused = focused == Some(<Self as WidgetCore>::tag());
-        let active_idx = active_radio_index(*state);
+        let active_idx = rc::active_index(&state.rows, state.focused);
         let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
         let mut group = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::RadioGroup)
             .with_name("Subscription tier");
@@ -423,11 +395,8 @@ impl WidgetA11y for RadioGroupView {
         focused: Option<&str>,
     ) -> Option<AccessFocus> {
         if focused == Some(<Self as WidgetCore>::tag()) {
-            let idx = active_radio_index(*state);
-            Some(AccessFocus::composite(
-                <Self as WidgetCore>::tag(),
-                format!("{PRIMARY_TAG}#{idx}"),
-            ))
+            let idx = rc::active_index(&state.rows, state.focused);
+            Some(rc::composite_focus(<Self as WidgetCore>::tag(), idx))
         } else {
             focused.map(AccessFocus::atomic)
         }
@@ -449,41 +418,13 @@ impl WidgetA11y for RadioGroupView {
     /// active row visually. Other actions decline so the shell
     /// stays in charge of the fallback chain.
     fn access_child_invoke(scene: &mut Scene, _parent_tag: &str, sub_tag: &str, action: AccessAction) -> bool {
-        let Ok(idx) = sub_tag.parse::<usize>() else {
-            return false;
-        };
-        if idx >= N {
-            return false;
-        }
         let Scene::External(node) = scene else {
             return false;
         };
         let Some(intro) = node.handle.introspect_mut() else {
             return false;
         };
-        match action {
-            AccessAction::Click | AccessAction::Default => {
-                for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-                    let _ = intro.invoke(
-                        "send",
-                        IntrospectValue::Text(format!("{idx}:{ev}")),
-                    );
-                }
-                true
-            }
-            AccessAction::Focus => {
-                if let Ok(i) = i64::try_from(idx) {
-                    let _ = intro.intervene(
-                        "focused_index",
-                        IntrospectValue::Int(i),
-                    );
-                }
-                true
-            }
-            AccessAction::Increment | AccessAction::Decrement | AccessAction::Other => {
-                false
-            }
-        }
+        rc::child_invoke(intro, sub_tag, action, N)
     }
 }
 
@@ -509,56 +450,10 @@ fn resolve_target_index(
         "a" | "Home" => Some(0),
         "b" => Some(1),
         "c" | "End" => Some(N - 1),
-        "ArrowDown" | "ArrowRight" => Some(arrow_step(intro, 1)),
-        "ArrowUp" | "ArrowLeft" => Some(arrow_step(intro, -1)),
+        "ArrowDown" | "ArrowRight" => Some(rc::step(intro, 1, N)),
+        "ArrowUp" | "ArrowLeft" => Some(rc::step(intro, -1, N)),
         _ => None,
     }
-}
-
-/// Compute the next target index for an arrow-key step. `direction`
-/// is `+1` for `ArrowDown` / `ArrowRight` and `-1` for `ArrowUp` /
-/// `ArrowLeft`. Wraps at the ends so the keyboard navigates the
-/// group as a cyclic ring (ARIA convention). When no radio is
-/// currently selected, an `ArrowDown` lands on `0` (start of the
-/// ring) and an `ArrowUp` lands on `N - 1` (end of the ring) — the
-/// same boundary the Material `RadioGroup` keyboard navigation
-/// reports.
-fn arrow_step(
-    intro: Option<&dyn pinion_core::external::ExternalIntrospect>,
-    direction: i32,
-) -> usize {
-    let current: Option<usize> = intro
-        .and_then(|i| i.query("selected_index"))
-        .and_then(|v| match v {
-            IntrospectValue::Int(i) => usize::try_from(i).ok(),
-            _ => None,
-        });
-    match (current, direction) {
-        (Some(c), 1) => (c + 1) % N,
-        (Some(c), -1) => (c + N - 1) % N,
-        (None, 1) => 0,
-        (None, -1) => N - 1,
-        _ => 0,
-    }
-}
-
-/// R51.66 §5.40 — active radio index (the row reported as the AT-side
-/// "active descendant" of the focused group). Resolution order:
-///
-/// 1. R51.87 §5.40 — `state.focused` if `Some(_)` (AT `Focus` action
-///    or programmatic `focused_index` intervene pinned a row).
-/// 2. The currently selected row, if any.
-/// 3. `0` (start of the cyclic ring — same fallback `arrow_step`
-///    uses when no radio is selected and `ArrowDown` lands first).
-///
-/// The keyboard activation path, the visual focus indication, and
-/// the AccessKit `access_focus_target` redirect all agree on this
-/// resolution so the three views never diverge.
-fn active_radio_index(state: GroupState) -> usize {
-    if let Some(idx) = state.focused {
-        return idx;
-    }
-    state.rows.iter().position(|(_, sel)| *sel).unwrap_or(0)
 }
 
 fn radio_state_short(state: RadioState) -> &'static str {
@@ -767,6 +662,7 @@ mod a11y_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::external::IntrospectValue;
     use pinion_core::scene::ExternalNode;
     use pinion_core::widgets::radio_group::RadioGroupExternal;
 

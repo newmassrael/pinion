@@ -86,6 +86,7 @@ pub mod elevation;
 pub mod dock;
 pub mod drawer;
 pub mod menu;
+pub mod radio_composite;
 pub mod scrim;
 pub mod scrollbar;
 pub mod splitter;

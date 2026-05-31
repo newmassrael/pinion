@@ -17,6 +17,7 @@ pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 # R51.66 §5.40 — AccessKit substrate for composite `access_node`.
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]
