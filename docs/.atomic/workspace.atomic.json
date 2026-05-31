@@ -101,9 +101,10 @@
           "reason": "scope creep vs framework focus"
         }
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-platform-storage/src/lib.rs"
+          "file": "crates/pinion-platform-storage/src/lib.rs",
+          "kind": "implements"
         }
       ]
     },
@@ -370,38 +371,46 @@
         "2",
         "5.7"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-rpc/src/invoke.rs",
-          "symbol": "invoke"
+          "symbol": "invoke",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/intents.rs",
-          "symbol": "drain_intents"
+          "symbol": "drain_intents",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/layout_query.rs",
-          "symbol": "LayoutNode::line_count"
+          "symbol": "LayoutNode::line_count",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "TextNode::line_count"
+          "symbol": "TextNode::line_count",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/layout.rs",
-          "symbol": "compute_layout::text_lines"
+          "symbol": "compute_layout::text_lines",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "App::resumed::request_redraw"
+          "symbol": "App::resumed::request_redraw",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "tests::scene_invoke_full_cycle_on_toggle_external_emits_toggle_intent"
+          "symbol": "tests::scene_invoke_full_cycle_on_toggle_external_emits_toggle_intent",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "deserialize_nullable_present"
+          "symbol": "deserialize_nullable_present",
+          "kind": "implements"
         }
       ]
     },
@@ -549,46 +558,56 @@
         "5.12",
         "5.14"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-core/src/widgets/button.rs",
-          "symbol": "ButtonExternal"
+          "symbol": "ButtonExternal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/button.rs",
-          "symbol": "ButtonStateSnapshot"
+          "symbol": "ButtonStateSnapshot",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/external.rs",
-          "symbol": "External::wants_pointer_capture"
+          "symbol": "External::wants_pointer_capture",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/external.rs",
-          "symbol": "External::pointer_move"
+          "symbol": "External::pointer_move",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/external.rs",
-          "symbol": "IntrospectValue::as_f32"
+          "symbol": "IntrospectValue::as_f32",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/external.rs",
-          "symbol": "IntrospectValue::as_i32"
+          "symbol": "IntrospectValue::as_i32",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/storage.rs",
-          "symbol": "Storage"
+          "symbol": "Storage",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/storage.rs",
-          "symbol": "InMemoryStorage"
+          "symbol": "InMemoryStorage",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-platform-storage/src/lib.rs",
-          "symbol": "FileStorage"
+          "symbol": "FileStorage",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-platform-storage/src/lib.rs",
-          "symbol": "open_app_storage"
+          "symbol": "open_app_storage",
+          "kind": "implements"
         }
       ]
     },
@@ -690,21 +709,25 @@
         "5.14",
         "6"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "VelloRenderer"
+          "symbol": "VelloRenderer",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::render"
+          "symbol": "AppShell::render",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "vello_renderer_impl"
+          "symbol": "vello_renderer_impl",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-shell/tests/smoke.rs"
+          "file": "crates/pinion-shell/tests/smoke.rs",
+          "kind": "implements"
         }
       ]
     },
@@ -969,58 +992,71 @@
         "Macro is dual-literal (stable concat! is literal-only); widget matches Scene::with_tag(...).",
         "Unit test pins macro output against runtime intent-queue format! shape (no separator drift)."
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-core/src/intent.rs",
-          "symbol": "Intent"
+          "symbol": "Intent",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/intent.rs",
-          "symbol": "IntentTag"
+          "symbol": "IntentTag",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-derive/src/lib.rs",
-          "symbol": "derive_intent_tag"
+          "symbol": "derive_intent_tag",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "BoxNode"
+          "symbol": "BoxNode",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/external.rs",
-          "symbol": "External::drain_intents"
+          "symbol": "External::drain_intents",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/intent_queue.rs",
-          "symbol": "walk_scene_and_drain"
+          "symbol": "walk_scene_and_drain",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/intents.rs",
-          "symbol": "IntentsError"
+          "symbol": "IntentsError",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/button.rs",
-          "symbol": "ButtonExternal::send"
+          "symbol": "ButtonExternal::send",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "App::drain_intents"
+          "symbol": "App::drain_intents",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "ExternalNode"
+          "symbol": "ExternalNode",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/intent.rs",
-          "symbol": "intent_tag"
+          "symbol": "intent_tag",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-toggle/src/main.rs",
-          "symbol": "TOGGLE_INTENT_TAG_FULL"
+          "symbol": "TOGGLE_INTENT_TAG_FULL",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-theme/src/main.rs",
-          "symbol": "TOGGLE_INTENT_TAG_FULL"
+          "symbol": "TOGGLE_INTENT_TAG_FULL",
+          "kind": "implements"
         }
       ]
     },
@@ -1078,18 +1114,21 @@
           "reason": "premature; flex must prove out before two-engine maintenance burden"
         }
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "LayoutStyle"
+          "symbol": "LayoutStyle",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/layout.rs",
-          "symbol": "compute_layout"
+          "symbol": "compute_layout",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "view"
+          "symbol": "view",
+          "kind": "implements"
         }
       ]
     },
@@ -1198,141 +1237,179 @@
           "reason": "Vue/Svelte pattern; largest impl burden, custom parser+lexer"
         }
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-core/src/reactive/signal.rs"
+          "file": "crates/pinion-core/src/reactive/signal.rs",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/src/reactive/owner.rs"
+          "file": "crates/pinion-core/src/reactive/owner.rs",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/src/reactive/computed.rs"
+          "file": "crates/pinion-core/src/reactive/computed.rs",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/src/reactive/resource.rs"
+          "file": "crates/pinion-core/src/reactive/resource.rs",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/src/reactive/introspect.rs"
+          "file": "crates/pinion-core/src/reactive/introspect.rs",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-forge/src/lib.rs"
-        },
-        {
-          "file": "crates/pinion-forge/src/ast.rs"
-        },
-        {
-          "file": "crates/pinion-forge/src/parser.rs"
-        },
-        {
-          "file": "crates/pinion-forge/src/codegen.rs"
-        },
-        {
-          "file": "crates/pinion-forge/src/diagnostic.rs"
-        },
-        {
-          "file": "crates/pinion-forge/src/wire.rs"
-        },
-        {
-          "file": "crates/pinion-forge/src/build.rs"
-        },
-        {
-          "file": "crates/pinion-forge/Cargo.toml"
+          "file": "crates/pinion-forge/src/lib.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/ast.rs",
-          "symbol": "SignalDecl"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/parser.rs",
-          "symbol": "ParseCtx::parse_signal"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/codegen.rs",
-          "symbol": "emit_struct_with_signals"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-forge/src/diagnostic.rs",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-forge/src/wire.rs",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-forge/src/build.rs",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-forge/Cargo.toml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/ast.rs",
-          "symbol": "ComputedDecl"
+          "symbol": "SignalDecl",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/parser.rs",
-          "symbol": "ParseCtx::parse_named_typed_body"
+          "symbol": "ParseCtx::parse_signal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/codegen.rs",
-          "symbol": "emit_struct_with_children"
+          "symbol": "emit_struct_with_signals",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/ast.rs",
-          "symbol": "ResourceDecl"
+          "symbol": "ComputedDecl",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/parser.rs",
-          "symbol": "ParseCtx::parse_resource"
+          "symbol": "ParseCtx::parse_named_typed_body",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/codegen.rs",
-          "symbol": "emit_resource_into"
-        },
-        {
-          "file": "crates/pinion-forge/src/codegen.rs",
-          "symbol": "needs_spawner"
+          "symbol": "emit_struct_with_children",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/ast.rs",
-          "symbol": "UseDecl"
+          "symbol": "ResourceDecl",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/parser.rs",
-          "symbol": "ParseCtx::parse_use"
+          "symbol": "ParseCtx::parse_resource",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-forge/src/codegen.rs",
-          "symbol": "emit_use_block"
+          "symbol": "emit_resource_into",
+          "kind": "implements"
         },
         {
-          "file": "examples/forge-counter/Cargo.toml"
+          "file": "crates/pinion-forge/src/codegen.rs",
+          "symbol": "needs_spawner",
+          "kind": "implements"
         },
         {
-          "file": "examples/forge-counter/build.rs"
+          "file": "crates/pinion-forge/src/ast.rs",
+          "symbol": "UseDecl",
+          "kind": "implements"
         },
         {
-          "file": "examples/forge-counter/ui/counter.pinion.xml"
+          "file": "crates/pinion-forge/src/parser.rs",
+          "symbol": "ParseCtx::parse_use",
+          "kind": "implements"
         },
         {
-          "file": "examples/forge-counter/src/main.rs"
+          "file": "crates/pinion-forge/src/codegen.rs",
+          "symbol": "emit_use_block",
+          "kind": "implements"
+        },
+        {
+          "file": "examples/forge-counter/Cargo.toml",
+          "kind": "implements"
+        },
+        {
+          "file": "examples/forge-counter/build.rs",
+          "kind": "implements"
+        },
+        {
+          "file": "examples/forge-counter/ui/counter.pinion.xml",
+          "kind": "implements"
+        },
+        {
+          "file": "examples/forge-counter/src/main.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::current"
+          "symbol": "Owner::current",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "CURRENT_OWNER_HANDLE"
+          "symbol": "CURRENT_OWNER_HANDLE",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "OwnerHandleGuard"
+          "symbol": "OwnerHandleGuard",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::cache"
+          "symbol": "Owner::cache",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::cache_contains"
+          "symbol": "Owner::cache_contains",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::apply_key"
+          "symbol": "CoreShell::apply_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_edit.rs",
-          "symbol": "TextEditState"
+          "symbol": "TextEditState",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_edit.rs",
-          "symbol": "use_text_edit_state"
+          "symbol": "use_text_edit_state",
+          "kind": "implements"
         }
       ]
     },
@@ -1402,366 +1479,459 @@
           "reason": "powerful but compilation cost; over-engineered for GUI"
         }
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-core/src/reactive/effect.rs"
+          "file": "crates/pinion-core/src/reactive/effect.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/effect.rs",
-          "symbol": "Effect"
+          "symbol": "Effect",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/effect.rs",
-          "symbol": "EffectInner"
+          "symbol": "EffectInner",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/effect.rs",
-          "symbol": "Effect::new"
+          "symbol": "Effect::new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/effect.rs",
-          "symbol": "EffectInner::rerun"
+          "symbol": "EffectInner::rerun",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/effect.rs",
-          "symbol": "EffectInner::mark_dirty"
+          "symbol": "EffectInner::mark_dirty",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::on_cleanup"
-        },
-        {
-          "file": "crates/pinion-core/src/command.rs"
+          "symbol": "Owner::on_cleanup",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/command.rs",
-          "symbol": "Command"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/command.rs",
-          "symbol": "Command::new_static"
+          "symbol": "Command",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-core/src/command.rs",
+          "symbol": "Command::new_static",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::dispatch_command"
+          "symbol": "Owner::dispatch_command",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::pending_commands"
+          "symbol": "Owner::pending_commands",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::take_pending_commands"
+          "symbol": "Owner::take_pending_commands",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::take_pending_commands_recursive"
+          "symbol": "Owner::take_pending_commands_recursive",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-runtime/src/command/mod.rs"
-        },
-        {
-          "file": "crates/pinion-runtime/src/command/handler.rs"
+          "file": "crates/pinion-runtime/src/command/mod.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/handler.rs",
-          "symbol": "Handler"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/handler.rs",
-          "symbol": "HandlerFuture"
+          "symbol": "Handler",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-runtime/src/command/registry.rs"
-        },
-        {
-          "file": "crates/pinion-runtime/src/command/registry.rs",
-          "symbol": "HandlerRegistry"
-        },
-        {
-          "file": "crates/pinion-runtime/src/command/registry.rs",
-          "symbol": "HandlerRegistry::register"
+          "file": "crates/pinion-runtime/src/command/handler.rs",
+          "symbol": "HandlerFuture",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/registry.rs",
-          "symbol": "HandlerRegistry::unregister"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/registry.rs",
-          "symbol": "HandlerRegistry::dispatch"
+          "symbol": "HandlerRegistry",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-runtime/src/command/executor.rs"
+          "file": "crates/pinion-runtime/src/command/registry.rs",
+          "symbol": "HandlerRegistry::register",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "Executor"
+          "file": "crates/pinion-runtime/src/command/registry.rs",
+          "symbol": "HandlerRegistry::unregister",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "BoxFuture"
-        },
-        {
-          "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandTaskHandle"
-        },
-        {
-          "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandTaskHandle::new"
+          "file": "crates/pinion-runtime/src/command/registry.rs",
+          "symbol": "HandlerRegistry::dispatch",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandTaskHandle::no_op"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandTaskHandle::cancel"
+          "symbol": "Executor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandTaskHandle::is_cancelled"
+          "symbol": "BoxFuture",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandExecutor"
+          "symbol": "CommandTaskHandle",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandExecutor::new"
+          "symbol": "CommandTaskHandle::new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandExecutor::registry"
+          "symbol": "CommandTaskHandle::no_op",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandExecutor::dispatch"
+          "symbol": "CommandTaskHandle::cancel",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "BlockOnExecutor"
+          "symbol": "CommandTaskHandle::is_cancelled",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-runtime/src/command/sink.rs"
+          "file": "crates/pinion-runtime/src/command/executor.rs",
+          "symbol": "CommandExecutor",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/command/executor.rs",
+          "symbol": "CommandExecutor::new",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/command/executor.rs",
+          "symbol": "CommandExecutor::registry",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/command/executor.rs",
+          "symbol": "CommandExecutor::dispatch",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/command/executor.rs",
+          "symbol": "BlockOnExecutor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/sink.rs",
-          "symbol": "IntentSink"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/sink.rs",
-          "symbol": "IntentSink::send"
+          "symbol": "IntentSink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/sink.rs",
-          "symbol": "VecSink"
+          "symbol": "IntentSink::send",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/sink.rs",
-          "symbol": "VecSink::new"
+          "symbol": "VecSink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/sink.rs",
-          "symbol": "VecSink::drain"
+          "symbol": "VecSink::new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/sink.rs",
-          "symbol": "VecSink::snapshot"
+          "symbol": "VecSink::drain",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/sink.rs",
-          "symbol": "VecSink::len"
+          "symbol": "VecSink::snapshot",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/sink.rs",
-          "symbol": "VecSink::is_empty"
+          "symbol": "VecSink::len",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/command/sink.rs",
+          "symbol": "VecSink::is_empty",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::with_executor"
+          "symbol": "CoreShell::with_executor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::set_executor"
+          "symbol": "CoreShell::set_executor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::clear_executor"
+          "symbol": "CoreShell::clear_executor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::executor"
+          "symbol": "CoreShell::executor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::dispatch_pending_commands"
+          "symbol": "CoreShell::dispatch_pending_commands",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandExecutor::cancel_scope"
+          "symbol": "CommandExecutor::cancel_scope",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandExecutor::in_flight_len"
+          "symbol": "CommandExecutor::in_flight_len",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandExecutor::has_in_flight"
-        },
-        {
-          "file": "crates/pinion-shell/src/executor.rs"
-        },
-        {
-          "file": "crates/pinion-shell/src/executor.rs",
-          "symbol": "TokioExecutor"
+          "symbol": "CommandExecutor::has_in_flight",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/executor.rs",
-          "symbol": "TokioExecutor::new"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/executor.rs",
-          "symbol": "ProxyIntentSink"
+          "symbol": "TokioExecutor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/executor.rs",
-          "symbol": "ProxyIntentSink::new"
+          "symbol": "TokioExecutor::new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/executor.rs",
-          "symbol": "build_executor_and_sink"
+          "symbol": "ProxyIntentSink",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-shell/src/executor.rs",
+          "symbol": "ProxyIntentSink::new",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-shell/src/executor.rs",
+          "symbol": "build_executor_and_sink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppEvent::IntentArrived"
+          "symbol": "AppEvent::IntentArrived",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/app.rs",
-          "symbol": "run_with_handlers"
+          "symbol": "run_with_handlers",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::set_command_executor"
+          "symbol": "ShellCore::set_command_executor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::command_executor"
+          "symbol": "ShellCore::command_executor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::dispatch_intent"
-        },
-        {
-          "file": "crates/pinion-tui/src/executor.rs"
-        },
-        {
-          "file": "crates/pinion-tui/src/executor.rs",
-          "symbol": "TokioExecutor"
+          "symbol": "ShellCore::dispatch_intent",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/executor.rs",
-          "symbol": "TokioExecutor::new"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/executor.rs",
-          "symbol": "MpscIntentSink"
+          "symbol": "TokioExecutor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/executor.rs",
-          "symbol": "MpscIntentSink::new"
+          "symbol": "TokioExecutor::new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/executor.rs",
-          "symbol": "build_executor_and_sink"
+          "symbol": "MpscIntentSink",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/executor.rs",
+          "symbol": "MpscIntentSink::new",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/executor.rs",
+          "symbol": "build_executor_and_sink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::set_command_executor"
+          "symbol": "ShellCoreTui::set_command_executor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::command_executor"
+          "symbol": "ShellCoreTui::command_executor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::dispatch_intent"
+          "symbol": "ShellCoreTui::dispatch_intent",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/shell.rs",
-          "symbol": "run_with_handlers"
+          "symbol": "run_with_handlers",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::pending_commands_recursive"
-        },
-        {
-          "file": "crates/pinion-rpc/src/commands.rs"
-        },
-        {
-          "file": "crates/pinion-rpc/src/commands.rs",
-          "symbol": "CommandsError"
+          "symbol": "Owner::pending_commands_recursive",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/commands.rs",
-          "symbol": "PendingCommandView"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/commands.rs",
-          "symbol": "list_pending_commands"
+          "symbol": "CommandsError",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-rpc/src/commands.rs",
+          "symbol": "PendingCommandView",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-rpc/src/commands.rs",
+          "symbol": "list_pending_commands",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "DispatchContext::with_commands_owner"
+          "symbol": "DispatchContext::with_commands_owner",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/command/executor.rs",
-          "symbol": "CommandExecutor::in_flight_snapshot"
+          "symbol": "CommandExecutor::in_flight_snapshot",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/commands.rs",
-          "symbol": "list_in_flight_commands"
+          "symbol": "list_in_flight_commands",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "DispatchContext::with_commands_executor"
-        },
-        {
-          "file": "examples/hello-commands/src/main.rs"
-        },
-        {
-          "file": "examples/hello-commands/src/main.rs",
-          "symbol": "queue_one_shot_demo_command"
+          "symbol": "DispatchContext::with_commands_executor",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-commands/src/main.rs",
-          "symbol": "CommandsView"
+          "kind": "implements"
         },
         {
           "file": "examples/hello-commands/src/main.rs",
-          "symbol": "echo_handler"
+          "symbol": "queue_one_shot_demo_command",
+          "kind": "implements"
         },
         {
-          "file": "examples/hello-commands-tui/src/main.rs"
+          "file": "examples/hello-commands/src/main.rs",
+          "symbol": "CommandsView",
+          "kind": "implements"
+        },
+        {
+          "file": "examples/hello-commands/src/main.rs",
+          "symbol": "echo_handler",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-commands-tui/src/main.rs",
-          "symbol": "HelloCommandsTui"
+          "kind": "implements"
         },
         {
           "file": "examples/hello-commands-tui/src/main.rs",
-          "symbol": "queue_one_shot_demo_command"
+          "symbol": "HelloCommandsTui",
+          "kind": "implements"
+        },
+        {
+          "file": "examples/hello-commands-tui/src/main.rs",
+          "symbol": "queue_one_shot_demo_command",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widget_core.rs",
-          "symbol": "WidgetCore::update"
+          "symbol": "WidgetCore::update",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::route_intent_through_update"
+          "symbol": "CoreShell::route_intent_through_update",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/test_fixtures.rs",
-          "symbol": "EchoButtonFixture"
+          "symbol": "EchoButtonFixture",
+          "kind": "implements"
         }
       ]
     },
@@ -2089,140 +2259,174 @@
         "5.23",
         "6.3"
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-core/src/animation.rs"
+          "file": "crates/pinion-core/src/animation.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "Animatable"
+          "symbol": "Animatable",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "SpringConfig"
+          "symbol": "SpringConfig",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "SpringState"
+          "symbol": "SpringState",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "AnimRect"
+          "symbol": "AnimRect",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "Color::to_linear"
+          "symbol": "Color::to_linear",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "Color::from_linear"
+          "symbol": "Color::from_linear",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "Easing"
+          "symbol": "Easing",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "Tween"
+          "symbol": "Tween",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "Animation"
+          "symbol": "Animation",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "AnimationInner"
+          "symbol": "AnimationInner",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "Tickable"
+          "symbol": "Tickable",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/animation.rs",
-          "symbol": "Animation::new"
+          "symbol": "Animation::new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::register_animation"
+          "symbol": "Owner::register_animation",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::tick_animations"
+          "symbol": "Owner::tick_animations",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::root_owner"
+          "symbol": "CoreShell::root_owner",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::tick_animations"
+          "symbol": "CoreShell::tick_animations",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::root_owner"
+          "symbol": "ShellCore::root_owner",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::compute_paint_scene"
+          "symbol": "ShellCore::compute_paint_scene",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::root_owner"
+          "symbol": "ShellCoreTui::root_owner",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::compute_paint_scene"
-        },
-        {
-          "file": "crates/pinion-runtime/src/frame_pacing.rs"
-        },
-        {
-          "file": "crates/pinion-runtime/src/frame_pacing.rs",
-          "symbol": "MAX_FRAME_DT_SECS"
+          "symbol": "ShellCoreTui::compute_paint_scene",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/frame_pacing.rs",
-          "symbol": "clamp_frame_dt"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/frame_pacing.rs",
+          "symbol": "MAX_FRAME_DT_SECS",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/frame_pacing.rs",
+          "symbol": "clamp_frame_dt",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/reactive/owner.rs",
-          "symbol": "Owner::any_animation_active"
+          "symbol": "Owner::any_animation_active",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::any_animation_active"
+          "symbol": "CoreShell::any_animation_active",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "drive_hover_progress"
+          "symbol": "drive_hover_progress",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "lerp_grayscale"
+          "symbol": "lerp_grayscale",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::any_animation_active"
+          "symbol": "ShellCoreTui::any_animation_active",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/shell.rs",
-          "symbol": "run"
+          "symbol": "run",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button-tui/src/main.rs",
-          "symbol": "drive_hover_progress"
+          "symbol": "drive_hover_progress",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::frame_signal"
+          "symbol": "CoreShell::frame_signal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "Color::lerp"
+          "symbol": "Color::lerp",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/caret_blink.rs",
-          "symbol": "CaretBlink"
+          "symbol": "CaretBlink",
+          "kind": "implements"
         }
       ]
     },
@@ -2338,50 +2542,61 @@
         "5.1",
         "5.6"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "Color"
+          "symbol": "Color",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "BoxStyle"
+          "symbol": "BoxStyle",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "Border"
+          "symbol": "Border",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "TextStyle"
+          "symbol": "TextStyle",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "PathStyle"
+          "symbol": "PathStyle",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "PathCommand"
+          "symbol": "PathCommand",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "ImageStyle"
+          "symbol": "ImageStyle",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "Align"
+          "symbol": "Align",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "Modifier"
+          "symbol": "Modifier",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "paint_text"
+          "symbol": "paint_text",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "scale_normalized_to_px"
+          "symbol": "scale_normalized_to_px",
+          "kind": "implements"
         }
       ]
     },
@@ -2575,37 +2790,45 @@
         "5.2",
         "2"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "Scene::hit_test"
+          "symbol": "Scene::hit_test",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "HitPath"
+          "symbol": "HitPath",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-rpc/src/locate.rs"
+          "file": "crates/pinion-rpc/src/locate.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "handle_scene_locate"
+          "symbol": "handle_scene_locate",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "Scene::hit_test_region"
+          "symbol": "Scene::hit_test_region",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/locate.rs",
-          "symbol": "locate_region"
+          "symbol": "locate_region",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "Scene::lookup_path"
+          "symbol": "Scene::lookup_path",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/locate.rs",
-          "symbol": "bbox"
+          "symbol": "bbox",
+          "kind": "implements"
         }
       ]
     },
@@ -2678,38 +2901,47 @@
         "5.20",
         "2"
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-overlay/Cargo.toml"
+          "file": "crates/pinion-overlay/Cargo.toml",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-overlay/src/lib.rs"
+          "file": "crates/pinion-overlay/src/lib.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-overlay/src/event.rs",
-          "symbol": "OverlayEvent"
+          "symbol": "OverlayEvent",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-overlay/src/highlight.rs",
-          "symbol": "inject_highlight"
+          "symbol": "inject_highlight",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-overlay/src/highlight.rs",
-          "symbol": "clear_highlights"
+          "symbol": "clear_highlights",
+          "kind": "implements"
         },
         {
-          "file": "examples/ai-introspect-demo/Cargo.toml"
+          "file": "examples/ai-introspect-demo/Cargo.toml",
+          "kind": "implements"
         },
         {
-          "file": "examples/ai-introspect-demo/src/main.rs"
+          "file": "examples/ai-introspect-demo/src/main.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-overlay/src/highlight.rs",
-          "symbol": "HighlightStyle::with_stroke"
+          "symbol": "HighlightStyle::with_stroke",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-overlay/src/highlight.rs",
-          "symbol": "HighlightStyle::with_stroke_width"
+          "symbol": "HighlightStyle::with_stroke_width",
+          "kind": "implements"
         }
       ]
     },
@@ -2796,140 +3028,174 @@
         "5.32",
         "5.33"
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-rpc/src/preview/mod.rs"
+          "file": "crates/pinion-rpc/src/preview/mod.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/id.rs",
-          "symbol": "PreviewId"
+          "symbol": "PreviewId",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/proposal.rs",
-          "symbol": "Proposal"
+          "symbol": "Proposal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/error.rs",
-          "symbol": "ProposeError"
+          "symbol": "ProposeError",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/error.rs",
-          "symbol": "ApplyError"
+          "symbol": "ApplyError",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/ledger.rs",
-          "symbol": "PreviewLedger"
+          "symbol": "PreviewLedger",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/ledger.rs",
-          "symbol": "Entry"
+          "symbol": "Entry",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/ledger.rs",
-          "symbol": "PreviewView"
+          "symbol": "PreviewView",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/ledger.rs",
-          "symbol": "SweepReport"
+          "symbol": "SweepReport",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/cancel.rs",
-          "symbol": "cancel_preview"
+          "symbol": "cancel_preview",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "handle_scene_cancel_preview"
+          "symbol": "handle_scene_cancel_preview",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/id.rs",
-          "symbol": "PreviewId::try_new"
+          "symbol": "PreviewId::try_new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/list.rs",
-          "symbol": "list_previews"
+          "symbol": "list_previews",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "handle_scene_list_previews"
+          "symbol": "handle_scene_list_previews",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "preview_view_to_json"
+          "symbol": "preview_view_to_json",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/revision.rs",
-          "symbol": "SceneRevision"
+          "symbol": "SceneRevision",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "mutates_scene_on_success"
+          "symbol": "mutates_scene_on_success",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/kinds.rs",
-          "symbol": "TypedProposal"
+          "symbol": "TypedProposal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/propose.rs",
-          "symbol": "propose_change"
+          "symbol": "propose_change",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/propose.rs",
-          "symbol": "ProposeOutcome"
+          "symbol": "ProposeOutcome",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "handle_scene_propose_change"
+          "symbol": "handle_scene_propose_change",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/apply.rs",
-          "symbol": "apply_preview"
+          "symbol": "apply_preview",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/apply.rs",
-          "symbol": "ApplyOutcome"
+          "symbol": "ApplyOutcome",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "handle_scene_apply_preview"
+          "symbol": "handle_scene_apply_preview",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "DispatchContext"
+          "symbol": "DispatchContext",
+          "kind": "implements"
         },
         {
-          "file": "examples/ai-introspect-demo/src/main.rs"
+          "file": "examples/ai-introspect-demo/src/main.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/proposal.rs",
-          "symbol": "ApplyContext"
+          "symbol": "ApplyContext",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/kinds.rs",
-          "symbol": "TypedProposal::DispatchIntent"
+          "symbol": "TypedProposal::DispatchIntent",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/kinds.rs",
-          "symbol": "TypedProposal::SetStyle"
+          "symbol": "TypedProposal::SetStyle",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "Scene::lookup_path_mut"
+          "symbol": "Scene::lookup_path_mut",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/blueprint.rs",
-          "symbol": "ViewBlueprint"
+          "symbol": "ViewBlueprint",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/preview/kinds.rs",
-          "symbol": "TypedProposal::ReplaceView"
+          "symbol": "TypedProposal::ReplaceView",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "Scene::lookup_path_ref"
+          "symbol": "Scene::lookup_path_ref",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/path.rs",
-          "symbol": "split_at_external"
+          "symbol": "split_at_external",
+          "kind": "implements"
         }
       ]
     },
@@ -2996,78 +3262,96 @@
           "code": "// 위젯 카탈로그 (Slider) — 같은 primitive, 코드 0줄 (R47-class bug 재발 불가)\nfn view(state: &AppState, _frame: &Frame) -> Scene {\n    Scene::Container(ContainerNode::new(vec![\n        Scene::Container(ContainerNode::new(vec![/* slider visuals */])\n            .with_tag(\"volume_slider\")),  // ← 이게 전부\n        Scene::Container(ContainerNode::new(vec![/* button */])\n            .with_tag(\"save_btn\")),\n    ]))\n}\n\n// state scene\nlet state_scene = Scene::Container(ContainerNode::new(vec![\n    Scene::External(ExternalNode::new(SliderExternal::new()).with_tag(\"volume_slider\")),\n    Scene::External(ExternalNode::new(ButtonExternal::new()).with_tag(\"save_btn\")),\n]));\n\n// router 의 dispatch logic 은 단일 — 위젯 N개여도 코드 N배 안 됨\nrouter.cursor_moved(x, y, &mut state_scene);  // volume_slider vs save_btn 자동 선택\nrouter.pointer_down(&mut state_scene);\n"
         }
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "InputRouter::captured_target"
+          "symbol": "InputRouter::captured_target",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "InputRouter::forward_pointer_move"
+          "symbol": "InputRouter::forward_pointer_move",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "rect_for_tag"
+          "symbol": "rect_for_tag",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "normalize_cursor"
+          "symbol": "normalize_cursor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "widget_wants_capture"
+          "symbol": "widget_wants_capture",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::apply_key"
+          "symbol": "AppShell::apply_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "named_key_str"
+          "symbol": "named_key_str",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "PointerId"
+          "symbol": "PointerId",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "PointerId::MOUSE"
+          "symbol": "PointerId::MOUSE",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "PointerId::touch"
+          "symbol": "PointerId::touch",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "InputRouter::cursors"
+          "symbol": "InputRouter::cursors",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "InputRouter::hover_targets"
+          "symbol": "InputRouter::hover_targets",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "InputRouter::captured_targets"
+          "symbol": "InputRouter::captured_targets",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "InputRouter::hover_wants_capture"
+          "symbol": "InputRouter::hover_wants_capture",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "split_subindex"
+          "symbol": "split_subindex",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio-group/src/main.rs",
-          "symbol": "RadioGroupView::apply_key"
+          "symbol": "RadioGroupView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::handle_touch"
+          "symbol": "AppShell::handle_touch",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "ScrollBarExternal::pointer_move"
+          "symbol": "ScrollBarExternal::pointer_move",
+          "kind": "implements"
         }
       ]
     },
@@ -3146,22 +3430,26 @@
         "6.3",
         "5.37"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-runtime/src/layout.rs",
-          "symbol": "compute_layout::ceil"
+          "symbol": "compute_layout::ceil",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/paint_adapter.rs",
-          "symbol": "paint_text"
+          "symbol": "paint_text",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text/src/caret.rs",
-          "symbol": "caret_rect_for_byte_offset"
+          "symbol": "caret_rect_for_byte_offset",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text/src/caret.rs",
-          "symbol": "CaretRect"
+          "symbol": "CaretRect",
+          "kind": "implements"
         }
       ]
     },
@@ -3293,78 +3581,96 @@
         "5.11",
         "5.3"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-text-font/src/sfnt.rs",
-          "symbol": "parse_sfnt"
+          "symbol": "parse_sfnt",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/sfnt.rs",
-          "symbol": "Flavor"
+          "symbol": "Flavor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/sfnt.rs",
-          "symbol": "OffsetTable"
+          "symbol": "OffsetTable",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/sfnt.rs",
-          "symbol": "TableRecord"
+          "symbol": "TableRecord",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/error.rs",
-          "symbol": "ParseError"
+          "symbol": "ParseError",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/font.rs",
-          "symbol": "Font"
+          "symbol": "Font",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/reader.rs",
-          "symbol": "Reader"
+          "symbol": "Reader",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/head.rs",
-          "symbol": "Head"
+          "symbol": "Head",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/hhea.rs",
-          "symbol": "Hhea"
+          "symbol": "Hhea",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/hmtx.rs",
-          "symbol": "Hmtx"
+          "symbol": "Hmtx",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/maxp.rs",
-          "symbol": "Maxp"
+          "symbol": "Maxp",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/os2.rs",
-          "symbol": "Os2"
+          "symbol": "Os2",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/post.rs",
-          "symbol": "Post"
+          "symbol": "Post",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/error.rs",
-          "symbol": "FieldValue"
+          "symbol": "FieldValue",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/cmap/mod.rs",
-          "symbol": "Cmap"
+          "symbol": "Cmap",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/cmap/mod.rs",
-          "symbol": "CmapSubtable"
+          "symbol": "CmapSubtable",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/cmap/format4.rs",
-          "symbol": "Format4"
+          "symbol": "Format4",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-font/src/tables/cmap/format12.rs",
-          "symbol": "Format12"
+          "symbol": "Format12",
+          "kind": "implements"
         }
       ]
     },
@@ -3438,86 +3744,106 @@
         "5.12",
         "2"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "FontRegistry"
+          "symbol": "FontRegistry",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "parse"
+          "symbol": "parse",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "family_name"
+          "symbol": "family_name",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "glyph_id_for"
+          "symbol": "glyph_id_for",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "FontError"
+          "symbol": "FontError",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "handle_font_parse"
+          "symbol": "handle_font_parse",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "handle_font_family_name"
+          "symbol": "handle_font_family_name",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "handle_font_glyph_id_for"
+          "symbol": "handle_font_glyph_id_for",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "font_error_to_rpc"
+          "symbol": "font_error_to_rpc",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "glyph_outline"
+          "symbol": "glyph_outline",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "cmap_subtables"
+          "symbol": "cmap_subtables",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "metrics"
+          "symbol": "metrics",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "subfamily_name"
+          "symbol": "subfamily_name",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "full_name"
+          "symbol": "full_name",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "postscript_name"
+          "symbol": "postscript_name",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "GlyphOutlineOutcome"
+          "symbol": "GlyphOutlineOutcome",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "dispose"
+          "symbol": "dispose",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/font.rs",
-          "symbol": "list"
+          "symbol": "list",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/text.rs",
-          "symbol": "text_normalize"
+          "symbol": "text_normalize",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "handle_text_normalize"
+          "symbol": "handle_text_normalize",
+          "kind": "implements"
         }
       ]
     },
@@ -3586,135 +3912,169 @@
         "5.37.1",
         "5.37.2"
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-text-unicode/Cargo.toml"
+          "file": "crates/pinion-text-unicode/Cargo.toml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/lib.rs",
-          "symbol": "NormForm"
+          "symbol": "NormForm",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-unicode/build.rs"
+          "file": "crates/pinion-text-unicode/build.rs",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-unicode/ucd/UnicodeData.txt"
+          "file": "crates/pinion-text-unicode/ucd/UnicodeData.txt",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-unicode/ucd/DerivedNormalizationProps.txt"
+          "file": "crates/pinion-text-unicode/ucd/DerivedNormalizationProps.txt",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-unicode/ucd/CompositionExclusions.txt"
+          "file": "crates/pinion-text-unicode/ucd/CompositionExclusions.txt",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/hangul.rs",
-          "symbol": "decompose_hangul_syllable"
+          "symbol": "decompose_hangul_syllable",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/decompose.rs",
-          "symbol": "decompose_canonical"
+          "symbol": "decompose_canonical",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/ordering.rs",
-          "symbol": "canonical_ordering"
+          "symbol": "canonical_ordering",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/nfd.rs",
-          "symbol": "nfd"
+          "symbol": "nfd",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-unicode/ucd/NormalizationTest.txt"
+          "file": "crates/pinion-text-unicode/ucd/NormalizationTest.txt",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/hangul.rs",
-          "symbol": "compose_hangul"
+          "symbol": "compose_hangul",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/composition.rs",
-          "symbol": "canonical_composition"
+          "symbol": "canonical_composition",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/nfc.rs",
-          "symbol": "nfc"
+          "symbol": "nfc",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/test_fixture.rs",
-          "symbol": "load_normalization_test"
+          "symbol": "load_normalization_test",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/decompose.rs",
-          "symbol": "decompose_compatibility"
+          "symbol": "decompose_compatibility",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/nfkd.rs",
-          "symbol": "nfkd"
+          "symbol": "nfkd",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/nfkc.rs",
-          "symbol": "nfkc"
+          "symbol": "nfkc",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/lib.rs",
-          "symbol": "normalize"
+          "symbol": "normalize",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/quick_check.rs",
-          "symbol": "nfc_quick_check"
+          "symbol": "nfc_quick_check",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-unicode/benches/normalize.rs"
-        },
-        {
-          "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "emit_fast_path_anchors"
-        },
-        {
-          "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "build_u8_bmp_trie"
+          "file": "crates/pinion-text-unicode/benches/normalize.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "emit_u8_bmp_trie_table"
+          "symbol": "emit_fast_path_anchors",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "build_u8_bmp_trie",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-text-unicode/build.rs",
+          "symbol": "emit_u8_bmp_trie_table",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/quick_check.rs",
-          "symbol": "lookup_u8_trie"
+          "symbol": "lookup_u8_trie",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/ordering.rs",
-          "symbol": "combining_class_supplementary"
+          "symbol": "combining_class_supplementary",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "build_decomp_bmp_trie"
+          "symbol": "build_decomp_bmp_trie",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "emit_decomp_table"
+          "symbol": "emit_decomp_table",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "emit_packed_u32_hex_row"
+          "symbol": "emit_packed_u32_hex_row",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/decompose.rs",
-          "symbol": "lookup_decomp_trie"
+          "symbol": "lookup_decomp_trie",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/decompose.rs",
-          "symbol": "lookup_decomp_supplementary"
+          "symbol": "lookup_decomp_supplementary",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "build_primary_composites_trie"
+          "symbol": "build_primary_composites_trie",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "emit_primary_composites_table"
+          "symbol": "emit_primary_composites_table",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/composition.rs",
-          "symbol": "compose_pair_supplementary"
+          "symbol": "compose_pair_supplementary",
+          "kind": "implements"
         }
       ]
     },
@@ -3784,123 +4144,153 @@
         "5.37.6",
         "5.37.7"
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-text-unicode/ucd/DerivedBidiClass.txt"
+          "file": "crates/pinion-text-unicode/ucd/DerivedBidiClass.txt",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "parse_bidi_class"
+          "symbol": "parse_bidi_class",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "BidiClass"
+          "symbol": "BidiClass",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "bidi_class"
+          "symbol": "bidi_class",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "paragraph_level"
+          "symbol": "paragraph_level",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "iter_paragraphs"
+          "symbol": "iter_paragraphs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "ParagraphIter"
+          "symbol": "ParagraphIter",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "resolve_explicit_levels"
+          "symbol": "resolve_explicit_levels",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "ExplicitLevels"
+          "symbol": "ExplicitLevels",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "MAX_DEPTH"
+          "symbol": "MAX_DEPTH",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "resolve_weak_types"
+          "symbol": "resolve_weak_types",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "paired_bracket"
+          "symbol": "paired_bracket",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "BracketType"
+          "symbol": "BracketType",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "parse_bidi_brackets"
+          "symbol": "parse_bidi_brackets",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "resolve_neutral_types"
+          "symbol": "resolve_neutral_types",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "resolve_implicit_levels"
+          "symbol": "resolve_implicit_levels",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "apply_l1_line_break"
+          "symbol": "apply_l1_line_break",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "reorder_visual"
+          "symbol": "reorder_visual",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "bidi_reorder"
+          "symbol": "bidi_reorder",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "mirroring_glyph"
+          "symbol": "mirroring_glyph",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "apply_l3_combining_marks"
+          "symbol": "apply_l3_combining_marks",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/build.rs",
-          "symbol": "parse_bidi_mirroring"
+          "symbol": "parse_bidi_mirroring",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "canonical_bracket_form"
+          "symbol": "canonical_bracket_form",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/test_fixture.rs",
-          "symbol": "parse_bidi_character_test"
+          "symbol": "parse_bidi_character_test",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/test_fixture.rs",
-          "symbol": "load_bidi_character_test"
+          "symbol": "load_bidi_character_test",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-unicode/ucd/BidiCharacterTest.txt"
+          "file": "crates/pinion-text-unicode/ucd/BidiCharacterTest.txt",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-text-unicode/ucd/BidiTest.txt"
+          "file": "crates/pinion-text-unicode/ucd/BidiTest.txt",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/test_fixture.rs",
-          "symbol": "load_bidi_test"
+          "symbol": "load_bidi_test",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/test_fixture.rs",
-          "symbol": "parse_bidi_test"
+          "symbol": "parse_bidi_test",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-text-unicode/src/bidi.rs",
-          "symbol": "mirror_paired_brackets"
+          "symbol": "mirror_paired_brackets",
+          "kind": "implements"
         }
       ]
     },
@@ -4015,369 +4405,463 @@
           "code": "// R56.1.h §5.38 §5.39 §5.28 — focus-aware TextField with caret blink.\n// The shell substrate calls External::on_focus_change automatically\n// after every focus mutation (Tab traversal / click / AT action / RPC\n// focus/set), so the binding only needs to construct the External and\n// attach state + blink:\nfn create_external() -> Box<dyn External> {\n    let text = Rc::new(TextEditState::new());\n    let blink = Rc::new(CaretBlink::new());\n    Box::new(\n        TextFieldExternal::new()\n            .attach_state(text)\n            .attach_blink(blink),\n    )\n}"
         }
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-core/widgets/toggle.scxml"
+          "file": "crates/pinion-core/widgets/toggle.scxml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/toggle.rs",
-          "symbol": "Toggle"
+          "symbol": "Toggle",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/toggle.rs",
-          "symbol": "ToggleExternal"
+          "symbol": "ToggleExternal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/build.rs",
-          "symbol": "scxml_inputs::toggle"
+          "symbol": "scxml_inputs::toggle",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/standard_button.sce-template.xml"
+          "file": "crates/pinion-core/widgets/standard_button.sce-template.xml",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/button.scxml"
+          "file": "crates/pinion-core/widgets/button.scxml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/widget.rs",
-          "symbol": "Widget"
+          "symbol": "Widget",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/widget.rs",
-          "symbol": "IntentEmitter"
+          "symbol": "IntentEmitter",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/checkbox.scxml"
+          "file": "crates/pinion-core/widgets/checkbox.scxml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/checkbox.rs",
-          "symbol": "Checkbox"
+          "symbol": "Checkbox",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/checkbox.rs",
-          "symbol": "CheckboxExternal"
+          "symbol": "CheckboxExternal",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/radio.scxml"
+          "file": "crates/pinion-core/widgets/radio.scxml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio.rs",
-          "symbol": "Radio"
+          "symbol": "Radio",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio.rs",
-          "symbol": "RadioExternal"
+          "symbol": "RadioExternal",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/slider.scxml"
+          "file": "crates/pinion-core/widgets/slider.scxml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "Slider"
+          "symbol": "Slider",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "SliderExternal"
+          "symbol": "SliderExternal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/widget.rs",
-          "symbol": "WidgetTransition"
+          "symbol": "WidgetTransition",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/widget.rs",
-          "symbol": "IntentEmitter::dispatch"
+          "symbol": "IntentEmitter::dispatch",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/button.rs",
-          "symbol": "&lt;Button as WidgetTransition&gt;"
+          "symbol": "&lt;Button as WidgetTransition&gt;",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/toggle.rs",
-          "symbol": "&lt;Toggle as WidgetTransition&gt;"
+          "symbol": "&lt;Toggle as WidgetTransition&gt;",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/checkbox.rs",
-          "symbol": "&lt;Checkbox as WidgetTransition&gt;"
+          "symbol": "&lt;Checkbox as WidgetTransition&gt;",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio.rs",
-          "symbol": "&lt;Radio as WidgetTransition&gt;"
+          "symbol": "&lt;Radio as WidgetTransition&gt;",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "&lt;Slider as WidgetTransition&gt;"
+          "symbol": "&lt;Slider as WidgetTransition&gt;",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "RadioGroup"
+          "symbol": "RadioGroup",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "RadioGroupExternal"
+          "symbol": "RadioGroupExternal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "&lt;RadioGroup as WidgetTransition&gt;"
+          "symbol": "&lt;RadioGroup as WidgetTransition&gt;",
+          "kind": "implements"
         },
         {
-          "file": "examples/hello-toggle/app.pinion.xml"
+          "file": "examples/hello-toggle/app.pinion.xml",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-toggle/src/main.rs",
-          "symbol": "view"
+          "symbol": "view",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "WidgetView"
+          "symbol": "WidgetView",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell"
+          "symbol": "AppShell",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "run"
+          "symbol": "run",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "ButtonView"
+          "symbol": "ButtonView",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-toggle/src/main.rs",
-          "symbol": "ToggleView"
+          "symbol": "ToggleView",
+          "kind": "implements"
         },
         {
-          "file": "examples/hello-checkbox/app.pinion.xml"
+          "file": "examples/hello-checkbox/app.pinion.xml",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-checkbox/src/main.rs",
-          "symbol": "view"
+          "symbol": "view",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-checkbox/src/main.rs",
-          "symbol": "CheckboxView"
+          "symbol": "CheckboxView",
+          "kind": "implements"
         },
         {
-          "file": "examples/hello-radio/app.pinion.xml"
+          "file": "examples/hello-radio/app.pinion.xml",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio/src/main.rs",
-          "symbol": "view"
+          "symbol": "view",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio/src/main.rs",
-          "symbol": "RadioView"
+          "symbol": "RadioView",
+          "kind": "implements"
         },
         {
-          "file": "examples/hello-slider/app.pinion.xml"
+          "file": "examples/hello-slider/app.pinion.xml",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider/src/main.rs",
-          "symbol": "view"
+          "symbol": "view",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider/src/main.rs",
-          "symbol": "SliderView"
+          "symbol": "SliderView",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "SliderExternal::wants_pointer_capture"
+          "symbol": "SliderExternal::wants_pointer_capture",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "SliderExternal::pointer_move"
+          "symbol": "SliderExternal::pointer_move",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "WidgetView::apply_key"
+          "symbol": "WidgetView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider/src/main.rs",
-          "symbol": "SliderView::apply_key"
+          "symbol": "SliderView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "SliderAxis"
+          "symbol": "SliderAxis",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "Slider::with_axis"
+          "symbol": "Slider::with_axis",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "Slider::axis"
+          "symbol": "Slider::axis",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "SliderExternal::with_axis"
+          "symbol": "SliderExternal::with_axis",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "SliderExternal::axis"
+          "symbol": "SliderExternal::axis",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/slider.rs",
-          "symbol": "slider_axis_name"
+          "symbol": "slider_axis_name",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "RadioGroupExternal::query/state.&lt;index&gt;"
+          "symbol": "RadioGroupExternal::query/state.&lt;index&gt;",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "RadioGroupExternal::query/selected.&lt;index&gt;"
+          "symbol": "RadioGroupExternal::query/selected.&lt;index&gt;",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio-group/src/main.rs",
-          "symbol": "RadioGroupView"
+          "symbol": "RadioGroupView",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider-vertical/src/main.rs",
-          "symbol": "SliderVerticalView"
+          "symbol": "SliderVerticalView",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
-          "symbol": "ListBox::with_multiselect"
+          "symbol": "ListBox::with_multiselect",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
-          "symbol": "ListBox::is_multiselect"
+          "symbol": "ListBox::is_multiselect",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
-          "symbol": "ListBox::selected_indices"
+          "symbol": "ListBox::selected_indices",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
-          "symbol": "ListBox::set_selected_indices"
+          "symbol": "ListBox::set_selected_indices",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
-          "symbol": "ListBoxExternal::with_multiselect"
+          "symbol": "ListBoxExternal::with_multiselect",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
-          "symbol": "ListBoxExternal::is_multiselect"
+          "symbol": "ListBoxExternal::is_multiselect",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
-          "symbol": "ListBoxExternal::selected_indices"
+          "symbol": "ListBoxExternal::selected_indices",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/typeahead.rs",
-          "symbol": "TypeaheadCursor"
+          "symbol": "TypeaheadCursor",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/typeahead.rs",
-          "symbol": "TypeaheadCursor::step"
-        },
-        {
-          "file": "crates/pinion-core/src/widgets/aria.rs"
+          "symbol": "TypeaheadCursor::step",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/aria.rs",
-          "symbol": "apply_aria_activate"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/aria.rs",
+          "symbol": "apply_aria_activate",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-listbox/src/main.rs",
-          "symbol": "listbox_row_at_y"
+          "symbol": "listbox_row_at_y",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/scroll_bar.scxml"
-        },
-        {
-          "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "ScrollBar"
-        },
-        {
-          "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "ScrollBarExternal"
+          "file": "crates/pinion-core/widgets/scroll_bar.scxml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "&lt;ScrollBar as WidgetTransition&gt;"
+          "symbol": "ScrollBar",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "ScrollBarEvent"
+          "symbol": "ScrollBarExternal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "ScrollBarState"
+          "symbol": "&lt;ScrollBar as WidgetTransition&gt;",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/text_field.scxml"
+          "file": "crates/pinion-core/src/widgets/scrollbar.rs",
+          "symbol": "ScrollBarEvent",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "TextField"
+          "file": "crates/pinion-core/src/widgets/scrollbar.rs",
+          "symbol": "ScrollBarState",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "TextFieldExternal"
-        },
-        {
-          "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "TextFieldEvent"
-        },
-        {
-          "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "TextFieldState"
+          "file": "crates/pinion-core/widgets/text_field.scxml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "&lt;TextField as WidgetTransition&gt;"
+          "symbol": "TextField",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "TextFieldExternal",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "TextFieldEvent",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "TextFieldState",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-core/src/widgets/text_field.rs",
+          "symbol": "&lt;TextField as WidgetTransition&gt;",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/build.rs",
-          "symbol": "scxml_inputs::text_field"
+          "symbol": "scxml_inputs::text_field",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_edit.rs",
-          "symbol": "TextEditState"
+          "symbol": "TextEditState",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_edit.rs",
-          "symbol": "use_text_edit_state"
+          "symbol": "use_text_edit_state",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "caret_rect"
+          "symbol": "caret_rect",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "TextField::attach_state"
+          "symbol": "TextField::attach_state",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "TextFieldExternal::attach_state"
+          "symbol": "TextFieldExternal::attach_state",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/caret_blink.rs",
-          "symbol": "CaretBlink"
+          "symbol": "CaretBlink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/caret_blink.rs",
-          "symbol": "use_caret_blink"
+          "symbol": "use_caret_blink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "apply_key"
+          "symbol": "apply_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "TextField::attach_blink"
+          "symbol": "TextField::attach_blink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "TextField::sync_blink"
+          "symbol": "TextField::sync_blink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/text_field.rs",
-          "symbol": "&lt;TextFieldExternal as External&gt;::on_focus_change"
+          "symbol": "&lt;TextFieldExternal as External&gt;::on_focus_change",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::notify_focus_change"
+          "symbol": "ShellCore::notify_focus_change",
+          "kind": "implements"
         }
       ]
     },
@@ -4448,122 +4932,151 @@
         "5.32",
         "5.35"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-runtime/src/focus.rs",
-          "symbol": "FocusManager"
+          "symbol": "FocusManager",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/focus.rs",
-          "symbol": "FocusManager::focus_next"
+          "symbol": "FocusManager::focus_next",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/focus.rs",
-          "symbol": "FocusManager::focus_prev"
+          "symbol": "FocusManager::focus_prev",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/focus.rs",
-          "symbol": "FocusManager::focus_set"
+          "symbol": "FocusManager::focus_set",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/focus.rs",
-          "symbol": "FocusManager::focus_clear"
+          "symbol": "FocusManager::focus_clear",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/focus.rs",
-          "symbol": "FocusManager::update_focusable_tags"
+          "symbol": "FocusManager::update_focusable_tags",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/focus.rs",
-          "symbol": "FocusManager::save"
+          "symbol": "FocusManager::save",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/focus.rs",
-          "symbol": "FocusManager::restore"
+          "symbol": "FocusManager::restore",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "WidgetView::focusable_tags"
+          "symbol": "WidgetView::focusable_tags",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "WidgetView::apply_key"
+          "symbol": "WidgetView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::click_to_focus"
+          "symbol": "AppShell::click_to_focus",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::focus"
+          "symbol": "AppShell::focus",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::modifiers"
+          "symbol": "AppShell::modifiers",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/widgets/standard_button.sce-template.xml",
-          "symbol": "keyboard_activate"
+          "symbol": "keyboard_activate",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/widget.rs",
-          "symbol": "WidgetTransition::detect"
+          "symbol": "WidgetTransition::detect",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/button.rs",
-          "symbol": "Button::detect (keyboard_click branch)"
+          "symbol": "Button::detect (keyboard_click branch)",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "ButtonView::apply_key"
+          "symbol": "ButtonView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/toggle.rs",
-          "symbol": "Toggle::send (keyboard_activate branch)"
+          "symbol": "Toggle::send (keyboard_activate branch)",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/checkbox.rs",
-          "symbol": "Checkbox::send (keyboard_activate branch)"
+          "symbol": "Checkbox::send (keyboard_activate branch)",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio.rs",
-          "symbol": "Radio::send (keyboard_activate branch)"
+          "symbol": "Radio::send (keyboard_activate branch)",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-toggle/src/main.rs",
-          "symbol": "ToggleView::apply_key"
+          "symbol": "ToggleView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-checkbox/src/main.rs",
-          "symbol": "CheckboxView::apply_key"
+          "symbol": "CheckboxView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio/src/main.rs",
-          "symbol": "RadioView::apply_key"
+          "symbol": "RadioView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider/src/main.rs",
-          "symbol": "SliderView::apply_key"
+          "symbol": "SliderView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider-vertical/src/main.rs",
-          "symbol": "SliderVerticalView::apply_key"
+          "symbol": "SliderVerticalView::apply_key",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio-group/src/main.rs",
-          "symbol": "RadioGroupView::apply_key (focused gate)"
+          "symbol": "RadioGroupView::apply_key (focused gate)",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/paint_adapter.rs",
-          "symbol": "paint_focus_ring"
+          "symbol": "paint_focus_ring",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::render (focus ring call)"
+          "symbol": "AppShell::render (focus ring call)",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell window_event WindowEvent::Focused"
+          "symbol": "AppShell window_event WindowEvent::Focused",
+          "kind": "implements"
         }
       ]
     },
@@ -4725,372 +5238,466 @@
         "5.35",
         "5.39"
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-a11y/src/lib.rs"
+          "file": "crates/pinion-a11y/src/lib.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/role.rs",
-          "symbol": "AriaRole"
+          "symbol": "AriaRole",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/node.rs",
-          "symbol": "AccessNode"
+          "symbol": "AccessNode",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/node.rs",
-          "symbol": "AccessState"
+          "symbol": "AccessState",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/node.rs",
-          "symbol": "AccessValue"
+          "symbol": "AccessValue",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/tree.rs",
-          "symbol": "AccessTreeBuilder"
+          "symbol": "AccessTreeBuilder",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/tree.rs",
-          "symbol": "tag_to_node_id"
+          "symbol": "tag_to_node_id",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/action.rs",
-          "symbol": "AccessAction"
+          "symbol": "AccessAction",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/action.rs",
-          "symbol": "translate_action"
+          "symbol": "translate_action",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppEvent::AccessKit"
+          "symbol": "AppEvent::AccessKit",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::handle_accesskit_event"
+          "symbol": "AppShell::handle_accesskit_event",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::forward_to_accesskit"
+          "symbol": "AppShell::forward_to_accesskit",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "rect_for_tag"
+          "symbol": "rect_for_tag",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "ButtonView::access_node"
+          "symbol": "ButtonView::access_node",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-toggle/src/main.rs",
-          "symbol": "ToggleView::access_node"
+          "symbol": "ToggleView::access_node",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-checkbox/src/main.rs",
-          "symbol": "CheckboxView::access_node"
+          "symbol": "CheckboxView::access_node",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio/src/main.rs",
-          "symbol": "RadioView::access_node"
+          "symbol": "RadioView::access_node",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider/src/main.rs",
-          "symbol": "SliderView::access_node"
+          "symbol": "SliderView::access_node",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider-vertical/src/main.rs",
-          "symbol": "SliderVerticalView::access_node"
+          "symbol": "SliderVerticalView::access_node",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio-group/src/main.rs",
-          "symbol": "RadioGroupView::access_node"
+          "symbol": "RadioGroupView::access_node",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio-group/src/main.rs",
-          "symbol": "RadioGroupView::access_focus_target"
+          "symbol": "RadioGroupView::access_focus_target",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::handle_action_request"
+          "symbol": "AppShell::handle_action_request",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::dispatch_access_action"
+          "symbol": "AppShell::dispatch_access_action",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::apply_a11y_key"
+          "symbol": "AppShell::apply_a11y_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "build_tag_map"
+          "symbol": "build_tag_map",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-a11y/tests/conformance.rs"
+          "file": "crates/pinion-a11y/tests/conformance.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "ContainerNode::aria_label"
+          "symbol": "ContainerNode::aria_label",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "ContainerNode::with_aria_label"
-        },
-        {
-          "file": "crates/pinion-a11y/src/scene_label.rs"
+          "symbol": "ContainerNode::with_aria_label",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/scene_label.rs",
-          "symbol": "enrich_names_from_scene"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-a11y/src/scene_label.rs",
+          "symbol": "enrich_names_from_scene",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio-group/src/main.rs",
-          "symbol": "RadioGroupView::access_child_invoke"
-        },
-        {
-          "file": "crates/pinion-a11y/src/focus.rs"
+          "symbol": "RadioGroupView::access_child_invoke",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/focus.rs",
-          "symbol": "AccessFocus"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-a11y/src/focus.rs",
+          "symbol": "AccessFocus",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/tree.rs",
-          "symbol": "AccessTreeBuilder::active_descendant"
+          "symbol": "AccessTreeBuilder::active_descendant",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/tree.rs",
-          "symbol": "AccessTreeBuilder::dirty_tags"
+          "symbol": "AccessTreeBuilder::dirty_tags",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::last_access_nodes"
+          "symbol": "AppShell::last_access_nodes",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::access_emit_initial"
-        },
-        {
-          "file": "crates/pinion-rpc/src/focus.rs"
-        },
-        {
-          "file": "crates/pinion-rpc/src/focus.rs",
-          "symbol": "focus_set"
+          "symbol": "AppShell::access_emit_initial",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/focus.rs",
-          "symbol": "focus_get"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-rpc/src/focus.rs",
+          "symbol": "focus_set",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-rpc/src/focus.rs",
+          "symbol": "focus_get",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "DispatchContext::focus_manager"
+          "symbol": "DispatchContext::focus_manager",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/focus.rs",
-          "symbol": "focus_next"
+          "symbol": "focus_next",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/focus.rs",
-          "symbol": "focus_prev"
+          "symbol": "focus_prev",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::last_access_focus"
+          "symbol": "AppShell::last_access_focus",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::handle_key_press"
+          "symbol": "AppShell::handle_key_press",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "AppShell::drain_redraw_to_winit"
+          "symbol": "AppShell::drain_redraw_to_winit",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-shell/tests/dispatch_core.rs"
+          "file": "crates/pinion-shell/tests/dispatch_core.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "TextRole"
+          "symbol": "TextRole",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "TextNode::with_role"
+          "symbol": "TextNode::with_role",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "RadioGroup::focused_index"
+          "symbol": "RadioGroup::focused_index",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "RadioGroup::set_focused_index"
+          "symbol": "RadioGroup::set_focused_index",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "RadioGroupExternal::focused_index"
+          "symbol": "RadioGroupExternal::focused_index",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "RpcError::new"
+          "symbol": "RpcError::new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "RpcError::with_data"
+          "symbol": "RpcError::with_data",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "RpcError::with_data_string"
+          "symbol": "RpcError::with_data_string",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "RpcError::invalid_params"
+          "symbol": "RpcError::invalid_params",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "RpcError::internal_error"
+          "symbol": "RpcError::internal_error",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "RadioGroup::send"
+          "symbol": "RadioGroup::send",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/external.rs",
-          "symbol": "InterveneError::OutOfRange"
+          "symbol": "InterveneError::OutOfRange",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/radio_group.rs",
-          "symbol": "RadioGroupExternal::resolve_index_intervene"
+          "symbol": "RadioGroupExternal::resolve_index_intervene",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore"
+          "symbol": "ShellCore",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "AccessEmitDecision"
+          "symbol": "AccessEmitDecision",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::dispatch_access_action"
+          "symbol": "ShellCore::dispatch_access_action",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::handle_action_request"
+          "symbol": "ShellCore::handle_action_request",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::take_redraw_request"
+          "symbol": "ShellCore::take_redraw_request",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::plan_access_emit"
+          "symbol": "ShellCore::plan_access_emit",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::commit_access_emit"
+          "symbol": "ShellCore::commit_access_emit",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::handle_focus_traverse"
+          "symbol": "ShellCore::handle_focus_traverse",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::handle_character_key"
+          "symbol": "ShellCore::handle_character_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::handle_named_key"
+          "symbol": "ShellCore::handle_named_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::compute_paint_scene"
+          "symbol": "ShellCore::compute_paint_scene",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::collect_access_emit_inputs"
+          "symbol": "ShellCore::collect_access_emit_inputs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::finalize_frame"
+          "symbol": "ShellCore::finalize_frame",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::text_cache_mut"
+          "symbol": "ShellCore::text_cache_mut",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::modifiers_shift_key"
+          "symbol": "ShellCore::modifiers_shift_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/app.rs",
-          "symbol": "AppShell"
+          "symbol": "AppShell",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/app.rs",
-          "symbol": "AppShell::new"
+          "symbol": "AppShell::new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/app.rs",
-          "symbol": "run"
+          "symbol": "run",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/standard_button.sce-template.xml"
+          "file": "crates/pinion-core/widgets/standard_button.sce-template.xml",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/slider.scxml"
+          "file": "crates/pinion-core/widgets/slider.scxml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "InputRouter::pointer_cancel"
+          "symbol": "InputRouter::pointer_cancel",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-core/widgets/listbox_item.scxml"
+          "file": "crates/pinion-core/widgets/listbox_item.scxml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox_item.rs",
-          "symbol": "ListBoxItem"
+          "symbol": "ListBoxItem",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox_item.rs",
-          "symbol": "ListBoxItemExternal"
+          "symbol": "ListBoxItemExternal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
-          "symbol": "ListBox"
+          "symbol": "ListBox",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/listbox.rs",
-          "symbol": "ListBoxExternal"
+          "symbol": "ListBoxExternal",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-listbox/src/main.rs",
-          "symbol": "ListBoxView"
+          "symbol": "ListBoxView",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/node.rs",
-          "symbol": "AccessNode::with_selected"
+          "symbol": "AccessNode::with_selected",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/node.rs",
-          "symbol": "AccessNode::with_multiselectable"
-        },
-        {
-          "file": "crates/pinion-a11y/src/widget_a11y.rs"
-        },
-        {
-          "file": "crates/pinion-a11y/src/widget_a11y.rs",
-          "symbol": "WidgetA11y"
+          "symbol": "AccessNode::with_multiselectable",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/widget_a11y.rs",
-          "symbol": "WidgetA11y::access_node"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/widget_a11y.rs",
-          "symbol": "WidgetA11y::access_focus_target"
+          "symbol": "WidgetA11y",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/widget_a11y.rs",
-          "symbol": "WidgetA11y::access_child_invoke"
+          "symbol": "WidgetA11y::access_node",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-a11y/src/widget_a11y.rs",
+          "symbol": "WidgetA11y::access_focus_target",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-a11y/src/widget_a11y.rs",
+          "symbol": "WidgetA11y::access_child_invoke",
+          "kind": "implements"
         }
       ]
     },
@@ -5206,287 +5813,361 @@
         "5.16",
         "5.40"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "TouchPhase"
+          "symbol": "TouchPhase",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "Touch"
+          "symbol": "Touch",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "Modifiers"
+          "symbol": "Modifiers",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "Modifiers::empty"
+          "symbol": "Modifiers::empty",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/input.rs",
-          "symbol": "Modifiers::shift_key"
+          "symbol": "Modifiers::shift_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/app.rs",
-          "symbol": "winit_touch_to_pinion"
+          "symbol": "winit_touch_to_pinion",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/app.rs",
-          "symbol": "winit_modifiers_to_pinion"
+          "symbol": "winit_modifiers_to_pinion",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-tui/Cargo.toml"
-        },
-        {
-          "file": "crates/pinion-tui/src/lib.rs"
+          "file": "crates/pinion-tui/Cargo.toml",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/lib.rs",
-          "symbol": "TuiRenderer"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/lib.rs",
+          "symbol": "TuiRenderer",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "WidgetRenderer"
+          "symbol": "WidgetRenderer",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/lib.rs",
-          "symbol": "VelloContext"
-        },
-        {
-          "file": "crates/pinion-core/src/renderer.rs"
+          "symbol": "VelloContext",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/renderer.rs",
-          "symbol": "WidgetRenderer"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-core/src/renderer.rs",
+          "symbol": "WidgetRenderer",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/lib.rs",
-          "symbol": "TuiContext"
-        },
-        {
-          "file": "crates/pinion-tui/src/paint.rs"
-        },
-        {
-          "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "to_buffer"
+          "symbol": "TuiContext",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "paint_text"
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-tui/src/widget.rs"
+          "file": "crates/pinion-tui/src/paint.rs",
+          "symbol": "to_buffer",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/paint.rs",
+          "symbol": "paint_text",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/widget.rs",
-          "symbol": "WidgetViewTui"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/widget.rs",
-          "symbol": "render_one_frame"
+          "symbol": "WidgetViewTui",
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-tui/src/shell.rs"
+          "file": "crates/pinion-tui/src/widget.rs",
+          "symbol": "render_one_frame",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/shell.rs",
-          "symbol": "run"
+          "kind": "implements"
         },
         {
-          "file": "examples/hello-button-tui/src/main.rs"
+          "file": "crates/pinion-tui/src/shell.rs",
+          "symbol": "run",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button-tui/src/main.rs",
-          "symbol": "HelloButtonTui"
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-tui/src/input.rs"
-        },
-        {
-          "file": "crates/pinion-tui/src/input.rs",
-          "symbol": "key_str_from_event"
-        },
-        {
-          "file": "crates/pinion-tui/src/input.rs",
-          "symbol": "modifiers_from_crossterm"
+          "file": "examples/hello-button-tui/src/main.rs",
+          "symbol": "HelloButtonTui",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/input.rs",
-          "symbol": "cell_to_pixel"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/input.rs",
+          "symbol": "key_str_from_event",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/input.rs",
+          "symbol": "modifiers_from_crossterm",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/input.rs",
+          "symbol": "cell_to_pixel",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/shell.rs",
-          "symbol": "dispatch_mouse"
+          "symbol": "dispatch_mouse",
+          "kind": "implements"
         },
         {
-          "file": "examples/hello-toggle-tui/Cargo.toml"
-        },
-        {
-          "file": "examples/hello-toggle-tui/src/main.rs"
+          "file": "examples/hello-toggle-tui/Cargo.toml",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-toggle-tui/src/main.rs",
-          "symbol": "HelloToggleTui"
+          "kind": "implements"
+        },
+        {
+          "file": "examples/hello-toggle-tui/src/main.rs",
+          "symbol": "HelloToggleTui",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "paint_box_style"
+          "symbol": "paint_box_style",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "paint_box"
+          "symbol": "paint_box",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "paint_container"
+          "symbol": "paint_container",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "color_to_tui"
-        },
-        {
-          "file": "crates/pinion-tui/src/substrate.rs"
+          "symbol": "color_to_tui",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui"
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/substrate.rs",
+          "symbol": "ShellCoreTui",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/shell.rs",
-          "symbol": "commit_paint"
+          "symbol": "commit_paint",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::dispatch_key"
+          "symbol": "ShellCoreTui::dispatch_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::cursor_moved"
+          "symbol": "ShellCoreTui::cursor_moved",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::pointer_down"
+          "symbol": "ShellCoreTui::pointer_down",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::pointer_up"
+          "symbol": "ShellCoreTui::pointer_up",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::compute_paint_scene"
+          "symbol": "ShellCoreTui::compute_paint_scene",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::update_paint_scene"
+          "symbol": "ShellCoreTui::update_paint_scene",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::set_log_sink"
+          "symbol": "ShellCoreTui::set_log_sink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/substrate.rs",
-          "symbol": "ShellCoreTui::with_log_sink"
-        },
-        {
-          "file": "crates/pinion-core/src/widget_core.rs"
+          "symbol": "ShellCoreTui::with_log_sink",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widget_core.rs",
-          "symbol": "WidgetCore"
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-a11y/src/widget_a11y.rs"
+          "file": "crates/pinion-core/src/widget_core.rs",
+          "symbol": "WidgetCore",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-a11y/src/widget_a11y.rs",
-          "symbol": "WidgetA11y"
+          "kind": "implements"
         },
         {
-          "file": "crates/pinion-runtime/src/core_shell.rs"
-        },
-        {
-          "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell"
-        },
-        {
-          "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::new"
+          "file": "crates/pinion-a11y/src/widget_a11y.rs",
+          "symbol": "WidgetA11y",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::forward"
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::apply_key"
+          "symbol": "CoreShell",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::cursor_moved"
+          "symbol": "CoreShell::new",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::cursor_left"
+          "symbol": "CoreShell::forward",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::pointer_down"
+          "symbol": "CoreShell::apply_key",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::pointer_up"
+          "symbol": "CoreShell::cursor_moved",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::pointer_cancel"
+          "symbol": "CoreShell::cursor_left",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::touch_event"
+          "symbol": "CoreShell::pointer_down",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::tail"
+          "symbol": "CoreShell::pointer_up",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "CoreShell::update_paint_scene"
+          "symbol": "CoreShell::pointer_cancel",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "DispatchTail"
+          "symbol": "CoreShell::touch_event",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/core_shell.rs",
-          "symbol": "StateChange"
+          "symbol": "CoreShell::tail",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/core_shell.rs",
+          "symbol": "CoreShell::update_paint_scene",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/core_shell.rs",
+          "symbol": "DispatchTail",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-runtime/src/core_shell.rs",
+          "symbol": "StateChange",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::compute_paint_scene"
+          "symbol": "ShellCore::compute_paint_scene",
+          "kind": "implements"
         },
         {
-          "file": "examples/hello-commands-tui/src/main.rs"
-        },
-        {
-          "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "CellClip"
-        },
-        {
-          "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "to_buffer_inner"
+          "file": "examples/hello-commands-tui/src/main.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "paint_text_inner"
+          "symbol": "CellClip",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "pixels_to_cell_floor"
+          "symbol": "to_buffer_inner",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "cell_to_buf_xy"
+          "symbol": "paint_text_inner",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/paint.rs",
+          "symbol": "pixels_to_cell_floor",
+          "kind": "implements"
+        },
+        {
+          "file": "crates/pinion-tui/src/paint.rs",
+          "symbol": "cell_to_buf_xy",
+          "kind": "implements"
         }
       ]
     },
@@ -5576,66 +6257,81 @@
           "code": "// R55.F — scene/scroll RPC method (11th typed method)\n{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"method\": \"scene/scroll\",\n  \"params\": {\n    \"path\": \"/external/list_box/scroll\",\n    \"action\": { \"scroll_by\": { \"dx\": 0, \"dy\": 120 } }\n  }\n}\n// Result mirrors the post-scroll offset so the AI client can confirm\n// the framework clamped to bounds and the visible window has moved.\n{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"result\": { \"offset_x\": 0, \"offset_y\": 240, \"clamped\": false }\n}"
         }
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "to_buffer_inner"
+          "symbol": "to_buffer_inner",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-tui/src/paint.rs",
-          "symbol": "CellClip"
+          "symbol": "CellClip",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "ScrollNode::from_state"
+          "symbol": "ScrollNode::from_state",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scroll.rs",
-          "symbol": "ScrollState::with_tag"
+          "symbol": "ScrollState::with_tag",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scroll.rs",
-          "symbol": "ScrollState::tag"
+          "symbol": "ScrollState::tag",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-listbox/src/main.rs",
-          "symbol": "view"
+          "symbol": "view",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-listbox/src/main.rs",
-          "symbol": "listbox_row_at_y"
+          "symbol": "listbox_row_at_y",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/scene.rs",
-          "symbol": "ScrollNode::map_layout"
+          "symbol": "ScrollNode::map_layout",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "ScrollBar"
+          "symbol": "ScrollBar",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "ScrollBarExternal"
+          "symbol": "ScrollBarExternal",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "ScrollBar::attach_state"
+          "symbol": "ScrollBar::attach_state",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scrollbar.rs",
-          "symbol": "ScrollBarExternal::pointer_move"
+          "symbol": "ScrollBarExternal::pointer_move",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-runtime/src/layout.rs",
-          "symbol": "compute_layout_with_scroll_dirty"
+          "symbol": "compute_layout_with_scroll_dirty",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/widgets/scroll.rs",
-          "symbol": "ScrollState::set_max"
+          "symbol": "ScrollState::set_max",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/substrate.rs",
-          "symbol": "ShellCore::compute_paint_scene"
+          "symbol": "ShellCore::compute_paint_scene",
+          "kind": "implements"
         }
       ]
     },
@@ -5706,17 +6402,20 @@
           "code": "from rpc_verify import RpcSubprocess, assert_eq, run_demo\n\ndef body() -> None:\n    with RpcSubprocess(\"hello-toggle\") as toggle:\n        assert_eq(toggle.query(\"/external/value\"), False, \"initial\")\n        for ev in (\"PointerEnter\", \"PointerDown\", \"PointerUp\"):\n            toggle.invoke(\"/external/send\", ev)\n        assert_eq(toggle.query(\"/external/value\"), True, \"post-activate\")\n\nif __name__ == \"__main__\":\n    import sys; sys.exit(run_demo(\"hello-toggle activate cycle\", body))"
         }
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "tools/rpc_verify.py",
-          "symbol": "RpcSubprocess"
+          "symbol": "RpcSubprocess",
+          "kind": "implements"
         },
         {
           "file": "tools/demos/hello_toggle_activate.py",
-          "symbol": "body"
+          "symbol": "body",
+          "kind": "implements"
         },
         {
-          "file": "tools/README.md"
+          "file": "tools/README.md",
+          "kind": "implements"
         }
       ]
     },
@@ -5860,154 +6559,191 @@
           "code": "// R57.0 substrate API surface (pinion-core::theme).\n#[non_exhaustive]\npub enum ColorRole { Surface, OnSurface, OnSurfaceMuted, Accent, OnAccent, Outline }\n\npub struct Theme {\n    pub surface: Color, pub on_surface: Color, pub on_surface_muted: Color,\n    pub accent: Color, pub on_accent: Color, pub outline: Color,\n}\nimpl Theme {\n    pub const fn light() -> Self { /* Material 3 light baseline, WCAG AA */ }\n    pub const fn dark()  -> Self { /* Material 3 dark baseline, WCAG AA  */ }\n    pub const fn resolve(&self, role: ColorRole) -> Color { /* per-role field dispatch */ }\n}\n\npub struct ThemeProvider { /* Signal<Theme> + tag */ }\nimpl ThemeProvider {\n    pub fn theme(&self) -> Theme { /* Signal::get -> auto-subscribe */ }\n    pub fn set_theme(&self, t: Theme) { /* Signal::set -> notify subscribers */ }\n}\n\npub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {\n    Owner::current().expect(\"use_theme requires an active Owner scope\")\n        .cache(tag, || ThemeProvider::with_tag(tag, Theme::light()))\n}"
         }
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ColorRole"
+          "symbol": "ColorRole",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "Theme"
+          "symbol": "Theme",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ThemeProvider"
+          "symbol": "ThemeProvider",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "use_theme"
+          "symbol": "use_theme",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/style.rs",
-          "symbol": "Color"
+          "symbol": "Color",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-theme/src/main.rs",
-          "symbol": "view"
+          "symbol": "view",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-theme/src/main.rs",
-          "symbol": "HelloThemeView::update"
+          "symbol": "HelloThemeView::update",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ColorRole::SurfaceContainerHighest"
+          "symbol": "ColorRole::SurfaceContainerHighest",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-toggle/src/main.rs",
-          "symbol": "ToggleView::update"
+          "symbol": "ToggleView::update",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-toggle/src/main.rs",
-          "symbol": "view"
+          "symbol": "view",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ColorRole::SurfaceContainerLow"
+          "symbol": "ColorRole::SurfaceContainerLow",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ColorRole::SurfaceContainer"
+          "symbol": "ColorRole::SurfaceContainer",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ColorRole::SurfaceContainerHigh"
+          "symbol": "ColorRole::SurfaceContainerHigh",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-listbox/src/main.rs",
-          "symbol": "listbox_row"
+          "symbol": "listbox_row",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-listbox/src/main.rs",
-          "symbol": "build_scrollbar_visual"
+          "symbol": "build_scrollbar_visual",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-textfield/src/main.rs",
-          "symbol": "text_fg_for"
+          "symbol": "text_fg_for",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-textfield/src/main.rs",
-          "symbol": "field_fill_for"
+          "symbol": "field_fill_for",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-textfield/src/main.rs",
-          "symbol": "selection_fill"
+          "symbol": "selection_fill",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-textfield/src/main.rs",
-          "symbol": "preedit_bg_fill"
+          "symbol": "preedit_bg_fill",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-textfield/src/main.rs",
-          "symbol": "preedit_underline"
+          "symbol": "preedit_underline",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-button/src/main.rs",
-          "symbol": "button_fill_endpoints"
+          "symbol": "button_fill_endpoints",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio/src/main.rs",
-          "symbol": "radio_border_color"
+          "symbol": "radio_border_color",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-radio-group/src/main.rs",
-          "symbol": "radio_border_color"
+          "symbol": "radio_border_color",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-checkbox/src/main.rs",
-          "symbol": "checkbox_accent_for"
+          "symbol": "checkbox_accent_for",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-checkbox/src/main.rs",
-          "symbol": "checkbox_outline_for"
+          "symbol": "checkbox_outline_for",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider/src/main.rs",
-          "symbol": "slider_accent_for"
+          "symbol": "slider_accent_for",
+          "kind": "implements"
         },
         {
           "file": "examples/hello-slider-vertical/src/main.rs",
-          "symbol": "slider_accent_for"
+          "symbol": "slider_accent_for",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "SystemColorScheme"
+          "symbol": "SystemColorScheme",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ThemeMode"
+          "symbol": "ThemeMode",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "system_color_scheme"
+          "symbol": "system_color_scheme",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "set_system_color_scheme"
+          "symbol": "set_system_color_scheme",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-shell/src/app.rs",
-          "symbol": "winit_theme_to_pinion_scheme"
+          "symbol": "winit_theme_to_pinion_scheme",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "THEME_FADE_SPRING"
+          "symbol": "THEME_FADE_SPRING",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ThemeLinear"
+          "symbol": "ThemeLinear",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ThemeFadeState"
+          "symbol": "ThemeFadeState",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/theme.rs",
-          "symbol": "ThemeProvider::theme_animated"
+          "symbol": "ThemeProvider::theme_animated",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/test_fixtures.rs",
-          "symbol": "settle_owner_animations"
+          "symbol": "settle_owner_animations",
+          "kind": "implements"
         }
       ]
     },
@@ -6094,10 +6830,11 @@
       "impact_scope": [
         "2"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-rpc/src/commands.rs",
-          "symbol": "list_pending_commands"
+          "symbol": "list_pending_commands",
+          "kind": "implements"
         }
       ]
     },
@@ -6325,17 +7062,20 @@
         "5.7",
         "5.8"
       ],
-      "implementations": [
+      "bindings": [
         {
-          "file": "crates/pinion-core/src/frame.rs"
+          "file": "crates/pinion-core/src/frame.rs",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/frame.rs",
-          "symbol": "Frame"
+          "symbol": "Frame",
+          "kind": "implements"
         },
         {
           "file": "crates/pinion-core/src/frame.rs",
-          "symbol": "Frame::with_dt"
+          "symbol": "Frame::with_dt",
+          "kind": "implements"
         }
       ]
     },
@@ -6422,10 +7162,11 @@
         "2",
         "3"
       ],
-      "implementations": [
+      "bindings": [
         {
           "file": "crates/pinion-rpc/src/dispatch.rs",
-          "symbol": "dispatch"
+          "symbol": "dispatch",
+          "kind": "implements"
         }
       ]
     }
@@ -25077,6 +25818,56 @@
         "leaf-typed activation predicate stays inline per coordinator (behind trait = no net reduction)"
       ]
     },
+    "R736": {
+      "decision_summary": "R736 editable number input (typeable spinbutton) — 2nd consumer of the editable-field value-coordination pattern, zero new substrate",
+      "changes_bullets": [
+        "New hello-number-input: editable WAI-ARIA spinbutton (typeable <input type=number> form factor)",
+        "Composition of TextFieldExternal draft + two ButtonExternal steppers; field text is the value SSOT",
+        "2nd consumer of the editable-field value-coordination pattern (after hello-combobox-editable); 0 new substrate",
+        "Numeric value = parse_clamp(field_text) pure projection; no separate f32 store (avoids dual-SSOT)",
+        "Stepper clicks emit click intents into the reducer; arrows/PageUp-Down step; Enter normalises in place",
+        "Non-numeric keystrokes dropped at the binding (the HTML number-input gate); reuses AriaRole::SpinButton"
+      ],
+      "verification_bullets": [
+        "17 binding unit tests green (clamp/parse/format/gate, value round-trip, reducer, keyboard, a11y, view)",
+        "cargo test --workspace -j2: 4793 passed, 0 failed; cargo clippy --workspace -D pedantic clean",
+        "r736_number_input.py: 40 assertions; full headless sweep 85/85 (was 84)",
+        "Live-pixel boot frame: numeric field + stepper render distinct opaque tonal surfaces vs page background"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "Blur-reformat deferred: no binding-observable plain-blur hook (WidgetCore has no focus-change callback)",
+        "delegate_to_field (2 copies w/ combobox-editable) + stepper helpers (2 copies w/ spinbutton) honest carry, under 3rd lift"
+      ],
+      "publishable_decision_summary": "R736 editable number input (typeable spinbutton) — 2nd consumer of the editable-field value-coordination pattern, zero new substrate",
+      "publishable_changes_bullets": [
+        "New hello-number-input: editable WAI-ARIA spinbutton (typeable <input type=number> form factor)",
+        "Composition of TextFieldExternal draft + two ButtonExternal steppers; field text is the value SSOT",
+        "2nd consumer of the editable-field value-coordination pattern (after hello-combobox-editable); 0 new substrate",
+        "Numeric value = parse_clamp(field_text) pure projection; no separate f32 store (avoids dual-SSOT)",
+        "Stepper clicks emit click intents into the reducer; arrows/PageUp-Down step; Enter normalises in place",
+        "Non-numeric keystrokes dropped at the binding (the HTML number-input gate); reuses AriaRole::SpinButton"
+      ],
+      "publishable_verification_bullets": [
+        "17 binding unit tests green (clamp/parse/format/gate, value round-trip, reducer, keyboard, a11y, view)",
+        "cargo test --workspace -j2: 4793 passed, 0 failed; cargo clippy --workspace -D pedantic clean",
+        "r736_number_input.py: 40 assertions; full headless sweep 85/85 (was 84)",
+        "Live-pixel boot frame: numeric field + stepper render distinct opaque tonal surfaces vs page background"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Blur-reformat deferred: no binding-observable plain-blur hook (WidgetCore has no focus-change callback)",
+        "delegate_to_field (2 copies w/ combobox-editable) + stepper helpers (2 copies w/ spinbutton) honest carry, under 3rd lift"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -38212,5 +39003,5 @@
       "reason": "design clarification — Intent.payload consumed by V::update reducer, not threaded through SCXML invoke send (R51.159 carry resolved as design choice)"
     }
   },
-  "schema_version": 4
+  "schema_version": 5
 }

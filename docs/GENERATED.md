@@ -132,8 +132,8 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
-**Implementations**:
-- crates/pinion-platform-storage/src/lib.rs
+**Bindings**:
+- [implements] crates/pinion-platform-storage/src/lib.rs
 
 
 
@@ -447,15 +447,15 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
-**Implementations**:
-- crates/pinion-rpc/src/invoke.rs:invoke
-- crates/pinion-rpc/src/intents.rs:drain_intents
-- crates/pinion-rpc/src/layout_query.rs:LayoutNode::line_count
-- crates/pinion-core/src/scene.rs:TextNode::line_count
-- crates/pinion-runtime/src/layout.rs:compute_layout::text_lines
-- examples/hello-button/src/main.rs:App::resumed::request_redraw
-- crates/pinion-rpc/src/dispatch.rs:tests::scene_invoke_full_cycle_on_toggle_external_emits_toggle_intent
-- crates/pinion-rpc/src/dispatch.rs:deserialize_nullable_present
+**Bindings**:
+- [implements] crates/pinion-rpc/src/invoke.rs:invoke
+- [implements] crates/pinion-rpc/src/intents.rs:drain_intents
+- [implements] crates/pinion-rpc/src/layout_query.rs:LayoutNode::line_count
+- [implements] crates/pinion-core/src/scene.rs:TextNode::line_count
+- [implements] crates/pinion-runtime/src/layout.rs:compute_layout::text_lines
+- [implements] examples/hello-button/src/main.rs:App::resumed::request_redraw
+- [implements] crates/pinion-rpc/src/dispatch.rs:tests::scene_invoke_full_cycle_on_toggle_external_emits_toggle_intent
+- [implements] crates/pinion-rpc/src/dispatch.rs:deserialize_nullable_present
 
 
 
@@ -618,17 +618,17 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
-**Implementations**:
-- crates/pinion-core/src/widgets/button.rs:ButtonExternal
-- crates/pinion-core/src/widgets/button.rs:ButtonStateSnapshot
-- crates/pinion-core/src/external.rs:External::wants_pointer_capture
-- crates/pinion-core/src/external.rs:External::pointer_move
-- crates/pinion-core/src/external.rs:IntrospectValue::as_f32
-- crates/pinion-core/src/external.rs:IntrospectValue::as_i32
-- crates/pinion-core/src/storage.rs:Storage
-- crates/pinion-core/src/storage.rs:InMemoryStorage
-- crates/pinion-platform-storage/src/lib.rs:FileStorage
-- crates/pinion-platform-storage/src/lib.rs:open_app_storage
+**Bindings**:
+- [implements] crates/pinion-core/src/widgets/button.rs:ButtonExternal
+- [implements] crates/pinion-core/src/widgets/button.rs:ButtonStateSnapshot
+- [implements] crates/pinion-core/src/external.rs:External::wants_pointer_capture
+- [implements] crates/pinion-core/src/external.rs:External::pointer_move
+- [implements] crates/pinion-core/src/external.rs:IntrospectValue::as_f32
+- [implements] crates/pinion-core/src/external.rs:IntrospectValue::as_i32
+- [implements] crates/pinion-core/src/storage.rs:Storage
+- [implements] crates/pinion-core/src/storage.rs:InMemoryStorage
+- [implements] crates/pinion-platform-storage/src/lib.rs:FileStorage
+- [implements] crates/pinion-platform-storage/src/lib.rs:open_app_storage
 
 
 
@@ -721,11 +721,11 @@ Source: `docs/.atomic/workspace.atomic.json`
 
 
 
-**Implementations**:
-- crates/pinion-shell/src/lib.rs:VelloRenderer
-- crates/pinion-shell/src/lib.rs:AppShell::render
-- crates/pinion-shell/src/lib.rs:vello_renderer_impl
-- crates/pinion-shell/tests/smoke.rs
+**Bindings**:
+- [implements] crates/pinion-shell/src/lib.rs:VelloRenderer
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::render
+- [implements] crates/pinion-shell/src/lib.rs:vello_renderer_impl
+- [implements] crates/pinion-shell/tests/smoke.rs
 
 
 
@@ -1021,20 +1021,20 @@ fn main() {
 
 
 
-**Implementations**:
-- crates/pinion-core/src/intent.rs:Intent
-- crates/pinion-core/src/intent.rs:IntentTag
-- crates/pinion-derive/src/lib.rs:derive_intent_tag
-- crates/pinion-core/src/scene.rs:BoxNode
-- crates/pinion-core/src/external.rs:External::drain_intents
-- crates/pinion-runtime/src/intent_queue.rs:walk_scene_and_drain
-- crates/pinion-rpc/src/intents.rs:IntentsError
-- crates/pinion-core/src/widgets/button.rs:ButtonExternal::send
-- examples/hello-button/src/main.rs:App::drain_intents
-- crates/pinion-core/src/scene.rs:ExternalNode
-- crates/pinion-core/src/intent.rs:intent_tag
-- examples/hello-toggle/src/main.rs:TOGGLE_INTENT_TAG_FULL
-- examples/hello-theme/src/main.rs:TOGGLE_INTENT_TAG_FULL
+**Bindings**:
+- [implements] crates/pinion-core/src/intent.rs:Intent
+- [implements] crates/pinion-core/src/intent.rs:IntentTag
+- [implements] crates/pinion-derive/src/lib.rs:derive_intent_tag
+- [implements] crates/pinion-core/src/scene.rs:BoxNode
+- [implements] crates/pinion-core/src/external.rs:External::drain_intents
+- [implements] crates/pinion-runtime/src/intent_queue.rs:walk_scene_and_drain
+- [implements] crates/pinion-rpc/src/intents.rs:IntentsError
+- [implements] crates/pinion-core/src/widgets/button.rs:ButtonExternal::send
+- [implements] examples/hello-button/src/main.rs:App::drain_intents
+- [implements] crates/pinion-core/src/scene.rs:ExternalNode
+- [implements] crates/pinion-core/src/intent.rs:intent_tag
+- [implements] examples/hello-toggle/src/main.rs:TOGGLE_INTENT_TAG_FULL
+- [implements] examples/hello-theme/src/main.rs:TOGGLE_INTENT_TAG_FULL
 
 
 
@@ -1094,10 +1094,10 @@ fn main() {
 
 
 
-**Implementations**:
-- crates/pinion-core/src/style.rs:LayoutStyle
-- crates/pinion-runtime/src/layout.rs:compute_layout
-- examples/hello-button/src/main.rs:view
+**Bindings**:
+- [implements] crates/pinion-core/src/style.rs:LayoutStyle
+- [implements] crates/pinion-runtime/src/layout.rs:compute_layout
+- [implements] examples/hello-button/src/main.rs:view
 
 
 
@@ -1196,45 +1196,45 @@ fn main() {
 
 
 
-**Implementations**:
-- crates/pinion-core/src/reactive/signal.rs
-- crates/pinion-core/src/reactive/owner.rs
-- crates/pinion-core/src/reactive/computed.rs
-- crates/pinion-core/src/reactive/resource.rs
-- crates/pinion-core/src/reactive/introspect.rs
-- crates/pinion-forge/src/lib.rs
-- crates/pinion-forge/src/ast.rs
-- crates/pinion-forge/src/parser.rs
-- crates/pinion-forge/src/codegen.rs
-- crates/pinion-forge/src/diagnostic.rs
-- crates/pinion-forge/src/wire.rs
-- crates/pinion-forge/src/build.rs
-- crates/pinion-forge/Cargo.toml
-- crates/pinion-forge/src/ast.rs:SignalDecl
-- crates/pinion-forge/src/parser.rs:ParseCtx::parse_signal
-- crates/pinion-forge/src/codegen.rs:emit_struct_with_signals
-- crates/pinion-forge/src/ast.rs:ComputedDecl
-- crates/pinion-forge/src/parser.rs:ParseCtx::parse_named_typed_body
-- crates/pinion-forge/src/codegen.rs:emit_struct_with_children
-- crates/pinion-forge/src/ast.rs:ResourceDecl
-- crates/pinion-forge/src/parser.rs:ParseCtx::parse_resource
-- crates/pinion-forge/src/codegen.rs:emit_resource_into
-- crates/pinion-forge/src/codegen.rs:needs_spawner
-- crates/pinion-forge/src/ast.rs:UseDecl
-- crates/pinion-forge/src/parser.rs:ParseCtx::parse_use
-- crates/pinion-forge/src/codegen.rs:emit_use_block
-- examples/forge-counter/Cargo.toml
-- examples/forge-counter/build.rs
-- examples/forge-counter/ui/counter.pinion.xml
-- examples/forge-counter/src/main.rs
-- crates/pinion-core/src/reactive/owner.rs:Owner::current
-- crates/pinion-core/src/reactive/owner.rs:CURRENT_OWNER_HANDLE
-- crates/pinion-core/src/reactive/owner.rs:OwnerHandleGuard
-- crates/pinion-core/src/reactive/owner.rs:Owner::cache
-- crates/pinion-core/src/reactive/owner.rs:Owner::cache_contains
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::apply_key
-- crates/pinion-core/src/widgets/text_edit.rs:TextEditState
-- crates/pinion-core/src/widgets/text_edit.rs:use_text_edit_state
+**Bindings**:
+- [implements] crates/pinion-core/src/reactive/signal.rs
+- [implements] crates/pinion-core/src/reactive/owner.rs
+- [implements] crates/pinion-core/src/reactive/computed.rs
+- [implements] crates/pinion-core/src/reactive/resource.rs
+- [implements] crates/pinion-core/src/reactive/introspect.rs
+- [implements] crates/pinion-forge/src/lib.rs
+- [implements] crates/pinion-forge/src/ast.rs
+- [implements] crates/pinion-forge/src/parser.rs
+- [implements] crates/pinion-forge/src/codegen.rs
+- [implements] crates/pinion-forge/src/diagnostic.rs
+- [implements] crates/pinion-forge/src/wire.rs
+- [implements] crates/pinion-forge/src/build.rs
+- [implements] crates/pinion-forge/Cargo.toml
+- [implements] crates/pinion-forge/src/ast.rs:SignalDecl
+- [implements] crates/pinion-forge/src/parser.rs:ParseCtx::parse_signal
+- [implements] crates/pinion-forge/src/codegen.rs:emit_struct_with_signals
+- [implements] crates/pinion-forge/src/ast.rs:ComputedDecl
+- [implements] crates/pinion-forge/src/parser.rs:ParseCtx::parse_named_typed_body
+- [implements] crates/pinion-forge/src/codegen.rs:emit_struct_with_children
+- [implements] crates/pinion-forge/src/ast.rs:ResourceDecl
+- [implements] crates/pinion-forge/src/parser.rs:ParseCtx::parse_resource
+- [implements] crates/pinion-forge/src/codegen.rs:emit_resource_into
+- [implements] crates/pinion-forge/src/codegen.rs:needs_spawner
+- [implements] crates/pinion-forge/src/ast.rs:UseDecl
+- [implements] crates/pinion-forge/src/parser.rs:ParseCtx::parse_use
+- [implements] crates/pinion-forge/src/codegen.rs:emit_use_block
+- [implements] examples/forge-counter/Cargo.toml
+- [implements] examples/forge-counter/build.rs
+- [implements] examples/forge-counter/ui/counter.pinion.xml
+- [implements] examples/forge-counter/src/main.rs
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::current
+- [implements] crates/pinion-core/src/reactive/owner.rs:CURRENT_OWNER_HANDLE
+- [implements] crates/pinion-core/src/reactive/owner.rs:OwnerHandleGuard
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::cache
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::cache_contains
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::apply_key
+- [implements] crates/pinion-core/src/widgets/text_edit.rs:TextEditState
+- [implements] crates/pinion-core/src/widgets/text_edit.rs:use_text_edit_state
 
 
 
@@ -1303,100 +1303,100 @@ fn main() {
 
 
 
-**Implementations**:
-- crates/pinion-core/src/reactive/effect.rs
-- crates/pinion-core/src/reactive/effect.rs:Effect
-- crates/pinion-core/src/reactive/effect.rs:EffectInner
-- crates/pinion-core/src/reactive/effect.rs:Effect::new
-- crates/pinion-core/src/reactive/effect.rs:EffectInner::rerun
-- crates/pinion-core/src/reactive/effect.rs:EffectInner::mark_dirty
-- crates/pinion-core/src/reactive/owner.rs:Owner::on_cleanup
-- crates/pinion-core/src/command.rs
-- crates/pinion-core/src/command.rs:Command
-- crates/pinion-core/src/command.rs:Command::new_static
-- crates/pinion-core/src/reactive/owner.rs:Owner::dispatch_command
-- crates/pinion-core/src/reactive/owner.rs:Owner::pending_commands
-- crates/pinion-core/src/reactive/owner.rs:Owner::take_pending_commands
-- crates/pinion-core/src/reactive/owner.rs:Owner::take_pending_commands_recursive
-- crates/pinion-runtime/src/command/mod.rs
-- crates/pinion-runtime/src/command/handler.rs
-- crates/pinion-runtime/src/command/handler.rs:Handler
-- crates/pinion-runtime/src/command/handler.rs:HandlerFuture
-- crates/pinion-runtime/src/command/registry.rs
-- crates/pinion-runtime/src/command/registry.rs:HandlerRegistry
-- crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::register
-- crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::unregister
-- crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::dispatch
-- crates/pinion-runtime/src/command/executor.rs
-- crates/pinion-runtime/src/command/executor.rs:Executor
-- crates/pinion-runtime/src/command/executor.rs:BoxFuture
-- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle
-- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::new
-- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::no_op
-- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::cancel
-- crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::is_cancelled
-- crates/pinion-runtime/src/command/executor.rs:CommandExecutor
-- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::new
-- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::registry
-- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::dispatch
-- crates/pinion-runtime/src/command/executor.rs:BlockOnExecutor
-- crates/pinion-runtime/src/command/sink.rs
-- crates/pinion-runtime/src/command/sink.rs:IntentSink
-- crates/pinion-runtime/src/command/sink.rs:IntentSink::send
-- crates/pinion-runtime/src/command/sink.rs:VecSink
-- crates/pinion-runtime/src/command/sink.rs:VecSink::new
-- crates/pinion-runtime/src/command/sink.rs:VecSink::drain
-- crates/pinion-runtime/src/command/sink.rs:VecSink::snapshot
-- crates/pinion-runtime/src/command/sink.rs:VecSink::len
-- crates/pinion-runtime/src/command/sink.rs:VecSink::is_empty
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::with_executor
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::set_executor
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::clear_executor
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::executor
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::dispatch_pending_commands
-- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::cancel_scope
-- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::in_flight_len
-- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::has_in_flight
-- crates/pinion-shell/src/executor.rs
-- crates/pinion-shell/src/executor.rs:TokioExecutor
-- crates/pinion-shell/src/executor.rs:TokioExecutor::new
-- crates/pinion-shell/src/executor.rs:ProxyIntentSink
-- crates/pinion-shell/src/executor.rs:ProxyIntentSink::new
-- crates/pinion-shell/src/executor.rs:build_executor_and_sink
-- crates/pinion-shell/src/lib.rs:AppEvent::IntentArrived
-- crates/pinion-shell/src/app.rs:run_with_handlers
-- crates/pinion-shell/src/substrate.rs:ShellCore::set_command_executor
-- crates/pinion-shell/src/substrate.rs:ShellCore::command_executor
-- crates/pinion-shell/src/substrate.rs:ShellCore::dispatch_intent
-- crates/pinion-tui/src/executor.rs
-- crates/pinion-tui/src/executor.rs:TokioExecutor
-- crates/pinion-tui/src/executor.rs:TokioExecutor::new
-- crates/pinion-tui/src/executor.rs:MpscIntentSink
-- crates/pinion-tui/src/executor.rs:MpscIntentSink::new
-- crates/pinion-tui/src/executor.rs:build_executor_and_sink
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::set_command_executor
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::command_executor
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::dispatch_intent
-- crates/pinion-tui/src/shell.rs:run_with_handlers
-- crates/pinion-core/src/reactive/owner.rs:Owner::pending_commands_recursive
-- crates/pinion-rpc/src/commands.rs
-- crates/pinion-rpc/src/commands.rs:CommandsError
-- crates/pinion-rpc/src/commands.rs:PendingCommandView
-- crates/pinion-rpc/src/commands.rs:list_pending_commands
-- crates/pinion-rpc/src/dispatch.rs:DispatchContext::with_commands_owner
-- crates/pinion-runtime/src/command/executor.rs:CommandExecutor::in_flight_snapshot
-- crates/pinion-rpc/src/commands.rs:list_in_flight_commands
-- crates/pinion-rpc/src/dispatch.rs:DispatchContext::with_commands_executor
-- examples/hello-commands/src/main.rs
-- examples/hello-commands/src/main.rs:queue_one_shot_demo_command
-- examples/hello-commands/src/main.rs:CommandsView
-- examples/hello-commands/src/main.rs:echo_handler
-- examples/hello-commands-tui/src/main.rs
-- examples/hello-commands-tui/src/main.rs:HelloCommandsTui
-- examples/hello-commands-tui/src/main.rs:queue_one_shot_demo_command
-- crates/pinion-core/src/widget_core.rs:WidgetCore::update
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::route_intent_through_update
-- crates/pinion-core/src/test_fixtures.rs:EchoButtonFixture
+**Bindings**:
+- [implements] crates/pinion-core/src/reactive/effect.rs
+- [implements] crates/pinion-core/src/reactive/effect.rs:Effect
+- [implements] crates/pinion-core/src/reactive/effect.rs:EffectInner
+- [implements] crates/pinion-core/src/reactive/effect.rs:Effect::new
+- [implements] crates/pinion-core/src/reactive/effect.rs:EffectInner::rerun
+- [implements] crates/pinion-core/src/reactive/effect.rs:EffectInner::mark_dirty
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::on_cleanup
+- [implements] crates/pinion-core/src/command.rs
+- [implements] crates/pinion-core/src/command.rs:Command
+- [implements] crates/pinion-core/src/command.rs:Command::new_static
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::dispatch_command
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::pending_commands
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::take_pending_commands
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::take_pending_commands_recursive
+- [implements] crates/pinion-runtime/src/command/mod.rs
+- [implements] crates/pinion-runtime/src/command/handler.rs
+- [implements] crates/pinion-runtime/src/command/handler.rs:Handler
+- [implements] crates/pinion-runtime/src/command/handler.rs:HandlerFuture
+- [implements] crates/pinion-runtime/src/command/registry.rs
+- [implements] crates/pinion-runtime/src/command/registry.rs:HandlerRegistry
+- [implements] crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::register
+- [implements] crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::unregister
+- [implements] crates/pinion-runtime/src/command/registry.rs:HandlerRegistry::dispatch
+- [implements] crates/pinion-runtime/src/command/executor.rs
+- [implements] crates/pinion-runtime/src/command/executor.rs:Executor
+- [implements] crates/pinion-runtime/src/command/executor.rs:BoxFuture
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::new
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::no_op
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::cancel
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandTaskHandle::is_cancelled
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandExecutor
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandExecutor::new
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandExecutor::registry
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandExecutor::dispatch
+- [implements] crates/pinion-runtime/src/command/executor.rs:BlockOnExecutor
+- [implements] crates/pinion-runtime/src/command/sink.rs
+- [implements] crates/pinion-runtime/src/command/sink.rs:IntentSink
+- [implements] crates/pinion-runtime/src/command/sink.rs:IntentSink::send
+- [implements] crates/pinion-runtime/src/command/sink.rs:VecSink
+- [implements] crates/pinion-runtime/src/command/sink.rs:VecSink::new
+- [implements] crates/pinion-runtime/src/command/sink.rs:VecSink::drain
+- [implements] crates/pinion-runtime/src/command/sink.rs:VecSink::snapshot
+- [implements] crates/pinion-runtime/src/command/sink.rs:VecSink::len
+- [implements] crates/pinion-runtime/src/command/sink.rs:VecSink::is_empty
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::with_executor
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::set_executor
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::clear_executor
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::executor
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::dispatch_pending_commands
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandExecutor::cancel_scope
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandExecutor::in_flight_len
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandExecutor::has_in_flight
+- [implements] crates/pinion-shell/src/executor.rs
+- [implements] crates/pinion-shell/src/executor.rs:TokioExecutor
+- [implements] crates/pinion-shell/src/executor.rs:TokioExecutor::new
+- [implements] crates/pinion-shell/src/executor.rs:ProxyIntentSink
+- [implements] crates/pinion-shell/src/executor.rs:ProxyIntentSink::new
+- [implements] crates/pinion-shell/src/executor.rs:build_executor_and_sink
+- [implements] crates/pinion-shell/src/lib.rs:AppEvent::IntentArrived
+- [implements] crates/pinion-shell/src/app.rs:run_with_handlers
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::set_command_executor
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::command_executor
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::dispatch_intent
+- [implements] crates/pinion-tui/src/executor.rs
+- [implements] crates/pinion-tui/src/executor.rs:TokioExecutor
+- [implements] crates/pinion-tui/src/executor.rs:TokioExecutor::new
+- [implements] crates/pinion-tui/src/executor.rs:MpscIntentSink
+- [implements] crates/pinion-tui/src/executor.rs:MpscIntentSink::new
+- [implements] crates/pinion-tui/src/executor.rs:build_executor_and_sink
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::set_command_executor
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::command_executor
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::dispatch_intent
+- [implements] crates/pinion-tui/src/shell.rs:run_with_handlers
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::pending_commands_recursive
+- [implements] crates/pinion-rpc/src/commands.rs
+- [implements] crates/pinion-rpc/src/commands.rs:CommandsError
+- [implements] crates/pinion-rpc/src/commands.rs:PendingCommandView
+- [implements] crates/pinion-rpc/src/commands.rs:list_pending_commands
+- [implements] crates/pinion-rpc/src/dispatch.rs:DispatchContext::with_commands_owner
+- [implements] crates/pinion-runtime/src/command/executor.rs:CommandExecutor::in_flight_snapshot
+- [implements] crates/pinion-rpc/src/commands.rs:list_in_flight_commands
+- [implements] crates/pinion-rpc/src/dispatch.rs:DispatchContext::with_commands_executor
+- [implements] examples/hello-commands/src/main.rs
+- [implements] examples/hello-commands/src/main.rs:queue_one_shot_demo_command
+- [implements] examples/hello-commands/src/main.rs:CommandsView
+- [implements] examples/hello-commands/src/main.rs:echo_handler
+- [implements] examples/hello-commands-tui/src/main.rs
+- [implements] examples/hello-commands-tui/src/main.rs:HelloCommandsTui
+- [implements] examples/hello-commands-tui/src/main.rs:queue_one_shot_demo_command
+- [implements] crates/pinion-core/src/widget_core.rs:WidgetCore::update
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::route_intent_through_update
+- [implements] crates/pinion-core/src/test_fixtures.rs:EchoButtonFixture
 
 
 
@@ -1725,41 +1725,41 @@ fn main() {
 
 
 
-**Implementations**:
-- crates/pinion-core/src/animation.rs
-- crates/pinion-core/src/animation.rs:Animatable
-- crates/pinion-core/src/animation.rs:SpringConfig
-- crates/pinion-core/src/animation.rs:SpringState
-- crates/pinion-core/src/animation.rs:AnimRect
-- crates/pinion-core/src/style.rs:Color::to_linear
-- crates/pinion-core/src/style.rs:Color::from_linear
-- crates/pinion-core/src/animation.rs:Easing
-- crates/pinion-core/src/animation.rs:Tween
-- crates/pinion-core/src/animation.rs:Animation
-- crates/pinion-core/src/animation.rs:AnimationInner
-- crates/pinion-core/src/animation.rs:Tickable
-- crates/pinion-core/src/animation.rs:Animation::new
-- crates/pinion-core/src/reactive/owner.rs:Owner::register_animation
-- crates/pinion-core/src/reactive/owner.rs:Owner::tick_animations
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::root_owner
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::tick_animations
-- crates/pinion-shell/src/substrate.rs:ShellCore::root_owner
-- crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::root_owner
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::compute_paint_scene
-- crates/pinion-runtime/src/frame_pacing.rs
-- crates/pinion-runtime/src/frame_pacing.rs:MAX_FRAME_DT_SECS
-- crates/pinion-runtime/src/frame_pacing.rs:clamp_frame_dt
-- crates/pinion-core/src/reactive/owner.rs:Owner::any_animation_active
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::any_animation_active
-- examples/hello-button/src/main.rs:drive_hover_progress
-- examples/hello-button/src/main.rs:lerp_grayscale
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::any_animation_active
-- crates/pinion-tui/src/shell.rs:run
-- examples/hello-button-tui/src/main.rs:drive_hover_progress
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::frame_signal
-- crates/pinion-core/src/style.rs:Color::lerp
-- crates/pinion-core/src/widgets/caret_blink.rs:CaretBlink
+**Bindings**:
+- [implements] crates/pinion-core/src/animation.rs
+- [implements] crates/pinion-core/src/animation.rs:Animatable
+- [implements] crates/pinion-core/src/animation.rs:SpringConfig
+- [implements] crates/pinion-core/src/animation.rs:SpringState
+- [implements] crates/pinion-core/src/animation.rs:AnimRect
+- [implements] crates/pinion-core/src/style.rs:Color::to_linear
+- [implements] crates/pinion-core/src/style.rs:Color::from_linear
+- [implements] crates/pinion-core/src/animation.rs:Easing
+- [implements] crates/pinion-core/src/animation.rs:Tween
+- [implements] crates/pinion-core/src/animation.rs:Animation
+- [implements] crates/pinion-core/src/animation.rs:AnimationInner
+- [implements] crates/pinion-core/src/animation.rs:Tickable
+- [implements] crates/pinion-core/src/animation.rs:Animation::new
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::register_animation
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::tick_animations
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::root_owner
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::tick_animations
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::root_owner
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::root_owner
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::compute_paint_scene
+- [implements] crates/pinion-runtime/src/frame_pacing.rs
+- [implements] crates/pinion-runtime/src/frame_pacing.rs:MAX_FRAME_DT_SECS
+- [implements] crates/pinion-runtime/src/frame_pacing.rs:clamp_frame_dt
+- [implements] crates/pinion-core/src/reactive/owner.rs:Owner::any_animation_active
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::any_animation_active
+- [implements] examples/hello-button/src/main.rs:drive_hover_progress
+- [implements] examples/hello-button/src/main.rs:lerp_grayscale
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::any_animation_active
+- [implements] crates/pinion-tui/src/shell.rs:run
+- [implements] examples/hello-button-tui/src/main.rs:drive_hover_progress
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::frame_signal
+- [implements] crates/pinion-core/src/style.rs:Color::lerp
+- [implements] crates/pinion-core/src/widgets/caret_blink.rs:CaretBlink
 
 
 
@@ -1879,18 +1879,18 @@ fn main() {
 
 
 
-**Implementations**:
-- crates/pinion-core/src/style.rs:Color
-- crates/pinion-core/src/style.rs:BoxStyle
-- crates/pinion-core/src/style.rs:Border
-- crates/pinion-core/src/style.rs:TextStyle
-- crates/pinion-core/src/style.rs:PathStyle
-- crates/pinion-core/src/scene.rs:PathCommand
-- crates/pinion-core/src/style.rs:ImageStyle
-- crates/pinion-core/src/style.rs:Align
-- crates/pinion-core/src/scene.rs:Modifier
-- examples/hello-button/src/main.rs:paint_text
-- crates/pinion-core/src/style.rs:scale_normalized_to_px
+**Bindings**:
+- [implements] crates/pinion-core/src/style.rs:Color
+- [implements] crates/pinion-core/src/style.rs:BoxStyle
+- [implements] crates/pinion-core/src/style.rs:Border
+- [implements] crates/pinion-core/src/style.rs:TextStyle
+- [implements] crates/pinion-core/src/style.rs:PathStyle
+- [implements] crates/pinion-core/src/scene.rs:PathCommand
+- [implements] crates/pinion-core/src/style.rs:ImageStyle
+- [implements] crates/pinion-core/src/style.rs:Align
+- [implements] crates/pinion-core/src/scene.rs:Modifier
+- [implements] examples/hello-button/src/main.rs:paint_text
+- [implements] crates/pinion-core/src/style.rs:scale_normalized_to_px
 
 
 
@@ -2083,15 +2083,15 @@ fn main() {
 
 
 
-**Implementations**:
-- crates/pinion-core/src/scene.rs:Scene::hit_test
-- crates/pinion-core/src/scene.rs:HitPath
-- crates/pinion-rpc/src/locate.rs
-- crates/pinion-rpc/src/dispatch.rs:handle_scene_locate
-- crates/pinion-core/src/scene.rs:Scene::hit_test_region
-- crates/pinion-rpc/src/locate.rs:locate_region
-- crates/pinion-core/src/scene.rs:Scene::lookup_path
-- crates/pinion-rpc/src/locate.rs:bbox
+**Bindings**:
+- [implements] crates/pinion-core/src/scene.rs:Scene::hit_test
+- [implements] crates/pinion-core/src/scene.rs:HitPath
+- [implements] crates/pinion-rpc/src/locate.rs
+- [implements] crates/pinion-rpc/src/dispatch.rs:handle_scene_locate
+- [implements] crates/pinion-core/src/scene.rs:Scene::hit_test_region
+- [implements] crates/pinion-rpc/src/locate.rs:locate_region
+- [implements] crates/pinion-core/src/scene.rs:Scene::lookup_path
+- [implements] crates/pinion-rpc/src/locate.rs:bbox
 
 
 
@@ -2158,16 +2158,16 @@ fn main() {
 
 
 
-**Implementations**:
-- crates/pinion-overlay/Cargo.toml
-- crates/pinion-overlay/src/lib.rs
-- crates/pinion-overlay/src/event.rs:OverlayEvent
-- crates/pinion-overlay/src/highlight.rs:inject_highlight
-- crates/pinion-overlay/src/highlight.rs:clear_highlights
-- examples/ai-introspect-demo/Cargo.toml
-- examples/ai-introspect-demo/src/main.rs
-- crates/pinion-overlay/src/highlight.rs:HighlightStyle::with_stroke
-- crates/pinion-overlay/src/highlight.rs:HighlightStyle::with_stroke_width
+**Bindings**:
+- [implements] crates/pinion-overlay/Cargo.toml
+- [implements] crates/pinion-overlay/src/lib.rs
+- [implements] crates/pinion-overlay/src/event.rs:OverlayEvent
+- [implements] crates/pinion-overlay/src/highlight.rs:inject_highlight
+- [implements] crates/pinion-overlay/src/highlight.rs:clear_highlights
+- [implements] examples/ai-introspect-demo/Cargo.toml
+- [implements] examples/ai-introspect-demo/src/main.rs
+- [implements] crates/pinion-overlay/src/highlight.rs:HighlightStyle::with_stroke
+- [implements] crates/pinion-overlay/src/highlight.rs:HighlightStyle::with_stroke_width
 
 
 
@@ -2248,41 +2248,41 @@ fn main() {
 
 
 
-**Implementations**:
-- crates/pinion-rpc/src/preview/mod.rs
-- crates/pinion-rpc/src/preview/id.rs:PreviewId
-- crates/pinion-rpc/src/preview/proposal.rs:Proposal
-- crates/pinion-rpc/src/preview/error.rs:ProposeError
-- crates/pinion-rpc/src/preview/error.rs:ApplyError
-- crates/pinion-rpc/src/preview/ledger.rs:PreviewLedger
-- crates/pinion-rpc/src/preview/ledger.rs:Entry
-- crates/pinion-rpc/src/preview/ledger.rs:PreviewView
-- crates/pinion-rpc/src/preview/ledger.rs:SweepReport
-- crates/pinion-rpc/src/preview/cancel.rs:cancel_preview
-- crates/pinion-rpc/src/dispatch.rs:handle_scene_cancel_preview
-- crates/pinion-rpc/src/preview/id.rs:PreviewId::try_new
-- crates/pinion-rpc/src/preview/list.rs:list_previews
-- crates/pinion-rpc/src/dispatch.rs:handle_scene_list_previews
-- crates/pinion-rpc/src/dispatch.rs:preview_view_to_json
-- crates/pinion-core/src/revision.rs:SceneRevision
-- crates/pinion-rpc/src/dispatch.rs:mutates_scene_on_success
-- crates/pinion-rpc/src/preview/kinds.rs:TypedProposal
-- crates/pinion-rpc/src/preview/propose.rs:propose_change
-- crates/pinion-rpc/src/preview/propose.rs:ProposeOutcome
-- crates/pinion-rpc/src/dispatch.rs:handle_scene_propose_change
-- crates/pinion-rpc/src/preview/apply.rs:apply_preview
-- crates/pinion-rpc/src/preview/apply.rs:ApplyOutcome
-- crates/pinion-rpc/src/dispatch.rs:handle_scene_apply_preview
-- crates/pinion-rpc/src/dispatch.rs:DispatchContext
-- examples/ai-introspect-demo/src/main.rs
-- crates/pinion-rpc/src/preview/proposal.rs:ApplyContext
-- crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::DispatchIntent
-- crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::SetStyle
-- crates/pinion-core/src/scene.rs:Scene::lookup_path_mut
-- crates/pinion-rpc/src/preview/blueprint.rs:ViewBlueprint
-- crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::ReplaceView
-- crates/pinion-core/src/scene.rs:Scene::lookup_path_ref
-- crates/pinion-rpc/src/path.rs:split_at_external
+**Bindings**:
+- [implements] crates/pinion-rpc/src/preview/mod.rs
+- [implements] crates/pinion-rpc/src/preview/id.rs:PreviewId
+- [implements] crates/pinion-rpc/src/preview/proposal.rs:Proposal
+- [implements] crates/pinion-rpc/src/preview/error.rs:ProposeError
+- [implements] crates/pinion-rpc/src/preview/error.rs:ApplyError
+- [implements] crates/pinion-rpc/src/preview/ledger.rs:PreviewLedger
+- [implements] crates/pinion-rpc/src/preview/ledger.rs:Entry
+- [implements] crates/pinion-rpc/src/preview/ledger.rs:PreviewView
+- [implements] crates/pinion-rpc/src/preview/ledger.rs:SweepReport
+- [implements] crates/pinion-rpc/src/preview/cancel.rs:cancel_preview
+- [implements] crates/pinion-rpc/src/dispatch.rs:handle_scene_cancel_preview
+- [implements] crates/pinion-rpc/src/preview/id.rs:PreviewId::try_new
+- [implements] crates/pinion-rpc/src/preview/list.rs:list_previews
+- [implements] crates/pinion-rpc/src/dispatch.rs:handle_scene_list_previews
+- [implements] crates/pinion-rpc/src/dispatch.rs:preview_view_to_json
+- [implements] crates/pinion-core/src/revision.rs:SceneRevision
+- [implements] crates/pinion-rpc/src/dispatch.rs:mutates_scene_on_success
+- [implements] crates/pinion-rpc/src/preview/kinds.rs:TypedProposal
+- [implements] crates/pinion-rpc/src/preview/propose.rs:propose_change
+- [implements] crates/pinion-rpc/src/preview/propose.rs:ProposeOutcome
+- [implements] crates/pinion-rpc/src/dispatch.rs:handle_scene_propose_change
+- [implements] crates/pinion-rpc/src/preview/apply.rs:apply_preview
+- [implements] crates/pinion-rpc/src/preview/apply.rs:ApplyOutcome
+- [implements] crates/pinion-rpc/src/dispatch.rs:handle_scene_apply_preview
+- [implements] crates/pinion-rpc/src/dispatch.rs:DispatchContext
+- [implements] examples/ai-introspect-demo/src/main.rs
+- [implements] crates/pinion-rpc/src/preview/proposal.rs:ApplyContext
+- [implements] crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::DispatchIntent
+- [implements] crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::SetStyle
+- [implements] crates/pinion-core/src/scene.rs:Scene::lookup_path_mut
+- [implements] crates/pinion-rpc/src/preview/blueprint.rs:ViewBlueprint
+- [implements] crates/pinion-rpc/src/preview/kinds.rs:TypedProposal::ReplaceView
+- [implements] crates/pinion-core/src/scene.rs:Scene::lookup_path_ref
+- [implements] crates/pinion-rpc/src/path.rs:split_at_external
 
 
 
@@ -2389,25 +2389,25 @@ router.pointer_down(&mut state_scene);
 
 
 
-**Implementations**:
-- crates/pinion-runtime/src/input.rs:InputRouter::captured_target
-- crates/pinion-runtime/src/input.rs:InputRouter::forward_pointer_move
-- crates/pinion-runtime/src/input.rs:rect_for_tag
-- crates/pinion-runtime/src/input.rs:normalize_cursor
-- crates/pinion-runtime/src/input.rs:widget_wants_capture
-- crates/pinion-shell/src/lib.rs:AppShell::apply_key
-- crates/pinion-shell/src/lib.rs:named_key_str
-- crates/pinion-runtime/src/input.rs:PointerId
-- crates/pinion-runtime/src/input.rs:PointerId::MOUSE
-- crates/pinion-runtime/src/input.rs:PointerId::touch
-- crates/pinion-runtime/src/input.rs:InputRouter::cursors
-- crates/pinion-runtime/src/input.rs:InputRouter::hover_targets
-- crates/pinion-runtime/src/input.rs:InputRouter::captured_targets
-- crates/pinion-runtime/src/input.rs:InputRouter::hover_wants_capture
-- crates/pinion-runtime/src/input.rs:split_subindex
-- examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key
-- crates/pinion-shell/src/lib.rs:AppShell::handle_touch
-- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal::pointer_move
+**Bindings**:
+- [implements] crates/pinion-runtime/src/input.rs:InputRouter::captured_target
+- [implements] crates/pinion-runtime/src/input.rs:InputRouter::forward_pointer_move
+- [implements] crates/pinion-runtime/src/input.rs:rect_for_tag
+- [implements] crates/pinion-runtime/src/input.rs:normalize_cursor
+- [implements] crates/pinion-runtime/src/input.rs:widget_wants_capture
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::apply_key
+- [implements] crates/pinion-shell/src/lib.rs:named_key_str
+- [implements] crates/pinion-runtime/src/input.rs:PointerId
+- [implements] crates/pinion-runtime/src/input.rs:PointerId::MOUSE
+- [implements] crates/pinion-runtime/src/input.rs:PointerId::touch
+- [implements] crates/pinion-runtime/src/input.rs:InputRouter::cursors
+- [implements] crates/pinion-runtime/src/input.rs:InputRouter::hover_targets
+- [implements] crates/pinion-runtime/src/input.rs:InputRouter::captured_targets
+- [implements] crates/pinion-runtime/src/input.rs:InputRouter::hover_wants_capture
+- [implements] crates/pinion-runtime/src/input.rs:split_subindex
+- [implements] examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::handle_touch
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal::pointer_move
 
 
 
@@ -2482,11 +2482,11 @@ router.pointer_down(&mut state_scene);
 
 
 
-**Implementations**:
-- crates/pinion-runtime/src/layout.rs:compute_layout::ceil
-- crates/pinion-runtime/src/paint_adapter.rs:paint_text
-- crates/pinion-text/src/caret.rs:caret_rect_for_byte_offset
-- crates/pinion-text/src/caret.rs:CaretRect
+**Bindings**:
+- [implements] crates/pinion-runtime/src/layout.rs:compute_layout::ceil
+- [implements] crates/pinion-runtime/src/paint_adapter.rs:paint_text
+- [implements] crates/pinion-text/src/caret.rs:caret_rect_for_byte_offset
+- [implements] crates/pinion-text/src/caret.rs:CaretRect
 
 
 
@@ -2610,25 +2610,25 @@ router.pointer_down(&mut state_scene);
 
 
 
-**Implementations**:
-- crates/pinion-text-font/src/sfnt.rs:parse_sfnt
-- crates/pinion-text-font/src/sfnt.rs:Flavor
-- crates/pinion-text-font/src/sfnt.rs:OffsetTable
-- crates/pinion-text-font/src/sfnt.rs:TableRecord
-- crates/pinion-text-font/src/error.rs:ParseError
-- crates/pinion-text-font/src/font.rs:Font
-- crates/pinion-text-font/src/reader.rs:Reader
-- crates/pinion-text-font/src/tables/head.rs:Head
-- crates/pinion-text-font/src/tables/hhea.rs:Hhea
-- crates/pinion-text-font/src/tables/hmtx.rs:Hmtx
-- crates/pinion-text-font/src/tables/maxp.rs:Maxp
-- crates/pinion-text-font/src/tables/os2.rs:Os2
-- crates/pinion-text-font/src/tables/post.rs:Post
-- crates/pinion-text-font/src/error.rs:FieldValue
-- crates/pinion-text-font/src/tables/cmap/mod.rs:Cmap
-- crates/pinion-text-font/src/tables/cmap/mod.rs:CmapSubtable
-- crates/pinion-text-font/src/tables/cmap/format4.rs:Format4
-- crates/pinion-text-font/src/tables/cmap/format12.rs:Format12
+**Bindings**:
+- [implements] crates/pinion-text-font/src/sfnt.rs:parse_sfnt
+- [implements] crates/pinion-text-font/src/sfnt.rs:Flavor
+- [implements] crates/pinion-text-font/src/sfnt.rs:OffsetTable
+- [implements] crates/pinion-text-font/src/sfnt.rs:TableRecord
+- [implements] crates/pinion-text-font/src/error.rs:ParseError
+- [implements] crates/pinion-text-font/src/font.rs:Font
+- [implements] crates/pinion-text-font/src/reader.rs:Reader
+- [implements] crates/pinion-text-font/src/tables/head.rs:Head
+- [implements] crates/pinion-text-font/src/tables/hhea.rs:Hhea
+- [implements] crates/pinion-text-font/src/tables/hmtx.rs:Hmtx
+- [implements] crates/pinion-text-font/src/tables/maxp.rs:Maxp
+- [implements] crates/pinion-text-font/src/tables/os2.rs:Os2
+- [implements] crates/pinion-text-font/src/tables/post.rs:Post
+- [implements] crates/pinion-text-font/src/error.rs:FieldValue
+- [implements] crates/pinion-text-font/src/tables/cmap/mod.rs:Cmap
+- [implements] crates/pinion-text-font/src/tables/cmap/mod.rs:CmapSubtable
+- [implements] crates/pinion-text-font/src/tables/cmap/format4.rs:Format4
+- [implements] crates/pinion-text-font/src/tables/cmap/format12.rs:Format12
 
 
 
@@ -2694,27 +2694,27 @@ router.pointer_down(&mut state_scene);
 
 
 
-**Implementations**:
-- crates/pinion-rpc/src/font.rs:FontRegistry
-- crates/pinion-rpc/src/font.rs:parse
-- crates/pinion-rpc/src/font.rs:family_name
-- crates/pinion-rpc/src/font.rs:glyph_id_for
-- crates/pinion-rpc/src/font.rs:FontError
-- crates/pinion-rpc/src/dispatch.rs:handle_font_parse
-- crates/pinion-rpc/src/dispatch.rs:handle_font_family_name
-- crates/pinion-rpc/src/dispatch.rs:handle_font_glyph_id_for
-- crates/pinion-rpc/src/dispatch.rs:font_error_to_rpc
-- crates/pinion-rpc/src/font.rs:glyph_outline
-- crates/pinion-rpc/src/font.rs:cmap_subtables
-- crates/pinion-rpc/src/font.rs:metrics
-- crates/pinion-rpc/src/font.rs:subfamily_name
-- crates/pinion-rpc/src/font.rs:full_name
-- crates/pinion-rpc/src/font.rs:postscript_name
-- crates/pinion-rpc/src/font.rs:GlyphOutlineOutcome
-- crates/pinion-rpc/src/font.rs:dispose
-- crates/pinion-rpc/src/font.rs:list
-- crates/pinion-rpc/src/text.rs:text_normalize
-- crates/pinion-rpc/src/dispatch.rs:handle_text_normalize
+**Bindings**:
+- [implements] crates/pinion-rpc/src/font.rs:FontRegistry
+- [implements] crates/pinion-rpc/src/font.rs:parse
+- [implements] crates/pinion-rpc/src/font.rs:family_name
+- [implements] crates/pinion-rpc/src/font.rs:glyph_id_for
+- [implements] crates/pinion-rpc/src/font.rs:FontError
+- [implements] crates/pinion-rpc/src/dispatch.rs:handle_font_parse
+- [implements] crates/pinion-rpc/src/dispatch.rs:handle_font_family_name
+- [implements] crates/pinion-rpc/src/dispatch.rs:handle_font_glyph_id_for
+- [implements] crates/pinion-rpc/src/dispatch.rs:font_error_to_rpc
+- [implements] crates/pinion-rpc/src/font.rs:glyph_outline
+- [implements] crates/pinion-rpc/src/font.rs:cmap_subtables
+- [implements] crates/pinion-rpc/src/font.rs:metrics
+- [implements] crates/pinion-rpc/src/font.rs:subfamily_name
+- [implements] crates/pinion-rpc/src/font.rs:full_name
+- [implements] crates/pinion-rpc/src/font.rs:postscript_name
+- [implements] crates/pinion-rpc/src/font.rs:GlyphOutlineOutcome
+- [implements] crates/pinion-rpc/src/font.rs:dispose
+- [implements] crates/pinion-rpc/src/font.rs:list
+- [implements] crates/pinion-rpc/src/text.rs:text_normalize
+- [implements] crates/pinion-rpc/src/dispatch.rs:handle_text_normalize
 
 
 
@@ -2779,41 +2779,41 @@ router.pointer_down(&mut state_scene);
 
 
 
-**Implementations**:
-- crates/pinion-text-unicode/Cargo.toml
-- crates/pinion-text-unicode/src/lib.rs:NormForm
-- crates/pinion-text-unicode/build.rs
-- crates/pinion-text-unicode/ucd/UnicodeData.txt
-- crates/pinion-text-unicode/ucd/DerivedNormalizationProps.txt
-- crates/pinion-text-unicode/ucd/CompositionExclusions.txt
-- crates/pinion-text-unicode/src/hangul.rs:decompose_hangul_syllable
-- crates/pinion-text-unicode/src/decompose.rs:decompose_canonical
-- crates/pinion-text-unicode/src/ordering.rs:canonical_ordering
-- crates/pinion-text-unicode/src/nfd.rs:nfd
-- crates/pinion-text-unicode/ucd/NormalizationTest.txt
-- crates/pinion-text-unicode/src/hangul.rs:compose_hangul
-- crates/pinion-text-unicode/src/composition.rs:canonical_composition
-- crates/pinion-text-unicode/src/nfc.rs:nfc
-- crates/pinion-text-unicode/src/test_fixture.rs:load_normalization_test
-- crates/pinion-text-unicode/src/decompose.rs:decompose_compatibility
-- crates/pinion-text-unicode/src/nfkd.rs:nfkd
-- crates/pinion-text-unicode/src/nfkc.rs:nfkc
-- crates/pinion-text-unicode/src/lib.rs:normalize
-- crates/pinion-text-unicode/src/quick_check.rs:nfc_quick_check
-- crates/pinion-text-unicode/benches/normalize.rs
-- crates/pinion-text-unicode/build.rs:emit_fast_path_anchors
-- crates/pinion-text-unicode/build.rs:build_u8_bmp_trie
-- crates/pinion-text-unicode/build.rs:emit_u8_bmp_trie_table
-- crates/pinion-text-unicode/src/quick_check.rs:lookup_u8_trie
-- crates/pinion-text-unicode/src/ordering.rs:combining_class_supplementary
-- crates/pinion-text-unicode/build.rs:build_decomp_bmp_trie
-- crates/pinion-text-unicode/build.rs:emit_decomp_table
-- crates/pinion-text-unicode/build.rs:emit_packed_u32_hex_row
-- crates/pinion-text-unicode/src/decompose.rs:lookup_decomp_trie
-- crates/pinion-text-unicode/src/decompose.rs:lookup_decomp_supplementary
-- crates/pinion-text-unicode/build.rs:build_primary_composites_trie
-- crates/pinion-text-unicode/build.rs:emit_primary_composites_table
-- crates/pinion-text-unicode/src/composition.rs:compose_pair_supplementary
+**Bindings**:
+- [implements] crates/pinion-text-unicode/Cargo.toml
+- [implements] crates/pinion-text-unicode/src/lib.rs:NormForm
+- [implements] crates/pinion-text-unicode/build.rs
+- [implements] crates/pinion-text-unicode/ucd/UnicodeData.txt
+- [implements] crates/pinion-text-unicode/ucd/DerivedNormalizationProps.txt
+- [implements] crates/pinion-text-unicode/ucd/CompositionExclusions.txt
+- [implements] crates/pinion-text-unicode/src/hangul.rs:decompose_hangul_syllable
+- [implements] crates/pinion-text-unicode/src/decompose.rs:decompose_canonical
+- [implements] crates/pinion-text-unicode/src/ordering.rs:canonical_ordering
+- [implements] crates/pinion-text-unicode/src/nfd.rs:nfd
+- [implements] crates/pinion-text-unicode/ucd/NormalizationTest.txt
+- [implements] crates/pinion-text-unicode/src/hangul.rs:compose_hangul
+- [implements] crates/pinion-text-unicode/src/composition.rs:canonical_composition
+- [implements] crates/pinion-text-unicode/src/nfc.rs:nfc
+- [implements] crates/pinion-text-unicode/src/test_fixture.rs:load_normalization_test
+- [implements] crates/pinion-text-unicode/src/decompose.rs:decompose_compatibility
+- [implements] crates/pinion-text-unicode/src/nfkd.rs:nfkd
+- [implements] crates/pinion-text-unicode/src/nfkc.rs:nfkc
+- [implements] crates/pinion-text-unicode/src/lib.rs:normalize
+- [implements] crates/pinion-text-unicode/src/quick_check.rs:nfc_quick_check
+- [implements] crates/pinion-text-unicode/benches/normalize.rs
+- [implements] crates/pinion-text-unicode/build.rs:emit_fast_path_anchors
+- [implements] crates/pinion-text-unicode/build.rs:build_u8_bmp_trie
+- [implements] crates/pinion-text-unicode/build.rs:emit_u8_bmp_trie_table
+- [implements] crates/pinion-text-unicode/src/quick_check.rs:lookup_u8_trie
+- [implements] crates/pinion-text-unicode/src/ordering.rs:combining_class_supplementary
+- [implements] crates/pinion-text-unicode/build.rs:build_decomp_bmp_trie
+- [implements] crates/pinion-text-unicode/build.rs:emit_decomp_table
+- [implements] crates/pinion-text-unicode/build.rs:emit_packed_u32_hex_row
+- [implements] crates/pinion-text-unicode/src/decompose.rs:lookup_decomp_trie
+- [implements] crates/pinion-text-unicode/src/decompose.rs:lookup_decomp_supplementary
+- [implements] crates/pinion-text-unicode/build.rs:build_primary_composites_trie
+- [implements] crates/pinion-text-unicode/build.rs:emit_primary_composites_table
+- [implements] crates/pinion-text-unicode/src/composition.rs:compose_pair_supplementary
 
 
 
@@ -2876,37 +2876,37 @@ router.pointer_down(&mut state_scene);
 
 
 
-**Implementations**:
-- crates/pinion-text-unicode/ucd/DerivedBidiClass.txt
-- crates/pinion-text-unicode/build.rs:parse_bidi_class
-- crates/pinion-text-unicode/src/bidi.rs:BidiClass
-- crates/pinion-text-unicode/src/bidi.rs:bidi_class
-- crates/pinion-text-unicode/src/bidi.rs:paragraph_level
-- crates/pinion-text-unicode/src/bidi.rs:iter_paragraphs
-- crates/pinion-text-unicode/src/bidi.rs:ParagraphIter
-- crates/pinion-text-unicode/src/bidi.rs:resolve_explicit_levels
-- crates/pinion-text-unicode/src/bidi.rs:ExplicitLevels
-- crates/pinion-text-unicode/src/bidi.rs:MAX_DEPTH
-- crates/pinion-text-unicode/src/bidi.rs:resolve_weak_types
-- crates/pinion-text-unicode/src/bidi.rs:paired_bracket
-- crates/pinion-text-unicode/src/bidi.rs:BracketType
-- crates/pinion-text-unicode/build.rs:parse_bidi_brackets
-- crates/pinion-text-unicode/src/bidi.rs:resolve_neutral_types
-- crates/pinion-text-unicode/src/bidi.rs:resolve_implicit_levels
-- crates/pinion-text-unicode/src/bidi.rs:apply_l1_line_break
-- crates/pinion-text-unicode/src/bidi.rs:reorder_visual
-- crates/pinion-text-unicode/src/bidi.rs:bidi_reorder
-- crates/pinion-text-unicode/src/bidi.rs:mirroring_glyph
-- crates/pinion-text-unicode/src/bidi.rs:apply_l3_combining_marks
-- crates/pinion-text-unicode/build.rs:parse_bidi_mirroring
-- crates/pinion-text-unicode/src/bidi.rs:canonical_bracket_form
-- crates/pinion-text-unicode/src/test_fixture.rs:parse_bidi_character_test
-- crates/pinion-text-unicode/src/test_fixture.rs:load_bidi_character_test
-- crates/pinion-text-unicode/ucd/BidiCharacterTest.txt
-- crates/pinion-text-unicode/ucd/BidiTest.txt
-- crates/pinion-text-unicode/src/test_fixture.rs:load_bidi_test
-- crates/pinion-text-unicode/src/test_fixture.rs:parse_bidi_test
-- crates/pinion-text-unicode/src/bidi.rs:mirror_paired_brackets
+**Bindings**:
+- [implements] crates/pinion-text-unicode/ucd/DerivedBidiClass.txt
+- [implements] crates/pinion-text-unicode/build.rs:parse_bidi_class
+- [implements] crates/pinion-text-unicode/src/bidi.rs:BidiClass
+- [implements] crates/pinion-text-unicode/src/bidi.rs:bidi_class
+- [implements] crates/pinion-text-unicode/src/bidi.rs:paragraph_level
+- [implements] crates/pinion-text-unicode/src/bidi.rs:iter_paragraphs
+- [implements] crates/pinion-text-unicode/src/bidi.rs:ParagraphIter
+- [implements] crates/pinion-text-unicode/src/bidi.rs:resolve_explicit_levels
+- [implements] crates/pinion-text-unicode/src/bidi.rs:ExplicitLevels
+- [implements] crates/pinion-text-unicode/src/bidi.rs:MAX_DEPTH
+- [implements] crates/pinion-text-unicode/src/bidi.rs:resolve_weak_types
+- [implements] crates/pinion-text-unicode/src/bidi.rs:paired_bracket
+- [implements] crates/pinion-text-unicode/src/bidi.rs:BracketType
+- [implements] crates/pinion-text-unicode/build.rs:parse_bidi_brackets
+- [implements] crates/pinion-text-unicode/src/bidi.rs:resolve_neutral_types
+- [implements] crates/pinion-text-unicode/src/bidi.rs:resolve_implicit_levels
+- [implements] crates/pinion-text-unicode/src/bidi.rs:apply_l1_line_break
+- [implements] crates/pinion-text-unicode/src/bidi.rs:reorder_visual
+- [implements] crates/pinion-text-unicode/src/bidi.rs:bidi_reorder
+- [implements] crates/pinion-text-unicode/src/bidi.rs:mirroring_glyph
+- [implements] crates/pinion-text-unicode/src/bidi.rs:apply_l3_combining_marks
+- [implements] crates/pinion-text-unicode/build.rs:parse_bidi_mirroring
+- [implements] crates/pinion-text-unicode/src/bidi.rs:canonical_bracket_form
+- [implements] crates/pinion-text-unicode/src/test_fixture.rs:parse_bidi_character_test
+- [implements] crates/pinion-text-unicode/src/test_fixture.rs:load_bidi_character_test
+- [implements] crates/pinion-text-unicode/ucd/BidiCharacterTest.txt
+- [implements] crates/pinion-text-unicode/ucd/BidiTest.txt
+- [implements] crates/pinion-text-unicode/src/test_fixture.rs:load_bidi_test
+- [implements] crates/pinion-text-unicode/src/test_fixture.rs:parse_bidi_test
+- [implements] crates/pinion-text-unicode/src/bidi.rs:mirror_paired_brackets
 
 
 
@@ -3076,101 +3076,101 @@ fn create_external() -> Box<dyn External> {
 
 
 
-**Implementations**:
-- crates/pinion-core/widgets/toggle.scxml
-- crates/pinion-core/src/widgets/toggle.rs:Toggle
-- crates/pinion-core/src/widgets/toggle.rs:ToggleExternal
-- crates/pinion-core/build.rs:scxml_inputs::toggle
-- crates/pinion-core/widgets/standard_button.sce-template.xml
-- crates/pinion-core/widgets/button.scxml
-- crates/pinion-core/src/widgets/widget.rs:Widget
-- crates/pinion-core/src/widgets/widget.rs:IntentEmitter
-- crates/pinion-core/widgets/checkbox.scxml
-- crates/pinion-core/src/widgets/checkbox.rs:Checkbox
-- crates/pinion-core/src/widgets/checkbox.rs:CheckboxExternal
-- crates/pinion-core/widgets/radio.scxml
-- crates/pinion-core/src/widgets/radio.rs:Radio
-- crates/pinion-core/src/widgets/radio.rs:RadioExternal
-- crates/pinion-core/widgets/slider.scxml
-- crates/pinion-core/src/widgets/slider.rs:Slider
-- crates/pinion-core/src/widgets/slider.rs:SliderExternal
-- crates/pinion-core/src/widgets/widget.rs:WidgetTransition
-- crates/pinion-core/src/widgets/widget.rs:IntentEmitter::dispatch
-- crates/pinion-core/src/widgets/button.rs:&lt;Button as WidgetTransition&gt;
-- crates/pinion-core/src/widgets/toggle.rs:&lt;Toggle as WidgetTransition&gt;
-- crates/pinion-core/src/widgets/checkbox.rs:&lt;Checkbox as WidgetTransition&gt;
-- crates/pinion-core/src/widgets/radio.rs:&lt;Radio as WidgetTransition&gt;
-- crates/pinion-core/src/widgets/slider.rs:&lt;Slider as WidgetTransition&gt;
-- crates/pinion-core/src/widgets/radio_group.rs:RadioGroup
-- crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal
-- crates/pinion-core/src/widgets/radio_group.rs:&lt;RadioGroup as WidgetTransition&gt;
-- examples/hello-toggle/app.pinion.xml
-- examples/hello-toggle/src/main.rs:view
-- crates/pinion-shell/src/lib.rs:WidgetView
-- crates/pinion-shell/src/lib.rs:AppShell
-- crates/pinion-shell/src/lib.rs:run
-- examples/hello-button/src/main.rs:ButtonView
-- examples/hello-toggle/src/main.rs:ToggleView
-- examples/hello-checkbox/app.pinion.xml
-- examples/hello-checkbox/src/main.rs:view
-- examples/hello-checkbox/src/main.rs:CheckboxView
-- examples/hello-radio/app.pinion.xml
-- examples/hello-radio/src/main.rs:view
-- examples/hello-radio/src/main.rs:RadioView
-- examples/hello-slider/app.pinion.xml
-- examples/hello-slider/src/main.rs:view
-- examples/hello-slider/src/main.rs:SliderView
-- crates/pinion-core/src/widgets/slider.rs:SliderExternal::wants_pointer_capture
-- crates/pinion-core/src/widgets/slider.rs:SliderExternal::pointer_move
-- crates/pinion-shell/src/lib.rs:WidgetView::apply_key
-- examples/hello-slider/src/main.rs:SliderView::apply_key
-- crates/pinion-core/src/widgets/slider.rs:SliderAxis
-- crates/pinion-core/src/widgets/slider.rs:Slider::with_axis
-- crates/pinion-core/src/widgets/slider.rs:Slider::axis
-- crates/pinion-core/src/widgets/slider.rs:SliderExternal::with_axis
-- crates/pinion-core/src/widgets/slider.rs:SliderExternal::axis
-- crates/pinion-core/src/widgets/slider.rs:slider_axis_name
-- crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/state.&lt;index&gt;
-- crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/selected.&lt;index&gt;
-- examples/hello-radio-group/src/main.rs:RadioGroupView
-- examples/hello-slider-vertical/src/main.rs:SliderVerticalView
-- crates/pinion-core/src/widgets/listbox.rs:ListBox::with_multiselect
-- crates/pinion-core/src/widgets/listbox.rs:ListBox::is_multiselect
-- crates/pinion-core/src/widgets/listbox.rs:ListBox::selected_indices
-- crates/pinion-core/src/widgets/listbox.rs:ListBox::set_selected_indices
-- crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::with_multiselect
-- crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::is_multiselect
-- crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::selected_indices
-- crates/pinion-shell/src/typeahead.rs:TypeaheadCursor
-- crates/pinion-shell/src/typeahead.rs:TypeaheadCursor::step
-- crates/pinion-core/src/widgets/aria.rs
-- crates/pinion-core/src/widgets/aria.rs:apply_aria_activate
-- examples/hello-listbox/src/main.rs:listbox_row_at_y
-- crates/pinion-core/widgets/scroll_bar.scxml
-- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar
-- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal
-- crates/pinion-core/src/widgets/scrollbar.rs:&lt;ScrollBar as WidgetTransition&gt;
-- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarEvent
-- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarState
-- crates/pinion-core/widgets/text_field.scxml
-- crates/pinion-core/src/widgets/text_field.rs:TextField
-- crates/pinion-core/src/widgets/text_field.rs:TextFieldExternal
-- crates/pinion-core/src/widgets/text_field.rs:TextFieldEvent
-- crates/pinion-core/src/widgets/text_field.rs:TextFieldState
-- crates/pinion-core/src/widgets/text_field.rs:&lt;TextField as WidgetTransition&gt;
-- crates/pinion-core/build.rs:scxml_inputs::text_field
-- crates/pinion-core/src/widgets/text_edit.rs:TextEditState
-- crates/pinion-core/src/widgets/text_edit.rs:use_text_edit_state
-- crates/pinion-core/src/widgets/text_field.rs:caret_rect
-- crates/pinion-core/src/widgets/text_field.rs:TextField::attach_state
-- crates/pinion-core/src/widgets/text_field.rs:TextFieldExternal::attach_state
-- crates/pinion-core/src/widgets/caret_blink.rs:CaretBlink
-- crates/pinion-core/src/widgets/caret_blink.rs:use_caret_blink
-- crates/pinion-core/src/widgets/text_field.rs:apply_key
-- crates/pinion-core/src/widgets/text_field.rs:TextField::attach_blink
-- crates/pinion-core/src/widgets/text_field.rs:TextField::sync_blink
-- crates/pinion-core/src/widgets/text_field.rs:&lt;TextFieldExternal as External&gt;::on_focus_change
-- crates/pinion-shell/src/substrate.rs:ShellCore::notify_focus_change
+**Bindings**:
+- [implements] crates/pinion-core/widgets/toggle.scxml
+- [implements] crates/pinion-core/src/widgets/toggle.rs:Toggle
+- [implements] crates/pinion-core/src/widgets/toggle.rs:ToggleExternal
+- [implements] crates/pinion-core/build.rs:scxml_inputs::toggle
+- [implements] crates/pinion-core/widgets/standard_button.sce-template.xml
+- [implements] crates/pinion-core/widgets/button.scxml
+- [implements] crates/pinion-core/src/widgets/widget.rs:Widget
+- [implements] crates/pinion-core/src/widgets/widget.rs:IntentEmitter
+- [implements] crates/pinion-core/widgets/checkbox.scxml
+- [implements] crates/pinion-core/src/widgets/checkbox.rs:Checkbox
+- [implements] crates/pinion-core/src/widgets/checkbox.rs:CheckboxExternal
+- [implements] crates/pinion-core/widgets/radio.scxml
+- [implements] crates/pinion-core/src/widgets/radio.rs:Radio
+- [implements] crates/pinion-core/src/widgets/radio.rs:RadioExternal
+- [implements] crates/pinion-core/widgets/slider.scxml
+- [implements] crates/pinion-core/src/widgets/slider.rs:Slider
+- [implements] crates/pinion-core/src/widgets/slider.rs:SliderExternal
+- [implements] crates/pinion-core/src/widgets/widget.rs:WidgetTransition
+- [implements] crates/pinion-core/src/widgets/widget.rs:IntentEmitter::dispatch
+- [implements] crates/pinion-core/src/widgets/button.rs:&lt;Button as WidgetTransition&gt;
+- [implements] crates/pinion-core/src/widgets/toggle.rs:&lt;Toggle as WidgetTransition&gt;
+- [implements] crates/pinion-core/src/widgets/checkbox.rs:&lt;Checkbox as WidgetTransition&gt;
+- [implements] crates/pinion-core/src/widgets/radio.rs:&lt;Radio as WidgetTransition&gt;
+- [implements] crates/pinion-core/src/widgets/slider.rs:&lt;Slider as WidgetTransition&gt;
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:RadioGroup
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:&lt;RadioGroup as WidgetTransition&gt;
+- [implements] examples/hello-toggle/app.pinion.xml
+- [implements] examples/hello-toggle/src/main.rs:view
+- [implements] crates/pinion-shell/src/lib.rs:WidgetView
+- [implements] crates/pinion-shell/src/lib.rs:AppShell
+- [implements] crates/pinion-shell/src/lib.rs:run
+- [implements] examples/hello-button/src/main.rs:ButtonView
+- [implements] examples/hello-toggle/src/main.rs:ToggleView
+- [implements] examples/hello-checkbox/app.pinion.xml
+- [implements] examples/hello-checkbox/src/main.rs:view
+- [implements] examples/hello-checkbox/src/main.rs:CheckboxView
+- [implements] examples/hello-radio/app.pinion.xml
+- [implements] examples/hello-radio/src/main.rs:view
+- [implements] examples/hello-radio/src/main.rs:RadioView
+- [implements] examples/hello-slider/app.pinion.xml
+- [implements] examples/hello-slider/src/main.rs:view
+- [implements] examples/hello-slider/src/main.rs:SliderView
+- [implements] crates/pinion-core/src/widgets/slider.rs:SliderExternal::wants_pointer_capture
+- [implements] crates/pinion-core/src/widgets/slider.rs:SliderExternal::pointer_move
+- [implements] crates/pinion-shell/src/lib.rs:WidgetView::apply_key
+- [implements] examples/hello-slider/src/main.rs:SliderView::apply_key
+- [implements] crates/pinion-core/src/widgets/slider.rs:SliderAxis
+- [implements] crates/pinion-core/src/widgets/slider.rs:Slider::with_axis
+- [implements] crates/pinion-core/src/widgets/slider.rs:Slider::axis
+- [implements] crates/pinion-core/src/widgets/slider.rs:SliderExternal::with_axis
+- [implements] crates/pinion-core/src/widgets/slider.rs:SliderExternal::axis
+- [implements] crates/pinion-core/src/widgets/slider.rs:slider_axis_name
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/state.&lt;index&gt;
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::query/selected.&lt;index&gt;
+- [implements] examples/hello-radio-group/src/main.rs:RadioGroupView
+- [implements] examples/hello-slider-vertical/src/main.rs:SliderVerticalView
+- [implements] crates/pinion-core/src/widgets/listbox.rs:ListBox::with_multiselect
+- [implements] crates/pinion-core/src/widgets/listbox.rs:ListBox::is_multiselect
+- [implements] crates/pinion-core/src/widgets/listbox.rs:ListBox::selected_indices
+- [implements] crates/pinion-core/src/widgets/listbox.rs:ListBox::set_selected_indices
+- [implements] crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::with_multiselect
+- [implements] crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::is_multiselect
+- [implements] crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal::selected_indices
+- [implements] crates/pinion-shell/src/typeahead.rs:TypeaheadCursor
+- [implements] crates/pinion-shell/src/typeahead.rs:TypeaheadCursor::step
+- [implements] crates/pinion-core/src/widgets/aria.rs
+- [implements] crates/pinion-core/src/widgets/aria.rs:apply_aria_activate
+- [implements] examples/hello-listbox/src/main.rs:listbox_row_at_y
+- [implements] crates/pinion-core/widgets/scroll_bar.scxml
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:&lt;ScrollBar as WidgetTransition&gt;
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarEvent
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarState
+- [implements] crates/pinion-core/widgets/text_field.scxml
+- [implements] crates/pinion-core/src/widgets/text_field.rs:TextField
+- [implements] crates/pinion-core/src/widgets/text_field.rs:TextFieldExternal
+- [implements] crates/pinion-core/src/widgets/text_field.rs:TextFieldEvent
+- [implements] crates/pinion-core/src/widgets/text_field.rs:TextFieldState
+- [implements] crates/pinion-core/src/widgets/text_field.rs:&lt;TextField as WidgetTransition&gt;
+- [implements] crates/pinion-core/build.rs:scxml_inputs::text_field
+- [implements] crates/pinion-core/src/widgets/text_edit.rs:TextEditState
+- [implements] crates/pinion-core/src/widgets/text_edit.rs:use_text_edit_state
+- [implements] crates/pinion-core/src/widgets/text_field.rs:caret_rect
+- [implements] crates/pinion-core/src/widgets/text_field.rs:TextField::attach_state
+- [implements] crates/pinion-core/src/widgets/text_field.rs:TextFieldExternal::attach_state
+- [implements] crates/pinion-core/src/widgets/caret_blink.rs:CaretBlink
+- [implements] crates/pinion-core/src/widgets/caret_blink.rs:use_caret_blink
+- [implements] crates/pinion-core/src/widgets/text_field.rs:apply_key
+- [implements] crates/pinion-core/src/widgets/text_field.rs:TextField::attach_blink
+- [implements] crates/pinion-core/src/widgets/text_field.rs:TextField::sync_blink
+- [implements] crates/pinion-core/src/widgets/text_field.rs:&lt;TextFieldExternal as External&gt;::on_focus_change
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::notify_focus_change
 
 
 
@@ -3238,36 +3238,36 @@ fn create_external() -> Box<dyn External> {
 
 
 
-**Implementations**:
-- crates/pinion-runtime/src/focus.rs:FocusManager
-- crates/pinion-runtime/src/focus.rs:FocusManager::focus_next
-- crates/pinion-runtime/src/focus.rs:FocusManager::focus_prev
-- crates/pinion-runtime/src/focus.rs:FocusManager::focus_set
-- crates/pinion-runtime/src/focus.rs:FocusManager::focus_clear
-- crates/pinion-runtime/src/focus.rs:FocusManager::update_focusable_tags
-- crates/pinion-runtime/src/focus.rs:FocusManager::save
-- crates/pinion-runtime/src/focus.rs:FocusManager::restore
-- crates/pinion-shell/src/lib.rs:WidgetView::focusable_tags
-- crates/pinion-shell/src/lib.rs:WidgetView::apply_key
-- crates/pinion-shell/src/lib.rs:AppShell::click_to_focus
-- crates/pinion-shell/src/lib.rs:AppShell::focus
-- crates/pinion-shell/src/lib.rs:AppShell::modifiers
-- crates/pinion-core/widgets/standard_button.sce-template.xml:keyboard_activate
-- crates/pinion-core/src/widgets/widget.rs:WidgetTransition::detect
-- crates/pinion-core/src/widgets/button.rs:Button::detect (keyboard_click branch)
-- examples/hello-button/src/main.rs:ButtonView::apply_key
-- crates/pinion-core/src/widgets/toggle.rs:Toggle::send (keyboard_activate branch)
-- crates/pinion-core/src/widgets/checkbox.rs:Checkbox::send (keyboard_activate branch)
-- crates/pinion-core/src/widgets/radio.rs:Radio::send (keyboard_activate branch)
-- examples/hello-toggle/src/main.rs:ToggleView::apply_key
-- examples/hello-checkbox/src/main.rs:CheckboxView::apply_key
-- examples/hello-radio/src/main.rs:RadioView::apply_key
-- examples/hello-slider/src/main.rs:SliderView::apply_key
-- examples/hello-slider-vertical/src/main.rs:SliderVerticalView::apply_key
-- examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key (focused gate)
-- crates/pinion-runtime/src/paint_adapter.rs:paint_focus_ring
-- crates/pinion-shell/src/lib.rs:AppShell::render (focus ring call)
-- crates/pinion-shell/src/lib.rs:AppShell window_event WindowEvent::Focused
+**Bindings**:
+- [implements] crates/pinion-runtime/src/focus.rs:FocusManager
+- [implements] crates/pinion-runtime/src/focus.rs:FocusManager::focus_next
+- [implements] crates/pinion-runtime/src/focus.rs:FocusManager::focus_prev
+- [implements] crates/pinion-runtime/src/focus.rs:FocusManager::focus_set
+- [implements] crates/pinion-runtime/src/focus.rs:FocusManager::focus_clear
+- [implements] crates/pinion-runtime/src/focus.rs:FocusManager::update_focusable_tags
+- [implements] crates/pinion-runtime/src/focus.rs:FocusManager::save
+- [implements] crates/pinion-runtime/src/focus.rs:FocusManager::restore
+- [implements] crates/pinion-shell/src/lib.rs:WidgetView::focusable_tags
+- [implements] crates/pinion-shell/src/lib.rs:WidgetView::apply_key
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::click_to_focus
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::focus
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::modifiers
+- [implements] crates/pinion-core/widgets/standard_button.sce-template.xml:keyboard_activate
+- [implements] crates/pinion-core/src/widgets/widget.rs:WidgetTransition::detect
+- [implements] crates/pinion-core/src/widgets/button.rs:Button::detect (keyboard_click branch)
+- [implements] examples/hello-button/src/main.rs:ButtonView::apply_key
+- [implements] crates/pinion-core/src/widgets/toggle.rs:Toggle::send (keyboard_activate branch)
+- [implements] crates/pinion-core/src/widgets/checkbox.rs:Checkbox::send (keyboard_activate branch)
+- [implements] crates/pinion-core/src/widgets/radio.rs:Radio::send (keyboard_activate branch)
+- [implements] examples/hello-toggle/src/main.rs:ToggleView::apply_key
+- [implements] examples/hello-checkbox/src/main.rs:CheckboxView::apply_key
+- [implements] examples/hello-radio/src/main.rs:RadioView::apply_key
+- [implements] examples/hello-slider/src/main.rs:SliderView::apply_key
+- [implements] examples/hello-slider-vertical/src/main.rs:SliderVerticalView::apply_key
+- [implements] examples/hello-radio-group/src/main.rs:RadioGroupView::apply_key (focused gate)
+- [implements] crates/pinion-runtime/src/paint_adapter.rs:paint_focus_ring
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::render (focus ring call)
+- [implements] crates/pinion-shell/src/lib.rs:AppShell window_event WindowEvent::Focused
 
 
 
@@ -3428,101 +3428,101 @@ fn create_external() -> Box<dyn External> {
 
 
 
-**Implementations**:
-- crates/pinion-a11y/src/lib.rs
-- crates/pinion-a11y/src/role.rs:AriaRole
-- crates/pinion-a11y/src/node.rs:AccessNode
-- crates/pinion-a11y/src/node.rs:AccessState
-- crates/pinion-a11y/src/node.rs:AccessValue
-- crates/pinion-a11y/src/tree.rs:AccessTreeBuilder
-- crates/pinion-a11y/src/tree.rs:tag_to_node_id
-- crates/pinion-a11y/src/action.rs:AccessAction
-- crates/pinion-a11y/src/action.rs:translate_action
-- crates/pinion-shell/src/lib.rs:AppEvent::AccessKit
-- crates/pinion-shell/src/lib.rs:AppShell::handle_accesskit_event
-- crates/pinion-shell/src/lib.rs:AppShell::forward_to_accesskit
-- crates/pinion-runtime/src/input.rs:rect_for_tag
-- examples/hello-button/src/main.rs:ButtonView::access_node
-- examples/hello-toggle/src/main.rs:ToggleView::access_node
-- examples/hello-checkbox/src/main.rs:CheckboxView::access_node
-- examples/hello-radio/src/main.rs:RadioView::access_node
-- examples/hello-slider/src/main.rs:SliderView::access_node
-- examples/hello-slider-vertical/src/main.rs:SliderVerticalView::access_node
-- examples/hello-radio-group/src/main.rs:RadioGroupView::access_node
-- examples/hello-radio-group/src/main.rs:RadioGroupView::access_focus_target
-- crates/pinion-shell/src/lib.rs:AppShell::handle_action_request
-- crates/pinion-shell/src/lib.rs:AppShell::dispatch_access_action
-- crates/pinion-shell/src/lib.rs:AppShell::apply_a11y_key
-- crates/pinion-shell/src/lib.rs:build_tag_map
-- crates/pinion-a11y/tests/conformance.rs
-- crates/pinion-core/src/scene.rs:ContainerNode::aria_label
-- crates/pinion-core/src/scene.rs:ContainerNode::with_aria_label
-- crates/pinion-a11y/src/scene_label.rs
-- crates/pinion-a11y/src/scene_label.rs:enrich_names_from_scene
-- examples/hello-radio-group/src/main.rs:RadioGroupView::access_child_invoke
-- crates/pinion-a11y/src/focus.rs
-- crates/pinion-a11y/src/focus.rs:AccessFocus
-- crates/pinion-a11y/src/tree.rs:AccessTreeBuilder::active_descendant
-- crates/pinion-a11y/src/tree.rs:AccessTreeBuilder::dirty_tags
-- crates/pinion-shell/src/lib.rs:AppShell::last_access_nodes
-- crates/pinion-shell/src/lib.rs:AppShell::access_emit_initial
-- crates/pinion-rpc/src/focus.rs
-- crates/pinion-rpc/src/focus.rs:focus_set
-- crates/pinion-rpc/src/focus.rs:focus_get
-- crates/pinion-rpc/src/dispatch.rs:DispatchContext::focus_manager
-- crates/pinion-rpc/src/focus.rs:focus_next
-- crates/pinion-rpc/src/focus.rs:focus_prev
-- crates/pinion-shell/src/lib.rs:AppShell::last_access_focus
-- crates/pinion-shell/src/lib.rs:AppShell::handle_key_press
-- crates/pinion-shell/src/lib.rs:AppShell::drain_redraw_to_winit
-- crates/pinion-shell/tests/dispatch_core.rs
-- crates/pinion-core/src/scene.rs:TextRole
-- crates/pinion-core/src/scene.rs:TextNode::with_role
-- crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::focused_index
-- crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::set_focused_index
-- crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::focused_index
-- crates/pinion-rpc/src/dispatch.rs:RpcError::new
-- crates/pinion-rpc/src/dispatch.rs:RpcError::with_data
-- crates/pinion-rpc/src/dispatch.rs:RpcError::with_data_string
-- crates/pinion-rpc/src/dispatch.rs:RpcError::invalid_params
-- crates/pinion-rpc/src/dispatch.rs:RpcError::internal_error
-- crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::send
-- crates/pinion-core/src/external.rs:InterveneError::OutOfRange
-- crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::resolve_index_intervene
-- crates/pinion-shell/src/substrate.rs:ShellCore
-- crates/pinion-shell/src/substrate.rs:AccessEmitDecision
-- crates/pinion-shell/src/substrate.rs:ShellCore::dispatch_access_action
-- crates/pinion-shell/src/substrate.rs:ShellCore::handle_action_request
-- crates/pinion-shell/src/substrate.rs:ShellCore::take_redraw_request
-- crates/pinion-shell/src/substrate.rs:ShellCore::plan_access_emit
-- crates/pinion-shell/src/substrate.rs:ShellCore::commit_access_emit
-- crates/pinion-shell/src/substrate.rs:ShellCore::handle_focus_traverse
-- crates/pinion-shell/src/substrate.rs:ShellCore::handle_character_key
-- crates/pinion-shell/src/substrate.rs:ShellCore::handle_named_key
-- crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
-- crates/pinion-shell/src/substrate.rs:ShellCore::collect_access_emit_inputs
-- crates/pinion-shell/src/substrate.rs:ShellCore::finalize_frame
-- crates/pinion-shell/src/substrate.rs:ShellCore::text_cache_mut
-- crates/pinion-shell/src/substrate.rs:ShellCore::modifiers_shift_key
-- crates/pinion-shell/src/app.rs:AppShell
-- crates/pinion-shell/src/app.rs:AppShell::new
-- crates/pinion-shell/src/app.rs:run
-- crates/pinion-core/widgets/standard_button.sce-template.xml
-- crates/pinion-core/widgets/slider.scxml
-- crates/pinion-runtime/src/input.rs:InputRouter::pointer_cancel
-- crates/pinion-core/widgets/listbox_item.scxml
-- crates/pinion-core/src/widgets/listbox_item.rs:ListBoxItem
-- crates/pinion-core/src/widgets/listbox_item.rs:ListBoxItemExternal
-- crates/pinion-core/src/widgets/listbox.rs:ListBox
-- crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal
-- examples/hello-listbox/src/main.rs:ListBoxView
-- crates/pinion-a11y/src/node.rs:AccessNode::with_selected
-- crates/pinion-a11y/src/node.rs:AccessNode::with_multiselectable
-- crates/pinion-a11y/src/widget_a11y.rs
-- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y
-- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y::access_node
-- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y::access_focus_target
-- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y::access_child_invoke
+**Bindings**:
+- [implements] crates/pinion-a11y/src/lib.rs
+- [implements] crates/pinion-a11y/src/role.rs:AriaRole
+- [implements] crates/pinion-a11y/src/node.rs:AccessNode
+- [implements] crates/pinion-a11y/src/node.rs:AccessState
+- [implements] crates/pinion-a11y/src/node.rs:AccessValue
+- [implements] crates/pinion-a11y/src/tree.rs:AccessTreeBuilder
+- [implements] crates/pinion-a11y/src/tree.rs:tag_to_node_id
+- [implements] crates/pinion-a11y/src/action.rs:AccessAction
+- [implements] crates/pinion-a11y/src/action.rs:translate_action
+- [implements] crates/pinion-shell/src/lib.rs:AppEvent::AccessKit
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::handle_accesskit_event
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::forward_to_accesskit
+- [implements] crates/pinion-runtime/src/input.rs:rect_for_tag
+- [implements] examples/hello-button/src/main.rs:ButtonView::access_node
+- [implements] examples/hello-toggle/src/main.rs:ToggleView::access_node
+- [implements] examples/hello-checkbox/src/main.rs:CheckboxView::access_node
+- [implements] examples/hello-radio/src/main.rs:RadioView::access_node
+- [implements] examples/hello-slider/src/main.rs:SliderView::access_node
+- [implements] examples/hello-slider-vertical/src/main.rs:SliderVerticalView::access_node
+- [implements] examples/hello-radio-group/src/main.rs:RadioGroupView::access_node
+- [implements] examples/hello-radio-group/src/main.rs:RadioGroupView::access_focus_target
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::handle_action_request
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::dispatch_access_action
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::apply_a11y_key
+- [implements] crates/pinion-shell/src/lib.rs:build_tag_map
+- [implements] crates/pinion-a11y/tests/conformance.rs
+- [implements] crates/pinion-core/src/scene.rs:ContainerNode::aria_label
+- [implements] crates/pinion-core/src/scene.rs:ContainerNode::with_aria_label
+- [implements] crates/pinion-a11y/src/scene_label.rs
+- [implements] crates/pinion-a11y/src/scene_label.rs:enrich_names_from_scene
+- [implements] examples/hello-radio-group/src/main.rs:RadioGroupView::access_child_invoke
+- [implements] crates/pinion-a11y/src/focus.rs
+- [implements] crates/pinion-a11y/src/focus.rs:AccessFocus
+- [implements] crates/pinion-a11y/src/tree.rs:AccessTreeBuilder::active_descendant
+- [implements] crates/pinion-a11y/src/tree.rs:AccessTreeBuilder::dirty_tags
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::last_access_nodes
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::access_emit_initial
+- [implements] crates/pinion-rpc/src/focus.rs
+- [implements] crates/pinion-rpc/src/focus.rs:focus_set
+- [implements] crates/pinion-rpc/src/focus.rs:focus_get
+- [implements] crates/pinion-rpc/src/dispatch.rs:DispatchContext::focus_manager
+- [implements] crates/pinion-rpc/src/focus.rs:focus_next
+- [implements] crates/pinion-rpc/src/focus.rs:focus_prev
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::last_access_focus
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::handle_key_press
+- [implements] crates/pinion-shell/src/lib.rs:AppShell::drain_redraw_to_winit
+- [implements] crates/pinion-shell/tests/dispatch_core.rs
+- [implements] crates/pinion-core/src/scene.rs:TextRole
+- [implements] crates/pinion-core/src/scene.rs:TextNode::with_role
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::focused_index
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::set_focused_index
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::focused_index
+- [implements] crates/pinion-rpc/src/dispatch.rs:RpcError::new
+- [implements] crates/pinion-rpc/src/dispatch.rs:RpcError::with_data
+- [implements] crates/pinion-rpc/src/dispatch.rs:RpcError::with_data_string
+- [implements] crates/pinion-rpc/src/dispatch.rs:RpcError::invalid_params
+- [implements] crates/pinion-rpc/src/dispatch.rs:RpcError::internal_error
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:RadioGroup::send
+- [implements] crates/pinion-core/src/external.rs:InterveneError::OutOfRange
+- [implements] crates/pinion-core/src/widgets/radio_group.rs:RadioGroupExternal::resolve_index_intervene
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore
+- [implements] crates/pinion-shell/src/substrate.rs:AccessEmitDecision
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::dispatch_access_action
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::handle_action_request
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::take_redraw_request
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::plan_access_emit
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::commit_access_emit
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::handle_focus_traverse
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::handle_character_key
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::handle_named_key
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::collect_access_emit_inputs
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::finalize_frame
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::text_cache_mut
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::modifiers_shift_key
+- [implements] crates/pinion-shell/src/app.rs:AppShell
+- [implements] crates/pinion-shell/src/app.rs:AppShell::new
+- [implements] crates/pinion-shell/src/app.rs:run
+- [implements] crates/pinion-core/widgets/standard_button.sce-template.xml
+- [implements] crates/pinion-core/widgets/slider.scxml
+- [implements] crates/pinion-runtime/src/input.rs:InputRouter::pointer_cancel
+- [implements] crates/pinion-core/widgets/listbox_item.scxml
+- [implements] crates/pinion-core/src/widgets/listbox_item.rs:ListBoxItem
+- [implements] crates/pinion-core/src/widgets/listbox_item.rs:ListBoxItemExternal
+- [implements] crates/pinion-core/src/widgets/listbox.rs:ListBox
+- [implements] crates/pinion-core/src/widgets/listbox.rs:ListBoxExternal
+- [implements] examples/hello-listbox/src/main.rs:ListBoxView
+- [implements] crates/pinion-a11y/src/node.rs:AccessNode::with_selected
+- [implements] crates/pinion-a11y/src/node.rs:AccessNode::with_multiselectable
+- [implements] crates/pinion-a11y/src/widget_a11y.rs
+- [implements] crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y
+- [implements] crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y::access_node
+- [implements] crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y::access_focus_target
+- [implements] crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y::access_child_invoke
 
 
 
@@ -3624,81 +3624,81 @@ fn create_external() -> Box<dyn External> {
 
 
 
-**Implementations**:
-- crates/pinion-runtime/src/input.rs:TouchPhase
-- crates/pinion-runtime/src/input.rs:Touch
-- crates/pinion-runtime/src/input.rs:Modifiers
-- crates/pinion-runtime/src/input.rs:Modifiers::empty
-- crates/pinion-runtime/src/input.rs:Modifiers::shift_key
-- crates/pinion-shell/src/app.rs:winit_touch_to_pinion
-- crates/pinion-shell/src/app.rs:winit_modifiers_to_pinion
-- crates/pinion-tui/Cargo.toml
-- crates/pinion-tui/src/lib.rs
-- crates/pinion-tui/src/lib.rs:TuiRenderer
-- crates/pinion-shell/src/lib.rs:WidgetRenderer
-- crates/pinion-shell/src/lib.rs:VelloContext
-- crates/pinion-core/src/renderer.rs
-- crates/pinion-core/src/renderer.rs:WidgetRenderer
-- crates/pinion-tui/src/lib.rs:TuiContext
-- crates/pinion-tui/src/paint.rs
-- crates/pinion-tui/src/paint.rs:to_buffer
-- crates/pinion-tui/src/paint.rs:paint_text
-- crates/pinion-tui/src/widget.rs
-- crates/pinion-tui/src/widget.rs:WidgetViewTui
-- crates/pinion-tui/src/widget.rs:render_one_frame
-- crates/pinion-tui/src/shell.rs
-- crates/pinion-tui/src/shell.rs:run
-- examples/hello-button-tui/src/main.rs
-- examples/hello-button-tui/src/main.rs:HelloButtonTui
-- crates/pinion-tui/src/input.rs
-- crates/pinion-tui/src/input.rs:key_str_from_event
-- crates/pinion-tui/src/input.rs:modifiers_from_crossterm
-- crates/pinion-tui/src/input.rs:cell_to_pixel
-- crates/pinion-tui/src/shell.rs:dispatch_mouse
-- examples/hello-toggle-tui/Cargo.toml
-- examples/hello-toggle-tui/src/main.rs
-- examples/hello-toggle-tui/src/main.rs:HelloToggleTui
-- crates/pinion-tui/src/paint.rs:paint_box_style
-- crates/pinion-tui/src/paint.rs:paint_box
-- crates/pinion-tui/src/paint.rs:paint_container
-- crates/pinion-tui/src/paint.rs:color_to_tui
-- crates/pinion-tui/src/substrate.rs
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui
-- crates/pinion-tui/src/shell.rs:commit_paint
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::dispatch_key
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::cursor_moved
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::pointer_down
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::pointer_up
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::compute_paint_scene
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::update_paint_scene
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::set_log_sink
-- crates/pinion-tui/src/substrate.rs:ShellCoreTui::with_log_sink
-- crates/pinion-core/src/widget_core.rs
-- crates/pinion-core/src/widget_core.rs:WidgetCore
-- crates/pinion-a11y/src/widget_a11y.rs
-- crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y
-- crates/pinion-runtime/src/core_shell.rs
-- crates/pinion-runtime/src/core_shell.rs:CoreShell
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::new
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::forward
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::apply_key
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::cursor_moved
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::cursor_left
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::pointer_down
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::pointer_up
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::pointer_cancel
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::touch_event
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::tail
-- crates/pinion-runtime/src/core_shell.rs:CoreShell::update_paint_scene
-- crates/pinion-runtime/src/core_shell.rs:DispatchTail
-- crates/pinion-runtime/src/core_shell.rs:StateChange
-- crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
-- examples/hello-commands-tui/src/main.rs
-- crates/pinion-tui/src/paint.rs:CellClip
-- crates/pinion-tui/src/paint.rs:to_buffer_inner
-- crates/pinion-tui/src/paint.rs:paint_text_inner
-- crates/pinion-tui/src/paint.rs:pixels_to_cell_floor
-- crates/pinion-tui/src/paint.rs:cell_to_buf_xy
+**Bindings**:
+- [implements] crates/pinion-runtime/src/input.rs:TouchPhase
+- [implements] crates/pinion-runtime/src/input.rs:Touch
+- [implements] crates/pinion-runtime/src/input.rs:Modifiers
+- [implements] crates/pinion-runtime/src/input.rs:Modifiers::empty
+- [implements] crates/pinion-runtime/src/input.rs:Modifiers::shift_key
+- [implements] crates/pinion-shell/src/app.rs:winit_touch_to_pinion
+- [implements] crates/pinion-shell/src/app.rs:winit_modifiers_to_pinion
+- [implements] crates/pinion-tui/Cargo.toml
+- [implements] crates/pinion-tui/src/lib.rs
+- [implements] crates/pinion-tui/src/lib.rs:TuiRenderer
+- [implements] crates/pinion-shell/src/lib.rs:WidgetRenderer
+- [implements] crates/pinion-shell/src/lib.rs:VelloContext
+- [implements] crates/pinion-core/src/renderer.rs
+- [implements] crates/pinion-core/src/renderer.rs:WidgetRenderer
+- [implements] crates/pinion-tui/src/lib.rs:TuiContext
+- [implements] crates/pinion-tui/src/paint.rs
+- [implements] crates/pinion-tui/src/paint.rs:to_buffer
+- [implements] crates/pinion-tui/src/paint.rs:paint_text
+- [implements] crates/pinion-tui/src/widget.rs
+- [implements] crates/pinion-tui/src/widget.rs:WidgetViewTui
+- [implements] crates/pinion-tui/src/widget.rs:render_one_frame
+- [implements] crates/pinion-tui/src/shell.rs
+- [implements] crates/pinion-tui/src/shell.rs:run
+- [implements] examples/hello-button-tui/src/main.rs
+- [implements] examples/hello-button-tui/src/main.rs:HelloButtonTui
+- [implements] crates/pinion-tui/src/input.rs
+- [implements] crates/pinion-tui/src/input.rs:key_str_from_event
+- [implements] crates/pinion-tui/src/input.rs:modifiers_from_crossterm
+- [implements] crates/pinion-tui/src/input.rs:cell_to_pixel
+- [implements] crates/pinion-tui/src/shell.rs:dispatch_mouse
+- [implements] examples/hello-toggle-tui/Cargo.toml
+- [implements] examples/hello-toggle-tui/src/main.rs
+- [implements] examples/hello-toggle-tui/src/main.rs:HelloToggleTui
+- [implements] crates/pinion-tui/src/paint.rs:paint_box_style
+- [implements] crates/pinion-tui/src/paint.rs:paint_box
+- [implements] crates/pinion-tui/src/paint.rs:paint_container
+- [implements] crates/pinion-tui/src/paint.rs:color_to_tui
+- [implements] crates/pinion-tui/src/substrate.rs
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui
+- [implements] crates/pinion-tui/src/shell.rs:commit_paint
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::dispatch_key
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::cursor_moved
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::pointer_down
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::pointer_up
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::compute_paint_scene
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::update_paint_scene
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::set_log_sink
+- [implements] crates/pinion-tui/src/substrate.rs:ShellCoreTui::with_log_sink
+- [implements] crates/pinion-core/src/widget_core.rs
+- [implements] crates/pinion-core/src/widget_core.rs:WidgetCore
+- [implements] crates/pinion-a11y/src/widget_a11y.rs
+- [implements] crates/pinion-a11y/src/widget_a11y.rs:WidgetA11y
+- [implements] crates/pinion-runtime/src/core_shell.rs
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::new
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::forward
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::apply_key
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::cursor_moved
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::cursor_left
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::pointer_down
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::pointer_up
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::pointer_cancel
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::touch_event
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::tail
+- [implements] crates/pinion-runtime/src/core_shell.rs:CoreShell::update_paint_scene
+- [implements] crates/pinion-runtime/src/core_shell.rs:DispatchTail
+- [implements] crates/pinion-runtime/src/core_shell.rs:StateChange
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
+- [implements] examples/hello-commands-tui/src/main.rs
+- [implements] crates/pinion-tui/src/paint.rs:CellClip
+- [implements] crates/pinion-tui/src/paint.rs:to_buffer_inner
+- [implements] crates/pinion-tui/src/paint.rs:paint_text_inner
+- [implements] crates/pinion-tui/src/paint.rs:pixels_to_cell_floor
+- [implements] crates/pinion-tui/src/paint.rs:cell_to_buf_xy
 
 
 
@@ -3813,22 +3813,22 @@ pub struct ScrollNode {
 
 
 
-**Implementations**:
-- crates/pinion-tui/src/paint.rs:to_buffer_inner
-- crates/pinion-tui/src/paint.rs:CellClip
-- crates/pinion-core/src/scene.rs:ScrollNode::from_state
-- crates/pinion-core/src/widgets/scroll.rs:ScrollState::with_tag
-- crates/pinion-core/src/widgets/scroll.rs:ScrollState::tag
-- examples/hello-listbox/src/main.rs:view
-- examples/hello-listbox/src/main.rs:listbox_row_at_y
-- crates/pinion-core/src/scene.rs:ScrollNode::map_layout
-- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar
-- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal
-- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar::attach_state
-- crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal::pointer_move
-- crates/pinion-runtime/src/layout.rs:compute_layout_with_scroll_dirty
-- crates/pinion-core/src/widgets/scroll.rs:ScrollState::set_max
-- crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
+**Bindings**:
+- [implements] crates/pinion-tui/src/paint.rs:to_buffer_inner
+- [implements] crates/pinion-tui/src/paint.rs:CellClip
+- [implements] crates/pinion-core/src/scene.rs:ScrollNode::from_state
+- [implements] crates/pinion-core/src/widgets/scroll.rs:ScrollState::with_tag
+- [implements] crates/pinion-core/src/widgets/scroll.rs:ScrollState::tag
+- [implements] examples/hello-listbox/src/main.rs:view
+- [implements] examples/hello-listbox/src/main.rs:listbox_row_at_y
+- [implements] crates/pinion-core/src/scene.rs:ScrollNode::map_layout
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:ScrollBar::attach_state
+- [implements] crates/pinion-core/src/widgets/scrollbar.rs:ScrollBarExternal::pointer_move
+- [implements] crates/pinion-runtime/src/layout.rs:compute_layout_with_scroll_dirty
+- [implements] crates/pinion-core/src/widgets/scroll.rs:ScrollState::set_max
+- [implements] crates/pinion-shell/src/substrate.rs:ShellCore::compute_paint_scene
 
 
 
@@ -3904,10 +3904,10 @@ if __name__ == "__main__":
 
 
 
-**Implementations**:
-- tools/rpc_verify.py:RpcSubprocess
-- tools/demos/hello_toggle_activate.py:body
-- tools/README.md
+**Bindings**:
+- [implements] tools/rpc_verify.py:RpcSubprocess
+- [implements] tools/demos/hello_toggle_activate.py:body
+- [implements] tools/README.md
 
 
 
@@ -4107,44 +4107,44 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
-**Implementations**:
-- crates/pinion-core/src/theme.rs:ColorRole
-- crates/pinion-core/src/theme.rs:Theme
-- crates/pinion-core/src/theme.rs:ThemeProvider
-- crates/pinion-core/src/theme.rs:use_theme
-- crates/pinion-core/src/style.rs:Color
-- examples/hello-theme/src/main.rs:view
-- examples/hello-theme/src/main.rs:HelloThemeView::update
-- crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerHighest
-- examples/hello-toggle/src/main.rs:ToggleView::update
-- examples/hello-toggle/src/main.rs:view
-- crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerLow
-- crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainer
-- crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerHigh
-- examples/hello-listbox/src/main.rs:listbox_row
-- examples/hello-listbox/src/main.rs:build_scrollbar_visual
-- examples/hello-textfield/src/main.rs:text_fg_for
-- examples/hello-textfield/src/main.rs:field_fill_for
-- examples/hello-textfield/src/main.rs:selection_fill
-- examples/hello-textfield/src/main.rs:preedit_bg_fill
-- examples/hello-textfield/src/main.rs:preedit_underline
-- examples/hello-button/src/main.rs:button_fill_endpoints
-- examples/hello-radio/src/main.rs:radio_border_color
-- examples/hello-radio-group/src/main.rs:radio_border_color
-- examples/hello-checkbox/src/main.rs:checkbox_accent_for
-- examples/hello-checkbox/src/main.rs:checkbox_outline_for
-- examples/hello-slider/src/main.rs:slider_accent_for
-- examples/hello-slider-vertical/src/main.rs:slider_accent_for
-- crates/pinion-core/src/theme.rs:SystemColorScheme
-- crates/pinion-core/src/theme.rs:ThemeMode
-- crates/pinion-core/src/theme.rs:system_color_scheme
-- crates/pinion-core/src/theme.rs:set_system_color_scheme
-- crates/pinion-shell/src/app.rs:winit_theme_to_pinion_scheme
-- crates/pinion-core/src/theme.rs:THEME_FADE_SPRING
-- crates/pinion-core/src/theme.rs:ThemeLinear
-- crates/pinion-core/src/theme.rs:ThemeFadeState
-- crates/pinion-core/src/theme.rs:ThemeProvider::theme_animated
-- crates/pinion-core/src/test_fixtures.rs:settle_owner_animations
+**Bindings**:
+- [implements] crates/pinion-core/src/theme.rs:ColorRole
+- [implements] crates/pinion-core/src/theme.rs:Theme
+- [implements] crates/pinion-core/src/theme.rs:ThemeProvider
+- [implements] crates/pinion-core/src/theme.rs:use_theme
+- [implements] crates/pinion-core/src/style.rs:Color
+- [implements] examples/hello-theme/src/main.rs:view
+- [implements] examples/hello-theme/src/main.rs:HelloThemeView::update
+- [implements] crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerHighest
+- [implements] examples/hello-toggle/src/main.rs:ToggleView::update
+- [implements] examples/hello-toggle/src/main.rs:view
+- [implements] crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerLow
+- [implements] crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainer
+- [implements] crates/pinion-core/src/theme.rs:ColorRole::SurfaceContainerHigh
+- [implements] examples/hello-listbox/src/main.rs:listbox_row
+- [implements] examples/hello-listbox/src/main.rs:build_scrollbar_visual
+- [implements] examples/hello-textfield/src/main.rs:text_fg_for
+- [implements] examples/hello-textfield/src/main.rs:field_fill_for
+- [implements] examples/hello-textfield/src/main.rs:selection_fill
+- [implements] examples/hello-textfield/src/main.rs:preedit_bg_fill
+- [implements] examples/hello-textfield/src/main.rs:preedit_underline
+- [implements] examples/hello-button/src/main.rs:button_fill_endpoints
+- [implements] examples/hello-radio/src/main.rs:radio_border_color
+- [implements] examples/hello-radio-group/src/main.rs:radio_border_color
+- [implements] examples/hello-checkbox/src/main.rs:checkbox_accent_for
+- [implements] examples/hello-checkbox/src/main.rs:checkbox_outline_for
+- [implements] examples/hello-slider/src/main.rs:slider_accent_for
+- [implements] examples/hello-slider-vertical/src/main.rs:slider_accent_for
+- [implements] crates/pinion-core/src/theme.rs:SystemColorScheme
+- [implements] crates/pinion-core/src/theme.rs:ThemeMode
+- [implements] crates/pinion-core/src/theme.rs:system_color_scheme
+- [implements] crates/pinion-core/src/theme.rs:set_system_color_scheme
+- [implements] crates/pinion-shell/src/app.rs:winit_theme_to_pinion_scheme
+- [implements] crates/pinion-core/src/theme.rs:THEME_FADE_SPRING
+- [implements] crates/pinion-core/src/theme.rs:ThemeLinear
+- [implements] crates/pinion-core/src/theme.rs:ThemeFadeState
+- [implements] crates/pinion-core/src/theme.rs:ThemeProvider::theme_animated
+- [implements] crates/pinion-core/src/test_fixtures.rs:settle_owner_animations
 
 
 
@@ -4244,8 +4244,8 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
-**Implementations**:
-- crates/pinion-rpc/src/commands.rs:list_pending_commands
+**Bindings**:
+- [implements] crates/pinion-rpc/src/commands.rs:list_pending_commands
 
 
 
@@ -4515,10 +4515,10 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
-**Implementations**:
-- crates/pinion-core/src/frame.rs
-- crates/pinion-core/src/frame.rs:Frame
-- crates/pinion-core/src/frame.rs:Frame::with_dt
+**Bindings**:
+- [implements] crates/pinion-core/src/frame.rs
+- [implements] crates/pinion-core/src/frame.rs:Frame
+- [implements] crates/pinion-core/src/frame.rs:Frame::with_dt
 
 
 
@@ -4613,8 +4613,8 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
-**Implementations**:
-- crates/pinion-rpc/src/dispatch.rs:dispatch
+**Bindings**:
+- [implements] crates/pinion-rpc/src/dispatch.rs:dispatch
 
 
 
@@ -15752,6 +15752,35 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - example grid introspect-readers byte-identical 2-copy but trivial pure queries, no clean home
 - grid cursor-movers diverge on sort-awareness (table sort-aware, multi plain) = wrong-abstraction risk
 - leaf-typed activation predicate stays inline per coordinator (behind trait = no net reduction)
+
+
+
+### R736 — R736 editable number input (typeable spinbutton) — 2nd consumer of the editable-field value-coordination pattern, zero new substrate
+
+**Changes**:
+- New hello-number-input: editable WAI-ARIA spinbutton (typeable <input type=number> form factor)
+- Composition of TextFieldExternal draft + two ButtonExternal steppers; field text is the value SSOT
+- 2nd consumer of the editable-field value-coordination pattern (after hello-combobox-editable); 0 new substrate
+- Numeric value = parse_clamp(field_text) pure projection; no separate f32 store (avoids dual-SSOT)
+- Stepper clicks emit click intents into the reducer; arrows/PageUp-Down step; Enter normalises in place
+- Non-numeric keystrokes dropped at the binding (the HTML number-input gate); reuses AriaRole::SpinButton
+
+
+
+**Verification**:
+- 17 binding unit tests green (clamp/parse/format/gate, value round-trip, reducer, keyboard, a11y, view)
+- cargo test --workspace -j2: 4793 passed, 0 failed; cargo clippy --workspace -D pedantic clean
+- r736_number_input.py: 40 assertions; full headless sweep 85/85 (was 84)
+- Live-pixel boot frame: numeric field + stepper render distinct opaque tonal surfaces vs page background
+
+
+
+**Impact**: §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- Blur-reformat deferred: no binding-observable plain-blur hook (WidgetCore has no focus-change callback)
+- delegate_to_field (2 copies w/ combobox-editable) + stepper helpers (2 copies w/ spinbutton) honest carry, under 3rd lift
 
 
 
