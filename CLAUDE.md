@@ -77,7 +77,7 @@ Spec phase summary:
 | 6 | Cargo workspace skeleton (first impl commit) |
 | 7 | §5.15 External contract (8 items) + §5.12 screenshot RPC method |
 
-**Never edit `docs/GENERATED.md` or files under `docs/.atomic/` directly.** Use the Mnemosyne MCP primitives (`set_section_*`, `append_changelog_entry_v2`, etc.).
+**Never edit `docs/GENERATED.md` or files under `docs/.atomic/` directly.** Use the Mnemosyne typed primitives — `set_section_*` etc. via MCP, and append the changelog with the CLI `mnemosyne-cli append-changelog-entry` (the MCP `append_changelog_entry_v2` wrapper is removed: it shells out to a dropped `append-changelog-entry-v2` subcommand and now errors `unknown command`).
 
 ## Repository structure
 
