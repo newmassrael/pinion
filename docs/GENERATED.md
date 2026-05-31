@@ -15154,6 +15154,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R719 — R719 scene/pointer_leave RPC peer closes the §2 #2 CursorLeft input-peer gap and gives the headless harness a deterministic no-hover boot baseline, fixing flaky accordion sweep FAILs caused by the physical desktop cursor overlapping the WM-mapped test window.
+
+**Changes**:
+- Add scene/pointer_leave RPC method enqueuing DeferredInput::PointerLeave (winit CursorLeft peer)
+- Closes a §2 #2 input-peer gap: scene/hover mirrored CursorMoved but CursorLeft had no RPC peer
+- Shell drain arm forwards PointerLeave to cursor_left_for_window, rolling back any in-flight Hover
+- Positionless + window-scoped: no at/path selector; the per-frame window field routes the drain
+- rpc_verify.pointer_leave() helper + auto-call at boot for a deterministic no-hover baseline
+- TUI drain left as wildcard no-op, mirroring its existing unhandled Hover arm (no TUI hover model)
+
+
+
+**Verification**:
+- cargo test --workspace -j2 green: 20 test binaries, 0 failures
+- clippy --workspace --all-targets --features pinion-runtime/vello -D warnings clean (pedantic)
+- r719_pointer_leave.py 33 assert PASS: tooltip hover/leave/focus-orthogonality + accordion Hover
+- Root cause confirmed: XWarpPointer over a WM-mapped window sets Hover at boot (live evidence)
+- r697/r701 accordion now PASS with the physical cursor parked over the window (was flaky FAIL)
+- full demo sweep green after the boot baseline (no behaviour change to existing demos)
+
+
+
+**Impact**: §5.35, §5.49
+
+
+**Carry forward**:
+- TUI scene/pointer_leave is a wildcard no-op (mirrors unhandled Hover); add arm if TUI hover lands
+- positionless leave assumes one mouse pointer; multi-pointer/touch leave would add a pid selector
+- boot baseline assumes the boot CursorMoved precedes the post-grace pointer_leave (still cursor)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

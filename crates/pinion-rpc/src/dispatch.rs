@@ -466,6 +466,26 @@ pub enum DeferredInput {
     /// `scene/hover` exposes the bare hover transition (§2 invariant #2
     /// — every input a human makes must have an RPC peer).
     Hover { x: f64, y: f64 },
+    /// R719 §5.49 §5.35 — `scene/pointer_leave` injection. The embedder
+    /// applies a single `cursor_left(MOUSE)` (winit's
+    /// `WindowEvent::CursorLeft`): the pointer exits the window
+    /// entirely, so the [`InputRouter`](pinion_runtime::InputRouter)
+    /// drops the cursor and rolls back any in-flight `Hover` —
+    /// re-running the synthetic `PointerLeave` arc on whatever widget
+    /// was hovered. Window-scoped (no coordinate): the per-frame
+    /// `window` field already routes it to the addressed window's
+    /// router, exactly like every other [`DeferredInput`].
+    ///
+    /// This is the missing RPC peer to [`Self::Hover`]: `scene/hover`
+    /// mirrors winit `CursorMoved`, but until R719 winit `CursorLeft`
+    /// had no peer, violating §2 invariant #2 ("every input a human
+    /// makes must have an RPC peer"). A human can move the pointer
+    /// *off* the surface; an AI client now can too. It also gives the
+    /// headless harness a portable way to establish a deterministic
+    /// "no pointer over the window" baseline, independent of where the
+    /// host's physical desktop cursor happens to sit when a real X /
+    /// Wayland server maps the test window under it.
+    PointerLeave,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -838,6 +858,14 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 handle_scene_hover(inbox, producer, last_paint_layout, request.params.as_ref()),
                 HandlerKind::Mutate,
             )
+        }
+        "scene/pointer_leave" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (handle_scene_pointer_leave(inbox), HandlerKind::Mutate)
         }
         "scene/double_click" => {
             #[allow(
@@ -1300,6 +1328,26 @@ where
     let params = require_params(params)?;
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
     inbox.push(DeferredInput::Hover { x, y });
+    Ok(Value::Null)
+}
+
+/// R719 §5.49 §5.35 — `scene/pointer_leave` handler: enqueues a single
+/// [`DeferredInput::PointerLeave`] (the pointer exits the window; no
+/// coordinate, no press). Unlike [`handle_scene_hover`] it takes no
+/// `at` / `path` selector — winit `CursorLeft` carries no position, so
+/// the variant is window-scoped and the per-frame `window` field
+/// already routes the drain to the addressed window's router. The RPC
+/// peer to [`handle_scene_hover`] for the cursor-exit half of the
+/// hover arc (§2 invariant #2); returns `null` on success, after which
+/// the AI client reads the resulting (un-hovered) state via
+/// `scene/query` / `scene/snapshot`.
+fn handle_scene_pointer_leave(
+    inbox: Option<&mut Vec<DeferredInput>>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    inbox.push(DeferredInput::PointerLeave);
     Ok(Value::Null)
 }
 

@@ -1268,6 +1268,17 @@ impl<V: WidgetView> ShellCore<V> {
                 DeferredInput::Hover { x, y } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                 }
+                // R719 §5.49 §5.35 — `scene/pointer_leave` mirror: the
+                // pointer exits the window (winit `CursorLeft`). Drops
+                // the cursor and rolls back any in-flight `Hover` on the
+                // addressed window's router, re-running the synthetic
+                // `PointerLeave` arc on whatever widget was hovered — the
+                // cursor-exit peer to the `Hover` arc. No coordinate: a
+                // window-leave is positionless, so unlike the other arms
+                // there is no leading `cursor_moved`.
+                DeferredInput::PointerLeave => {
+                    self.cursor_left_for_window(window_id, PointerId::MOUSE);
+                }
                 DeferredInput::Key { x, y, ref key } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                     self.handle_named_key(key);

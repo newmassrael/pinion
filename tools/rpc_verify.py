@@ -146,6 +146,21 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"subprocess exited during boot (rc={self._proc.returncode})",
                 "\n".join(self._stderr_lines[-20:]),
             )
+        # R719 §5.35 §5.49 — establish a deterministic no-hover baseline.
+        # A real X / Wayland server maps the window wherever the WM
+        # places it — frequently under the host's physical cursor — and
+        # winit delivers a genuine boot-time `CursorMoved`, leaving a
+        # widget reporting `Hover` before any RPC ran (flaky boot-state
+        # assertions, e.g. the accordion sweep). A headless CI with the
+        # cursor parked never sees that event; `pointer_leave()` clears
+        # the ambient hover so a cursor-occupied desktop matches that
+        # clean baseline. Best-effort: older binaries built before the
+        # `scene/pointer_leave` peer reject the method — ignore so the
+        # harness still drives them.
+        try:
+            self.pointer_leave()
+        except RpcError:
+            pass
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -432,6 +447,28 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             assert path is not None
             params = {"path": path}
         self.request("scene/hover", params)
+
+    def pointer_leave(self) -> None:
+        """`scene/pointer_leave` typed wrapper (R719 §5.35 §5.49).
+
+        Moves the pointer *off* the window entirely (winit
+        `CursorLeft`): the shell drops the cursor and rolls back any
+        in-flight `Hover`, so whatever widget the pointer was over
+        returns to its un-hovered resting state. The cursor-exit peer
+        to `hover()` — positionless, so it takes no `at` / `path`.
+
+        `__enter__` calls this once after boot to establish a
+        deterministic "no pointer over the window" baseline: a real
+        X / Wayland server maps the test window wherever the window
+        manager places it, often under the developer's physical
+        cursor, which delivers a genuine boot-time `CursorMoved` and
+        leaves a widget reporting `Hover` before any RPC ran. A true
+        headless CI (cursor parked) never sees that event; this wrapper
+        makes a cursor-occupied desktop match that clean baseline so
+        boot-state assertions are reproducible regardless of where the
+        host mouse sits.
+        """
+        self.request("scene/pointer_leave")
 
     def double_click(
         self,
