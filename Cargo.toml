@@ -39,6 +39,7 @@ members = [
     "examples/hello-table",
     "examples/hello-radio",
     "examples/hello-radio-group",
+    "examples/hello-segmented-button",
     "examples/hello-listbox",
     "examples/hello-listbox-multi",
     "examples/hello-slider",

@@ -1,0 +1,30 @@
+[package]
+name = "hello-segmented-button"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R728 §5.38 §5.40 single-select Material 3 segmented button: pure composition over RadioGroupExternal (R51.44) — tonal track + Accent-filled selected segment + leading check glyph; substrate-0 (no new coordinator), 2nd standalone consumer of the segmented re-skin pattern after the todomvc filter row"
+publish = false
+
+[[bin]]
+name = "hello-segmented-button"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.66 §5.40 — AccessKit substrate for composite `access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — `assert_widget_view_carries_tag` regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

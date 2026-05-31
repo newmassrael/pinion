@@ -15448,6 +15448,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R728 — R728 single-select Material 3 segmented button (hello-segmented-button): pure composition over RadioGroupExternal, substrate-0; 2nd standalone consumer of the segmented re-skin after the todomvc filter row
+
+**Changes**:
+- New example hello-segmented-button: single-select Material 3 segmented button widget
+- Pure composition over RadioGroupExternal (R697/R714 pattern) — zero new substrate
+- Tonal track + Accent-filled selected pill + leading U+2713 check glyph on selected
+- Default boot selection = segment 0 via KeyboardActivate (M3 segmented always selects one)
+- a11y radiogroup+radio tree; explicit per-segment names survive enrichment past check glyph
+- Keyboard: ArrowLeft/Right wrap + Home/End + d/w/m shortcuts via apply_key (single tab stop)
+- Workspace member + r728 RPC demo (36 assertions + live-pixel introspection-screen parity)
+
+
+
+**Verification**:
+- cargo test --workspace green (23 new unit tests in hello-segmented-button)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)
+- demo sweep 78/78 PASS under Xvfb software-GL (r728 = entry 66)
+- r728 live-pixel: selected pill = snapshot Accent, unselected shows track tone, track verified
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- Opinionated segmented paint now 2-consumer (todomvc filter + this) but divergent styles
+- 3rd identical M3-tonal consumer triggers pinion_widget_paint::segmented lift (R703 rule)
+- multi-select segmented (toggle-button group, aria-pressed) is a separate a11y mapping, deferred
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
