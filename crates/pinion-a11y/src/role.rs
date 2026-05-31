@@ -12,7 +12,10 @@
 //! spelling so introspect / RPC consumers see the same identifiers
 //! they would in HTML's `role` attribute.
 
-use accesskit::{AutoComplete as AkAutoComplete, Role, SortDirection as AkSortDirection};
+use accesskit::{
+    AriaCurrent as AkAriaCurrent, AutoComplete as AkAutoComplete, Role,
+    SortDirection as AkSortDirection,
+};
 
 /// Pinion-native ARIA role enum.
 ///
@@ -342,6 +345,18 @@ pub enum AriaRole {
     /// [`Self::ProgressBar`]); any in-snackbar action label is a
     /// separate [`Self::Button`] child with its own action surface.
     Status,
+    /// R731 §5.40 — WAI-ARIA 1.2 §3.5 `navigation` landmark: a region of
+    /// links for navigating the document or related documents (the
+    /// breadcrumb trail, a nav rail). AT lists it among the page
+    /// landmarks. Passive container — no keyboard model of its own (its
+    /// link children carry the interaction).
+    Navigation,
+    /// R731 §5.40 — WAI-ARIA 1.2 §3.2 `link` role: an interactive
+    /// reference that navigates when activated (a breadcrumb crumb). The
+    /// current-location crumb additionally carries
+    /// [`AccessNode::current`](crate::AccessNode::current) =
+    /// `Some(AriaCurrent::Page)`.
+    Link,
     Generic,
 }
 
@@ -398,6 +413,8 @@ impl AriaRole {
             // R725 §5.40 — AccessKit carries `status` one-to-one as a
             // polite live region.
             Self::Status => Role::Status,
+            Self::Navigation => Role::Navigation,
+            Self::Link => Role::Link,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -444,6 +461,8 @@ impl AriaRole {
             Self::Row => "row",
             Self::ProgressBar => "progressbar",
             Self::Status => "status",
+            Self::Navigation => "navigation",
+            Self::Link => "link",
             Self::Generic => "generic",
         }
     }
@@ -532,6 +551,63 @@ impl SortDirection {
         match self {
             Self::Ascending => "ascending",
             Self::Descending => "descending",
+        }
+    }
+}
+
+/// R731 §5.40 — WAI-ARIA 1.2 §6.6.3 `aria-current`: which element in a set
+/// of related elements is the *current* one. The wrapper keeps
+/// [`AccessNode`] free of a direct `accesskit` dependency, exactly as
+/// [`SortDirection`] does.
+///
+/// `aria-current="false"` (not the current element) is modelled by the
+/// *absence* of the value ([`AccessNode::current`](crate::AccessNode::current)
+/// = `None`). Only the positive states are carried — the breadcrumb's
+/// current crumb is [`Self::Page`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AriaCurrent {
+    /// `aria-current="page"` — the current page within a navigation set
+    /// (the breadcrumb's current-location crumb).
+    Page,
+    /// `aria-current="step"` — the current step in a process (a stepper).
+    Step,
+    /// `aria-current="location"` — the current location (e.g. an image map).
+    Location,
+    /// `aria-current="date"` — the current date in a calendar.
+    Date,
+    /// `aria-current="time"` — the current time in a timetable.
+    Time,
+    /// `aria-current="true"` — the current item, kind unspecified.
+    True,
+}
+
+impl AriaCurrent {
+    /// Lower to `accesskit::AriaCurrent`. The single bridge point so an
+    /// `accesskit` minor bump rewrites only this arm.
+    #[must_use]
+    pub const fn to_accesskit(self) -> AkAriaCurrent {
+        match self {
+            Self::Page => AkAriaCurrent::Page,
+            Self::Step => AkAriaCurrent::Step,
+            Self::Location => AkAriaCurrent::Location,
+            Self::Date => AkAriaCurrent::Date,
+            Self::Time => AkAriaCurrent::Time,
+            Self::True => AkAriaCurrent::True,
+        }
+    }
+
+    /// WAI-ARIA literal as it appears in an HTML `aria-current` attribute,
+    /// so introspect / RPC and AT report identical tokens.
+    #[must_use]
+    pub const fn aria_name(self) -> &'static str {
+        match self {
+            Self::Page => "page",
+            Self::Step => "step",
+            Self::Location => "location",
+            Self::Date => "date",
+            Self::Time => "time",
+            Self::True => "true",
         }
     }
 }

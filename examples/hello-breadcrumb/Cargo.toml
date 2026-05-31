@@ -1,0 +1,28 @@
+[package]
+name = "hello-breadcrumb"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R731 §5.38 §5.40 WAI-ARIA breadcrumb navigation: a Navigation landmark of Link crumbs with aria-current on the current location; pure composition over RadioGroupExternal (current = 1-of-N selection), substrate-0 interaction + new Link/Navigation/aria-current a11y primitives"
+publish = false
+
+[[bin]]
+name = "hello-breadcrumb"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

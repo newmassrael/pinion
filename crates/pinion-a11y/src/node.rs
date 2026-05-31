@@ -15,7 +15,7 @@
 
 use pinion_core::scene::Rect;
 
-use crate::role::{AriaRole, AutoComplete, SortDirection};
+use crate::role::{AriaCurrent, AriaRole, AutoComplete, SortDirection};
 
 /// Pinion-native a11y descriptor for one widget.
 ///
@@ -209,6 +209,16 @@ pub struct AccessNode {
     /// R717 additive-axis convention) so it defaults absent without
     /// forcing every hand-written node literal to enumerate it.
     pub sort: Option<SortDirection>,
+    /// R731 §5.40 — WAI-ARIA 1.2 §6.6.3 `aria-current`. `Some(kind)` marks
+    /// this node as the current element of a related set (the breadcrumb's
+    /// current crumb = `Some(AriaCurrent::Page)`); the tree builder lowers
+    /// it via `accesskit::Node::set_aria_current`, and `None` omits the
+    /// attribute (`aria-current="false"`).
+    ///
+    /// Placed on [`AccessNode`] (the R674 / R693 / R695 / R696 / R714 /
+    /// R717 / R730 additive-axis convention) so it defaults absent without
+    /// forcing every hand-written node literal to enumerate it.
+    pub current: Option<AriaCurrent>,
 }
 
 impl AccessNode {
@@ -236,6 +246,7 @@ impl AccessNode {
             controls: None,
             auto_complete: None,
             sort: None,
+            current: None,
         }
     }
 
@@ -373,6 +384,14 @@ impl AccessNode {
     #[must_use]
     pub fn with_sort(mut self, dir: SortDirection) -> Self {
         self.sort = Some(dir);
+        self
+    }
+
+    /// R731 §5.40 — set the WAI-ARIA `aria-current` kind (the breadcrumb's
+    /// current crumb). See [`Self::current`].
+    #[must_use]
+    pub fn with_current(mut self, kind: AriaCurrent) -> Self {
+        self.current = Some(kind);
         self
     }
 }

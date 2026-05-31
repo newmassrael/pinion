@@ -15539,6 +15539,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R731 — R731 WAI-ARIA breadcrumb navigation (hello-breadcrumb): new Navigation/Link/aria-current a11y primitives + RadioGroupExternal-backed current-location selection (3rd consumer, substrate-0 interaction)
+
+**Changes**:
+- New example hello-breadcrumb: WAI-ARIA breadcrumb (Navigation landmark + Link crumbs + aria-current)
+- 3rd RadioGroupExternal consumer (current location = 1-of-N selection); substrate-0 interaction
+- New a11y primitives: AriaRole::Link + AriaRole::Navigation + AriaCurrent axis (AccessNode.current + lowering)
+- current crumb = aria-current=page; link crumbs Accent, current OnSurface; "/" separators
+- keyboard single tab stop + arrow roving + Home/End (RadioGroup model); per-link-Tab deferred
+- default boot current = last crumb (Summary); navigate via click / RPC / keyboard / AT
+
+
+
+**Verification**:
+- cargo test --workspace green (9 new breadcrumb unit tests + 17 a11y conformance)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)
+- demo sweep 81/81 PASS under Xvfb (r731 = RPC nav/colour structural + boot Surface live-pixel)
+- new roles additive (no role-count test to update); all existing examples unregressed
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- per-link-Tab APG variant deferred (needs per-crumb focusable externals); roving model shipped + documented
+- dynamic trail truncation on navigate deferred (fixed trail = path selector); the a11y primitives are correct
+- AriaCurrent models the positive vocabulary (page/step/location/date/time/true); false = absence (None)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

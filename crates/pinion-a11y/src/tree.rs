@@ -452,6 +452,12 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.set_sort_direction(dir.to_accesskit());
     }
 
+    // R731 §5.40 — WAI-ARIA `aria-current` on the current element of a set
+    // (the breadcrumb's current crumb). `None` omits it (`aria-current="false"`).
+    if let Some(kind) = access.current {
+        node.set_aria_current(kind.to_accesskit());
+    }
+
     add_actions_for_role(&mut node, access.role);
     node
 }
@@ -504,6 +510,11 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // readers announce "combo box, collapsed/expanded") stays
         // distinct while the actions match.
         | AriaRole::ComboBox
+        // R731 §5.40 — `Link` (a breadcrumb crumb) is commit-class atomic
+        // at the AT-action surface: Click navigates, Focus moves the AT
+        // cursor. The role identity stays distinct (`Role::Link` → screen
+        // readers announce "link") but the action set matches Button.
+        | AriaRole::Link
         | AriaRole::Switch => {
             node.add_action(Action::Click);
             node.add_action(Action::Focus);
@@ -607,11 +618,16 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // it carries zero actions (the same passive arm as `Tooltip` /
         // `ProgressBar`). Any in-snackbar action label is a separate
         // `Button` child carrying its own Click/Focus action set.
+        // R731 §5.40 — `Navigation` (WAI-ARIA §3.5) is a passive landmark:
+        // AT lists it among the page regions but it never receives focus
+        // and is not clickable (its `Link` children carry the
+        // interaction), so it joins the zero-action arm.
         AriaRole::Tooltip
         | AriaRole::ColumnHeader
         | AriaRole::Row
         | AriaRole::ProgressBar
-        | AriaRole::Status => {}
+        | AriaRole::Status
+        | AriaRole::Navigation => {}
     }
 }
 
