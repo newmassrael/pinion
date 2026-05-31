@@ -1,10 +1,69 @@
-# Path B binding axis — next-session prep (MNEMO-GAP-001 follow-up)
+# Path B binding axis — MNEMO-GAP-001 follow-up (RESOLVED)
 
-> Status: **DECISION PENDING.** This is a scoping/prep doc, not a committed
-> plan. The next session must make the §1 decision *before* any binding.
+> Status: **DECISION: A — REJECTED (resolved R716, 2026-05-31).** pinion's
+> `§X` citations are *provenance, not implementation claims*; Path B's
+> set-equality model is incompatible with that convention, so the binding
+> classes stay `severity_binding="info"` (advisory). See §1.1 for the
+> verified rationale. §2–§4 below are retained as the reference workplan for
+> a future deliberate Option-C effort, *if* spec↔code traceability ever
+> becomes a stated goal — they are not a committed plan.
 > Not Mnemosyne-managed (plain `docs/` markdown, outside `docs=[GENERATED.md]`
 > scope and outside the `validate-code-refs` `crates/`+`examples/` scan — so
 > the `§` tokens in here are not validated as code citations).
+
+## 1.1 RESOLUTION (R716, 2026-05-31)
+
+Decision **A** adopted after an independent audit ([[verify-seed-claims-audit-first]])
+of this doc's own central premise — the recommendation was not taken on trust.
+
+**Re-measured (HEAD `d1969b0`, clean):** `validate-code-refs` →
+`citation_unbound=3465 impl_unbacked=81 impl_missing=33`; top bucket
+`§5.16=896`. Identical to §2.
+
+**Premise verified directly (decisive).** `§5.16` ("GPU renderer
+architecture") is cited 896× in `R<round> §<section>` *header* form by files
+that plainly do not implement a GPU renderer:
+
+| File | Cite (verbatim) | What the file is |
+|---|---|---|
+| `composite_tag.rs` | `R659 §5.16 §5.35 — composite-tag wire helpers` | tag-string helpers |
+| `reactive/owner.rs` | `R680 §5.16 §5.28 — tick only this owner's …` | reactive owner tick |
+| `widgets/checkbox.rs` | `R698 §5.16 — route the CheckboxState <-> SCXML-id mapping` | state-name routing |
+| `pinion-shell/Cargo.toml` | `description = "… §5.16/§5.20/§5.35 paint-side AppShell …"` | crate manifest |
+
+These are **provenance/blame pointers** (which round touched this; which
+spec-area it relates to), **not** "this file implements §5.16." Path B's
+bidirectional set-equality treats a citation *as* an implements-claim, so
+mechanically binding the scan would encode ~896 false "implements GPU
+renderer" assertions into the spec — the exact boilerplate-as-truth failure
+Path B was supposed to prevent.
+
+**Conclusion.** pinion's citation convention is a *provenance* relation; Path
+B models an *implementation* relation; the two do not coincide. Reject the
+mechanical binding. `severity_binding` stays `info` (no `mnemosyne.toml`
+change). Recorded as meta/tooling (mirrors MNEMO-GAP-001, which is infra
+commits with no product changelog entry — a fabricated `§impact` here would
+itself be a false binding).
+
+**Doors left open (both deferred, evidence-first):**
+
+1. **Option-C, if traceability is ever a stated goal** — per-section
+   curation (49 sections), *gated on* first cleaning citation semantics
+   (resolve the `§5.16=896` boilerplate-default; see carry below). §2–§4 are
+   that workplan.
+2. **Mnemosyne-upstream RFC: a "provenance-citation" mode** that distinguishes
+   `references §X` (provenance, no bind) from `implements §X` (binds), so the
+   binding gate could become useful for pinion without demanding global
+   set-equality. Carry as a Mnemosyne-upstream item (parallel to SCE-004);
+   not actioned in this repo by R716.
+
+**Carry (citation-hygiene debt, fix-on-touch — NOT part of this decision):**
+the `§5.16=896` bucket is a meaningless boilerplate-default co-citation (the
+860-count drift MNEMO-GAP-001 §3 flagged). It is a hygiene debt to correct
+opportunistically when files are touched (most `§5.16` cites should become
+their real section — `§5.38` widgets, `§5.2`/`§5.11` scene, `§5.40` a11y, …
+— or be dropped). It is a *prerequisite* for any future Option-C, not a task
+mandated by Option A.
 
 ## 0. Where this came from
 
