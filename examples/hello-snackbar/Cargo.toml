@@ -1,0 +1,29 @@
+[package]
+name = "hello-snackbar"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R725 §5.28 §5.38 §5.40 Snackbar/Toast consumer — a Show button raises a Material 3 snackbar (inverseSurface fill + inverseOnSurface text + inversePrimary UNDO action) that auto-dismisses after 4 s via the SnackbarTimer Tickable; the timed dismissal is deterministically drivable by the R724 scene/tick RPC; first inversePrimary consumer, role=status live region"
+publish = false
+
+[[bin]]
+name = "hello-snackbar"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

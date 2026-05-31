@@ -594,10 +594,17 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // but it never receives focus and is not operable (a slider is —
         // hence `ProgressBar` is passive, not a `Slider`). Zero actions,
         // the same passive arm as `Tooltip` / `ColumnHeader` / `Row`.
+        // R725 §5.40 — `Status` (the snackbar/toast live region) is a
+        // passive polite region: AT announces its content when it
+        // appears but it never receives focus and is not clickable, so
+        // it carries zero actions (the same passive arm as `Tooltip` /
+        // `ProgressBar`). Any in-snackbar action label is a separate
+        // `Button` child carrying its own Click/Focus action set.
         AriaRole::Tooltip
         | AriaRole::ColumnHeader
         | AriaRole::Row
-        | AriaRole::ProgressBar => {}
+        | AriaRole::ProgressBar
+        | AriaRole::Status => {}
     }
 }
 

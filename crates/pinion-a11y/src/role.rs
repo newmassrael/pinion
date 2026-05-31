@@ -333,6 +333,15 @@ pub enum AriaRole {
     /// [`Self::ColumnHeader`] / [`Self::Row`]). AT announces the value as
     /// a read-only status, not as an editable control.
     ProgressBar,
+    /// R725 §5.40 — WAI-ARIA 1.2 §3.4 `status` role: a polite live
+    /// region for advisory, transient messages (the Material 3
+    /// snackbar / toast). AT announces the content when it appears
+    /// without moving focus. Descriptive and **passive** — the
+    /// container owns no keyboard model and exposes no AT actions
+    /// (it joins the zero-action arm with [`Self::Tooltip`] /
+    /// [`Self::ProgressBar`]); any in-snackbar action label is a
+    /// separate [`Self::Button`] child with its own action surface.
+    Status,
     Generic,
 }
 
@@ -386,6 +395,9 @@ impl AriaRole {
             // (`Role::ProgressIndicator`); the numeric value lowers
             // through the same `set_numeric_value` path as `Slider`.
             Self::ProgressBar => Role::ProgressIndicator,
+            // R725 §5.40 — AccessKit carries `status` one-to-one as a
+            // polite live region.
+            Self::Status => Role::Status,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -431,6 +443,7 @@ impl AriaRole {
             Self::ColumnHeader => "columnheader",
             Self::Row => "row",
             Self::ProgressBar => "progressbar",
+            Self::Status => "status",
             Self::Generic => "generic",
         }
     }

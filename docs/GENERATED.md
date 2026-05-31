@@ -15356,6 +15356,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R725 — R725 Snackbar/Toast - timed-auto-dismiss substrate (SnackbarTimer Tickable) + first inversePrimary consumer + role=status
+
+**Changes**:
+- SnackbarTimer (Tickable countdown): visible/elapsed/duration; auto-dismiss on tick
+- use_snackbar_timer hook (caret_blink one-shot sibling); scene/tick advances it deterministically
+- AriaRole::Status (WAI-ARIA polite live region) -> accesskit Role::Status; passive zero-action arm
+- hello-snackbar: Show raises M3 snackbar (inverseSurface + inverseOnSurface + inversePrimary UNDO)
+- first inversePrimary consumer (clears R723 carry); ButtonColors::new inline action tone
+- non-modal; UNDO reachable by pointer/RPC/AT-Click (keyboard Tab = carry)
+
+
+
+**Verification**:
+- cargo test --workspace green; SnackbarTimer 7 + a11y Status + hello-snackbar 5 unit tests
+- cargo clippy --workspace --all-targets (-D pedantic) clean
+- r725_snackbar.py: show -> 3 inverse roles -> tick(0.5) visible -> tick(4.0) dismiss -> UNDO+count
+- auto-dismiss deterministic via scene/tick (no wall-clock); overlay not boot-pixelable (R711)
+- demo sweep 76/76 under Xvfb
+
+
+
+**Impact**: §5.28, §5.38, §5.40
+
+
+**Carry forward**:
+- keyboard Tab-to-UNDO deferred: non-modal dynamic-focusable substrate absent (modal-scope only)
+- snackbar elevation (M3 L3) flat now; with_shadows opt-in additive (R711 elevation helper exists)
+- snackbar queue (multi-message) + swipe-to-dismiss + leading icon = additive, no consumer
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

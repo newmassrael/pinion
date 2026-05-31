@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R725 §5.38 Snackbar consumer: pinion-forge renderer manifest for
+  hello-snackbar. Emits `HelloSnackbarRenderer` (Vello-backed). Same
+  manifest shape as hello-dialog — only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloSnackbarRenderer"
+        backend="vello"/>

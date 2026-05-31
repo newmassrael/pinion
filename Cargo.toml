@@ -21,6 +21,7 @@ members = [
     "examples/hello-button-tui",
     "examples/hello-gradient",
     "examples/hello-path",
+    "examples/hello-snackbar",
     "examples/hello-richtext",
     "examples/hello-color-picker",
     "examples/hello-elevation",
