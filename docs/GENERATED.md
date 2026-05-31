@@ -15630,6 +15630,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R734 — R734 WAI-ARIA spinbutton (bounded stepped numeric field): new SpinButtonExternal value holder + new AriaRole::SpinButton (3rd AccessValue::Float consumer)
+
+**Changes**:
+- new hello-spinbutton example: WAI-ARIA spinbutton (bounded stepped numeric field)
+- new SpinButtonExternal (pinion-core): plain value holder, no SCXML, ProgressBar shape
+- value/min/max/step + increment/decrement/page_up/page_down + set_value clamp (NaN->min)
+- new AriaRole::SpinButton -> accesskit Role::SpinButton; 3rd AccessValue::Float consumer
+- SpinButton joins Slider operable action arm (Focus+Increment+Decrement) vs passive ProgressBar
+- / + steppers tagged spin#dec / spin#inc route via R51.42 composite to invoke send
+- keyboard Arrow +/-step, Page +/-page, Home/End to min/max; AI invoke + intervene same path
+
+
+
+**Verification**:
+- SpinButtonExternal 11 unit tests (clamp/step/page/NaN/intervene/invoke/composite-send)
+- pinion-a11y r734_spin_button_lowers + Slider/SpinButton shared action arm; hello-spinbutton 8 tests
+- cargo test --workspace green; cargo clippy --workspace --all-targets -D pedantic clean
+- r734_spinbutton.py 34 assertions + PINION_SCREENSHOT live-pixel; headless Xvfb sweep PASS
+- demo sweep 83/83 (R733 82 + R734 1); existing demos byte-identical
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- stepper - / + regions own no hover/press statechart (plain External); state-layer deferred
+- aria-valuetext absent (no AccessNode value_text field); plain valuenow only, additive later
+- plain value-holder pattern now 2 consumers (ProgressBar passive/SpinButton operable); diverge
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R734 §5.38 §5.40 — pinion-forge renderer manifest for hello-spinbutton.
+  Same single-source-of-truth template that emits the other Vello
+  example renderers; only the struct name diverges. backend=vello.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloSpinButtonRenderer"
+        backend="vello"/>

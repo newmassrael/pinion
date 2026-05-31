@@ -519,7 +519,12 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
             node.add_action(Action::Click);
             node.add_action(Action::Focus);
         }
-        AriaRole::Slider => {
+        // R734 §5.40 — `SpinButton` shares `Slider`'s *operable* numeric
+        // action set: Focus (Tab in) + Increment / Decrement (the AT
+        // step-up / step-down actions a screen reader maps to ArrowUp /
+        // ArrowDown). Distinct from the passive `ProgressBar`, which
+        // reports a `Float` value but receives no actions.
+        AriaRole::Slider | AriaRole::SpinButton => {
             node.add_action(Action::Focus);
             node.add_action(Action::Increment);
             node.add_action(Action::Decrement);

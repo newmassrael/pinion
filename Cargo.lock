@@ -2103,6 +2103,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-spinbutton"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-table"
 version = "0.0.1"
 dependencies = [

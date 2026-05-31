@@ -16,6 +16,7 @@ pub mod scroll;
 pub mod scrollbar;
 pub mod slider;
 pub mod snackbar;
+pub mod spin_button;
 pub mod table;
 pub mod text_edit;
 pub mod text_field;

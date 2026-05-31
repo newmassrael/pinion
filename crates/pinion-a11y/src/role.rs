@@ -378,6 +378,22 @@ pub enum AriaRole {
     /// [`AccessNode::current`](crate::AccessNode::current) =
     /// `Some(AriaCurrent::Page)`.
     Link,
+    /// R734 §5.40 — WAI-ARIA 1.2 §4.3 `spinbutton` role: a numeric input
+    /// the user steps through a bounded range. Pairs with the §5.38
+    /// `SpinButtonExternal` value holder (`hello-spinbutton`, R734). The
+    /// value lowers through the same [`AccessValue::Float`] path
+    /// (`aria-valuenow` / `aria-valuemin` / `aria-valuemax`) a `Slider`
+    /// uses — `SpinButton` is the 3rd `Float` consumer after
+    /// [`Self::Slider`] and [`Self::ProgressBar`]. Distinct from
+    /// `Slider`: a slider is a *continuous* drag along a track, a
+    /// spinbutton is a *discrete* stepped numeric field (ArrowUp/Down ±
+    /// step, Home/End to min/max, PageUp/Down ± a larger step). It shares
+    /// `Slider`'s **operable** AT action set (Focus + Increment +
+    /// Decrement) — distinct from the *passive* `ProgressBar`, which
+    /// reports a `Float` value but is read-only.
+    ///
+    /// [`AccessValue::Float`]: crate::node::AccessValue::Float
+    SpinButton,
     /// R733 §5.40 — WAI-ARIA 1.2 §3.6 `group` role: a labelled set of
     /// user-interface objects that are *not* a page landmark (vs
     /// [`Self::Navigation`], which is). The canonical container for a
@@ -454,6 +470,8 @@ impl AriaRole {
             Self::Status => Role::Status,
             Self::Navigation => Role::Navigation,
             Self::Link => Role::Link,
+            // R734 §5.40 — AccessKit carries `spinbutton` one-to-one.
+            Self::SpinButton => Role::SpinButton,
             // R733 §5.40 — AccessKit carries `group` one-to-one
             // (distinct from `GenericContainer`, which the
             // semantics-free `Generic` role maps to).
@@ -506,6 +524,7 @@ impl AriaRole {
             Self::Status => "status",
             Self::Navigation => "navigation",
             Self::Link => "link",
+            Self::SpinButton => "spinbutton",
             Self::Group => "group",
             Self::Generic => "generic",
         }
@@ -881,6 +900,14 @@ mod tests {
     fn r704_row_lowers_to_accesskit_row() {
         assert_eq!(AriaRole::Row.to_accesskit(), Role::Row);
         assert_eq!(AriaRole::Row.aria_name(), "row");
+    }
+
+    #[test]
+    fn r734_spin_button_lowers_to_accesskit_spin_button() {
+        // R734 §5.40 — discrete numeric stepper; shares Slider's Float
+        // lowering + operable action set, distinct role token.
+        assert_eq!(AriaRole::SpinButton.to_accesskit(), Role::SpinButton);
+        assert_eq!(AriaRole::SpinButton.aria_name(), "spinbutton");
     }
 
     #[test]
