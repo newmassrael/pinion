@@ -41,8 +41,9 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::spin_button::SpinButtonExternal;
-use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -84,11 +85,15 @@ struct SpinState {
     value: f32,
     min: f32,
     max: f32,
+    /// R734.2 — per-stepper interaction state (drives the hover / pressed
+    /// state-layer paint).
+    dec: ButtonState,
+    inc: ButtonState,
 }
 
 impl SpinState {
     fn boot() -> Self {
-        Self { value: START, min: MIN, max: MAX }
+        Self { value: START, min: MIN, max: MAX, dec: ButtonState::Idle, inc: ButtonState::Idle }
     }
 }
 
@@ -100,9 +105,9 @@ fn view(state: &SpinState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let field = Scene::Container(
         ContainerNode::new(vec![
-            stepper(DEC_TAG, MINUS_GLYPH, &theme),
+            stepper(DEC_TAG, MINUS_GLYPH, state.dec, &theme),
             readout(state.value, &theme),
-            stepper(INC_TAG, PLUS_GLYPH, &theme),
+            stepper(INC_TAG, PLUS_GLYPH, state.inc, &theme),
         ])
         .with_tag(TAG)
         .with_style(
@@ -130,9 +135,11 @@ fn view(state: &SpinState, _frame: &Frame) -> Scene {
 
 /// A circular − / + stepper affordance, tagged for composite-pointer
 /// routing. Presentational at the AT layer (the spinbutton owns the
-/// Increment / Decrement actions); a hover / pressed state layer is a
-/// deferred carry (`SpinButtonExternal` owns no pointer statechart).
-fn stepper(tag: &'static str, glyph: &str, theme: &Theme) -> Scene {
+/// Increment / Decrement actions). R734.2 — `state` is the stepper's own
+/// `Button` interaction state; the fill layers the shared M3 hover (0.08)
+/// / pressed (0.12) `OnSurface` state overlay so the affordance has full
+/// desktop-grade pointer feedback.
+fn stepper(tag: &'static str, glyph: &str, state: ButtonState, theme: &Theme) -> Scene {
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             glyph,
@@ -141,7 +148,7 @@ fn stepper(tag: &'static str, glyph: &str, theme: &Theme) -> Scene {
         ))])
         .with_tag(tag)
         .with_style(
-            BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
+            BoxStyle::filled(stepper_fill(theme, state))
                 .with_corner_radius(FIELD_H / 2),
         )
         .with_layout(
@@ -152,6 +159,18 @@ fn stepper(tag: &'static str, glyph: &str, theme: &Theme) -> Scene {
                 .with_size(Size::px(STEP_W, FIELD_H)),
         ),
     )
+}
+
+/// Stepper fill = the `SurfaceContainerHighest` base with the shared M3
+/// hover / pressed `OnSurface` state-layer (0.08 / 0.12) — the same overlay
+/// `hello-segmented-button` / `hello-radio-group` use, applied per stepper.
+fn stepper_fill(theme: &Theme, state: ButtonState) -> Color {
+    let base = theme.resolve(ColorRole::SurfaceContainerHighest);
+    match state {
+        ButtonState::Idle | ButtonState::Disabled => base,
+        ButtonState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        ButtonState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+    }
 }
 
 /// The numeric readout (the spinbutton's visible value). Integer-formatted
@@ -202,6 +221,12 @@ fn read_spin(scene: &Scene) -> SpinState {
         {
             out.max = v as f32;
         }
+    }
+    if let Some(IntrospectValue::Text(name)) = intro.query("dec_state") {
+        out.dec = ButtonState::from_name_or_default(&name);
+    }
+    if let Some(IntrospectValue::Text(name)) = intro.query("inc_state") {
+        out.inc = ButtonState::from_name_or_default(&name);
     }
     out
 }

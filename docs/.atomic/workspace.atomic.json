@@ -24919,6 +24919,54 @@
         "plain value-holder pattern now 2 consumers (ProgressBar passive/SpinButton operable); diverge"
       ]
     },
+    "R734.2": {
+      "decision_summary": "R734.2 SpinButton stateful steppers: per-region Button SCXML (dec/inc) + hover/pressed paint, clearing the R734 inert-stepper gap",
+      "changes_bullets": [
+        "SpinButtonExternal gains 2 Button SCXML state machines (dec/inc) per RadioGroup pattern",
+        "composite send drives the addressed stepper SM; Pressed->Hover activate steps the value",
+        "new query dec_state/inc_state; binding paints M3 hover(0.08)/pressed(0.12) state-layer per stepper",
+        "clears R734 honest gap: steppers now have desktop-grade pointer feedback (not inert glyphs)",
+        "dropped Copy/Clone/PartialEq derive (Button non-Copy) + manual Debug impl",
+        "keyboard arrow path unchanged (operates the value field, not the stepper buttons)"
+      ],
+      "verification_bullets": [
+        "SpinButtonExternal 12 unit (full pointer arc, cancel-on-leave, per-region independence, query)",
+        "hello-spinbutton 8 + workspace test 91 suites green + clippy -D pedantic clean",
+        "sweep 83/83 + r734 demo stepper-state assertions (Hover after click-release, Idle after leave)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "steppers presentational at AT layer (spinbutton owns Increment/Decrement); no separate AT nodes",
+        "whole-widget disabled spinbutton not wired (steppers + field stay enabled); additive on consumer",
+        "named String sub-key (dec/inc) vs numeric index; parse_send_payload generic over key type"
+      ],
+      "publishable_decision_summary": "R734.2 SpinButton stateful steppers: per-region Button SCXML (dec/inc) + hover/pressed paint, clearing the R734 inert-stepper gap",
+      "publishable_changes_bullets": [
+        "SpinButtonExternal gains 2 Button SCXML state machines (dec/inc) per RadioGroup pattern",
+        "composite send drives the addressed stepper SM; Pressed->Hover activate steps the value",
+        "new query dec_state/inc_state; binding paints M3 hover(0.08)/pressed(0.12) state-layer per stepper",
+        "clears R734 honest gap: steppers now have desktop-grade pointer feedback (not inert glyphs)",
+        "dropped Copy/Clone/PartialEq derive (Button non-Copy) + manual Debug impl",
+        "keyboard arrow path unchanged (operates the value field, not the stepper buttons)"
+      ],
+      "publishable_verification_bullets": [
+        "SpinButtonExternal 12 unit (full pointer arc, cancel-on-leave, per-region independence, query)",
+        "hello-spinbutton 8 + workspace test 91 suites green + clippy -D pedantic clean",
+        "sweep 83/83 + r734 demo stepper-state assertions (Hover after click-release, Idle after leave)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "steppers presentational at AT layer (spinbutton owns Increment/Decrement); no separate AT nodes",
+        "whole-widget disabled spinbutton not wired (steppers + field stay enabled); additive on consumer",
+        "named String sub-key (dec/inc) vs numeric index; parse_send_payload generic over key type"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -87,9 +87,19 @@ def body() -> None:
         assert find_by_tag(snap, DEC) is not None, "decrement region present"
         assert find_by_tag(snap, INC) is not None, "increment region present"
 
+        # ── R734.2 stateful steppers: per-region hover/press feedback ────
+        # boot: both steppers Idle.
+        assert_eq(tf.query("/external/dec_state"), "Idle", "dec stepper boots Idle")
+        assert_eq(tf.query("/external/inc_state"), "Idle", "inc stepper boots Idle")
+
         # ── pointer: click + / - steps by 1 and clamps ──────────────────
         tf.click(path=INC)
+        # click-release leaves the cursor on the inc region -> Hover; the dec
+        # stepper stays Idle (independent per-region state).
+        assert_eq(tf.query("/external/inc_state"), "Hover", "inc Hover after click-release")
+        assert_eq(tf.query("/external/dec_state"), "Idle", "dec untouched by inc click")
         tf.pointer_leave()
+        assert_eq(tf.query("/external/inc_state"), "Idle", "pointer_leave returns inc to Idle")
         assert_eq(val(tf), 4.0, "click + : 3 -> 4")
         tf.click(path=INC)
         tf.pointer_leave()

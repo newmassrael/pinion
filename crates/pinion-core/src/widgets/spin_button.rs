@@ -30,17 +30,31 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use crate::widgets::button::{Button, ButtonEvent, ButtonState};
+use crate::{WidgetEventName, WidgetStateName};
 
-/// R734 §5.38 — bounded stepped numeric value holder.
+/// R734 §5.38 — bounded stepped numeric value holder with two
+/// interactive stepper sub-regions.
 ///
 /// Stores the value in domain units (`f32`, matching the
 /// [`AccessValue::Float`](pinion_a11y::AccessValue::Float) lowering) with
 /// an explicit `min` / `max` / `step` and a larger `page_step`. Every
 /// mutation re-clamps into `[min, max]`; `NaN` saturates to `min` so a
-/// malformed wire payload can never poison the value. There is no
-/// interaction state to carry, so the struct is a plain `Copy` value
-/// (distinct from the SCXML-backed operable widgets).
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// malformed wire payload can never poison the value.
+///
+/// R734.2 §5.38 §5.35 — the decrement / increment affordances each own a
+/// standard [`Button`] interaction state machine (`Idle` / `Hover` /
+/// `Pressed` / `Disabled`), exactly as
+/// [`RadioGroup`](crate::widgets::radio_group::RadioGroup) owns a
+/// per-segment `Radio` state machine. A composite `"<sub>:<EventName>"`
+/// send (R51.42 §5.35) drives the addressed stepper's SCXML; the
+/// `Pressed → Hover` activate transition (or `KeyboardActivate`) steps the
+/// value. The binding reads [`Self::dec_state`] / [`Self::inc_state`] to
+/// paint the hover / pressed state layer — so the steppers have full
+/// desktop-grade pointer feedback rather than being inert glyphs. The
+/// field value itself carries no interaction state (it is a value display,
+/// the HTML `<input type=number>` model); the *operability* lives in the
+/// stepper SMs + the binding's arrow-key handler.
 pub struct SpinButtonExternal {
     value: f32,
     min: f32,
@@ -49,15 +63,28 @@ pub struct SpinButtonExternal {
     step: f32,
     /// `PageUp` / `PageDown` larger step.
     page_step: f32,
+    /// Decrement stepper interaction state machine.
+    dec: Button,
+    /// Increment stepper interaction state machine.
+    inc: Button,
 }
 
 impl SpinButtonExternal {
     /// Construct a spin button at `value`, bounded to `[min, max]`, with a
     /// single `step`. `page_step` defaults to `step` (override with
-    /// [`Self::with_page_step`]). `value` is clamped into the range.
+    /// [`Self::with_page_step`]). `value` is clamped into the range. Both
+    /// steppers start `Idle`.
     #[must_use]
     pub fn new(value: f32, min: f32, max: f32, step: f32) -> Self {
-        let mut s = Self { value: min, min, max, step, page_step: step };
+        let mut s = Self {
+            value: min,
+            min,
+            max,
+            step,
+            page_step: step,
+            dec: Button::new(),
+            inc: Button::new(),
+        };
         s.set_value(value);
         s
     }
@@ -67,6 +94,19 @@ impl SpinButtonExternal {
     pub fn with_page_step(mut self, page_step: f32) -> Self {
         self.page_step = page_step;
         self
+    }
+
+    /// Current decrement-stepper interaction state (drives the hover /
+    /// pressed paint state layer).
+    #[must_use]
+    pub fn dec_state(&self) -> ButtonState {
+        self.dec.state()
+    }
+
+    /// Current increment-stepper interaction state.
+    #[must_use]
+    pub fn inc_state(&self) -> ButtonState {
+        self.inc.state()
     }
 
     /// Current value (always within `[min, max]`).
@@ -123,6 +163,49 @@ impl SpinButtonExternal {
     pub fn page_down(&mut self) -> bool {
         self.set_value(self.value - self.page_step)
     }
+
+    /// Drive the addressed stepper's [`Button`] SCXML and, on the
+    /// activate transition (`Pressed → Hover` or `KeyboardActivate` from a
+    /// non-`Disabled` state), step the value. Returns the resulting value.
+    /// Unknown sub-region / event names are harmless no-ops so the full
+    /// pointer arc the router replays (Enter → Down → Up) drives the state
+    /// machine without over-stepping.
+    fn drive_stepper(&mut self, sub: &str, event: ButtonEvent) -> f32 {
+        let btn = match sub {
+            "dec" => &mut self.dec,
+            "inc" => &mut self.inc,
+            _ => return self.value,
+        };
+        let before = btn.state();
+        btn.send(event);
+        let after = btn.state();
+        let activated = (matches!(before, ButtonState::Pressed)
+            && matches!(after, ButtonState::Hover))
+            || (matches!(event, ButtonEvent::KeyboardActivate)
+                && !matches!(before, ButtonState::Disabled));
+        if activated {
+            match sub {
+                "dec" => self.decrement(),
+                "inc" => self.increment(),
+                _ => false,
+            };
+        }
+        self.value
+    }
+}
+
+impl core::fmt::Debug for SpinButtonExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SpinButtonExternal")
+            .field("value", &self.value)
+            .field("min", &self.min)
+            .field("max", &self.max)
+            .field("step", &self.step)
+            .field("page_step", &self.page_step)
+            .field("dec", &self.dec.state())
+            .field("inc", &self.inc.state())
+            .finish()
+    }
 }
 
 impl External for SpinButtonExternal {
@@ -169,6 +252,10 @@ impl ExternalIntrospect for SpinButtonExternal {
             ("min", "float"),
             ("max", "float"),
             ("step", "float"),
+            // R734.2 — per-stepper interaction state (paint state-layer +
+            // AI-observable hover / pressed feedback).
+            ("dec_state", "string"),
+            ("inc_state", "string"),
             ("send", "string"),
         ])
     }
@@ -179,6 +266,8 @@ impl ExternalIntrospect for SpinButtonExternal {
             "min" => Some(IntrospectValue::Float(f64::from(self.min))),
             "max" => Some(IntrospectValue::Float(f64::from(self.max))),
             "step" => Some(IntrospectValue::Float(f64::from(self.step))),
+            "dec_state" => Some(IntrospectValue::Text(self.dec.state().as_name().to_string())),
+            "inc_state" => Some(IntrospectValue::Text(self.inc.state().as_name().to_string())),
             _ => None,
         }
     }
@@ -228,36 +317,29 @@ impl ExternalIntrospect for SpinButtonExternal {
                 self.page_down();
                 Ok(IntrospectValue::Float(f64::from(self.value)))
             }
-            // R51.42 §5.35 composite pointer channel: a click on the
-            // `spin#dec` / `spin#inc` paint region routes here as
-            // `invoke("send", "dec:PointerUp")` / `"inc:PointerUp"`. The
+            // R51.42 §5.35 composite pointer channel: the `spin#dec` /
+            // `spin#inc` paint regions route the full pointer arc here as
+            // `invoke("send", "dec:PointerEnter")` … `"dec:PointerUp"`. The
             // `"<sub>:<EventName>"` wire is split by the R660
             // [`composite_tag::parse_send_payload`] SSOT (shared with
-            // RadioGroup / ListBox / Table) rather than an inline
-            // `split_once(':')` — the key type is `String` because the
-            // sub-region is named (`dec` / `inc`), not a numeric index.
-            // Only the activate (`PointerUp`) edge steps; every other
-            // pointer edge (Enter / Leave / Down / Cancel) is a harmless
-            // no-op so the full pointer arc the router replays does not
-            // over-step.
+            // RadioGroup / ListBox / Table); the key type is `String`
+            // because the sub-region is named (`dec` / `inc`), not a
+            // numeric index. R734.2 — every pointer edge drives the
+            // addressed stepper's `Button` SCXML (so hover / pressed paint
+            // tracks the cursor), and `Pressed → Hover` (or
+            // `KeyboardActivate`) steps the value via [`Self::drive_stepper`].
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    if let Some((sub, event)) =
-                        crate::composite_tag::parse_send_payload::<String>(payload)
-                    {
-                        if event == "PointerUp" {
-                            match sub.as_str() {
-                                "inc" => {
-                                    self.increment();
-                                }
-                                "dec" => {
-                                    self.decrement();
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                    Ok(IntrospectValue::Float(f64::from(self.value)))
+                    let value = match crate::composite_tag::parse_send_payload::<String>(payload) {
+                        Some((sub, event_name)) => match ButtonEvent::from_name(event_name) {
+                            Some(ev) => self.drive_stepper(&sub, ev),
+                            // Unknown / internal event name: no SM drive,
+                            // report the current value (no over-step).
+                            None => self.value,
+                        },
+                        None => self.value,
+                    };
+                    Ok(IntrospectValue::Float(f64::from(value)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -367,24 +449,42 @@ mod tests {
     }
 
     #[test]
-    fn invoke_send_composite_pointer_steps_only_on_pointer_up() {
+    fn invoke_send_composite_arc_tracks_stepper_state_and_steps_on_activate() {
         let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0);
-        // PointerDown / Enter do not step (the router replays the arc).
-        s.invoke("send", IntrospectValue::Text("inc:PointerDown".into())).unwrap();
+        // R734.2 — the full pointer arc drives the inc stepper's Button SM:
+        // Enter -> Hover, Down -> Pressed (no step yet), Up -> Hover = activate.
         s.invoke("send", IntrospectValue::Text("inc:PointerEnter".into())).unwrap();
-        assert!((s.value() - 5.0).abs() < f32::EPSILON, "non-activate edges do not step");
-        // PointerUp on the increment / decrement region steps once.
+        assert_eq!(s.inc_state(), ButtonState::Hover, "Enter -> stepper Hover");
+        assert!((s.value() - 5.0).abs() < f32::EPSILON, "hover does not step");
+        s.invoke("send", IntrospectValue::Text("inc:PointerDown".into())).unwrap();
+        assert_eq!(s.inc_state(), ButtonState::Pressed, "Down -> stepper Pressed");
+        assert!((s.value() - 5.0).abs() < f32::EPSILON, "press alone does not step");
         s.invoke("send", IntrospectValue::Text("inc:PointerUp".into())).unwrap();
-        assert!((s.value() - 6.0).abs() < f32::EPSILON, "inc:PointerUp -> +step");
-        s.invoke("send", IntrospectValue::Text("dec:PointerUp".into())).unwrap();
-        assert!((s.value() - 5.0).abs() < f32::EPSILON, "dec:PointerUp -> -step");
-        // Unknown sub-region is a harmless no-op.
+        assert_eq!(s.inc_state(), ButtonState::Hover, "Up -> back to Hover");
+        assert!((s.value() - 6.0).abs() < f32::EPSILON, "activate (Pressed->Hover) -> +step");
+        // The dec stepper stayed Idle the whole time (per-region state).
+        assert_eq!(s.dec_state(), ButtonState::Idle, "dec untouched by inc arc");
+        // Cancel path (Down then Leave) presses then returns to Idle WITHOUT
+        // stepping — the W3C button cancel-on-drag-off path.
+        s.invoke("send", IntrospectValue::Text("dec:PointerEnter".into())).unwrap();
+        s.invoke("send", IntrospectValue::Text("dec:PointerDown".into())).unwrap();
+        assert_eq!(s.dec_state(), ButtonState::Pressed);
+        s.invoke("send", IntrospectValue::Text("dec:PointerLeave".into())).unwrap();
+        assert_eq!(s.dec_state(), ButtonState::Idle, "Leave from Pressed -> Idle (cancel)");
+        assert!((s.value() - 6.0).abs() < f32::EPSILON, "cancelled press does not step");
+        // Unknown sub-region + malformed wire are harmless no-ops (R660 guard).
         s.invoke("send", IntrospectValue::Text("xyz:PointerUp".into())).unwrap();
-        assert!((s.value() - 5.0).abs() < f32::EPSILON);
-        // Malformed wire (no separator / empty event) is rejected by the
-        // shared `parse_send_payload` guard -> no step (R660 SSOT).
         s.invoke("send", IntrospectValue::Text("noseparator".into())).unwrap();
         s.invoke("send", IntrospectValue::Text("inc:".into())).unwrap();
-        assert!((s.value() - 5.0).abs() < f32::EPSILON, "malformed payload does not step");
+        assert!((s.value() - 6.0).abs() < f32::EPSILON, "no-op payloads do not step");
+    }
+
+    #[test]
+    fn query_exposes_stepper_states() {
+        let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0);
+        assert_eq!(s.query("dec_state"), Some(IntrospectValue::Text("Idle".into())));
+        assert_eq!(s.query("inc_state"), Some(IntrospectValue::Text("Idle".into())));
+        s.invoke("send", IntrospectValue::Text("inc:PointerEnter".into())).unwrap();
+        assert_eq!(s.query("inc_state"), Some(IntrospectValue::Text("Hover".into())));
     }
 }
