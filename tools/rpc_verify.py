@@ -474,6 +474,20 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         """
         self.request("scene/pointer_leave")
 
+    def tick(self, dt: float) -> None:
+        """`scene/tick` typed wrapper (R724 §5.28).
+
+        Advances the window's animation clock by `dt` seconds, so
+        time-driven state — §5.28 springs, the R57.X theme-fade, caret
+        blink, timed widget dismissal — can be driven *deterministically*
+        rather than waiting on non-deterministic real-frame ticks
+        between RPC calls. Call it, then read the settled state via
+        `snapshot()` / `query()`. A large `dt` (e.g. 0.5) fast-forwards
+        a short animation (~200 ms theme-fade) safely past completion;
+        smaller deltas step it. `dt` must be finite and >= 0.
+        """
+        self.request("scene/tick", {"dt": dt})
+
     def double_click(
         self,
         at: Optional[tuple[float, float]] = None,

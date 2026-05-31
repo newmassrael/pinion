@@ -486,6 +486,18 @@ pub enum DeferredInput {
     /// host's physical desktop cursor happens to sit when a real X /
     /// Wayland server maps the test window under it.
     PointerLeave,
+    /// R724 §5.28 — `scene/tick` injection. Advances the addressed
+    /// window's animation clock by `dt` seconds
+    /// (`CoreShell::tick_animations_for_window`), so time-driven state
+    /// — `§5.28` springs, the R57.X theme-fade, caret blink, and (R724
+    /// onward) timed widget dismissal — is *deterministically*
+    /// drivable by an AI client. Until R724 a headless client could
+    /// read animation state but never advance the clock on demand
+    /// (real-frame ticks are non-deterministic between RPC calls), so
+    /// settled-value assertions had to be time-tolerant (R723's
+    /// theme-fade demo). The caller-injected `dt` keeps the §2 #3
+    /// dry-run guarantee intact (same as `Tween::tick` / `Frame::dt`).
+    Tick { dt: f32 },
 }
 
 impl<'a> DispatchContext<'a> {
@@ -866,6 +878,17 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
             (handle_scene_pointer_leave(inbox), HandlerKind::Mutate)
+        }
+        "scene/tick" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_tick(inbox, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
         }
         "scene/double_click" => {
             #[allow(
@@ -1348,6 +1371,33 @@ fn handle_scene_pointer_leave(
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     inbox.push(DeferredInput::PointerLeave);
+    Ok(Value::Null)
+}
+
+/// R724 §5.28 — `scene/tick` handler: enqueue a [`DeferredInput::Tick`]
+/// advancing the addressed window's animation clock by `params.dt`
+/// seconds. `dt` must be a finite, non-negative number (a negative or
+/// NaN delta is rejected — the clock only moves forward). Window-scoped
+/// like [`handle_scene_pointer_leave`] (the per-frame `window` field
+/// routes the drain). Returns `null` on success; the AI client then
+/// reads the advanced state via `scene/snapshot` / `scene/query`,
+/// making time-driven widgets deterministically verifiable.
+fn handle_scene_tick(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let dt = params
+        .and_then(|p| p.get("dt"))
+        .and_then(Value::as_f64)
+        .ok_or_else(|| RpcError::invalid_params("params.dt missing or not a number"))?;
+    if !dt.is_finite() || dt < 0.0 {
+        return Err(RpcError::invalid_params("params.dt must be finite and >= 0"));
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    inbox.push(DeferredInput::Tick { dt: dt as f32 });
     Ok(Value::Null)
 }
 

@@ -102,15 +102,18 @@ def body() -> None:
         swatch_rect = rects["inverse_swatch"]
 
         # ── Toggle light -> dark: the role tracks the palette ─────────
+        # R724: settle the theme-fade deterministically with scene/tick,
+        # then assert the EXACT dark inverseSurface (#E6E1E5) — no longer
+        # the time-tolerant "lighter than light" check this round shipped
+        # with before scene/tick existed.
         light_fill = rgb(fill)
         d.click(path="theme_toggle")
+        d.tick(1.0)  # >> the ~200 ms M3 short4 fade
         snap_dark = d.snapshot(source="paint", viewport=VIEWPORT)
         dark_fill = rgb(find_by_tag(snap_dark, "inverse_swatch")["style"]["fill"])
-        # Fade-tolerant: dark inverseSurface (#E6E1E5) is far lighter than the
-        # light tone (#322F35); even mid-fade the sum has risen and the value
-        # has left the light tone.
         assert dark_fill != light_fill, "inverseSurface changed on theme swap"
-        assert sum(dark_fill) > sum(light_fill), "dark inverseSurface is lighter"
+        for ch, a, e in zip("rgb", dark_fill, (0xE6, 0xE1, 0xE5)):
+            assert abs(a - e) <= 1, f"dark inverseSurface {ch}: {a} != {e}"
 
     # ── Phase 2 — live-pixel (light boot frame) ──────────────────────
     assert swatch_rect is not None

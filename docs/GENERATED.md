@@ -15325,6 +15325,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R724 — R724 scene/tick RPC - deterministic animation time-advance (DeferredInput::Tick + fixed-timestep substep)
+
+**Changes**:
+- scene/tick RPC: DeferredInput::Tick{dt} + handle_scene_tick (finite, >=0 validation)
+- shell drain advances tick_animations_for_window in fixed 1/120s sub-steps
+- one giant dt destabilises the semi-implicit-Euler §5.28 spring; sub-step accumulator fixes it
+- time peer to scene/hover (§2 #2); caller-injected dt keeps §2 #3 dry-run determinism
+- rpc_verify.tick(dt) helper; r724 demo: hello-theme fade settles to exact dark/light
+- r723 demo strengthened: fade-tolerant dark assert -> exact #E6E1E5 via scene/tick
+
+
+
+**Verification**:
+- cargo test --workspace green; 3 new scene/tick dispatch tests (enqueue / missing / bad-dt)
+- cargo clippy --workspace --all-targets (-D pedantic) clean
+- r724_scene_tick.py: boot light -> toggle+tick(1.0) exact dark -> round-trip light + tick(0) no-op
+- determinism: settled spring = exact target, step-size independent (was time-tolerant pre-R724)
+- demo sweep 75/75 under Xvfb
+
+
+
+**Impact**: §5.28, §5.49
+
+
+**Carry forward**:
+- timed-auto-dismiss widgets (Snackbar/Toast) now unblocked: tick advances a Tickable countdown
+- ProgressBar indeterminate (looping animation) also unblocked by deterministic tick
+- scene/tick window-scoped (per-frame window routes); multi-window selective tick additive later
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

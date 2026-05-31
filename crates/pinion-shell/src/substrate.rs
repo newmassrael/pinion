@@ -1279,6 +1279,30 @@ impl<V: WidgetView> ShellCore<V> {
                 DeferredInput::PointerLeave => {
                     self.cursor_left_for_window(window_id, PointerId::MOUSE);
                 }
+                // R724 §5.28 — `scene/tick`: advance this window's
+                // animation clock by `dt` seconds so time-driven state
+                // (springs, theme-fade, caret blink, timed dismissal)
+                // is deterministically drivable by an AI client. The
+                // §5.28 spring integrator is semi-implicit Euler, which
+                // is only stable for small steps (real frames cap at
+                // 1/30 s), so a large RPC-injected `dt` is advanced in
+                // fixed `TICK_SUBSTEP`-second sub-steps (the canonical
+                // fixed-timestep accumulator) — feeding `dt` as one
+                // giant step would overshoot / destabilise the spring.
+                // A settled spring converges to its target regardless
+                // of step size, so the settled value is deterministic.
+                // The mutated animation Signals mark the owner dirty,
+                // so the next `scene/snapshot` re-render reflects the
+                // advanced frame. `dt == 0.0` is a no-op (clock frozen).
+                DeferredInput::Tick { dt } => {
+                    const TICK_SUBSTEP: f32 = 1.0 / 120.0;
+                    let mut remaining = dt;
+                    while remaining > 0.0 {
+                        let step = remaining.min(TICK_SUBSTEP);
+                        self.core.tick_animations_for_window(window_id, step);
+                        remaining -= step;
+                    }
+                }
                 DeferredInput::Key { x, y, ref key } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                     self.handle_named_key(key);

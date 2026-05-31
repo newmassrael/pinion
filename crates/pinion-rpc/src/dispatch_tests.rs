@@ -691,6 +691,59 @@ fn scene_click_v1_enqueues_click_at_coordinate() {
     assert!((y - 80.0).abs() < f64::EPSILON);
 }
 
+// ---- R724 §5.28 — scene/tick (DeferredInput::Tick) ----
+
+#[test]
+fn scene_tick_enqueues_tick_with_dt() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/tick","params":{"dt":0.25},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::Tick { dt } = inbox[0] else {
+        panic!("expected Tick variant, got {:?}", inbox[0]);
+    };
+    assert!((dt - 0.25).abs() < 1e-6);
+}
+
+#[test]
+fn scene_tick_missing_dt_errors() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/tick","params":{},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_some(), "missing dt must error");
+    assert!(inbox.is_empty(), "no tick enqueued on error");
+}
+
+#[test]
+fn scene_tick_rejects_negative_and_nan_dt() {
+    for bad in [r#"{"dt":-1.0}"#, r#"{"dt":"x"}"#] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/tick","params":{bad},"id":7}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert!(resp.error.is_some(), "dt {bad} must error");
+        assert!(inbox.is_empty(), "no tick enqueued for {bad}");
+    }
+}
+
 // ---- R695 §5.49 §5.35 — scene/hover (DeferredInput::Hover) ----
 
 #[test]
