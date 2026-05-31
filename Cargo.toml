@@ -37,6 +37,7 @@ members = [
     "examples/hello-accordion-single",
     "examples/hello-datepicker",
     "examples/hello-table",
+    "examples/hello-table-multi",
     "examples/hello-radio",
     "examples/hello-radio-group",
     "examples/hello-segmented-button",

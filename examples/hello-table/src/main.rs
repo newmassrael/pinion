@@ -303,10 +303,15 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
     // `row_ids` carries each visual row's data index so cells tag by data
     // id and the data-indexed selection / state stay correct.
     let rows: Vec<&[&str]> = state.order.iter().map(|&d| &ROWS[d][..]).collect();
+    // R735 §5.38 — `view_table` takes a data-indexed selection bitmap
+    // (uniform with `row_states`); single-select projects its one
+    // `selected_row` into the bitmap.
+    let row_selected: [bool; NROWS] =
+        core::array::from_fn(|i| state.selected_row == Some(i));
     let table = view_table(
         PRIMARY_TAG,
         TableData { headers: &HEADERS, rows: &rows, row_ids: &state.order },
-        state.selected_row,
+        &row_selected,
         &state.row_states,
         state.sort,
         &theme,

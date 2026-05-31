@@ -94,6 +94,17 @@ pub struct Table {
     /// simply paints at its new visual position). Defaulting to `None`
     /// keeps the unsorted boot identical to the pre-R730 table.
     sort: Option<(usize, bool)>,
+    /// R735 §5.38 — selection cardinality mode. `false` (via
+    /// [`Self::new`]) is the R707 single-row-exclusion model
+    /// (`aria-multiselectable` absent): activating a row deselects every
+    /// other. `true` (via [`Self::with_multiselect`]) is the WAI-ARIA
+    /// `aria-multiselectable="true"` model (the 2-D grid analog of
+    /// [`ListBox::with_multiselect`](crate::widgets::listbox::ListBox::with_multiselect)):
+    /// activating a row toggles only that row's selection bit, siblings
+    /// untouched, and [`Self::selected_row`] has no single meaningful
+    /// value (callers use [`Self::selected_rows`]). Mode is immutable
+    /// after construction — the row [`Radio`] vector is sized once.
+    multiselect: bool,
 }
 
 impl Table {
@@ -110,7 +121,28 @@ impl Table {
             focused_row: None,
             focused_col: 0,
             sort: None,
+            multiselect: false,
         }
+    }
+
+    /// R735 §5.38 — construct a **multi-select** table (the WAI-ARIA
+    /// `aria-multiselectable="true"` model). Activating a row toggles only
+    /// that row's selection bit; siblings are untouched. The 2-D grid
+    /// analog of [`ListBox::with_multiselect`](crate::widgets::listbox::ListBox::with_multiselect)
+    /// — same [`Radio`] leaf per row, but no sibling-deselect. All rows
+    /// start idle and unselected, with no active descendant.
+    #[must_use]
+    pub fn with_multiselect(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
+        let mut t = Self::new(headers, rows);
+        t.multiselect = true;
+        t
+    }
+
+    /// R735 §5.38 — `true` if this table was constructed via
+    /// [`Self::with_multiselect`].
+    #[must_use]
+    pub fn is_multiselect(&self) -> bool {
+        self.multiselect
     }
 
     /// The number of rows.
@@ -140,19 +172,85 @@ impl Table {
             .map_or("", String::as_str)
     }
 
-    /// The selected row (0-based), or `None`.
+    /// The selected row (0-based), or `None`. **Single-select only** —
+    /// see [`Self::selected_rows`] for the multi-select-aware query.
+    ///
+    /// # Panics
+    /// Panics if [`Self::is_multiselect`] is `true`: a multi-select table
+    /// has no single meaningful selected row (zero or many rows may be
+    /// selected); multi-mode callers must use [`Self::selected_rows`].
     #[must_use]
     pub fn selected_row(&self) -> Option<usize> {
+        assert!(
+            !self.multiselect,
+            "Table::selected_row() is single-select-only; \
+             use selected_rows() in multi-select mode"
+        );
         self.selected_row
     }
 
-    /// Drive `event` to the cell at `(row, col)`. If the event activates
+    /// R735 §5.38 — every currently-selected row, ascending. Works in
+    /// both modes (single-select returns 0 or 1 rows; multi-select returns
+    /// `0..row_count`). The canonical query for multi-mode and the
+    /// mode-agnostic query for tooling — mirror of
+    /// [`ListBox::selected_indices`](crate::widgets::listbox::ListBox::selected_indices).
+    #[must_use]
+    pub fn selected_rows(&self) -> Vec<usize> {
+        self.row_radios
+            .iter()
+            .enumerate()
+            .filter_map(|(i, r)| r.is_selected().then_some(i))
+            .collect()
+    }
+
+    /// R735 §5.38 — slot-assignment setter that works in both modes
+    /// (persisted-preference restore / programmatic clear). Replaces the
+    /// entire selection set with `rows`. Silent on the §5.20 intent
+    /// channel — restoration is admin, not interaction (mirror of
+    /// [`ListBox::set_selected_indices`](crate::widgets::listbox::ListBox::set_selected_indices)).
+    ///
+    /// # Panics
+    /// * Panics if any index in `rows` is `>= row_count()`.
+    /// * In single-select mode, panics if `rows.len() > 1`.
+    pub fn set_selected_rows(&mut self, rows: &[usize]) {
+        for &r in rows {
+            assert!(
+                r < self.row_radios.len(),
+                "Table::set_selected_rows row {r} out of range (rows={})",
+                self.row_radios.len()
+            );
+        }
+        if !self.multiselect {
+            assert!(
+                rows.len() <= 1,
+                "Table::set_selected_rows: single-select mode accepts at \
+                 most one row, got {}",
+                rows.len()
+            );
+            self.selected_row = rows.first().copied();
+        }
+        for (j, radio) in self.row_radios.iter_mut().enumerate() {
+            radio.set_selected(rows.contains(&j));
+        }
+    }
+
+    /// Drive `event` to the cell at `(row, col)`.
+    ///
+    /// **Single-select mode** ([`Self::new`]) — if the event activates
     /// that row (`false → true` selected), every other row is deselected
-    /// and `selected_row` snaps to `row`. Independently, the `PointerUp`
-    /// edge of a click syncs the active descendant to `(row, col)` —
-    /// WAI-ARIA "clicking a cell moves focus to it", whether or not the
-    /// selection changed (so clicking a different cell in the already-
-    /// selected row still moves the keyboard cursor there).
+    /// and `selected_row` snaps to `row`.
+    ///
+    /// **Multi-select mode** ([`Self::with_multiselect`]) — R735 §5.38 —
+    /// activation toggles the addressed row only (already-selected →
+    /// deselected; unselected → selected); siblings stay untouched and
+    /// `selected_row` is not maintained. Toggle-off is detected off the
+    /// row [`Radio`]'s state-machine activation edge (the leaf's value is
+    /// set-not-flip, so the composite forces the new `false` here) — the
+    /// 2-D grid mirror of [`ListBox::send`](crate::widgets::listbox::ListBox::send).
+    ///
+    /// In both modes the `PointerUp` edge of a click syncs the active
+    /// descendant to `(row, col)` — WAI-ARIA "clicking a cell moves focus
+    /// to it", whether or not the selection changed.
     ///
     /// Out-of-range `(row, col)` is a silent no-op (the router rejects
     /// bad composite sub-indices upstream; this guards the model path).
@@ -160,16 +258,34 @@ impl Table {
         if row >= self.rows.len() || col >= self.headers.len() {
             return;
         }
+        let pre_state = self.row_radios[row].state();
         let was_selected = self.row_radios[row].is_selected();
         self.row_radios[row].send(event);
-        let now_selected = self.row_radios[row].is_selected();
-        if !was_selected && now_selected {
-            for (j, r) in self.row_radios.iter_mut().enumerate() {
-                if j != row {
-                    r.set_selected(false);
-                }
+        let post_state = self.row_radios[row].state();
+        if self.multiselect {
+            // R735 §5.38 — detect activation off the leaf's state-machine
+            // transition (so multi-mode toggle-off, where the leaf's
+            // set-not-flip value is idempotent on the already-`true`
+            // value, is still caught). Mirror of `ListBox::send`.
+            let activation = (matches!(pre_state, RadioState::Pressed)
+                && matches!(post_state, RadioState::Hover))
+                || (matches!(event, RadioEvent::KeyboardActivate)
+                    && !matches!(pre_state, RadioState::Disabled));
+            if activation && was_selected {
+                // Toggle off: the leaf set its value `true` on the
+                // activation edge; force `false` to complete the toggle.
+                self.row_radios[row].set_selected(false);
             }
-            self.selected_row = Some(row);
+        } else {
+            let now_selected = self.row_radios[row].is_selected();
+            if !was_selected && now_selected {
+                for (j, r) in self.row_radios.iter_mut().enumerate() {
+                    if j != row {
+                        r.set_selected(false);
+                    }
+                }
+                self.selected_row = Some(row);
+            }
         }
         // R707 §5.40 — the active descendant follows the click's
         // `PointerUp` regardless of whether the selection changed (the
@@ -277,27 +393,46 @@ fn cell_cmp(a: &str, b: &str) -> core::cmp::Ordering {
     }
 }
 
+/// R735 §5.38 — `Table` snapshot capturing the mode flag + the full
+/// per-row selection bitmap, so the trait-level `detect` expresses both
+/// single-select-replace and multi-select-toggle in one rule (mirror of
+/// [`ListBoxSnapshot`](crate::widgets::listbox::ListBox)). The Vec
+/// heap-allocates once per `IntentEmitter::dispatch` (i.e. once per user
+/// input event); negligible at UI / AI dispatch frequencies.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TableSnapshot {
+    multiselect: bool,
+    bits: Vec<bool>,
+}
+
 /// `Table` transition contract (R51.12 substrate). The event pairs the
-/// `(row, col)` cell with the underlying [`RadioEvent`]; the snapshot is
-/// the selected row index; detect emits `"selected"` (the new row index
-/// as [`IntrospectValue::Int`]) whenever the selection moves to a new
-/// row.
+/// `(row, col)` cell with the underlying [`RadioEvent`]. R735 §5.38 — the
+/// snapshot captures mode + the per-row selection bitmap so `detect`
+/// handles both modes:
 ///
-/// Selection transitions that emit:
+/// **Single-select** (`multiselect = false`) — emit `Int(i)` for the row
+/// whose bit went `false → true` (siblings deselect silently):
 ///
-/// * `None → Some(r)` — first selection
-/// * `Some(a) → Some(b)` where `a != b` — switch rows
+/// * `None → Some(r)` — first selection ⇒ `vec![Int(r)]`
+/// * `Some(a) → Some(b)` (`a != b`) — `a` lost, `b` gained ⇒ `vec![Int(b)]`
+/// * `Some(a) → Some(a)` — bitmap unchanged ⇒ `Vec::new()`
 ///
-/// Transitions that stay silent (idempotent):
+/// **Multi-select** (`multiselect = true`) — emit `Int(i)` for *every*
+/// row whose bit flipped in either direction (toggle-on + toggle-off both
+/// carry information the AI client needs; the follow-up `selected.<i>`
+/// query learns the new boolean). Unchanged bitmap ⇒ `Vec::new()`.
 ///
-/// * `Some(a) → Some(a)` — re-activate the same row
-/// * `None → None` — non-activating event
+/// The rule is single-shape: emit `Int(i)` for every index `i` whose bit
+/// changed, gated in single-select to the `false → true` direction only.
 impl WidgetTransition for Table {
     type Event = (usize, usize, RadioEvent);
-    type Snapshot = Option<usize>;
+    type Snapshot = TableSnapshot;
 
     fn snapshot(&self) -> Self::Snapshot {
-        self.selected_row
+        TableSnapshot {
+            multiselect: self.multiselect,
+            bits: self.row_radios.iter().map(Radio::is_selected).collect(),
+        }
     }
 
     fn drive(&mut self, event: Self::Event) {
@@ -310,17 +445,26 @@ impl WidgetTransition for Table {
         _event: Self::Event,
         after: Self::Snapshot,
     ) -> Vec<Intent> {
-        if before != after {
-            if let Some(row) = after {
-                if let Ok(row_i) = i64::try_from(row) {
-                    return vec![Intent::new_static(
+        debug_assert_eq!(before.bits.len(), after.bits.len());
+        debug_assert_eq!(before.multiselect, after.multiselect);
+        let multi = after.multiselect;
+        let mut out = Vec::new();
+        for (i, (b, a)) in before.bits.iter().zip(after.bits.iter()).enumerate() {
+            if b == a {
+                continue;
+            }
+            // Single-select emits only on row gain (RadioGroup-class
+            // semantic); multi-select emits on every flip.
+            if multi || (!*b && *a) {
+                if let Ok(row_i) = i64::try_from(i) {
+                    out.push(Intent::new_static(
                         "selected",
                         IntrospectValue::Int(row_i),
-                    )];
+                    ));
                 }
             }
         }
-        Vec::new()
+        out
     }
 }
 
@@ -333,14 +477,31 @@ pub struct TableExternal {
 }
 
 impl TableExternal {
-    /// Construct a table over `headers` columns and `rows` of cell text.
+    /// Construct a single-select table over `headers` columns and `rows`
+    /// of cell text.
     #[must_use]
     pub fn new(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
         Self { em: IntentEmitter::new(Table::new(headers, rows)) }
     }
 
+    /// R735 §5.38 — construct a **multi-select** table (the WAI-ARIA
+    /// `aria-multiselectable="true"` model). Activating a row toggles only
+    /// that row; siblings are untouched.
+    #[must_use]
+    pub fn with_multiselect(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
+        Self { em: IntentEmitter::new(Table::with_multiselect(headers, rows)) }
+    }
+
+    /// R735 §5.38 — `true` if this table was constructed via
+    /// [`Self::with_multiselect`].
+    #[must_use]
+    pub fn is_multiselect(&self) -> bool {
+        self.em.inner.is_multiselect()
+    }
+
     /// Drive `event` to the cell at `(row, col)`. Queues a `"selected"`
-    /// intent on selection-change transitions.
+    /// intent per row whose selection bit flipped (single: on gain;
+    /// multi: on every flip).
     pub fn send_cell(&mut self, row: usize, col: usize, event: RadioEvent) {
         self.em.dispatch((row, col, event));
     }
@@ -357,10 +518,34 @@ impl TableExternal {
         self.em.inner.col_count()
     }
 
-    /// The selected row (0-based), or `None`.
+    /// The selected row (0-based), or `None`. **Single-select only**.
+    ///
+    /// # Panics
+    /// Panics if [`Self::is_multiselect`] is `true` (use
+    /// [`Self::selected_rows`] in multi-select mode).
     #[must_use]
     pub fn selected_row(&self) -> Option<usize> {
         self.em.inner.selected_row()
+    }
+
+    /// R735 §5.38 — every currently-selected row, ascending. Works in
+    /// both modes.
+    #[must_use]
+    pub fn selected_rows(&self) -> Vec<usize> {
+        self.em.inner.selected_rows()
+    }
+
+    /// R735 §5.38 — slot-assignment setter (persisted-preference restore
+    /// / boot seed / programmatic clear). Replaces the entire selection
+    /// set with `rows`; silent on the §5.20 intent channel and leaves the
+    /// active descendant untouched — restoration is admin, not
+    /// interaction (mirror of [`Table::set_selected_rows`]).
+    ///
+    /// # Panics
+    /// Panics on an out-of-range index, or `rows.len() > 1` in
+    /// single-select mode (see [`Table::set_selected_rows`]).
+    pub fn set_selected_rows(&mut self, rows: &[usize]) {
+        self.em.inner.set_selected_rows(rows);
     }
 
     /// Interaction state of `row` (0-based).
@@ -435,11 +620,18 @@ impl Default for TableExternal {
 
 impl core::fmt::Debug for TableExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("TableExternal")
-            .field("rows", &self.row_count())
+        let mut dbg = f.debug_struct("TableExternal");
+        dbg.field("rows", &self.row_count())
             .field("cols", &self.col_count())
-            .field("selected_row", &self.selected_row())
-            .finish()
+            .field("multiselect", &self.is_multiselect());
+        // R735 §5.38 — `selected_row` panics in multi-mode, so the Debug
+        // output substitutes the mode-agnostic `selected_rows` there.
+        if self.is_multiselect() {
+            dbg.field("selected_rows", &self.selected_rows());
+        } else {
+            dbg.field("selected_row", &self.selected_row());
+        }
+        dbg.finish()
     }
 }
 
@@ -482,6 +674,12 @@ impl ExternalIntrospect for TableExternal {
         IntrospectSchema::new(&[
             ("rows", "int"),
             ("cols", "int"),
+            // R735 §5.38 — `multiselect` (bool) is read-only mode
+            // metadata. `selected.<row>` becomes write-enabled in
+            // multi-select mode (the canonical per-row admin path);
+            // `selected_row` returns `null` in multi-mode and rejects
+            // intervene.
+            ("multiselect", "bool"),
             ("selected", "bool"),
             ("selected_row", "int"),
             ("focused_row", "int"),
@@ -507,13 +705,23 @@ impl ExternalIntrospect for TableExternal {
         match path {
             "rows" => Some(IntrospectValue::Int(int_of(self.row_count()))),
             "cols" => Some(IntrospectValue::Int(int_of(self.col_count()))),
-            "selected" => Some(IntrospectValue::Bool(self.selected_row().is_some())),
+            // R735 §5.38 — mode metadata so a mode-agnostic introspector
+            // picks the right path (`selected.<i>` per-row vs
+            // `selected_row` single).
+            "multiselect" => Some(IntrospectValue::Bool(self.is_multiselect())),
+            // `selected` (any row selected?) is mode-agnostic — reads the
+            // selection set, never the single-only `selected_row`.
+            "selected" => Some(IntrospectValue::Bool(!self.selected_rows().is_empty())),
             // The selected / focused row use `-1` until a value lands
             // (mirror of the date picker's `selected_day` / `focused_day`
-            // `int` sentinel convention).
-            "selected_row" => Some(IntrospectValue::Int(
-                self.selected_row().map_or(-1, int_of),
-            )),
+            // `int` sentinel convention). R735 §5.38 — multi-mode has no
+            // single selected row, so it returns `-1` (AI clients use the
+            // per-row `selected.<i>` slots).
+            "selected_row" => Some(IntrospectValue::Int(if self.is_multiselect() {
+                -1
+            } else {
+                self.selected_row().map_or(-1, int_of)
+            })),
             "focused_row" => Some(IntrospectValue::Int(
                 self.focused_row().map_or(-1, int_of),
             )),
@@ -617,6 +825,39 @@ impl ExternalIntrospect for TableExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
+            // R735 §5.38 — per-row selection write, **only in
+            // multi-select mode** (slot-assignment admin path: persisted
+            // restore / programmatic toggle). Single-select keeps the
+            // selection driven solely through the cell activate wire so
+            // the mutual-exclusion invariant cannot be violated via the
+            // RPC surface (mirror of `ListBoxExternal`'s `selected.<i>`).
+            other if other.starts_with("selected.") => {
+                if !self.is_multiselect() {
+                    return Err(InterveneError::ReadOnly);
+                }
+                let row_str = other.strip_prefix("selected.").unwrap_or("");
+                let row: usize =
+                    row_str.parse().map_err(|_| InterveneError::UnknownPath)?;
+                if row >= self.row_count() {
+                    return Err(InterveneError::OutOfRange);
+                }
+                match value {
+                    IntrospectValue::Bool(b) => {
+                        let mut next: Vec<usize> = self
+                            .selected_rows()
+                            .into_iter()
+                            .filter(|&j| j != row)
+                            .collect();
+                        if b {
+                            next.push(row);
+                            next.sort_unstable();
+                        }
+                        self.em.inner.set_selected_rows(&next);
+                        Ok(())
+                    }
+                    _ => Err(InterveneError::TypeMismatch),
+                }
+            }
             // The remaining slots are read-only: the selection is driven
             // through the cell activate wire (`invoke "send"`), never by
             // direct slot assignment; the data is immutable. This mirrors
@@ -675,9 +916,17 @@ impl ExternalIntrospect for TableExternal {
                     let ev = RadioEvent::from_name(event_name)
                         .ok_or(InvokeError::Rejected)?;
                     self.send_cell(row, col, ev);
-                    Ok(match self.selected_row() {
-                        Some(r) => IntrospectValue::Int(int_of(r)),
-                        None => IntrospectValue::Null,
+                    // R735 §5.38 — single returns the (possibly new)
+                    // `selected_row`; multi returns Null (no single row).
+                    // AI clients follow up with `selected.<i>` /
+                    // `selected_rows()` for the new full set.
+                    Ok(if self.is_multiselect() {
+                        IntrospectValue::Null
+                    } else {
+                        match self.selected_row() {
+                            Some(r) => IntrospectValue::Int(int_of(r)),
+                            None => IntrospectValue::Null,
+                        }
                     })
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -1039,5 +1288,146 @@ mod tests {
                 vec!["Table".to_string(), "707".to_string()],
             ],
         )
+    }
+
+    // ----- R735 §5.38 multi-select -----
+
+    fn multi_sample() -> Table {
+        Table::with_multiselect(
+            vec!["Name".to_string(), "Round".to_string()],
+            vec![
+                vec!["Tabs".to_string(), "R690".to_string()],
+                vec!["Menu".to_string(), "R691".to_string()],
+                vec!["Table".to_string(), "R707".to_string()],
+            ],
+        )
+    }
+
+    #[test]
+    fn multiselect_flag_is_set_by_constructor() {
+        assert!(!sample().is_multiselect(), "new() is single-select");
+        assert!(multi_sample().is_multiselect(), "with_multiselect() is multi");
+    }
+
+    #[test]
+    fn multi_activation_toggles_only_the_addressed_row() {
+        let mut t = multi_sample();
+        activate(&mut t, 0, 0);
+        activate(&mut t, 2, 1);
+        // Both rows are selected — no sibling-deselect (the multi-select
+        // contract that distinguishes it from R707 single-select).
+        assert_eq!(t.selected_rows(), vec![0, 2]);
+        assert!(t.is_selected(0) && t.is_selected(2));
+        assert!(!t.is_selected(1));
+        // Re-activating row 0 toggles it back off (siblings untouched).
+        activate(&mut t, 0, 0);
+        assert_eq!(t.selected_rows(), vec![2], "re-activate toggles row 0 off");
+    }
+
+    #[test]
+    fn multi_keyboard_activate_toggles() {
+        let mut t = multi_sample();
+        t.send_cell(1, 0, RadioEvent::KeyboardActivate);
+        assert_eq!(t.selected_rows(), vec![1]);
+        t.send_cell(1, 0, RadioEvent::KeyboardActivate);
+        assert_eq!(t.selected_rows(), Vec::<usize>::new(), "2nd KeyboardActivate toggles off");
+    }
+
+    #[test]
+    fn set_selected_rows_replaces_the_whole_set() {
+        let mut t = multi_sample();
+        t.set_selected_rows(&[0, 2]);
+        assert_eq!(t.selected_rows(), vec![0, 2]);
+        t.set_selected_rows(&[1]);
+        assert_eq!(t.selected_rows(), vec![1], "set replaces, not merges");
+        t.set_selected_rows(&[]);
+        assert_eq!(t.selected_rows(), Vec::<usize>::new(), "empty clears all");
+    }
+
+    #[test]
+    #[should_panic(expected = "single-select-only")]
+    fn selected_row_panics_in_multi_mode() {
+        let _ = multi_sample().selected_row();
+    }
+
+    #[test]
+    fn multi_external_emits_per_flip_intent() {
+        let mut ext = TableExternal::with_multiselect(
+            vec!["A".to_string()],
+            vec![vec!["x".to_string()], vec!["y".to_string()]],
+        );
+        // Toggle row 0 on, then off: two flips => two intents.
+        for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+            let _ = ext.invoke("send", IntrospectValue::Text(format!("0_0:{ev}")));
+        }
+        for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+            let _ = ext.invoke("send", IntrospectValue::Text(format!("0_0:{ev}")));
+        }
+        let mut intents = Vec::new();
+        ext.drain_intents(&mut |i| intents.push(i));
+        let selected: Vec<_> =
+            intents.iter().filter(|i| i.tag_str() == "selected").collect();
+        assert_eq!(selected.len(), 2, "toggle-on + toggle-off each emit an intent");
+    }
+
+    #[test]
+    fn multi_external_query_surface() {
+        let mut ext = TableExternal::with_multiselect(
+            vec!["A".to_string(), "B".to_string()],
+            vec![vec!["1".to_string(), "2".to_string()], vec![
+                "3".to_string(),
+                "4".to_string(),
+            ]],
+        );
+        assert_eq!(ext.query("multiselect"), Some(IntrospectValue::Bool(true)));
+        // No selection yet.
+        assert_eq!(ext.query("selected"), Some(IntrospectValue::Bool(false)));
+        // selected_row is the -1 sentinel in multi-mode (no single row).
+        assert_eq!(ext.query("selected_row"), Some(IntrospectValue::Int(-1)));
+        // Toggle row 1 on through the wire.
+        for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
+            let _ = ext.invoke("send", IntrospectValue::Text(format!("1_0:{ev}")));
+        }
+        assert_eq!(ext.query("selected"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(ext.query("selected.1"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(ext.query("selected.0"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.selected_rows(), vec![1]);
+        // invoke send returns Null in multi-mode (no single selected row).
+        let r = ext.invoke("send", IntrospectValue::Text("0_0:PointerUp".to_string()));
+        assert_eq!(r, Ok(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn multi_intervene_per_row_selected_bit() {
+        let mut ext = TableExternal::with_multiselect(
+            vec!["A".to_string()],
+            vec![vec!["1".to_string()], vec!["2".to_string()], vec!["3".to_string()]],
+        );
+        // Per-row write is enabled in multi-mode (persisted restore path).
+        assert!(ext.intervene("selected.0", IntrospectValue::Bool(true)).is_ok());
+        assert!(ext.intervene("selected.2", IntrospectValue::Bool(true)).is_ok());
+        assert_eq!(ext.selected_rows(), vec![0, 2]);
+        // Clearing a bit removes only that row.
+        assert!(ext.intervene("selected.0", IntrospectValue::Bool(false)).is_ok());
+        assert_eq!(ext.selected_rows(), vec![2]);
+        // Out-of-range row rejects.
+        assert_eq!(
+            ext.intervene("selected.9", IntrospectValue::Bool(true)),
+            Err(InterveneError::OutOfRange),
+        );
+    }
+
+    #[test]
+    fn single_mode_rejects_per_row_selected_write() {
+        let mut ext = TableExternal::new(
+            vec!["A".to_string()],
+            vec![vec!["1".to_string()], vec!["2".to_string()]],
+        );
+        // Single-select keeps `selected.<row>` read-only so the
+        // mutual-exclusion invariant cannot be violated via the RPC surface.
+        assert_eq!(
+            ext.intervene("selected.0", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly),
+        );
     }
 }

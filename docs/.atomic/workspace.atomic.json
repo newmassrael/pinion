@@ -24967,6 +24967,66 @@
         "named String sub-key (dec/inc) vs numeric index; parse_send_payload generic over key type"
       ]
     },
+    "R735": {
+      "decision_summary": "R735 multi-select Table: TableExternal::with_multiselect toggles a row per activation with no sibling-deselect so any subset reports aria-selected, the 2-D grid analog of ListBox multi-select and 2nd aria-multiselectable consumer; view_table selection param lifted from Option usize to a data-indexed bool slice as one SSOT paint path for both modes; hello-table-multi binding",
+      "changes_bullets": [
+        "Table::with_multiselect + is_multiselect + selected_rows + set_selected_rows mirror ListBox multi",
+        "send_cell mode-branch: multi toggles addressed row off via Radio activation edge, siblings kept",
+        "TableSnapshot bitmap + mode-aware detect (single: gain-only; multi: per-flip selected intents)",
+        "TableExternal multiselect query + selected_row -1 sentinel + invoke send returns Null in multi",
+        "intervene selected.row writable in multi mode only; single-select keeps it read-only",
+        "view_table selection param Option usize to data-indexed bool slice (one SSOT paint path both modes)",
+        "hello-table-multi example: 2nd aria-multiselectable consumer after ListBox, boot-seeds rows 0 and 2"
+      ],
+      "verification_bullets": [
+        "cargo test pinion-core table 29 (+9 multi) + pinion-widget-paint table + hello-table-multi 8 green",
+        "9 new core multi-select unit tests: toggle independence, selected_row panic, per-flip intents",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "tools/demos/r735_table_multi.py 42 assertions PASS over live hello-table-multi RPC surface",
+        "full demo sweep 84/84 via tools/sweep_headless.sh (was 83; +r735_table_multi)",
+        "live pixel: boot-seeded rows 0 and 2 share the accent wash, both differ from unselected row 1"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "range / shift-click selection deferred: app-logic refinement over the aria-multiselectable base",
+        "column resize / per-column width / virtualization / editable data still R707 deferred axes",
+        "no sort axis in hello-table-multi (orthogonal to cardinality; shown by hello-table R730)",
+        "grid-nav helpers (move_row/col) diverge sort-aware vs plain; no clean lift until 3rd identical"
+      ],
+      "publishable_decision_summary": "R735 multi-select Table: TableExternal::with_multiselect toggles a row per activation with no sibling-deselect so any subset reports aria-selected, the 2-D grid analog of ListBox multi-select and 2nd aria-multiselectable consumer; view_table selection param lifted from Option usize to a data-indexed bool slice as one SSOT paint path for both modes; hello-table-multi binding",
+      "publishable_changes_bullets": [
+        "Table::with_multiselect + is_multiselect + selected_rows + set_selected_rows mirror ListBox multi",
+        "send_cell mode-branch: multi toggles addressed row off via Radio activation edge, siblings kept",
+        "TableSnapshot bitmap + mode-aware detect (single: gain-only; multi: per-flip selected intents)",
+        "TableExternal multiselect query + selected_row -1 sentinel + invoke send returns Null in multi",
+        "intervene selected.row writable in multi mode only; single-select keeps it read-only",
+        "view_table selection param Option usize to data-indexed bool slice (one SSOT paint path both modes)",
+        "hello-table-multi example: 2nd aria-multiselectable consumer after ListBox, boot-seeds rows 0 and 2"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test pinion-core table 29 (+9 multi) + pinion-widget-paint table + hello-table-multi 8 green",
+        "9 new core multi-select unit tests: toggle independence, selected_row panic, per-flip intents",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "tools/demos/r735_table_multi.py 42 assertions PASS over live hello-table-multi RPC surface",
+        "full demo sweep 84/84 via tools/sweep_headless.sh (was 83; +r735_table_multi)",
+        "live pixel: boot-seeded rows 0 and 2 share the accent wash, both differ from unselected row 1"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "range / shift-click selection deferred: app-logic refinement over the aria-multiselectable base",
+        "column resize / per-column width / virtualization / editable data still R707 deferred axes",
+        "no sort axis in hello-table-multi (orthogonal to cardinality; shown by hello-table R730)",
+        "grid-nav helpers (move_row/col) diverge sort-aware vs plain; no clean lift until 3rd identical"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

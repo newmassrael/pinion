@@ -325,8 +325,10 @@ fn row_fg(theme: &Theme, state: RadioState) -> Color {
 ///   paired with
 ///   [`TableExternal`](pinion_core::widgets::table::TableExternal)'s
 ///   `rows` / `cols` / `cell.<r>.<c>` introspect slots.
-/// - `selected_row` — the selected row index, or `None`. The selected
-///   row strip is washed with the accent tint.
+/// - `row_selected` — per-row selection bitmap, indexed by **data** row
+///   (parallel to `row_states`). A `true` row strip is washed with the
+///   accent tint; a row outside the slice defaults to unselected. One
+///   path serves both single-select (one bit set) and R735 multi-select.
 /// - `row_states` — per-row [`RadioState`] interaction projections,
 ///   indexed by row (the binding reads them from the table's per-row
 ///   `state.<r>` introspect slots). A row outside the slice bounds
@@ -353,7 +355,7 @@ fn row_fg(theme: &Theme, state: RadioState) -> Color {
 pub fn view_table(
     tag: &str,
     data: TableData<'_>,
-    selected_row: Option<usize>,
+    row_selected: &[bool],
     row_states: &[RadioState],
     sort: Option<(usize, bool)>,
     theme: &Theme,
@@ -367,7 +369,7 @@ pub fn view_table(
         // Data-row id for this visual position (identity fallback).
         let data_id = data.row_ids.get(visual).copied().unwrap_or(visual);
         let state = row_states.get(data_id).copied().unwrap_or(RadioState::Idle);
-        let selected = selected_row == Some(data_id);
+        let selected = row_selected.get(data_id).copied().unwrap_or(false);
         // Zebra parity is **visual** so the stripe pattern stays stable
         // across re-sorts; selection / state are **data-indexed**.
         let fill = row_fill(theme, state, selected, visual);
@@ -435,7 +437,7 @@ mod tests {
             view_table(
                 "table",
                 TableData { headers: &headers, rows: &rows, row_ids: &[] },
-                None,
+                &[],
                 &all_idle(),
                 None,
                 &light(),
@@ -491,7 +493,7 @@ mod tests {
             view_table(
                 "table",
                 TableData { headers: &headers, rows: &rows, row_ids: &[] },
-                None,
+                &[],
                 &all_idle(),
                 None,
                 &theme,
@@ -506,7 +508,7 @@ mod tests {
             view_table(
                 "table",
                 TableData { headers: &headers, rows: &rows, row_ids: &[] },
-                None,
+                &[],
                 &all_idle(),
                 Some((1, true)),
                 &theme,
@@ -530,7 +532,7 @@ mod tests {
             view_table(
                 "table",
                 TableData { headers: &headers, rows: &reordered, row_ids: &[2, 0, 1] },
-                None,
+                &[],
                 &all_idle(),
                 Some((0, true)),
                 &light(),
