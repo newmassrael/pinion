@@ -30,6 +30,27 @@ use accesskit::{
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AriaRole {
+    /// WAI-ARIA 1.2 §4.3 `button` role: a clickable control that
+    /// triggers an action (the default `ButtonExternal` / disclosure
+    /// header / segment).
+    ///
+    /// **`aria-pressed` (toggle button) vs `aria-checked`** (R733
+    /// §5.40): a `button` that additionally carries
+    /// [`AccessState::checked`](crate::node::AccessState::checked) =
+    /// `Some(_)` is a **toggle button** — AT announces it as
+    /// "pressed" / "not pressed". This is distinct from a
+    /// [`Self::CheckBox`] / [`Self::Switch`] / [`Self::RadioButton`]
+    /// carrying the same `checked`, which AT announces as "checked".
+    /// Both lower through the *same* AccessKit `set_toggled` call
+    /// ([`crate::tree`] `lower_access_node`); the `aria-pressed` vs
+    /// `aria-checked` split is purely a function of the role, exactly
+    /// as the WAI-ARIA spec defines (a button reflects `aria-pressed`,
+    /// not `aria-checked`). The multi-select segmented button
+    /// (`hello-segmented-multi`, R733) is the first toggle-button
+    /// consumer: N independent `button[aria-pressed]` segments under a
+    /// [`Self::Group`] parent. A `button` with `checked = None` is a
+    /// plain (non-toggle) button — the accordion header (R697) carries
+    /// `aria-expanded` instead, with `checked = None`.
     Button,
     Switch,
     CheckBox,
@@ -357,6 +378,24 @@ pub enum AriaRole {
     /// [`AccessNode::current`](crate::AccessNode::current) =
     /// `Some(AriaCurrent::Page)`.
     Link,
+    /// R733 §5.40 — WAI-ARIA 1.2 §3.6 `group` role: a labelled set of
+    /// user-interface objects that are *not* a page landmark (vs
+    /// [`Self::Navigation`], which is). The canonical container for a
+    /// **multi-select segmented button** / toggle-button group: each
+    /// child is a [`Self::Button`] carrying `aria-pressed` (the
+    /// `set_toggled` mapping on a `button` role — see the
+    /// [`Self::Button`] doc for the `aria-pressed` vs `aria-checked`
+    /// distinction). The group itself owns no keyboard model and
+    /// exposes no AT action — it is a passive labelled wrapper so AT
+    /// announces "View, group" before walking its toggle-button
+    /// children. Pairs with the `hello-segmented-multi` consumer
+    /// (R733). Distinct from [`Self::RadioGroup`] (single-select, where
+    /// the children are mutually-exclusive `radio`s with
+    /// `aria-checked`) and [`Self::Toolbar`] (which carries the
+    /// roving-tabindex toolbar keyboard model); a plain `group` of
+    /// independently-tabbable toggle buttons is the simplest WAI-ARIA
+    /// multi-select toggle pattern.
+    Group,
     Generic,
 }
 
@@ -415,6 +454,10 @@ impl AriaRole {
             Self::Status => Role::Status,
             Self::Navigation => Role::Navigation,
             Self::Link => Role::Link,
+            // R733 §5.40 — AccessKit carries `group` one-to-one
+            // (distinct from `GenericContainer`, which the
+            // semantics-free `Generic` role maps to).
+            Self::Group => Role::Group,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -463,6 +506,7 @@ impl AriaRole {
             Self::Status => "status",
             Self::Navigation => "navigation",
             Self::Link => "link",
+            Self::Group => "group",
             Self::Generic => "generic",
         }
     }
@@ -837,5 +881,14 @@ mod tests {
     fn r704_row_lowers_to_accesskit_row() {
         assert_eq!(AriaRole::Row.to_accesskit(), Role::Row);
         assert_eq!(AriaRole::Row.aria_name(), "row");
+    }
+
+    #[test]
+    fn r733_group_lowers_to_accesskit_group() {
+        // R733 §5.40 — labelled multi-select segmented-button container.
+        // Distinct from `Generic` (→ `GenericContainer`, semantics-free).
+        assert_eq!(AriaRole::Group.to_accesskit(), Role::Group);
+        assert_eq!(AriaRole::Group.aria_name(), "group");
+        assert_ne!(AriaRole::Group.to_accesskit(), Role::GenericContainer);
     }
 }

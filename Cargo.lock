@@ -2057,6 +2057,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-segmented-multi"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-slider"
 version = "0.0.1"
 dependencies = [

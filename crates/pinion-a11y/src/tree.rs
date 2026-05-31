@@ -622,12 +622,20 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // AT lists it among the page regions but it never receives focus
         // and is not clickable (its `Link` children carry the
         // interaction), so it joins the zero-action arm.
+        // R733 §5.40 — `Group` (WAI-ARIA §3.6) is a passive labelled
+        // container: it never receives focus and is not clickable (its
+        // toggle-`Button` children each carry their own Click/Focus
+        // action set and own Tab stop), so it joins the zero-action arm.
+        // Distinct from `RadioGroup` / `Toolbar` (focus-only above): those
+        // own the single Tab stop + roving cursor, whereas a multi-select
+        // toggle-button group leaves each button independently tabbable.
         AriaRole::Tooltip
         | AriaRole::ColumnHeader
         | AriaRole::Row
         | AriaRole::ProgressBar
         | AriaRole::Status
-        | AriaRole::Navigation => {}
+        | AriaRole::Navigation
+        | AriaRole::Group => {}
     }
 }
 
@@ -777,6 +785,33 @@ mod tests {
         let update = b.build(None);
         assert_eq!(update.focus, tag_to_node_id("cb"));
         assert_eq!(update.nodes.len(), 2);
+    }
+
+    #[test]
+    fn r733_button_with_checked_lowers_as_toggle_button() {
+        // R733 §5.40 — a `button` role carrying `checked = Some(_)` is a
+        // toggle button: it lowers through the same `set_toggled` path a
+        // checkbox uses, but AT announces it as `aria-pressed` (not
+        // `aria-checked`) purely because the role is `Button`. The first
+        // toggle-button consumer is the multi-select segmented button
+        // (`hello-segmented-multi`). AccessKit exposes no public
+        // `toggled()` getter, so we pin the lowering by node count +
+        // role; the pressed-vs-checked semantic distinction lives in the
+        // role (verified at the binding's `access_node` level).
+        let pressed = AccessNode::new("seg", AriaRole::Button)
+            .with_name("Photos")
+            .with_state(AccessState { checked: Some(true), ..AccessState::default() })
+            .with_bounds(Rect::new(0, 0, 80, 32));
+        let mut b = AccessTreeBuilder::new();
+        b.add(&pressed);
+        let update = b.build(None);
+        // root + the toggle button.
+        assert_eq!(update.nodes.len(), 2);
+        // A plain (non-toggle) button carries `checked = None` — the
+        // distinguishing field is the `AccessNode` state, not the role.
+        let plain = AccessNode::new("btn", AriaRole::Button);
+        assert_eq!(plain.state.checked, None);
+        assert_eq!(pressed.state.checked, Some(true));
     }
 
     #[test]

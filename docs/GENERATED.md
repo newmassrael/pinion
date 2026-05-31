@@ -15597,6 +15597,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R733 — R733 multi-select segmented button (toggle-button group): N independent ToggleExternals + new AriaRole::Group + first aria-pressed consumer
+
+**Changes**:
+- new hello-segmented-multi example: multi-select segmented button (toggle-button group)
+- interaction = N independent ToggleExternals via create_extra_externals; 0 new coordinator
+- new AriaRole::Group (WAI-ARIA 1.2 sec 3.6) to accesskit Role::Group; labelled passive container
+- first aria-pressed consumer: role=button + AccessState.checked=Some(on) lowers via set_toggled
+- aria-pressed vs aria-checked is purely role-driven (button reflects pressed); same set_toggled call
+- segment paint = 2nd identical consumer of R728 segmented skin (typed over ToggleState)
+- each segment own Tab stop; Space/Enter toggle, Arrow roving + Home/End via focus_request mailbox
+- boot Photos+Videos pressed / Audio off; clicking toggles independently (no mutual exclusion)
+
+
+
+**Verification**:
+- pinion-a11y 109 lib tests incl r733_group_lowers + r733 button-with-checked toggle-button lowering
+- hello-segmented-multi 13 tests: view tags, per-segment Tab stops, keyboard, group + aria-pressed
+- cargo test --workspace green; cargo clippy --workspace --all-targets -D pedantic clean
+- r733_segmented_multi.py 40 assertions + PINION_SCREENSHOT live-pixel; headless Xvfb sweep PASS
+- demo sweep 82/82 (R732 81 + R733 1); existing demos byte-identical (no regression)
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- segmented paint now 2 identical consumers (RadioState/ToggleState); 3rd id -> segmented lift
+- per-segment Tab stops (not single-tab-stop roving); M3 roving-within-group variant deferred
+- aria-pressed/group unit-tested in binding; no a11y-tree RPC, verified via external value + paint
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
