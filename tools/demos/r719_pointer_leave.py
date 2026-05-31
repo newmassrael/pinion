@@ -119,24 +119,12 @@ def _tooltip_part() -> None:
             "focus-shown tooltip stays visible after pointer_leave (hover/focus orthogonal)",
         )
         assert _overlay(tf, AUTOSAVE_POP, TIP_VIEWPORT) is not None, "focus overlay still painted"
-        # drop focus so the next part starts clean.
-        tf.request("focus/set", {"tag": OFFLINE})
-        time.sleep(PAUSE)
-        # offline focus shows the offline tooltip; blur it back off.
-        assert_eq(_offline(tf, "visible"), True, "offline tooltip shown on focus")
-        tf.request("focus/set", {"tag": AUTOSAVE})
-        time.sleep(PAUSE)
-        tf.pointer_leave()
-        time.sleep(PAUSE)
 
-        # ── (D) window-scoped: clears the extra external's hover too ──
-        tf.request("focus/set", {"tag": OFFLINE})  # park focus off autosave
-        time.sleep(PAUSE)
-        # blur autosave-shown tooltip first by focusing offline, then
-        # hover the EXTRA external (offline) and leave.
-        tf.request("focus/set", {"tag": AUTOSAVE})
-        time.sleep(PAUSE)
-        assert_eq(_offline(tf, "visible"), False, "offline hidden (focus moved away)")
+        # ── (D) window-scoped: clears the EXTRA external's hover too ──
+        # autosave still holds focus from (C) and nothing is hovered, so
+        # the extra external (offline) is both unfocused and unhovered —
+        # a clean, no-juggling start.
+        assert_eq(_offline(tf, "visible"), False, "offline hidden while unfocused + unhovered")
         tf.hover(path=OFFLINE)
         time.sleep(PAUSE)
         assert_eq(_offline(tf, "hovered"), True, "extra external hovered")
@@ -146,6 +134,8 @@ def _tooltip_part() -> None:
         assert_eq(_offline(tf, "hovered"), False, "pointer_leave clears extra-external hover")
         assert_eq(_offline(tf, "visible"), False, "pointer_leave hides the offline tooltip")
         assert _overlay(tf, OFFLINE_POP, TIP_VIEWPORT) is None, "offline overlay gone"
+        # the leave is pointer-only: autosave's focus-held tooltip stands.
+        assert_eq(_autosave(tf, "focused"), True, "autosave focus survives the offline hover/leave")
 
 
 def _accordion_part() -> None:

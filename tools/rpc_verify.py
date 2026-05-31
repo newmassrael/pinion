@@ -154,13 +154,17 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # assertions, e.g. the accordion sweep). A headless CI with the
         # cursor parked never sees that event; `pointer_leave()` clears
         # the ambient hover so a cursor-occupied desktop matches that
-        # clean baseline. Best-effort: older binaries built before the
-        # `scene/pointer_leave` peer reject the method — ignore so the
-        # harness still drives them.
+        # clean baseline. Tolerate ONLY a genuinely-absent method
+        # (-32601), i.e. a stale pre-R719 `target/release/` binary that
+        # predates the `scene/pointer_leave` peer; the harness still
+        # drives it (just without the baseline). Any other error fails
+        # loud — a swallowed real failure would silently reintroduce the
+        # very boot-hover flakiness this baseline exists to remove.
         try:
             self.pointer_leave()
-        except RpcError:
-            pass
+        except RpcError as exc:
+            if exc.code != -32601:
+                raise
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
