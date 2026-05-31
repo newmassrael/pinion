@@ -18,6 +18,36 @@ python3 tools/demos/hello_toggle_activate.py
 Exit code 0 = every assertion satisfied. Non-zero = typed reason on
 stderr (assertion / RPC error / unexpected exception).
 
+## Headless / deterministic sweep (R720)
+
+By default a demo spawns its windowed winit + wgpu shell against
+whatever `DISPLAY` is set — i.e. the developer's physical X server
+(`:0`). That borrows the host's *physical cursor*, and a window the WM
+maps under it receives a spurious boot `CursorMoved` → boot-time hover
+flakiness (the R719 root cause, which `scene/pointer_leave` could only
+mask at the boot instant).
+
+`tools/sweep_headless.sh` runs the whole `tools/demos/*.py` suite inside a
+single throw-away **Xvfb** display, which has no physical cursor at all —
+the complete fix, not a boot-instant patch:
+
+```sh
+tools/sweep_headless.sh                 # run all demos headless
+tools/sweep_headless.sh r719 r697       # only demos whose name matches a substring
+```
+
+The wrapper pins `WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1` (GL/llvmpipe):
+a windowed surface under lavapipe (Vulkan) panics `Out of Memory` on the
+Xvfb framebuffer, while the software-GL path creates it fine. This is
+test-harness env-selection only — **framework code is untouched** (no
+RPC-input-only test mode); the binaries are the same shells an end user
+runs. The surfaceless `headless_screenshot.rs` (R637) path is separate;
+these are real windowed shells, including the live-pixel
+`PINION_SCREENSHOT` demos (all pass under GL/llvmpipe).
+
+The R719 boot `pointer_leave` baseline is retained as belt-and-suspenders
+for runs against a real display.
+
 ## Architecture
 
 `rpc_verify.RpcSubprocess` is a context manager that:
@@ -61,36 +91,11 @@ the build graph.
 Python 3.9+ stdlib only. No third-party deps. Run from the workspace
 root.
 
-## Carry list (R51.194+)
+## Status
 
-The first slice (R51.193) lands the harness primitive plus one demo
-(`hello_toggle_activate.py`). The remaining RPC surface gaps that
-block richer demos:
-
-- **R51.194 — `scene/snapshot` Container / Scroll traversal.** The v0
-  dispatcher only dumps the scene-root primitive's discriminator plus
-  any root-`External` introspect fields. `Scene::Container`, `Scene::Scroll`,
-  and `Scene::Box` children fall through to `SnapshotNode::Unknown`
-  (snapshot.rs:104). Until this lands, the harness cannot enumerate
-  widget rows nested under a container — and `hello-listbox` is exactly
-  that shape.
-- **R51.195 — wheel / key event injection RPC method.** The current
-  surface has no way to synthesise a `WheelDelta` or `KeyboardEvent`
-  through the wire. Demo coverage for the §5.45 Scroll axis requires
-  this method so a Claude-driven demo can scroll `hello-listbox`,
-  observe `ScrollState`, and assert the visible row window without a
-  human at the keyboard.
-- **R51.196 — `scene/click` v1: Container traversal + real event
-  pipeline.** Today `scene/click` is probe-only — it reports the root
-  `External`'s `handles_event` policy verdict but does not actually
-  mutate state and does not descend through `Scene::Container`
-  (click.rs:7-17). Once §5.3 settles a richer scene-path syntax, the
-  click handler should walk to the tagged target and feed a real
-  `PointerEvent` through the shell's `InputRouter`. Until then, demos
-  must drive state through `scene/invoke "/external/send"` (R17
-  bidirectional channel) rather than synthesised clicks.
-
-Each of those carries is the textbook substrate-first fix for a
-specific class of visual-state RPC introspection that the harness
-cannot yet cover. Land them in priority order so the harness grows
-along with the visible widget catalogue.
+The R51.193 harness primitive and its R51.194-196 carries (snapshot
+Container/Scroll traversal, wheel/key injection, `scene/click` v1 real
+event pipeline) all landed long ago; the RPC surface the demos drive is
+documented in `docs/GENERATED.md`. The live source of truth for the demo
+suite and per-round verification obligations is `docs/SEED_PROMPT.md`
+(round log + carry list) and `git log`.

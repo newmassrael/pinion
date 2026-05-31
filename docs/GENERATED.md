@@ -15186,6 +15186,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R720 — R720 deterministic headless demo sweep: tools/sweep_headless.sh runs all 71 demos under a single throw-away Xvfb display (GL/llvmpipe), decoupling the suite from the physical X server :0 and its physical cursor — the complete textbook fix for the R719-class boot-hover flakiness, with zero framework change.
+
+**Changes**:
+- Add tools/sweep_headless.sh: run all tools/demos/*.py under one throw-away Xvfb display
+- Pin WGPU_BACKEND=gl + LIBGL_ALWAYS_SOFTWARE=1 (lavapipe Vulkan OOMs a windowed Xvfb surface)
+- Unset inherited DISPLAY so a stray :0 cannot leak the physical server back in
+- Single xvfb-run wraps the whole loop: one virtual display and one parked cursor per sweep
+- Substring filter args select a demo subset; exit nonzero iff any selected demo fails
+- Framework code untouched: pure test-harness env-selection, no RPC-input-only test mode
+- tools/README.md: headless-sweep section plus retire long-cleared R51.194-196 carry list
+
+
+
+**Verification**:
+- full demo sweep 71/71 PASS under Xvfb GL/llvmpipe, incl all 13 PINION_SCREENSHOT live-pixel demos
+- honest gate clean: GL path broke zero live-pixel demos, so no :0 physical-display fallback needed
+- r697/r701 accordion PASS headless with no physical cursor (cursor-independence; R719 untouched)
+- naive xvfb-run reproduced the lavapipe Out-of-Memory panic rc=101, confirming the GL backend pin
+- shellcheck clean; exit 0 on all-pass, 2 on no-match (gate fails loud, not silent)
+- no Rust change this round so the sweep is the gate (cargo test/clippy only on code changes)
+
+
+
+**Impact**: §5.49
+
+
+**Carry forward**:
+- RpcSubprocess self-managed Xvfb spawn deferred: wrapper (a) is simpler and framework-clean
+- GL/llvmpipe is the headless render path; lavapipe Vulkan windowed-surface OOM stays an env limit
+- boot pointer_leave baseline (R719) kept as belt-and-suspenders for runs against a real display
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
