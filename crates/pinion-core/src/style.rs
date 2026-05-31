@@ -2028,11 +2028,24 @@ impl Stroke {
 /// Sidecar style for [`PathNode`](crate::scene::PathNode) per §5.3 R20.
 /// Either the `stroke` or `fill` arm can be `None`; rasterizers must
 /// gracefully ignore an empty style (no-op).
+///
+/// R722 §5.50 added an optional [`gradient`](Self::gradient) fill: when
+/// `Some`, the rasterizer paints it *in place of* the solid `fill`
+/// (mirroring [`BoxStyle::gradient`]). UV geometry is relative to the
+/// path's bounding [`rect`](crate::scene::PathNode::rect). Because a
+/// [`Gradient`] is heap- and float-bearing, `PathStyle` is no longer
+/// `Copy`/`Eq` and hand-rolls `Hash` (below) so the §5.16 R682
+/// paint-cache `style.hash()` stays a faithful key — exactly as
+/// `BoxStyle` does (R708).
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct PathStyle {
     pub stroke: Option<Stroke>,
     pub fill: Option<Color>,
+    /// Optional gradient fill. `Some` paints the gradient in place of
+    /// the solid `fill`; `None` (default) keeps `fill`. UV geometry is
+    /// box-relative to the path's bounding rect (R722 §5.50).
+    pub gradient: Option<Gradient>,
 }
 
 impl PathStyle {
@@ -2042,6 +2055,7 @@ impl PathStyle {
         Self {
             stroke: Some(stroke),
             fill: None,
+            gradient: None,
         }
     }
 
@@ -2051,6 +2065,7 @@ impl PathStyle {
         Self {
             stroke: None,
             fill: Some(fill),
+            gradient: None,
         }
     }
 
@@ -2069,6 +2084,29 @@ impl PathStyle {
     pub const fn with_fill(mut self, fill: Color) -> Self {
         self.fill = Some(fill);
         self
+    }
+
+    /// Builder: attach a [`Gradient`] fill (R722 §5.50). Painted in
+    /// place of the solid `fill`. Non-const because a `Gradient` carries
+    /// a heap `Vec<ColorStop>` (mirrors [`BoxStyle::with_gradient`]).
+    #[must_use]
+    pub fn with_gradient(mut self, gradient: Gradient) -> Self {
+        self.gradient = Some(gradient);
+        self
+    }
+}
+
+impl core::hash::Hash for PathStyle {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.stroke.hash(state);
+        self.fill.hash(state);
+        match &self.gradient {
+            None => 0u8.hash(state),
+            Some(gradient) => {
+                1u8.hash(state);
+                hash_gradient(gradient, state);
+            }
+        }
     }
 }
 

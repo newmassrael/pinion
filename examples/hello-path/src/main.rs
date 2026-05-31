@@ -27,6 +27,12 @@
 //!   combined arm and that the §5.16 paint-cache re-keys when a
 //!   `PathStyle` changes (the `Hash for PathNode` folds the style in).
 //!
+//! R722 §5.50 adds two **gradient-fill paths** ([`PathStyle::gradient`],
+//! isomorphic to `BoxStyle::gradient`): a `grad_linear` rectangle with a
+//! 3-stop horizontal ramp (its white midpoint is an exact-stop pixel no
+//! solid fill could produce) and a `grad_radial` diamond whose centre
+//! pixel is the radial centre stop.
+//!
 //! Every path is positioned with `LayoutStyle::absolute_position` so
 //! its rect sits at a fixed window coordinate that matches the
 //! author-space command stream (path commands are absolute device
@@ -61,8 +67,8 @@ use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode,
 };
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, PathStyle, Size,
-    Stroke, StrokeCap, TextStyle,
+    AlignItems, BoxStyle, Color, FlexDirection, Gradient, JustifyContent, LayoutStyle, PathStyle,
+    Size, Stroke, StrokeCap, TextStyle,
 };
 use pinion_core::widgets::toggle::{ToggleEvent, ToggleExternal, ToggleState};
 use pinion_core::{ColorRole, Frame, Scene, WidgetCore, WidgetStateName, use_theme};
@@ -111,6 +117,15 @@ const STROKE_TEAL: Color = Color::rgb(0x00, 0x96, 0x88);
 
 const STROKE_W: u32 = 8;
 const DEMO_STROKE_W: u32 = 8;
+
+// ── R722 gradient-path fill colours (fixed, theme-independent) ──────
+// `GRAD_A` / `GRAD_B` are the gradient endpoints; `GRAD_MID` is the
+// midpoint stop of the linear ramp — an exact-stop pixel anchor that no
+// solid fill or stroke could produce (the colour AT a stop is the stop
+// colour regardless of interpolation space, per the R708 lesson).
+const GRAD_A: Color = Color::rgb(0x21, 0x96, 0xf3); // blue
+const GRAD_B: Color = Color::rgb(0xe5, 0x39, 0x35); // red
+const GRAD_MID: Color = Color::rgb(0xff, 0xff, 0xff); // white
 
 /// Triangle vertices (window-absolute px). Centroid ≈ (90, 133) — the
 /// fill-arm live-pixel anchor.
@@ -191,6 +206,57 @@ fn path_node(
                     .with_size(Size::px(size.0, size.1)),
             ),
     )
+}
+
+/// R722 §5.50 gradient-fill paths — the first [`PathStyle::gradient`]
+/// consumers (isomorphic to `BoxStyle::gradient`, R708). Two static,
+/// theme-independent shapes so the live-pixel guard predicts exact RGB:
+///
+/// * `grad_linear` — a rectangle path with a 3-stop horizontal ramp
+///   (`GRAD_A` → `GRAD_MID` → `GRAD_B`). Its midpoint pixel is the
+///   white mid stop, which is impossible for any solid fill or stroke;
+/// * `grad_radial` — a diamond path with a 2-stop radial gradient
+///   (`GRAD_B` centre → `GRAD_A` edge). Its exact centre pixel is the
+///   centre stop colour.
+///
+/// Both are introspectable as data via `scene/snapshot` (geometry kind,
+/// stops, UV) and verified by the R722 demo.
+fn gradient_paths() -> Vec<Scene> {
+    // Linear: a filled rect so any column samples the ramp.
+    let linear_rect = vec![
+        PathCommand::MoveTo(pt((45.0, 168.0))),
+        PathCommand::LineTo(pt((140.0, 168.0))),
+        PathCommand::LineTo(pt((140.0, 220.0))),
+        PathCommand::LineTo(pt((45.0, 220.0))),
+        PathCommand::Close,
+    ];
+    let linear = path_node(
+        "grad_linear",
+        (45, 168),
+        (95, 52),
+        linear_rect,
+        PathStyle::default().with_gradient(
+            Gradient::horizontal()
+                .with_stop(0.0, GRAD_A)
+                .with_stop(0.5, GRAD_MID)
+                .with_stop(1.0, GRAD_B),
+        ),
+    );
+
+    // Radial: a diamond whose exact centre is the centre stop.
+    let radial = path_node(
+        "grad_radial",
+        (267, 160),
+        (76, 70),
+        closed_polygon(&[(305.0, 160.0), (343.0, 195.0), (305.0, 230.0), (267.0, 195.0)]),
+        PathStyle::default().with_gradient(
+            Gradient::radial((0.5, 0.5), 0.5)
+                .with_stop(0.0, GRAD_B)
+                .with_stop(1.0, GRAD_A),
+        ),
+    );
+
+    vec![linear, radial]
 }
 
 /// Build the RPC-drivable mode switch — a rounded chip tagged
@@ -313,6 +379,10 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
 
     let mode_chip = mode_switch(&theme, state, on, on_surface, surface, accent);
 
+    let [grad_linear, grad_radial] = gradient_paths()
+        .try_into()
+        .expect("gradient_paths returns exactly two paths");
+
     let status = Scene::Text(
         TextNode::styled(
             format!(
@@ -329,7 +399,9 @@ fn view(state: ToggleState, on: bool, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![title, tri, chevron, arc, demo_path, mode_chip, status])
+        ContainerNode::new(vec![
+            title, tri, chevron, arc, demo_path, grad_linear, grad_radial, mode_chip, status,
+        ])
             .with_style(BoxStyle::filled(surface))
             .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
     )
@@ -509,6 +581,50 @@ mod tests {
         for tag in ["tri", "chevron", "arc", "demo_path"] {
             assert!(find_path(&scene, tag).is_some(), "missing path {tag}");
         }
+    }
+
+    #[test]
+    fn grad_linear_is_a_three_stop_horizontal_gradient_fill() {
+        use pinion_core::style::GradientKind;
+        let scene = rendered(ToggleState::Idle, false);
+        let g = find_path(&scene, "grad_linear").expect("grad_linear present");
+        assert!(g.style.fill.is_none(), "gradient path has no solid fill");
+        let gradient = g.style.gradient.as_ref().expect("grad_linear has a gradient");
+        assert!(matches!(gradient.kind, GradientKind::Linear { .. }));
+        assert_eq!(gradient.stops.len(), 3);
+        assert_eq!(gradient.stops[0].color, GRAD_A);
+        assert_eq!(gradient.stops[1].color, GRAD_MID);
+        assert_eq!(gradient.stops[2].color, GRAD_B);
+    }
+
+    #[test]
+    fn grad_radial_centre_stop_is_grad_b() {
+        use pinion_core::style::GradientKind;
+        let scene = rendered(ToggleState::Idle, false);
+        let g = find_path(&scene, "grad_radial").expect("grad_radial present");
+        let gradient = g.style.gradient.as_ref().expect("grad_radial has a gradient");
+        assert!(matches!(gradient.kind, GradientKind::Radial { .. }));
+        assert_eq!(gradient.stops.len(), 2);
+        // The centre (offset 0) stop is the exact-pixel anchor.
+        assert_eq!(gradient.stops[0].color, GRAD_B);
+        assert_eq!(gradient.stops[1].color, GRAD_A);
+    }
+
+    #[test]
+    fn gradient_fill_re_keys_the_paint_hash_vs_solid() {
+        use std::hash::{Hash, Hasher};
+        // A gradient path must hash differently from the same shape with
+        // a solid fill, or the §5.16 R682 paint-cache would replay a
+        // stale solid fragment. Exercises `Hash for PathStyle`.
+        let g = PathStyle::default()
+            .with_gradient(Gradient::horizontal().with_stop(0.0, GRAD_A).with_stop(1.0, GRAD_B));
+        let solid = PathStyle::filled(GRAD_A);
+        let h = |s: &PathStyle| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            s.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_ne!(h(&g), h(&solid));
     }
 
     #[test]

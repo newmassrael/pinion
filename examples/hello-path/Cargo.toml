@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R721 §5.16 vector-path rendering substrate consumer — the first Scene::Path paint: a filled triangle, a stroked chevron, a cubic-Bezier arc, and a Toggle-driven fill/stroke diamond, exercising every PathCommand (MoveTo/LineTo/CurveTo/Close) and both PathStyle arms; substrate-first, each path is introspectable via scene/snapshot and verifiable by live-pixel sampling"
+description = "R721/R722 §5.16 §5.50 vector-path rendering substrate consumer — the first Scene::Path paint: a filled triangle, a stroked chevron, a cubic-Bezier arc, a Toggle-driven fill/stroke diamond, and (R722) linear/radial gradient-fill paths, exercising every PathCommand and all PathStyle arms; substrate-first, each path is introspectable via scene/snapshot and verifiable by live-pixel sampling"
 publish = false
 
 [[bin]]

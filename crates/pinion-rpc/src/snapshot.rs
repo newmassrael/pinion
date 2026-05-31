@@ -297,7 +297,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
             commands: node.commands.clone(),
-            style: node.style,
+            style: node.style.clone(),
         }),
         Scene::Image(node) => SnapshotNode::Image(ImageSnapshot {
             rect: node.rect,

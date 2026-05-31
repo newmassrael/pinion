@@ -2115,7 +2115,7 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
                 .map(path_command_to_json)
                 .collect();
             obj.insert("commands".to_string(), Value::Array(cmds));
-            obj.insert("style".to_string(), path_style_to_json(snap.style));
+            obj.insert("style".to_string(), path_style_to_json(&snap.style));
         }
         SnapshotNode::Image(snap) => {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
@@ -2463,7 +2463,7 @@ fn stroke_to_json(stroke: pinion_core::style::Stroke) -> Value {
 /// R55.G.11 §5.49 — wire serialization for `PathStyle`. Both arms are
 /// optional (a Path may stroke without filling or vice versa), so the
 /// wire keeps them as `null`-able fields.
-fn path_style_to_json(style: pinion_core::style::PathStyle) -> Value {
+fn path_style_to_json(style: &pinion_core::style::PathStyle) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert(
         "stroke".to_string(),
@@ -2472,6 +2472,11 @@ fn path_style_to_json(style: pinion_core::style::PathStyle) -> Value {
     obj.insert(
         "fill".to_string(),
         style.fill.map_or(Value::Null, color_to_json),
+    );
+    // R722 §5.50 — gradient fill (reuses the BoxStyle gradient wire).
+    obj.insert(
+        "gradient".to_string(),
+        style.gradient.as_ref().map_or(Value::Null, gradient_to_json),
     );
     Value::Object(obj)
 }

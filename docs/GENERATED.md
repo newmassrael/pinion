@@ -15259,6 +15259,40 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R722 — R722 PathStyle gradient fill - gradient-on-path (R709 carry, R721-unblocked) + hello-path consumers
+
+**Changes**:
+- PathStyle gains gradient: Option<Gradient> (mirrors BoxStyle R708); drops Copy/Eq, hand-rolls Hash
+- paint_path: gradient overrides solid fill (mirrors fill_box_bg precedence)
+- gradient_brush helper single-sources the peniko lowering for rect + BezPath fills
+- only the filled shape (rect vs BezPath) differs; UV geometry box-relative to the path rect
+- snapshot path_style_to_json gains a gradient field (reuses the BoxStyle gradient wire)
+- hello-path: grad_linear rect (3-stop horizontal ramp) + grad_radial diamond (2-stop) consumers
+
+
+
+**Verification**:
+- cargo test --workspace green; hello-path 11 unit tests (3 new: linear/radial/hash re-key)
+- cargo clippy --workspace --all-targets (-D pedantic) clean
+- r722_path_gradient.py 20+ assert: scene/snapshot geometry kind / stops / UV read-back
+- live-pixel: grad_linear white mid-stop (impossible for solid) + blue/red ramp directionality
+- live-pixel: grad_radial exact centre stop (red) + edgeward bluer (radial ramp)
+- demo sweep 73/73 under Xvfb; r721 demo unchanged (R722 only adds paths)
+
+
+
+**Impact**: §5.50, §5.16, §5.3
+
+
+**Carry forward**:
+- parse_path_style gradient round-trip (write-side) unwired: no path-replacement gradient consumer
+- read-side (scene/snapshot path gradient) is complete; write-side additive when a consumer appears
+- sweep/conic GradientKind + brush_transform + per-stop interpolation colour space (R709 carry)
+- image/pattern Brush + fill->Brush unification deferred to Phase C material (R709 carry)
+- gradient+stroke combined arm works (gradient fill then stroke); dashed-gradient = no consumer
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

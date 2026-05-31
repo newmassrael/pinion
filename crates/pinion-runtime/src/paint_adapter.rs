@@ -972,9 +972,11 @@ fn to_kurbo_cap(cap: StrokeCap) -> KurboCap {
 
 /// R721 §5.16 — rasterize a [`Scene::Path`] leaf: lower its
 /// `Vec<PathCommand>` into a Vello [`BezPath`] (absolute device
-/// coordinates), then fill the closed region with `style.fill`
-/// (non-zero winding — the CSS / SVG default) and stroke the outline
-/// with `style.stroke`. Both [`PathStyle`](pinion_core::style::PathStyle)
+/// coordinates), then fill the closed region (non-zero winding — the
+/// CSS / SVG default) with either the R722 `style.gradient` (box-
+/// relative to the node's `rect`) when present or the solid
+/// `style.fill`, and stroke the outline with `style.stroke`. All
+/// [`PathStyle`](pinion_core::style::PathStyle)
 /// arms are independently optional, so a fill-only, stroke-only, or
 /// empty style each paints only what it carries; an empty command
 /// stream is a no-op. Issued into the caller's fresh sub-scene before
@@ -998,7 +1000,12 @@ fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
             _ => {}
         }
     }
-    if let Some(fill) = node.style.fill
+    // Fill: a gradient (R722) overrides the solid fill when present,
+    // mirroring `fill_box_bg`'s Box gradient-over-solid precedence.
+    if let Some(gradient) = &node.style.gradient {
+        let brush = gradient_brush(gradient, node.rect);
+        out.fill(Fill::NonZero, transform, &brush, None, &path);
+    } else if let Some(fill) = node.style.fill
         && fill != Color::TRANSPARENT
     {
         out.fill(Fill::NonZero, transform, to_peniko(fill), None, &path);
@@ -1046,6 +1053,28 @@ fn fill_rect_gradient(
     corner_radius: u32,
     transform: Affine,
 ) {
+    let brush = gradient_brush(gradient, r);
+    let x0 = f64::from(r.x);
+    let y0 = f64::from(r.y);
+    let x1 = x0 + f64::from(r.w);
+    let y1 = y0 + f64::from(r.h);
+    if corner_radius == 0 {
+        let rect = KurboRect::new(x0, y0, x1, y1);
+        out.fill(Fill::NonZero, transform, &brush, None, &rect);
+    } else {
+        let rounded = KurboRoundedRect::new(x0, y0, x1, y1, f64::from(corner_radius));
+        out.fill(Fill::NonZero, transform, &brush, None, &rounded);
+    }
+}
+
+/// R722 §5.50 — build a peniko gradient [`PenikoBrush`] from a pinion
+/// [`Gradient`] whose box-relative UV geometry is anchored to `r`
+/// (`(0,0)` = top-left, `(1,1)` = bottom-right; a radial `radius` is a
+/// fraction of the shorter side). Shared by [`fill_rect_gradient`]
+/// (Box / Container fills) and [`paint_path`] (R721 vector paths) so
+/// the gradient lowering is single-source — only the filled *shape*
+/// (rect vs `BezPath`) differs.
+fn gradient_brush(gradient: &Gradient, r: Rect) -> PenikoBrush {
     let x0 = f64::from(r.x);
     let y0 = f64::from(r.y);
     let w = f64::from(r.w);
@@ -1070,17 +1099,7 @@ fn fill_rect_gradient(
         .map(|stop| (stop.offset, to_peniko(stop.color)))
         .collect();
     peniko_gradient = peniko_gradient.with_stops(stops.as_slice());
-    let brush = PenikoBrush::Gradient(peniko_gradient);
-
-    let x1 = x0 + w;
-    let y1 = y0 + h;
-    if corner_radius == 0 {
-        let rect = KurboRect::new(x0, y0, x1, y1);
-        out.fill(Fill::NonZero, transform, &brush, None, &rect);
-    } else {
-        let rounded = KurboRoundedRect::new(x0, y0, x1, y1, f64::from(corner_radius));
-        out.fill(Fill::NonZero, transform, &brush, None, &rounded);
-    }
+    PenikoBrush::Gradient(peniko_gradient)
 }
 
 /// R708 §5.50 — map a pinion [`Extend`](pinion_core::style::Extend) to
