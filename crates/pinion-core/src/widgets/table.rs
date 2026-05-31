@@ -52,6 +52,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
+use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
@@ -213,24 +214,12 @@ impl Table {
     /// * Panics if any index in `rows` is `>= row_count()`.
     /// * In single-select mode, panics if `rows.len() > 1`.
     pub fn set_selected_rows(&mut self, rows: &[usize]) {
-        for &r in rows {
-            assert!(
-                r < self.row_radios.len(),
-                "Table::set_selected_rows row {r} out of range (rows={})",
-                self.row_radios.len()
-            );
-        }
+        // R735.1 §5.38 — shared slot-assignment core (index validation +
+        // single-select cardinality cap); the returned first index
+        // mirrors into the single-select cursor.
+        let first = selection::replace_selection(&mut self.row_radios, rows, self.multiselect);
         if !self.multiselect {
-            assert!(
-                rows.len() <= 1,
-                "Table::set_selected_rows: single-select mode accepts at \
-                 most one row, got {}",
-                rows.len()
-            );
-            self.selected_row = rows.first().copied();
-        }
-        for (j, radio) in self.row_radios.iter_mut().enumerate() {
-            radio.set_selected(rows.contains(&j));
+            self.selected_row = first;
         }
     }
 
@@ -263,29 +252,22 @@ impl Table {
         self.row_radios[row].send(event);
         let post_state = self.row_radios[row].state();
         if self.multiselect {
-            // R735 §5.38 — detect activation off the leaf's state-machine
-            // transition (so multi-mode toggle-off, where the leaf's
-            // set-not-flip value is idempotent on the already-`true`
-            // value, is still caught). Mirror of `ListBox::send`.
+            // R735.1 §5.38 — multi-select toggle. The activation predicate
+            // is leaf-typed (RadioState / RadioEvent), so it stays inline;
+            // the set-not-flip toggle-off completion is the shared
+            // substrate (selection::toggle_off_if_reselected).
             let activation = (matches!(pre_state, RadioState::Pressed)
                 && matches!(post_state, RadioState::Hover))
                 || (matches!(event, RadioEvent::KeyboardActivate)
                     && !matches!(pre_state, RadioState::Disabled));
-            if activation && was_selected {
-                // Toggle off: the leaf set its value `true` on the
-                // activation edge; force `false` to complete the toggle.
-                self.row_radios[row].set_selected(false);
-            }
-        } else {
-            let now_selected = self.row_radios[row].is_selected();
-            if !was_selected && now_selected {
-                for (j, r) in self.row_radios.iter_mut().enumerate() {
-                    if j != row {
-                        r.set_selected(false);
-                    }
-                }
-                self.selected_row = Some(row);
-            }
+            selection::toggle_off_if_reselected(
+                &mut self.row_radios[row],
+                was_selected,
+                activation,
+            );
+        } else if selection::select_exclusive(&mut self.row_radios, row, was_selected) {
+            // R707 §5.40 — single-row exclusion landed; store the cursor.
+            self.selected_row = Some(row);
         }
         // R707 §5.40 — the active descendant follows the click's
         // `PointerUp` regardless of whether the selection changed (the
@@ -399,12 +381,6 @@ fn cell_cmp(a: &str, b: &str) -> core::cmp::Ordering {
 /// [`ListBoxSnapshot`](crate::widgets::listbox::ListBox)). The Vec
 /// heap-allocates once per `IntentEmitter::dispatch` (i.e. once per user
 /// input event); negligible at UI / AI dispatch frequencies.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TableSnapshot {
-    multiselect: bool,
-    bits: Vec<bool>,
-}
-
 /// `Table` transition contract (R51.12 substrate). The event pairs the
 /// `(row, col)` cell with the underlying [`RadioEvent`]. R735 §5.38 — the
 /// snapshot captures mode + the per-row selection bitmap so `detect`
@@ -426,13 +402,10 @@ pub struct TableSnapshot {
 /// changed, gated in single-select to the `false → true` direction only.
 impl WidgetTransition for Table {
     type Event = (usize, usize, RadioEvent);
-    type Snapshot = TableSnapshot;
+    type Snapshot = selection::SelectionSnapshot;
 
     fn snapshot(&self) -> Self::Snapshot {
-        TableSnapshot {
-            multiselect: self.multiselect,
-            bits: self.row_radios.iter().map(Radio::is_selected).collect(),
-        }
+        selection::capture(&self.row_radios, self.multiselect)
     }
 
     fn drive(&mut self, event: Self::Event) {
@@ -445,26 +418,9 @@ impl WidgetTransition for Table {
         _event: Self::Event,
         after: Self::Snapshot,
     ) -> Vec<Intent> {
-        debug_assert_eq!(before.bits.len(), after.bits.len());
-        debug_assert_eq!(before.multiselect, after.multiselect);
-        let multi = after.multiselect;
-        let mut out = Vec::new();
-        for (i, (b, a)) in before.bits.iter().zip(after.bits.iter()).enumerate() {
-            if b == a {
-                continue;
-            }
-            // Single-select emits only on row gain (RadioGroup-class
-            // semantic); multi-select emits on every flip.
-            if multi || (!*b && *a) {
-                if let Ok(row_i) = i64::try_from(i) {
-                    out.push(Intent::new_static(
-                        "selected",
-                        IntrospectValue::Int(row_i),
-                    ));
-                }
-            }
-        }
-        out
+        // R735.1 §5.38 — shared multi-capable bitmap diff (single: gain
+        // only; multi: every flip).
+        selection::detect_intents(&before, &after)
     }
 }
 

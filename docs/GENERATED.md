@@ -15725,6 +15725,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R735.1 — R735.1 audit-clearance (user SSOT review): grep+read audit found the select-N-of-M coordinator family duplicated the single-select sibling-deselect loop (4 copies: RadioGroup/DatePicker/ListBox/Table) + the multi-select bitmap snapshot/detect/slot-setter (2 copies: ListBox/Table). New crate-internal widgets::selection substrate is the single source of truth, adopted by all four; the leaf-typed activation predicate stays inline (don't abstract what diverges). Finding 2 (example grid introspect-reader duplication) examined and kept as honest carry: the cursor-movers genuinely diverge on sort-awareness so a shared helper would be a wrong abstraction, and the pure readers are trivial example glue with no clean home.
+
+**Changes**:
+- new widgets::selection substrate: SelectableLeaf trait + select_exclusive (4-consumer)
+- toggle_off_if_reselected (2-consumer multi) + SelectionSnapshot/capture/detect_intents
+- ListBox + Table adopt selection:: for snapshot/detect/multi-toggle/set_selected_indices
+- RadioGroup + DatePicker adopt select_exclusive (was byte-identical 4-copy exclusion loop)
+- coordinators net -67 lines: exclusion loop 4->1, bitmap detect/snapshot/setter 2->1
+
+
+
+**Verification**:
+- selection.rs 11 unit tests green (exclusion/toggle/detect single+multi/replace asserts)
+- cargo test -p pinion-core 2014 passed 0 failed (4 coordinators + dependents)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)
+- full demo sweep 84/84 (no behavioral regression across coordinator-consuming examples)
+- should_panic substrings preserved (out of range / single-select mode) after unification
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- example grid introspect-readers byte-identical 2-copy but trivial pure queries, no clean home
+- grid cursor-movers diverge on sort-awareness (table sort-aware, multi plain) = wrong-abstraction risk
+- leaf-typed activation predicate stays inline per coordinator (behind trait = no net reduction)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

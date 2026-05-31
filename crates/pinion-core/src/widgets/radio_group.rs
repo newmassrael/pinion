@@ -45,6 +45,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
+use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
@@ -101,13 +102,10 @@ impl RadioGroup {
     pub fn send(&mut self, index: usize, event: RadioEvent) {
         let was_selected = self.radios[index].is_selected();
         self.radios[index].send(event);
-        let now_selected = self.radios[index].is_selected();
-        if !was_selected && now_selected {
-            for (j, r) in self.radios.iter_mut().enumerate() {
-                if j != index {
-                    r.set_selected(false);
-                }
-            }
+        // R735.1 §5.38 — single-select sibling-deselect is the shared
+        // 4-consumer substrate; on a fresh activation it clears every
+        // other radio and reports the gain so the cursor + focus sync.
+        if selection::select_exclusive(&mut self.radios, index, was_selected) {
             self.selected = Some(index);
             // R51.90 §5.40 — WAI-ARIA Authoring Practices roving-
             // tabindex: activation moves focus. When a Radio's

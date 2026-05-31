@@ -48,6 +48,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
+use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
@@ -236,13 +237,10 @@ impl DatePicker {
         let idx = usize::from(day - 1);
         let was_selected = self.days[idx].is_selected();
         self.days[idx].send(event);
-        let now_selected = self.days[idx].is_selected();
-        if !was_selected && now_selected {
-            for (j, r) in self.days.iter_mut().enumerate() {
-                if j != idx {
-                    r.set_selected(false);
-                }
-            }
+        // R735.1 §5.38 — single-select sibling-deselect (shared 4-consumer
+        // substrate). On a fresh activation it clears the other days and
+        // reports the gain so the selected date + active descendant sync.
+        if selection::select_exclusive(&mut self.days, idx, was_selected) {
             self.selected = Some(CivilDate {
                 year: self.displayed_year,
                 month: self.displayed_month,

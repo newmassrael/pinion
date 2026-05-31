@@ -72,6 +72,7 @@ use crate::intent::Intent;
 use crate::widgets::listbox_item::{
     ListBoxItem, ListboxItemEvent, ListboxItemState,
 };
+use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
@@ -196,31 +197,25 @@ impl ListBox {
             || (matches!(event, ListboxItemEvent::KeyboardActivate)
                 && !matches!(pre_state, ListboxItemState::Disabled));
         if self.multiselect {
+            // R735.1 §5.38 — multi-select toggle: the leaf's set-not-flip
+            // value needs forcing back to `false` on a re-activation
+            // (selection::toggle_off_if_reselected). Focus follows any
+            // activation regardless of the resulting bit.
+            selection::toggle_off_if_reselected(
+                &mut self.items[index],
+                was_selected,
+                activation,
+            );
             if activation {
-                if was_selected {
-                    // Toggle off: atom is set-not-flip, so the
-                    // composite forces the new false here.
-                    self.items[index].set_selected(false);
-                }
-                // Else: atom already set true on the activation edge.
                 self.focused = Some(index);
             }
-        } else {
-            let now_selected = self.items[index].is_selected();
-            if !was_selected && now_selected {
-                for (j, r) in self.items.iter_mut().enumerate() {
-                    if j != index {
-                        r.set_selected(false);
-                    }
-                }
-                self.selected = Some(index);
-                // R51.90 §5.40 — activation moves focus. Mirrors
-                // `RadioGroup::send`. Differs from RadioGroup in
-                // keyboard routing (Arrow keys do not reach `send` in
-                // the ARIA Listbox model — only Space/Enter on a
-                // focused row does) but the sync rule is identical.
-                self.focused = Some(index);
-            }
+        } else if selection::select_exclusive(&mut self.items, index, was_selected) {
+            // R51.90 §5.40 — single-select sibling-deselect landed; store
+            // the cursor + sync the active descendant (activation moves
+            // focus). Differs from RadioGroup only in keyboard routing
+            // (Listbox Arrow keys do not reach `send`), not the sync rule.
+            self.selected = Some(index);
+            self.focused = Some(index);
         }
     }
 
@@ -327,24 +322,13 @@ impl ListBox {
     /// * Panics if any index in `indices` is `>= count()`.
     /// * In single-select mode, panics if `indices.len() > 1`.
     pub fn set_selected_indices(&mut self, indices: &[usize]) {
-        for &i in indices {
-            assert!(
-                i < self.items.len(),
-                "ListBox::set_selected_indices index {i} out of range (count={})",
-                self.items.len()
-            );
-        }
+        // R735.1 §5.38 — shared slot-assignment core (validates indices +
+        // the single-select cardinality cap, replaces the whole set). The
+        // returned first index updates the single-select cursor mirror;
+        // multi-select has no single cursor.
+        let first = selection::replace_selection(&mut self.items, indices, self.multiselect);
         if !self.multiselect {
-            assert!(
-                indices.len() <= 1,
-                "ListBox::set_selected_indices: single-select mode \
-                 accepts at most one index, got {}",
-                indices.len()
-            );
-            self.selected = indices.first().copied();
-        }
-        for (j, item) in self.items.iter_mut().enumerate() {
-            item.set_selected(indices.contains(&j));
+            self.selected = first;
         }
     }
 
@@ -402,12 +386,6 @@ impl Default for ListBox {
 /// the cost is negligible for the AI / UI dispatch frequencies, but
 /// motivates the `Snapshot: Clone` (not `Copy`) trait bound — see
 /// [`WidgetTransition`] for the bound rationale.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ListBoxSnapshot {
-    multiselect: bool,
-    bits: Vec<bool>,
-}
-
 /// `ListBox` transition contract (R51.12 substrate). Event pairs the
 /// item index with the underlying [`ListboxItemEvent`]. R51.102 §5.38
 /// — snapshot captures mode + the full per-item bitmap so the
@@ -446,13 +424,10 @@ pub struct ListBoxSnapshot {
 /// needs.
 impl WidgetTransition for ListBox {
     type Event = (usize, ListboxItemEvent);
-    type Snapshot = ListBoxSnapshot;
+    type Snapshot = selection::SelectionSnapshot;
 
     fn snapshot(&self) -> Self::Snapshot {
-        ListBoxSnapshot {
-            multiselect: self.multiselect,
-            bits: self.items.iter().map(ListBoxItem::is_selected).collect(),
-        }
+        selection::capture(&self.items, self.multiselect)
     }
 
     fn drive(&mut self, event: Self::Event) {
@@ -465,34 +440,10 @@ impl WidgetTransition for ListBox {
         _event: Self::Event,
         after: Self::Snapshot,
     ) -> Vec<Intent> {
-        // Multi-select carries through the after snapshot's mode flag;
-        // the contract panics on mismatched lengths only in
-        // debug_assertions (the inner widget's bitmap can't change
-        // length mid-dispatch by construction).
-        debug_assert_eq!(before.bits.len(), after.bits.len());
-        debug_assert_eq!(before.multiselect, after.multiselect);
-        let multi = after.multiselect;
-        let mut out = Vec::new();
-        for (i, (b, a)) in
-            before.bits.iter().zip(after.bits.iter()).enumerate()
-        {
-            if b == a {
-                continue;
-            }
-            // Single-select: only emit on row gain (matches pre-R51.102
-            // RadioGroup-class semantic of one intent per activation).
-            // Multi-select: emit on every flip (toggle-on + toggle-off
-            // carry independent meaning).
-            if multi || (!*b && *a) {
-                out.push(Intent::new_static(
-                    "selected",
-                    IntrospectValue::Int(
-                        i64::try_from(i).expect("ListBox index fits in i64"),
-                    ),
-                ));
-            }
-        }
-        out
+        // R735.1 §5.38 — the multi-capable bitmap diff (single emits row
+        // gains only; multi emits every flip) is the shared selection
+        // substrate.
+        selection::detect_intents(&before, &after)
     }
 }
 
