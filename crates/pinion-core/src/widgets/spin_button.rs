@@ -230,15 +230,23 @@ impl ExternalIntrospect for SpinButtonExternal {
             }
             // R51.42 §5.35 composite pointer channel: a click on the
             // `spin#dec` / `spin#inc` paint region routes here as
-            // `invoke("send", "dec:PointerUp")` / `"inc:PointerUp"`. Only
-            // the activate (`PointerUp`) edge steps; every other pointer
-            // edge (Enter / Leave / Down / Cancel) is a harmless no-op so
-            // the full pointer arc the router replays does not over-step.
+            // `invoke("send", "dec:PointerUp")` / `"inc:PointerUp"`. The
+            // `"<sub>:<EventName>"` wire is split by the R660
+            // [`composite_tag::parse_send_payload`] SSOT (shared with
+            // RadioGroup / ListBox / Table) rather than an inline
+            // `split_once(':')` — the key type is `String` because the
+            // sub-region is named (`dec` / `inc`), not a numeric index.
+            // Only the activate (`PointerUp`) edge steps; every other
+            // pointer edge (Enter / Leave / Down / Cancel) is a harmless
+            // no-op so the full pointer arc the router replays does not
+            // over-step.
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    if let Some((sub, event)) = payload.split_once(':') {
+                    if let Some((sub, event)) =
+                        crate::composite_tag::parse_send_payload::<String>(payload)
+                    {
                         if event == "PointerUp" {
-                            match sub {
+                            match sub.as_str() {
                                 "inc" => {
                                     self.increment();
                                 }
@@ -373,5 +381,10 @@ mod tests {
         // Unknown sub-region is a harmless no-op.
         s.invoke("send", IntrospectValue::Text("xyz:PointerUp".into())).unwrap();
         assert!((s.value() - 5.0).abs() < f32::EPSILON);
+        // Malformed wire (no separator / empty event) is rejected by the
+        // shared `parse_send_payload` guard -> no step (R660 SSOT).
+        s.invoke("send", IntrospectValue::Text("noseparator".into())).unwrap();
+        s.invoke("send", IntrospectValue::Text("inc:".into())).unwrap();
+        assert!((s.value() - 5.0).abs() < f32::EPSILON, "malformed payload does not step");
     }
 }
