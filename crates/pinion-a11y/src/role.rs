@@ -311,6 +311,28 @@ pub enum AriaRole {
     /// a consumer needs explicit row grouping — the variant lands so the
     /// role surface is complete for future tabular widgets.
     Row,
+    /// R718 §5.40 — WAI-ARIA 1.2 §3.5 `progressbar` role. A
+    /// descriptive (non-interactive) widget that reports the progress
+    /// of a long-running task. Pairs with the §5.38
+    /// [`ProgressBarExternal`](pinion_core::widgets::progress_bar) value
+    /// holder + the R718 `hello-progress` consumer.
+    ///
+    /// The current fraction is carried by the
+    /// [`AccessValue::Float`](crate::AccessValue::Float) value
+    /// (`aria-valuenow` / `aria-valuemin` / `aria-valuemax`) — the same
+    /// numeric lowering [`Self::Slider`] uses, so a determinate progress
+    /// bar reports `value` in `[min, max]`. An *indeterminate* bar omits
+    /// the value entirely (no `aria-valuenow`, the WAI-ARIA signal for
+    /// "progress is unknown"); pinion's first slice is determinate-only,
+    /// so the value is always present.
+    ///
+    /// Distinct from [`Self::Slider`] at the AT-action surface: a slider
+    /// is operable (Focus / Increment / Decrement), while a progressbar
+    /// is **passive** — it never receives focus and exposes no actions
+    /// (it joins the zero-action arm with [`Self::Tooltip`] /
+    /// [`Self::ColumnHeader`] / [`Self::Row`]). AT announces the value as
+    /// a read-only status, not as an editable control.
+    ProgressBar,
     Generic,
 }
 
@@ -360,6 +382,10 @@ impl AriaRole {
             Self::GridCell => Role::GridCell,
             Self::ColumnHeader => Role::ColumnHeader,
             Self::Row => Role::Row,
+            // R718 §5.40 — AccessKit carries `progressbar` one-to-one
+            // (`Role::ProgressIndicator`); the numeric value lowers
+            // through the same `set_numeric_value` path as `Slider`.
+            Self::ProgressBar => Role::ProgressIndicator,
             Self::Generic => Role::GenericContainer,
         }
     }
@@ -404,6 +430,7 @@ impl AriaRole {
             Self::GridCell => "gridcell",
             Self::ColumnHeader => "columnheader",
             Self::Row => "row",
+            Self::ProgressBar => "progressbar",
             Self::Generic => "generic",
         }
     }
@@ -483,6 +510,12 @@ mod tests {
     #[test]
     fn generic_lowers_to_generic_container() {
         assert_eq!(AriaRole::Generic.to_accesskit(), Role::GenericContainer);
+    }
+
+    #[test]
+    fn r718_progress_bar_lowers_to_progress_indicator() {
+        assert_eq!(AriaRole::ProgressBar.to_accesskit(), Role::ProgressIndicator);
+        assert_eq!(AriaRole::ProgressBar.aria_name(), "progressbar");
     }
 
     #[test]

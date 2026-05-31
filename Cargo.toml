@@ -41,6 +41,7 @@ members = [
     "examples/hello-listbox-multi",
     "examples/hello-slider",
     "examples/hello-slider-vertical",
+    "examples/hello-progress",
     "examples/hello-theme",
     "examples/forge-counter",
     "examples/ai-introspect-demo",

@@ -15121,6 +15121,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R718 — R718 — determinate linear ProgressBar widget. New AriaRole::ProgressBar (passive, -> accesskit Role::ProgressIndicator) + ProgressBarExternal plain value holder (no SCXML, TooltipExternal descriptive precedent); value RPC-settable via intervene. 2nd AccessValue::Float aria-valuenow consumer after Slider. Substrate-0: only one new AriaRole variant; the Float->aria-valuenow lowering already existed. hello-progress consumer. Indeterminate (looping animation) deferred.
+
+**Changes**:
+- pinion-a11y: AriaRole::ProgressBar -> accesskit Role::ProgressIndicator + aria_name progressbar
+- pinion-a11y: ProgressBar joins passive zero-action arm (Tooltip/ColumnHeader/Row)
+- pinion-core: ProgressBarExternal plain value holder (no SCXML; TooltipExternal precedent)
+- value writable via intervene(value, Float|Int); min/max read-only; NaN+range clamp to [0,1]
+- examples/hello-progress: determinate bar (accent fill + inactive track + percent readout)
+- 2nd AccessValue::Float aria-valuenow consumer (after Slider); ProgressBar non-focusable
+
+
+
+**Verification**:
+- cargo test --workspace green (progress_bar +9, role/tree +2, hello-progress +10)
+- cargo clippy --workspace --all-targets -D pedantic clean (doc_markdown fix)
+- demo sweep PASS; r718_progress.py 33 assert + PINION_SCREENSHOT live-pixel
+- live-pixel 40% boot: filled(accent)/unfilled(track)/page 3 distinct opaque regions
+- RPC value set/clamp/int-coerce; min/max read-only; unknown paths rejected
+- validate-workspace: T1=0, round-trip 1/1, GENERATED sync, new orphan +0
+
+
+
+**Impact**: §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- indeterminate progress (Option value=busy, omit aria-valuenow) needs looping animation
+- §5.28 spring settles to target, so indeterminate sweep is a separate repeating-driver axis
+- ProgressBar paint helper lift to pinion_widget_paint on 2nd consumer (inline for 1st)
+- buffer/secondary-progress + circular variant deferred to consumer demand
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

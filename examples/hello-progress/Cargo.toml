@@ -1,0 +1,28 @@
+[package]
+name = "hello-progress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R718 §5.38 §5.40 §5.50 — first consumer of the ProgressBar widget (pinion_core::widgets::progress_bar). A determinate linear progress bar reporting a normalized fraction as aria-valuenow on a passive AriaRole::ProgressBar node; the value is RPC-settable through the same intervene(\"value\", Float) channel a Slider uses."
+publish = false
+
+[[bin]]
+name = "hello-progress"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -588,7 +588,16 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // grid's column/row structure, but neither receives focus nor is
         // clickable, so they carry zero actions (the same passive arm as
         // `Tooltip`).
-        AriaRole::Tooltip | AriaRole::ColumnHeader | AriaRole::Row => {}
+        //
+        // R718 §5.40 — `ProgressBar` is a descriptive status widget: AT
+        // announces its `aria-valuenow` as a read-only progress reading,
+        // but it never receives focus and is not operable (a slider is —
+        // hence `ProgressBar` is passive, not a `Slider`). Zero actions,
+        // the same passive arm as `Tooltip` / `ColumnHeader` / `Row`.
+        AriaRole::Tooltip
+        | AriaRole::ColumnHeader
+        | AriaRole::Row
+        | AriaRole::ProgressBar => {}
     }
 }
 
@@ -950,6 +959,23 @@ mod tests {
         b.add(&AccessNode::new("fruit_options", AriaRole::Listbox).with_name("Fruit options"));
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 3);
+    }
+
+    #[test]
+    fn r718_progress_bar_numeric_value_lowers() {
+        // Smoke test: a determinate ProgressBar carrying a normalized
+        // AccessValue::Float (aria-valuenow/min/max). AccessKit node
+        // internals are opaque from outside the crate, so we verify the
+        // build succeeds with the node present (root + progressbar) and
+        // the same numeric lowering path Slider exercises.
+        let mut b = AccessTreeBuilder::new();
+        b.add(
+            &AccessNode::new("dl_progress", AriaRole::ProgressBar)
+                .with_name("Download")
+                .with_value(crate::AccessValue::Float { value: 0.4, min: 0.0, max: 1.0 }),
+        );
+        let update = b.build(None);
+        assert_eq!(update.nodes.len(), 2);
     }
 
     #[test]

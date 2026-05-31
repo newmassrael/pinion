@@ -9,6 +9,7 @@ pub mod disclosure_group;
 pub mod listbox;
 pub mod listbox_item;
 pub mod menu;
+pub mod progress_bar;
 pub mod radio;
 pub mod radio_group;
 pub mod scroll;
