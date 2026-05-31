@@ -78,7 +78,7 @@ use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_focused, read_button_state, use_hover_progress, view_button,
+    button_a11y_state, read_button_focused, read_button_state,
     ButtonColors, ButtonStyle,
 };
 use pinion_widget_paint::dialog::{view_dialog, DialogContent, DialogStyle};
@@ -184,12 +184,14 @@ fn button_scene(
     size: Size,
     theme: &pinion_core::theme::Theme,
 ) -> Scene {
-    let hover = use_hover_progress(matches!(state, ButtonState::Hover), hover_key);
-    view_button(
+    // R727 — opinionated default (filled-tonal + 16 px) stays local
+    // (2-consumer with hello-drawer, R703-deferred); the mechanical
+    // hover + view_button pairing is the lifted SSOT core.
+    pinion_widget_paint::button::button_scene(
         label,
         state,
-        hover,
         focused,
+        hover_key,
         &ButtonColors::filled_tonal(theme),
         &ButtonStyle::m3_default(tag)
             .with_size(size)

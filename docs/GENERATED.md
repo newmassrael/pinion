@@ -15418,6 +15418,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R727 — R727 SSOT audit-clearance - register_animation_once Tickable lift + button_scene core lift (user review)
+
+**Changes**:
+- Owner::register_animation_once<T>(key, factory): SSOT for cache-and-register Tickable
+- use_caret_blink / use_snackbar_timer / use_indeterminate_sweep delegate (3-copy gone)
+- pinion_widget_paint::button::button_scene lifts hover + view_button pairing (3 consumers)
+- hello-dialog/drawer/snackbar button helpers delegate to the lifted core
+- hello-progress: set_active gate justified (idempotent gate, not an R693 mailbox effect)
+- audit-clearance round (user SSOT review); behaviour-preserving, no new feature
+
+
+
+**Verification**:
+- cargo test --workspace green; 3 use-hook "registers once" tests exercise register_animation_once
+- cargo clippy --workspace --all-targets (-D pedantic) clean
+- behaviour-preserving: no demo logic changed; release rebuild + full sweep 77/77 under Xvfb
+- r724/r725/r726 (Tickable) + r693/r702 (button) consumers unchanged and green
+
+
+
+**Impact**: §5.28, §5.16
+
+
+**Carry forward**:
+- opinionated button default (filled-tonal + 16px) stays local in dialog/drawer (2-consumer, R703)
+- External-field-changed -> animation-gate listener hook absent (hello-progress syncs in view)
+- dedicated such hook deferred to a 2nd consumer (idempotent view-sync documented as honest)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

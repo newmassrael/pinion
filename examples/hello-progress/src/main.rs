@@ -151,9 +151,22 @@ fn view(state: (f32, bool), _frame: &Frame) -> Scene {
     let (value, indeterminate) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
 
-    // Gate the sweep on the mode (idempotent — Signal equality-skip — so
-    // calling it every view is safe). Parked while determinate, so the
-    // backend releases frames; looping while indeterminate.
+    // R726/R727 — gate the sweep on the mode. Unlike `CaretBlink`, whose
+    // `set_enabled` is driven from the shell's focus-change *listener*,
+    // the `indeterminate` flag lives on the `ProgressBarExternal` and is
+    // flipped by `intervene` (RPC / task driver) — which has no listener
+    // hook, so the view-fn is the only owner-scoped site that observes
+    // the change (`read_state` is not owner-wrapped). This is a derived
+    // *idempotent* gate, NOT an edge-triggered mailbox side effect, so
+    // the R693 "side effects belong in the reducer for handle_tail
+    // timing" concern does not apply: `set_active` early-returns on a
+    // same-value call (Signal equality-skip), writing the `position`
+    // Signal only on an actual transition — no re-render loop, no timing
+    // dependency. Parked while determinate (the sweep reports at-rest so
+    // the backend releases frames); looping while indeterminate. A
+    // dedicated "External-field-changed → animation-gate" hook is the
+    // only fully-listener-driven alternative; deferred until a 2nd
+    // consumer needs it (premature for one).
     let sweep = use_indeterminate_sweep(SWEEP_KEY);
     sweep.set_active(indeterminate);
 

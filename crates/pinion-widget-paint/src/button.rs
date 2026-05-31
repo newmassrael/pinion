@@ -390,6 +390,35 @@ pub fn use_hover_progress(is_hover: bool, anim_key: &'static str) -> f32 {
     anim.value()
 }
 
+/// R727 §5.16 — compose a button paint node: derive the hover-progress
+/// from `state` (the R686.C spring via [`use_hover_progress`]) and hand
+/// it to [`view_button`]. This is the SSOT for the *mechanical*
+/// `use_hover_progress(matches!(Hover)) + view_button(...)` pairing that
+/// the composite multi-`ButtonExternal` bindings (`hello-dialog`,
+/// `hello-drawer`, `hello-snackbar`) each repeated verbatim — a
+/// 3-consumer mechanical lift (the [`use_hover_progress`] R686.C
+/// precedent).
+///
+/// The *opinionated* per-example defaults (which [`ButtonColors`] tone,
+/// which label font) stay at the call site: callers pass the resolved
+/// [`ButtonColors`] (filled-tonal / accent / a custom inverse-surface
+/// action tone) and a [`ButtonStyle`] carrying the tag / size / font. So
+/// this lifts only the un-opinionated wiring, leaving styling decisions
+/// with each binding (R703 keeps opinionated paint-compose per-binding
+/// until a 3rd *identical* consumer).
+#[must_use]
+pub fn button_scene(
+    label: &str,
+    state: ButtonState,
+    focused: bool,
+    hover_key: &'static str,
+    colors: &ButtonColors,
+    style: &ButtonStyle,
+) -> Scene {
+    let hover = use_hover_progress(matches!(state, ButtonState::Hover), hover_key);
+    view_button(label, state, hover, focused, colors, style)
+}
+
 /// R703 §5.16 §5.40 — read a
 /// [`ButtonExternal`](pinion_core::widgets::button::ButtonExternal)'s
 /// [`ButtonState`] out of the state scene by tag (via the §5.15

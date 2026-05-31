@@ -222,26 +222,12 @@ impl Tickable for CaretBlink {
 /// [`TextField`]: crate::widgets::text_field::TextField
 #[must_use]
 pub fn use_caret_blink(key: &'static str) -> Rc<CaretBlink> {
-    let owner = Owner::current().expect("use_caret_blink requires an active Owner scope");
-    // First-time-init detection is the canonical Animation::new
-    // registration pattern lifted into the Owner::cache hook shape.
-    // Re-running the view-fn after the cache populates must NOT
-    // re-register (every `tick_animations` walk would then fire the
-    // blink twice per frame). `cache_contains` is the textbook
-    // dedup primitive — the next R56.x sub-round could promote this
-    // into a `register_animation_once` helper if a second Tickable
-    // user hook lands.
-    // (R56.1.b.1 §5.22) `cache_contains` is now type-aware — the
-    // first-time-init gate fires once per `(CaretBlink, key)` pair,
-    // independent of other typed hooks (`use_text_edit_state`,
-    // `use_scroll_state`, etc.) using the same widget tag.
-    let first_time = !owner.cache_contains::<CaretBlink>(key);
-    let blink = owner.cache(key, CaretBlink::new);
-    if first_time {
-        let as_tickable: Rc<dyn Tickable> = Rc::clone(&blink) as Rc<dyn Tickable>;
-        owner.register_animation(as_tickable);
-    }
-    blink
+    // R727 §5.28 — delegates to `Owner::register_animation_once`, the
+    // SSOT for cache-and-register-once (the lift this comment historically
+    // predicted, now landed when the 2nd/3rd Tickable hook arrived).
+    Owner::current()
+        .expect("use_caret_blink requires an active Owner scope")
+        .register_animation_once(key, CaretBlink::new)
 }
 
 #[cfg(test)]

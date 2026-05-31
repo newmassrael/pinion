@@ -161,14 +161,10 @@ impl Tickable for SnackbarTimer {
 /// the same owner (see [`Owner::cache`]).
 #[must_use]
 pub fn use_snackbar_timer(key: &'static str) -> Rc<SnackbarTimer> {
-    let owner = Owner::current().expect("use_snackbar_timer requires an active Owner scope");
-    let first_time = !owner.cache_contains::<SnackbarTimer>(key);
-    let timer = owner.cache(key, SnackbarTimer::new);
-    if first_time {
-        let as_tickable: Rc<dyn Tickable> = Rc::clone(&timer) as Rc<dyn Tickable>;
-        owner.register_animation(as_tickable);
-    }
-    timer
+    // R727 §5.28 — delegates to the `Owner::register_animation_once` SSOT.
+    Owner::current()
+        .expect("use_snackbar_timer requires an active Owner scope")
+        .register_animation_once(key, SnackbarTimer::new)
 }
 
 #[cfg(test)]

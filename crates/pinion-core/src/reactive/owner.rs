@@ -596,6 +596,41 @@ impl Owner {
         self.inner.owned_animations.borrow_mut().push(tickable);
     }
 
+    /// R727 §5.28 — resolve (or lazily construct **and register**) a
+    /// per-scope [`Tickable`](crate::animation::Tickable) keyed by `key`,
+    /// registering it for animation dispatch exactly once.
+    ///
+    /// This is the single source of truth for the "cache a `Tickable`
+    /// and register it on first construction" pattern shared by every
+    /// `use_*` animation hook — `use_caret_blink` (R56),
+    /// `use_snackbar_timer` (R725), `use_indeterminate_sweep` (R726) —
+    /// the lift `caret_blink.rs` predicted when a second such hook
+    /// landed. Each hook now delegates here.
+    ///
+    /// Registration is gated by [`Self::cache_contains`] so re-running
+    /// the view-fn after the cache populates does **not** re-register
+    /// (a double registration would advance the driver twice per
+    /// `tick_animations` walk). The gate fires once per `(T, key)` pair,
+    /// independent of other typed hooks reusing the same widget tag.
+    #[must_use]
+    pub fn register_animation_once<T, F>(
+        &self,
+        key: impl Into<Cow<'static, str>>,
+        factory: F,
+    ) -> Rc<T>
+    where
+        T: crate::animation::Tickable + 'static,
+        F: FnOnce() -> T,
+    {
+        let key = key.into();
+        let first_time = !self.cache_contains::<T>(key.clone());
+        let value = self.cache(key, factory);
+        if first_time {
+            self.register_animation(Rc::clone(&value) as Rc<dyn crate::animation::Tickable>);
+        }
+        value
+    }
+
     /// Advance every registered animation by `dt` seconds — depth-first
     /// across the owner subtree, so child scopes tick before this scope's
     /// own registrations. Wrapped in [`batch`] so all

@@ -51,7 +51,7 @@ use pinion_core::widgets::snackbar::{use_snackbar_timer, SnackbarTimer};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
-    button_a11y_state, read_button_focused, read_button_state, use_hover_progress, view_button,
+    button_a11y_state, read_button_focused, read_button_state,
     ButtonColors, ButtonStyle,
 };
 use std::rc::Rc;
@@ -107,12 +107,13 @@ fn button_scene(
     colors: &ButtonColors,
     size: Size,
 ) -> Scene {
-    let hover = use_hover_progress(matches!(state, ButtonState::Hover), hover_key);
-    view_button(
+    // R727 — delegates to the lifted SSOT core; the snackbar supplies
+    // its own action tone (`colors`) + 15 px font.
+    pinion_widget_paint::button::button_scene(
         label,
         state,
-        hover,
         focused,
+        hover_key,
         colors,
         &ButtonStyle::m3_default(tag)
             .with_size(size)

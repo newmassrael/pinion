@@ -317,14 +317,10 @@ impl Tickable for IndeterminateSweep {
 /// [`Owner::cache`]).
 #[must_use]
 pub fn use_indeterminate_sweep(key: &'static str) -> Rc<IndeterminateSweep> {
-    let owner = Owner::current().expect("use_indeterminate_sweep requires an active Owner scope");
-    let first_time = !owner.cache_contains::<IndeterminateSweep>(key);
-    let sweep = owner.cache(key, IndeterminateSweep::new);
-    if first_time {
-        let as_tickable: Rc<dyn Tickable> = Rc::clone(&sweep) as Rc<dyn Tickable>;
-        owner.register_animation(as_tickable);
-    }
-    sweep
+    // R727 §5.28 — delegates to the `Owner::register_animation_once` SSOT.
+    Owner::current()
+        .expect("use_indeterminate_sweep requires an active Owner scope")
+        .register_animation_once(key, IndeterminateSweep::new)
 }
 
 #[cfg(test)]
