@@ -23943,6 +23943,62 @@
         "none new; R715 carry items (combobox coordinator, empty-strip-click, pass-through barrier) unchanged"
       ]
     },
+    "R717": {
+      "decision_summary": "R717 editable ComboBox (WAI-ARIA list autocomplete): 2nd combobox-class consumer of R714 by pure composition (TextField input + filtered ListBox popup + dismiss_barrier); new AriaRole::EditableComboBox + aria-autocomplete a11y substrate",
+      "changes_bullets": [
+        "pinion-a11y AriaRole::EditableComboBox (to_accesskit EditableComboBox, aria_name stays combobox)",
+        "pinion-a11y AutoComplete enum + AccessNode.auto_complete + with_auto_complete + tree lowering",
+        "hello-combobox-editable: TextField input + filtered ListBox popup + shared dismiss_barrier",
+        "typeahead = binding-side filter_indices (case-insensitive substring); focused_index roves filtered",
+        "apply_key reserves ArrowUp/Down/Enter/Escape; other keys to field (Home/End/Left/Right = caret)",
+        "commit funnels combo_options.selected; update reads intent.payload index then set_text + close",
+        "a11y EditableComboBox + aria-expanded + aria-controls + aria-autocomplete=list + active-descendant"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (incl 19 hello-combobox-editable + 7 pinion-a11y R717 unit tests)",
+        "cargo clippy --workspace --all-targets -D pedantic clean (match_same_arms + single_match_else)",
+        "r717_combobox_editable.py 49 assert: type/filter/rove/commit/refilter/escape/click-outside/Enter",
+        "live-pixel boot: empty editable field renders distinct opaque surface vs page background",
+        "full release demo sweep green (69 demos; additive substrate, existing widgets behaviour-identical)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "ComboBoxExternal coordinator + chrome lift still deferred (2 consumers compose with no SSOT cycle)",
+        "no dropdown-arrow affordance (field is the trigger; view_field has no trailing-icon slot yet)",
+        "IME composition (apply_composition) not wired; ASCII typing flows via apply_key (additive carry)",
+        "input paints no keyboard focus ring (shared shell-focus-paint R690 carry, inherited)"
+      ],
+      "publishable_decision_summary": "R717 editable ComboBox (WAI-ARIA list autocomplete): 2nd combobox-class consumer of R714 by pure composition (TextField input + filtered ListBox popup + dismiss_barrier); new AriaRole::EditableComboBox + aria-autocomplete a11y substrate",
+      "publishable_changes_bullets": [
+        "pinion-a11y AriaRole::EditableComboBox (to_accesskit EditableComboBox, aria_name stays combobox)",
+        "pinion-a11y AutoComplete enum + AccessNode.auto_complete + with_auto_complete + tree lowering",
+        "hello-combobox-editable: TextField input + filtered ListBox popup + shared dismiss_barrier",
+        "typeahead = binding-side filter_indices (case-insensitive substring); focused_index roves filtered",
+        "apply_key reserves ArrowUp/Down/Enter/Escape; other keys to field (Home/End/Left/Right = caret)",
+        "commit funnels combo_options.selected; update reads intent.payload index then set_text + close",
+        "a11y EditableComboBox + aria-expanded + aria-controls + aria-autocomplete=list + active-descendant"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (incl 19 hello-combobox-editable + 7 pinion-a11y R717 unit tests)",
+        "cargo clippy --workspace --all-targets -D pedantic clean (match_same_arms + single_match_else)",
+        "r717_combobox_editable.py 49 assert: type/filter/rove/commit/refilter/escape/click-outside/Enter",
+        "live-pixel boot: empty editable field renders distinct opaque surface vs page background",
+        "full release demo sweep green (69 demos; additive substrate, existing widgets behaviour-identical)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "ComboBoxExternal coordinator + chrome lift still deferred (2 consumers compose with no SSOT cycle)",
+        "no dropdown-arrow affordance (field is the trigger; view_field has no trailing-icon slot yet)",
+        "IME composition (apply_composition) not wired; ASCII typing flows via apply_key (additive carry)",
+        "input paints no keyboard focus ring (shared shell-focus-paint R690 carry, inherited)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

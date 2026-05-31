@@ -15088,6 +15088,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R717 — R717 editable ComboBox (WAI-ARIA list autocomplete): 2nd combobox-class consumer of R714 by pure composition (TextField input + filtered ListBox popup + dismiss_barrier); new AriaRole::EditableComboBox + aria-autocomplete a11y substrate
+
+**Changes**:
+- pinion-a11y AriaRole::EditableComboBox (to_accesskit EditableComboBox, aria_name stays combobox)
+- pinion-a11y AutoComplete enum + AccessNode.auto_complete + with_auto_complete + tree lowering
+- hello-combobox-editable: TextField input + filtered ListBox popup + shared dismiss_barrier
+- typeahead = binding-side filter_indices (case-insensitive substring); focused_index roves filtered
+- apply_key reserves ArrowUp/Down/Enter/Escape; other keys to field (Home/End/Left/Right = caret)
+- commit funnels combo_options.selected; update reads intent.payload index then set_text + close
+- a11y EditableComboBox + aria-expanded + aria-controls + aria-autocomplete=list + active-descendant
+
+
+
+**Verification**:
+- cargo test --workspace green (incl 19 hello-combobox-editable + 7 pinion-a11y R717 unit tests)
+- cargo clippy --workspace --all-targets -D pedantic clean (match_same_arms + single_match_else)
+- r717_combobox_editable.py 49 assert: type/filter/rove/commit/refilter/escape/click-outside/Enter
+- live-pixel boot: empty editable field renders distinct opaque surface vs page background
+- full release demo sweep green (69 demos; additive substrate, existing widgets behaviour-identical)
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- ComboBoxExternal coordinator + chrome lift still deferred (2 consumers compose with no SSOT cycle)
+- no dropdown-arrow affordance (field is the trigger; view_field has no trailing-icon slot yet)
+- IME composition (apply_composition) not wired; ASCII typing flows via apply_key (additive carry)
+- input paints no keyboard focus ring (shared shell-focus-paint R690 carry, inherited)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

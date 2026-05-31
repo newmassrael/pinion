@@ -56,6 +56,7 @@ members = [
     "examples/hello-dialog",
     "examples/hello-drawer",
     "examples/hello-combobox",
+    "examples/hello-combobox-editable",
     "examples/hello-tooltip",
     "examples/hello-immediate-mode-canvas",
     "examples/hello-dock-panels",

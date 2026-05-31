@@ -1,0 +1,32 @@
+[package]
+name = "hello-combobox-editable"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R717 §5.38 §5.40 §5.50 editable ComboBox — WAI-ARIA editable combobox with list autocomplete; composition of a TextFieldExternal input + filtered ListBoxExternal popup + dismiss_barrier; new AriaRole::EditableComboBox + aria-autocomplete a11y axis (2nd combobox-class consumer of R714)"
+publish = false
+
+[[bin]]
+name = "hello-combobox-editable"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R717 §5.50 — dismiss_barrier (transparent light-dismiss) + text-field paint helpers + elevation.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

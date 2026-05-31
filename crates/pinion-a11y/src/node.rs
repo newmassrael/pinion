@@ -15,7 +15,7 @@
 
 use pinion_core::scene::Rect;
 
-use crate::role::AriaRole;
+use crate::role::{AriaRole, AutoComplete};
 
 /// Pinion-native a11y descriptor for one widget.
 ///
@@ -183,6 +183,20 @@ pub struct AccessNode {
     /// additive-axis convention) so it defaults absent without forcing
     /// every hand-written node literal to enumerate it.
     pub controls: Option<String>,
+    /// R717 §5.40 — WAI-ARIA 1.2 §6.6.1 `aria-autocomplete`. Declares
+    /// the completion behaviour of an editable combobox input; the tree
+    /// builder lowers `Some(ac)` via `accesskit::Node::set_auto_complete`
+    /// and `None` omits the attribute (`aria-autocomplete="none"`).
+    ///
+    /// The canonical consumer is the WAI-ARIA §4.5 editable combobox
+    /// ([`AriaRole::EditableComboBox`]): the input carries
+    /// `Some(AutoComplete::List)` so AT announces "editable, has popup,
+    /// list autocomplete". Atomic and select-only roles leave it `None`.
+    ///
+    /// Placed on [`AccessNode`] (the R674 / R693 / R695 / R696 / R714
+    /// additive-axis convention) so it defaults absent without forcing
+    /// every hand-written node literal to enumerate it.
+    pub auto_complete: Option<AutoComplete>,
 }
 
 impl AccessNode {
@@ -208,6 +222,7 @@ impl AccessNode {
             described_by: None,
             expanded: None,
             controls: None,
+            auto_complete: None,
         }
     }
 
@@ -329,6 +344,14 @@ impl AccessNode {
     #[must_use]
     pub fn with_controls(mut self, tag: impl Into<String>) -> Self {
         self.controls = Some(tag.into());
+        self
+    }
+
+    /// R717 §5.40 — set the WAI-ARIA `aria-autocomplete` value (the
+    /// editable-combobox completion behaviour). See [`Self::auto_complete`].
+    #[must_use]
+    pub fn with_auto_complete(mut self, mode: AutoComplete) -> Self {
+        self.auto_complete = Some(mode);
         self
     }
 }
@@ -466,6 +489,23 @@ mod tests {
     fn r696_new_omits_expanded() {
         let n = AccessNode::new("section_hdr", AriaRole::Button);
         assert_eq!(n.expanded, None);
+    }
+
+    // R717 §5.40 — aria-autocomplete builder + default omission. The
+    // `auto_complete` field defaults absent (aria-autocomplete="none")
+    // and is opt-in via `with_auto_complete` (editable combobox only).
+
+    #[test]
+    fn r717_new_omits_auto_complete() {
+        let n = AccessNode::new("fruit_input", AriaRole::EditableComboBox);
+        assert_eq!(n.auto_complete, None);
+    }
+
+    #[test]
+    fn r717_with_auto_complete_records_axis() {
+        let n = AccessNode::new("fruit_input", AriaRole::EditableComboBox)
+            .with_auto_complete(AutoComplete::List);
+        assert_eq!(n.auto_complete, Some(AutoComplete::List));
     }
 
     #[test]

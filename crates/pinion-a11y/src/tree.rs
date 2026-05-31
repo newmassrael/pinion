@@ -438,6 +438,13 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.push_controlled(tag_to_node_id(controls_tag));
     }
 
+    // R717 §5.40 — WAI-ARIA `aria-autocomplete` (editable combobox).
+    // `Some(mode)` lowers through the `AutoComplete` bridge; `None`
+    // omits the property (`aria-autocomplete="none"`).
+    if let Some(mode) = access.auto_complete {
+        node.set_auto_complete(mode.to_accesskit());
+    }
+
     add_actions_for_role(&mut node, access.role);
     node
 }
@@ -559,7 +566,13 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // dispatched as `AccessAction::SetValue` events on R56.1.f+
         // accessibility carry — the action set here matches
         // WAI-ARIA 1.2 §4.3 textbox baseline.
-        AriaRole::TextInput => {
+        //
+        // R717 §5.40 — `EditableComboBox` shares the textbox action set:
+        // its trigger *is* a single-line text input (Focus to Tab in,
+        // Click to place the caret). The popup-open behaviour rides on
+        // the same surface (typing / ArrowDown open it); no extra AT
+        // action token is needed beyond the textbox baseline.
+        AriaRole::TextInput | AriaRole::EditableComboBox => {
             node.add_action(Action::Focus);
             node.add_action(Action::Click);
         }
@@ -915,6 +928,26 @@ mod tests {
                 .with_controls("size_options"),
         );
         b.add(&AccessNode::new("size_options", AriaRole::Listbox).with_name("Size options"));
+        let update = b.build(None);
+        assert_eq!(update.nodes.len(), 3);
+    }
+
+    #[test]
+    fn r717_editable_combobox_autocomplete_lowers() {
+        // Smoke test: an EditableComboBox input controlling a filtered
+        // Listbox popup with aria-autocomplete=list (the WAI-ARIA §4.5
+        // editable-combobox pairing). AccessKit node internals are opaque
+        // from outside the crate, so we verify the build succeeds with
+        // all nodes present (root + combobox input + listbox).
+        let mut b = AccessTreeBuilder::new();
+        b.add(
+            &AccessNode::new("fruit_input", AriaRole::EditableComboBox)
+                .with_name("Fruit")
+                .with_expanded(true)
+                .with_controls("fruit_options")
+                .with_auto_complete(crate::role::AutoComplete::List),
+        );
+        b.add(&AccessNode::new("fruit_options", AriaRole::Listbox).with_name("Fruit options"));
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 3);
     }

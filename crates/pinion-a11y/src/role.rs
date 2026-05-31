@@ -12,7 +12,7 @@
 //! spelling so introspect / RPC consumers see the same identifiers
 //! they would in HTML's `role` attribute.
 
-use accesskit::Role;
+use accesskit::{AutoComplete as AkAutoComplete, Role};
 
 /// Pinion-native ARIA role enum.
 ///
@@ -63,6 +63,26 @@ pub enum AriaRole {
     /// value is chosen from the list, not typed); an editable
     /// combobox would lower to `Role::EditableComboBox` additively.
     ComboBox,
+    /// R717 §5.40 — WAI-ARIA 1.2 §4.5 *editable* combobox: a
+    /// single-line text input that owns a popup [`Self::Listbox`]
+    /// (the "Editable Combobox With List Autocomplete" APG pattern).
+    /// The user types into the trigger; the popup filters to matching
+    /// options (`aria-autocomplete="list"`, carried by
+    /// [`crate::AccessNode::auto_complete`]). The collapsed-vs-open
+    /// state is [`crate::AccessNode::expanded`] (`aria-expanded`); the
+    /// controlled popup [`crate::AccessNode::controls`]
+    /// (`aria-controls`); the highlighted (not focused) option
+    /// `aria-activedescendant` while focus stays in the input.
+    ///
+    /// Distinct from [`Self::ComboBox`] (select-only) only at the
+    /// AccessKit layer: AccessKit splits the WAI-ARIA `combobox` role
+    /// across `Role::ComboBox` (select-only) and
+    /// `Role::EditableComboBox` (typed-value) for the platform AX
+    /// mapping, so [`Self::to_accesskit`] differs while
+    /// [`Self::aria_name`] stays `"combobox"` for both (WAI-ARIA 1.2
+    /// has a single `combobox` role; editability is conveyed by the
+    /// input + `aria-autocomplete`, not a separate role token).
+    EditableComboBox,
     /// R56.1.b.1 §5.40 — WAI-ARIA 1.2 §4.3 `textbox` role
     /// (single-line input). Pairs with the §5.38 `TextField` widget
     /// primitive ([`pinion_core::widgets::text_field`]). The role
@@ -315,6 +335,9 @@ impl AriaRole {
             // (the select-only variant; `EditableComboBox` is the
             // typed-value future axis).
             Self::ComboBox => Role::ComboBox,
+            // R717 §5.40 — AccessKit's typed-value combobox variant
+            // (the editable sibling of `Role::ComboBox`).
+            Self::EditableComboBox => Role::EditableComboBox,
             Self::TextInput => Role::TextInput,
             Self::List => Role::List,
             Self::ListItem => Role::ListItem,
@@ -355,7 +378,11 @@ impl AriaRole {
             Self::RadioGroup => "radiogroup",
             Self::Listbox => "listbox",
             Self::ListBoxOption => "option",
-            Self::ComboBox => "combobox",
+            // WAI-ARIA 1.2 has a single `combobox` role; the select-only
+            // and editable variants (split only at the AccessKit layer)
+            // both report the same literal token — editability is
+            // conveyed by the input + `aria-autocomplete`, not the role.
+            Self::ComboBox | Self::EditableComboBox => "combobox",
             // WAI-ARIA 1.2 spec literal — the single-line text input
             // role is `textbox` regardless of AccessKit's internal
             // single/multiline split.
@@ -378,6 +405,53 @@ impl AriaRole {
             Self::ColumnHeader => "columnheader",
             Self::Row => "row",
             Self::Generic => "generic",
+        }
+    }
+}
+
+/// R717 §5.40 — WAI-ARIA 1.2 §6.6.1 `aria-autocomplete`, the axis that
+/// declares *how* an editable combobox predicts the user's intended
+/// value as they type. Pinion-native mirror of `accesskit::AutoComplete`
+/// (the wrapper keeps [`AccessNode`](crate::AccessNode) free of a direct
+/// `accesskit` dependency, exactly as [`AriaRole`] does for `Role`).
+///
+/// `aria-autocomplete="none"` is modelled by the *absence* of the value
+/// ([`AccessNode::auto_complete`](crate::AccessNode::auto_complete) =
+/// `None`), matching AccessKit (which has no `None` member — an omitted
+/// property means "none").
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AutoComplete {
+    /// `aria-autocomplete="inline"` — the input is completed in place
+    /// (selected text appended after the caret).
+    Inline,
+    /// `aria-autocomplete="list"` — a popup presents the filtered set
+    /// of completions (the pinion editable-combobox typeahead model).
+    List,
+    /// `aria-autocomplete="both"` — list popup *and* inline completion.
+    Both,
+}
+
+impl AutoComplete {
+    /// Lower to `accesskit::AutoComplete`. The single bridge point so an
+    /// `accesskit` minor bump rewrites only this arm.
+    #[must_use]
+    pub const fn to_accesskit(self) -> AkAutoComplete {
+        match self {
+            Self::Inline => AkAutoComplete::Inline,
+            Self::List => AkAutoComplete::List,
+            Self::Both => AkAutoComplete::Both,
+        }
+    }
+
+    /// WAI-ARIA literal as it appears in an HTML `aria-autocomplete`
+    /// attribute, so introspect / RPC and AT report identical tokens.
+    #[must_use]
+    pub const fn aria_name(self) -> &'static str {
+        match self {
+            Self::Inline => "inline",
+            Self::List => "list",
+            Self::Both => "both",
         }
     }
 }
@@ -458,6 +532,36 @@ mod tests {
     #[test]
     fn combobox_aria_name_is_combobox() {
         assert_eq!(AriaRole::ComboBox.aria_name(), "combobox");
+    }
+
+    // R717 §5.40 — EditableComboBox lowers to the AccessKit typed-value
+    // variant, but the WAI-ARIA literal stays `combobox` (single role).
+    #[test]
+    fn r717_editable_combobox_lowers_to_editable_variant() {
+        assert_eq!(
+            AriaRole::EditableComboBox.to_accesskit(),
+            Role::EditableComboBox
+        );
+    }
+
+    #[test]
+    fn r717_editable_combobox_aria_name_is_combobox() {
+        assert_eq!(AriaRole::EditableComboBox.aria_name(), "combobox");
+    }
+
+    // R717 §5.40 — aria-autocomplete value enum bridge.
+    #[test]
+    fn r717_auto_complete_lowers_to_accesskit() {
+        assert_eq!(AutoComplete::Inline.to_accesskit(), AkAutoComplete::Inline);
+        assert_eq!(AutoComplete::List.to_accesskit(), AkAutoComplete::List);
+        assert_eq!(AutoComplete::Both.to_accesskit(), AkAutoComplete::Both);
+    }
+
+    #[test]
+    fn r717_auto_complete_aria_names_match_wai_aria() {
+        assert_eq!(AutoComplete::Inline.aria_name(), "inline");
+        assert_eq!(AutoComplete::List.aria_name(), "list");
+        assert_eq!(AutoComplete::Both.aria_name(), "both");
     }
 
     // R56.1.b.1 §5.40 — TextInput role lowering.
