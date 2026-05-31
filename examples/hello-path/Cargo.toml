@@ -1,0 +1,42 @@
+[package]
+name = "hello-path"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R721 §5.16 vector-path rendering substrate consumer — the first Scene::Path paint: a filled triangle, a stroked chevron, a cubic-Bezier arc, and a Toggle-driven fill/stroke diamond, exercising every PathCommand (MoveTo/LineTo/CurveTo/Close) and both PathStyle arms; substrate-first, each path is introspectable via scene/snapshot and verifiable by live-pixel sampling"
+publish = false
+
+[[bin]]
+name = "hello-path"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Toggle widget reused as the fill-only / fill+stroke mode bit
+# (the binding paints paths; the Toggle is the RPC-drivable control).
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the `HelloPathRenderer` struct emitted by `build.rs`
+# names `::vello::*` directly; the `vello_renderer_impl!` expansion also
+# names `::vello::Scene` / `::vello::peniko::Color`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the `HelloPathRenderer` Vello
+# wrapper. Identical pattern to hello-gradient / hello-toggle.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

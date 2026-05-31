@@ -20,6 +20,7 @@ members = [
     "examples/hello-button",
     "examples/hello-button-tui",
     "examples/hello-gradient",
+    "examples/hello-path",
     "examples/hello-richtext",
     "examples/hello-color-picker",
     "examples/hello-elevation",

@@ -41,17 +41,17 @@ use std::collections::{HashMap, HashSet};
 use crate::paint_cache_stats::FragmentCacheStats;
 use pinion_core::Scene;
 use pinion_core::scene::{
-    BoxNode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
+    BoxNode, ImmediateModeNode, ImmediatePainter, PathCommand, PathNode, PathPoint, Rect, TextNode,
 };
 use pinion_core::style::{
-    Border, BorderPlacement, BoxStyle, Color, Gradient, GradientKind, TextOverflow,
+    Border, BorderPlacement, BoxStyle, Color, Gradient, GradientKind, StrokeCap, TextOverflow,
 };
 use pinion_text::LayoutCache;
 use pinion_text::parley::PositionedLayoutItem;
 use vello::Glyph;
 use vello::Scene as VelloScene;
 use vello::kurbo::{
-    Affine, BezPath, Line, PathEl, Point as KurboPoint, Rect as KurboRect,
+    Affine, BezPath, Cap as KurboCap, Line, PathEl, Point as KurboPoint, Rect as KurboRect,
     RoundedRect as KurboRoundedRect, Stroke,
 };
 use vello::peniko::{
@@ -79,9 +79,11 @@ use vello::peniko::{
 /// * [`Scene::Text`] — shape via [`LayoutCache::layout`], walk
 ///   `positioned_glyphs()` per [`parley::GlyphRun`], emit one
 ///   [`vello::Scene::draw_glyphs`] call per run.
-/// * [`Scene::External`] / [`Scene::Effect`] / [`Scene::Path`] /
-///   [`Scene::Image`] — no-op. Path / Image paint primitives attach
-///   in follow-up rounds.
+/// * [`Scene::Path`] — lower `commands` to a Vello [`BezPath`] and
+///   fill (`style.fill`, non-zero winding) + stroke (`style.stroke`)
+///   via [`paint_path`] (R721).
+/// * [`Scene::External`] / [`Scene::Effect`] / [`Scene::Image`] —
+///   no-op. The Image paint primitive attaches in a follow-up round.
 pub fn to_vello<F>(
     scene: &Scene,
     fill_hook: &F,
@@ -174,8 +176,9 @@ fn to_vello_inner<F>(
         Scene::ImmediateModeNode(node) => {
             paint_immediate_mode_node(out, node, transform);
         }
-        // External / Effect / Path / Image: no-op. Path + Image paint
-        // primitives attach in follow-up rounds.
+        Scene::Path(p) => paint_path(out, p, transform),
+        // External / Effect / Image: no-op. Image paint primitive
+        // attaches in a follow-up round.
         _ => {}
     }
 }
@@ -552,7 +555,8 @@ pub fn to_vello_cached<F>(
 /// [`Scene::External`], [`Scene::Path`], [`Scene::Image`],
 /// [`Scene::ImmediateModeNode`]) share their paint logic with
 /// [`to_vello_inner`] — same `fill_rect` / `paint_text` /
-/// `paint_immediate_mode_node` helpers. [`Scene::Scroll`] threads
+/// `paint_path` / `paint_immediate_mode_node` helpers.
+/// [`Scene::Scroll`] threads
 /// the inherited transform exactly like [`to_vello_inner`]; the
 /// recursion into `content` is via this function so the eventual
 /// `IDENTITY`-resumed descendant Containers (extremely rare — would
@@ -673,8 +677,9 @@ fn to_vello_cached_inner<F>(
         Scene::ImmediateModeNode(node) => {
             paint_immediate_mode_node(&mut sub, node, transform);
         }
-        // External / Effect / Path / Image: no-op (matches
-        // to_vello_inner's `_ => {}` arm).
+        Scene::Path(p) => paint_path(&mut sub, p, transform),
+        // External / Effect / Image: no-op (matches to_vello_inner's
+        // `_ => {}` arm).
         _ => {}
     }
     out.append(&sub, None);
@@ -944,6 +949,67 @@ fn paint_box_shadows(out: &mut VelloScene, r: Rect, style: &BoxStyle, transform:
         let std_dev = f64::from(shadow.blur) / 2.0;
         let rect = KurboRect::new(x0, y0, x1, y1);
         out.draw_blurred_rounded_rect(transform, rect, to_peniko(shadow.color), radius, std_dev);
+    }
+}
+
+/// R721 §5.16 — convert a pinion [`PathPoint`] (absolute device-pixel
+/// `f32` coordinates, the same space as [`PathNode::rect`]) to a Vello
+/// [`KurboPoint`].
+fn path_point(p: PathPoint) -> KurboPoint {
+    KurboPoint::new(f64::from(p.x), f64::from(p.y))
+}
+
+/// R721 §5.16 — map a pinion [`StrokeCap`] to a Vello [`KurboCap`] 1:1.
+fn to_kurbo_cap(cap: StrokeCap) -> KurboCap {
+    match cap {
+        StrokeCap::Round => KurboCap::Round,
+        StrokeCap::Square => KurboCap::Square,
+        // `Butt` and any future `#[non_exhaustive]` variant fall back to
+        // the CSS / kurbo default flat cap.
+        _ => KurboCap::Butt,
+    }
+}
+
+/// R721 §5.16 — rasterize a [`Scene::Path`] leaf: lower its
+/// `Vec<PathCommand>` into a Vello [`BezPath`] (absolute device
+/// coordinates), then fill the closed region with `style.fill`
+/// (non-zero winding — the CSS / SVG default) and stroke the outline
+/// with `style.stroke`. Both [`PathStyle`](pinion_core::style::PathStyle)
+/// arms are independently optional, so a fill-only, stroke-only, or
+/// empty style each paints only what it carries; an empty command
+/// stream is a no-op. Issued into the caller's fresh sub-scene before
+/// any child `append`, preserving the R706 "out receives appends only"
+/// invariant.
+fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
+    if node.commands.is_empty() {
+        return;
+    }
+    let mut path = BezPath::new();
+    for cmd in &node.commands {
+        match *cmd {
+            PathCommand::MoveTo(p) => path.move_to(path_point(p)),
+            PathCommand::LineTo(p) => path.line_to(path_point(p)),
+            PathCommand::CurveTo { c1, c2, end } => {
+                path.curve_to(path_point(c1), path_point(c2), path_point(end));
+            }
+            PathCommand::Close => path.close_path(),
+            // `PathCommand` is `#[non_exhaustive]`; an unrecognised
+            // future command is skipped rather than mis-rastered.
+            _ => {}
+        }
+    }
+    if let Some(fill) = node.style.fill
+        && fill != Color::TRANSPARENT
+    {
+        out.fill(Fill::NonZero, transform, to_peniko(fill), None, &path);
+    }
+    if let Some(stroke) = node.style.stroke
+        && stroke.width > 0
+        && stroke.color != Color::TRANSPARENT
+    {
+        let kurbo_stroke =
+            Stroke::new(f64::from(stroke.width)).with_caps(to_kurbo_cap(stroke.cap));
+        out.stroke(&kurbo_stroke, transform, to_peniko(stroke.color), None, &path);
     }
 }
 
@@ -1976,6 +2042,64 @@ mod tests {
         // installed exactly one fragment (the root Container).
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.entries(), 1);
+    }
+
+    #[test]
+    fn r721_path_arm_paints_fill_stroke_and_curve_no_panic() {
+        use pinion_core::scene::{PathCommand, PathNode, PathPoint};
+        use pinion_core::style::{PathStyle, Stroke, StrokeCap};
+
+        let p = |x: f32, y: f32| PathPoint::new(x, y);
+        // A closed filled triangle, a stroked (round-cap) chevron, and
+        // a cubic-Bezier arc — every PathCommand variant + both
+        // PathStyle arms (fill / stroke), plus a combined fill+stroke.
+        let tri = Scene::Path(PathNode::new(
+            Rect::new(0, 0, 60, 60),
+            vec![
+                PathCommand::MoveTo(p(0.0, 60.0)),
+                PathCommand::LineTo(p(60.0, 60.0)),
+                PathCommand::LineTo(p(30.0, 0.0)),
+                PathCommand::Close,
+            ],
+            PathStyle::filled(Color::rgb(0x21, 0x96, 0xf3)),
+        ));
+        let chevron = Scene::Path(PathNode::new(
+            Rect::new(60, 0, 60, 60),
+            vec![
+                PathCommand::MoveTo(p(60.0, 60.0)),
+                PathCommand::LineTo(p(90.0, 0.0)),
+                PathCommand::LineTo(p(120.0, 60.0)),
+            ],
+            PathStyle::stroked(Stroke::new(Color::rgb(0, 0x96, 0x88), 8).with_cap(StrokeCap::Round)),
+        ));
+        let arc = Scene::Path(PathNode::new(
+            Rect::new(120, 0, 60, 60),
+            vec![
+                PathCommand::MoveTo(p(120.0, 60.0)),
+                PathCommand::CurveTo {
+                    c1: p(120.0, 0.0),
+                    c2: p(180.0, 0.0),
+                    end: p(180.0, 60.0),
+                },
+            ],
+            PathStyle::filled(Color::rgb(0xe5, 0x39, 0x35))
+                .with_stroke(Stroke::new(Color::rgb(0x10, 0x10, 0x10), 4)),
+        ));
+        // An empty command stream paints nothing (early-return no-op).
+        let empty = Scene::Path(PathNode::empty(Rect::new(0, 0, 10, 10)));
+        let scene = Scene::Container(ContainerNode::new(vec![tri, chevron, arc, empty]));
+        let mut text = LayoutCache::new();
+
+        // to_vello (uncached) walker.
+        let mut uncached = VelloScene::new();
+        to_vello(&scene, &null_hook(), &mut text, &mut uncached);
+
+        // to_vello_cached walker — the path leaf shares paint_path with
+        // to_vello, so both arms must reach it without panic.
+        let mut cache = FragmentCache::new();
+        let mut cached = VelloScene::new();
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut cached);
+        assert_eq!(cache.misses(), 1);
     }
 
     #[test]

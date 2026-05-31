@@ -15219,6 +15219,46 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R721 — R721 Scene::Path rasterization - first vector-path paint (fill + stroke) + hello-path consumer
+
+**Changes**:
+- paint_adapter: paint_path lowers Vec<PathCommand> to a Vello BezPath, then fills + strokes it
+- Scene::Path arm wired into both to_vello_inner and to_vello_cached walkers (producer parity)
+- fill = style.fill (non-zero winding, CSS/SVG default); stroke = style.stroke; both arms optional
+- path_point + to_kurbo_cap helpers; StrokeCap to kurbo Cap with non_exhaustive Butt fallback
+- empty command stream / transparent colour / zero width are no-ops
+- doc: paint_adapter no-op list drops Path (only Scene::Image paint remains a follow-up)
+- examples/hello-path: first PathNode paint consumer - triangle, chevron, arc, diamond
+- exercises every PathCommand (MoveTo/LineTo/CurveTo/Close) + both PathStyle arms
+- Toggle drives the demo diamond fill-only -> fill+stroke (PathStyle change re-keys R682 cache)
+- paths use absolute_position so author-absolute command coords match the flex-assigned rect
+
+
+
+**Verification**:
+- cargo test --workspace green (exit 0); new r721 paint_path fill/stroke/curve no-panic unit test
+- cargo clippy --workspace --all-targets (-D pedantic) clean
+- hello-path 8 unit tests: command streams, style arms, paint-hash re-key, Switch a11y role
+- r721_path.py 40+ assert: scene/snapshot command + style read-back, toggle fill/stroke change
+- live-pixel (PINION_SCREENSHOT): triangle fill blue, chevron stroke teal, diamond blue, bg white
+- headless demo sweep 72/72 PASS under Xvfb (GL/llvmpipe)
+
+
+
+**Impact**: §5.16, §5.3
+
+
+**Carry forward**:
+- PathStyle gradient (R709 carry) now unblocked: gradient path fill mirrors BoxStyle.gradient
+- gradient-on-path is the natural next consumer round (isomorphic to fill_rect_gradient)
+- Scene::Image paint still a no-op: needs asset/decode story (Phase C-adjacent), separate axis
+- flex-flowed vector art deferred: commands are author-absolute, untouched by the flex pass
+- absolute_position keeps rect=commands in sync; flex-relative commands need a transform pass
+- stroke join/dash/miter unwired (kurbo Stroke supports; no consumer); only StrokeCap exercised
+- pinion_widget_paint::path builder lift waits for a 2nd consumer; paint_path is the rasterizer
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
