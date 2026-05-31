@@ -12,7 +12,7 @@
 //! spelling so introspect / RPC consumers see the same identifiers
 //! they would in HTML's `role` attribute.
 
-use accesskit::{AutoComplete as AkAutoComplete, Role};
+use accesskit::{AutoComplete as AkAutoComplete, Role, SortDirection as AkSortDirection};
 
 /// Pinion-native ARIA role enum.
 ///
@@ -492,6 +492,46 @@ impl AutoComplete {
             Self::Inline => "inline",
             Self::List => "list",
             Self::Both => "both",
+        }
+    }
+}
+
+/// R730 §5.40 — WAI-ARIA 1.2 §6.6.2 `aria-sort` direction for a sortable
+/// [`AriaRole::ColumnHeader`]. The wrapper keeps [`AccessNode`] free of a
+/// direct `accesskit` dependency, exactly as [`AutoComplete`] does.
+///
+/// `aria-sort="none"` (the column is sortable but not currently the sort
+/// key) is modelled by the *absence* of the value
+/// ([`AccessNode::sort`](crate::AccessNode::sort) = `None`). Only the two
+/// directional states are carried — AccessKit's `Other` has no WAI-ARIA
+/// column-sort meaning the data grid emits.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SortDirection {
+    /// `aria-sort="ascending"` — rows ordered low → high by this column.
+    Ascending,
+    /// `aria-sort="descending"` — rows ordered high → low by this column.
+    Descending,
+}
+
+impl SortDirection {
+    /// Lower to `accesskit::SortDirection`. The single bridge point so an
+    /// `accesskit` minor bump rewrites only this arm.
+    #[must_use]
+    pub const fn to_accesskit(self) -> AkSortDirection {
+        match self {
+            Self::Ascending => AkSortDirection::Ascending,
+            Self::Descending => AkSortDirection::Descending,
+        }
+    }
+
+    /// WAI-ARIA literal as it appears in an HTML `aria-sort` attribute, so
+    /// introspect / RPC and AT report identical tokens.
+    #[must_use]
+    pub const fn aria_name(self) -> &'static str {
+        match self {
+            Self::Ascending => "ascending",
+            Self::Descending => "descending",
         }
     }
 }

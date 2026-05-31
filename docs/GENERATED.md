@@ -15509,6 +15509,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R730 — R730 sortable Table columns (aria-sort): additive sort in TableExternal (order permutation, data-indexed selection survives sort with no remap) + new aria-sort a11y axis + clickable header sort glyph; numeric-aware 3-state cycle
+
+**Changes**:
+- TableExternal sortable columns (additive): sort state + order() perm + cycle_sort + query/invoke
+- selection stays data-indexed so a sorted view needs no remap (highlight is_selected(order[v]))
+- New aria-sort a11y axis: AccessNode.sort + SortDirection enum + tree set_sort_direction lowering
+- view_table: clickable header tags table#h{col} + sort glyph + cells tagged by data id (row_ids)
+- hello-table: header-click sort + visual-aware keyboard roving + aria-sort headers + visual-order a11y
+- numeric-aware compare (numbers numerically, else lexicographic); 3-state cycle none/asc/desc
+
+
+
+**Verification**:
+- cargo test --workspace green (9 new TableExternal sort tests + 2 view_table sort tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)
+- demo sweep 80/80 PASS under Xvfb (r730 = 31-assert RPC + boot grid live-pixel)
+- boot stays unsorted (identity order) so R707 single-select behaviour byte-identical (r707 demos pass)
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- keyboard-activate-to-sort on headers deferred (headers not in cell roving); pointer+RPC sort reach AI
+- column resize / per-column widths / multi-select / virtualization still deferred (R707 axes)
+- a11y rows in visual order via position_in_set; explicit aria-rowindex not emitted (deferred)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

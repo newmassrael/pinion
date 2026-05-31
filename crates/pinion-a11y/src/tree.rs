@@ -445,6 +445,13 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.set_auto_complete(mode.to_accesskit());
     }
 
+    // R730 §5.40 — WAI-ARIA `aria-sort` on a sortable column header.
+    // `Some(dir)` lowers through the `SortDirection` bridge; `None` omits
+    // the property (`aria-sort="none"`).
+    if let Some(dir) = access.sort {
+        node.set_sort_direction(dir.to_accesskit());
+    }
+
     add_actions_for_role(&mut node, access.role);
     node
 }

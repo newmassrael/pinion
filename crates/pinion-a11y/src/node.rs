@@ -15,7 +15,7 @@
 
 use pinion_core::scene::Rect;
 
-use crate::role::{AriaRole, AutoComplete};
+use crate::role::{AriaRole, AutoComplete, SortDirection};
 
 /// Pinion-native a11y descriptor for one widget.
 ///
@@ -197,6 +197,18 @@ pub struct AccessNode {
     /// additive-axis convention) so it defaults absent without forcing
     /// every hand-written node literal to enumerate it.
     pub auto_complete: Option<AutoComplete>,
+    /// R730 §5.40 — WAI-ARIA 1.2 §6.6.2 `aria-sort` for a sortable
+    /// [`AriaRole::ColumnHeader`]. `Some(dir)` lowers via
+    /// `accesskit::Node::set_sort_direction`; `None` omits the attribute
+    /// (`aria-sort="none"` — the column is sortable but not the current
+    /// sort key, or not sortable at all). The data grid's sorted column
+    /// header carries `Some(Ascending | Descending)`; every other header
+    /// leaves it `None`.
+    ///
+    /// Placed on [`AccessNode`] (the R674 / R693 / R695 / R696 / R714 /
+    /// R717 additive-axis convention) so it defaults absent without
+    /// forcing every hand-written node literal to enumerate it.
+    pub sort: Option<SortDirection>,
 }
 
 impl AccessNode {
@@ -223,6 +235,7 @@ impl AccessNode {
             expanded: None,
             controls: None,
             auto_complete: None,
+            sort: None,
         }
     }
 
@@ -352,6 +365,14 @@ impl AccessNode {
     #[must_use]
     pub fn with_auto_complete(mut self, mode: AutoComplete) -> Self {
         self.auto_complete = Some(mode);
+        self
+    }
+
+    /// R730 §5.40 — set the WAI-ARIA `aria-sort` direction on a sortable
+    /// column header. See [`Self::sort`].
+    #[must_use]
+    pub fn with_sort(mut self, dir: SortDirection) -> Self {
+        self.sort = Some(dir);
         self
     }
 }

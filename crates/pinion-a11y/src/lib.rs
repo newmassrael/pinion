@@ -63,7 +63,7 @@ mod test_fixtures;
 pub use action::{translate_action, AccessAction, PinionAccessAction};
 pub use focus::AccessFocus;
 pub use node::{AccessNode, AccessState, AccessValue};
-pub use role::{AriaRole, AutoComplete};
+pub use role::{AriaRole, AutoComplete, SortDirection};
 pub use scene_label::enrich_names_from_scene;
 pub use tree::{tag_to_node_id, AccessTreeBuilder, ROOT_NODE_ID};
 pub use widget_a11y::WidgetA11y;

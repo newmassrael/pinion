@@ -60,7 +60,7 @@
 //! second consumer.
 
 use pinion_a11y::{
-    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y,
+    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, SortDirection, WidgetA11y,
 };
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::ContainerNode;
@@ -131,8 +131,16 @@ struct TableState {
     focused_row: Option<usize>,
     /// R707 §5.40 — the roving active-descendant column (0-based).
     focused_col: usize,
-    /// Per-row interaction state, indexed by row (exactly [`NROWS`]).
+    /// Per-row interaction state, indexed by **data** row (exactly
+    /// [`NROWS`]). Selection / interaction stay data-indexed so a sort
+    /// needs no remap (R730).
     row_states: [RadioState; NROWS],
+    /// R730 §5.40 — the active sort key `(col, ascending)`, or `None`.
+    sort: Option<(usize, bool)>,
+    /// R730 §5.40 — the visual→data row permutation
+    /// ([`TableExternal::order`]): `order[visual]` is the data row painted
+    /// at visual position `visual`. Identity when unsorted.
+    order: [usize; NROWS],
 }
 
 impl TableState {
@@ -142,6 +150,8 @@ impl TableState {
             focused_row: None,
             focused_col: 0,
             row_states: [RadioState::Idle; NROWS],
+            sort: None,
+            order: core::array::from_fn(|i| i),
         }
     }
 
@@ -197,27 +207,61 @@ fn read_cols(intro: &dyn pinion_core::external::ExternalIntrospect) -> usize {
     }
 }
 
+/// R730 §5.40 — read the coordinator's visual→data permutation
+/// ([`TableExternal::order`]) via the `order.<visual>` introspect slots.
+/// `read_order(...)[visual]` is the data row painted at `visual`; identity
+/// when unsorted.
+fn read_order(intro: &dyn pinion_core::external::ExternalIntrospect, rows: usize) -> Vec<usize> {
+    (0..rows)
+        .map(|v| match intro.query(&format!("order.{v}")) {
+            Some(IntrospectValue::Int(d)) if d >= 0 => usize::try_from(d).unwrap_or(v),
+            _ => v,
+        })
+        .collect()
+}
+
+/// Set the data-row active descendant to the data row at visual position
+/// `visual` (clamped). The R730 visual↔data bridge: keyboard navigation
+/// reasons in **visual** (displayed) rows, but `focused_row` is stored as
+/// the **data** row so a sort needs no remap.
+fn set_visual_row(intro: &mut dyn pinion_core::external::ExternalIntrospect, visual: usize) {
+    let rows = read_rows(intro);
+    if rows == 0 {
+        return;
+    }
+    let order = read_order(intro, rows);
+    let data = order.get(visual.min(rows - 1)).copied().unwrap_or(0);
+    let _ = intro.intervene("focused_row", IntrospectValue::Int(i64::try_from(data).unwrap_or(0)));
+}
+
 /// Establish the active-descendant row if none is set yet (a horizontal
-/// arrow / Home / End entering the grid lands the cursor on row 0).
+/// arrow / Home / End entering the grid lands the cursor on the first
+/// **visual** row).
 fn ensure_row(intro: &mut dyn pinion_core::external::ExternalIntrospect) {
     if read_focused_row(intro).is_none() {
-        let _ = intro.intervene("focused_row", IntrospectValue::Int(0));
+        set_visual_row(intro, 0);
     }
 }
 
-/// Move the active-descendant row by `delta`, clamped within the dataset.
-/// From `None`, the first vertical arrow lands on row 0.
+/// Move the active-descendant row by `delta` in **visual** order, clamped
+/// within the dataset. From `None`, the first vertical arrow lands on the
+/// first visual row. The current data row is located in the sort
+/// permutation, stepped visually, then mapped back to a data row.
 fn move_row(intro: &mut dyn pinion_core::external::ExternalIntrospect, delta: i64) {
     let rows = read_rows(intro);
     if rows == 0 {
         return;
     }
+    let order = read_order(intro, rows);
     let max = i64::try_from(rows - 1).unwrap_or(0);
-    let next = match read_focused_row(intro) {
+    let next_visual = match read_focused_row(intro).and_then(|d| order.iter().position(|&x| x == d)) {
         None => 0,
-        Some(current) => (i64::try_from(current).unwrap_or(0) + delta).clamp(0, max),
+        Some(v) => (i64::try_from(v).unwrap_or(0) + delta).clamp(0, max),
     };
-    let _ = intro.intervene("focused_row", IntrospectValue::Int(next));
+    let next_visual = usize::try_from(next_visual).unwrap_or(0);
+    let next_data = order.get(next_visual).copied().unwrap_or(0);
+    let _ =
+        intro.intervene("focused_row", IntrospectValue::Int(i64::try_from(next_data).unwrap_or(0)));
 }
 
 /// Move the active-descendant column by `delta`, clamped within the
@@ -245,17 +289,6 @@ fn set_col(intro: &mut dyn pinion_core::external::ExternalIntrospect, col: usize
     let _ = intro.intervene("focused_col", IntrospectValue::Int(i64::try_from(clamped).unwrap_or(0)));
 }
 
-/// Set the active-descendant row to a specific value (`PageUp` /
-/// `PageDown`), clamped within the dataset.
-fn set_row(intro: &mut dyn pinion_core::external::ExternalIntrospect, row: usize) {
-    let rows = read_rows(intro);
-    if rows == 0 {
-        return;
-    }
-    let clamped = row.min(rows - 1);
-    let _ = intro.intervene("focused_row", IntrospectValue::Int(i64::try_from(clamped).unwrap_or(0)));
-}
-
 /// view-fn (§6.3): pure sync mapping [`TableState`] -> [`Scene`]. Wraps
 /// [`view_table`] in a centred surface container, mirroring
 /// `hello-datepicker`'s outer container + theme. The keyboard-focus ring
@@ -266,12 +299,16 @@ fn set_row(intro: &mut dyn pinion_core::external::ExternalIntrospect, row: usize
 fn view(state: &TableState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let style = TableStyle::m3();
-    let rows: Vec<&[&str]> = ROWS.iter().map(|r| &r[..]).collect();
+    // R730 §5.40 — paint rows in the coordinator's sorted (visual) order;
+    // `row_ids` carries each visual row's data index so cells tag by data
+    // id and the data-indexed selection / state stay correct.
+    let rows: Vec<&[&str]> = state.order.iter().map(|&d| &ROWS[d][..]).collect();
     let table = view_table(
         PRIMARY_TAG,
-        TableData { headers: &HEADERS, rows: &rows },
+        TableData { headers: &HEADERS, rows: &rows, row_ids: &state.order },
         state.selected_row,
         &state.row_states,
+        state.sort,
         &theme,
         &style,
     );
@@ -338,6 +375,21 @@ impl WidgetCore for TableView {
                 *slot = st;
             }
         }
+        // R730 §5.40 — sort key + visual→data permutation, read from the
+        // coordinator (the single source of truth for both paint + a11y).
+        let sort_col = match intro.query("sort_col") {
+            Some(IntrospectValue::Int(c)) if c >= 0 => usize::try_from(c).ok(),
+            _ => None,
+        };
+        if let Some(col) = sort_col {
+            let ascending =
+                matches!(intro.query("sort_dir"), Some(IntrospectValue::Text(d)) if d == "ascending");
+            out.sort = Some((col, ascending));
+        }
+        out.order = core::array::from_fn(|v| match intro.query(&format!("order.{v}")) {
+            Some(IntrospectValue::Int(d)) if d >= 0 => usize::try_from(d).unwrap_or(v),
+            _ => v,
+        });
         out
     }
 
@@ -412,12 +464,12 @@ impl WidgetCore for TableView {
                 true
             }
             "PageUp" => {
-                set_row(intro, 0);
+                set_visual_row(intro, 0);
                 true
             }
             "PageDown" => {
                 let last = read_rows(intro).saturating_sub(1);
-                set_row(intro, last);
+                set_visual_row(intro, last);
                 true
             }
             "Enter" | "Space" => {
@@ -465,44 +517,58 @@ impl WidgetA11y for TableView {
         let mut nodes: Vec<AccessNode> =
             Vec::with_capacity(NROWS * (NCOLS + 1) + NCOLS + 2);
 
-        // Grid root: children are the header row + each data row.
+        // Grid root: children are the header row + each data row, in
+        // **visual** (sorted) order so AT announces rows top-to-bottom as
+        // displayed (R730).
         let mut grid = AccessNode::new(PRIMARY_TAG, AriaRole::Grid)
             .with_name("pinion widget catalog");
         grid = grid.with_child(format!("{PRIMARY_TAG}_hrow"));
-        for row in 0..NROWS {
-            grid = grid.with_child(format!("{PRIMARY_TAG}_row{row}"));
+        for &data in &state.order {
+            grid = grid.with_child(format!("{PRIMARY_TAG}_row{data}"));
         }
         nodes.push(grid);
 
-        // Header row + its columnheader cells.
+        // Header row + its columnheader cells. The active sort column
+        // carries `aria-sort` (R730 §5.40).
         let mut header_row = AccessNode::new(format!("{PRIMARY_TAG}_hrow"), AriaRole::Row);
         for col in 0..NCOLS {
             header_row = header_row.with_child(format!("{PRIMARY_TAG}_ch{col}"));
         }
         nodes.push(header_row);
         for (col, label) in HEADERS.iter().enumerate() {
-            nodes.push(
-                AccessNode::new(format!("{PRIMARY_TAG}_ch{col}"), AriaRole::ColumnHeader)
-                    .with_name(*label),
-            );
+            let mut ch = AccessNode::new(format!("{PRIMARY_TAG}_ch{col}"), AriaRole::ColumnHeader)
+                .with_name(*label);
+            if let Some((sort_col, ascending)) = state.sort {
+                if sort_col == col {
+                    ch = ch.with_sort(if ascending {
+                        SortDirection::Ascending
+                    } else {
+                        SortDirection::Descending
+                    });
+                }
+            }
+            nodes.push(ch);
         }
 
-        // Data rows + their gridcells.
-        for (row, row_data) in ROWS.iter().enumerate() {
-            let is_selected = state.selected_row == Some(row);
-            let interaction = state.row_state(row);
-            let mut row_node = AccessNode::new(format!("{PRIMARY_TAG}_row{row}"), AriaRole::Row)
+        // Data rows + their gridcells, in **visual** order. Tags + state
+        // are **data-indexed** (so selection survives sort); `position_in_set`
+        // is the **visual** position (the displayed row number).
+        for (visual, &data) in state.order.iter().enumerate() {
+            let row_data = &ROWS[data];
+            let is_selected = state.selected_row == Some(data);
+            let interaction = state.row_state(data);
+            let mut row_node = AccessNode::new(format!("{PRIMARY_TAG}_row{data}"), AriaRole::Row)
                 .with_selected(is_selected)
-                .with_position_in_set(u32::try_from(row + 1).unwrap_or(1))
+                .with_position_in_set(u32::try_from(visual + 1).unwrap_or(1))
                 .with_size_of_set(u32::try_from(NROWS).unwrap_or(1));
             for col in 0..NCOLS {
-                row_node = row_node.with_child(format!("{PRIMARY_TAG}#{row}_{col}"));
+                row_node = row_node.with_child(format!("{PRIMARY_TAG}#{data}_{col}"));
             }
             nodes.push(row_node);
 
             for (col, header) in HEADERS.iter().enumerate() {
-                let cell_tag = format!("{PRIMARY_TAG}#{row}_{col}");
-                let cell_focused = grid_focused && active_row == row && active_col == col;
+                let cell_tag = format!("{PRIMARY_TAG}#{data}_{col}");
+                let cell_focused = grid_focused && active_row == data && active_col == col;
                 let name = format!("{header}: {}", row_data[col]);
                 nodes.push(
                     AccessNode::new(&cell_tag, AriaRole::GridCell)

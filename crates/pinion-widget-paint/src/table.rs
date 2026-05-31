@@ -100,9 +100,18 @@ impl Default for TableStyle {
 pub struct TableData<'a> {
     /// Column header labels; `headers.len()` is the column count.
     pub headers: &'a [&'a str],
-    /// Row-major cell text. Each inner slice is one row; a cell beyond a
-    /// row's length renders blank.
+    /// Row-major cell text **in visual (display) order**. Each inner slice
+    /// is one visual row; a cell beyond a row's length renders blank.
     pub rows: &'a [&'a [&'a str]],
+    /// R730 §5.40 — the data-row index for each visual row (the table's
+    /// [`order()`](pinion_core::widgets::table::TableExternal::order)
+    /// permutation): `row_ids[v]` is the data row whose cells are in
+    /// `rows[v]`. Cells / strips tag by `row_ids[v]` and the selection /
+    /// per-row state lookups index by it, so the table's data-indexed
+    /// selection survives a sort with no remap. An empty slice (or a
+    /// too-short one) falls back to identity (`row_ids[v] == v`) — the
+    /// unsorted R707 behaviour.
+    pub row_ids: &'a [usize],
 }
 
 /// R707 §5.50 — row-strip fill for `state` + `selected` + zebra parity
@@ -165,24 +174,85 @@ fn cell(tag: &str, text: &str, fg: Color, size_px: u32, style: &TableStyle, heig
     )
 }
 
-/// The header band: one `columnheader` cell per column, tagged
-/// `"<tag>_ch<col>"`, on a raised [`ColorRole::SurfaceContainerHigh`]
-/// surface.
-fn header_row(tag: &str, headers: &[&str], theme: &Theme, style: &TableStyle) -> Scene {
+/// R730 §5.50 — sort-direction indicator glyphs shown on the active sort
+/// column's header (U+25B2 BLACK UP-POINTING TRIANGLE / U+25BC down).
+/// Named consts + escapes per the non-ASCII-source rule.
+const ASC_GLYPH: &str = "\u{25B2}";
+const DESC_GLYPH: &str = "\u{25BC}";
+
+/// R730 — one clickable column header. The outer container keeps the
+/// presentational `"<tag>_ch<col>"` tag (the binding's `access_node`
+/// walker attaches the `columnheader` node + bounds there, unchanged
+/// since R707); it wraps an inner container carrying the **composite**
+/// `"<tag>#h<col>"` tag so a click on the header routes through the
+/// R51.42 `'#'`-split to the table's `"h<col>:<EventName>"` sort wire.
+/// When `col` is the active sort key the inner row also paints a sort
+/// glyph (▲ ascending / ▼ descending) after the label.
+fn header_cell(
+    tag: &str,
+    col: usize,
+    label: &str,
+    sort: Option<(usize, bool)>,
+    fg: Color,
+    style: &TableStyle,
+) -> Scene {
+    let label_node = Scene::Text(
+        TextNode::styled(
+            label.to_string(),
+            Rect::default(),
+            TextStyle::new().with_size_px(style.header_size_px).with_fg(fg),
+        )
+        .with_role(TextRole::Presentational),
+    );
+    let mut inner_children = vec![label_node];
+    if let Some((c, ascending)) = sort {
+        if c == col {
+            let glyph = if ascending { ASC_GLYPH } else { DESC_GLYPH };
+            inner_children.push(Scene::Text(
+                TextNode::styled(
+                    glyph.to_string(),
+                    Rect::default(),
+                    TextStyle::new().with_size_px(style.header_size_px).with_fg(fg),
+                )
+                .with_role(TextRole::Presentational),
+            ));
+        }
+    }
+    let inner = Scene::Container(
+        ContainerNode::new(inner_children)
+            .with_tag(format!("{tag}#h{col}"))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Start)
+                    .with_align_items(AlignItems::Center)
+                    .with_gap(4)
+                    .with_size(Size::px(style.col_width, style.header_height))
+                    .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
+            ),
+    );
+    Scene::Container(
+        ContainerNode::new(vec![inner])
+            .with_tag(format!("{tag}_ch{col}"))
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+    )
+}
+
+/// The header band: one clickable `columnheader` cell per column ([
+/// `header_cell`]) on a raised [`ColorRole::SurfaceContainerHigh`]
+/// surface. `sort` drives the active column's sort glyph.
+fn header_row(
+    tag: &str,
+    headers: &[&str],
+    sort: Option<(usize, bool)>,
+    theme: &Theme,
+    style: &TableStyle,
+) -> Scene {
     let fg = theme.resolve(ColorRole::OnSurface);
     let cells: Vec<Scene> = headers
         .iter()
         .enumerate()
-        .map(|(col, label)| {
-            cell(
-                &format!("{tag}_ch{col}"),
-                label,
-                fg,
-                style.header_size_px,
-                style,
-                style.header_height,
-            )
-        })
+        .map(|(col, label)| header_cell(tag, col, label, sort, fg, style))
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
@@ -202,18 +272,23 @@ fn header_row(tag: &str, headers: &[&str], theme: &Theme, style: &TableStyle) ->
 /// budget.
 fn data_row(
     tag: &str,
-    row: usize,
+    data_id: usize,
     cells_text: &[&str],
     cols: usize,
     fill: Color,
     fg: Color,
     style: &TableStyle,
 ) -> Scene {
+    // R730 §5.40 — cells / strip are tagged by **data-row id** (not the
+    // visual position), so a click on a sorted row routes to the right
+    // data row's `"<data_id>_<col>"` send wire and the table's
+    // data-indexed selection stays correct without a remap. When unsorted
+    // (`data_id == visual`) the tags are identical to the R707 scheme.
     let cells: Vec<Scene> = (0..cols)
         .map(|col| {
             let text = cells_text.get(col).copied().unwrap_or("");
             cell(
-                &format!("{tag}#{row}_{col}"),
+                &format!("{tag}#{data_id}_{col}"),
                 text,
                 fg,
                 style.label_size_px,
@@ -224,7 +299,7 @@ fn data_row(
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
-            .with_tag(format!("{tag}_row{row}"))
+            .with_tag(format!("{tag}_row{data_id}"))
             .with_style(BoxStyle::filled(fill))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     )
@@ -260,6 +335,15 @@ fn row_fg(theme: &Theme, state: RadioState) -> Color {
 ///   [`pinion_core::theme::use_theme`] and forwards.
 /// - `style` — [`TableStyle`] dimension carrier.
 ///
+/// # R730 sort
+///
+/// `data.row_ids` carries each visual row's data-row index (the table's
+/// [`order()`](pinion_core::widgets::table::TableExternal::order)
+/// permutation) so cells / strips tag by data id and the data-indexed
+/// selection survives a sort with no remap (identity fallback when
+/// empty). `sort` is the active sort key `(col, ascending)` for the
+/// header glyph.
+///
 /// # Returns
 ///
 /// A [`Scene::Container`] (Column) holding the header band and the data
@@ -271,19 +355,24 @@ pub fn view_table(
     data: TableData<'_>,
     selected_row: Option<usize>,
     row_states: &[RadioState],
+    sort: Option<(usize, bool)>,
     theme: &Theme,
     style: &TableStyle,
 ) -> Scene {
     let cols = data.headers.len();
-    let header = header_row(tag, data.headers, theme, style);
+    let header = header_row(tag, data.headers, sort, theme, style);
     let mut children: Vec<Scene> = Vec::with_capacity(data.rows.len() + 1);
     children.push(header);
-    for (row, cells_text) in data.rows.iter().enumerate() {
-        let state = row_states.get(row).copied().unwrap_or(RadioState::Idle);
-        let selected = selected_row == Some(row);
-        let fill = row_fill(theme, state, selected, row);
+    for (visual, cells_text) in data.rows.iter().enumerate() {
+        // Data-row id for this visual position (identity fallback).
+        let data_id = data.row_ids.get(visual).copied().unwrap_or(visual);
+        let state = row_states.get(data_id).copied().unwrap_or(RadioState::Idle);
+        let selected = selected_row == Some(data_id);
+        // Zebra parity is **visual** so the stripe pattern stays stable
+        // across re-sorts; selection / state are **data-indexed**.
+        let fill = row_fill(theme, state, selected, visual);
         let fg = row_fg(theme, state);
-        children.push(data_row(tag, row, cells_text, cols, fill, fg, style));
+        children.push(data_row(tag, data_id, cells_text, cols, fill, fg, style));
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -345,9 +434,10 @@ mod tests {
         let scene = Owner::new().run(|| {
             view_table(
                 "table",
-                TableData { headers: &headers, rows: &rows },
+                TableData { headers: &headers, rows: &rows, row_ids: &[] },
                 None,
                 &all_idle(),
+                None,
                 &light(),
                 &TableStyle::m3(),
             )
@@ -357,7 +447,11 @@ mod tests {
         for col in 0..3 {
             assert!(
                 scene.contains_tag(&format!("table_ch{col}")),
-                "column header {col} present",
+                "column header {col} present (presentational, a11y bounds)",
+            );
+            assert!(
+                scene.contains_tag(&format!("table#h{col}")),
+                "column header {col} clickable sort tag present",
             );
         }
         for row in 0..3 {
@@ -375,6 +469,83 @@ mod tests {
         // No phantom 4th row / column.
         assert!(!scene.contains_tag("table_row3"));
         assert!(!scene.contains_tag("table#0_3"));
+    }
+
+    fn collect_text(scene: &Scene, out: &mut Vec<String>) {
+        match scene {
+            Scene::Text(t) => out.push(t.content.clone()),
+            Scene::Container(c) => {
+                for child in &c.children {
+                    collect_text(child, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn r730_sort_glyph_only_on_active_column() {
+        let (headers, rows) = data();
+        let theme = light();
+        let unsorted = Owner::new().run(|| {
+            view_table(
+                "table",
+                TableData { headers: &headers, rows: &rows, row_ids: &[] },
+                None,
+                &all_idle(),
+                None,
+                &theme,
+                &TableStyle::m3(),
+            )
+        });
+        let mut t = Vec::new();
+        collect_text(&unsorted, &mut t);
+        assert!(!t.iter().any(|s| s == ASC_GLYPH || s == DESC_GLYPH), "no glyph when unsorted");
+
+        let sorted = Owner::new().run(|| {
+            view_table(
+                "table",
+                TableData { headers: &headers, rows: &rows, row_ids: &[] },
+                None,
+                &all_idle(),
+                Some((1, true)),
+                &theme,
+                &TableStyle::m3(),
+            )
+        });
+        let mut t2 = Vec::new();
+        collect_text(&sorted, &mut t2);
+        assert_eq!(t2.iter().filter(|s| *s == ASC_GLYPH).count(), 1, "one ascending glyph");
+        assert!(!t2.iter().any(|s| s == DESC_GLYPH), "no descending glyph for ascending sort");
+    }
+
+    #[test]
+    fn r730_row_ids_tag_strips_by_data_id_in_visual_order() {
+        // Caller passes rows already in visual (sorted) order with the
+        // parallel data-id permutation; strips tag by data id.
+        let (headers, all) = data();
+        // Visual order = data rows [2, 0, 1].
+        let reordered: Vec<&[&str]> = vec![all[2], all[0], all[1]];
+        let scene = Owner::new().run(|| {
+            view_table(
+                "table",
+                TableData { headers: &headers, rows: &reordered, row_ids: &[2, 0, 1] },
+                None,
+                &all_idle(),
+                Some((0, true)),
+                &light(),
+                &TableStyle::m3(),
+            )
+        });
+        let Scene::Container(root) = &scene else { panic!("root container") };
+        // children[0] = header band; children[1..] = data rows in visual order.
+        let strip_tag = |i: usize| {
+            let Scene::Container(c) = &root.children[i] else { panic!("row strip") };
+            c.tag.clone().unwrap()
+        };
+        assert_eq!(strip_tag(1), "table_row2", "1st visual row = data row 2");
+        assert_eq!(strip_tag(2), "table_row0", "2nd visual row = data row 0");
+        assert_eq!(strip_tag(3), "table_row1", "3rd visual row = data row 1");
     }
 
     #[test]

@@ -86,6 +86,14 @@ pub struct Table {
     /// Always valid (defaults to column 0); paired with `focused_row` to
     /// address the active-descendant cell.
     focused_col: usize,
+    /// R730 §5.40 — the current sort key `(col, ascending)`, or `None`
+    /// when unsorted (display = data order). Purely a **display order**
+    /// concern: [`Self::order`] derives the visual→data permutation from
+    /// it, while selection / interaction state stay indexed by **data
+    /// row** (so a sorted view needs no remap — a selected data row
+    /// simply paints at its new visual position). Defaulting to `None`
+    /// keeps the unsorted boot identical to the pre-R730 table.
+    sort: Option<(usize, bool)>,
 }
 
 impl Table {
@@ -101,6 +109,7 @@ impl Table {
             selected_row: None,
             focused_row: None,
             focused_col: 0,
+            sort: None,
         }
     }
 
@@ -214,6 +223,58 @@ impl Table {
     pub fn is_selected(&self, row: usize) -> bool {
         self.row_radios.get(row).is_some_and(Radio::is_selected)
     }
+
+    /// R730 §5.40 — the current sort key `(col, ascending)`, or `None`
+    /// when unsorted.
+    #[must_use]
+    pub fn sort_state(&self) -> Option<(usize, bool)> {
+        self.sort
+    }
+
+    /// R730 §5.40 — cycle the sort on `col` the way a clicked column
+    /// header does: unsorted → ascending → descending → unsorted. Clicking
+    /// a *different* column jumps straight to that column ascending.
+    /// Out-of-range `col` is a silent no-op.
+    pub fn cycle_sort(&mut self, col: usize) {
+        if col >= self.headers.len() {
+            return;
+        }
+        self.sort = match self.sort {
+            Some((c, true)) if c == col => Some((col, false)),
+            Some((c, false)) if c == col => None,
+            _ => Some((col, true)),
+        };
+    }
+
+    /// R730 §5.40 — the visual→data row permutation for the current sort.
+    /// `order()[visual]` is the data-row index painted at visual position
+    /// `visual`. Identity (`0..row_count`) when unsorted. The comparison
+    /// is **numeric-aware** (cells that both parse as numbers compare
+    /// numerically, else lexicographically) and **stable** (ties keep
+    /// their data order), so re-sorting is deterministic.
+    #[must_use]
+    pub fn order(&self) -> Vec<usize> {
+        let mut idx: Vec<usize> = (0..self.rows.len()).collect();
+        let Some((col, ascending)) = self.sort else {
+            return idx;
+        };
+        idx.sort_by(|&a, &b| {
+            let ord = cell_cmp(self.cell(a, col), self.cell(b, col));
+            if ascending { ord } else { ord.reverse() }
+        });
+        idx
+    }
+}
+
+/// R730 — numeric-aware cell comparison: two cells that both parse as
+/// `f64` compare numerically (so `"9" < "12"`); otherwise lexicographic
+/// (so `"Active" < "Done"`). A data grid that sorted a numeric column
+/// lexicographically (`"12" < "9"`) would be visibly wrong.
+fn cell_cmp(a: &str, b: &str) -> core::cmp::Ordering {
+    match (a.trim().parse::<f64>(), b.trim().parse::<f64>()) {
+        (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or(core::cmp::Ordering::Equal),
+        _ => a.cmp(b),
+    }
 }
 
 /// `Table` transition contract (R51.12 substrate). The event pairs the
@@ -326,6 +387,26 @@ impl TableExternal {
         self.em.inner.focused_col()
     }
 
+    /// R730 §5.40 — the current sort key `(col, ascending)`, or `None`.
+    #[must_use]
+    pub fn sort_state(&self) -> Option<(usize, bool)> {
+        self.em.inner.sort_state()
+    }
+
+    /// R730 §5.40 — cycle the sort on `col` (unsorted → asc → desc →
+    /// unsorted; a new column jumps to ascending). The column-header
+    /// click + the `invoke "sort"` RPC path both land here.
+    pub fn cycle_sort(&mut self, col: usize) {
+        self.em.inner.cycle_sort(col);
+    }
+
+    /// R730 §5.40 — the visual→data row permutation for the current sort
+    /// ([`Table::order`]).
+    #[must_use]
+    pub fn order(&self) -> Vec<usize> {
+        self.em.inner.order()
+    }
+
     /// Validate an intervene `row` index against the row count.
     fn resolve_row_intervene(&self, i: i64) -> Result<usize, InterveneError> {
         let row = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
@@ -410,6 +491,15 @@ impl ExternalIntrospect for TableExternal {
             ("state.<row>", "string"),
             ("selected.<row>", "bool"),
             ("send", "string"),
+            // R730 §5.40 — sort surface. `sort_col` is the sort key column
+            // (`-1` when unsorted); `sort_dir` is "none"/"ascending"/
+            // "descending"; `order.<visual>` is the data-row index painted
+            // at visual position `<visual>`; `sort` (invoke) cycles a
+            // column's sort the way a header click does.
+            ("sort_col", "int"),
+            ("sort_dir", "string"),
+            ("order.<visual>", "int"),
+            ("sort", "int"),
         ])
     }
 
@@ -428,6 +518,19 @@ impl ExternalIntrospect for TableExternal {
                 self.focused_row().map_or(-1, int_of),
             )),
             "focused_col" => Some(IntrospectValue::Int(int_of(self.focused_col()))),
+            // R730 §5.40 — sort key column (`-1` when unsorted) + the
+            // WAI-ARIA `aria-sort` token the active header carries.
+            "sort_col" => Some(IntrospectValue::Int(
+                self.sort_state().map_or(-1, |(c, _)| int_of(c)),
+            )),
+            "sort_dir" => Some(IntrospectValue::Text(
+                match self.sort_state() {
+                    None => "none",
+                    Some((_, true)) => "ascending",
+                    Some((_, false)) => "descending",
+                }
+                .to_string(),
+            )),
             _ => {
                 // Per-column header text: `header.<col>`.
                 if let Some(col_str) = path.strip_prefix("header.") {
@@ -468,6 +571,13 @@ impl ExternalIntrospect for TableExternal {
                         return None;
                     }
                     return Some(IntrospectValue::Bool(self.is_selected(row)));
+                }
+                // R730 §5.40 — visual→data permutation: `order.<visual>`
+                // is the data-row index painted at visual position.
+                if let Some(v_str) = path.strip_prefix("order.") {
+                    let visual: usize = v_str.parse().ok()?;
+                    let order = self.order();
+                    return order.get(visual).map(|&d| IntrospectValue::Int(int_of(d)));
                 }
                 None
             }
@@ -533,6 +643,26 @@ impl ExternalIntrospect for TableExternal {
                 IntrospectValue::Text(ref s) => {
                     let (key, event_name) =
                         s.split_once(':').ok_or(InvokeError::Rejected)?;
+                    // R730 §5.40 — a column-header click arrives as
+                    // `"h<col>:<EventName>"` (the paint tag `"<tag>#h<col>"`
+                    // through the R51.42 `'#'`-split funnel). Cell keys are
+                    // `"<row>_<col>"` (always an underscore), so the `h`
+                    // prefix is unambiguous. The sort cycles on `PointerUp`
+                    // (the activate edge), matching cell activation; other
+                    // pointer phases are inert. Returns the new `sort_dir`.
+                    if let Some(col_str) = key.strip_prefix('h') {
+                        let col: usize =
+                            col_str.parse().map_err(|_| InvokeError::Rejected)?;
+                        if col >= self.col_count() {
+                            return Err(InvokeError::Rejected);
+                        }
+                        if event_name == "PointerUp" {
+                            self.cycle_sort(col);
+                        }
+                        return Ok(self
+                            .query("sort_dir")
+                            .unwrap_or(IntrospectValue::Null));
+                    }
                     let (row_str, col_str) =
                         key.split_once('_').ok_or(InvokeError::Rejected)?;
                     let row: usize =
@@ -549,6 +679,21 @@ impl ExternalIntrospect for TableExternal {
                         Some(r) => IntrospectValue::Int(int_of(r)),
                         None => IntrospectValue::Null,
                     })
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R730 §5.40 — direct sort cycle for AI clients: `invoke
+            // "sort" Int(col)` cycles that column's sort the same way a
+            // header click does, without synthesising a pointer event.
+            // Returns the resulting `sort_dir` token.
+            "sort" => match args {
+                IntrospectValue::Int(i) => {
+                    let col = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    if col >= self.col_count() {
+                        return Err(InvokeError::Rejected);
+                    }
+                    self.cycle_sort(col);
+                    Ok(self.query("sort_dir").unwrap_or(IntrospectValue::Null))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -763,5 +908,136 @@ mod tests {
             ext.invoke("send", IntrospectValue::Text("9_9:PointerUp".to_string())),
             Err(InvokeError::Rejected),
         );
+    }
+
+    // ----- R730 §5.40 sort -----
+
+    fn sort_sample() -> Table {
+        // A numeric "Round" column to exercise numeric-aware compare.
+        Table::new(
+            vec!["Name".to_string(), "Round".to_string()],
+            vec![
+                vec!["Menu".to_string(), "12".to_string()],
+                vec!["Tabs".to_string(), "9".to_string()],
+                vec!["Table".to_string(), "707".to_string()],
+            ],
+        )
+    }
+
+    #[test]
+    fn boot_is_unsorted_identity_order() {
+        let t = sort_sample();
+        assert_eq!(t.sort_state(), None);
+        assert_eq!(t.order(), vec![0, 1, 2], "unsorted = identity (R707 boot)");
+    }
+
+    #[test]
+    fn cycle_sort_three_states_then_clears() {
+        let mut t = sort_sample();
+        t.cycle_sort(0);
+        assert_eq!(t.sort_state(), Some((0, true)), "1st click ascending");
+        t.cycle_sort(0);
+        assert_eq!(t.sort_state(), Some((0, false)), "2nd click descending");
+        t.cycle_sort(0);
+        assert_eq!(t.sort_state(), None, "3rd click clears");
+    }
+
+    #[test]
+    fn cycle_a_different_column_jumps_to_ascending() {
+        let mut t = sort_sample();
+        t.cycle_sort(0);
+        t.cycle_sort(1);
+        assert_eq!(t.sort_state(), Some((1, true)), "new column -> ascending");
+    }
+
+    #[test]
+    fn order_sorts_text_column_lexicographically() {
+        let mut t = sort_sample();
+        t.cycle_sort(0); // Name ascending: Menu, Table, Tabs
+        assert_eq!(t.order(), vec![0, 2, 1]);
+        t.cycle_sort(0); // descending
+        assert_eq!(t.order(), vec![1, 2, 0]);
+    }
+
+    #[test]
+    fn order_sorts_numeric_column_numerically_not_lexically() {
+        let mut t = sort_sample();
+        t.cycle_sort(1); // Round ascending: 9 (row1), 12 (row0), 707 (row2)
+        assert_eq!(t.order(), vec![1, 0, 2], "9 < 12 < 707 numerically");
+        // A lexicographic sort would wrongly give "12" < "707" < "9".
+    }
+
+    #[test]
+    fn selection_is_data_indexed_so_it_survives_sort() {
+        // Select data row 0 ("Menu"), then sort by Name: it moves to
+        // visual position 0 here, but the *data row* stays selected with
+        // no remap — is_selected is by data index.
+        let mut ext = TableExternal::new(
+            vec!["Name".to_string(), "Round".to_string()],
+            vec![
+                vec!["Menu".to_string(), "12".to_string()],
+                vec!["Tabs".to_string(), "9".to_string()],
+                vec!["Table".to_string(), "707".to_string()],
+            ],
+        );
+        for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
+            let _ = ext.invoke("send", IntrospectValue::Text(format!("0_0:{ev}")));
+        }
+        assert_eq!(ext.selected_row(), Some(0));
+        ext.cycle_sort(1); // sort by Round ascending -> order [1, 0, 2]
+        assert_eq!(ext.order(), vec![1, 0, 2]);
+        assert!(ext.is_selected(0), "data row 0 still selected after sort");
+        assert_eq!(ext.selected_row(), Some(0), "no remap needed");
+    }
+
+    #[test]
+    fn header_click_wire_cycles_sort_on_pointer_up_only() {
+        let mut ext = TableExternal::new(
+            vec!["Name".to_string(), "Round".to_string()],
+            vec![vec!["Menu".to_string(), "12".to_string()]],
+        );
+        // Enter / Down are inert; only PointerUp activates the sort.
+        let _ = ext.invoke("send", IntrospectValue::Text("h0:PointerEnter".to_string()));
+        assert_eq!(ext.sort_state(), None, "hover does not sort");
+        let r = ext.invoke("send", IntrospectValue::Text("h0:PointerUp".to_string()));
+        assert_eq!(r, Ok(IntrospectValue::Text("ascending".to_string())));
+        assert_eq!(ext.sort_state(), Some((0, true)));
+    }
+
+    #[test]
+    fn invoke_sort_action_is_the_ai_path() {
+        let mut ext = sort_sample_ext();
+        assert_eq!(
+            ext.invoke("sort", IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Text("ascending".to_string())),
+        );
+        assert_eq!(ext.query("sort_col"), Some(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("sort_dir"), Some(IntrospectValue::Text("ascending".to_string())));
+        // Out-of-range column rejects.
+        assert_eq!(
+            ext.invoke("sort", IntrospectValue::Int(9)),
+            Err(InvokeError::Rejected),
+        );
+    }
+
+    #[test]
+    fn order_query_reports_visual_to_data_mapping() {
+        let mut ext = sort_sample_ext();
+        let _ = ext.invoke("sort", IntrospectValue::Int(1)); // Round asc -> [1,0,2]
+        assert_eq!(ext.query("order.0"), Some(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("order.1"), Some(IntrospectValue::Int(0)));
+        assert_eq!(ext.query("order.2"), Some(IntrospectValue::Int(2)));
+        assert_eq!(ext.query("order.9"), None, "out of range visual is None");
+    }
+
+    fn sort_sample_ext() -> TableExternal {
+        TableExternal::new(
+            vec!["Name".to_string(), "Round".to_string()],
+            vec![
+                vec!["Menu".to_string(), "12".to_string()],
+                vec!["Tabs".to_string(), "9".to_string()],
+                vec!["Table".to_string(), "707".to_string()],
+            ],
+        )
     }
 }
