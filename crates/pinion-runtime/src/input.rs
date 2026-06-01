@@ -661,9 +661,17 @@ impl InputRouter {
         // source coordinator applies the move (or ignores `None`). The
         // normal `PointerUp` is dispatched afterwards so a
         // press-release-in-place (no real drag) still reaches the
-        // statechart as a click. A drag release is therefore never *also*
-        // a capture release — the two maps are disjoint per pointer.
+        // statechart as a click.
+        //
+        // A drag session *supersedes* capture for the same pointer: while
+        // a session is in flight `cursor_moved` already routes to the drag
+        // path (not `forward_pointer_move`), so any `captured_targets`
+        // entry — if a widget ever opts into both `wants_pointer_capture`
+        // and `begin_drag` — is vestigial. Clear it here so the lock can
+        // never outlive the gesture (no current widget sets both, but the
+        // release must not depend on that staying true).
         if let Some(session) = self.drag_sessions.remove(&id) {
+            self.captured_targets.remove(&id);
             let over = self
                 .cursors
                 .get(&id)
@@ -3242,15 +3250,25 @@ mod tests {
     struct DragExternal {
         pressed: std::cell::Cell<Option<usize>>,
         log: Arc<Mutex<Vec<String>>>,
+        /// When true, also opts into `wants_pointer_capture` — the
+        /// (currently hypothetical) widget that is *both* a capture widget
+        /// and a drag source, used to prove a drag release clears any
+        /// vestigial capture lock.
+        capture: bool,
     }
 
     impl DragExternal {
         fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+            Self::with_capture(false)
+        }
+
+        fn with_capture(capture: bool) -> (Self, Arc<Mutex<Vec<String>>>) {
             let log = Arc::new(Mutex::new(Vec::new()));
             (
                 Self {
                     pressed: std::cell::Cell::new(None),
                     log: Arc::clone(&log),
+                    capture,
                 },
                 log,
             )
@@ -3275,6 +3293,9 @@ mod tests {
         }
         fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
             Some(self)
+        }
+        fn wants_pointer_capture(&self) -> bool {
+            self.capture
         }
         fn begin_drag(&self) -> Option<DragPayload> {
             self.pressed.get().map(|i| {
@@ -3393,6 +3414,30 @@ mod tests {
         assert!(
             !log[..drop_at].iter().any(|s| s.contains("PointerLeave")),
             "no stray leave mid-drag: {log:?}"
+        );
+    }
+
+    #[test]
+    fn r742_drag_release_clears_any_vestigial_capture_lock() {
+        // A widget that opts into BOTH wants_pointer_capture and
+        // begin_drag: the drag session supersedes capture, and the
+        // release must not leave a stale captured_targets entry that would
+        // pin every future cursor_moved to forward_pointer_move.
+        let mut router = InputRouter::new();
+        let (drag, _log) = DragExternal::with_capture(true);
+        let mut state = Scene::External(ExternalNode::new(Box::new(drag)).with_tag("dnd"));
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        // Both maps armed on press (capture set, then a drag session).
+        assert_eq!(router.captured_target(PointerId::MOUSE), Some("dnd#0"));
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        // The drag committed AND the capture lock is gone.
+        assert_eq!(
+            router.captured_target(PointerId::MOUSE),
+            None,
+            "drag release must clear the vestigial capture lock"
         );
     }
 

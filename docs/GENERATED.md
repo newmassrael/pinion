@@ -16150,6 +16150,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R742.1 — R742.1 audit fix — pointer_up's drag-release branch now clears any vestigial captured_targets entry, so a widget that opts into both wants_pointer_capture and begin_drag cannot leave a stale capture lock pinning every future cursor_moved. Found in the post-round textbook/SSOT review: the disjointness the doc asserted was not enforced in code. Behavior-identical for all current consumers (none set both); guarded by a new regression test. Remaining honest review findings recorded as carry.
+
+**Changes**:
+- pointer_up drag-release branch clears captured_targets[id] before returning (vestigial-lock guard)
+- doc reframed: a drag session supersedes capture (was an unenforced disjointness assertion in code)
+- regression test: a widget with both wants_pointer_capture + begin_drag releases with no stale lock
+
+
+
+**Verification**:
+- pinion-runtime +1 unit (r742_drag_release_clears_any_vestigial_capture_lock)
+- workspace 4880 passed / 0 fail; clippy -D pedantic clean; full demo sweep 90/90 (behavior-identical)
+
+
+
+**Impact**: §5.51, §5.35
+
+
+**Carry forward**:
+- DnD payload passed to drag_to/drag_release is unread by the intra-widget consumer (uses pressed)
+- payload = textbook API surface, load-bearing only for cross-widget drop + in-flight introspection
+- composite-tag '#' split has no SSOT (shell/runtime/bindings inline); split_subindex lift candidate
+- no drag threshold (press = zero-distance drag); insertion line is a flex child so rows shift ~10px
+- binding pressed is single-slot (multi-touch aliases a list); substrate drag_sessions is per-pointer
+- keyboard reorder (APG Ctrl+Arrow) remains the main a11y gap — deferred to a DnD consumer round
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
