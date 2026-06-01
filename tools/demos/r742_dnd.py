@@ -139,8 +139,11 @@ def body() -> None:
         assert_eq(order(tf), before, "dropping a row on its own gap is a no-op")
 
         # ── (E) keyboard reorder (APG keyboard-drag, modifier-free) ──
-        tf.request("focus/set", {"tag": TAG})
-        assert_eq(tf.request("focus/get").result.get("focused"), TAG, "list focused")
+        # R742.3 — clicking a composite row focuses the single-tab-stop
+        # list (the click resolves to the sub-tag `dnd#0`, which falls back
+        # to the focusable primary `dnd`); no explicit focus/set needed.
+        tf.click(path="dnd#0")
+        assert_eq(tf.request("focus/get").result.get("focused"), TAG, "click on a row focuses the list")
         base = order(tf)
         tf.key(path=TAG, name="ArrowDown"); time.sleep(PAUSE)  # cursor → row 0
         assert_eq(tf.query("/external/focused_index"), 0, "ArrowDown sets the cursor")

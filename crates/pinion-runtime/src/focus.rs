@@ -249,6 +249,38 @@ impl FocusManager {
         true
     }
 
+    /// R742.3 §5.39 — resolve a (possibly composite `group#i`) tag to the
+    /// focusable tag a *click* on it should land on:
+    ///
+    /// * the tag itself when it is registered focusable — per-sub-tab
+    ///   composites (`hello-accordion-single` registers every header
+    ///   `accordion_single#i`);
+    /// * else its primary half (`group`) when THAT is focusable — the
+    ///   single-tab-stop composites (`ListBox` / `RadioGroup` / `Table` /
+    ///   the reorder list) that register only the primary, where a click
+    ///   resolves to a sub-tag (`group#2`) the bare exact-match
+    ///   [`focus_set`](Self::focus_set) would reject;
+    /// * else `None` — a tagged-but-non-focusable decoration the click
+    ///   should leave focus unchanged for (the W3C HTML convention).
+    ///
+    /// Pre-R742.3 click-to-focus only matched the exact hover tag, so
+    /// clicking any primary-focusable composite never focused it — the
+    /// gap was masked because the example demos focus via RPC
+    /// `focus/set` (which passes the primary tag explicitly).
+    #[must_use]
+    pub fn resolve_focusable(&self, tag: &str) -> Option<String> {
+        let order = self.active_order();
+        if order.iter().any(|t| t == tag) {
+            return Some(tag.to_owned());
+        }
+        if let Some((primary, _)) = tag.split_once('#') {
+            if order.iter().any(|t| t == primary) {
+                return Some(primary.to_owned());
+            }
+        }
+        None
+    }
+
     /// Clear focus. Returns `true` if focus changed (`focused` was
     /// `Some`).
     pub fn focus_clear(&mut self) -> bool {
@@ -406,6 +438,24 @@ mod tests {
         m.update_focusable_tags(tags(&["a", "b"]));
         m.focus_set("a");
         assert!(!m.focus_set("a"));
+    }
+
+    #[test]
+    fn resolve_focusable_handles_composite_click_targets() {
+        let mut m = FocusManager::new();
+        // `dnd` is a single-tab-stop composite (only the primary is
+        // focusable); `acc#0` / `acc#1` are a per-sub-tab composite.
+        m.update_focusable_tags(tags(&["dnd", "acc#0", "acc#1"]));
+        // A click resolving to a sub-tag of a primary-focusable composite
+        // lands on the primary (the pre-R742.3 bug: this was `None`).
+        assert_eq!(m.resolve_focusable("dnd#2").as_deref(), Some("dnd"));
+        // An exactly-registered sub-tag focuses itself (not its primary).
+        assert_eq!(m.resolve_focusable("acc#1").as_deref(), Some("acc#1"));
+        // A single tag focuses itself.
+        assert_eq!(m.resolve_focusable("dnd").as_deref(), Some("dnd"));
+        // A tag whose neither form is focusable (decoration) is `None`.
+        assert_eq!(m.resolve_focusable("deco#3"), None);
+        assert_eq!(m.resolve_focusable("nope"), None);
     }
 
     #[test]

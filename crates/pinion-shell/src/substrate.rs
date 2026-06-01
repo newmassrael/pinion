@@ -1934,10 +1934,15 @@ impl<V: WidgetView> ShellCore<V> {
             .hover_target_for_window(window_id, pid)
             .map(str::to_owned)
         {
-            if !self.focus.focus_set(&target) {
-                // Tagged but non-focusable (decoration) — leave focus
-                // unchanged. The W3C HTML convention says only
-                // focusable elements receive focus on mousedown.
+            // R742.3 §5.39 — the hover target is the deepest tag, which is
+            // a composite sub-tag (`group#i`) for composite widgets.
+            // Resolve it to the focusable tag the click lands on (the
+            // sub-tag itself for per-sub-tab widgets, else the primary for
+            // single-tab-stop composites). `None` means a tagged but
+            // non-focusable decoration — leave focus unchanged (the W3C
+            // HTML convention: only focusable elements focus on mousedown).
+            if let Some(focusable) = self.focus.resolve_focusable(&target) {
+                self.focus.focus_set(&focusable);
             }
         } else {
             self.focus.focus_clear();

@@ -16213,6 +16213,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R742.3 — R742.3 fix composite click-to-focus — genuine framework debt surfaced by the R742 review (not dnd-specific). Click-to-focus only matched the exact hover tag, but a click on a composite widget resolves to a sub-tag (group#i) while single-tab-stop composites (ListBox / RadioGroup / Table / the reorder list) register only the primary tag — so clicking any of them never focused the widget. Masked because every example demo focuses via RPC focus/set, never a native click. New FocusManager::resolve_focusable (exact-first, composite-primary fallback) used by the shell click-to-focus; per-sub-tab composites (accordion-single) still focus the exact sub-tag.
+
+**Changes**:
+- FocusManager::resolve_focusable: exact tag if focusable, else composite primary, else None
+- shell click_to_focus_for_window resolves the hover sub-tag through it before focus_set
+- fixes click-to-focus for every single-tab-stop composite (ListBox/RadioGroup/Table/reorder list)
+- per-sub-tab composites (accordion-single registers exact sub-tags) unaffected — exact match wins
+- hello-dnd demo now enters keyboard via clicking dnd#0 (no explicit focus/set)
+
+
+
+**Verification**:
+- pinion-runtime +1 unit (resolve_focusable: primary fallback / exact sub-tag / decoration None)
+- workspace 4889 passed / 0 fail; clippy -D pedantic clean; full demo sweep 90/90
+- RPC: scene/click dnd#0 -> focus/get == dnd (was None); ArrowDown then works with no focus/set
+- the gap was masked because every example demo focuses via RPC focus/set, never native click
+
+
+
+**Impact**: §5.39, §5.51
+
+
+**Carry forward**:
+- CLEARED: composite click-to-focus (was an R742.2 carry) — framework-wide, not dnd-specific
+- focus_set stays strict-exact (RPC focus/set clients pass the primary); only the click path resolves
+- scene/key modifier channel still absent — no consumer (keyboard is modifier-free), YAGNI not debt
+- 2nd DnD consumer (tab/dock/tree) + ReorderListExternal lift stay 2nd-consumer-gated (premature)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
