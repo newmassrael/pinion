@@ -35,3 +35,6 @@ notes/
 # self-verification harness when demos under tools/demos/ run.
 **/__pycache__/
 *.pyc
+
+# Session-local SEED prompt (untracked per dev request; lives on disk only)
+docs/SEED_PROMPT.md
