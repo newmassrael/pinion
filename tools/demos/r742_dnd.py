@@ -138,6 +138,32 @@ def body() -> None:
         drag_onto(tf, "dnd#1", "dnd#1", 0.25)  # press + release over self
         assert_eq(order(tf), before, "dropping a row on its own gap is a no-op")
 
+        # ── (E) keyboard reorder (APG keyboard-drag, modifier-free) ──
+        tf.request("focus/set", {"tag": TAG})
+        assert_eq(tf.request("focus/get").result.get("focused"), TAG, "list focused")
+        base = order(tf)
+        tf.key(path=TAG, name="ArrowDown"); time.sleep(PAUSE)  # cursor → row 0
+        assert_eq(tf.query("/external/focused_index"), 0, "ArrowDown sets the cursor")
+        assert_eq(order(tf), base, "navigating the cursor does not reorder")
+        # Space picks up the focused row; ArrowDown moves it; Space drops.
+        tf.key(path=TAG, name=" "); time.sleep(PAUSE)
+        assert tf.query("/external/grabbed") is True, "Space grabs the focused row"
+        tf.key(path=TAG, name="ArrowDown"); time.sleep(PAUSE)
+        moved = order(tf)
+        assert moved != base, f"grabbed ArrowDown reorders: {base} -> {moved}"
+        assert_eq(tf.query("/external/focused_index"), 1, "cursor follows the grabbed row")
+        tf.key(path=TAG, name=" "); time.sleep(PAUSE)
+        assert tf.query("/external/grabbed") is False, "Space drops the grab"
+        assert_eq(order(tf), moved, "dropped order is kept")
+        # Escape cancels a grab, reverting to the pre-grab order.
+        pre = order(tf)
+        tf.key(path=TAG, name=" "); time.sleep(PAUSE)          # grab (cursor at 1)
+        tf.key(path=TAG, name="End"); time.sleep(PAUSE)        # move grabbed row to bottom
+        assert order(tf) != pre, "grabbed End moved the row"
+        tf.key(path=TAG, name="Escape"); time.sleep(PAUSE)
+        assert tf.query("/external/grabbed") is False, "Escape drops the grab"
+        assert_eq(order(tf), pre, "Escape reverts to the pre-grab order")
+
         # ── (D) introspection round-trip + rejections ───────────────
         assert_eq(
             labels(tf),

@@ -16178,6 +16178,41 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R742.2 — R742.2 hello-dnd keyboard reorder + overlay polish (driven by the post-round textbook review). (1) Fixes the 'insertion line jumps up then down' artifact the user reported: inter-row gaps resolve to the list container, not a row, so drag_to/drag_release now hold the last resolved gap instead of snapping the indicator back to the dragged row. (2) The insertion line is an absolute overlay so showing it never reflows the rows. (3) Keyboard reorder via the APG modifier-free keyboard-drag model (Space grab / Arrow move / Space drop / Escape revert), drivable through plain scene/key because the RPC key channel carries no modifiers. (4) Roving focus ring + lifted grab ring + List/ListItem active-descendant a11y.
+
+**Changes**:
+- drag_to/drag_release hold the last resolved gap over an inter-row gap (fixes line-up-then-down)
+- inter-row gaps resolve to the list container not a row; the old fallback snapped to the dragged row
+- insertion line is an absolute overlay (with_absolute_position) so showing it never reflows the rows
+- keyboard reorder: APG keyboard-drag (Space grab / Arrow move / Space drop / Escape revert)
+- modifier-free by design — drives via plain scene/key (the RPC key channel carries no modifiers)
+- focused_index roving cursor + grab snapshot/cancel; move / grab / grab_cancel invoke actions
+- focus ring (OnSurface) + lifted grab ring (Accent) + List/ListItem active-descendant a11y
+
+
+
+**Verification**:
+- hello-dnd 18 unit (+8): hold-last gap / grab-mode apply_key / Escape revert / grab action / overlay
+- workspace 4888 passed / 0 fail; clippy -D pedantic clean; full demo sweep 90/90
+- r742_dnd.py keyboard: focus + ArrowDown + Space grab + Arrow move + Space drop + Escape revert
+- LIVE :0 native mid-drag capture: rows do NOT shift when the insertion line appears (overlay fix)
+- live: the line holds in the inter-row gap (no jump to gap 1) — the reported up-then-down fixed
+
+
+
+**Impact**: §5.51, §5.49, §5.40
+
+
+**Carry forward**:
+- scene/key + DeferredInput::Key carry NO modifier channel — Ctrl/Shift/Alt+key unreachable via RPC
+- keyboard reorder therefore uses the modifier-free APG keyboard-drag model (not Ctrl+Arrow)
+- framework axis: thread a modifiers param through scene/key -> DeferredInput::Key -> apply_key
+- Tab focuses the list (focus manager); native click-to-focus on a drag-source row is not wired
+- synthetic XTEST key delivery on live :0 is flaky (focus); keyboard verified via RPC + units
+- insertion-line accent colour is near the blue witness row but sits in the white gap (visible)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

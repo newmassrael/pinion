@@ -37,11 +37,12 @@ use pinion_core::external::{
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
+    TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -76,6 +77,23 @@ const ROW_RADIUS: u32 = 8;
 const GAP: u32 = 6;
 /// Insertion-line thickness (drawn at the drop gap during a drag).
 const LINE_H: u32 = 4;
+/// Inner list container height = N rows + (N-1) gaps. Fixed so the
+/// insertion line is an **absolute overlay** (the rows never reflow when
+/// it appears). Locked to `N` by the const-assert below.
+const LIST_H: u32 = 4 * ROW_H + 3 * GAP;
+const _: () = assert!(N == 4, "LIST_H hard-codes N rows + (N-1) gaps");
+
+/// Top edge (in the list container) of the insertion line for drop gap
+/// `k` (`0..=N`): the centre of the gap before row `k`, clamped inside
+/// the container. The gap before row `k` sits at `k*(ROW_H+GAP)`.
+fn gap_line_top(k: usize) -> u32 {
+    let k = u32::try_from(k).unwrap_or(0);
+    let centre = k * (ROW_H + GAP);
+    // centre is the boundary between row k-1 and row k; back off half a
+    // gap + half the line so the bar is centred in the gap.
+    let top = centre.saturating_sub(GAP / 2 + LINE_H / 2);
+    top.min(LIST_H.saturating_sub(LINE_H))
+}
 
 /// A live drag preview: which visual row is being dragged and the gap
 /// index (`0..=N`) the cursor currently targets. `Copy` so it rides
@@ -96,6 +114,13 @@ struct DragPreview {
 struct ListState {
     order: [usize; N],
     preview: Option<DragPreview>,
+    /// Keyboard cursor / WAI-ARIA active descendant — the visual row the
+    /// arrow keys move. `None` until the list is focused and a navigation
+    /// key lands.
+    focused: Option<usize>,
+    /// Whether the focused row is *picked up* (APG keyboard drag) — drawn
+    /// with a "lifted" ring so the keyboard reorder reads clearly.
+    grabbed: bool,
 }
 
 impl Default for ListState {
@@ -103,6 +128,8 @@ impl Default for ListState {
         Self {
             order: IDENTITY,
             preview: None,
+            focused: None,
+            grabbed: false,
         }
     }
 }
@@ -169,6 +196,15 @@ struct ReorderListExternal {
     /// Live drag preview (dragged row + target gap), set by `drag_to`,
     /// cleared by `drag_release`. Drives the view's dim + insertion line.
     preview: RefCell<Option<DragPreview>>,
+    /// Keyboard cursor / AT active descendant (visual index). `Arrow`
+    /// keys move it. Set via `intervene("focused_index")`, read via
+    /// `query("focused_index")`.
+    focused: Cell<Option<usize>>,
+    /// APG "keyboard drag" grab state. `Some(order)` while the focused
+    /// row is *picked up* — `Arrow` then moves the row (cursor following)
+    /// and the snapshot is the pre-grab order an `Escape` reverts to.
+    /// `None` when not grabbing. Grab is toggled by `Space` / `Enter`.
+    grab_snapshot: Cell<Option<[usize; N]>>,
 }
 
 impl ReorderListExternal {
@@ -177,7 +213,14 @@ impl ReorderListExternal {
             order: RefCell::new(IDENTITY),
             pressed: Cell::new(None),
             preview: RefCell::new(None),
+            focused: Cell::new(None),
+            grab_snapshot: Cell::new(None),
         }
+    }
+
+    /// Whether the focused row is currently picked up (APG keyboard drag).
+    fn grabbed(&self) -> bool {
+        self.grab_snapshot.get().is_some()
     }
 
     /// Labels in current visual order — the AI-readable observable
@@ -189,6 +232,33 @@ impl ReorderListExternal {
             .map(|&id| ITEMS[id].0)
             .collect()
     }
+
+    /// Keyboard reorder: move the focused row to `target` (clamped to a
+    /// valid index) and keep the cursor on the moved row. No-op when no
+    /// row is focused or the position is unchanged. Returns the new
+    /// focused index, if any — the value `invoke("move")` reports back.
+    fn move_focused_to(&self, target: usize) -> Option<usize> {
+        let from = self.focused.get()?;
+        let target = target.min(N - 1);
+        if target != from {
+            apply_move(&mut self.order.borrow_mut(), from, gap_for_target(from, target));
+        }
+        self.focused.set(Some(target));
+        Some(target)
+    }
+}
+
+/// Map a keyboard move (`from` row → `target` row) to the gap index
+/// [`apply_move`] expects. Moving *down* (`target > from`) inserts after
+/// `target` (gap `target+1`); moving *up* inserts before it (gap
+/// `target`). This makes a one-step `Ctrl+Arrow` land exactly one slot
+/// over, matching the displayed motion.
+fn gap_for_target(from: usize, target: usize) -> usize {
+    if target > from {
+        target + 1
+    } else {
+        target
+    }
 }
 
 impl core::fmt::Debug for ReorderListExternal {
@@ -197,6 +267,8 @@ impl core::fmt::Debug for ReorderListExternal {
             .field("order", &self.order.borrow())
             .field("pressed", &self.pressed.get())
             .field("preview", &self.preview.borrow())
+            .field("focused", &self.focused.get())
+            .field("grab_snapshot", &self.grab_snapshot.get())
             .finish()
     }
 }
@@ -241,7 +313,15 @@ impl External for ReorderListExternal {
         let Some(from_visual) = self.pressed.get() else {
             return;
         };
-        let insert_at = drop_gap(over.as_ref()).unwrap_or(from_visual);
+        // `drop_gap` is `None` when the cursor sits between rows (over the
+        // list container, not a row). **Hold** the last resolved gap there
+        // rather than snapping the indicator back to the dragged row —
+        // otherwise the line jumps up to the dragged row's own gap every
+        // time the cursor crosses a 6 px inter-row gap, then drops back on
+        // the next row ("up then down" flicker). Falls back to the dragged
+        // row only on the first frame, before any gap has resolved.
+        let last = (*self.preview.borrow()).map(|p| p.insert_at);
+        let insert_at = drop_gap(over.as_ref()).or(last).unwrap_or(from_visual);
         *self.preview.borrow_mut() = Some(DragPreview {
             from_visual,
             insert_at,
@@ -253,7 +333,10 @@ impl External for ReorderListExternal {
     /// leaves the order unchanged.
     fn drag_release(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
         if let Some(from_visual) = self.pressed.get() {
-            let insert_at = drop_gap(over.as_ref()).unwrap_or(from_visual);
+            // Release in a gap honours the gap the indicator was showing
+            // (the held preview), not a snap-back to the dragged row.
+            let last = (*self.preview.borrow()).map(|p| p.insert_at);
+            let insert_at = drop_gap(over.as_ref()).or(last).unwrap_or(from_visual);
             apply_move(&mut self.order.borrow_mut(), from_visual, insert_at);
         }
         *self.preview.borrow_mut() = None;
@@ -267,6 +350,11 @@ impl ExternalIntrospect for ReorderListExternal {
             ("order", "json"),
             ("labels", "json"),
             ("preview", "json"),
+            ("focused_index", "int"),
+            ("grabbed", "bool"),
+            ("move", "int"),
+            ("grab", "bool"),
+            ("grab_cancel", "null"),
         ])
     }
 
@@ -296,14 +384,33 @@ impl ExternalIntrospect for ReorderListExternal {
                 })),
                 None => IntrospectValue::Null,
             }),
+            "focused_index" => Some(match self.focused.get() {
+                Some(i) => IntrospectValue::Int(i64::try_from(i).unwrap_or(0)),
+                None => IntrospectValue::Null,
+            }),
+            "grabbed" => Some(IntrospectValue::Bool(self.grabbed())),
             _ => None,
         }
     }
 
-    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        // Order mutates only through the drag session (the AI-first path
-        // is `scene/drag`); there are no directly-writable slots.
-        Err(InterveneError::UnknownPath)
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        match path {
+            // The keyboard cursor / AT active descendant. Out-of-range
+            // indices are rejected (composite-index convention); the
+            // shell's apply_key always writes a clamped value.
+            "focused_index" => {
+                let i = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
+                if i >= N {
+                    return Err(InterveneError::OutOfRange);
+                }
+                self.focused.set(Some(i));
+                Ok(())
+            }
+            // The order mutates through the drag session or the `move`
+            // action, never a direct slot write.
+            "order" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
     }
 
     fn invoke(
@@ -311,30 +418,87 @@ impl ExternalIntrospect for ReorderListExternal {
         method: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
-        if method != "send" {
-            return Err(InvokeError::UnknownPath);
+        match method {
+            // Composite "{visual}:{Event}" wire form — parsed through the
+            // shared `parse_send_payload` SSOT (R51.42 / R734.1), not an
+            // inline split. A PointerDown records which row was pressed so
+            // `begin_drag` can arm it.
+            "send" => {
+                let IntrospectValue::Text(ref payload) = args else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                let (visual, event): (usize, &str) =
+                    pinion_core::composite_tag::parse_send_payload(payload)
+                        .ok_or(InvokeError::Rejected)?;
+                if event == "PointerDown" && visual < N {
+                    self.pressed.set(Some(visual));
+                }
+                Ok(IntrospectValue::Null)
+            }
+            // Keyboard reorder: move the focused row by `delta` slots
+            // (`+1` down / `-1` up), clamped, cursor following. Returns
+            // the new focused index, or `Null` when no row is focused.
+            // This is the `Ctrl+Arrow` path and the AT increment/decrement
+            // funnel — one channel for shell, RPC, and assistive tech.
+            "move" => {
+                let delta = args.as_i64().ok_or(InvokeError::TypeMismatch)?;
+                let Some(from) = self.focused.get() else {
+                    return Ok(IntrospectValue::Null);
+                };
+                let target = (i64::try_from(from).unwrap_or(0) + delta)
+                    .clamp(0, i64::try_from(N - 1).unwrap_or(0));
+                let target = usize::try_from(target).unwrap_or(0);
+                match self.move_focused_to(target) {
+                    Some(i) => Ok(IntrospectValue::Int(i64::try_from(i).unwrap_or(0))),
+                    None => Ok(IntrospectValue::Null),
+                }
+            }
+            // APG keyboard drag — toggle pick-up of the focused row.
+            // Entering grab snapshots the order (for `grab_cancel` to
+            // revert); dropping keeps the live order. Returns the new
+            // grabbed state. No-op without a focused row.
+            "grab" => {
+                if self.focused.get().is_none() {
+                    return Ok(IntrospectValue::Bool(false));
+                }
+                // `Bool(b)` sets the grab explicitly (deterministic RPC /
+                // AT); `Null` or anything else toggles (the keyboard
+                // `Space` path).
+                let want = match args {
+                    IntrospectValue::Bool(b) => b,
+                    _ => !self.grabbed(),
+                };
+                if want && !self.grabbed() {
+                    self.grab_snapshot.set(Some(*self.order.borrow()));
+                } else if !want && self.grabbed() {
+                    self.grab_snapshot.set(None);
+                }
+                Ok(IntrospectValue::Bool(self.grabbed()))
+            }
+            // Cancel a grab: revert to the snapshotted order and drop.
+            "grab_cancel" => {
+                if let Some(snap) = self.grab_snapshot.get() {
+                    *self.order.borrow_mut() = snap;
+                    self.grab_snapshot.set(None);
+                }
+                Ok(IntrospectValue::Null)
+            }
+            _ => Err(InvokeError::UnknownPath),
         }
-        // Composite "{visual}:{Event}" wire form — parsed through the
-        // shared `parse_send_payload` SSOT (R51.42 / R734.1), not an
-        // inline split. A PointerDown records which row was pressed so
-        // `begin_drag` can arm it.
-        let IntrospectValue::Text(ref payload) = args else {
-            return Err(InvokeError::TypeMismatch);
-        };
-        let (visual, event): (usize, &str) =
-            pinion_core::composite_tag::parse_send_payload(payload)
-                .ok_or(InvokeError::Rejected)?;
-        if event == "PointerDown" && visual < N {
-            self.pressed.set(Some(visual));
-        }
-        Ok(IntrospectValue::Null)
     }
 }
 
 /// Build one row: a colour-filled rounded container tagged `dnd#{visual}`
 /// holding its centred label. The dragged row renders dimmed (translucent
 /// fill over the surface) so the user sees what is being moved.
-fn row(visual: usize, item: usize, dim: bool, theme: &pinion_core::theme::Theme) -> Scene {
+fn row(
+    visual: usize,
+    item: usize,
+    dim: bool,
+    focused: bool,
+    grabbed: bool,
+    theme: &pinion_core::theme::Theme,
+) -> Scene {
     let (label, base) = ITEMS[item];
     let fill = if dim {
         // Translucent so the dragged row reads as "lifted"; the witness
@@ -351,10 +515,21 @@ fn row(visual: usize, item: usize, dim: bool, theme: &pinion_core::theme::Theme)
             .with_size_px(16)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
+    let mut style = BoxStyle::filled(fill).with_corner_radius(ROW_RADIUS);
+    if grabbed {
+        // Picked-up (keyboard-dragged) row: a thicker Accent ring reads as
+        // "lifted", distinct from the plain focus cue.
+        style = style.with_border(Border::new(theme.resolve(ColorRole::Accent), 3));
+    } else if focused {
+        // Keyboard focus ring / AT active-descendant cue — a 2-px
+        // high-contrast outline (OnSurface reads against every witness
+        // hue). Drawn inside the row rect so it never reflows siblings.
+        style = style.with_border(Border::new(theme.resolve(ColorRole::OnSurface), 2));
+    }
     Scene::Container(
         ContainerNode::new(vec![text])
             .with_tag(row_tag(visual))
-            .with_style(BoxStyle::filled(fill).with_corner_radius(ROW_RADIUS))
+            .with_style(style)
             .with_layout(
                 LayoutStyle::new()
                     .with_justify(JustifyContent::Center)
@@ -364,42 +539,58 @@ fn row(visual: usize, item: usize, dim: bool, theme: &pinion_core::theme::Theme)
     )
 }
 
-/// The insertion line drawn at the drop gap during a drag — a thin accent
-/// bar full row width.
-fn insertion_line(theme: &pinion_core::theme::Theme) -> Scene {
+/// The insertion line for drop gap `k` — a thin accent bar, **absolutely
+/// positioned** inside the list container so showing it never reflows the
+/// rows (the R742.1-review polish fix: previously a flex child that
+/// shifted every row by its height).
+fn insertion_line(k: usize, theme: &pinion_core::theme::Theme) -> Scene {
     Scene::Container(
         ContainerNode::new(vec![])
             .with_tag("dnd_insert")
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Accent)).with_corner_radius(2))
-            .with_layout(LayoutStyle::new().with_size(Size::px(ROW_W, LINE_H))),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(0, gap_line_top(k))
+                    .with_size(Size::px(ROW_W, LINE_H)),
+            ),
     )
 }
 
-/// view-fn (§6.3): pure sync `ListState -> Scene`. Renders rows in visual
-/// order; during a drag the dragged row dims and an insertion line sits
-/// at the target gap.
+/// view-fn (§6.3): pure sync `ListState -> Scene`. Rows flow in a
+/// fixed-size list container (visual order); the dragged row dims, the
+/// focused row gets a ring, and — while dragging — an absolutely-
+/// positioned insertion line overlays the target gap without shifting
+/// any row.
 fn view(state: ListState) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let mut children = Vec::with_capacity(N + 2);
-    for k in 0..=N {
-        if state.preview.is_some_and(|p| p.insert_at == k) {
-            children.push(insertion_line(&theme));
-        }
-        if k < N {
-            let dim = state.preview.is_some_and(|p| p.from_visual == k);
-            children.push(row(k, state.order[k], dim, &theme));
-        }
+    let mut kids = Vec::with_capacity(N + 1);
+    for k in 0..N {
+        let dim = state.preview.is_some_and(|p| p.from_visual == k);
+        let focused = state.focused == Some(k);
+        kids.push(row(k, state.order[k], dim, focused, focused && state.grabbed, &theme));
     }
-    Scene::Container(
-        ContainerNode::new(children)
+    if let Some(p) = state.preview {
+        kids.push(insertion_line(p.insert_at, &theme));
+    }
+    let list = Scene::Container(
+        ContainerNode::new(kids)
             .with_tag(TAG)
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Center)
+                    .with_gap(GAP)
+                    .with_size(Size::px(ROW_W, LIST_H)),
+            ),
+    );
+    Scene::Container(
+        ContainerNode::new(vec![list])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(GAP),
+                    .with_align_items(AlignItems::Center),
             ),
     )
 }
@@ -420,10 +611,77 @@ fn order_from_json(v: &serde_json::Value) -> [usize; N] {
     out
 }
 
+/// Read the list's current keyboard cursor (`focused_index`), if any.
+fn cursor(node: &pinion_core::scene::ExternalNode) -> Option<usize> {
+    node.handle
+        .introspect()
+        .and_then(|i| i.query("focused_index"))
+        .and_then(|v| v.as_usize())
+}
+
+/// Set the keyboard cursor to `idx` via the `focused_index` slot.
+fn set_cursor(node: &mut pinion_core::scene::ExternalNode, idx: usize) -> bool {
+    if let Some(intro) = node.handle.introspect_mut() {
+        let _ = intro.intervene("focused_index", IntrospectValue::Int(i64::try_from(idx).unwrap_or(0)));
+    }
+    true
+}
+
+/// Move the cursor one row in `dir` (`+1` down, `-1` up), clamped at the
+/// ends. A first Arrow with no cursor lands on `0` (down) or `N-1` (up).
+fn move_cursor(node: &mut pinion_core::scene::ExternalNode, dir: i32) -> bool {
+    let next = match (cursor(node), dir) {
+        (Some(c), 1) => (c + 1).min(N - 1),
+        (Some(c), -1) => c.saturating_sub(1),
+        (None, 1) => 0,
+        (None, -1) => N - 1,
+        _ => 0,
+    };
+    set_cursor(node, next)
+}
+
+/// Move the focused row by `delta` slots (cursor following) through the
+/// `move` action — the shared funnel the AT increment/decrement path also
+/// uses. No-op (returns `false`) when no row is focused.
+fn move_item(node: &mut pinion_core::scene::ExternalNode, delta: i64) -> bool {
+    if cursor(node).is_none() {
+        return false;
+    }
+    if let Some(intro) = node.handle.introspect_mut() {
+        let _ = intro.invoke("move", IntrospectValue::Int(delta));
+    }
+    true
+}
+
+/// Whether the focused row is currently picked up (APG keyboard drag).
+fn is_grabbed(node: &pinion_core::scene::ExternalNode) -> bool {
+    node.handle
+        .introspect()
+        .and_then(|i| i.query("grabbed"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+/// Toggle the grab on the focused row (`Space` / `Enter`).
+fn toggle_grab(node: &mut pinion_core::scene::ExternalNode) -> bool {
+    if let Some(intro) = node.handle.introspect_mut() {
+        let _ = intro.invoke("grab", IntrospectValue::Null);
+    }
+    true
+}
+
+/// Cancel a grab, reverting to the pre-grab order (`Escape`).
+fn cancel_grab(node: &mut pinion_core::scene::ExternalNode) -> bool {
+    if let Some(intro) = node.handle.introspect_mut() {
+        let _ = intro.invoke("grab_cancel", IntrospectValue::Null);
+    }
+    true
+}
+
 /// Manual [`WidgetCore`] binding (descriptive-coordinator pattern shared
 /// with `hello-progress`): the reorder list has no keyboard-channel event
-/// enum — order changes flow through the drag session, observed via
-/// introspection.
+/// enum — order changes flow through the drag session or the keyboard
+/// `move` action, observed via introspection.
 struct DndView;
 
 impl WidgetCore for DndView {
@@ -465,7 +723,17 @@ impl WidgetCore for DndView {
                     }
                     _ => None,
                 };
-                return ListState { order, preview };
+                let focused = match intro.query("focused_index") {
+                    Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+                    _ => None,
+                };
+                let grabbed = matches!(intro.query("grabbed"), Some(IntrospectValue::Bool(true)));
+                return ListState {
+                    order,
+                    preview,
+                    focused,
+                    grabbed,
+                };
             }
         }
         ListState::default()
@@ -487,11 +755,79 @@ impl WidgetCore for DndView {
         None
     }
 
-    /// v1 has no keyboard reorder (APG `Ctrl+Arrow` move is a deferred
-    /// axis), so no row takes focus — reorder is reached via pointer +
-    /// `scene/drag`. The list stays AT-readable through `access_node`.
+    /// The list is a single Tab stop with roving focus (the WAI-ARIA
+    /// active-descendant model): `Arrow` keys move the cursor among rows,
+    /// `Ctrl+Arrow` reorders the row under it. Keyboard, pointer
+    /// (`scene/drag`), and AT all reach reorder.
     fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
+        vec![TAG]
+    }
+
+    /// Keyboard reorder — the APG "keyboard drag" model (one tab stop
+    /// with a roving cursor and pick-up). Modifier-free, so it drives
+    /// through plain `scene/key` (the RPC key channel carries no
+    /// modifiers) and reads naturally to a screen reader:
+    ///
+    /// * `Arrow`(Down/Right / Up/Left) — when *not* grabbing, move the
+    ///   cursor one row (clamped at the ends). When grabbing, move the
+    ///   picked-up row one slot, the cursor following.
+    /// * `Home` / `End` — cursor to first / last (or, while grabbing,
+    ///   move the row there — the `move` action clamps an over-range
+    ///   delta).
+    /// * `Space` / `Enter` — pick up the focused row, or drop it.
+    /// * `Escape` — cancel a grab, reverting to the pre-grab order.
+    ///
+    /// Keys route only when the list itself holds focus (no sibling
+    /// aliasing). Unrecognised keys return `false` for the shell's
+    /// swallow contract. `modifiers` is unused — the model is
+    /// deliberately modifier-free.
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        if focused != Some(TAG) {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let big = i64::try_from(N).unwrap_or(i64::MAX);
+        let grabbed = is_grabbed(node);
+        match key {
+            " " | "Spacebar" | "Enter" => toggle_grab(node),
+            "Escape" => grabbed && cancel_grab(node),
+            "ArrowDown" | "ArrowRight" => {
+                if grabbed {
+                    move_item(node, 1)
+                } else {
+                    move_cursor(node, 1)
+                }
+            }
+            "ArrowUp" | "ArrowLeft" => {
+                if grabbed {
+                    move_item(node, -1)
+                } else {
+                    move_cursor(node, -1)
+                }
+            }
+            "Home" => {
+                if grabbed {
+                    move_item(node, -big)
+                } else {
+                    set_cursor(node, 0)
+                }
+            }
+            "End" => {
+                if grabbed {
+                    move_item(node, big)
+                } else {
+                    set_cursor(node, N - 1)
+                }
+            }
+            _ => false,
+        }
     }
 
     fn fmt_state_log(state: &ListState) -> String {
@@ -501,21 +837,80 @@ impl WidgetCore for DndView {
 }
 
 impl WidgetA11y for DndView {
-    /// An [`AriaRole::List`] container with one [`AriaRole::ListItem`] per
-    /// row in *visual* order, each named by its label and carrying its
+    /// An [`AriaRole::List`] container claiming one [`AriaRole::ListItem`]
+    /// per row in *visual* order, each named by its label and carrying its
     /// 1-based position — so AT (and `scene/snapshot`) read the live order
-    /// without a pixel round-trip.
-    fn access_node(state: &ListState, _focused: Option<&str>) -> Vec<AccessNode> {
-        let mut nodes = vec![AccessNode::new(TAG, AriaRole::List).with_name("Reorderable list")];
+    /// without a pixel round-trip. When the list holds focus, the active
+    /// descendant (the keyboard cursor row) is marked `focused` so AT
+    /// announces the move target.
+    fn access_node(state: &ListState, focused: Option<&str>) -> Vec<AccessNode> {
+        let list_focused = focused == Some(TAG);
+        let active = state.focused.unwrap_or(0);
+        let mut list = AccessNode::new(TAG, AriaRole::List).with_name("Reorderable list");
+        for visual in 0..N {
+            list = list.with_child(row_tag(visual));
+        }
+        let mut nodes = vec![list];
         for (visual, &item) in state.order.iter().enumerate() {
             let pos = u32::try_from(visual + 1).unwrap_or(1);
+            let access_state = AccessState {
+                focused: list_focused && visual == active,
+                disabled: false,
+                hovered: false,
+                pressed: false,
+                checked: None,
+            };
             nodes.push(
                 AccessNode::new(row_tag(visual), AriaRole::ListItem)
                     .with_name(ITEMS[item].0)
-                    .with_position_in_set(pos),
+                    .with_position_in_set(pos)
+                    .with_state(access_state),
             );
         }
         nodes
+    }
+
+    /// Composite focus model: when the list is focused, report the parent
+    /// tag as the focus target and the cursor row as the
+    /// `aria-activedescendant`.
+    fn access_focus_target(state: &ListState, focused: Option<&str>) -> Option<AccessFocus> {
+        if focused == Some(TAG) {
+            Some(AccessFocus::composite(TAG, row_tag(state.focused.unwrap_or(0))))
+        } else {
+            focused.map(AccessFocus::atomic)
+        }
+    }
+
+    /// AT actions on a row sub-tag: `Focus` parks the cursor on it;
+    /// `Increment` / `Decrement` move that row down / up (the same `move`
+    /// funnel `Ctrl+Arrow` uses), giving assistive tech a reorder path.
+    fn access_child_invoke(
+        scene: &mut Scene,
+        _parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
+        let Ok(idx) = sub_tag.parse::<usize>() else {
+            return false;
+        };
+        if idx >= N {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        match action {
+            AccessAction::Focus | AccessAction::Click | AccessAction::Default => set_cursor(node, idx),
+            AccessAction::Increment => {
+                set_cursor(node, idx);
+                move_item(node, 1)
+            }
+            AccessAction::Decrement => {
+                set_cursor(node, idx);
+                move_item(node, -1)
+            }
+            AccessAction::Other => false,
+        }
     }
 }
 
@@ -538,6 +933,11 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::scene::ExternalNode;
+    use pinion_core::Modifiers;
+
+    /// `apply_key` is deliberately modifier-free; `NONE` stands in for the
+    /// (ignored) modifier argument.
+    const NONE: Modifiers = Modifiers::empty();
 
     fn fresh() -> ReorderListExternal {
         ReorderListExternal::new()
@@ -634,6 +1034,30 @@ mod tests {
     }
 
     #[test]
+    fn drag_to_over_gap_holds_last_gap_no_snap_back() {
+        let mut ext = fresh();
+        ext.invoke("send", IntrospectValue::Text("1:PointerDown".into())).expect("grab Bravo");
+        let pl = payload(1);
+        // Over row 2's lower half → gap 3.
+        ext.drag_to(&pl, Some(drop_at(2, 0.8)));
+        assert_eq!(ext.preview.borrow().unwrap().insert_at, 3);
+        // Cursor crosses an inter-row gap (over the list container `TAG`,
+        // not a row): `drop_gap` is None, but the indicator HOLDS at gap 3
+        // instead of snapping back to the dragged row's gap (1) — the
+        // "line jumps up then down" fix.
+        let gap_pt = DropPoint {
+            tag: TAG.to_string(),
+            x_rel: 0.5,
+            y_rel: 0.5,
+        };
+        ext.drag_to(&pl, Some(gap_pt));
+        assert_eq!(ext.preview.borrow().unwrap().insert_at, 3, "held last gap, no snap to 1");
+        // Fully off the list (None) also holds, not snaps.
+        ext.drag_to(&pl, None);
+        assert_eq!(ext.preview.borrow().unwrap().insert_at, 3);
+    }
+
+    #[test]
     fn query_order_and_labels_reflect_reorder() {
         let mut ext = fresh();
         ext.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
@@ -661,6 +1085,121 @@ mod tests {
         assert_eq!(state.order, [1, 2, 0, 3]);
         assert!(state.preview.is_none());
     }
+
+    // ----- R742.2 keyboard reorder + overlay -----
+
+    #[test]
+    fn move_action_reorders_clamps_and_follows_cursor() {
+        let mut ext = fresh();
+        ext.intervene("focused_index", IntrospectValue::Int(0)).expect("focus 0");
+        // Ctrl+Down: Alpha (vis 0) moves below Bravo; cursor follows to 1.
+        let r = ext.invoke("move", IntrospectValue::Int(1)).expect("move");
+        assert_eq!(r, IntrospectValue::Int(1));
+        assert_eq!(*ext.order.borrow(), [1, 0, 2, 3]);
+        // Over-range delta clamps to the last / first slot.
+        ext.intervene("focused_index", IntrospectValue::Int(1)).expect("focus 1");
+        ext.invoke("move", IntrospectValue::Int(10)).expect("move");
+        assert_eq!(ext.focused.get(), Some(3));
+        ext.invoke("move", IntrospectValue::Int(-10)).expect("move");
+        assert_eq!(ext.focused.get(), Some(0));
+    }
+
+    #[test]
+    fn move_without_focus_is_noop() {
+        let mut ext = fresh();
+        assert_eq!(ext.invoke("move", IntrospectValue::Int(1)).expect("move"), IntrospectValue::Null);
+        assert_eq!(*ext.order.borrow(), IDENTITY);
+    }
+
+    #[test]
+    fn intervene_focused_index_clamps_and_rejects() {
+        let mut ext = fresh();
+        ext.intervene("focused_index", IntrospectValue::Int(2)).expect("in range");
+        assert_eq!(ext.focused.get(), Some(2));
+        assert!(matches!(
+            ext.intervene("focused_index", IntrospectValue::Int(99)),
+            Err(InterveneError::OutOfRange)
+        ));
+        assert!(matches!(
+            ext.intervene("order", IntrospectValue::Int(0)),
+            Err(InterveneError::ReadOnly)
+        ));
+    }
+
+    #[test]
+    fn apply_key_arrow_navigates_then_grab_reorders() {
+        let mut scene = Scene::External(ExternalNode::new(Box::new(fresh())).with_tag(TAG));
+        // Keys ignored unless the list holds focus.
+        assert!(!DndView::apply_key(&mut scene, None, "ArrowDown", NONE));
+        // Arrow navigates the cursor; clamps at the ends; no reorder.
+        assert!(DndView::apply_key(&mut scene, Some(TAG), "ArrowDown", NONE));
+        assert_eq!(DndView::read_state(&scene).focused, Some(0));
+        assert!(DndView::apply_key(&mut scene, Some(TAG), "End", NONE));
+        assert_eq!(DndView::read_state(&scene).focused, Some(N - 1));
+        assert_eq!(DndView::read_state(&scene).order, IDENTITY, "navigation does not reorder");
+        // Space picks up the focused (last) row.
+        assert!(DndView::apply_key(&mut scene, Some(TAG), " ", NONE));
+        assert!(DndView::read_state(&scene).grabbed, "Space grabs the focused row");
+        // While grabbed, ArrowUp MOVES the row; the cursor follows.
+        assert!(DndView::apply_key(&mut scene, Some(TAG), "ArrowUp", NONE));
+        let st = DndView::read_state(&scene);
+        assert_eq!(st.order, [0, 1, 3, 2], "Delta moved above Charlie");
+        assert_eq!(st.focused, Some(2), "cursor followed the grabbed row");
+        assert!(st.grabbed, "still grabbed mid-reorder");
+        // Space drops; the new order is kept.
+        assert!(DndView::apply_key(&mut scene, Some(TAG), " ", NONE));
+        assert!(!DndView::read_state(&scene).grabbed);
+        assert_eq!(DndView::read_state(&scene).order, [0, 1, 3, 2]);
+    }
+
+    #[test]
+    fn escape_cancels_grab_and_reverts_order() {
+        let mut scene = Scene::External(ExternalNode::new(Box::new(fresh())).with_tag(TAG));
+        assert!(DndView::apply_key(&mut scene, Some(TAG), "Home", NONE)); // cursor -> 0
+        assert!(DndView::apply_key(&mut scene, Some(TAG), " ", NONE)); // grab row 0
+        assert!(DndView::apply_key(&mut scene, Some(TAG), "End", NONE)); // move it to the bottom
+        assert_eq!(DndView::read_state(&scene).order, [1, 2, 3, 0]);
+        // Escape reverts to the pre-grab order and drops.
+        assert!(DndView::apply_key(&mut scene, Some(TAG), "Escape", NONE));
+        let st = DndView::read_state(&scene);
+        assert!(!st.grabbed);
+        assert_eq!(st.order, IDENTITY, "Escape reverts to the pre-grab order");
+    }
+
+    #[test]
+    fn grab_action_snapshots_and_cancel_reverts() {
+        let mut ext = fresh();
+        ext.intervene("focused_index", IntrospectValue::Int(0)).expect("focus");
+        // Explicit grab via Bool(true) (the deterministic RPC / AT path).
+        assert_eq!(
+            ext.invoke("grab", IntrospectValue::Bool(true)).expect("grab"),
+            IntrospectValue::Bool(true)
+        );
+        assert!(ext.grabbed());
+        ext.invoke("move", IntrospectValue::Int(1)).expect("move");
+        assert_ne!(*ext.order.borrow(), IDENTITY);
+        ext.invoke("grab_cancel", IntrospectValue::Null).expect("cancel");
+        assert!(!ext.grabbed());
+        assert_eq!(*ext.order.borrow(), IDENTITY, "cancel reverts to the snapshot");
+        // Grab without a focused row is a no-op (false).
+        let mut ext2 = fresh();
+        assert_eq!(
+            ext2.invoke("grab", IntrospectValue::Null).expect("grab"),
+            IntrospectValue::Bool(false)
+        );
+    }
+
+    #[test]
+    fn gap_line_top_is_monotonic_and_clamped() {
+        let tops: Vec<u32> = (0..=N).map(gap_line_top).collect();
+        assert_eq!(tops[0], 0, "gap 0 sits at the top edge");
+        for w in tops.windows(2) {
+            assert!(w[1] >= w[0], "insertion line moves down as the gap index grows");
+        }
+        for &t in &tops {
+            assert!(t <= LIST_H - LINE_H, "line stays inside the list container");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -683,6 +1222,8 @@ mod a11y_tests {
         let state = ListState {
             order: [2, 0, 3, 1],
             preview: None,
+            focused: None,
+            grabbed: false,
         };
         let nodes = DndView::access_node(&state, None);
         let names: Vec<&str> = nodes[1..].iter().filter_map(|n| n.name.as_deref()).collect();
