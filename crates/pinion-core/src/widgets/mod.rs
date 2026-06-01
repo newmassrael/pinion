@@ -26,6 +26,7 @@ pub mod text_field;
 pub mod toggle;
 pub mod toolbar;
 pub mod tooltip;
+pub mod virtual_list;
 pub mod widget;
 
 pub use widget::{IntentEmitter, Widget, WidgetTransition};

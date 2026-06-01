@@ -16332,6 +16332,49 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R744 — R744 implements the section 5.27 virtualization capability via view-fn composition over ScrollNode (react-window FixedSizeList technique): a 10000-row list materializes only the visible window while a full-height sizer preserves the scroll bound; the dedicated Scene::VirtualList IR variant stays deferred per R690.A.
+
+**Changes**:
+- New pinion_core::widgets::virtual_list: VisibleWindow + compute_visible_range + content_height
+- Pure backend-agnostic windowing math (uniform pitch), 15 unit tests incl overflow/overscan/clamp
+- New pinion_widget_paint::virtual_list::view_virtual_list assembling a windowed ScrollNode
+- Shape: auto content-root wrapper -> fixed-height sizer -> absolutely-positioned visible rows
+- Sizer reports full N*pitch height so the runtime scroll-bound pass writes the true max_y
+- Scrollbar thumb sizes against the total extent; only the window exists in the scene tree
+- Zero changes to scroll / layout / scrollbar substrate -- purely additive view composition
+- New example hello-virtual-list: 10000-row list, StubExternal anchor + ScrollBarExternal peer
+- a11y: AriaRole::List aria-setsize=N + per-visible-row AriaRole::ListItem aria-posinset
+- Materialization at view-fn (O(window)/frame); composition path, not the R32 layout-pass variant
+
+
+
+**Verification**:
+- cargo test --workspace: 0 fail; core virtual_list 15/15, widget-paint 5/5, example 4/4
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)
+- demo sweep 92/92 (added r744_virtual_list.py)
+- r744 demo 35+ asserts: rendered band == windowing math at offset 0 / 4000 / bottom
+- only ~15 of 10000 rows materialize in the tree; deep rows absent; band slides on scroll
+- scroll-to-bottom offset clamps to N*pitch - viewport (proves sizer drove max_y); last row reached
+- scrollbar thumb tiny vs viewport (bound = total extent)
+- live pixels (PINION_SCREENSHOT): zebra rows distinct; list region distinct from page surround
+- live native XTEST wheel on :0 real focused window: rows shift, parity with hello-listbox
+
+
+
+**Impact**: §5.27, §5.45, §5.40, §5.16
+
+
+**Carry forward**:
+- Scene::VirtualList IR variant + scene/virtual_list RPC (R32 design) deferred to R750+
+- That layout-pass form decouples view-fn from viewport geometry; gated on Scene-clone-closure carry
+- Variable / measured row height: needs prefix-sum offset table + binary search; uniform pitch only now
+- Formal VirtualListModel trait premature at 1 consumer; model = item_count + FnMut(usize)->Scene
+- Selection / sort on the model: later mini-series round; reuse widgets::selection helpers
+- u32 pixel ceiling: total height saturates at u32::MAX (browsers cap scroll height likewise)
+- Horizontal + 2-D grid windowing: vertical-only this slice
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

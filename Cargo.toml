@@ -22,6 +22,7 @@ members = [
     "examples/hello-button-tui",
     "examples/hello-dnd",
     "examples/hello-tab-reorder",
+    "examples/hello-virtual-list",
     "examples/hello-gradient",
     "examples/hello-path",
     "examples/hello-snackbar",
