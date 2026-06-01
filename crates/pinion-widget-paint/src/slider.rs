@@ -27,8 +27,9 @@
 
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::Scene;
+use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::slider::SliderState;
-use pinion_core::WidgetStateName;
+use pinion_core::{Color, WidgetStateName};
 
 /// R737 §5.38 — read a slider external's `(SliderState, f32)` from the
 /// state scene by tag. Returns `None` when no introspectable external
@@ -49,6 +50,65 @@ pub fn read_slider_state(scene: &Scene, tag: &str) -> Option<(SliderState, f32)>
     };
     let value = intro.query("value").and_then(|v| v.as_f32()).unwrap_or(0.0);
     Some((state, value))
+}
+
+// ─── R738 §5.38 §5.50 — slider M3 color contract (SSOT) ───────────────
+//
+// The three color ramps a slider's track + thumb paint reads. Lifted out
+// of the per-binding view-fns once a 4th identical consumer appeared
+// (`hello-slider`, `hello-slider-vertical`/`settings-panel`, and
+// `hello-slider-discrete` already carried byte-identical copies; the
+// R738 `hello-range-slider` is the trigger). These are *opinionated*
+// paint (specific M3 state-layer lerp weights), so unlike the mechanical
+// [`read_slider_state`] reader the R703/R727 rule defers the lift to the
+// 3rd *identical* consumer rather than the 2nd — and the R737 carry that
+// logged this as a "2-copy deferred" undercounted (it only looked at the
+// two sliders R737 touched; `settings-panel` was the silent third). Per
+// [[r735.1]] / [[verify-seed-claims-audit-first]], a deferred carry is
+// re-audited every round, and the entry self-grep for R738 caught the
+// real count. The thumb-fill peer [`checkbox::checkbox_accent_for`] uses
+// the same `Accent` + state-layer anchor for its checked fill.
+
+/// R738 §5.38 §5.50 — the *active* (filled) track color. Anchors on
+/// [`ColorRole::Accent`] and layers the canonical M3 state-layer overlays
+/// (hover 0.08 / dragging 0.12 toward `OnSurface`); `Disabled` fades 0.38
+/// toward `Surface` for the washed look. The slider peer of
+/// [`checkbox::checkbox_accent_for`](crate::checkbox::checkbox_accent_for).
+#[must_use]
+pub fn slider_accent_for(theme: &Theme, state: SliderState) -> Color {
+    let base = theme.resolve(ColorRole::Accent);
+    match state {
+        SliderState::Idle => base,
+        SliderState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        SliderState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+    }
+}
+
+/// R738 §5.38 §5.50 — the *inactive* (unfilled) track color: M3
+/// `surfaceContainerHighest` (the inactive-track tier), fading 0.38
+/// toward `Surface` when `Disabled`.
+#[must_use]
+pub fn slider_track_inactive(theme: &Theme, state: SliderState) -> Color {
+    let base = theme.resolve(ColorRole::SurfaceContainerHighest);
+    match state {
+        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+        _ => base,
+    }
+}
+
+/// R738 §5.38 §5.50 — the thumb fill: M3 `OnAccent` (the paired-contrast
+/// role for controls on accent fills). `Dragging` tints 0.2 toward
+/// `Accent` so the moment of capture is visible; `Disabled` washes 0.38
+/// toward `Surface`.
+#[must_use]
+pub fn slider_thumb_fill(theme: &Theme, state: SliderState) -> Color {
+    let on_accent = theme.resolve(ColorRole::OnAccent);
+    match state {
+        SliderState::Idle | SliderState::Hover => on_accent,
+        SliderState::Dragging => on_accent.lerp(theme.resolve(ColorRole::Accent), 0.2),
+        SliderState::Disabled => on_accent.lerp(theme.resolve(ColorRole::Surface), 0.38),
+    }
 }
 
 #[cfg(test)]
@@ -85,5 +145,49 @@ mod tests {
     fn returns_none_for_missing_external() {
         let scene = slider_scene("vol", 0.5);
         assert_eq!(read_slider_state(&scene, "nope"), None, "missing tag → None (caller defaults)");
+    }
+
+    // ── R738 color contract (pre-lift parity with the inline bindings) ──
+
+    #[test]
+    fn slider_accent_idle_resolves_to_theme_accent() {
+        let theme = Theme::light();
+        assert_eq!(slider_accent_for(&theme, SliderState::Idle), theme.accent);
+    }
+
+    #[test]
+    fn slider_accent_dragging_lerps_toward_on_surface() {
+        let theme = Theme::light();
+        let expected = theme
+            .resolve(ColorRole::Accent)
+            .lerp(theme.resolve(ColorRole::OnSurface), 0.12);
+        assert_eq!(slider_accent_for(&theme, SliderState::Dragging), expected);
+    }
+
+    #[test]
+    fn slider_track_inactive_idle_is_surface_container_highest() {
+        let theme = Theme::light();
+        assert_eq!(
+            slider_track_inactive(&theme, SliderState::Idle),
+            theme.resolve(ColorRole::SurfaceContainerHighest)
+        );
+        // Disabled fades toward Surface (observationally distinct).
+        assert_ne!(
+            slider_track_inactive(&theme, SliderState::Disabled),
+            theme.resolve(ColorRole::SurfaceContainerHighest)
+        );
+    }
+
+    #[test]
+    fn slider_thumb_fill_idle_is_on_accent_dragging_tints() {
+        let theme = Theme::light();
+        assert_eq!(
+            slider_thumb_fill(&theme, SliderState::Idle),
+            theme.resolve(ColorRole::OnAccent)
+        );
+        let expected_drag = theme
+            .resolve(ColorRole::OnAccent)
+            .lerp(theme.resolve(ColorRole::Accent), 0.2);
+        assert_eq!(slider_thumb_fill(&theme, SliderState::Dragging), expected_drag);
     }
 }

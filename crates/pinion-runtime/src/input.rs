@@ -811,14 +811,27 @@ impl InputRouter {
         let Some(paint) = self.last_paint_scene.as_ref() else {
             return;
         };
-        let Some(rect) = rect_for_tag(paint, target_tag) else {
-            return;
-        };
-        let (x_rel, y_rel) = normalize_cursor(rect, cursor_x, cursor_y);
         let (primary, _) = split_subindex(target_tag);
         let Some(external) = find_external_by_tag(state_scene, primary) else {
             return;
         };
+        // R738 §5.35 — choose the normalization rect per the widget's
+        // opt-in. Default: the captured (sub-)tag's own rect — correct
+        // for single-tag capture widgets (primary == target_tag) and for
+        // composites whose drag value is sub-region-relative (dock
+        // tear-off). A widget whose value spans the whole widget (the
+        // range slider) returns `true` and normalizes against the primary
+        // (track) rect, so grabbing a thumb sub-tag still maps the cursor
+        // across the full track instead of saturating on the thumb rect.
+        let norm_tag = if external.handle.capture_normalize_against_primary() {
+            primary
+        } else {
+            target_tag
+        };
+        let Some(rect) = rect_for_tag(paint, norm_tag) else {
+            return;
+        };
+        let (x_rel, y_rel) = normalize_cursor(rect, cursor_x, cursor_y);
         external.handle.pointer_move(x_rel, y_rel);
     }
 
@@ -1412,16 +1425,24 @@ mod tests {
     struct DragCaptureExternal {
         events: EventLog,
         moves: MoveLog,
+        // R738 — when true, `capture_normalize_against_primary` returns
+        // true (range-slider-style whole-widget normalization).
+        normalize_primary: bool,
     }
 
     impl DragCaptureExternal {
         fn new() -> (Self, EventLog, MoveLog) {
+            Self::with_normalize_primary(false)
+        }
+
+        fn with_normalize_primary(normalize_primary: bool) -> (Self, EventLog, MoveLog) {
             let events = Arc::new(Mutex::new(Vec::new()));
             let moves = Arc::new(Mutex::new(Vec::new()));
             (
                 Self {
                     events: Arc::clone(&events),
                     moves: Arc::clone(&moves),
+                    normalize_primary,
                 },
                 events,
                 moves,
@@ -1447,6 +1468,9 @@ mod tests {
         }
         fn wants_pointer_capture(&self) -> bool {
             true
+        }
+        fn capture_normalize_against_primary(&self) -> bool {
+            self.normalize_primary
         }
         fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
             self.moves.lock().expect("mutex poisoned").push((x_rel, y_rel));
@@ -2061,6 +2085,115 @@ mod tests {
         (scene, events, moves)
     }
 
+    /// R738 §5.35 — paint fixture for a composite that paints BOTH a
+    /// primary track rect and a sub-tagged thumb rect (the range-slider
+    /// shape), so primary-rect vs sub-rect normalization differ.
+    fn paint_with_primary_and_subtag(
+        viewport_w: u32,
+        viewport_h: u32,
+        primary_rect: Rect,
+        thumb_rect: Rect,
+        primary: &str,
+        sub_index: &str,
+    ) -> Scene {
+        let mut thumb = Scene::Container(
+            ContainerNode::new(vec![])
+                .with_tag(format!("{primary}#{sub_index}"))
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut thumb {
+            c.rect = thumb_rect;
+        }
+        let mut track = Scene::Container(
+            ContainerNode::new(vec![thumb])
+                .with_tag(primary.to_string())
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut track {
+            c.rect = primary_rect;
+        }
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![track]).with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, viewport_w, viewport_h);
+        }
+        root
+    }
+
+    #[test]
+    fn capture_normalize_against_primary_uses_track_rect() {
+        // R738 regression: a capture widget that opts into
+        // `capture_normalize_against_primary` (the dual-thumb range
+        // slider) normalizes the dragged cursor against the PRIMARY
+        // (track) rect even though capture pinned a thumb sub-tag — so
+        // x_rel maps across the whole track instead of saturating on the
+        // thumb rect (the bug where grabbing the low thumb moved the
+        // high thumb). The `DragCaptureExternal` mock here returns true.
+        let mut router = InputRouter::new();
+        let (drag, _events, moves) = DragCaptureExternal::with_normalize_primary(true);
+        let mut state =
+            Scene::External(ExternalNode::new(Box::new(drag)).with_tag("range"));
+        // Track x 80..120 (width 40); thumb x 96..104 (width 8). Cursor
+        // x=98 is on the thumb but off-centre so the two rects differ.
+        let paint = paint_with_primary_and_subtag(
+            200,
+            200,
+            Rect::new(80, 80, 40, 40),
+            Rect::new(96, 80, 8, 40),
+            "range",
+            "low",
+        );
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 98.0, 100.0, &mut state); // hover thumb
+        router.pointer_down(PointerId::MOUSE, &mut state); // capture range#low + forward
+        assert_eq!(router.captured_target(PointerId::MOUSE), Some("range#low"));
+        let log = read_moves(&moves);
+        assert_eq!(log.len(), 1, "click-to-position forwards once");
+        // (98-80)/40 = 0.45 against the TRACK; against the 8px thumb it
+        // would be (98-96)/8 = 0.25. Asserting 0.45 proves the opt-in
+        // normalizes against the primary rect.
+        assert!(
+            (log[0].0 - 0.45).abs() < 1e-4,
+            "x_rel normalized against the track (0.45), got {}",
+            log[0].0
+        );
+    }
+
+    #[test]
+    fn capture_default_normalizes_against_subtag_even_with_primary_painted() {
+        // R738 — the DEFAULT (false) normalizes against the captured
+        // sub-tag's rect even when the primary IS painted. This is the
+        // dock tear-off's exact shape (panel primary + header sub-tag):
+        // its tear-off fraction is measured relative to the grabbed
+        // header, so it must NOT normalize against the whole panel.
+        let mut router = InputRouter::new();
+        let (drag, _events, moves) = DragCaptureExternal::with_normalize_primary(false);
+        let mut state =
+            Scene::External(ExternalNode::new(Box::new(drag)).with_tag("panel"));
+        let paint = paint_with_primary_and_subtag(
+            200,
+            200,
+            Rect::new(80, 80, 40, 40),
+            Rect::new(96, 80, 8, 40),
+            "panel",
+            "header",
+        );
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 98.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(router.captured_target(PointerId::MOUSE), Some("panel#header"));
+        let log = read_moves(&moves);
+        assert_eq!(log.len(), 1);
+        // (98-96)/8 = 0.25 against the 8px header sub-rect (NOT 0.45,
+        // which would be the whole-panel normalization).
+        assert!(
+            (log[0].0 - 0.25).abs() < 1e-4,
+            "x_rel normalized against the sub-tag header (0.25), got {}",
+            log[0].0
+        );
+    }
+
     #[test]
     fn sub_index_dispatch_forwards_idx_prefixed_event_name() {
         // Paint `main_group#2` + state `main_group` → cursor on the
@@ -2128,6 +2261,11 @@ mod tests {
         // routes the call to the primary `External`. R51.41
         // composite hit-target convention is symmetric for drag-
         // aware composites even though `RadioGroup` itself opts out.
+        // (R738 §5.35 — the dock tear-off relies on this raw-sub-rect
+        // normalization: its tear-off fraction is measured relative to
+        // the grabbed header, not the whole panel. The range slider,
+        // which needs whole-track normalization, instead makes the
+        // *track* its sole capture target rather than tagging thumbs.)
         let mut router = InputRouter::new();
         let (mut state, _events, moves) = state_with_primary_drag("composite");
         let paint = paint_with_subindex_tag(

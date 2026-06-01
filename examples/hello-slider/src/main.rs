@@ -55,7 +55,7 @@ use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::slider::{SliderEvent, SliderExternal, SliderState};
 use pinion_core::{
     scale_normalized_to_px, Color, Frame, Scene, WidgetCore, WidgetStateName,
@@ -63,7 +63,9 @@ use pinion_core::{
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
-use pinion_widget_paint::slider::read_slider_state;
+use pinion_widget_paint::slider::{
+    read_slider_state, slider_accent_for, slider_thumb_fill, slider_track_inactive,
+};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSliderRenderer, HelloSliderRendererError);
@@ -75,18 +77,9 @@ const WIN_H: u32 = 220;
 const THEME_TAG: &str = "app";
 
 /// (R57.X.slider §5.50) Material 3 slider filled-track + thumb base
-/// = `ColorRole::Accent`. Hover / Dragging layer the M3 state-layer
-/// overlay (8 % / 12 % toward `OnSurface`); Disabled fades 38 %
-/// toward `Surface` for the canonical washed look.
-fn slider_accent_for(theme: &Theme, state: SliderState) -> Color {
-    let base = theme.resolve(ColorRole::Accent);
-    match state {
-        SliderState::Idle => base,
-        SliderState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        SliderState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
-}
+// (R738 §5.38) The track/thumb M3 color contract is the lifted SSOT in
+// `pinion_widget_paint::slider` (`slider_accent_for` / `slider_track_
+// inactive` / `slider_thumb_fill`) — 4-consumer opinionated-paint lift.
 // Track is 200×8 — the thin Material rail. The track's pill radius
 // is 4 (= TRACK_H / 2) so its ends round flush with the thumb.
 const TRACK_W: u32 = 200;
@@ -139,22 +132,12 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
     let filled_color: Color = slider_accent_for(&theme, state);
     // Unfilled portion = M3 `surfaceContainerHighest` (the inactive-
     // track tier). Disabled fades toward `Surface`.
-    let unfilled_color: Color = match state {
-        SliderState::Disabled => theme
-            .resolve(ColorRole::SurfaceContainerHighest)
-            .lerp(theme.resolve(ColorRole::Surface), 0.38),
-        _ => theme.resolve(ColorRole::SurfaceContainerHighest),
-    };
+    let unfilled_color: Color = slider_track_inactive(&theme, state);
     // Thumb = `OnAccent` (canonical M3 paired-contrast role for
     // controls on accent fills). Dragging tints slightly toward the
     // filled track so the moment of capture is visible; Disabled
     // washes toward `Surface`.
-    let on_accent = theme.resolve(ColorRole::OnAccent);
-    let thumb_fill: Color = match state {
-        SliderState::Idle | SliderState::Hover => on_accent,
-        SliderState::Dragging => on_accent.lerp(theme.resolve(ColorRole::Accent), 0.2),
-        SliderState::Disabled => on_accent.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    };
+    let thumb_fill: Color = slider_thumb_fill(&theme, state);
     // R51.154 §5.3 — value * RANGE → leading-pixel width of the
     // filled portion. [`scale_normalized_to_px`] handles the clamp +
     // safe cast + drift saturation; the bespoke per-channel cast

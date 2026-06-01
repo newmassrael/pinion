@@ -54,9 +54,11 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::slider::{SliderExternal, SliderState};
-use pinion_core::{scale_normalized_to_px, Color, Frame, Scene, WidgetCore, WidgetStateName};
+use pinion_core::{scale_normalized_to_px, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::slider::read_slider_state;
+use pinion_widget_paint::slider::{
+    read_slider_state, slider_accent_for, slider_thumb_fill, slider_track_inactive,
+};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSliderDiscreteRenderer, HelloSliderDiscreteRendererError);
@@ -87,19 +89,6 @@ const THUMB_RADIUS: u32 = 9;
 const RANGE: u32 = TRACK_W - THUMB_SIZE;
 const TICK_SIZE: u32 = 4;
 const ROW_GAP: u32 = 18;
-
-/// M3 filled-track + thumb base = `Accent`; Hover / Dragging layer the
-/// state-layer overlay, Disabled fades toward `Surface` (hello-slider
-/// palette, shared M3 convention).
-fn accent_for(theme: &Theme, state: SliderState) -> Color {
-    let base = theme.resolve(ColorRole::Accent);
-    match state {
-        SliderState::Idle => base,
-        SliderState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        SliderState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
-}
 
 /// Cached posture: the SCXML interaction state + the snapped value. Both
 /// read from the live `SliderExternal` so the cache never diverges from
@@ -165,13 +154,8 @@ fn view(state: &DiscState, _frame: &Frame) -> Scene {
     let rail = Scene::Box(
         BoxNode::new(
             Rect::default(),
-            BoxStyle::filled(match interaction {
-                SliderState::Disabled => theme
-                    .resolve(ColorRole::SurfaceContainerHighest)
-                    .lerp(theme.resolve(ColorRole::Surface), 0.38),
-                _ => theme.resolve(ColorRole::SurfaceContainerHighest),
-            })
-            .with_corner_radius(TRACK_RADIUS),
+            BoxStyle::filled(slider_track_inactive(&theme, interaction))
+                .with_corner_radius(TRACK_RADIUS),
         )
         .with_layout(
             LayoutStyle::new()
@@ -183,7 +167,7 @@ fn view(state: &DiscState, _frame: &Frame) -> Scene {
     let filled = Scene::Box(
         BoxNode::new(
             Rect::default(),
-            BoxStyle::filled(accent_for(&theme, interaction)).with_corner_radius(TRACK_RADIUS),
+            BoxStyle::filled(slider_accent_for(&theme, interaction)).with_corner_radius(TRACK_RADIUS),
         )
         .with_layout(
             LayoutStyle::new()
@@ -201,15 +185,7 @@ fn view(state: &DiscState, _frame: &Frame) -> Scene {
     }
 
     // Thumb at the snapped value position.
-    let thumb_fill = match interaction {
-        SliderState::Idle | SliderState::Hover => theme.resolve(ColorRole::OnAccent),
-        SliderState::Dragging => theme
-            .resolve(ColorRole::OnAccent)
-            .lerp(theme.resolve(ColorRole::Accent), 0.2),
-        SliderState::Disabled => theme
-            .resolve(ColorRole::OnAccent)
-            .lerp(theme.resolve(ColorRole::Surface), 0.38),
-    };
+    let thumb_fill = slider_thumb_fill(&theme, interaction);
     let thumb = Scene::Box(
         BoxNode::new(
             Rect::default(),

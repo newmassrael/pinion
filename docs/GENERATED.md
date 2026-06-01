@@ -15814,6 +15814,83 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R738 — R738 dual-thumb range slider — RangeSliderExternal substrate (shared SliderPolicy SCXML + low/high/active sidecar, nearest-thumb pick, monotonic low<=high) + 4-consumer slider color SSOT lift + hello-range-slider 1st consumer (two-Tab-stop APG dual-thumb)
+
+**Changes**:
+- R738 dual-thumb range slider (WAI-ARIA Slider Multi-Thumb / Material range)
+- RangeSliderExternal reuses single-slider SliderPolicy SCXML (Idle/Hover/Dragging same)
+- Two-value sidecar low/high + active thumb; nearest-thumb pick on first drag; monotonic low<=high
+- Not two SliderExternals: one shared track rect needs one coordinating model for the pick
+- Introspect state/low/high/active(read-only)/orientation/send; intervene low/high clamp to other
+- value_changing + value_committed (active thumb) intent channels mirror the single slider
+- SSOT lift slider_accent_for/slider_track_inactive/slider_thumb_fill to pinion-widget-paint::slider
+- 4-consumer color lift (slider/discrete/settings-panel/range); R737 carry undercounted it as 2
+- Entry self-grep found settings-panel the silent 3rd copy (re-audit deferred carries each round)
+- New hello-range-slider: two-Tab-stop composite focus range#low/range#high, APG arrows+Home/End
+- a11y Group + two cross-constrained Slider children (low valuemax=high, high valuemin=low)
+
+
+
+**Verification**:
+- pinion-core range_slider 16 unit (pick/clamp/drag-latch/commit/intervene/read-only/vertical)
+- pinion-widget-paint slider 7 unit (+4 R738 lifted color contract pre-lift parity)
+- hello-range-slider 9 binding unit (two Tab stops, per-thumb arrows, monotonic clamp, dual a11y)
+- cargo test --workspace -j2: 4238 passed, 0 failed (50 binaries; vello-gated ignored)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic: clean
+- r738_range_slider.py 49 assertions + PINION_SCREENSHOT live-pixel (fill vs rail vs page vs thumb)
+
+
+
+**Impact**: §5.16, §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- discrete (stepped) range variant deferred — RangeSlider has no step; a discrete consumer adds it
+- per-thumb hover/press visual deferred — both thumbs share one SliderState; active is tracked
+- track-click between thumbs adjusts nearest thumb but does not move keyboard focus (additive axis)
+- aria-valuetext named stops (R737 carry) still open — labeled discrete slider / range axis
+
+
+
+### R738.1 — R738.1 audit + user-caught live bug clearance — grabbing the low thumb moved the high thumb; root cause was InputRouter normalizing the captured cursor against the sub-tag (thumb) rect; fixed via a new External::capture_normalize_against_primary opt-in (default false, range slider returns true) after a too-broad global fix broke dock tear-off; + accent border-ring handle visibility + audit smell fixes
+
+**Changes**:
+- R738.1 audit + live-interaction bug clearance (range slider)
+- BUG (user-caught, live window): grabbing the low thumb moved the high thumb
+- Cause: forward_pointer_move normalized the captured cursor vs the sub-tag (thumb) rect
+- The 18px thumb rect saturated x_rel on any drag so the nearest-thumb pick hit the far thumb
+- First fix (global primary-rect normalize) broke dock tear-off (sweep caught it) -> reverted
+- Correct fix: new External::capture_normalize_against_primary() opt-in, default false
+- Range returns true (value spans track); dock stays false; router honors the per-widget flag
+- Thumbs stay clickable + focusable hit-targets (full APG); single-tag + dock widgets unaffected
+- Visibility: white OnAccent thumbs were invisible on the light page; +2px accent border ring
+- Audit smells: boot() dedup; thumb() takes &Theme; strengthened vertical-pointer unit test
+- Two router regression tests (opt-in -> track 0.45; default -> sub-tag header 0.25)
+- Demo: grab a thumb (from_path) + mid-track drag asserts grab-low->low; endpoints had masked the bug
+
+
+
+**Verification**:
+- pinion-runtime +2 unit (capture_normalize opt-in -> track; default -> sub-tag header)
+- pinion-core range_slider 16 unit (incl. strengthened vertical-pointer inversion)
+- External gains capture_normalize_against_primary (default false); existing impls inherit it
+- cargo test --workspace -j2: 0 failed; clippy --features pinion-runtime/vello -D pedantic: clean
+- full headless sweep 87/87 (both r683 dock tear-off and r738 range slider green)
+- r738_range_slider.py 51 assertions; grab low thumb -> low moves; live window user-confirmed
+
+
+
+**Impact**: §5.15, §5.35, §5.38, §5.40
+
+
+**Carry forward**:
+- bare-track click between thumbs moves nearest thumb without focusing (thumb-click focuses); minor
+- discrete (stepped) range + aria-valuetext named stops still deferred (R737/R738 carry)
+- single-slider white handle also low-contrast on light page (catalog-wide axis; range got ring)
+- drag tint may not engage on click-without-hover (shared slider SCXML; pre-existing, single too)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

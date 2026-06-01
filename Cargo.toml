@@ -46,6 +46,7 @@ members = [
     "examples/hello-listbox-multi",
     "examples/hello-slider",
     "examples/hello-slider-vertical",
+    "examples/hello-range-slider",
     "examples/hello-progress",
     "examples/hello-spinbutton",
     "examples/hello-theme",

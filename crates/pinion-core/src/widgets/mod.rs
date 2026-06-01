@@ -12,6 +12,7 @@ pub mod menu;
 pub mod progress_bar;
 pub mod radio;
 pub mod radio_group;
+pub mod range_slider;
 pub mod scroll;
 pub mod scrollbar;
 pub mod selection;

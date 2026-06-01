@@ -68,7 +68,9 @@ use pinion_platform_storage::open_app_storage;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::checkbox::{view_checkbox, CheckboxStyle};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
-use pinion_widget_paint::slider::read_slider_state;
+use pinion_widget_paint::slider::{
+    read_slider_state, slider_accent_for, slider_thumb_fill, slider_track_inactive,
+};
 use pinion_widget_paint::text_field as tf_paint;
 use pinion_widget_paint::text_field::TextFieldStyle;
 
@@ -689,15 +691,9 @@ fn toggle_track_fill(theme: &Theme, state: ToggleState, on: bool) -> Color {
     }
 }
 
-fn slider_accent(theme: &Theme, state: SliderState) -> Color {
-    let base = theme.resolve(ColorRole::Accent);
-    match state {
-        SliderState::Idle => base,
-        SliderState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        SliderState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
-}
+// (R738 §5.38) The slider track/thumb M3 color contract is the lifted
+// SSOT in `pinion_widget_paint::slider` (`slider_accent_for` /
+// `slider_track_inactive` / `slider_thumb_fill`).
 
 // ─── section labels ───────────────────────────────────────────────
 
@@ -836,19 +832,9 @@ fn view_appearance_section(theme: &Theme, state: SliderState, value: f32) -> Sce
             .with_size_px(TITLE_FONT_PX)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
-    let filled_color = slider_accent(theme, state);
-    let unfilled_color = match state {
-        SliderState::Disabled => theme
-            .resolve(ColorRole::SurfaceContainerHighest)
-            .lerp(theme.resolve(ColorRole::Surface), 0.38),
-        _ => theme.resolve(ColorRole::SurfaceContainerHighest),
-    };
-    let on_accent = theme.resolve(ColorRole::OnAccent);
-    let thumb_fill = match state {
-        SliderState::Idle | SliderState::Hover => on_accent,
-        SliderState::Dragging => on_accent.lerp(theme.resolve(ColorRole::Accent), 0.2),
-        SliderState::Disabled => on_accent.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    };
+    let filled_color = slider_accent_for(theme, state);
+    let unfilled_color = slider_track_inactive(theme, state);
+    let thumb_fill = slider_thumb_fill(theme, state);
     let filled_w = scale_normalized_to_px(value, SLIDER_RANGE);
     let unfilled_w = SLIDER_RANGE.saturating_sub(filled_w);
     let filled = Scene::Box(

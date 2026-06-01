@@ -40,7 +40,18 @@ mod sm {
 }
 
 pub use sm::{SliderEvent, SliderState};
-use sm::SliderPolicy;
+// R738 §5.38 — the generated interaction policy is re-exported so the
+// range-slider widget ([`crate::widgets::range_slider`]) can reuse the
+// *identical* Idle/Hover/Dragging statechart instead of duplicating
+// `slider.scxml` into a byte-for-byte `range_slider.scxml`. A dual-thumb
+// slider's pointer interaction (enter → hover, down → dragging, up →
+// hover, cancel → idle) is the same machine as a single-thumb slider's;
+// the only difference (two values + an active thumb) is value-domain
+// sidecar, not interaction state. Sharing the policy keeps the SCXML
+// SSOT ([[sce-priority-over-pinion]]); see `range_slider.rs` for the
+// rationale that distinguishes this from the R709/R734 "similar grammar
+// ≠ shared statechart" caution (there the *transitions* diverged).
+pub use sm::SliderPolicy;
 
 // R645 §5.16 — pinion-side WidgetStateName + WidgetEventName impls
 // for the sce-build-emitted enums. vendor/sce templates emit no

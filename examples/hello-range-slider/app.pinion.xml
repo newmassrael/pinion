@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R738 §5.16 range slider: pinion-forge renderer manifest for
+  hello-range-slider. Same single-source-of-truth template that emits
+  the other hello-* renderers; only the struct name diverges.
+  backend=vello + default Area antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloRangeSliderRenderer"
+        backend="vello"/>

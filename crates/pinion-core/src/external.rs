@@ -399,6 +399,30 @@ pub trait External: core::fmt::Debug {
         false
     }
 
+    /// R738 §5.15 + §5.35 — capture-cursor normalization surface. When a
+    /// composite widget tags its sub-regions (`primary#sub`) so each is a
+    /// focusable, clickable hit-target, pointer capture pins the grabbed
+    /// *sub-tag*. By default the framework's
+    /// [`InputRouter`](crate#) then normalizes the dragged cursor against
+    /// that sub-region's own rect — correct for a widget whose drag value
+    /// is measured relative to the grabbed region (e.g. a dock panel's
+    /// tear-off fraction, measured against the grabbed header).
+    ///
+    /// A widget whose drag value spans the **whole** widget overrides
+    /// this to `true`: the dual-thumb range slider tags its thumbs
+    /// `range#low` / `range#high` (so a click focuses a thumb) but the
+    /// value maps across the whole track, so it must normalize the cursor
+    /// against the *primary* (track) rect. Without this, the cursor would
+    /// normalize against the ~18px thumb rect and saturate, so the
+    /// nearest-thumb pick always resolved the far thumb.
+    ///
+    /// Default `false` preserves the established per-sub-region
+    /// normalization (dock tear-off and every single-tag capture widget,
+    /// where `primary == captured tag`, are unaffected).
+    fn capture_normalize_against_primary(&self) -> bool {
+        false
+    }
+
     /// R51.34 §5.15 + §5.35 — pointer-move forward during drag. The
     /// framework's [`InputRouter`](crate#) calls this whenever the
     /// cursor moves while this widget holds capture (i.e. after a
