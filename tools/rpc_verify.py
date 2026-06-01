@@ -643,6 +643,38 @@ def assert_eq(actual: Any, expected: Any, label: str = "value") -> None:
         )
 
 
+def wait_until(
+    predicate,
+    *,
+    timeout: float = 8.0,
+    interval: float = 0.04,
+    desc: str = "condition",
+) -> Any:
+    """Poll `predicate()` until it returns a truthy value (returned) or
+    `timeout` seconds elapse (raises `AssertionError`).
+
+    Replaces a fixed `time.sleep()` between an action and the assertion
+    that observes its effect. An action driven over RPC (a click / key /
+    focus change) lands in the deferred-input inbox and applies on the
+    next shell frame, and `scene/snapshot from=paint` reads the last
+    *rendered* frame (R705) — so a fixed sleep races the render under
+    load (the R694 sweep flake). Polling makes the demo deterministic on
+    the *observed* post-action state instead of wall-clock, so it stays
+    green whatever the machine load. See [[introspection-from-paint-not-screen]].
+    """
+    deadline = time.monotonic() + timeout
+    last: Any = None
+    while True:
+        last = predicate()
+        if last:
+            return last
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"wait_until timed out after {timeout}s: {desc} (last={last!r})"
+            )
+        time.sleep(interval)
+
+
 def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
     """Depth-first walk of a snapshot tree for the first node with this `tag`.
 
