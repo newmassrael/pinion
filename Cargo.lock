@@ -2188,6 +2188,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-tab-reorder"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-table"
 version = "0.0.1"
 dependencies = [

@@ -29,7 +29,6 @@
 //! `scene/drag`, and the list is AT-readable as an `AriaRole::List`.
 
 use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
 
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
@@ -41,6 +40,7 @@ use pinion_core::style::{
     TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::widgets::reorder::{DragPreview, ReorderAxis, ReorderModel};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -95,18 +95,6 @@ fn gap_line_top(k: usize) -> u32 {
     top.min(LIST_H.saturating_sub(LINE_H))
 }
 
-/// A live drag preview: which visual row is being dragged and the gap
-/// index (`0..=N`) the cursor currently targets. `Copy` so it rides
-/// inside the `Copy` [`ListState`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct DragPreview {
-    /// Visual index of the row being dragged (dimmed in the view).
-    from_visual: usize,
-    /// Gap index the drop would insert at (`0` = above row 0, `N` =
-    /// below the last row), drawn as the insertion line.
-    insert_at: usize,
-}
-
 /// The projection `read_state` builds and `view` renders: the current
 /// visual order (`order[visual] = item id`) plus an optional in-flight
 /// drag preview.
@@ -144,135 +132,34 @@ fn row_tag(visual: usize) -> String {
     format!("{TAG}#{visual}")
 }
 
-/// Parse the visual index out of a (possibly composite) drop tag
-/// (`"dnd#2"` → `Some(2)`). `None` for the bare root tag `"dnd"` or any
-/// non-row tag — a drop there resolves to "no target".
-fn visual_of(tag: &str) -> Option<usize> {
-    // Shared `#` SSOT (R742.4) rather than an inline split.
-    pinion_core::composite_tag::split_subindex(tag)
-        .1
-        .and_then(|s| s.parse::<usize>().ok())
-}
-
-/// Classify a [`DropPoint`] into the gap index (`0..=N`) the drop targets.
-/// Top half of row `j` inserts *above* `j` (gap `j`); bottom half inserts
-/// *below* (gap `j + 1`) — the standard sortable-list rule. `None` when
-/// the cursor is over no row (a gap / the background), so the source
-/// leaves the order unchanged.
-fn drop_gap(over: Option<&DropPoint>) -> Option<usize> {
-    let p = over?;
-    let j = visual_of(&p.tag)?;
-    if j >= N {
-        return Some(N);
-    }
-    Some(if p.y_rel < 0.5 { j } else { j + 1 })
-}
-
-/// Move the item at visual index `from` to gap index `insert_at`,
-/// accounting for the shift the removal introduces (inserting *after* the
-/// original slot lands one index earlier once the source is removed). A
-/// no-op move (drop onto the source's own gap) leaves the order
-/// unchanged, so a press-release-in-place never reorders.
-fn apply_move(order: &mut [usize; N], from: usize, insert_at: usize) {
-    if from >= N {
-        return;
-    }
-    let mut v: Vec<usize> = order.to_vec();
-    let item = v.remove(from);
-    let dest = if insert_at > from { insert_at - 1 } else { insert_at };
-    let dest = dest.min(v.len());
-    v.insert(dest, item);
-    order.copy_from_slice(&v);
-}
-
 /// R742 §5.51 — the reorderable list coordinator. A plain `External`
 /// (no statechart; the drag session lives in the router) that owns the
-/// visual order and the in-flight drag preview. Every row's drag source
-/// and drop target funnel back here, so it both produces the payload
-/// (`begin_drag`) and resolves the drop (`drag_to` / `drag_release`).
+/// reorder mechanics. Since R743 the reorder state + drag/keyboard logic
+/// lives in the shared [`ReorderModel`] (lifted when `hello-tab-reorder`
+/// became the substrate's second consumer); this binding embeds one and
+/// layers on only the list-specific `labels` observable. Every row's drag
+/// source and drop target funnel back here, so the model both produces
+/// the payload (`begin_drag`) and resolves the drop (`drag_to` /
+/// `drag_release`).
+#[derive(Debug)]
 struct ReorderListExternal {
-    /// `order[visual] = item id`. Mutated on a committed drop.
-    order: RefCell<[usize; N]>,
-    /// Visual index of the row whose `PointerDown` last landed — read by
-    /// `begin_drag` to arm a session for the pressed row.
-    pressed: Cell<Option<usize>>,
-    /// Live drag preview (dragged row + target gap), set by `drag_to`,
-    /// cleared by `drag_release`. Drives the view's dim + insertion line.
-    preview: RefCell<Option<DragPreview>>,
-    /// Keyboard cursor / AT active descendant (visual index). `Arrow`
-    /// keys move it. Set via `intervene("focused_index")`, read via
-    /// `query("focused_index")`.
-    focused: Cell<Option<usize>>,
-    /// APG "keyboard drag" grab state. `Some(order)` while the focused
-    /// row is *picked up* — `Arrow` then moves the row (cursor following)
-    /// and the snapshot is the pre-grab order an `Escape` reverts to.
-    /// `None` when not grabbing. Grab is toggled by `Space` / `Enter`.
-    grab_snapshot: Cell<Option<[usize; N]>>,
+    /// The shared reorder mechanics — vertical axis (the drop
+    /// classification reads `y_rel`).
+    model: ReorderModel,
 }
 
 impl ReorderListExternal {
     fn new() -> Self {
         Self {
-            order: RefCell::new(IDENTITY),
-            pressed: Cell::new(None),
-            preview: RefCell::new(None),
-            focused: Cell::new(None),
-            grab_snapshot: Cell::new(None),
+            model: ReorderModel::new(N, ReorderAxis::Vertical),
         }
     }
 
-    /// Whether the focused row is currently picked up (APG keyboard drag).
-    fn grabbed(&self) -> bool {
-        self.grab_snapshot.get().is_some()
-    }
-
-    /// Labels in current visual order — the AI-readable observable
-    /// (`query("labels")`) and the AT name source.
+    /// Labels in current visual order — the list-specific AI-readable
+    /// observable (`query("labels")`) and the AT name source. Maps the
+    /// model's `order` through the binding-owned `ITEMS` table.
     fn labels(&self) -> Vec<&'static str> {
-        self.order
-            .borrow()
-            .iter()
-            .map(|&id| ITEMS[id].0)
-            .collect()
-    }
-
-    /// Keyboard reorder: move the focused row to `target` (clamped to a
-    /// valid index) and keep the cursor on the moved row. No-op when no
-    /// row is focused or the position is unchanged. Returns the new
-    /// focused index, if any — the value `invoke("move")` reports back.
-    fn move_focused_to(&self, target: usize) -> Option<usize> {
-        let from = self.focused.get()?;
-        let target = target.min(N - 1);
-        if target != from {
-            apply_move(&mut self.order.borrow_mut(), from, gap_for_target(from, target));
-        }
-        self.focused.set(Some(target));
-        Some(target)
-    }
-}
-
-/// Map a keyboard move (`from` row → `target` row) to the gap index
-/// [`apply_move`] expects. Moving *down* (`target > from`) inserts after
-/// `target` (gap `target+1`); moving *up* inserts before it (gap
-/// `target`). This makes a one-step `Ctrl+Arrow` land exactly one slot
-/// over, matching the displayed motion.
-fn gap_for_target(from: usize, target: usize) -> usize {
-    if target > from {
-        target + 1
-    } else {
-        target
-    }
-}
-
-impl core::fmt::Debug for ReorderListExternal {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ReorderListExternal")
-            .field("order", &self.order.borrow())
-            .field("pressed", &self.pressed.get())
-            .field("preview", &self.preview.borrow())
-            .field("focused", &self.focused.get())
-            .field("grab_snapshot", &self.grab_snapshot.get())
-            .finish()
+        self.model.order().iter().map(|&id| ITEMS[id].0).collect()
     }
 }
 
@@ -293,57 +180,19 @@ impl External for ReorderListExternal {
         Some(self)
     }
 
-    /// Arm a drag from the most-recently-pressed row. The payload carries
-    /// the dragged item's stable id (not its visual index) under the
-    /// `"dnd-row"` kind, so the in-flight drag is introspectable and a
-    /// future cross-widget target could match on it. The visual index the
-    /// reorder needs is recovered from `pressed` on commit.
+    /// Arm a drag from the most-recently-pressed row, under the
+    /// `"dnd-row"` kind. Delegates to the model, which carries the dragged
+    /// item's stable id in the payload.
     fn begin_drag(&self) -> Option<DragPayload> {
-        let visual = self.pressed.get()?;
-        let item = self.order.borrow().get(visual).copied()?;
-        Some(DragPayload {
-            kind: Cow::Borrowed("dnd-row"),
-            value: IntrospectValue::Int(i64::try_from(item).unwrap_or(0)),
-        })
+        self.model.begin_drag_payload(Cow::Borrowed("dnd-row"))
     }
 
-    /// Live update: classify the cursor's drop gap and store it as the
-    /// preview the view reads (dragged row dims, insertion line at the
-    /// gap). `pressed` is the source row; the gap defaults to the source
-    /// itself when the cursor is over no row, so the line never vanishes
-    /// mid-drag.
-    fn drag_to(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
-        let Some(from_visual) = self.pressed.get() else {
-            return;
-        };
-        // `drop_gap` is `None` when the cursor sits between rows (over the
-        // list container, not a row). **Hold** the last resolved gap there
-        // rather than snapping the indicator back to the dragged row —
-        // otherwise the line jumps up to the dragged row's own gap every
-        // time the cursor crosses a 6 px inter-row gap, then drops back on
-        // the next row ("up then down" flicker). Falls back to the dragged
-        // row only on the first frame, before any gap has resolved.
-        let last = (*self.preview.borrow()).map(|p| p.insert_at);
-        let insert_at = drop_gap(over.as_ref()).or(last).unwrap_or(from_visual);
-        *self.preview.borrow_mut() = Some(DragPreview {
-            from_visual,
-            insert_at,
-        });
+    fn drag_to(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
+        self.model.drag_to(payload, over.as_ref());
     }
 
-    /// Commit: move the source row to the final gap, then clear the
-    /// transient drag state. A drop over no row (or the source's own gap)
-    /// leaves the order unchanged.
-    fn drag_release(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
-        if let Some(from_visual) = self.pressed.get() {
-            // Release in a gap honours the gap the indicator was showing
-            // (the held preview), not a snap-back to the dragged row.
-            let last = (*self.preview.borrow()).map(|p| p.insert_at);
-            let insert_at = drop_gap(over.as_ref()).or(last).unwrap_or(from_visual);
-            apply_move(&mut self.order.borrow_mut(), from_visual, insert_at);
-        }
-        *self.preview.borrow_mut() = None;
-        self.pressed.set(None);
+    fn drag_release(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
+        self.model.drag_release(payload, over.as_ref());
     }
 }
 
@@ -363,15 +212,7 @@ impl ExternalIntrospect for ReorderListExternal {
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "order" => {
-                let arr: Vec<serde_json::Value> = self
-                    .order
-                    .borrow()
-                    .iter()
-                    .map(|&id| serde_json::Value::from(id))
-                    .collect();
-                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
-            }
+            // List-specific observable; everything else is a reorder slot.
             "labels" => {
                 let arr: Vec<serde_json::Value> = self
                     .labels()
@@ -380,40 +221,12 @@ impl ExternalIntrospect for ReorderListExternal {
                     .collect();
                 Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
-            "preview" => Some(match *self.preview.borrow() {
-                Some(p) => IntrospectValue::Json(serde_json::json!({
-                    "from_visual": p.from_visual,
-                    "insert_at": p.insert_at,
-                })),
-                None => IntrospectValue::Null,
-            }),
-            "focused_index" => Some(match self.focused.get() {
-                Some(i) => IntrospectValue::Int(i64::try_from(i).unwrap_or(0)),
-                None => IntrospectValue::Null,
-            }),
-            "grabbed" => Some(IntrospectValue::Bool(self.grabbed())),
-            _ => None,
+            other => self.model.query(other),
         }
     }
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
-        match path {
-            // The keyboard cursor / AT active descendant. Out-of-range
-            // indices are rejected (composite-index convention); the
-            // shell's apply_key always writes a clamped value.
-            "focused_index" => {
-                let i = value.as_usize().ok_or(InterveneError::TypeMismatch)?;
-                if i >= N {
-                    return Err(InterveneError::OutOfRange);
-                }
-                self.focused.set(Some(i));
-                Ok(())
-            }
-            // The order mutates through the drag session or the `move`
-            // action, never a direct slot write.
-            "order" => Err(InterveneError::ReadOnly),
-            _ => Err(InterveneError::UnknownPath),
-        }
+        self.model.intervene(path, &value)
     }
 
     fn invoke(
@@ -421,73 +234,7 @@ impl ExternalIntrospect for ReorderListExternal {
         method: &str,
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
-        match method {
-            // Composite "{visual}:{Event}" wire form — parsed through the
-            // shared `parse_send_payload` SSOT (R51.42 / R734.1), not an
-            // inline split. A PointerDown records which row was pressed so
-            // `begin_drag` can arm it.
-            "send" => {
-                let IntrospectValue::Text(ref payload) = args else {
-                    return Err(InvokeError::TypeMismatch);
-                };
-                let (visual, event): (usize, &str) =
-                    pinion_core::composite_tag::parse_send_payload(payload)
-                        .ok_or(InvokeError::Rejected)?;
-                if event == "PointerDown" && visual < N {
-                    self.pressed.set(Some(visual));
-                }
-                Ok(IntrospectValue::Null)
-            }
-            // Keyboard reorder: move the focused row by `delta` slots
-            // (`+1` down / `-1` up), clamped, cursor following. Returns
-            // the new focused index, or `Null` when no row is focused.
-            // This is the `Ctrl+Arrow` path and the AT increment/decrement
-            // funnel — one channel for shell, RPC, and assistive tech.
-            "move" => {
-                let delta = args.as_i64().ok_or(InvokeError::TypeMismatch)?;
-                let Some(from) = self.focused.get() else {
-                    return Ok(IntrospectValue::Null);
-                };
-                let target = (i64::try_from(from).unwrap_or(0) + delta)
-                    .clamp(0, i64::try_from(N - 1).unwrap_or(0));
-                let target = usize::try_from(target).unwrap_or(0);
-                match self.move_focused_to(target) {
-                    Some(i) => Ok(IntrospectValue::Int(i64::try_from(i).unwrap_or(0))),
-                    None => Ok(IntrospectValue::Null),
-                }
-            }
-            // APG keyboard drag — toggle pick-up of the focused row.
-            // Entering grab snapshots the order (for `grab_cancel` to
-            // revert); dropping keeps the live order. Returns the new
-            // grabbed state. No-op without a focused row.
-            "grab" => {
-                if self.focused.get().is_none() {
-                    return Ok(IntrospectValue::Bool(false));
-                }
-                // `Bool(b)` sets the grab explicitly (deterministic RPC /
-                // AT); `Null` or anything else toggles (the keyboard
-                // `Space` path).
-                let want = match args {
-                    IntrospectValue::Bool(b) => b,
-                    _ => !self.grabbed(),
-                };
-                if want && !self.grabbed() {
-                    self.grab_snapshot.set(Some(*self.order.borrow()));
-                } else if !want && self.grabbed() {
-                    self.grab_snapshot.set(None);
-                }
-                Ok(IntrospectValue::Bool(self.grabbed()))
-            }
-            // Cancel a grab: revert to the snapshotted order and drop.
-            "grab_cancel" => {
-                if let Some(snap) = self.grab_snapshot.get() {
-                    *self.order.borrow_mut() = snap;
-                    self.grab_snapshot.set(None);
-                }
-                Ok(IntrospectValue::Null)
-            }
-            _ => Err(InvokeError::UnknownPath),
-        }
+        self.model.invoke(method, &args)
     }
 }
 
@@ -962,102 +709,36 @@ mod tests {
     }
 
     #[test]
-    fn drop_gap_classifies_top_and_bottom_halves() {
-        assert_eq!(drop_gap(Some(&drop_at(1, 0.2))), Some(1)); // above row 1
-        assert_eq!(drop_gap(Some(&drop_at(1, 0.8))), Some(2)); // below row 1
-        assert_eq!(drop_gap(None), None);
-        // A drop on the bare root tag (a gap / background) targets no row.
-        assert_eq!(
-            drop_gap(Some(&DropPoint {
-                tag: TAG.to_string(),
-                x_rel: 0.5,
-                y_rel: 0.5,
-            })),
-            None
-        );
-    }
-
-    #[test]
-    fn apply_move_relocates_with_removal_shift() {
-        // Move row 0 to gap 2: [0,1,2,3] -> remove 0 -> [1,2,3], dest =
-        // 2-1 = 1 -> [1,0,2,3].
-        let mut order = IDENTITY;
-        apply_move(&mut order, 0, 2);
-        assert_eq!(order, [1, 0, 2, 3]);
-        // Move row 3 to gap 1 (top): [0,1,2,3] -> [0,3,1,2].
-        let mut order = IDENTITY;
-        apply_move(&mut order, 3, 1);
-        assert_eq!(order, [0, 3, 1, 2]);
-    }
-
-    #[test]
-    fn apply_move_onto_own_gap_is_noop() {
-        let mut order = IDENTITY;
-        apply_move(&mut order, 2, 2); // gap above self
-        assert_eq!(order, IDENTITY);
-        let mut order = IDENTITY;
-        apply_move(&mut order, 2, 3); // gap below self
-        assert_eq!(order, IDENTITY);
-    }
-
-    #[test]
-    fn begin_drag_arms_only_after_press() {
-        let ext = fresh();
+    fn begin_drag_delegates_and_arms_only_after_press() {
+        // The reorder *mechanics* (drop classification, apply_move, grab,
+        // move, hold-last-gap) are unit-tested once in the shared model
+        // (`pinion_core::widgets::reorder`); these binding tests cover the
+        // delegation + the list-specific surface (labels / read_state /
+        // keyboard policy / paint).
+        let mut ext = fresh();
         assert!(ext.begin_drag().is_none(), "no press → no drag");
-        // Press row 2 via the composite send wire.
-        let mut ext = ext;
         ext.invoke("send", IntrospectValue::Text("2:PointerDown".into()))
             .expect("send accepted");
         let p = ext.begin_drag().expect("armed");
-        assert_eq!(p.kind, Cow::Borrowed("dnd-row"));
-        assert_eq!(p.value.as_usize(), Some(2)); // item id at visual 2
+        assert_eq!(p.kind, Cow::Borrowed("dnd-row"), "list kind");
+        assert_eq!(p.value.as_usize(), Some(2), "payload carries item id at visual 2");
     }
 
     #[test]
-    fn drag_to_then_release_reorders_and_clears_preview() {
+    fn drag_to_then_release_reorders_through_model() {
         let mut ext = fresh();
         ext.invoke("send", IntrospectValue::Text("0:PointerDown".into()))
             .expect("press");
         let pl = payload(0);
-        // Drag row 0 over the bottom half of row 2 → gap 3.
-        ext.drag_to(&pl, Some(drop_at(2, 0.8)));
-        assert_eq!(
-            *ext.preview.borrow(),
-            Some(DragPreview {
-                from_visual: 0,
-                insert_at: 3,
-            }),
-            "preview tracks the live gap"
+        ext.drag_to(&pl, Some(drop_at(2, 0.8))); // → gap 3
+        assert!(
+            matches!(ext.query("preview"), Some(IntrospectValue::Json(_))),
+            "preview is in flight (queryable as scene-as-data)"
         );
         ext.drag_release(&pl, Some(drop_at(2, 0.8)));
-        // [0,1,2,3] move 0 -> gap 3 -> [1,2,0,3].
-        assert_eq!(*ext.order.borrow(), [1, 2, 0, 3]);
-        assert!(ext.preview.borrow().is_none(), "preview cleared on drop");
-        assert!(ext.pressed.get().is_none(), "press cleared on drop");
-    }
-
-    #[test]
-    fn drag_to_over_gap_holds_last_gap_no_snap_back() {
-        let mut ext = fresh();
-        ext.invoke("send", IntrospectValue::Text("1:PointerDown".into())).expect("grab Bravo");
-        let pl = payload(1);
-        // Over row 2's lower half → gap 3.
-        ext.drag_to(&pl, Some(drop_at(2, 0.8)));
-        assert_eq!(ext.preview.borrow().unwrap().insert_at, 3);
-        // Cursor crosses an inter-row gap (over the list container `TAG`,
-        // not a row): `drop_gap` is None, but the indicator HOLDS at gap 3
-        // instead of snapping back to the dragged row's gap (1) — the
-        // "line jumps up then down" fix.
-        let gap_pt = DropPoint {
-            tag: TAG.to_string(),
-            x_rel: 0.5,
-            y_rel: 0.5,
-        };
-        ext.drag_to(&pl, Some(gap_pt));
-        assert_eq!(ext.preview.borrow().unwrap().insert_at, 3, "held last gap, no snap to 1");
-        // Fully off the list (None) also holds, not snaps.
-        ext.drag_to(&pl, None);
-        assert_eq!(ext.preview.borrow().unwrap().insert_at, 3);
+        assert_eq!(ext.model.order(), [1, 2, 0, 3], "row 0 dropped below row 2");
+        assert!(matches!(ext.query("preview"), Some(IntrospectValue::Null)), "preview cleared");
+        assert!(ext.begin_drag().is_none(), "press cleared on drop");
     }
 
     #[test]
@@ -1089,45 +770,7 @@ mod tests {
         assert!(state.preview.is_none());
     }
 
-    // ----- R742.2 keyboard reorder + overlay -----
-
-    #[test]
-    fn move_action_reorders_clamps_and_follows_cursor() {
-        let mut ext = fresh();
-        ext.intervene("focused_index", IntrospectValue::Int(0)).expect("focus 0");
-        // Ctrl+Down: Alpha (vis 0) moves below Bravo; cursor follows to 1.
-        let r = ext.invoke("move", IntrospectValue::Int(1)).expect("move");
-        assert_eq!(r, IntrospectValue::Int(1));
-        assert_eq!(*ext.order.borrow(), [1, 0, 2, 3]);
-        // Over-range delta clamps to the last / first slot.
-        ext.intervene("focused_index", IntrospectValue::Int(1)).expect("focus 1");
-        ext.invoke("move", IntrospectValue::Int(10)).expect("move");
-        assert_eq!(ext.focused.get(), Some(3));
-        ext.invoke("move", IntrospectValue::Int(-10)).expect("move");
-        assert_eq!(ext.focused.get(), Some(0));
-    }
-
-    #[test]
-    fn move_without_focus_is_noop() {
-        let mut ext = fresh();
-        assert_eq!(ext.invoke("move", IntrospectValue::Int(1)).expect("move"), IntrospectValue::Null);
-        assert_eq!(*ext.order.borrow(), IDENTITY);
-    }
-
-    #[test]
-    fn intervene_focused_index_clamps_and_rejects() {
-        let mut ext = fresh();
-        ext.intervene("focused_index", IntrospectValue::Int(2)).expect("in range");
-        assert_eq!(ext.focused.get(), Some(2));
-        assert!(matches!(
-            ext.intervene("focused_index", IntrospectValue::Int(99)),
-            Err(InterveneError::OutOfRange)
-        ));
-        assert!(matches!(
-            ext.intervene("order", IntrospectValue::Int(0)),
-            Err(InterveneError::ReadOnly)
-        ));
-    }
+    // ----- R742.2 keyboard reorder (binding policy over the model) -----
 
     #[test]
     fn apply_key_arrow_navigates_then_grab_reorders() {
@@ -1167,29 +810,6 @@ mod tests {
         let st = DndView::read_state(&scene);
         assert!(!st.grabbed);
         assert_eq!(st.order, IDENTITY, "Escape reverts to the pre-grab order");
-    }
-
-    #[test]
-    fn grab_action_snapshots_and_cancel_reverts() {
-        let mut ext = fresh();
-        ext.intervene("focused_index", IntrospectValue::Int(0)).expect("focus");
-        // Explicit grab via Bool(true) (the deterministic RPC / AT path).
-        assert_eq!(
-            ext.invoke("grab", IntrospectValue::Bool(true)).expect("grab"),
-            IntrospectValue::Bool(true)
-        );
-        assert!(ext.grabbed());
-        ext.invoke("move", IntrospectValue::Int(1)).expect("move");
-        assert_ne!(*ext.order.borrow(), IDENTITY);
-        ext.invoke("grab_cancel", IntrospectValue::Null).expect("cancel");
-        assert!(!ext.grabbed());
-        assert_eq!(*ext.order.borrow(), IDENTITY, "cancel reverts to the snapshot");
-        // Grab without a focused row is a no-op (false).
-        let mut ext2 = fresh();
-        assert_eq!(
-            ext2.invoke("grab", IntrospectValue::Null).expect("grab"),
-            IntrospectValue::Bool(false)
-        );
     }
 
     #[test]

@@ -16271,6 +16271,43 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R743 — R743: reorderable Material 3 tab strip is the second consumer of the R742 drag-and-drop substrate; lift the shared reorder mechanics to pinion_core::widgets::reorder::ReorderModel (composition) and refactor hello-dnd onto it, so both consumers share one SSOT.
+
+**Changes**:
+- New pinion_core::widgets::reorder: ReorderModel (order/pressed/preview/focused/grab) + ReorderAxis
+- ReorderModel owns the drag hooks + keyboard move/grab/grab_cancel + reorder introspection slots
+- hello-dnd refactored to embed ReorderModel (Vertical axis); SSOT lift, no third copy
+- New hello-tab-reorder: horizontal M3 strip, second DnD-substrate consumer (orthogonal to the list)
+- Selection stored by stable tab id: a reorder is a pure permutation, selection visually follows
+- drag_release sets selected to the dragged/clicked id, so click (zero-distance drag) and drag share one path
+- Reuses begin_drag/drag_to/drag_release + router drag_sessions unchanged (additive default-None)
+- Keyboard modifier-free APG: Arrow activates, Space-grab then Arrow reorders, Escape reverts
+- a11y TabList/Tab/TabPanel over composite tabreorder#v tags; left-aligned swatch = reorder pixel witness
+
+
+
+**Verification**:
+- pinion-core +11 reorder unit tests (both axes / apply_move / drag / move / grab / intervene)
+- hello-tab-reorder +14 binding tests; hello-dnd 10 tests green after the refactor (no regression)
+- workspace cargo test 0-fail across 40 binaries; clippy -D pedantic clean with vello feature
+- r743_tab_reorder.py 35+ assertions via scene/drag RPC + PINION_SCREENSHOT boot swatch live-pixel
+- Live :0 native XTEST mouse drag: tab0 over tab2 right half reorders [0,1,2,3] to [1,2,0,3]
+- Native drag verified by ffmpeg x11grab swatch sampling before/after (not RPC); r742_dnd.py re-run green
+
+
+
+**Impact**: §5.51
+
+
+**Carry forward**:
+- Reorder/tab-strip paint lift to pinion-widget-paint deferred: hello-tab-reorder is the first reorder-tab paint consumer (gradient/elevation/progress inline-first precedent); a second reorder-list paint consumer triggers the lift
+- Cross-widget drop (palette to canvas) still deferred: intra-widget only (source==coordinator), zero consumers, premature per abstraction-needs-second-consumer
+- Selected-id selection helper not lifted: hello-tab-reorder uses a bare Cell (drag-driven, by-id) vs RadioGroupExternal; the divergence is deliberate (no per-tab statechart painted); lift only if a second reorder-plus-selection consumer appears
+- scene/key still has no modifier channel (R742.2 carry): the modifier-free APG model suffices; a Ctrl-shortcut consumer would need modifiers threaded scene/key to apply_key
+- dock resolve_dock_drop still invoke-only: adopting the R742 router drag_sessions for live tear-off is a later consumer round (R687 carry)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
