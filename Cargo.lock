@@ -1849,6 +1849,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-dnd"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-dock-panels"
 version = "0.0.1"
 dependencies = [

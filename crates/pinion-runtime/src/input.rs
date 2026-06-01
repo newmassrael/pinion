@@ -80,7 +80,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use pinion_core::event::WheelDelta;
-use pinion_core::external::IntrospectValue;
+use pinion_core::external::{DragPayload, DropPoint, IntrospectValue};
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 
 /// R664 §5.49 — W3C UI Events `dblclick` time threshold (milliseconds).
@@ -291,6 +291,40 @@ pub struct InputRouter {
     /// distinction until a 2nd consumer requests triple, per
     /// `[[abstraction-needs-second-consumer]]`).
     last_press: HashMap<PointerId, (Instant, f64, f64, String)>,
+    /// R742 §5.51 — per-pointer in-flight drag session. Present between a
+    /// [`pointer_down`](Self::pointer_down) whose target returned `Some`
+    /// from [`External::begin_drag`](pinion_core::external::External::begin_drag)
+    /// and the matching [`pointer_up`](Self::pointer_up). While present,
+    /// [`cursor_moved`](Self::cursor_moved) resolves the drop location
+    /// under the *absolute* cursor and forwards it to the **source**
+    /// widget via
+    /// [`External::drag_to`](pinion_core::external::External::drag_to),
+    /// suppressing hover re-resolution so the source statechart sees no
+    /// spurious `PointerLeave` mid-drag (the capture-lock guarantee, for
+    /// the drag path). [`pointer_up`](Self::pointer_up) commits via
+    /// [`External::drag_release`](pinion_core::external::External::drag_release)
+    /// and clears the entry. Keyed by [`PointerId`] so two simultaneous
+    /// touch-drags stay independent, mirroring `captured_targets`. The
+    /// map is disjoint from `captured_targets` for every current consumer
+    /// (a reorder source does not opt into `wants_pointer_capture`), so
+    /// the two mechanisms never contend for one pointer.
+    drag_sessions: HashMap<PointerId, DragSession>,
+}
+
+/// R742 §5.51 — in-flight drag state owned by the [`InputRouter`].
+/// Constructed on `pointer_down` when the pressed widget arms a drag,
+/// consumed on `pointer_up`.
+#[derive(Debug)]
+struct DragSession {
+    /// Full paint tag of the widget the drag started on — the source
+    /// coordinator that receives `drag_to` / `drag_release`. Its primary
+    /// half (`split_subindex`) resolves the `ExternalNode` to forward to.
+    source_tag: String,
+    /// The payload [`External::begin_drag`](pinion_core::external::External::begin_drag)
+    /// produced, carried back to the source on every update so a future
+    /// cross-widget target can match on it without the router re-deriving
+    /// it.
+    payload: DragPayload,
 }
 
 impl InputRouter {
@@ -454,7 +488,13 @@ impl InputRouter {
     ///   cancel-by-leave UX.
     pub fn cursor_moved(&mut self, id: PointerId, x: f64, y: f64, state_scene: &mut Scene) {
         self.cursors.insert(id, (x, y));
-        if let Some(tag) = self.captured_targets.get(&id).cloned() {
+        if self.drag_sessions.contains_key(&id) {
+            // R742 §5.51 — a drag started on this pointer: resolve the
+            // drop location under the absolute cursor and forward it to
+            // the source. Takes precedence over capture/free so the
+            // source's hover stays pinned (no spurious mid-drag leave).
+            self.update_drag(id, x, y, state_scene);
+        } else if let Some(tag) = self.captured_targets.get(&id).cloned() {
             self.forward_pointer_move(state_scene, &tag, x, y);
         } else {
             self.refresh_hover(id, state_scene);
@@ -471,7 +511,10 @@ impl InputRouter {
     /// [`pointer_up`](Self::pointer_up).
     pub fn cursor_left(&mut self, id: PointerId, state_scene: &mut Scene) {
         self.cursors.remove(&id);
-        if self.captured_targets.contains_key(&id) {
+        // R742 §5.51 — an in-flight drag suppresses the leave for the
+        // same reason capture does: the gesture survives the cursor
+        // straying outside the window and re-entering.
+        if self.captured_targets.contains_key(&id) || self.drag_sessions.contains_key(&id) {
             return;
         }
         if let Some(tag) = self.hover_targets.remove(&id) {
@@ -544,6 +587,22 @@ impl InputRouter {
                 }
             }
 
+            // R742 §5.51 — drag-source arming. PointerDown already
+            // reached the widget (so it recorded which sub-region was
+            // pressed); ask whether it wants to start a drag. `Some`
+            // opens a session the router drives via `drag_to` /
+            // `drag_release` until `pointer_up`. Default `begin_drag` is
+            // `None`, so non-DnD widgets never open a session.
+            if let Some(payload) = widget_begin_drag(state_scene, &tag) {
+                self.drag_sessions.insert(
+                    id,
+                    DragSession {
+                        source_tag: tag.clone(),
+                        payload,
+                    },
+                );
+            }
+
             // R664 §5.49 — double-click detection. Same target +
             // within W3C `dblclick` time + space window → synthesise
             // a `DoubleClick` named event on top of `PointerDown`.
@@ -597,6 +656,27 @@ impl InputRouter {
     /// [`refresh_hover`](Self::refresh_hover) re-runs to resettle the
     /// hover state against the release position.
     pub fn pointer_up(&mut self, id: PointerId, state_scene: &mut Scene) {
+        // R742 §5.51 — a drag started on this pointer commits here. The
+        // final drop location is the tag under the release cursor; the
+        // source coordinator applies the move (or ignores `None`). The
+        // normal `PointerUp` is dispatched afterwards so a
+        // press-release-in-place (no real drag) still reaches the
+        // statechart as a click. A drag release is therefore never *also*
+        // a capture release — the two maps are disjoint per pointer.
+        if let Some(session) = self.drag_sessions.remove(&id) {
+            let over = self
+                .cursors
+                .get(&id)
+                .copied()
+                .and_then(|(x, y)| self.resolve_drop_point(x, y));
+            let (primary, _) = split_subindex(&session.source_tag);
+            if let Some(external) = find_external_by_tag(state_scene, primary) {
+                external.handle.drag_release(&session.payload, over);
+            }
+            dispatch_send(state_scene, &session.source_tag, "PointerUp");
+            self.refresh_hover(id, state_scene);
+            return;
+        }
         if let Some(cap_tag) = self.captured_targets.get(&id).cloned() {
             let release_over = self.cursor_over_tag(id, &cap_tag);
             let event = if !release_over && widget_cancels_on_release_off(state_scene, &cap_tag) {
@@ -863,6 +943,44 @@ impl InputRouter {
         external.handle.pointer_move(x_rel, y_rel);
     }
 
+    /// R742 §5.51 — drive an in-flight drag for `id`: resolve the drop
+    /// location under the absolute cursor and forward it to the source
+    /// coordinator via
+    /// [`External::drag_to`](pinion_core::external::External::drag_to).
+    /// Hover stays pinned (no `refresh_hover`) so the source statechart
+    /// sees no spurious mid-drag `PointerLeave`. No-op if the session
+    /// vanished between the `contains_key` gate and here (it cannot, but
+    /// the `get` keeps the borrow honest) or the source external is gone.
+    fn update_drag(&mut self, id: PointerId, x: f64, y: f64, state_scene: &mut Scene) {
+        let Some(session) = self.drag_sessions.get(&id) else {
+            return;
+        };
+        let source = session.source_tag.clone();
+        let payload = session.payload.clone();
+        let over = self.resolve_drop_point(x, y);
+        let (primary, _) = split_subindex(&source);
+        if let Some(external) = find_external_by_tag(state_scene, primary) {
+            external.handle.drag_to(&payload, over);
+        }
+    }
+
+    /// R742 §5.51 — hit-test the retained paint scene at the absolute
+    /// cursor `(x, y)` and build the [`DropPoint`] the source coordinator
+    /// classifies: the full tag under the cursor (composite `widget#sub`
+    /// when over a sub-element) plus the cursor normalised over that
+    /// tag's post-layout rect. `None` when the cursor is over no tagged
+    /// region or no paint scene has been recorded yet. This is the
+    /// pointer-driven equivalent of the dock resolver reading
+    /// `scene/layout` — the router already holds the painted tree, so the
+    /// hit-test needs no `view()` rebuild.
+    fn resolve_drop_point(&self, x: f64, y: f64) -> Option<DropPoint> {
+        let paint = self.last_paint_scene.as_ref()?;
+        let tag = resolve_hover_tag(paint, x, y)?;
+        let rect = rect_for_tag(paint, &tag)?;
+        let (x_rel, y_rel) = normalize_cursor(rect, x, y);
+        Some(DropPoint { tag, x_rel, y_rel })
+    }
+
     /// Recompute `hover_targets[id]` from `id`'s current cursor and
     /// the retained paint scene. Dispatches `PointerLeave` for the
     /// pointer's old target (if any) then `PointerEnter` for its new
@@ -924,6 +1042,18 @@ fn resolve_hover_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
         }
     }
     None
+}
+
+/// R742 §5.51 — ask the widget at `target_tag` whether a `pointer_down`
+/// on it should start a drag. Resolves the state-scene `ExternalNode`
+/// from the primary half of a (possibly composite) paint tag and returns
+/// its [`External::begin_drag`](pinion_core::external::External::begin_drag)
+/// — `None` (no session) for a non-DnD widget or an out-of-sync tag.
+/// Called right after the matching `PointerDown` dispatch, so the widget
+/// has already recorded which sub-region was pressed.
+fn widget_begin_drag(state_scene: &mut Scene, target_tag: &str) -> Option<DragPayload> {
+    let (primary, _) = split_subindex(target_tag);
+    find_external_by_tag(state_scene, primary)?.handle.begin_drag()
 }
 
 /// Dispatch a synthetic input event to the state scene's matching
@@ -3100,5 +3230,185 @@ mod tests {
         let log = read(&captures);
         let double_count = log.iter().filter(|s| s.as_str() == "DoubleClick").count();
         assert_eq!(double_count, 2, "exactly two DoubleClick fires across 4 presses");
+    }
+
+    // ----- R742 §5.51 drag-and-drop session -----
+
+    /// A composite reorder-list-shaped drag source: a single
+    /// `ExternalNode` tagged `dnd` with two paint sub-regions
+    /// `dnd#0` / `dnd#1`. `send "{i}:PointerDown"` records the pressed
+    /// row so [`begin_drag`] can arm; `drag_to` / `drag_release` append a
+    /// readable trace so the router-side wiring can be asserted.
+    struct DragExternal {
+        pressed: std::cell::Cell<Option<usize>>,
+        log: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl DragExternal {
+        fn new() -> (Self, Arc<Mutex<Vec<String>>>) {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    pressed: std::cell::Cell::new(None),
+                    log: Arc::clone(&log),
+                },
+                log,
+            )
+        }
+    }
+
+    impl std::fmt::Debug for DragExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("DragExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for DragExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+            Some(self)
+        }
+        fn begin_drag(&self) -> Option<DragPayload> {
+            self.pressed.get().map(|i| {
+                self.log.lock().expect("poisoned").push(format!("begin:{i}"));
+                DragPayload {
+                    kind: std::borrow::Cow::Borrowed("dnd-row"),
+                    value: IntrospectValue::Int(i64::try_from(i).unwrap_or(0)),
+                }
+            })
+        }
+        fn drag_to(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
+            let dst = over.map_or_else(|| "none".to_string(), |p| p.tag);
+            self.log
+                .lock()
+                .expect("poisoned")
+                .push(format!("to:{}:{dst}", payload.value.as_i64().unwrap_or(-1)));
+        }
+        fn drag_release(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
+            let dst = over.map_or_else(|| "none".to_string(), |p| p.tag);
+            self.log
+                .lock()
+                .expect("poisoned")
+                .push(format!("drop:{}:{dst}", payload.value.as_i64().unwrap_or(-1)));
+        }
+    }
+
+    impl ExternalIntrospect for DragExternal {
+        fn schema(&self) -> IntrospectSchema {
+            IntrospectSchema::new(&[])
+        }
+        fn query(&self, _path: &str) -> Option<IntrospectValue> {
+            None
+        }
+        fn intervene(
+            &mut self,
+            _path: &str,
+            _value: IntrospectValue,
+        ) -> Result<(), InterveneError> {
+            Err(InterveneError::UnknownPath)
+        }
+        fn invoke(
+            &mut self,
+            method: &str,
+            args: IntrospectValue,
+        ) -> Result<IntrospectValue, InvokeError> {
+            if method == "send" {
+                if let IntrospectValue::Text(name) = args {
+                    // Composite "{idx}:{Event}" wire form (R51.42).
+                    if let Some((idx, event)) = name.split_once(':') {
+                        if event == "PointerDown" {
+                            if let Ok(i) = idx.parse::<usize>() {
+                                self.pressed.set(Some(i));
+                            }
+                        }
+                        self.log.lock().expect("poisoned").push(name.clone());
+                    }
+                }
+            }
+            Ok(IntrospectValue::Null)
+        }
+    }
+
+    /// Paint scene: two stacked rows `dnd#0` (y 0..40) and `dnd#1`
+    /// (y 40..80) inside a 200x200 root — the reorder-list shape.
+    fn paint_with_two_rows() -> Scene {
+        let mut row0 = Scene::Container(ContainerNode::new(vec![]).with_tag("dnd#0"));
+        if let Scene::Container(c) = &mut row0 {
+            c.rect = Rect::new(0, 0, 200, 40);
+        }
+        let mut row1 = Scene::Container(ContainerNode::new(vec![]).with_tag("dnd#1"));
+        if let Scene::Container(c) = &mut row1 {
+            c.rect = Rect::new(0, 40, 200, 40);
+        }
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![row0, row1]).with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 200, 200);
+        }
+        root
+    }
+
+    fn state_with_dnd() -> (Scene, Arc<Mutex<Vec<String>>>) {
+        let (drag, log) = DragExternal::new();
+        let scene = Scene::External(ExternalNode::new(Box::new(drag)).with_tag("dnd"));
+        (scene, log)
+    }
+
+    #[test]
+    fn r742_drag_row0_onto_row1_forwards_resolved_drop_to_source() {
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        // Press inside row 0, drag down into row 1, release there.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(router.captured_target(PointerId::MOUSE), None,
+            "a reorder source does not opt into pointer capture");
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        // PointerDown reached row 0, the drag armed, drag_to saw the
+        // absolute cursor resolve to row 1, the drop committed on row 1,
+        // and the trailing PointerUp still reached the statechart.
+        assert!(log.contains(&"0:PointerDown".to_string()), "{log:?}");
+        assert!(log.contains(&"begin:0".to_string()), "{log:?}");
+        assert!(log.iter().any(|s| s == "to:0:dnd#1"), "drag_to over row 1: {log:?}");
+        assert!(log.iter().any(|s| s == "drop:0:dnd#1"), "drop on row 1: {log:?}");
+        assert!(log.contains(&"0:PointerUp".to_string()), "click still reaches: {log:?}");
+        // Hover was pinned *during* the drag — no `PointerLeave` reaches
+        // the source between arming and the drop commit (the capture-
+        // equivalent guarantee). A leave *after* the drop is correct: the
+        // post-gesture `refresh_hover` resettles hover onto row 1, where
+        // the cursor genuinely ended (mirrors capture's `pointer_up`).
+        let drop_at = log.iter().position(|s| s == "drop:0:dnd#1").expect("drop logged");
+        assert!(
+            !log[..drop_at].iter().any(|s| s.contains("PointerLeave")),
+            "no stray leave mid-drag: {log:?}"
+        );
+    }
+
+    #[test]
+    fn r742_press_release_in_place_drops_on_self_and_still_clicks() {
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        // Press and release on row 0 without moving.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        // The drop resolves to the same row (no reorder); PointerUp still
+        // reaches the statechart so press-to-select stays reachable.
+        assert!(log.iter().any(|s| s == "drop:0:dnd#0"), "drop on self: {log:?}");
+        assert!(log.contains(&"0:PointerUp".to_string()), "{log:?}");
     }
 }

@@ -4149,6 +4149,49 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### §5.51. Drag-and-drop substrate (R742)
+
+
+
+**Intent**: Generic pointer drag-and-drop: the InputRouter grows a per-pointer drag session resolving the drop target under the absolute cursor, plus three additive External hooks and DragPayload / DropPoint.
+
+
+**Rationale**:
+- A widget sees only rect-relative coords + capture pins the source, so none can resolve its own drop
+- The router holds the absolute cursor + paint layout, so it hit-tests the drop tag and feeds it back
+- The source coordinator owns every drop candidate (list/tab/dock/tree), so the source is the resolver
+- Pointer generalisation of the invoke-driven dock resolve_dock_drop, whose doc deferred this round
+- Fully additive: default begin_drag is None, so every existing widget is untouched (no regression)
+- DragPayload mirrors the Intent wire form (kind + IntrospectValue) for scene-as-data introspection
+- Driven by the existing scene/drag RPC (press + N moves + release); no new RPC method needed
+
+
+
+
+
+**Caveats**:
+- Keyboard reorder (APG Ctrl+Arrow) deferred; v1 reorder via pointer + scene/drag, list is AT-readable
+- Free-floating drag ghost deferred; v1 dims the source row + draws an insertion line at the drop gap
+- Dock live tear-off + tab/tree reorder are the waiting 2nd/3rd consumers (still invoke/RPC-only)
+- Cross-widget drop (palette to canvas) needs a target hook; intra-widget reorder uses only the source
+
+
+
+
+**Impact scope**: §5.15, §5.35, §5.49
+
+
+
+**Bindings**:
+- [implements] crates/pinion-core/src/external.rs:DragPayload
+- [implements] crates/pinion-core/src/external.rs:DropPoint
+- [implements] crates/pinion-runtime/src/input.rs:InputRouter::update_drag
+- [implements] crates/pinion-runtime/src/input.rs:InputRouter::resolve_drop_point
+- [implements] examples/hello-dnd/src/main.rs:ReorderListExternal
+
+
+
+
 ### §5.6. Reuse path (early cascade-emit vs Rust-native then port)
 
 
@@ -16069,6 +16112,41 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - button capture forwards a default no-op pointer_move on press (harmless extra call)
 - off-then-back-on-then-release activates (capture tracks the final release position; standard)
 - slider / drag widgets unchanged (cancel_on_release_off=false = release commits the value anywhere)
+
+
+
+### R742 — R742 generic drag-and-drop substrate — the InputRouter grows a per-pointer drag session that resolves the drop target under the absolute cursor and feeds it to the source coordinator (the pointer generalisation of the invoke-driven dock resolve_dock_drop, whose own doc deferred this round). Three additive External hooks (begin_drag / drag_to / drag_release) + DragPayload / DropPoint; default begin_drag None keeps every existing widget untouched. First consumer hello-dnd reorderable list, driven by the existing scene/drag RPC.
+
+**Changes**:
+- pinion-core: DragPayload{kind,value} + DropPoint{tag,x_rel,y_rel} + 3 additive External hooks
+- External::begin_drag (source arm) / drag_to (live update) / drag_release (commit); all default no-op
+- pinion-runtime InputRouter: per-pointer drag_sessions; update_drag + resolve_drop_point hit-test
+- pointer_down arms via begin_drag; cursor_moved drives drag_to; pointer_up drag_release + PointerUp
+- additive: default begin_drag None, so button/slider/dock capture paths untouched (no regression)
+- hello-dnd: ReorderListExternal reorderable list (composite dnd#i rows, Rc state, insertion line)
+- whole gesture driven by the existing scene/drag RPC; no new RPC method added
+- binding send parsing routed through parse_send_payload SSOT (R734.1 self-grep finding)
+
+
+
+**Verification**:
+- pinion-core +1 unit (stub is not a drag source); pinion-runtime +2 (drag row0->row1, press-in-place)
+- hello-dnd +13 unit (drop_gap / apply_move / begin_drag / reorder / labels / read_state / a11y list)
+- workspace 4879 passed / 0 fail; clippy -D pedantic clean; full headless demo sweep 90/90
+- r742_dnd.py >=30 assert (boot order+labels, 2 reorders, drop-on-self no-op, rejects) + live-pixel
+- LIVE WINDOW :0 — real native XTEST mouse drag (10 steps) reordered [0,1,2,3] -> [1,2,0,3]
+
+
+
+**Impact**: §5.51, §5.15, §5.35, §5.49
+
+
+**Carry forward**:
+- Cross-widget drop (palette to canvas) needs a target-side hook; intra-widget reorder = source only
+- Keyboard reorder (APG Ctrl+Arrow) deferred; v1 reorder via pointer + scene/drag, list is AT-readable
+- Free-floating drag ghost deferred; v1 dims the source row + draws an insertion line at the drop gap
+- Dock live tear-off + tab reorder + tree reorder = waiting 2nd/3rd consumers (still invoke/RPC-only)
+- ReorderListExternal lift to pinion-widget-paint when a 2nd reorder-list consumer appears
 
 
 

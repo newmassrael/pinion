@@ -20,6 +20,7 @@ members = [
     "crates/pinion-asset",
     "examples/hello-button",
     "examples/hello-button-tui",
+    "examples/hello-dnd",
     "examples/hello-gradient",
     "examples/hello-path",
     "examples/hello-snackbar",

@@ -26,6 +26,8 @@
 //! UI-thread synchronous. It exists to anchor the contract semantically
 //! and to give tests/examples a baseline.
 
+use std::borrow::Cow;
+
 use crate::intent::Intent;
 use crate::Event;
 
@@ -240,6 +242,46 @@ impl IntrospectValue {
     pub fn is_null(&self) -> bool {
         matches!(self, Self::Null)
     }
+}
+
+/// R742 §5.51 — typed drag-and-drop payload. Produced by a drag source
+/// via [`External::begin_drag`] and carried by the router's drag session
+/// until the matching drop, mirroring the
+/// [`Intent`](crate::intent::Intent) wire form (a `kind` tag plus an
+/// [`IntrospectValue`]) so the in-flight drag is introspectable as
+/// scene-as-data (§2 #7) and a future cross-widget drop target can match
+/// on `kind` before interpreting `value`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DragPayload {
+    /// Discriminator naming what is being dragged (e.g. `"dnd-row"`,
+    /// `"dock-panel"`, `"tab"`). A drop target matches on this before
+    /// reading `value`. `Cow` so a static-string source pays no
+    /// allocation while a runtime-built kind is still expressible.
+    pub kind: Cow<'static, str>,
+    /// The dragged datum — typically the source item's stable id or
+    /// index, addressed the same way an [`Intent`] payload is.
+    pub value: IntrospectValue,
+}
+
+/// R742 §5.51 — the live drop location the router resolves under the
+/// cursor during a drag and feeds back to the drag source via
+/// [`External::drag_to`] / [`External::drag_release`].
+///
+/// `tag` is the full paint tag directly under the cursor — a composite
+/// `widget#sub` when the hovered region is a sub-element (the reorder
+/// row / dock panel / tab the cursor is over). `x_rel` / `y_rel` are the
+/// cursor position normalised over that tag's post-layout rect
+/// (`0.0`..=`1.0`, clamped at the edges), so the source coordinator can
+/// classify before / after / centre without re-reading layout — the
+/// generalisation of the dock resolver's edge-vs-centre zone test.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DropPoint {
+    /// Full paint tag under the cursor (possibly composite `widget#sub`).
+    pub tag: String,
+    /// Cursor X normalised over `tag`'s rect (`0.0` left .. `1.0` right).
+    pub x_rel: f32,
+    /// Cursor Y normalised over `tag`'s rect (`0.0` top .. `1.0` bottom).
+    pub y_rel: f32,
 }
 
 /// Failure modes for [`ExternalIntrospect::intervene`].
@@ -472,6 +514,57 @@ pub trait External: core::fmt::Debug {
     /// long-press widget that only cares about the dwell time, not
     /// the cursor X).
     fn pointer_move(&mut self, _x_rel: f32, _y_rel: f32) {}
+
+    // --- 5b. Drag-and-drop source / coordinator (R742 §5.51) ---
+
+    /// R742 §5.51 — drag-source hook. The framework's
+    /// [`InputRouter`](crate#) calls this immediately after it dispatches
+    /// `PointerDown` to this widget. Returning `Some(payload)` **starts a
+    /// drag session**: the router pins this pointer's hover (so the
+    /// statechart sees no spurious `PointerLeave` mid-drag, exactly like
+    /// capture) and, on every subsequent cursor move, resolves the drop
+    /// location under the *absolute* cursor and forwards it back to this
+    /// widget via [`drag_to`](Self::drag_to), then once via
+    /// [`drag_release`](Self::drag_release) on the matching `pointer_up`.
+    ///
+    /// Why the *source* receives the updates, not the hovered target: an
+    /// `External` only ever sees rect-relative coordinates and the router
+    /// routes the whole press → release gesture to the pressed widget, so
+    /// no widget can resolve "what is under the cursor" on its own — only
+    /// the router holds the absolute cursor plus the full paint layout.
+    /// The router does the hit-test and hands the resolved [`DropPoint`]
+    /// to the coordinator that started the drag. Every drop candidate for
+    /// the in-tree reorder consumers (reorder list, tab bar, dock, tree)
+    /// belongs to that one coordinator, so the source *is* the resolver —
+    /// the pointer-driven generalisation of the invoke-driven dock
+    /// `resolve_dock_drop`. A future cross-widget drop (palette → canvas)
+    /// adds a target-side hook without changing this source contract.
+    ///
+    /// Called on `&self`: arming is observation of state the matching
+    /// `PointerDown` already recorded (which sub-region was pressed), not
+    /// a mutation. Default `None` — the widget is not a drag source and
+    /// no session starts, so every pre-R742 `External` is unaffected.
+    fn begin_drag(&self) -> Option<DragPayload> {
+        None
+    }
+
+    /// R742 §5.51 — live drag update. Called on every cursor move while a
+    /// session this widget started via [`begin_drag`](Self::begin_drag)
+    /// is in flight. `over` is the drop location currently under the
+    /// cursor, or `None` when the cursor is over no tagged region. The
+    /// widget updates its drop-preview state (e.g. the insertion index a
+    /// reorder list highlights) — typically by writing a shared
+    /// `Rc<Signal<_>>` the view fn also reads, so the highlight
+    /// re-renders reactively. Default no-op.
+    fn drag_to(&mut self, _payload: &DragPayload, _over: Option<DropPoint>) {}
+
+    /// R742 §5.51 — drop commit. Called once on `pointer_up` with the
+    /// final drop location (`None` when released over no tagged region).
+    /// The widget applies the move / reorder and clears its drop-preview
+    /// state. The router *also* dispatches the normal `PointerUp` to the
+    /// source afterwards, so a press-release-in-place (no real drag) still
+    /// reaches the statechart as a click. Default no-op.
+    fn drag_release(&mut self, _payload: &DragPayload, _over: Option<DropPoint>) {}
 
     // --- 6. DPI / resize notification ---
 
@@ -715,6 +808,30 @@ mod tests {
         // the no-op body compiles for the StubExternal baseline.
         stub.pointer_move(0.5, 0.5);
         stub.pointer_move(-0.1, 1.3);
+    }
+
+    #[test]
+    fn stub_is_not_a_drag_source() {
+        // R742 §5.51 — the default `begin_drag` returns `None`, so the
+        // router never starts a session for a non-DnD widget. `drag_to`
+        // / `drag_release` are no-op defaults exercised here so the
+        // additive trait surface compiles for the StubExternal baseline
+        // and stays dyn-safe.
+        let mut stub = StubExternal::new();
+        assert!(stub.begin_drag().is_none());
+        let payload = DragPayload {
+            kind: Cow::Borrowed("dnd-row"),
+            value: IntrospectValue::Int(0),
+        };
+        let over = DropPoint {
+            tag: "dnd#1".to_string(),
+            x_rel: 0.5,
+            y_rel: 0.25,
+        };
+        stub.drag_to(&payload, Some(over.clone()));
+        stub.drag_to(&payload, None);
+        stub.drag_release(&payload, Some(over));
+        stub.drag_release(&payload, None);
     }
 
     #[test]

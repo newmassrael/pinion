@@ -1,0 +1,31 @@
+[package]
+name = "hello-dnd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R742 §5.51 — first consumer of the generic drag-and-drop substrate (External::begin_drag / drag_to / drag_release + the InputRouter drag session). A canonical reorderable list: each row is a drag source and a drop target; dragging a row past another reorders the list, with a live insertion-line highlight. Driven by the existing scene/drag RPC."
+publish = false
+
+[[bin]]
+name = "hello-dnd"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+# `query` exposes the visual order / labels / drag preview as structured
+# `IntrospectValue::Json` (serde_json::Value) for §2 #7 scene-as-data.
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
