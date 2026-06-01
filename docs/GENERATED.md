@@ -15891,6 +15891,44 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R739 — R739 labeled-step slider — WAI-ARIA aria-valuetext named-stop slider (Off/Low/Medium/High/Max); new AccessNode.value_text a11y axis lowering to accesskit set_value alongside the numeric AccessValue::Float; hello-slider-labeled = 2nd consumer of the R737 with_step substrate + 1st consumer of value_text; one label_for SSOT drives the visible readout and the announced label
+
+**Changes**:
+- R739 labeled-step slider — WAI-ARIA aria-valuetext named-stop slider (Off/Low/Medium/High/Max)
+- New a11y axis AccessNode.value_text Option<String> + with_value_text builder (R739 §5.40)
+- Lowers to accesskit set_value alongside the numeric AccessValue::Float (valuenow/min/max coexist)
+- Additive field per the R674/R693/R695/R696/R714/R717/R730/R731 axis convention (zero breakage)
+- WAI-ARIA 1.2 §6.6.2: AT announces the named label but keeps the numeric range for context
+- Distinct from AccessValue::Text (a text field whole value); value_text augments a numeric range
+- hello-slider-labeled: 2nd consumer of the R737 with_step substrate + 1st consumer of value_text
+- Named stops rendered as a label row (active in accent); no tick-dot paint copied from discrete
+- label_for is one SSOT for the visible readout AND aria-valuetext (announced == painted, no drift)
+- read_slider_state + three slider color helpers reused (6th consumer of the R737/R738 SSOT)
+
+
+
+**Verification**:
+- pinion-a11y 112 lib unit (+2 R739 value_text: builder default/set; labeled lowering twin)
+- hello-slider-labeled 12 binding unit (label_for map, per-stop keys, snap, dual a11y valuetext)
+- cargo test --workspace -j2: 4851 passed, 0 failed
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic: clean
+- r739_slider_labeled.py 43 assertions + PINION_SCREENSHOT live-pixel (fill vs rail vs page)
+- live window boot frame visually confirmed: named stops + Medium active highlight + readout
+- full demo sweep 88/88 (r739_slider_labeled at 76/88) under headless Xvfb
+
+
+
+**Impact**: §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- aria-valuetext on range slider (R738 carry) — RangeSliderExternal needs a discrete step first
+- discrete (stepped) range variant still deferred — range+step composite, then per-thumb valuetext
+- tick-dot paint not duplicated; labeled uses a label row; a 3rd discrete-dots consumer lifts tick()
+- per-stop label centering uses space-between (edge labels align to ends, not under end stops)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

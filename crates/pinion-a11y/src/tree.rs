@@ -340,6 +340,16 @@ fn lower_access_node(access: &AccessNode) -> Node {
         None => {}
     }
 
+    // R739 §5.40 — WAI-ARIA `aria-valuetext`: a labeled-step range widget
+    // (slider / spinbutton) sets a string value *alongside* the numeric
+    // `AccessValue::Float` lowered above. AccessKit's `set_value` carries
+    // the string; `set_numeric_value` carries the number; AT prefers the
+    // string when present but keeps the numeric range for context. Lowered
+    // after the value match so a `Float` + `value_text` node emits both.
+    if let Some(text) = &access.value_text {
+        node.set_value(text.clone());
+    }
+
     if let Some(checked) = access.state.checked {
         node.set_toggled(if checked { accesskit::Toggled::True } else { accesskit::Toggled::False });
     }
@@ -1046,6 +1056,31 @@ mod tests {
         );
         let update = b.build(None);
         assert_eq!(update.nodes.len(), 2);
+    }
+
+    #[test]
+    fn r739_labeled_slider_lowers_valuetext_and_numeric() {
+        // R739 §5.40 — a labeled-step slider lowers BOTH the numeric range
+        // (aria-valuenow/min/max from AccessValue::Float) AND the string
+        // aria-valuetext (from value_text). AccessKit keeps them as separate
+        // node properties; AT prefers the string but retains the numeric
+        // range for context. Call the private lowering directly so we can
+        // read both back via the AccessKit getters.
+        let labeled = AccessNode::new("sl", AriaRole::Slider)
+            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 })
+            .with_value_text("Medium");
+        let node = lower_access_node(&labeled);
+        assert_eq!(node.value(), Some("Medium"), "aria-valuetext string lowered");
+        assert_eq!(node.numeric_value(), Some(0.5), "aria-valuenow still lowered");
+        assert_eq!(node.min_numeric_value(), Some(0.0), "aria-valuemin retained");
+        assert_eq!(node.max_numeric_value(), Some(1.0), "aria-valuemax retained");
+
+        // A plain numeric slider (no value_text) omits the string value.
+        let plain = AccessNode::new("sl", AriaRole::Slider)
+            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 });
+        let plain_node = lower_access_node(&plain);
+        assert_eq!(plain_node.value(), None, "plain numeric slider omits aria-valuetext");
+        assert_eq!(plain_node.numeric_value(), Some(0.5), "numeric value still present");
     }
 
     #[test]

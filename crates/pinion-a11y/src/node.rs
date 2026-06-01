@@ -219,6 +219,25 @@ pub struct AccessNode {
     /// R717 / R730 additive-axis convention) so it defaults absent without
     /// forcing every hand-written node literal to enumerate it.
     pub current: Option<AriaCurrent>,
+    /// R739 §5.40 — WAI-ARIA 1.2 §6.6.2 `aria-valuetext`: a human-readable
+    /// text alternative for [`AccessValue::Float`]'s numeric `aria-valuenow`.
+    /// `Some(label)` lowers via `accesskit::Node::set_value` (the string
+    /// value the labeled-step slider's "Medium" reads instead of "0.5"),
+    /// while the numeric `aria-valuenow` / `valuemin` / `valuemax` still
+    /// lower from the coexisting `AccessValue::Float` — the two are
+    /// complementary, exactly as WAI-ARIA specifies (AT prefers the
+    /// `valuetext` when present but keeps the numeric range for context).
+    ///
+    /// Distinct from [`AccessValue::Text`] (a text *field*'s entire value):
+    /// `value_text` augments a *numeric* range widget (slider / spinbutton /
+    /// progressbar) whose discrete stops carry names. Defaults `None`, so a
+    /// continuous or plain-numeric range widget omits the attribute and AT
+    /// announces the bare `valuenow`.
+    ///
+    /// Placed on [`AccessNode`] (the R674 / R693 / R695 / R696 / R714 /
+    /// R717 / R730 / R731 additive-axis convention) so it defaults absent
+    /// without forcing every hand-written node literal to enumerate it.
+    pub value_text: Option<String>,
 }
 
 impl AccessNode {
@@ -247,6 +266,7 @@ impl AccessNode {
             auto_complete: None,
             sort: None,
             current: None,
+            value_text: None,
         }
     }
 
@@ -394,6 +414,16 @@ impl AccessNode {
         self.current = Some(kind);
         self
     }
+
+    /// R739 §5.40 — set the WAI-ARIA `aria-valuetext` label (the labeled-step
+    /// slider's named stop, e.g. "Medium" for the numeric `valuenow` 0.5).
+    /// Lowers alongside the coexisting [`AccessValue::Float`]. See
+    /// [`Self::value_text`].
+    #[must_use]
+    pub fn with_value_text(mut self, text: impl Into<String>) -> Self {
+        self.value_text = Some(text.into());
+        self
+    }
 }
 
 /// Interaction-state flags exposed to AT.
@@ -480,6 +510,23 @@ mod tests {
                     && (min - 0.0).abs() < f32::EPSILON
                     && (max - 1.0).abs() < f32::EPSILON
         ));
+    }
+
+    #[test]
+    fn with_value_text_defaults_absent_and_sets() {
+        // R739 §5.40 — value_text is a separate additive axis: a plain
+        // numeric slider omits it (None), and the labeled variant carries
+        // the named-stop string alongside the numeric Float.
+        let plain = AccessNode::new("sl", AriaRole::Slider)
+            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 });
+        assert!(plain.value_text.is_none(), "numeric slider omits aria-valuetext");
+
+        let labeled = AccessNode::new("sl", AriaRole::Slider)
+            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 })
+            .with_value_text("Medium");
+        assert_eq!(labeled.value_text.as_deref(), Some("Medium"));
+        // Coexists with the numeric value — the two are complementary.
+        assert!(matches!(labeled.value, Some(AccessValue::Float { .. })));
     }
 
     #[test]
