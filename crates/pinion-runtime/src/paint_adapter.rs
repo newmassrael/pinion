@@ -38,13 +38,15 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::image_cache::ImageCache;
 use crate::paint_cache_stats::FragmentCacheStats;
 use pinion_core::Scene;
 use pinion_core::scene::{
-    BoxNode, ImmediateModeNode, ImmediatePainter, PathCommand, PathNode, PathPoint, Rect, TextNode,
+    BoxNode, ImageNode, ImmediateModeNode, ImmediatePainter, PathCommand, PathNode, PathPoint,
+    Rect, TextNode,
 };
 use pinion_core::style::{
-    Border, BorderPlacement, BoxStyle, Color, Gradient, GradientKind, StrokeCap, TextOverflow,
+    Border, BorderPlacement, BoxStyle, Color, Fit, Gradient, GradientKind, StrokeCap, TextOverflow,
 };
 use pinion_text::LayoutCache;
 use pinion_text::parley::PositionedLayoutItem;
@@ -56,7 +58,7 @@ use vello::kurbo::{
 };
 use vello::peniko::{
     Brush as PenikoBrush, Color as PenikoColor, Extend as PenikoExtend, Fill,
-    Gradient as PenikoGradient,
+    Gradient as PenikoGradient, ImageBrush,
 };
 
 /// Build a Vello scene from a pinion [`Scene`] tree. `fill_hook` is
@@ -92,7 +94,13 @@ pub fn to_vello<F>(
 ) where
     F: Fn(&BoxNode) -> Option<Color>,
 {
-    to_vello_inner(scene, fill_hook, text_cache, out, Affine::IDENTITY);
+    // R740 §5.16 — the uncached walker is the stateless reference /
+    // test path (production uses `to_vello_cached` with the per-window
+    // persistent cache). A per-call throwaway `ImageCache` keeps this
+    // public signature stable while still painting `Scene::Image`
+    // leaves; there is no cross-call decode reuse here by design.
+    let mut image_cache = ImageCache::new();
+    to_vello_inner(scene, fill_hook, text_cache, &mut image_cache, out, Affine::IDENTITY);
 }
 
 /// (R51.188 §5.45 R55.E.1) Transform-carrying recursive walker.
@@ -116,6 +124,7 @@ fn to_vello_inner<F>(
     scene: &Scene,
     fill_hook: &F,
     text_cache: &mut LayoutCache,
+    image_cache: &mut ImageCache,
     out: &mut VelloScene,
     transform: Affine,
 ) where
@@ -126,7 +135,7 @@ fn to_vello_inner<F>(
             paint_box_shadows(out, c.rect, &c.style, transform);
             fill_box_bg(out, c.rect, &c.style, c.style.fill, transform);
             for child in &c.children {
-                to_vello_inner(child, fill_hook, text_cache, out, transform);
+                to_vello_inner(child, fill_hook, text_cache, image_cache, out, transform);
             }
         }
         Scene::Box(b) => {
@@ -159,7 +168,7 @@ fn to_vello_inner<F>(
             let dx = f64::from(s.viewport.x) - f64::from(s.offset_x);
             let dy = f64::from(s.viewport.y) - f64::from(s.offset_y);
             let child_transform = transform * Affine::translate((dx, dy));
-            to_vello_inner(&s.content, fill_hook, text_cache, out, child_transform);
+            to_vello_inner(&s.content, fill_hook, text_cache, image_cache, out, child_transform);
             out.pop_layer();
         }
         // R681 §2 #4 atomic 1 — ImmediateModeNode paints through
@@ -177,8 +186,9 @@ fn to_vello_inner<F>(
             paint_immediate_mode_node(out, node, transform);
         }
         Scene::Path(p) => paint_path(out, p, transform),
-        // External / Effect / Image: no-op. Image paint primitive
-        // attaches in a follow-up round.
+        // R740 §5.16 — raster image paint (decode-once via `image_cache`).
+        Scene::Image(i) => paint_image(out, i, image_cache, transform),
+        // External / Effect: no-op (no rasterizable contribution here).
         _ => {}
     }
 }
@@ -516,6 +526,7 @@ pub fn to_vello_cached<F>(
     scene: &Scene,
     fill_hook: &F,
     text_cache: &mut LayoutCache,
+    image_cache: &mut ImageCache,
     fragment_cache: &mut FragmentCache,
     out: &mut VelloScene,
 ) where
@@ -526,6 +537,7 @@ pub fn to_vello_cached<F>(
         scene,
         fill_hook,
         text_cache,
+        image_cache,
         fragment_cache,
         out,
         Affine::IDENTITY,
@@ -567,6 +579,7 @@ fn to_vello_cached_inner<F>(
     scene: &Scene,
     fill_hook: &F,
     text_cache: &mut LayoutCache,
+    image_cache: &mut ImageCache,
     fragment_cache: &mut FragmentCache,
     out: &mut VelloScene,
     transform: Affine,
@@ -597,6 +610,7 @@ fn to_vello_cached_inner<F>(
                 child,
                 fill_hook,
                 text_cache,
+                image_cache,
                 fragment_cache,
                 &mut sub,
                 Affine::IDENTITY,
@@ -638,6 +652,7 @@ fn to_vello_cached_inner<F>(
                     child,
                     fill_hook,
                     text_cache,
+                    image_cache,
                     fragment_cache,
                     &mut sub,
                     transform,
@@ -668,6 +683,7 @@ fn to_vello_cached_inner<F>(
                 &s.content,
                 fill_hook,
                 text_cache,
+                image_cache,
                 fragment_cache,
                 &mut sub,
                 child_transform,
@@ -678,8 +694,11 @@ fn to_vello_cached_inner<F>(
             paint_immediate_mode_node(&mut sub, node, transform);
         }
         Scene::Path(p) => paint_path(&mut sub, p, transform),
-        // External / Effect / Image: no-op (matches to_vello_inner's
-        // `_ => {}` arm).
+        // R740 §5.16 — raster image paint into the fresh sub-scene (the
+        // R682 cache key already folds `ImageNode::source`, so a cached
+        // fragment re-uses the decoded image and a source change misses).
+        Scene::Image(i) => paint_image(&mut sub, i, image_cache, transform),
+        // External / Effect: no-op (matches to_vello_inner's `_ => {}` arm).
         _ => {}
     }
     out.append(&sub, None);
@@ -982,6 +1001,79 @@ fn to_kurbo_cap(cap: StrokeCap) -> KurboCap {
 /// stream is a no-op. Issued into the caller's fresh sub-scene before
 /// any child `append`, preserving the R706 "out receives appends only"
 /// invariant.
+/// R740 §5.16 — paint a [`Scene::Image`](pinion_core::scene::Scene::Image)
+/// leaf. Resolves `node.source` through the decode-once
+/// [`ImageCache`] (a missing / undecodable source paints nothing — the
+/// same graceful skip the pre-R740 no-op gave, but only for genuinely
+/// broken sources), then places the decoded image into `node.rect`
+/// according to the [`Fit`] policy:
+///
+/// * [`Fit::Fill`] — non-uniform stretch to the rect (default).
+/// * [`Fit::Contain`] — uniform scale to fit *inside* the rect, centred
+///   (letterboxed).
+/// * [`Fit::Cover`] — uniform scale to *cover* the rect, centred, clipped
+///   to the rect (overflow cropped).
+/// * [`Fit::Tile`] — repeat at natural size across the rect.
+///
+/// `style.tint` (a multiply recolour) is a deferred additive axis — it
+/// needs a blend layer and has no consumer yet; the buffer is painted
+/// untinted for now.
+fn paint_image(out: &mut VelloScene, node: &ImageNode, image_cache: &mut ImageCache, transform: Affine) {
+    let Some(data) = image_cache.resolve(&node.source) else {
+        return;
+    };
+    let (iw, ih) = (f64::from(data.width), f64::from(data.height));
+    let r = node.rect;
+    let (rw, rh) = (f64::from(r.w), f64::from(r.h));
+    if iw <= 0.0 || ih <= 0.0 || rw <= 0.0 || rh <= 0.0 {
+        return;
+    }
+    let (rx, ry) = (f64::from(r.x), f64::from(r.y));
+
+    if matches!(node.style.fit, Fit::Tile) {
+        // Repeat the image at natural size; the brush transform anchors
+        // the tiling origin at the rect's top-left.
+        let brush = ImageBrush::new(data).with_extend(PenikoExtend::Repeat);
+        let shape = KurboRect::new(rx, ry, rx + rw, ry + rh);
+        out.fill(
+            Fill::NonZero,
+            transform,
+            &PenikoBrush::Image(brush),
+            Some(Affine::translate((rx, ry))),
+            &shape,
+        );
+        return;
+    }
+
+    // Fill / Contain / Cover — a single placement via `draw_image`.
+    let (sx, sy) = match node.style.fit {
+        Fit::Contain => {
+            let s = (rw / iw).min(rh / ih);
+            (s, s)
+        }
+        Fit::Cover => {
+            let s = (rw / iw).max(rh / ih);
+            (s, s)
+        }
+        // `Fit` is `#[non_exhaustive]`; Fill + any future variant stretch.
+        _ => (rw / iw, rh / ih),
+    };
+    // Centre the scaled image in the rect (a no-op for Fill).
+    let ox = rx + (rw - iw * sx) / 2.0;
+    let oy = ry + (rh - ih * sy) / 2.0;
+    let place = transform * Affine::new([sx, 0.0, 0.0, sy, ox, oy]);
+
+    // Cover overflows the rect → clip so the overflow is cropped.
+    let clip = matches!(node.style.fit, Fit::Cover);
+    if clip {
+        out.push_clip_layer(transform, &KurboRect::new(rx, ry, rx + rw, ry + rh));
+    }
+    out.draw_image(&ImageBrush::new(data), place);
+    if clip {
+        out.pop_layer();
+    }
+}
+
 fn paint_path(out: &mut VelloScene, node: &PathNode, transform: Affine) {
     if node.commands.is_empty() {
         return;
@@ -1813,7 +1905,7 @@ mod tests {
         let mut cache = FragmentCache::new();
         let mut text = LayoutCache::new();
         let mut vello = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut vello);
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut vello);
         assert_eq!(cache.hits(), 0);
         assert_eq!(cache.misses(), 1);
         assert_eq!(cache.entries(), 1, "miss installs the fragment");
@@ -1836,6 +1928,7 @@ mod tests {
             &simple_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut vello1,
         );
@@ -1844,6 +1937,7 @@ mod tests {
             &simple_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut vello2,
         );
@@ -1867,6 +1961,7 @@ mod tests {
             &simple_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut vello1,
         );
@@ -1875,6 +1970,7 @@ mod tests {
             &mutated_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut vello2,
         );
@@ -1900,6 +1996,7 @@ mod tests {
             &simple_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -1910,6 +2007,7 @@ mod tests {
             &mutated_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -1942,7 +2040,7 @@ mod tests {
         let mut cache = FragmentCache::new();
         let mut text = LayoutCache::new();
         let mut v = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut v);
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
         // No miss → no install. Cache stays empty.
         assert_eq!(cache.hits(), 0);
         assert_eq!(cache.misses(), 0);
@@ -1963,7 +2061,7 @@ mod tests {
         let mut cache = FragmentCache::new();
         let mut text = LayoutCache::new();
         let mut v = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut v);
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
         assert_eq!(cache.entries(), 0);
     }
 
@@ -1996,7 +2094,7 @@ mod tests {
         let mut text = LayoutCache::new();
 
         let mut v = VelloScene::new();
-        to_vello_cached(&make_scene(), &null_hook(), &mut text, &mut cache, &mut v);
+        to_vello_cached(&make_scene(), &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
         // First paint: header Container missed (installed) — root
         // Container is uncacheable so it didn't probe; ImmediateMode
         // doesn't probe.
@@ -2005,7 +2103,7 @@ mod tests {
         assert_eq!(cache.entries(), 1);
 
         let mut v = VelloScene::new();
-        to_vello_cached(&make_scene(), &null_hook(), &mut text, &mut cache, &mut v);
+        to_vello_cached(&make_scene(), &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
         // Second paint: header hits.
         assert_eq!(cache.hits(), 1);
         assert_eq!(cache.misses(), 1);
@@ -2021,6 +2119,7 @@ mod tests {
             &simple_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -2053,6 +2152,7 @@ mod tests {
             &scene,
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut cached,
         );
@@ -2117,7 +2217,7 @@ mod tests {
         // to_vello, so both arms must reach it without panic.
         let mut cache = FragmentCache::new();
         let mut cached = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut cached);
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut cached);
         assert_eq!(cache.misses(), 1);
     }
 
@@ -2133,6 +2233,7 @@ mod tests {
             &Scene::Effect(EffectNode::new()),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -2145,6 +2246,7 @@ mod tests {
             ))),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -2164,6 +2266,7 @@ mod tests {
                 &simple_container(),
                 &null_hook(),
                 &mut text,
+                &mut ImageCache::new(),
                 &mut cache,
                 &mut v,
             );
@@ -2242,7 +2345,7 @@ mod tests {
         let mut cache = FragmentCache::new();
         let mut text = LayoutCache::new();
         let mut v = VelloScene::new();
-        to_vello_cached(&scene, &null_hook(), &mut text, &mut cache, &mut v);
+        to_vello_cached(&scene, &null_hook(), &mut text, &mut ImageCache::new(), &mut cache, &mut v);
 
         let dmg = cache.last_damage_region().expect("first paint = damage");
         assert_eq!(dmg, expected_rect);
@@ -2258,6 +2361,7 @@ mod tests {
             &simple_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -2268,6 +2372,7 @@ mod tests {
             &simple_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -2314,6 +2419,7 @@ mod tests {
             &root_uncacheable,
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -2337,6 +2443,7 @@ mod tests {
             &simple_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -2349,6 +2456,7 @@ mod tests {
             &simple_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -2360,6 +2468,7 @@ mod tests {
             &mutated_container(),
             &null_hook(),
             &mut text,
+            &mut ImageCache::new(),
             &mut cache,
             &mut v,
         );
@@ -2444,7 +2553,7 @@ mod tests {
 
     fn run_paint(scene: &Scene, cache: &mut FragmentCache, text: &mut LayoutCache) {
         let mut v = VelloScene::new();
-        to_vello_cached(scene, &null_hook(), text, cache, &mut v);
+        to_vello_cached(scene, &null_hook(), text, &mut ImageCache::new(), cache, &mut v);
     }
 
     #[test]

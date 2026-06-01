@@ -33,6 +33,8 @@ pub mod input;
 pub mod intent_queue;
 pub mod layout;
 #[cfg(feature = "vello")]
+pub mod image_cache;
+#[cfg(feature = "vello")]
 pub mod paint_adapter;
 pub mod paint_cache_stats;
 pub mod window;

@@ -35,7 +35,7 @@ use pinion_core::reactive::{Effect, Signal};
 use pinion_a11y::AccessTreeBuilder;
 use pinion_core::event::WheelDelta;
 use pinion_core::scene::BoxNode;
-use pinion_runtime::{paint_adapter, CommandExecutor, HandlerRegistry, PointerId};
+use pinion_runtime::{image_cache, paint_adapter, CommandExecutor, HandlerRegistry, PointerId};
 use vello::Scene as VelloScene;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -173,6 +173,13 @@ struct WindowSlot<R: VelloRenderer> {
     /// recent frame — no fixed-cap LRU; no manual reset between
     /// frames.
     fragment_cache: paint_adapter::FragmentCache,
+    /// R740 §5.16 — per-window decoded-image cache. Sits beside the
+    /// fragment cache (both are vello render state) and feeds
+    /// [`paint_adapter::to_vello_cached`] so `Scene::Image` sources are
+    /// decoded once and reused every frame. Per-window for now (a
+    /// multi-window image consumer that wants one shared decode is an
+    /// additive app-level move, [[abstraction-needs-second-consumer]]).
+    image_cache: image_cache::ImageCache,
 }
 
 impl<R: VelloRenderer> WindowSlot<R> {
@@ -198,6 +205,7 @@ impl<R: VelloRenderer> WindowSlot<R> {
             last_paint_layout: None,
             has_immediate_mode_subtree: false,
             fragment_cache: paint_adapter::FragmentCache::new(),
+            image_cache: image_cache::ImageCache::new(),
         }
     }
 }
@@ -726,6 +734,7 @@ impl<V: WidgetView> AppShell<V> {
             &paint_scene,
             &|_b: &BoxNode| None,
             self.core.text_cache_mut(),
+            &mut slot.image_cache,
             &mut slot.fragment_cache,
             &mut slot.vello_scene,
         );
@@ -2316,10 +2325,12 @@ fn try_headless_screenshot<V: WidgetView>() -> bool {
     // matches `to_vello` when both are correct and tracks `to_vello_cached`
     // when they would diverge.
     let mut fragment_cache = paint_adapter::FragmentCache::new();
+    let mut image_cache = image_cache::ImageCache::new();
     paint_adapter::to_vello_cached(
         &paint_scene,
         &|_b: &BoxNode| None,
         core.text_cache_mut(),
+        &mut image_cache,
         &mut fragment_cache,
         &mut vello_scene,
     );

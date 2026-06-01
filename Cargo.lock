@@ -1911,6 +1911,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-image"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-immediate-mode-canvas"
 version = "0.0.1"
 dependencies = [
@@ -3536,6 +3548,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinion-asset"
+version = "0.0.1"
+dependencies = [
+ "image",
+]
+
+[[package]]
 name = "pinion-cli"
 version = "0.0.1"
 dependencies = [
@@ -3623,6 +3642,7 @@ name = "pinion-runtime"
 version = "0.0.1"
 dependencies = [
  "futures-executor",
+ "pinion-asset",
  "pinion-core",
  "pinion-text",
  "taffy",

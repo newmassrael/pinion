@@ -532,8 +532,16 @@ mod tests {
         let scene = inject_focus_ring(scene, Some(FOCUSED_TAG), FocusRingStyle::default());
         let base = root_background(&scene);
         let mut cache = FragmentCache::new();
+        let mut image_cache = pinion_runtime::image_cache::ImageCache::new();
         let mut vello = VelloScene::new();
-        to_vello_cached(&scene, &|_| None, &mut text_cache, &mut cache, &mut vello);
+        to_vello_cached(
+            &scene,
+            &|_| None,
+            &mut text_cache,
+            &mut image_cache,
+            &mut cache,
+            &mut vello,
+        );
 
         let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
         let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");

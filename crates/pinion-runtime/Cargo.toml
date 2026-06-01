@@ -42,6 +42,11 @@ futures-executor = "0.3"
 # Workspace pin matches Vello's transitive wgpu version (see workspace
 # Cargo.toml comment for the §5.16 R41 path C rationale).
 vello = { workspace = true, optional = true }
+# R740 §5.16 — backend-agnostic image decode for the vello-side image
+# cache (`image_cache`, gated on `vello`). The decode lives in
+# pinion-asset; this crate only converts a `DecodedImage`'s Arc-shared
+# RGBA8 buffer into a `peniko::ImageData` at paint time.
+pinion-asset = { path = "../pinion-asset", version = "0.0.1" }
 
 [dev-dependencies]
 # R51.127 §5.41 — pull `pinion_core::test_fixtures::ButtonFixture` into

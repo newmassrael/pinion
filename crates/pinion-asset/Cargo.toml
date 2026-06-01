@@ -1,0 +1,16 @@
+[package]
+name = "pinion-asset"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+# R740 §5.16 — backend-agnostic image decode. PNG only for the first
+# slice (default-features off keeps the dependency surface minimal);
+# JPEG / WebP arrive as additive `image` features behind a consumer.
+image = { workspace = true }
+
+[lints]
+workspace = true

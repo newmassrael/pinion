@@ -15996,6 +15996,47 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R740 — R740 raster image paint — the Scene::Image paint no-op is cleared, the first slice of the asset pipeline. New backend-agnostic pinion-asset crate decodes PNG bytes to an Arc-shared RGBA8 DecodedImage; new vello-side pinion-runtime::image_cache resolves an ImageNode.source path to a decode-once peniko ImageData; paint_image renders all four Fit policies (Fill/Contain/Cover/Tile) in both paint walkers, threaded through to_vello_cached per-window like the text cache. First consumer hello-image bundles a bordered quadrant PNG drawn under every fit; tint/https/async deferred.
+
+**Changes**:
+- R740 raster image paint — Scene::Image no-op cleared (asset pipeline first slice)
+- New pinion-asset crate: backend-agnostic decode_image (PNG) -> DecodedImage (Arc RGBA8)
+- New pinion-runtime::image_cache (vello): source path -> decode-once peniko ImageData
+- paint_image arm in both walkers, all four Fit policies (Fill/Contain/Cover/Tile)
+- R682 cache key already folds ImageNode.source, so cached fragments reuse the decode
+- Cache threaded through to_vello_cached like text_cache; per-window WindowSlot.image_cache
+- to_vello (uncached reference path) keeps a stable signature via an internal throwaway cache
+- hello-image: bundled 16x16 bordered quadrant PNG drawn under all four fits in wide cells
+- ImageNode.source = filesystem path (file:// model); decode + misses both cached once
+- decode is sync (decode-once); tint multiply, https/memory sources, async load all deferred
+
+
+
+**Verification**:
+- pinion-asset 4 unit (decode PNG->RGBA8 / reject garbage / buffer-length guard / Arc-share)
+- pinion-runtime image_cache 3 unit (empty / seed+resolve / missing-file caches the miss)
+- hello-image 4 binding unit (four fit tags / distinct fit policies / bounds outline / Switch role)
+- cargo test --workspace -j2: 4865 passed, 0 failed
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic: clean
+- r740_image.py ~45 assertions: 4 image nodes (source/fit/rect) + RPC toggle + PINION_SCREENSHOT
+- live-pixel: Fill cell 4 quadrants = red/green/blue/white (decisive); Cover crops border vs Fill
+- full demo sweep 89/89 (r740_image at 77/89) under headless Xvfb
+- live window on display :0 visually confirmed: all four fits render distinctly (user-reviewed)
+
+
+
+**Impact**: §5.3, §5.16
+
+
+**Carry forward**:
+- tint multiply-blend deferred (needs a blend layer, no consumer) — first icon-recolour consumer
+- https:// / memory:// sources + binding-registered asset store deferred (file path only for now)
+- per-window image cache (WindowSlot); app-level shared decode awaits a multi-window image consumer
+- async / streaming image loading is a Phase C axis; sync decode-once suffices for static icons
+- button pointer-capture jitter-tolerance = R741 (live toggle: no capture = stray-cancel on jitter)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
