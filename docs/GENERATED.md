@@ -15929,6 +15929,42 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R739.1 — R739.1 audit clearance (user review trigger) — the single-value slider keyboard apply_key scaffold (focus-guard / disabled-check / read value / intervene write) was duplicated byte-identically across hello-slider / -vertical / -discrete / -labeled; lifted to pinion-widget-paint::slider::slider_apply_key with the per-widget key-map kept as a closure; RangeSlider stays separate (per-thumb path). R739 self-grep missed this axis (R734.1 trap).
+
+**Changes**:
+- R739.1 audit clearance — slider keyboard apply_key scaffold SSOT lift (user review trigger)
+- New pinion-widget-paint::slider::slider_apply_key — focus/disabled/read/intervene scaffold
+- Policy closure FnOnce(f32)->Option<f32> stays per-binding (key set + step); scaffold is SSOT
+- 4 identical copies retrofit: hello-slider / -vertical / -discrete / -labeled delegate to it
+- Mechanical wiring (Rule-of-Three immediate per R727/R732), not opinionated paint; was 4 copies
+- Crossed three at R737 (discrete); R738 + R739 added more; nobody lifted it until this audit
+- R739 entry self-grep checked tick/reader/labels but missed apply_key (R734.1 grep-some-axes trap)
+- RangeSlider stays separate: per-thumb low/high path + no disabled-guard = a different scaffold
+- Keyboard peer of read_slider_state split: SSOT plumbing here, opinionated key-map per-widget
+
+
+
+**Verification**:
+- pinion-widget-paint 21 unit (+3 R739.1: unfocused/declined-key, policy->intervene, disabled-guard)
+- 4 slider bindings retrofit; apply_key now delegates, key-map stays per-binding; behavior identical
+- cargo test --workspace -j2: 4854 passed, 0 failed
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic: clean
+- full demo sweep 88/88 under headless Xvfb (slider family r737/r738/r739 + all unaffected)
+- continuous/vertical sliders have no sweep demo; covered by their apply_key unit tests (10/12 pass)
+
+
+
+**Impact**: §5.16, §5.38
+
+
+**Carry forward**:
+- RangeSlider apply_key stays per-binding — per-thumb low/high routing is a distinct scaffold
+- aria-valuetext on range slider (R739 carry) still open — discrete range first
+- tick-dot paint not duplicated (R739 carry); 3rd discrete-dots consumer would lift tick()
+- per-stop label centering=space-between (R739 carry); edge labels align to ends
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

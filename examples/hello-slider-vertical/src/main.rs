@@ -29,7 +29,7 @@
 //! `ArrowDown` / `ArrowLeft` decrement, `Home` / `End` jump to the
 //! extremes, `PageUp` / `PageDown` apply the large step.
 
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::External;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -39,7 +39,7 @@ use pinion_core::widgets::slider::{SliderAxis, SliderEvent, SliderExternal, Slid
 use pinion_core::{scale_normalized_to_px, Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::slider::read_slider_state;
+use pinion_widget_paint::slider::{read_slider_state, slider_apply_key};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSliderVerticalRenderer, HelloSliderVerticalRendererError);
@@ -254,37 +254,20 @@ impl WidgetCore for SliderVerticalView {
     /// direction. Disabled state ignores keyboard input per the
     /// same ARIA contract.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
-        if focused != Some(Self::tag()) {
-            return false;
-        }
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-            // R698.A §5.16 — compare against the SSOT variant, not a
-            // hard-coded SCXML-id literal.
-            if matches!(SliderState::from_name_or_default(&name), SliderState::Disabled) {
-                return false;
-            }
-        }
-        let Some(IntrospectValue::Float(current)) = intro.query("value") else {
-            return false;
-        };
-        let new_value = match key {
-            "ArrowLeft" | "ArrowDown" => (current - 0.05).clamp(0.0, 1.0),
-            "ArrowRight" | "ArrowUp" => (current + 0.05).clamp(0.0, 1.0),
-            "Home" => 0.0,
-            "End" => 1.0,
-            "PageDown" => (current - 0.10).clamp(0.0, 1.0),
-            "PageUp" => (current + 0.10).clamp(0.0, 1.0),
-            _ => return false,
-        };
-        intro
-            .intervene("value", IntrospectValue::Float(new_value))
-            .is_ok()
+        // The focus-guard / disabled-check / read / intervene scaffold is
+        // the lifted R739.1 `slider_apply_key` SSOT (shared with the
+        // horizontal / discrete / labeled sliders). The key-map keeps
+        // `ArrowUp` / `ArrowRight` as the increment direction — the value
+        // axis is the same normalised 0..1 regardless of paint orientation.
+        slider_apply_key(scene, focused, Self::tag(), |current| match key {
+            "ArrowLeft" | "ArrowDown" => Some((current - 0.05).clamp(0.0, 1.0)),
+            "ArrowRight" | "ArrowUp" => Some((current + 0.05).clamp(0.0, 1.0)),
+            "Home" => Some(0.0),
+            "End" => Some(1.0),
+            "PageDown" => Some((current - 0.10).clamp(0.0, 1.0)),
+            "PageUp" => Some((current + 0.10).clamp(0.0, 1.0)),
+            _ => None,
+        })
     }
 
     fn fmt_state_log(state: &(SliderState, f32)) -> String {
@@ -329,6 +312,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::external::IntrospectValue;
     use pinion_core::scene::ExternalNode;
 
     /// Build a vertical-axis slider scene at a starting value. The

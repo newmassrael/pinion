@@ -50,7 +50,6 @@
 //! route uses, so the AI client and the keyboard path see the
 //! identical observable state transitions.
 
-use pinion_core::external::IntrospectValue;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -64,7 +63,8 @@ use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 use pinion_widget_paint::slider::{
-    read_slider_state, slider_accent_for, slider_thumb_fill, slider_track_inactive,
+    read_slider_state, slider_accent_for, slider_apply_key, slider_thumb_fill,
+    slider_track_inactive,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -265,8 +265,8 @@ impl SliderView {
     /// `value` float). The state half routes through the R643
     /// [`WidgetStateName::from_name_or_default`] derive (drops the
     /// per-binding `parse_slider_state` helper); the value half
-    /// uses [`IntrospectValue::as_f32`] (R51.155) for the f64 → f32
-    /// narrowing.
+    /// uses [`IntrospectValue::as_f32`](pinion_core::external::IntrospectValue::as_f32)
+    /// (R51.155) for the f64 → f32 narrowing.
     fn read_state(scene: &Scene) -> (SliderState, f32) {
         // R737 §5.38 — shared introspect reader; the continuous
         // slider's missing-external fallback is `(Idle, 0.0)`.
@@ -274,48 +274,29 @@ impl SliderView {
             .unwrap_or((SliderState::Idle, 0.0))
     }
 
-    /// W3C/ARIA Slider keyboard accessibility — wires the six
-    /// standard navigation keys (arrows, Home/End, PageUp/PageDown)
-    /// to value mutation via the §5.15 introspect channel. Walks the
-    /// authoritative state scene to the root [`Scene::External`]
-    /// (the `SliderExternal` opt-in to [`ExternalIntrospect`]),
-    /// reads the current value via `query("value")`, computes the
-    /// next clamped value, and writes it back through
+    /// W3C/ARIA Slider keyboard accessibility — wires the six standard
+    /// navigation keys (arrows, Home/End, PageUp/PageDown) to value
+    /// mutation. The focus-guard / disabled-check / read / write scaffold
+    /// is the lifted R739.1 [`slider_apply_key`] SSOT (it walks to the root
+    /// [`Scene::External`], reads `query("value")`, and writes back through
     /// `intervene("value", Float)` — the same side door the RPC
-    /// `scene/intervene` route uses, so the AI client observes
-    /// keyboard mutations identically to drag-driven mutations.
+    /// `scene/intervene` route uses, so the AI client observes keyboard
+    /// mutations identically to drag-driven mutations). Only the small /
+    /// large step key-map stays here.
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
-        if focused != Some(Self::tag()) {
-            return false;
-        }
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-            // R698.A §5.16 — compare against the SSOT variant, not a
-            // hard-coded SCXML-id literal.
-            if matches!(SliderState::from_name_or_default(&name), SliderState::Disabled) {
-                return false;
-            }
-        }
-        let Some(IntrospectValue::Float(current)) = intro.query("value") else {
-            return false;
-        };
-        let new_value = match key {
-            "ArrowLeft" | "ArrowDown" => (current - 0.05).clamp(0.0, 1.0),
-            "ArrowRight" | "ArrowUp" => (current + 0.05).clamp(0.0, 1.0),
-            "Home" => 0.0,
-            "End" => 1.0,
-            "PageDown" => (current - 0.10).clamp(0.0, 1.0),
-            "PageUp" => (current + 0.10).clamp(0.0, 1.0),
-            _ => return false,
-        };
-        intro
-            .intervene("value", IntrospectValue::Float(new_value))
-            .is_ok()
+        // The focus-guard / disabled-check / read / intervene scaffold is
+        // the lifted R739.1 `slider_apply_key` SSOT (shared with the
+        // vertical / discrete / labeled sliders); only the small + large
+        // step key-map (with PageUp/PageDown) stays per-widget.
+        slider_apply_key(scene, focused, Self::tag(), |current| match key {
+            "ArrowLeft" | "ArrowDown" => Some((current - 0.05).clamp(0.0, 1.0)),
+            "ArrowRight" | "ArrowUp" => Some((current + 0.05).clamp(0.0, 1.0)),
+            "Home" => Some(0.0),
+            "End" => Some(1.0),
+            "PageDown" => Some((current - 0.10).clamp(0.0, 1.0)),
+            "PageUp" => Some((current + 0.10).clamp(0.0, 1.0)),
+            _ => None,
+        })
     }
 
     fn keybinding(key: &str) -> Option<SliderEvent> {
@@ -373,6 +354,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::external::IntrospectValue;
     use pinion_core::scene::ExternalNode;
 
     /// Build a fresh slider scene at a given starting value. Mirrors

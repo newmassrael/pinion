@@ -38,7 +38,7 @@
 //! the drag + RPC use, so the substrate snap applies uniformly.
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::External;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -48,7 +48,8 @@ use pinion_core::widgets::slider::{SliderExternal, SliderState};
 use pinion_core::{scale_normalized_to_px, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::slider::{
-    read_slider_state, slider_accent_for, slider_thumb_fill, slider_track_inactive,
+    read_slider_state, slider_accent_for, slider_apply_key, slider_thumb_fill,
+    slider_track_inactive,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -319,42 +320,24 @@ impl WidgetCore for LabeledView {
     }
 
     /// WAI-ARIA discrete-slider keyboard: arrows move one stop, Home / End
-    /// jump to the extreme stops. Every key writes through
-    /// `intervene("value", Float)` so the substrate snap applies.
+    /// jump to the extreme stops. The focus-guard / disabled-check / read /
+    /// `intervene("value", Float)` scaffold is the lifted R739.1
+    /// [`slider_apply_key`] SSOT (shared with the continuous / vertical /
+    /// discrete sliders); only the stop key-map is per-widget. The write
+    /// funnels through `intervene` so the substrate snap applies.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        if focused != Some(TAG) {
-            return false;
-        }
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        // A disabled slider ignores keyboard input (ARIA).
-        if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-            if matches!(SliderState::from_name_or_default(&name), SliderState::Disabled) {
-                return false;
-            }
-        }
-        let Some(current) = intro.query("value").and_then(|v| v.as_f32()) else {
-            return false;
-        };
-        let next = match key {
-            "ArrowRight" | "ArrowUp" => (current + STEP).clamp(0.0, 1.0),
-            "ArrowLeft" | "ArrowDown" => (current - STEP).clamp(0.0, 1.0),
-            "Home" => 0.0,
-            "End" => 1.0,
-            _ => return false,
-        };
-        intro
-            .intervene("value", IntrospectValue::Float(f64::from(next)))
-            .is_ok()
+        slider_apply_key(scene, focused, TAG, |current| match key {
+            "ArrowRight" | "ArrowUp" => Some((current + STEP).clamp(0.0, 1.0)),
+            "ArrowLeft" | "ArrowDown" => Some((current - STEP).clamp(0.0, 1.0)),
+            "Home" => Some(0.0),
+            "End" => Some(1.0),
+            _ => None,
+        })
     }
 
     fn fmt_state_log(state: &LabeledState) -> String {
@@ -398,6 +381,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::external::IntrospectValue;
     use pinion_core::scene::ExternalNode;
 
     fn scene_fixture() -> Scene {
