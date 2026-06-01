@@ -73,7 +73,7 @@ use pinion_core::style::{
     SizeValue, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::reorder::{ReorderAxis, ReorderModel};
+use pinion_core::widgets::reorder::{read_reorder, ReorderAxis, ReorderModel};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::tabs::{composite_tab_tag, TabsStyle};
@@ -560,22 +560,6 @@ fn view(state: TabsState) -> Scene {
     )
 }
 
-/// Parse a `query("order")` JSON array back into the fixed `[usize; N]`
-/// projection; falls back to identity on any shape mismatch.
-fn order_from_json(v: &serde_json::Value) -> [usize; N] {
-    let mut out = IDENTITY;
-    if let serde_json::Value::Array(a) = v {
-        if a.len() == N {
-            for (slot, item) in out.iter_mut().zip(a) {
-                if let Some(id) = item.as_u64().and_then(|n| usize::try_from(n).ok()) {
-                    *slot = id;
-                }
-            }
-        }
-    }
-    out
-}
-
 struct TabReorderView;
 
 impl WidgetCore for TabReorderView {
@@ -601,33 +585,19 @@ impl WidgetCore for TabReorderView {
         let Some(intro) = node.handle.introspect() else {
             return out;
         };
-        if let Some(IntrospectValue::Json(v)) = intro.query("order") {
-            out.order = order_from_json(&v);
-        }
+        // Shared reorder slots through `read_reorder` (the deserialize
+        // peer of `ReorderModel::query`); only `selected_id` is this
+        // binding's own slot.
+        let v = read_reorder(intro);
+        out.order = v.order.try_into().unwrap_or(IDENTITY);
+        out.preview = v.preview.map(|p| (p.from_visual, p.insert_at));
+        out.focused = v.focused;
+        out.grabbed = v.grabbed;
         if let Some(IntrospectValue::Int(i)) = intro.query("selected_id") {
             if let Ok(i) = usize::try_from(i) {
                 out.selected = i;
             }
         }
-        out.preview = match intro.query("preview") {
-            Some(IntrospectValue::Json(v)) => {
-                let from = v.get("from_visual").and_then(serde_json::Value::as_u64);
-                let at = v.get("insert_at").and_then(serde_json::Value::as_u64);
-                match (from, at) {
-                    (Some(from), Some(at)) => Some((
-                        usize::try_from(from).unwrap_or(0),
-                        usize::try_from(at).unwrap_or(0),
-                    )),
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-        out.focused = match intro.query("focused_index") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
-            _ => None,
-        };
-        out.grabbed = matches!(intro.query("grabbed"), Some(IntrospectValue::Bool(true)));
         out
     }
 

@@ -16308,6 +16308,30 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R743.1 — R743.1 (audit): lift the reorder introspection decode (read_state order/preview/focused/grabbed) to pinion_core::widgets::reorder::read_reorder, the deserialize peer of ReorderModel::query, so both consumers stop hand-decoding the wire shape (SSOT, divergence-is-a-bug class; byte-identical order_from_json removed).
+
+**Changes**:
+- read_reorder + ReorderView: the deserialize peer of ReorderModel::query (one wire SSOT, same module)
+- hello-dnd + hello-tab-reorder read_state route through read_reorder; byte-identical order_from_json deleted (was 2-copy)
+- bindings keep only the fixed-N Copy projection + their own slots (tabs selected_id); decode of shared slots is single-source
+
+
+
+**Verification**:
+- pinion-core +1 reorder unit (read_reorder round-trips the query encode via a Probe ExternalIntrospect); 12 total
+- hello-dnd 10 + hello-tab-reorder 14 green; clippy -D pedantic clean; r742_dnd + r743_tab_reorder demos green
+
+
+
+**Impact**: §5.51
+
+
+**Carry forward**:
+- External wrapper boilerplate (backends/repaint/thread + drag-hook delegation) repeats per plain External (Tooltip/Progress/...): framework-wide ergonomic, not reorder-specific; a derive could fold it but that is a separate axis
+- Vec-to-fixed-N order projection is a trivial one-line try_into per binding (Copy-State shaping, not divergence-is-a-bug): acceptable inline, no lift
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

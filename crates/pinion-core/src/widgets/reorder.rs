@@ -49,7 +49,7 @@ use std::cell::{Cell, RefCell};
 
 use crate::composite_tag::{parse_send_payload, split_subindex};
 use crate::external::{
-    DragPayload, DropPoint, InterveneError, IntrospectValue, InvokeError,
+    DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
 };
 
 /// The flow direction of a reorderable collection — selects which axis of
@@ -374,6 +374,68 @@ impl ReorderModel {
     }
 }
 
+/// A decoded snapshot of a [`ReorderModel`]'s introspection slots — the
+/// **deserialize peer** of [`ReorderModel::query`]. A consumer's
+/// `read_state` decodes the reorder wire shape through this instead of
+/// hand-matching the JSON in every binding, so the encode (the model's
+/// `query`) and the decode live in one module: a slot rename can't
+/// silently break a binding's hand-decode. Bindings map this into their
+/// own `Copy` projection (and add widget-specific slots like a tab's
+/// selection). `order` is a `Vec` (count-agnostic, like the model); a
+/// fixed-`N` binding converts with `try_into().unwrap_or(IDENTITY)`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReorderView {
+    /// Current visual order (`order[visual] = item id`); empty on a
+    /// shape mismatch.
+    pub order: Vec<usize>,
+    /// In-flight drag preview, if any.
+    pub preview: Option<DragPreview>,
+    /// Keyboard cursor / AT active descendant (visual index).
+    pub focused: Option<usize>,
+    /// Whether a keyboard grab is in flight.
+    pub grabbed: bool,
+}
+
+/// Decode the reorder slots (`order` / `preview` / `focused_index` /
+/// `grabbed`) from an introspection surface that delegates them to a
+/// [`ReorderModel`] (the binding's `External` wrapper). The inverse of
+/// [`ReorderModel::query`]; keep the two in lockstep.
+#[must_use]
+pub fn read_reorder(intro: &dyn ExternalIntrospect) -> ReorderView {
+    let order = match intro.query("order") {
+        Some(IntrospectValue::Json(serde_json::Value::Array(a))) => a
+            .iter()
+            .filter_map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let preview = match intro.query("preview") {
+        Some(IntrospectValue::Json(v)) => {
+            let from = v.get("from_visual").and_then(serde_json::Value::as_u64);
+            let at = v.get("insert_at").and_then(serde_json::Value::as_u64);
+            match (from, at) {
+                (Some(f), Some(a)) => Some(DragPreview {
+                    from_visual: usize::try_from(f).unwrap_or(0),
+                    insert_at: usize::try_from(a).unwrap_or(0),
+                }),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    let focused = match intro.query("focused_index") {
+        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        _ => None,
+    };
+    let grabbed = matches!(intro.query("grabbed"), Some(IntrospectValue::Bool(true)));
+    ReorderView {
+        order,
+        preview,
+        focused,
+        grabbed,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,5 +601,42 @@ mod tests {
         let m = ReorderModel::new(2, ReorderAxis::Horizontal);
         assert!(m.query("selected_id").is_none());
         assert!(matches!(m.query("grabbed"), Some(IntrospectValue::Bool(false))));
+    }
+
+    /// A minimal `ExternalIntrospect` that delegates `query` to a model —
+    /// stands in for a binding's `External` wrapper so `read_reorder` is
+    /// tested against the real `query` encode (the round-trip SSOT).
+    struct Probe(ReorderModel);
+
+    impl ExternalIntrospect for Probe {
+        fn schema(&self) -> crate::external::IntrospectSchema {
+            crate::external::IntrospectSchema::new(&[])
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            self.0.query(path)
+        }
+        fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+            self.0.intervene(path, &value)
+        }
+        fn invoke(
+            &mut self,
+            method: &str,
+            args: IntrospectValue,
+        ) -> Result<IntrospectValue, InvokeError> {
+            self.0.invoke(method, &args)
+        }
+    }
+
+    #[test]
+    fn read_reorder_round_trips_query_encode() {
+        let m = ReorderModel::new(4, ReorderAxis::Horizontal);
+        m.intervene("focused_index", &IntrospectValue::Int(1)).expect("focus");
+        press(&m, 0);
+        m.drag_to(&pl(), Some(&drop_h(2, 0.8))); // preview from 0 → gap 3
+        let v = read_reorder(&Probe(m));
+        assert_eq!(v.order, vec![0, 1, 2, 3]);
+        assert_eq!(v.focused, Some(1));
+        assert_eq!(v.preview, Some(DragPreview { from_visual: 0, insert_at: 3 }));
+        assert!(!v.grabbed);
     }
 }

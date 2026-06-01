@@ -40,7 +40,7 @@ use pinion_core::style::{
     TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::reorder::{DragPreview, ReorderAxis, ReorderModel};
+use pinion_core::widgets::reorder::{read_reorder, DragPreview, ReorderAxis, ReorderModel};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -345,22 +345,6 @@ fn view(state: ListState) -> Scene {
     )
 }
 
-/// Parse a `query("order")` JSON array back into the fixed `[usize; N]`
-/// projection; falls back to identity on any shape mismatch.
-fn order_from_json(v: &serde_json::Value) -> [usize; N] {
-    let mut out = IDENTITY;
-    if let serde_json::Value::Array(a) = v {
-        if a.len() == N {
-            for (slot, item) in out.iter_mut().zip(a) {
-                if let Some(id) = item.as_u64().and_then(|n| usize::try_from(n).ok()) {
-                    *slot = id;
-                }
-            }
-        }
-    }
-    out
-}
-
 /// Read the list's current keyboard cursor (`focused_index`), if any.
 fn cursor(node: &pinion_core::scene::ExternalNode) -> Option<usize> {
     node.handle
@@ -447,46 +431,23 @@ impl WidgetCore for DndView {
     }
 
     fn read_state(scene: &Scene) -> ListState {
-        if let Scene::External(node) = scene {
-            if let Some(intro) = node.handle.introspect() {
-                let order = match intro.query("order") {
-                    Some(IntrospectValue::Json(v)) => order_from_json(&v),
-                    _ => IDENTITY,
-                };
-                let preview = match intro.query("preview") {
-                    Some(IntrospectValue::Json(v)) => {
-                        let from_visual = v
-                            .get("from_visual")
-                            .and_then(serde_json::Value::as_u64)
-                            .and_then(|n| usize::try_from(n).ok());
-                        let insert_at = v
-                            .get("insert_at")
-                            .and_then(serde_json::Value::as_u64)
-                            .and_then(|n| usize::try_from(n).ok());
-                        match (from_visual, insert_at) {
-                            (Some(from_visual), Some(insert_at)) => Some(DragPreview {
-                                from_visual,
-                                insert_at,
-                            }),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                let focused = match intro.query("focused_index") {
-                    Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
-                    _ => None,
-                };
-                let grabbed = matches!(intro.query("grabbed"), Some(IntrospectValue::Bool(true)));
-                return ListState {
-                    order,
-                    preview,
-                    focused,
-                    grabbed,
-                };
-            }
+        let Scene::External(node) = scene else {
+            return ListState::default();
+        };
+        let Some(intro) = node.handle.introspect() else {
+            return ListState::default();
+        };
+        // Decode the reorder slots through the shared `read_reorder`
+        // (the deserialize peer of `ReorderModel::query`), then project
+        // the count-agnostic `Vec` onto this binding's fixed `[usize; N]`
+        // `Copy` state.
+        let v = read_reorder(intro);
+        ListState {
+            order: v.order.try_into().unwrap_or(IDENTITY),
+            preview: v.preview,
+            focused: v.focused,
+            grabbed: v.grabbed,
         }
-        ListState::default()
     }
 
     fn view(state: ListState, _frame: &Frame) -> Scene {
