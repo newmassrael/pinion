@@ -15965,6 +15965,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R739.2 — R739.2 audit clearance (user review trigger) — the labeled-slider stop labels used a SpaceBetween approximation whose interior labels did not land exactly on their stops; replaced with pixel-exact layout: each interior label is absolutely centred on its stop's thumb-centre (stop_centre_x), and the two end labels flush left/right to the track ends (they sit too close to the edge to centre without clipping — the canonical Material value-label layout).
+
+**Changes**:
+- R739.2 audit clearance — labeled-slider stop labels now pixel-exact (user review trigger)
+- Replaced the SpaceBetween approximation: interior labels absolutely centred on their stop x
+- stop_centre_x(i) = the thumb-centre at that stop; "Medium" sits exactly under the 0.5 thumb
+- End stops sit THUMB_SIZE/2 from the edge (cannot centre a full label without clipping)
+- So first label flush-left, last flush-right — the canonical Material value-label layout
+- Fixed-width LABEL_W box per label + Start/Center/End justify; no text measurement needed
+
+
+
+**Verification**:
+- hello-slider-labeled 12 binding unit (unchanged tags; view layout only)
+- cargo test -p hello-slider-labeled: 12 passed; clippy -D pedantic clean
+- live boot frame visually confirmed: Medium centred under the 0.5 thumb, Off/Max flush to ends
+- r739_slider_labeled.py 43 assertions PASS (tags unchanged) + full sweep 88/88
+- change is isolated to one example view-fn (no shared crate touched)
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- LABEL_W fixed at 56px (fits "Medium" at 11px); a longer label set would need a wider box
+- interior label boxes may overlap by a few px at this density; centred text never visually collides
+- aria-valuetext on range slider / discrete range (R739 carry) still open
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

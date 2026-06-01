@@ -90,6 +90,11 @@ const THUMB_RADIUS: u32 = 9;
 /// `[THUMB_SIZE/2, THUMB_SIZE/2 + RANGE]`.
 const RANGE: u32 = TRACK_W - THUMB_SIZE;
 const ROW_GAP: u32 = 16;
+/// Stop-label box geometry. Each label is laid out in a fixed-width box so
+/// it can be centred on (or flushed to) its stop; `LABEL_W` is wide enough
+/// for the widest label ("Medium") at the 11px label size.
+const LABEL_W: u32 = 56;
+const LABEL_H: u32 = 16;
 
 /// The stop index nearest `value` (`round(value / STEP)`), clamped into
 /// `0..STOPS`. The single value→stop primitive both the readout and the
@@ -127,36 +132,61 @@ impl LabeledState {
     }
 }
 
+/// The x of stop `i`'s centre within the track (the same thumb-centre the
+/// filled portion reaches at that stop's value). R739.2 — each interior
+/// label is centred on exactly this x.
+fn stop_centre_x(i: usize) -> u32 {
+    #[allow(clippy::cast_precision_loss)]
+    let frac = i as f32 * STEP;
+    THUMB_SIZE / 2 + scale_normalized_to_px(frac, RANGE)
+}
+
 /// The named-stop label row: every stop named, the active one in accent so
 /// the discrete stops read as *labels* (no tick-dot paint duplicated from
-/// `hello-slider-discrete`). Space-between distributes the five labels
-/// across the track width, aligning each under its stop.
+/// `hello-slider-discrete`).
+///
+/// R739.2 — pixel-exact alignment (replacing the earlier `SpaceBetween`
+/// approximation): every *interior* label is absolutely centred on its
+/// stop's thumb-centre [`stop_centre_x`], so "Medium" sits exactly under
+/// the thumb at value 0.5. The two *end* stops sit only `THUMB_SIZE / 2`
+/// from the track edge — too close to centre a full label without clipping
+/// — so the first label is flush-left and the last flush-right (the
+/// canonical Material value-label layout: end labels align to the ends,
+/// not past them).
 fn stop_label_row(theme: &Theme, interaction: SliderState, active: usize) -> Scene {
+    let accent = slider_accent_for(theme, interaction);
+    let muted = theme.resolve(ColorRole::OnSurfaceMuted);
+    let children = LABELS
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let fg = if i == active { accent } else { muted };
+            let (box_left, justify) = if i == 0 {
+                (0, JustifyContent::Start)
+            } else if i == STOPS - 1 {
+                (TRACK_W - LABEL_W, JustifyContent::End)
+            } else {
+                (stop_centre_x(i).saturating_sub(LABEL_W / 2), JustifyContent::Center)
+            };
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                    *label,
+                    Rect::default(),
+                    TextStyle::new().with_size_px(11).with_fg(fg),
+                ))])
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_justify(justify)
+                        .with_absolute_position(box_left, 0)
+                        .with_size(Size::px(LABEL_W, LABEL_H)),
+                ),
+            )
+        })
+        .collect();
     Scene::Container(
-        ContainerNode::new(
-            LABELS
-                .iter()
-                .enumerate()
-                .map(|(i, label)| {
-                    let fg = if i == active {
-                        slider_accent_for(theme, interaction)
-                    } else {
-                        theme.resolve(ColorRole::OnSurfaceMuted)
-                    };
-                    Scene::Text(TextNode::styled(
-                        *label,
-                        Rect::default(),
-                        TextStyle::new().with_size_px(11).with_fg(fg),
-                    ))
-                })
-                .collect(),
-        )
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_justify(JustifyContent::SpaceBetween)
-                .with_size(Size::px(TRACK_W, 16)),
-        ),
+        ContainerNode::new(children)
+            .with_layout(LayoutStyle::new().with_size(Size::px(TRACK_W, LABEL_H))),
     )
 }
 
