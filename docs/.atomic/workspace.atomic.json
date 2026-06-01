@@ -26877,6 +26877,62 @@
         "Horizontal + 2-D grid windowing: vertical-only this slice"
       ]
     },
+    "R744.1": {
+      "decision_summary": "R744.1 audit correction (user hack/smell/textbook review): the R744 deferral of the section 5.27 Scene::VirtualList IR variant was wrongly justified as blocked on Scene-clone (a Box<dyn Fn> cannot derive Clone). Scene is already not-Clone via ExternalNode, and a closure variant can use Rc<dyn Fn> exactly as Scene::ImmediateModeNode already does -- clone is a non-issue. Corrected the recorded reasons to evidence-first + layout node-synthesis being a new capability, and documented the honest caller-supplied-viewport limitation. No code logic change.",
+      "changes_bullets": [
+        "Corrected virtual_list module doc + SEED: removed false \"Box<dyn Fn> cannot derive Clone\" blocker",
+        "Evidence: Scene is already not-Clone (ExternalNode Box<dyn External>; docs say \"Not Clone\")",
+        "Evidence: Scene::ImmediateModeNode (R681) already carries Rc<RefCell<dyn>> cloneable handle",
+        "A VirtualList IR variant could use Rc<dyn Fn> the same way -- clone is a non-issue",
+        "Real deferral reasons recorded: evidence-first (1 fixed-viewport consumer) + layout node-synthesis",
+        "Documented honest slice limitation: caller-supplied viewport (mirrors ScrollNode), no flex auto-adapt",
+        "Framed composition as React-school peer of the Flutter/Compose layout-lazy IR design",
+        "No code logic change -- docs/SEED honesty correction only (R686.A/R743.1 precedent)"
+      ],
+      "verification_bullets": [
+        "grep: crates/pinion-core/src/scene.rs enum Scene has no derive(Clone) / impl Clone",
+        "grep: scene.rs docs state \"Not Clone -- Box<dyn External> has no generic clone strategy\"",
+        "grep: Scene::ImmediateModeNode handle = Rc<RefCell<dyn ImmediateMode>> (R681 cloneable-handle)",
+        "grep: compute_layout(scene: &mut Scene) -- layout node-synthesis is possible, just unbuilt",
+        "docs-only change: R744 tests (core 15, widget-paint 5, example 4) + sweep 92/92 stand unchanged",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (pre-commit gate)"
+      ],
+      "impact_refs": [
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "R744 deferred axes stand (corrected reasons): IR variant = evidence-first + layout node-synthesis",
+        "IR variant payoff = flex/resizable viewport virtualization without caller-supplied viewport (no consumer yet)",
+        "variable row height / selection / sort / formal VirtualListModel trait: later mini-series rounds"
+      ],
+      "publishable_decision_summary": "R744.1 audit correction (user hack/smell/textbook review): the R744 deferral of the section 5.27 Scene::VirtualList IR variant was wrongly justified as blocked on Scene-clone (a Box<dyn Fn> cannot derive Clone). Scene is already not-Clone via ExternalNode, and a closure variant can use Rc<dyn Fn> exactly as Scene::ImmediateModeNode already does -- clone is a non-issue. Corrected the recorded reasons to evidence-first + layout node-synthesis being a new capability, and documented the honest caller-supplied-viewport limitation. No code logic change.",
+      "publishable_changes_bullets": [
+        "Corrected virtual_list module doc + SEED: removed false \"Box<dyn Fn> cannot derive Clone\" blocker",
+        "Evidence: Scene is already not-Clone (ExternalNode Box<dyn External>; docs say \"Not Clone\")",
+        "Evidence: Scene::ImmediateModeNode (R681) already carries Rc<RefCell<dyn>> cloneable handle",
+        "A VirtualList IR variant could use Rc<dyn Fn> the same way -- clone is a non-issue",
+        "Real deferral reasons recorded: evidence-first (1 fixed-viewport consumer) + layout node-synthesis",
+        "Documented honest slice limitation: caller-supplied viewport (mirrors ScrollNode), no flex auto-adapt",
+        "Framed composition as React-school peer of the Flutter/Compose layout-lazy IR design",
+        "No code logic change -- docs/SEED honesty correction only (R686.A/R743.1 precedent)"
+      ],
+      "publishable_verification_bullets": [
+        "grep: crates/pinion-core/src/scene.rs enum Scene has no derive(Clone) / impl Clone",
+        "grep: scene.rs docs state \"Not Clone -- Box<dyn External> has no generic clone strategy\"",
+        "grep: Scene::ImmediateModeNode handle = Rc<RefCell<dyn ImmediateMode>> (R681 cloneable-handle)",
+        "grep: compute_layout(scene: &mut Scene) -- layout node-synthesis is possible, just unbuilt",
+        "docs-only change: R744 tests (core 15, widget-paint 5, example 4) + sweep 92/92 stand unchanged",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (pre-commit gate)"
+      ],
+      "publishable_impact_refs": [
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R744 deferred axes stand (corrected reasons): IR variant = evidence-first + layout node-synthesis",
+        "IR variant payoff = flex/resizable viewport virtualization without caller-supplied viewport (no consumer yet)",
+        "variable row height / selection / sort / formal VirtualListModel trait: later mini-series rounds"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -69,17 +69,38 @@
 //! the *layout pass* (the view-fn returns a template + `item_fn`). R690.A
 //! recorded that variant as never implemented, removed the stale 8th-
 //! variant numbering, judged the windowed-re-materialize design valid, and
-//! deferred the IR variant to R750+ pending re-derivation against the
-//! current 9-variant `Scene` — and pending the Scene-clone-with-closure
-//! resolution the R690 carry tracks (a `Box<dyn Fn(usize) -> Scene>` in a
-//! `Scene` variant cannot derive `Clone`). R744 lands the §5.27 capability
-//! *now* via view-fn composition over the existing
-//! [`ScrollNode`](crate::scene::ScrollNode): O(window) materialization per
-//! frame, AI-introspectable as scene-data, zero new IR. The dedicated
-//! `Scene::VirtualList` variant + `scene/virtual_list` RPC stay the
-//! deferred "full IR" form (layout-pass materialization buys decoupling
-//! the view-fn from viewport geometry); they are additive over this slice
-//! when the Scene-clone carry clears, not a precondition for it.
+//! deferred the IR variant to R750+ "evidence-first, re-derive against the
+//! current 9-variant `Scene` at impl".
+//!
+//! R744 lands the §5.27 *capability* now via view-fn composition over the
+//! existing [`ScrollNode`](crate::scene::ScrollNode): O(window)
+//! materialization per frame, AI-introspectable as scene-data, zero new IR.
+//! This is the React-school of virtualization (`react-window` / `TanStack`:
+//! the view layer windows against scroll + a known viewport); the R32 IR design
+//! is the Flutter/Compose school (the layout/measure phase drives lazy item
+//! creation). Both are textbook — this is a peer technique, not a lesser
+//! slice of the IR one.
+//!
+//! Why the IR variant stays deferred (R744.1 honest correction — the
+//! earlier "blocked on Scene-clone, a `Box<dyn Fn>` cannot derive `Clone`"
+//! note was wrong): `Scene` is *already* not `Clone` (it carries
+//! `ExternalNode`'s `Box<dyn External>`), and a cloneable closure variant
+//! could anyway use `Rc<dyn Fn>` exactly as `Scene::ImmediateModeNode`
+//! (R681) already carries `Rc<RefCell<dyn ImmediateMode>>` — so clone is a
+//! non-issue. The real reasons are (1) **evidence-first**: one
+//! fixed-viewport consumer exists; the IR variant's payoff (decoupling the
+//! view-fn from viewport geometry, so a *flex/resizable* container
+//! virtualizes without a caller-supplied viewport) has no consumer yet, and
+//! (2) layout-pass node *synthesis* (calling `item_fn` and injecting nodes
+//! mid-layout) is a genuinely new layout capability that R690.A flagged for
+//! re-derivation. They are additive when a flex-viewport consumer arrives,
+//! not a precondition for this slice.
+//!
+//! Honest limitation of *this* slice: the viewport is caller-supplied
+//! (`view_virtual_list(viewport, …)`), mirroring `ScrollNode`'s own
+//! caller-supplied `viewport.{w,h}`. It does not auto-adapt to a
+//! flex-/resize-sized container — that adaptation is exactly the IR
+//! variant's deferred benefit above.
 
 /// R744 §5.27 — the half-open span `[first, first + count)` of item
 /// indices a virtualized list must build scene nodes for this frame.
