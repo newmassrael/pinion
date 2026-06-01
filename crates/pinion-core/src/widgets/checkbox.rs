@@ -234,6 +234,17 @@ impl core::fmt::Debug for CheckboxExternal {
 }
 
 impl External for CheckboxExternal {
+    /// R741 §5.35 — capture the pointer on press so a real-mouse click is
+    /// robust to sub-pixel jitter between press and release.
+    fn wants_pointer_capture(&self) -> bool {
+        true
+    }
+
+    /// R741 §5.35 — a deliberate release off the widget cancels the press.
+    fn cancel_on_release_off_target(&self) -> bool {
+        true
+    }
+
     fn backends(&self) -> BackendSupport {
         BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
     }

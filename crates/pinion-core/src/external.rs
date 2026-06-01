@@ -384,18 +384,47 @@ pub trait External: core::fmt::Debug {
     /// framework's [`InputRouter`](crate#) keeps the cursor lock on
     /// this widget across the `pointer_down` → `pointer_up` span
     /// even when the cursor strays outside the widget rect (Material
-    /// / `SwiftUI` / Qt gesture-recognizer convention). Default
-    /// `false` preserves the pre-R51.34 cancel-by-leave behaviour
-    /// for button-like widgets (Button / Toggle / Checkbox / Radio):
-    /// if the cursor strays off the widget during press the SCXML
-    /// receives `PointerLeave` and the press cancels.
+    /// / `SwiftUI` / Qt gesture-recognizer convention) — `cursor_moved`
+    /// forwards the cursor to the widget and **suppresses the
+    /// `PointerLeave` that hover re-resolution would otherwise fire** for
+    /// any stray, so a small jitter during the press cannot cancel it.
+    ///
+    /// R741 §5.35: button-like widgets (Button / Toggle / Checkbox /
+    /// Radio) override this to `true` so a real-mouse click is robust to
+    /// the sub-pixel jitter between press and release (before R741 they
+    /// defaulted `false`, so a 1px stray fired `PointerLeave → Idle` and
+    /// the click silently cancelled — the canonical toolkits all capture
+    /// to avoid exactly this). They pair it with
+    /// [`cancel_on_release_off_target`](Self::cancel_on_release_off_target)
+    /// `= true` so a *deliberate* slide-off-and-release still cancels.
     ///
     /// Drag-aware widgets (Slider in R51.35, drag-to-resize, range
-    /// pickers) override to `true`. The router still dispatches
+    /// pickers) override to `true` with the default
+    /// `cancel_on_release_off_target = false` (release commits the value
+    /// wherever the cursor ended). The router still dispatches
     /// `PointerDown` / `PointerUp` symbolic events to the widget via
     /// `ExternalIntrospect::invoke("send", ...)`; the difference is
     /// purely in the cursor-leave handling.
     fn wants_pointer_capture(&self) -> bool {
+        false
+    }
+
+    /// R741 §5.35 — release-position policy for a captured widget.
+    /// Consulted only when [`wants_pointer_capture`](Self::wants_pointer_capture)
+    /// is `true`. On `pointer_up`, the router checks whether the cursor
+    /// is still over this widget:
+    ///
+    /// * `false` (default, drag widgets) — release always dispatches
+    ///   `PointerUp` (the drag commits its value wherever the cursor
+    ///   ended; a Slider released past the track edge still commits the
+    ///   clamped value).
+    /// * `true` (button-like widgets) — release **over** the widget
+    ///   dispatches `PointerUp` (activate); release **off** the widget
+    ///   dispatches `PointerLeave` (cancel). This is the standard
+    ///   button "press, slide off to abort, release off = no-op"
+    ///   gesture, made reachable now that capture suppresses the
+    ///   mid-press leave.
+    fn cancel_on_release_off_target(&self) -> bool {
         false
     }
 

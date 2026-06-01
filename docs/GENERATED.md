@@ -16037,6 +16037,41 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R741 — R741 button-like pointer-capture — a real-mouse click on a Button/Toggle/Checkbox/Radio is now robust to sub-pixel jitter between press and release. Found via the live hello-image toggle: the binding was correct (RPC scene/click flipped it) but real clicks stray-cancelled because button-likes did not capture the pointer, so a 1px move fired PointerLeave->Idle. Fix = those widgets opt into wants_pointer_capture (suppresses the mid-press leave) plus a new External::cancel_on_release_off_target so a deliberate slide-off-and-release still cancels; the router's pointer_up decides activate (PointerUp, release over) vs cancel (PointerLeave, release off) by full-tag cursor position. Drag widgets keep the commit-anywhere default.
+
+**Changes**:
+- R741 button-like pointer-capture — jitter-robust clicks (Material/Qt/SwiftUI convention)
+- Button/Toggle/Checkbox/Radio override wants_pointer_capture=true + cancel_on_release_off=true
+- New External::cancel_on_release_off_target() default false (drag widgets commit anywhere)
+- pointer_up under capture: release-over activates (PointerUp), release-off cancels (PointerLeave)
+- capture suppresses the mid-press PointerLeave, so a 1px jitter no longer cancels a click
+- cursor_over_tag = full-tag equality: a radio press released over a different option cancels (W3C)
+- root cause found via live hello-image toggle: real clicks stray-cancelled because no capture
+- binding logic was always correct (RPC scene/click flipped); only live-mouse jitter cancelled
+
+
+
+**Verification**:
+- pinion-runtime input 56 unit (+1 R741: release-over=activate / jitter=no-cancel / off=cancel)
+- pinion-core 1650 unit unchanged (4 button-like capture overrides; no behaviour change to logic)
+- cargo test --workspace -j2: 4866 passed, 0 failed
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic: clean
+- full demo sweep 89/89 — all button/toggle/checkbox/radio demos regression-clean
+- root cause + fix verified via the real ToggleExternal end-to-end through the InputRouter
+- RPC scene/click path unchanged (precise click = release over target = activate)
+
+
+
+**Impact**: §5.15, §5.35
+
+
+**Carry forward**:
+- button capture forwards a default no-op pointer_move on press (harmless extra call)
+- off-then-back-on-then-release activates (capture tracks the final release position; standard)
+- slider / drag widgets unchanged (cancel_on_release_off=false = release commits the value anywhere)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

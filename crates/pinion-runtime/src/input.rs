@@ -493,8 +493,10 @@ impl InputRouter {
     /// [`cursor_moved`] forwards the cursor to the widget through
     /// [`External::pointer_move`](pinion_core::external::External::pointer_move)
     /// and suppresses hover / leave dispatch for this pointer.
-    /// Button-like widgets keep the default `false` and observe no
-    /// behaviour change.
+    /// R741 §5.35: button-like widgets now also opt in (so a click is
+    /// jitter-robust) and pair it with
+    /// [`External::cancel_on_release_off_target`] so a release off the
+    /// widget still cancels — see [`pointer_up`](Self::pointer_up).
     ///
     /// R664 §5.49 — W3C UI Events `dblclick` detection. After the
     /// standard `PointerDown` dispatch, the router compares this
@@ -578,24 +580,50 @@ impl InputRouter {
     /// SCXML out of `Pressed` back to `Idle`.
     ///
     /// R51.34 §5.35: in capture mode the cursor may currently sit
-    /// off the widget rect (the drag strayed). `PointerUp` still
-    /// dispatches to the captured tag so the SCXML observes the
-    /// drag-end transition (e.g. Slider `Dragging → Hover` →
-    /// `value_committed` intent). Capture for this pointer is then
-    /// released and [`refresh_hover`](Self::refresh_hover) re-runs
-    /// — if the cursor really did stray off, the deferred
-    /// `PointerLeave` fires here.
+    /// off the widget rect (the drag strayed, or a button-like press
+    /// slid off). The release event then depends on the captured
+    /// widget's [`External::cancel_on_release_off_target`] policy:
+    ///
+    /// * `false` (drag widgets, e.g. Slider) — always dispatch
+    ///   `PointerUp` so the drag commits its value wherever the cursor
+    ///   ended (`Dragging → Hover` → `value_committed`).
+    /// * `true` (R741 button-like widgets) — dispatch `PointerUp`
+    ///   (activate) only when the cursor is still over the captured
+    ///   tag, else dispatch `PointerLeave` (cancel). This is the
+    ///   "slide off to abort" gesture; capture made it reachable by
+    ///   suppressing the mid-press stray leave.
+    ///
+    /// Capture for this pointer is then released and
+    /// [`refresh_hover`](Self::refresh_hover) re-runs to resettle the
+    /// hover state against the release position.
     pub fn pointer_up(&mut self, id: PointerId, state_scene: &mut Scene) {
-        let target = self
-            .hover_targets
-            .get(&id)
-            .cloned()
-            .or_else(|| self.captured_targets.get(&id).cloned());
-        if let Some(tag) = target {
+        if let Some(cap_tag) = self.captured_targets.get(&id).cloned() {
+            let release_over = self.cursor_over_tag(id, &cap_tag);
+            let event = if !release_over && widget_cancels_on_release_off(state_scene, &cap_tag) {
+                "PointerLeave"
+            } else {
+                "PointerUp"
+            };
+            dispatch_send(state_scene, &cap_tag, event);
+            self.captured_targets.remove(&id);
+            self.refresh_hover(id, state_scene);
+        } else if let Some(tag) = self.hover_targets.get(&id).cloned() {
+            // Free (no-capture) release: the cursor is over the target
+            // (a mid-press stray already drove the SCXML out of Pressed
+            // via `cursor_moved`'s `PointerLeave`).
             dispatch_send(state_scene, &tag, "PointerUp");
         }
-        if self.captured_targets.remove(&id).is_some() {
-            self.refresh_hover(id, state_scene);
+    }
+
+    /// R741 §5.35 — whether the cursor for `id` currently resolves to
+    /// `tag` (full-tag equality, so a composite `group#0` press that is
+    /// released over `group#1` reads as off-target — the W3C "press and
+    /// release on the same control" rule). `false` when the pointer has
+    /// no tracked cursor or no last paint scene.
+    fn cursor_over_tag(&self, id: PointerId, tag: &str) -> bool {
+        match (self.cursors.get(&id), self.last_paint_scene.as_ref()) {
+            (Some(&(x, y)), Some(scene)) => resolve_hover_tag(scene, x, y).as_deref() == Some(tag),
+            _ => false,
         }
     }
 
@@ -1046,6 +1074,37 @@ fn widget_wants_capture(state_scene: &Scene, target_tag: &str) -> bool {
     widget_wants_capture_walk(state_scene, primary).unwrap_or(false)
 }
 
+/// R741 §5.35 — resolve [`External::cancel_on_release_off_target`] for
+/// the external registered at `target_tag`'s primary half. `false` when
+/// the tag is not found or the widget keeps the drag-commit default.
+fn widget_cancels_on_release_off(state_scene: &Scene, target_tag: &str) -> bool {
+    let (primary, _) = split_subindex(target_tag);
+    widget_cancels_on_release_off_walk(state_scene, primary).unwrap_or(false)
+}
+
+/// Recursive helper for [`widget_cancels_on_release_off`] (mirror of
+/// [`widget_wants_capture_walk`]).
+fn widget_cancels_on_release_off_walk(scene: &Scene, target_tag: &str) -> Option<bool> {
+    match scene {
+        Scene::External(node) => {
+            if tag_matches(node.tag.as_deref(), target_tag) {
+                Some(node.handle.cancel_on_release_off_target())
+            } else {
+                None
+            }
+        }
+        Scene::Container(c) => {
+            for child in &c.children {
+                if let Some(found) = widget_cancels_on_release_off_walk(child, target_tag) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 /// Recursive helper for [`widget_wants_capture`]. Returns
 /// `Some(bool)` when the tag is found (allowing the caller to
 /// distinguish "found, but declined" from "not found"), `None`
@@ -1277,6 +1336,60 @@ mod tests {
         router.pointer_up(PointerId::MOUSE, &mut state);
         assert!(read(&captures).is_empty());
         assert_eq!(router.hover_target(PointerId::MOUSE), None);
+    }
+
+    #[test]
+    fn r741_captured_button_release_over_activates_release_off_cancels() {
+        use pinion_core::external::IntrospectValue;
+        use pinion_core::widgets::toggle::ToggleExternal;
+
+        fn toggle_value(scene: &Scene) -> bool {
+            let Scene::External(node) = scene else { panic!("external root") };
+            matches!(
+                node.handle.introspect().unwrap().query("value"),
+                Some(IntrospectValue::Bool(true))
+            )
+        }
+        fn fresh() -> (InputRouter, Scene) {
+            let mut router = InputRouter::new();
+            // The toggle reuses the `main_btn` tag so `paint_with_button`
+            // supplies its post-layout rect (80..120 x 80..120).
+            let mut state = Scene::External(
+                ExternalNode::new(Box::new(ToggleExternal::new())).with_tag("main_btn"),
+            );
+            router.update_paint_scene(
+                paint_with_button(200, 200, Rect::new(80, 80, 40, 40)),
+                &mut state,
+            );
+            (router, state)
+        }
+
+        // ACTIVATE — press + release both over the captured toggle flips it.
+        let (mut router, mut state) = fresh();
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(router.captured_target(PointerId::MOUSE), Some("main_btn"),
+            "button captures the pointer on press (R741)");
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert!(toggle_value(&state), "release over the captured button activates");
+
+        // JITTER — a stray *back onto* the widget before release still
+        // activates (capture suppressed the mid-press PointerLeave).
+        let (mut router, mut state) = fresh();
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 121.0, 100.0, &mut state); // 1px off
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state); // back on
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert!(toggle_value(&state), "sub-pixel jitter during press does not cancel");
+
+        // CANCEL — a deliberate slide off the widget then release cancels.
+        let (mut router, mut state) = fresh();
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 10.0, 10.0, &mut state); // slid off
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert!(!toggle_value(&state), "release off the captured button cancels");
     }
 
     #[test]

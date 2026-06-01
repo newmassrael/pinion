@@ -239,6 +239,20 @@ impl core::fmt::Debug for RadioExternal {
 }
 
 impl External for RadioExternal {
+    /// R741 §5.35 — capture the pointer on press so a real-mouse click is
+    /// robust to sub-pixel jitter. The captured tag is the composite
+    /// `group#i` sub-tag; the router's release check compares the full
+    /// tag, so releasing over a *different* option cancels (W3C: press
+    /// and release must land on the same control).
+    fn wants_pointer_capture(&self) -> bool {
+        true
+    }
+
+    /// R741 §5.35 — a deliberate release off the pressed option cancels.
+    fn cancel_on_release_off_target(&self) -> bool {
+        true
+    }
+
     fn backends(&self) -> BackendSupport {
         BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
     }
