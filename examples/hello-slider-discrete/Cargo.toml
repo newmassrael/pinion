@@ -1,20 +1,19 @@
 [package]
-name = "hello-slider-vertical"
+name = "hello-slider-discrete"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R51.46 §5.38 vertical Slider visual evidence — SliderAxis::Vertical first-client on the R51.39 future-proof axis substrate, aria-orientation=vertical (top=max) Material/iOS volume-HUD convention"
+description = "R737 §5.38 §5.40 §5.50 discrete (stepped) slider — WAI-ARIA discrete slider / Material tick-mark variant; SliderExternal::with_step snaps drag + keyboard + intervene + RPC through one funnel; tick-mark paint; 1st consumer of the R737 step substrate"
 publish = false
 
 [[bin]]
-name = "hello-slider-vertical"
+name = "hello-slider-discrete"
 path = "src/main.rs"
 
 [dependencies]
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
-# R51.65 §5.40 — AccessKit substrate for `WidgetView::access_node`.
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 # R737 §5.38 — shared read_slider_state introspect reader.
@@ -22,8 +21,6 @@ pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.
 vello = { workspace = true }
 
 [dev-dependencies]
-# R55.G.22 §5.49 — `pinion_core::test_fixtures::assert_widget_view_carries_tag`
-# regression helper for the [[composite-paint-root-tag-convention]] (R55.G.17).
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
 
 [build-dependencies]

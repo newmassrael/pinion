@@ -68,6 +68,7 @@ use pinion_platform_storage::open_app_storage;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::checkbox::{view_checkbox, CheckboxStyle};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_widget_paint::slider::read_slider_state;
 use pinion_widget_paint::text_field as tf_paint;
 use pinion_widget_paint::text_field::TextFieldStyle;
 
@@ -642,31 +643,13 @@ fn read_theme_toggle(scene: &Scene) -> (ToggleState, bool) {
 
 // ─── slider walker ────────────────────────────────────────────────
 
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "f64 → f32 narrowing is intentional; slider value is in [0.0, 1.0]"
-)]
+// R737 §5.38 — the introspect walk is the lifted
+// `pinion_widget_paint::slider::read_slider_state`; this binding keeps
+// only its own missing-external fallback (`DEFAULT_FONT_SCALE`, the
+// middle of the font-scale range) + the defensive value clamp.
 fn read_font_slider(scene: &Scene) -> (SliderState, f32) {
-    let Some(node) = scene.find_external_with_tag(FONT_SLIDER_TAG) else {
-        return (SliderState::Idle, DEFAULT_FONT_SCALE);
-    };
-    let Some(intro) = node.handle.introspect() else {
-        return (SliderState::Idle, DEFAULT_FONT_SCALE);
-    };
-    let state = intro
-        .query("state")
-        .and_then(|v| match v {
-            IntrospectValue::Text(s) => Some(SliderState::from_name_or_default(&s)),
-            _ => None,
-        })
-        .unwrap_or(SliderState::Idle);
-    let value = intro
-        .query("value")
-        .and_then(|v| match v {
-            IntrospectValue::Float(f) => Some(f as f32),
-            _ => None,
-        })
-        .unwrap_or(DEFAULT_FONT_SCALE);
+    let (state, value) = read_slider_state(scene, FONT_SLIDER_TAG)
+        .unwrap_or((SliderState::Idle, DEFAULT_FONT_SCALE));
     (state, value.clamp(0.0, 1.0))
 }
 

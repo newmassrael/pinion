@@ -15784,6 +15784,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R737 — R737 discrete (stepped) slider — Slider step snap substrate (one funnel) + read_slider_state SSOT lift (4 consumers) + hello-slider-discrete 1st consumer with tick marks
+
+**Changes**:
+- R737 discrete (stepped) slider — WAI-ARIA discrete-slider / Material tick-mark variant
+- Substrate: optional Slider step (normalised); snap lives in Slider::set_value so one funnel covers drag/keyboard/intervene/RPC
+- SliderExternal::with_step + with_axis_step constructors; read-only step introspect field (0.0 = continuous sentinel)
+- SSOT lift: pinion-widget-paint::slider::read_slider_state (mechanical introspect reader) adopted by all 4 slider consumers
+- New hello-slider-discrete (1st step consumer): with_step(0.2) = six stops; absolute rail/filled/ticks/thumb; tick marks
+- Arrows advance one tick, Home/End jump to extreme stops; off-grid intervene + drag snap via the substrate funnel
+
+
+
+**Verification**:
+- pinion-core slider 33 unit (+8 R737 snap/with_step/guard/funnel/resnap/read-only/no-op); widget-paint slider reader 3 unit
+- hello-slider-discrete 10 binding unit; cargo test --workspace -j2: 4806 passed, 0 failed
+- cargo clippy --workspace -D pedantic clean; full headless sweep 86/86 (was 85)
+- r737_slider_discrete.py 32 assertions + PINION_SCREENSHOT live-pixel (filled accent vs unfilled rail vs page distinct)
+
+
+
+**Impact**: §5.16, §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- accent_for M3 state-layer slider fill 2-copy opinionated paint (Rule-of-Three deferred, hello-spinbutton stepper_fill precedent)
+- labeled-step aria-valuetext (named stops e.g. Medium) deferred until a consumer needs non-numeric labels (numeric valuenow suffices)
+- range slider (two-thumb) is a separate RangeSliderExternal substrate (2 values + nearest-thumb arbitration), not substrate-0 composable
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

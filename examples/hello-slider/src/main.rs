@@ -63,6 +63,7 @@ use pinion_core::{
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
+use pinion_widget_paint::slider::read_slider_state;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSliderRenderer, HelloSliderRendererError);
@@ -284,21 +285,10 @@ impl SliderView {
     /// uses [`IntrospectValue::as_f32`] (R51.155) for the f64 → f32
     /// narrowing.
     fn read_state(scene: &Scene) -> (SliderState, f32) {
-        if let Scene::External(node) = scene {
-            if let Some(intro) = node.handle.introspect() {
-                let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    SliderState::from_name_or_default(&name)
-                } else {
-                    SliderState::Idle
-                };
-                let value = intro
-                    .query("value")
-                    .and_then(|v| v.as_f32())
-                    .unwrap_or(0.0);
-                return (state, value);
-            }
-        }
-        (SliderState::Idle, 0.0)
+        // R737 §5.38 — shared introspect reader; the continuous
+        // slider's missing-external fallback is `(Idle, 0.0)`.
+        read_slider_state(scene, <Self as WidgetCore>::tag())
+            .unwrap_or((SliderState::Idle, 0.0))
     }
 
     /// W3C/ARIA Slider keyboard accessibility — wires the six

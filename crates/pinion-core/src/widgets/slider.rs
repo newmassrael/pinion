@@ -105,6 +105,13 @@ pub struct Slider {
     inner: Widget<SliderPolicy>,
     value: f32,
     axis: SliderAxis,
+    /// R737 §5.38 — optional discrete snap increment in normalised
+    /// (`0.0..=1.0`) units. `None` is the continuous slider (every
+    /// real value reachable, the R51.7 default); `Some(s)` snaps every
+    /// [`Self::set_value`] to the nearest multiple of `s` so a *single*
+    /// snap funnel covers drag, keyboard, `intervene`, and RPC alike
+    /// (the W3C ARIA discrete-slider / Material "tick mark" model).
+    step: Option<f32>,
 }
 
 impl Slider {
@@ -117,6 +124,7 @@ impl Slider {
             inner: Widget::new(),
             value: 0.0,
             axis: SliderAxis::Horizontal,
+            step: None,
         }
     }
 
@@ -130,6 +138,44 @@ impl Slider {
             inner: Widget::new(),
             value: 0.0,
             axis,
+            step: None,
+        }
+    }
+
+    /// R737 §5.38 — make the slider *discrete*: snap every
+    /// [`Self::set_value`] to the nearest multiple of `step`
+    /// (normalised `0.0..=1.0` units, e.g. `0.2` for the six stops
+    /// `0.0 / 0.2 / 0.4 / 0.6 / 0.8 / 1.0`). A non-positive or
+    /// non-finite `step` is ignored (stays continuous), so a malformed
+    /// argument can never freeze the value. Builder-style; chain after
+    /// [`Self::new`] / [`Self::with_axis`]. The construction value is
+    /// re-snapped so the initial readout already sits on a tick.
+    #[must_use]
+    pub fn with_step(mut self, step: f32) -> Self {
+        self.step = (step.is_finite() && step > 0.0).then_some(step);
+        // Re-snap the current value onto the new grid.
+        let v = self.value;
+        self.value = self.snap(v);
+        self
+    }
+
+    /// R737 §5.38 — discrete snap increment (normalised units), or
+    /// `None` for a continuous slider. Surfaced to the AI side through
+    /// the `"step"` introspect field.
+    #[must_use]
+    pub fn step(&self) -> Option<f32> {
+        self.step
+    }
+
+    /// R737 §5.38 — snap `v` (already caller-clamped or not) to the
+    /// nearest discrete tick when [`Self::step`] is set, else return it
+    /// clamped. The single snap primitive every value path funnels
+    /// through ([`Self::set_value`]).
+    fn snap(&self, v: f32) -> f32 {
+        let clamped = v.clamp(0.0, 1.0);
+        match self.step {
+            Some(s) if s > 0.0 => ((clamped / s).round() * s).clamp(0.0, 1.0),
+            _ => clamped,
         }
     }
 
@@ -167,11 +213,16 @@ impl Slider {
     /// `state() == Pressed` so non-drag programmatic updates
     /// (preference restore, keyboard step) work too.
     pub fn set_value(&mut self, v: f32) -> bool {
-        let clamped = v.clamp(0.0, 1.0);
-        if (clamped - self.value).abs() < f32::EPSILON {
+        // R737 §5.38 — funnel every value mutation through the snap
+        // primitive, so a discrete slider snaps identically whether the
+        // value arrives from a drag (`pointer_move`), a keyboard step,
+        // `intervene`, or an RPC write. Continuous sliders snap to a
+        // no-op (clamp only), preserving the pre-R737 behaviour.
+        let snapped = self.snap(v);
+        if (snapped - self.value).abs() < f32::EPSILON {
             return false;
         }
-        self.value = clamped;
+        self.value = snapped;
         true
     }
 }
@@ -256,12 +307,43 @@ impl SliderExternal {
         }
     }
 
+    /// R737 §5.38 — construct a *discrete* horizontal Slider external
+    /// that snaps to multiples of `step` (normalised units). Wraps a
+    /// [`Slider::new`]`.with_step(step)`; the `"step"` introspect field
+    /// then reports the increment so an AI client (or the binding's
+    /// tick-mark paint) can enumerate the stops. Combine with a
+    /// vertical axis via [`Self::with_axis_step`].
+    #[must_use]
+    pub fn with_step(step: f32) -> Self {
+        Self {
+            em: IntentEmitter::new(Slider::new().with_step(step)),
+        }
+    }
+
+    /// R737 §5.38 — discrete Slider external on an explicit
+    /// [`SliderAxis`] (the `with_axis` + `with_step` combination).
+    #[must_use]
+    pub fn with_axis_step(axis: SliderAxis, step: f32) -> Self {
+        Self {
+            em: IntentEmitter::new(Slider::with_axis(axis).with_step(step)),
+        }
+    }
+
     /// R51.39 §5.38 — track orientation (delegates to
     /// [`Slider::axis`]). Diagnostic / test surface; consumers
     /// usually read the introspect `"orientation"` field instead.
     #[must_use]
     pub fn axis(&self) -> SliderAxis {
         self.em.inner.axis()
+    }
+
+    /// R737 §5.38 — discrete snap increment (delegates to
+    /// [`Slider::step`]). `None` for a continuous slider. Diagnostic /
+    /// test surface; consumers usually read the introspect `"step"`
+    /// field instead.
+    #[must_use]
+    pub fn step(&self) -> Option<f32> {
+        self.em.inner.step()
     }
 
     /// Drive a [`SliderEvent`] and queue a `"value_committed"`
@@ -391,6 +473,9 @@ impl ExternalIntrospect for SliderExternal {
             ("state", "string"),
             ("value", "float"),
             ("orientation", "string"),
+            // R737 §5.38 — discrete snap increment (normalised units);
+            // `0.0` is the continuous-slider sentinel.
+            ("step", "float"),
             ("send", "string"),
         ])
     }
@@ -404,6 +489,11 @@ impl ExternalIntrospect for SliderExternal {
             "orientation" => Some(IntrospectValue::Text(
                 slider_axis_name(self.axis()).to_string(),
             )),
+            // R737 §5.38 — `0.0` sentinel = continuous (no snap); any
+            // positive value is the normalised tick increment.
+            "step" => Some(IntrospectValue::Float(f64::from(
+                self.step().unwrap_or(0.0),
+            ))),
             _ => None,
         }
     }
@@ -420,7 +510,10 @@ impl ExternalIntrospect for SliderExternal {
             // differ between axes; a runtime flip would change the
             // meaning of in-flight intent emissions and the
             // introspect type contract). Both reject intervene.
-            "state" | "orientation" => Err(InterveneError::ReadOnly),
+            // R737 §5.38 — `step` is construction-fixed (like
+            // `orientation`): a runtime grid change would re-snap
+            // in-flight values and shift the introspect contract.
+            "state" | "orientation" | "step" => Err(InterveneError::ReadOnly),
             "value" => match value {
                 IntrospectValue::Float(v) => {
                     // f64 → f32 narrowing is deliberate: the wire
@@ -655,10 +748,12 @@ mod tests {
     }
 
     #[test]
-    fn external_schema_declares_four_slots() {
-        // R51.39 §5.38 — schema grew an `orientation` field; the
-        // legacy `state`/`value`/`send` triple is preserved in the
-        // declaration order pre-R51.39 callers observed.
+    fn external_schema_declares_five_slots() {
+        // R51.39 §5.38 — schema grew an `orientation` field; R737 §5.38
+        // added the discrete `step` field after it. The legacy
+        // `state`/`value`/`send` triple is preserved in the declaration
+        // order pre-R51.39 callers observed (the additive fields slot in
+        // before `send`).
         let sx = SliderExternal::new();
         let schema = sx.schema();
         assert_eq!(
@@ -667,6 +762,7 @@ mod tests {
                 ("state", "string"),
                 ("value", "float"),
                 ("orientation", "string"),
+                ("step", "float"),
                 ("send", "string"),
             ]
         );

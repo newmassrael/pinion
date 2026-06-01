@@ -65,6 +65,7 @@ members = [
     "examples/hello-combobox",
     "examples/hello-combobox-editable",
     "examples/hello-number-input",
+    "examples/hello-slider-discrete",
     "examples/hello-tooltip",
     "examples/hello-tooltip-rich",
     "examples/hello-breadcrumb",

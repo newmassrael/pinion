@@ -2088,6 +2088,19 @@ dependencies = [
  "pinion-derive",
  "pinion-forge",
  "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
+name = "hello-slider-discrete"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
  "vello",
 ]
 
@@ -2099,6 +2112,7 @@ dependencies = [
  "pinion-core",
  "pinion-forge",
  "pinion-shell",
+ "pinion-widget-paint",
  "vello",
 ]
 

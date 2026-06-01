@@ -39,6 +39,7 @@ use pinion_core::widgets::slider::{SliderAxis, SliderEvent, SliderExternal, Slid
 use pinion_core::{scale_normalized_to_px, Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_widget_paint::slider::read_slider_state;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSliderVerticalRenderer, HelloSliderVerticalRendererError);
@@ -214,23 +215,11 @@ impl WidgetCore for SliderVerticalView {
     }
 
     fn read_state(scene: &Scene) -> (SliderState, f32) {
-        if let Scene::External(node) = scene {
-            if let Some(intro) = node.handle.introspect() {
-                let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
-                    SliderState::from_name_or_default(&name)
-                } else {
-                    SliderState::Idle
-                };
-                // R51.155 §5.15 — `IntrospectValue::as_f32` (see
-                // hello-slider for rationale).
-                let value = intro
-                    .query("value")
-                    .and_then(|v| v.as_f32())
-                    .unwrap_or(0.0);
-                return (state, value);
-            }
-        }
-        (SliderState::Idle, 0.0)
+        // R737 §5.38 — shared introspect reader (axis-agnostic; the
+        // value is the same normalised f32 on either axis). Fallback
+        // `(Idle, 0.0)` matches the horizontal mirror.
+        read_slider_state(scene, <Self as WidgetCore>::tag())
+            .unwrap_or((SliderState::Idle, 0.0))
     }
 
     fn view(state: (SliderState, f32), frame: &Frame) -> Scene {

@@ -89,6 +89,7 @@ pub mod menu;
 pub mod radio_composite;
 pub mod scrim;
 pub mod scrollbar;
+pub mod slider;
 pub mod splitter;
 pub mod table;
 pub mod tabs;
