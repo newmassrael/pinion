@@ -71,9 +71,50 @@ pub fn parse_send_payload<K: FromStr>(payload: &str) -> Option<(K, &str)> {
     Some((key, event_name))
 }
 
+/// R742.4 §5.16 §5.35 — split a (possibly composite) paint tag at the
+/// `#` separator into `(primary, Some(sub))`, the companion of
+/// [`parse_send_payload`] for the *tag* side of the R51.42 protocol.
+///
+/// * `"group#2"` → `("group", Some("2"))`
+/// * `"main_btn"` → `("main_btn", None)` (no separator)
+/// * `"group#"` → `("group", None)` (empty sub-index is treated as
+///   absent — the well-defined corner case the router relies on)
+/// * `"a#b#c"` → `("a", Some("b#c"))` ([`str::split_once`] stops at the
+///   first `#`; the remainder is opaque to the router today)
+///
+/// This is the canonical `#` splitter shared by the
+/// [`InputRouter`](pinion_runtime::InputRouter) dispatch / drag / focus
+/// paths, the shell's access-action router, and composite-widget
+/// bindings (e.g. the reorder list) — the `#` SSOT paired with the `:`
+/// SSOT above so neither separator is re-split inline (R742.4 review
+/// consolidation; the prior copies were divergent in return shape but
+/// shared this exact semantics).
+#[must_use]
+pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
+    match tag.split_once('#') {
+        Some((primary, idx)) if !idx.is_empty() => (primary, Some(idx)),
+        Some((primary, _)) => (primary, None),
+        None => (tag, None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_send_payload;
+    use super::{parse_send_payload, split_subindex};
+
+    #[test]
+    fn split_subindex_covers_all_shapes() {
+        assert_eq!(split_subindex("main_btn"), ("main_btn", None));
+        assert_eq!(split_subindex("group#0"), ("group", Some("0")));
+        assert_eq!(split_subindex("group#42"), ("group", Some("42")));
+        // Empty sub-index is treated as absent.
+        assert_eq!(split_subindex("group#"), ("group", None));
+        // Empty primary — lookups will silently fail, but the split is
+        // well-defined.
+        assert_eq!(split_subindex("#0"), ("", Some("0")));
+        // `split_once` stops at the first `#`; the remainder is opaque.
+        assert_eq!(split_subindex("a#b#c"), ("a", Some("b#c")));
+    }
 
     #[test]
     fn r659_parse_u64_pointer_down_happy_path() {

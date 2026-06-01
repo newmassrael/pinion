@@ -2865,10 +2865,10 @@ impl<V: WidgetView> ShellCore<V> {
     /// segment after `#`) and dispatches through its own wire-format
     /// invocation path; the shell stays composite-agnostic.
     pub fn dispatch_access_action(&mut self, action: &PinionAccessAction) {
-        let (parent_tag, sub_tag) = match action.tag.split_once('#') {
-            Some((p, s)) => (p, Some(s)),
-            None => (action.tag.as_str(), None),
-        };
+        // R742.4 — shared `#` SSOT (an empty sub-index `"tag#"` resolves
+        // to `None`, identical downstream to the old `Some("")` whose
+        // `access_child_invoke` parse would fail to a no-op).
+        let (parent_tag, sub_tag) = pinion_core::composite_tag::split_subindex(&action.tag);
         match action.kind {
             AccessAction::Focus => {
                 let focus_before = self.focus.focused().map(str::to_owned);

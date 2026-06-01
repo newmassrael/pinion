@@ -148,7 +148,10 @@ fn row_tag(visual: usize) -> String {
 /// (`"dnd#2"` → `Some(2)`). `None` for the bare root tag `"dnd"` or any
 /// non-row tag — a drop there resolves to "no target".
 fn visual_of(tag: &str) -> Option<usize> {
-    tag.split_once('#')?.1.parse::<usize>().ok()
+    // Shared `#` SSOT (R742.4) rather than an inline split.
+    pinion_core::composite_tag::split_subindex(tag)
+        .1
+        .and_then(|s| s.parse::<usize>().ok())
 }
 
 /// Classify a [`DropPoint`] into the gap index (`0..=N`) the drop targets.

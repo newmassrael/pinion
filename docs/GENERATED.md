@@ -16243,6 +16243,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R742.4 — R742.4 composite-tag '#' SSOT consolidation (the last borderline review item). Lifts the '#' splitter into pinion_core::composite_tag::split_subindex (public), pairing it with the existing ':' parser parse_send_payload so neither separator is re-split inline. Moves the canonical impl out of pinion-runtime (private) and re-points all four sites: the InputRouter dispatch/drag/focus paths (8 call sites), the R742.3 focus resolver, the shell access-action router, and the reorder-list binding. The prior copies were divergent in return shape but shared this exact semantics; behaviour-identical for real tags.
+
+**Changes**:
+- pinion_core::composite_tag::split_subindex (public): canonical '#' splitter, empty-idx -> None
+- moved from pinion-runtime input.rs (private) + its corner-case test into composite_tag
+- input.rs (8 sites) + focus.rs resolver + shell access-router + hello-dnd visual_of all use it
+- composite_tag now owns BOTH separators: '#' (split_subindex) + ':' (parse_send_payload)
+
+
+
+**Verification**:
+- pinion-core composite_tag 9 unit (+1 split shapes); runtime 283; hello-dnd 18 — all pass
+- workspace 4889 passed / 0 fail; clippy -D pedantic clean; full demo sweep 90/90
+- behaviour-identical for real tags (group#i); only the unused 'tag#' edge differs harmlessly
+
+
+
+**Impact**: §5.16, §5.35
+
+
+**Carry forward**:
+- CLEARED: '#' split SSOT (the last borderline review item) — composite_tag owns both separators
+- only behavioural delta = unused empty-sub 'tag#' edge (None vs old Some('')), no real consumer
+- 2nd DnD consumer (tab/dock/tree) + ReorderListExternal lift stay 2nd-consumer-gated (premature)
+- scene/key modifier channel absent (no consumer, keyboard modifier-free) — YAGNI not debt
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

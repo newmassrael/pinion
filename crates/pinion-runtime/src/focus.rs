@@ -273,7 +273,9 @@ impl FocusManager {
         if order.iter().any(|t| t == tag) {
             return Some(tag.to_owned());
         }
-        if let Some((primary, _)) = tag.split_once('#') {
+        // Composite sub-tag (`group#i`) → fall back to the primary half
+        // via the shared `#` SSOT (R742.4).
+        if let (primary, Some(_)) = pinion_core::composite_tag::split_subindex(tag) {
             if order.iter().any(|t| t == primary) {
                 return Some(primary.to_owned());
             }

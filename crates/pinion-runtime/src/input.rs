@@ -79,6 +79,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
+use pinion_core::composite_tag::split_subindex;
 use pinion_core::event::WheelDelta;
 use pinion_core::external::{DragPayload, DropPoint, IntrospectValue};
 use pinion_core::scene::{ExternalNode, Rect, Scene};
@@ -1093,24 +1094,6 @@ fn dispatch_send(state_scene: &mut Scene, target_tag: &str, event_name: &str) {
     let _ = intro.invoke("send", IntrospectValue::Text(payload));
 }
 
-/// R51.42 §5.35 — split a paint tag into `(primary, sub_index)`
-/// according to the composite hit-target convention. Paint
-/// `"group#2"` → `("group", Some("2"))` — state-scene `ExternalNode`
-/// lookup uses `"group"`; the sub-index prefixes the wire payload to
-/// `invoke("send", ...)` per the R51.41 RFC. Plain tag `"main_btn"`
-/// → `("main_btn", None)` — backwards-compatible single-tag flow.
-/// Degenerate `"tag#"` (trailing `#` with empty sub-index) collapses
-/// to `("tag", None)` so the dispatch path does not forward a
-/// malformed `":<EventName>"` payload that composite widgets would
-/// reject; the application's paint-tag schema is treated as opaque
-/// and the router never panics on a degenerate input.
-fn split_subindex(tag: &str) -> (&str, Option<&str>) {
-    match tag.split_once('#') {
-        Some((primary, idx)) if !idx.is_empty() => (primary, Some(idx)),
-        Some((primary, _)) => (primary, None),
-        None => (tag, None),
-    }
-}
 
 /// Depth-first search for an [`ExternalNode`] whose tag matches
 /// `target_tag`. Returns the first match in declaration order
@@ -2590,25 +2573,6 @@ mod tests {
                 "PointerUp".into(),
             ],
         );
-    }
-
-    #[test]
-    fn split_subindex_helper_covers_all_shapes() {
-        // Pure helper coverage: the dispatch path tests exercise the
-        // common shapes end-to-end, but the corner cases (empty
-        // primary, multiple `'#'`) deserve their own assertion so a
-        // future refactor cannot regress them silently.
-        assert_eq!(split_subindex("main_btn"), ("main_btn", None));
-        assert_eq!(split_subindex("group#0"), ("group", Some("0")));
-        assert_eq!(split_subindex("group#42"), ("group", Some("42")));
-        assert_eq!(split_subindex("group#"), ("group", None));
-        // Empty primary — state-scene lookup will silently fail, but
-        // the split itself is well-defined.
-        assert_eq!(split_subindex("#0"), ("", Some("0")));
-        // Multiple `'#'` — `split_once` stops at the first; the
-        // remainder is opaque to the router (a future schema may
-        // give it meaning, e.g. nested sub-indexing).
-        assert_eq!(split_subindex("a#b#c"), ("a", Some("b#c")));
     }
 
     // ─── R51.186 §5.45 R55.C.2 wheel dispatch fixtures + tests ────
