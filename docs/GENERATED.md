@@ -16409,6 +16409,52 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R745 — R745 adds variable-height list virtualization to section 5.27: a prefix-sum RowOffsets table searched in O(log n) (react-window VariableSizeList) is the variable-pitch peer of R744's uniform compute_visible_range; hello-variable-list renders 10000 rows of cycling heights, materializing only the visible window while the prefix-sum sizer preserves the scroll bound. Measured/auto height and the Scene::VirtualList IR variant stay deferred.
+
+**Changes**:
+- New pinion_core::widgets::virtual_list::RowOffsets — prefix-sum offset table over per-row heights
+- RowOffsets::from_heights builds cumulative tops (u64); item_count/total_height/row_top/row_height
+- New compute_visible_range_variable: O(log n) binary search (partition_point) over the offset table
+- Reuses R744 VisibleWindow so view assembly + a11y windowing are shared across uniform and variable
+- Variable = react-window VariableSizeList to R744 FixedSizeList; uniform O(1) path kept as peer
+- +14 core unit tests: variable==uniform-when-equal, all-zero-heights empty, u32 saturate, clamps
+- New pinion_widget_paint::virtual_list::view_variable_virtual_list assembling a variable-height list
+- Lifted positioned_slot + assemble_windowed shared by both views (divergence-is-a-bug SSOT shape)
+- +5 widget-paint tests: window count, prefix-sum sizer height, per-row top/height, slide, empty
+- New example hello-variable-list: 10000 rows cycling 28/44/60/76px heights; cached RowOffsets
+- Offset table memoized via Owner::cache (built once O(n); per-frame cost is the O(log n) search)
+- a11y: AriaRole::List aria-setsize=N + per-visible-row AriaRole::ListItem aria-posinset (same model)
+
+
+
+**Verification**:
+- cargo test --workspace: 0 fail; core virtual_list 29/29, widget-paint 10/10, example 6/6
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)
+- demo sweep includes r745_variable_list.py (added); r745 demo PASS headless under Xvfb
+- r745 demo 40+ asserts: band == variable windowing math at offset 0 / wheel / 100000 / bottom
+- each rendered row painted height == modeled height; >=3 distinct heights; top deltas == heights
+- scroll-to-bottom offset clamps to total_height - viewport (proves prefix-sum sizer drove max_y)
+- only a small window of 10000 rows materializes; deep rows absent; band slides on scroll
+- scrollbar thumb tiny vs viewport (bound = total prefix-sum extent)
+- live pixels: four height tiers paint four distinct tones; list region distinct from page
+- live native XTEST wheel on :0 real focused window: row band shifts (label glyphs move to new y)
+
+
+
+**Impact**: §5.27
+
+
+**Carry forward**:
+- Measured row height (render then read back laid-out height) deferred: needs layout-pass measurement
+- That measurement round-trip = the same capability the Scene::VirtualList IR variant wants (R690.A)
+- Scene::VirtualList IR variant + scene/virtual_list RPC still deferred to R750+ (evidence-first)
+- Formal VirtualListModel trait still premature; model = heights slice + FnMut(usize)->Scene (2 users)
+- BarPhase scrollbar projection now 2-copy (virtual+variable); mechanical lift at 3rd, no shared home
+- Selection / sort on the variable list: later mini-series round; reuse widgets::selection helpers
+- Horizontal + 2-D grid windowing: vertical-only; compute_visible_range is 1-axis general
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

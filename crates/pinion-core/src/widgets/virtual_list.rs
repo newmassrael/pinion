@@ -46,10 +46,17 @@
 //!
 //! ## Scope of this slice (honest boundaries)
 //!
-//! - **Uniform pitch only.** Variable / measured row heights need a
-//!   prefix-sum offset table + a binary search in place of the integer
-//!   divides here; that is the next mini-series round, kept out so the
-//!   first consumer lands on the simplest correct core.
+//! - **Uniform pitch** is this module's O(1) path
+//!   ([`compute_visible_range`] / [`content_height`]). **Variable /
+//!   explicit row heights** are the R745 peer path
+//!   ([`RowOffsets`] + [`compute_visible_range_variable`]): a prefix-sum
+//!   offset table searched in O(log n) — `react-window`'s `VariableSizeList`
+//!   to the fixed path's `FixedSizeList`. Both are kept (the uniform path
+//!   avoids building an n-entry table; they are peer techniques, not one
+//!   subsuming the other — see the R745 design note below). *Measured*
+//!   heights (render → read back the laid-out height → feed the table) are
+//!   still deferred: that needs a layout-pass measurement round-trip, the
+//!   same capability the IR variant wants (see the §5.27 note).
 //! - **No selection / sort / `Model` trait.** The "model" is the
 //!   consumer's `item_count` plus a `FnMut(usize) -> Scene` row builder
 //!   (the Flutter / `react-window` shape), not a retained trait object.
@@ -218,6 +225,165 @@ pub fn compute_visible_range(
     }
 }
 
+/// R745 §5.27 — a prefix-sum offset table over **explicit per-row
+/// heights**, enabling O(log n) windowing for a variable-height
+/// virtualized list.
+///
+/// This is the variable-pitch peer of [`compute_visible_range`]'s integer
+/// divide: where the uniform path computes a row's top as `index · pitch`
+/// in O(1), a variable-height list must remember where every row starts.
+/// The canonical structure (`react-window` `VariableSizeList`,
+/// `TanStack Virtual`, Qt `QHeaderView`'s section offsets) is a cumulative
+/// sum: `offsets[i]` is the total height of rows `0..i`, i.e. the top edge
+/// of row `i`, and the final entry is the total content height. Because
+/// the sums are monotonically non-decreasing, the visible window is found
+/// by binary search ([`compute_visible_range_variable`]).
+///
+/// The table is built once from the height slice and reused across frames
+/// (the consumer caches it; rebuilding only when the heights change), so
+/// the O(n) construction is amortized to nothing per frame while every
+/// scroll resolves in O(log n).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RowOffsets {
+    /// Cumulative tops: `offsets[i]` = Σ heights[0..i]. Length is
+    /// `item_count + 1`; `offsets[0] == 0` and `offsets[item_count]` is
+    /// the total content height. Held as `u64` so the prefix sum cannot
+    /// overflow before the final saturating cast to a `u32` pixel extent.
+    offsets: Vec<u64>,
+}
+
+impl RowOffsets {
+    /// Build the prefix-sum table from a slice of per-row heights (logical
+    /// pixels). `heights[i]` is the height of row `i`; a height of `0` is
+    /// valid (a collapsed row) and simply contributes no extent.
+    ///
+    /// An empty slice yields a single-entry table (`offsets == [0]`):
+    /// zero items, zero total height.
+    #[must_use]
+    pub fn from_heights(heights: &[u32]) -> Self {
+        let mut offsets = Vec::with_capacity(heights.len() + 1);
+        let mut acc: u64 = 0;
+        offsets.push(0);
+        for &h in heights {
+            acc = acc.saturating_add(u64::from(h));
+            offsets.push(acc);
+        }
+        Self { offsets }
+    }
+
+    /// Number of rows in the table.
+    #[must_use]
+    pub fn item_count(&self) -> usize {
+        self.offsets.len() - 1
+    }
+
+    /// Whether the table has no rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.item_count() == 0
+    }
+
+    /// Total intrinsic content height of all rows, saturated to `u32`
+    /// (the sizer extent — the variable-height analogue of
+    /// [`content_height`]). See the module `u32` ceiling note.
+    #[must_use]
+    pub fn total_height(&self) -> u32 {
+        u32::try_from(*self.offsets.last().unwrap_or(&0)).unwrap_or(u32::MAX)
+    }
+
+    /// Top edge of row `index` (logical pixels), saturated to `u32`.
+    /// Returns the total height for `index == item_count` (the one-past
+    /// sentinel) and saturates to the total for any out-of-range index.
+    #[must_use]
+    pub fn row_top(&self, index: usize) -> u32 {
+        let top = self
+            .offsets
+            .get(index)
+            .or_else(|| self.offsets.last())
+            .copied()
+            .unwrap_or(0);
+        u32::try_from(top).unwrap_or(u32::MAX)
+    }
+
+    /// Height of row `index` (logical pixels), or `0` for an
+    /// out-of-range index.
+    #[must_use]
+    pub fn row_height(&self, index: usize) -> u32 {
+        let (Some(&top), Some(&bottom)) =
+            (self.offsets.get(index), self.offsets.get(index + 1))
+        else {
+            return 0;
+        };
+        u32::try_from(bottom - top).unwrap_or(u32::MAX)
+    }
+}
+
+/// R745 §5.27 — compute the visible window for a **variable-height** list
+/// from its prefix-sum [`RowOffsets`] table.
+///
+/// The variable-pitch peer of [`compute_visible_range`]: instead of
+/// dividing the scroll offset by a uniform pitch, it binary-searches the
+/// cumulative tops for the rows straddling the viewport edges. The
+/// `overscan` padding and the clamp to `0..item_count` are identical to
+/// the uniform path, and the result is the same [`VisibleWindow`] — so the
+/// view assembly and a11y windowing are shared across both paths.
+///
+/// # Parameters
+///
+/// - `offset_y` — current vertical scroll offset (logical pixels);
+///   negatives treated as `0`.
+/// - `viewport_h` — clip-window height (logical pixels).
+/// - `offsets` — the prefix-sum table built from the row heights.
+/// - `overscan` — extra rows rendered on each side of the strict window.
+///
+/// # Returns
+///
+/// The [`VisibleWindow`] of indices whose `[top_i, top_i + height_i)` slot
+/// intersects `[offset_y, offset_y + viewport_h)`, expanded by `overscan`
+/// and clamped to `0..item_count`. [`VisibleWindow::EMPTY`] when the table
+/// is empty, the viewport is zero-height, or the total content height is
+/// zero (every row collapsed).
+#[must_use]
+pub fn compute_visible_range_variable(
+    offset_y: i32,
+    viewport_h: u32,
+    offsets: &RowOffsets,
+    overscan: usize,
+) -> VisibleWindow {
+    let item_count = offsets.item_count();
+    if item_count == 0 || viewport_h == 0 || offsets.total_height() == 0 {
+        return VisibleWindow::EMPTY;
+    }
+    let offset = u64::from(offset_y.max(0).unsigned_abs());
+    let bottom = offset + u64::from(viewport_h);
+    let max_index = item_count - 1;
+
+    // `tops` = `offsets.offsets`, the sorted cumulative tops including the
+    // one-past total at the end. `partition_point(|t| t <= x)` returns the
+    // count of tops `<= x`; subtracting one gives the index of the row
+    // *containing* pixel `x` (mirrors `floor(x / pitch)` in the uniform
+    // path), clamped to the last real row.
+    let tops = &offsets.offsets;
+    let first_visible = tops
+        .partition_point(|&t| t <= offset)
+        .saturating_sub(1)
+        .min(max_index);
+    // The last row inside the viewport is the one whose top is strictly
+    // above `bottom` (`t < bottom` ⟺ `t <= bottom - 1`, the last visible
+    // pixel — written as `< bottom` so the count never needs `bottom - 1`).
+    let last_visible = tops
+        .partition_point(|&t| t < bottom)
+        .saturating_sub(1)
+        .min(max_index);
+
+    let first = first_visible.saturating_sub(overscan);
+    let last = last_visible.saturating_add(overscan).min(max_index);
+    VisibleWindow {
+        first,
+        count: last - first + 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,5 +503,169 @@ mod tests {
         let w = compute_visible_range(offset, VP, n, PITCH, 0);
         assert_eq!(w.count, 5);
         assert_eq!(w.first, 25_000_000);
+    }
+
+    // ── R745 variable-height (RowOffsets + binary-search windowing) ──
+
+    // A 4-row repeating height pattern, distinctly non-uniform so the
+    // prefix sums are irregular: 20, 60, 20, 60, … Tops: 0, 20, 80, 100,
+    // 160, 180, 240, … (every 2 rows = 80 px).
+    fn var_heights(n: usize) -> Vec<u32> {
+        (0..n).map(|i| if i % 2 == 0 { 20 } else { 60 }).collect()
+    }
+
+    #[test]
+    fn row_offsets_builds_prefix_sums_and_total() {
+        let o = RowOffsets::from_heights(&[20, 60, 20, 60]);
+        assert_eq!(o.item_count(), 4);
+        assert!(!o.is_empty());
+        assert_eq!(o.total_height(), 160);
+        assert_eq!(o.row_top(0), 0);
+        assert_eq!(o.row_top(1), 20);
+        assert_eq!(o.row_top(2), 80);
+        assert_eq!(o.row_top(3), 100);
+        // One-past sentinel = total.
+        assert_eq!(o.row_top(4), 160);
+        assert_eq!(o.row_height(0), 20);
+        assert_eq!(o.row_height(1), 60);
+        assert_eq!(o.row_height(3), 60);
+        // Out-of-range height is 0.
+        assert_eq!(o.row_height(4), 0);
+    }
+
+    #[test]
+    fn row_offsets_empty_slice_is_empty_table() {
+        let o = RowOffsets::from_heights(&[]);
+        assert_eq!(o.item_count(), 0);
+        assert!(o.is_empty());
+        assert_eq!(o.total_height(), 0);
+        // row_top of an empty table saturates to the (zero) total.
+        assert_eq!(o.row_top(0), 0);
+        assert_eq!(o.row_height(0), 0);
+    }
+
+    #[test]
+    fn variable_equals_uniform_when_all_heights_equal() {
+        // A variable table of equal heights must window identically to the
+        // O(1) uniform path — the two are peers, not divergent.
+        let o = RowOffsets::from_heights(&vec![PITCH; N]);
+        for &offset in &[0, 20, 400, 4000, 39_960] {
+            for overscan in [0usize, 2, 4] {
+                assert_eq!(
+                    compute_visible_range_variable(offset, VP, &o, overscan),
+                    compute_visible_range(offset, VP, N, PITCH, overscan),
+                    "variable must match uniform at offset {offset}, overscan {overscan}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn empty_table_is_empty_window() {
+        let o = RowOffsets::from_heights(&[]);
+        assert_eq!(
+            compute_visible_range_variable(0, VP, &o, 0),
+            VisibleWindow::EMPTY
+        );
+    }
+
+    #[test]
+    fn zero_viewport_variable_is_empty_window() {
+        let o = RowOffsets::from_heights(&var_heights(100));
+        assert_eq!(
+            compute_visible_range_variable(0, 0, &o, 0),
+            VisibleWindow::EMPTY
+        );
+    }
+
+    #[test]
+    fn all_zero_heights_is_empty_window() {
+        // Total content height 0 → nothing to show, even with rows.
+        let o = RowOffsets::from_heights(&[0, 0, 0, 0]);
+        assert_eq!(o.item_count(), 4);
+        assert_eq!(o.total_height(), 0);
+        assert_eq!(
+            compute_visible_range_variable(0, VP, &o, 0),
+            VisibleWindow::EMPTY
+        );
+    }
+
+    #[test]
+    fn variable_top_aligned_windows_by_height() {
+        // Tops 0,20,80,100,160,180,240,260,320,340,400,...; viewport 200.
+        // first_visible 0 (top 0 <= 0). last pixel 199: largest top <= 199
+        // is 180 (row 5) → rows 0..=5.
+        let o = RowOffsets::from_heights(&var_heights(1000));
+        let w = compute_visible_range_variable(0, VP, &o, 0);
+        assert_eq!(w, VisibleWindow { first: 0, count: 6 });
+    }
+
+    #[test]
+    fn variable_partial_first_row_includes_straddled_top() {
+        // offset 50 sits inside row 1 (top 20, bottom 80) → first_visible 1.
+        // bottom 250, last pixel 249: largest top <= 249 is 240 (row 6) →
+        // rows 1..=6.
+        let o = RowOffsets::from_heights(&var_heights(1000));
+        let w = compute_visible_range_variable(50, VP, &o, 0);
+        assert_eq!(w, VisibleWindow { first: 1, count: 6 });
+    }
+
+    #[test]
+    fn variable_overscan_pads_and_clamps_at_top() {
+        // Same as top-aligned (rows 0..=5) but overscan 2: top saturates to
+        // 0, bottom extends to row 7 → rows 0..=7.
+        let o = RowOffsets::from_heights(&var_heights(1000));
+        let w = compute_visible_range_variable(0, VP, &o, 2);
+        assert_eq!(w, VisibleWindow { first: 0, count: 8 });
+    }
+
+    #[test]
+    fn variable_middle_offset_windows_correctly() {
+        // The pattern repeats every 2 rows = 80 px. offset 800 = 20 pairs
+        // down → top of row 20 is exactly 800 → first_visible 20. bottom
+        // 1000, last pixel 999: 999 = 12*80 + 39 → within pair 12 from row
+        // 24... compute: top of row 24 = 960, row 25 = 980, row 26 = 1040.
+        // largest top <= 999 is 980 (row 25) → rows 20..=25.
+        let o = RowOffsets::from_heights(&var_heights(1000));
+        let w = compute_visible_range_variable(800, VP, &o, 0);
+        assert_eq!(w, VisibleWindow { first: 20, count: 6 });
+    }
+
+    #[test]
+    fn variable_negative_offset_treated_as_top() {
+        let o = RowOffsets::from_heights(&var_heights(1000));
+        assert_eq!(
+            compute_visible_range_variable(-500, VP, &o, 0),
+            compute_visible_range_variable(0, VP, &o, 0),
+        );
+    }
+
+    #[test]
+    fn variable_viewport_taller_than_content_shows_all_rows() {
+        let o = RowOffsets::from_heights(&[20, 60, 20]); // total 100
+        let w = compute_visible_range_variable(0, 1000, &o, 0);
+        assert_eq!(w, VisibleWindow { first: 0, count: 3 });
+    }
+
+    #[test]
+    fn variable_bottom_edge_overscan_clamps_to_last_index() {
+        // 1000 rows, total height = 500 pairs * 80 = 40_000. Scroll near
+        // the bottom; overscan 4 cannot exceed the last index.
+        let o = RowOffsets::from_heights(&var_heights(1000));
+        let max_off = i32::try_from(o.total_height() - VP).unwrap();
+        let w = compute_visible_range_variable(max_off, VP, &o, 4);
+        assert_eq!(w.last(), Some(999));
+    }
+
+    #[test]
+    fn variable_total_height_saturates_at_u32_max() {
+        // Many tall rows whose sum exceeds u32::MAX saturate (the u64 prefix
+        // sum stays exact internally; only the public extent caps).
+        let o = RowOffsets::from_heights(&vec![1_000_000; 5000]); // 5e9 > u32::MAX
+        assert_eq!(o.total_height(), u32::MAX);
+        // Windowing still resolves a small span near the top.
+        let w = compute_visible_range_variable(0, VP, &o, 0);
+        assert_eq!(w.first, 0);
+        assert!(w.count >= 1);
     }
 }

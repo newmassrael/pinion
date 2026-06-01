@@ -52,9 +52,14 @@
 //! this helper adds owns only the slot placement and a `w × row_pitch`
 //! frame.
 //!
-//! Uniform `row_pitch` only this slice — see the
+//! Two pitch models share this shape: [`view_virtual_list`] (uniform
+//! `row_pitch`, R744) and [`view_variable_virtual_list`] (explicit
+//! per-row heights via a prefix-sum [`RowOffsets`] table, R745). They
+//! differ only in how each slot's top + height is derived; the slot
+//! wrapper ([`positioned_slot`]) and the sizer / content-root / scroll
+//! assembly ([`assemble_windowed`]) are shared. See the
 //! [`virtual_list`](pinion_core::widgets::virtual_list) module's scope
-//! notes.
+//! notes for the *measured*-height boundary still deferred.
 
 use std::rc::Rc;
 
@@ -62,7 +67,8 @@ use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
 use pinion_core::style::{LayoutStyle, Size};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::virtual_list::{
-    compute_visible_range, content_height, VisibleWindow,
+    compute_visible_range, compute_visible_range_variable, content_height, RowOffsets,
+    VisibleWindow,
 };
 use pinion_core::Scene;
 
@@ -105,27 +111,96 @@ pub fn view_virtual_list(
         // below that total, so the same saturating cast is safe.
         let top = u32::try_from((index as u64).saturating_mul(u64::from(row_pitch)))
             .unwrap_or(u32::MAX);
-        slots.push(Scene::Container(
-            ContainerNode::new(vec![row]).with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(0, top)
-                    .with_size(Size::px(viewport.w, row_pitch)),
-            ),
+        slots.push(positioned_slot(row, viewport.w, top, row_pitch));
+    }
+
+    assemble_windowed(scroll, viewport, total_h, slots)
+}
+
+/// R745 §5.27 — assemble a **variable-height** virtualized vertical list
+/// as a [`ScrollNode`].
+///
+/// The variable-pitch peer of [`view_virtual_list`]: identical windowed
+/// shape, but each row's slot top and height come from the prefix-sum
+/// [`RowOffsets`] table (`react-window`'s `VariableSizeList`) instead of a
+/// uniform pitch. The shared sizer / content-root / scroll wrapping keeps
+/// the scroll bound at the true total extent exactly as the fixed path
+/// does, so the scrollbar peer and layout pass need no awareness of which
+/// pitch model produced the rows.
+///
+/// # Parameters
+///
+/// - `scroll` — the reactive [`ScrollState`] (shared with the scrollbar peer).
+/// - `viewport` — the clip window rect (`w` frames each slot; `h` feeds the
+///   windowing math).
+/// - `offsets` — the prefix-sum table built from the per-row heights
+///   (`RowOffsets::from_heights`); owns both the per-row geometry and the
+///   total content height.
+/// - `overscan` — rows rendered beyond the strict window on each side.
+/// - `build_row` — row builder invoked once per visible index.
+pub fn view_variable_virtual_list(
+    scroll: &Rc<ScrollState>,
+    viewport: Rect,
+    offsets: &RowOffsets,
+    overscan: usize,
+    mut build_row: impl FnMut(usize) -> Scene,
+) -> Scene {
+    let window: VisibleWindow =
+        compute_visible_range_variable(scroll.offset_y(), viewport.h, offsets, overscan);
+    let total_h = offsets.total_height();
+
+    let mut slots: Vec<Scene> = Vec::with_capacity(window.count);
+    for index in window.indices() {
+        let row = build_row(index);
+        // Per-row top and height read straight off the prefix-sum table —
+        // the variable-pitch analogue of the fixed path's `index · pitch`.
+        slots.push(positioned_slot(
+            row,
+            viewport.w,
+            offsets.row_top(index),
+            offsets.row_height(index),
         ));
     }
 
-    // Sizer: explicit full-height frame the auto content-root wrapper
-    // resolves its height from, so the scroll-bound pass sees the total
-    // extent even though only the window exists.
+    assemble_windowed(scroll, viewport, total_h, slots)
+}
+
+/// Lift a built `row` out of flow into an absolutely-positioned slot at
+/// `(0, top)` framed to `width × height` — the R55.D.6 CSS-mirror
+/// positioning wrapper shared by both list assemblies. Absolute children
+/// do not contribute to the sizer's content height, so a sparse window
+/// leaves the scroll extent (fixed by the sizer) intact.
+fn positioned_slot(row: Scene, width: u32, top: u32, height: u32) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![row]).with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(0, top)
+                .with_size(Size::px(width, height)),
+        ),
+    )
+}
+
+/// Wrap windowed `slots` in the canonical "full-height sizer inside an
+/// auto content-root inside a `ScrollNode`" shape shared by the fixed-
+/// ([`view_virtual_list`]) and variable-pitch
+/// ([`view_variable_virtual_list`]) assemblies.
+///
+/// `total_h` is the sizer's explicit height (the full content extent). The
+/// scroll-content layout pass forces the *content root* to `auto`, so it
+/// resolves its height from the fixed-height sizer child and writes that
+/// total into [`ScrollState::set_max`] — even though only the window's
+/// slots exist in the tree.
+fn assemble_windowed(
+    scroll: &Rc<ScrollState>,
+    viewport: Rect,
+    total_h: u32,
+    slots: Vec<Scene>,
+) -> Scene {
     let sizer = Scene::Container(
         ContainerNode::new(slots)
             .with_layout(LayoutStyle::new().with_size(Size::px(viewport.w, total_h))),
     );
-    // Content root: the scroll-content layout pass forces this node's
-    // height to `auto`; it wraps the fixed-height sizer so its resolved
-    // rect height equals `total_h`.
     let content = Scene::Container(ContainerNode::new(vec![sizer]));
-
     Scene::Scroll(ScrollNode::from_state(Rc::clone(scroll), viewport, content))
 }
 
@@ -228,6 +303,90 @@ mod tests {
             .run(|| view_virtual_list(&state, VIEWPORT, 0, PITCH, 2, build_row));
         let sizer = unwrap_sizer(&scene);
         assert!(sizer.children.is_empty(), "no rows for an empty dataset");
+        assert_eq!(sizer.layout.size, Size::px(VIEWPORT.w, 0));
+    }
+
+    // ── R745 variable-height view assembly ──────────────────────────
+
+    // Alternating 20 / 60 px rows: tops 0,20,80,100,160,180,240,… (80 px
+    // per pair). Total for `N` rows = N/2 * 80.
+    fn var_offsets(n: usize) -> RowOffsets {
+        RowOffsets::from_heights(
+            &(0..n).map(|i| if i % 2 == 0 { 20 } else { 60 }).collect::<Vec<_>>(),
+        )
+    }
+
+    fn run_variable(offset_y: i32, n: usize) -> Scene {
+        let offsets = var_offsets(n);
+        let total = i32::try_from(offsets.total_height()).unwrap();
+        let state = Rc::new(ScrollState::new());
+        state.set_max(0, total);
+        state.scroll_to(0, offset_y);
+        Owner::new()
+            .run(|| view_variable_virtual_list(&state, VIEWPORT, &offsets, 2, build_row))
+    }
+
+    #[test]
+    fn variable_renders_only_the_window() {
+        let scene = run_variable(0, N);
+        let sizer = unwrap_sizer(&scene);
+        // offset 0, viewport 200: rows 0..=5 (top<200) + 2 overscan below
+        // → rows 0..=7 = 8 slots, NOT 10 000.
+        assert_eq!(sizer.children.len(), 8, "only the windowed rows exist");
+    }
+
+    #[test]
+    fn variable_sizer_carries_total_prefix_sum_height() {
+        let scene = run_variable(0, N);
+        let sizer = unwrap_sizer(&scene);
+        // N/2 pairs * 80 = 10000/2 * 80 = 400_000.
+        assert_eq!(
+            sizer.layout.size,
+            Size::px(VIEWPORT.w, var_offsets(N).total_height()),
+            "sizer height = prefix-sum total so set_max sees full extent",
+        );
+        assert_eq!(var_offsets(N).total_height(), 400_000);
+    }
+
+    #[test]
+    fn variable_rows_positioned_and_sized_by_offset_table() {
+        let scene = run_variable(0, N);
+        let sizer = unwrap_sizer(&scene);
+        // First slot = row 0: top 0, height 20.
+        let Scene::Container(slot0) = &sizer.children[0] else {
+            panic!("slot must be a Container");
+        };
+        assert_eq!(slot0.layout.absolute_position, Some((0, 0)));
+        assert_eq!(slot0.layout.size, Size::px(VIEWPORT.w, 20));
+        // Second slot = row 1: top 20, height 60 (variable!).
+        let Scene::Container(slot1) = &sizer.children[1] else {
+            panic!("slot must be a Container");
+        };
+        assert_eq!(slot1.layout.absolute_position, Some((0, 20)));
+        assert_eq!(slot1.layout.size, Size::px(VIEWPORT.w, 60));
+    }
+
+    #[test]
+    fn variable_window_slides_with_offset() {
+        // Scroll to top of row 20 (offset 800, see core tests). First
+        // windowed slot = 20 - 2 overscan = row 18, top 18 = 9 pairs * 80
+        // = 720.
+        let scene = run_variable(800, N);
+        let sizer = unwrap_sizer(&scene);
+        let Scene::Container(first) = &sizer.children[0] else {
+            panic!("slot must be a Container");
+        };
+        assert_eq!(first.layout.absolute_position, Some((0, 720)));
+    }
+
+    #[test]
+    fn variable_empty_table_yields_empty_sizer() {
+        let offsets = RowOffsets::from_heights(&[]);
+        let state = Rc::new(ScrollState::new());
+        let scene = Owner::new()
+            .run(|| view_variable_virtual_list(&state, VIEWPORT, &offsets, 2, build_row));
+        let sizer = unwrap_sizer(&scene);
+        assert!(sizer.children.is_empty(), "no rows for an empty table");
         assert_eq!(sizer.layout.size, Size::px(VIEWPORT.w, 0));
     }
 }
