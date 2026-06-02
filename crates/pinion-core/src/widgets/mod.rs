@@ -1,4 +1,5 @@
 pub mod aria;
+pub mod badge;
 pub mod button;
 pub mod caret_blink;
 pub mod checkbox;

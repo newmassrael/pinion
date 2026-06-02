@@ -52,6 +52,7 @@ members = [
     "examples/hello-input-chip",
     "examples/hello-card",
     "examples/hello-rating",
+    "examples/hello-badge",
     "examples/hello-segmented-button",
     "examples/hello-segmented-multi",
     "examples/hello-listbox",

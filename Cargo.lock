@@ -1704,6 +1704,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-badge"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-breadcrumb"
 version = "0.0.1"
 dependencies = [

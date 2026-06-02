@@ -380,19 +380,23 @@ impl WidgetA11y for TooltipView {
         let (autosave, offline) = state;
         let mut nodes = Vec::new();
         for (tag, posture) in [(AUTOSAVE_TAG, autosave), (OFFLINE_TAG, offline)] {
-            let mut control = AccessNode::new(tag, AriaRole::Button).with_state(AccessState {
+            let control = AccessNode::new(tag, AriaRole::Button).with_state(AccessState {
                 focused: focused == Some(tag),
                 hovered: posture.hovered,
                 ..AccessState::default()
             });
-            if posture.visible {
-                let desc = pop_tag(tag);
-                control = control.with_described_by(desc.clone());
-                nodes.push(control);
-                nodes.push(AccessNode::new(desc, AriaRole::Tooltip));
-            } else {
-                nodes.push(control);
-            }
+            // R759 — the describedby-gated region SSOT (shared with
+            // hello-tooltip-rich / hello-badge): the relation + tooltip
+            // node appear only while visible, so the described-by NodeId
+            // never dangles. The plain tooltip is nameless (its name is
+            // enriched from the painted text by `enrich_names_from_scene`).
+            nodes.extend(pinion_a11y::describedby_region(
+                control,
+                pop_tag(tag),
+                AriaRole::Tooltip,
+                None,
+                posture.visible,
+            ));
         }
         nodes
     }

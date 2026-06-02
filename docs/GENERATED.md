@@ -17207,6 +17207,40 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R759 — R759 §5.38 Badge (hello-badge): a descriptive count/dot status overlay over BadgeExternal (a plain value holder with no statechart, the R718 descriptive-widget pattern) positioned at the anchor top-right via LayoutStyle::absolute_position with inline error-tier pill/dot paint (1st badge-paint consumer); a mandatory 3b self-grep across the a11y access_node axis then lifted the describedby-gated region shape to pinion_a11y::describedby_region at its 3rd consumer (hello-tooltip + hello-tooltip-rich + hello-badge), refactoring all three so the no-dangling-aria-describedby correctness rule is single-sourced
+
+**Changes**:
+- new BadgeExternal plain holder: count/max/dot + derived read-only label/visible; no statechart (R718)
+- new hello-badge: count badge ("3" then "99+" overflow) + dot badge over anchors; multi-external cluster
+- badge sits top-right via LayoutStyle::absolute_position; inline error-tier pill/dot paint (1st consumer)
+- count 0 hides a count badge; the dot variant shows a bare dot; the raw count stays uncapped on overflow
+- mandatory 3b self-grep across the a11y axis found the describedby-gated region shape at its 3rd consumer
+- lift pinion_a11y::describedby_region: anchor + aria-describedby + region node, gated on presence
+- refactor hello-tooltip + hello-tooltip-rich + hello-badge through the describedby_region SSOT
+
+
+
+**Verification**:
+- pinion-core badge 15 tests; hello-badge 11 tests (read_state/view/a11y); pinion-a11y described 3 tests
+- hello-tooltip 11 + hello-tooltip-rich 5 green after the describedby_region refactor
+- workspace cargo test green (114 suites); clippy --features pinion-runtime/vello -D pedantic clean
+- demo r759_badge.py ~42 assertions; headless Xvfb sweep PASS (104/104)
+- AI-first: count/max/dot/label/visible introspected; intervene count=150 caps label to "99+", count=0 hides
+- live-pixel boot: count pill + dot interiors = error tier, window = Surface (introspect<->screen parity)
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- badge pill/dot paint inline (1st badge-paint consumer); lift pinion_widget_paint::badge at the 2nd
+- overhang past the anchor edge needs signed offsets; v1 anchors the badge flush within bounds
+- count-only / dot variants; M3 large-badge max-char + a leading-icon slot deferred (consumer 0)
+- describedby_region region_name is plain text; richer described relationships deferred (consumer 0)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

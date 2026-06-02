@@ -47,6 +47,7 @@
 #![forbid(unsafe_code)]
 
 pub mod action;
+pub mod described;
 pub mod focus;
 pub mod navigation;
 pub mod node;
@@ -64,6 +65,7 @@ pub mod widget_a11y;
 mod test_fixtures;
 
 pub use action::{translate_action, AccessAction, PinionAccessAction};
+pub use described::describedby_region;
 pub use focus::AccessFocus;
 pub use navigation::{navigation_link_nodes, NavLink};
 pub use node::{AccessNode, AccessState, AccessValue};

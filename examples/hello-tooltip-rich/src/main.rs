@@ -336,21 +336,21 @@ impl WidgetA11y for RichTooltipView {
     /// relation + node appear only while visible, so the described-by
     /// `NodeId` never dangles.
     fn access_node(state: &AnchorState, focused: Option<&str>) -> Vec<AccessNode> {
-        let mut control = AccessNode::new(TRIGGER_TAG, AriaRole::Button).with_state(AccessState {
+        let control = AccessNode::new(TRIGGER_TAG, AriaRole::Button).with_state(AccessState {
             focused: focused == Some(TRIGGER_TAG),
             hovered: state.hovered,
             ..AccessState::default()
         });
-        if state.visible {
-            let desc = pop_tag(TRIGGER_TAG);
-            control = control.with_described_by(desc.clone());
-            vec![
-                control,
-                AccessNode::new(desc, AriaRole::Tooltip).with_name(format!("{TIP_TITLE}. {TIP_BODY}")),
-            ]
-        } else {
-            vec![control]
-        }
+        // R759 — the describedby-gated region SSOT (shared with
+        // hello-tooltip / hello-badge): link the trigger to the tooltip
+        // region while shown, drop both when hidden (no dangling ref).
+        pinion_a11y::describedby_region(
+            control,
+            pop_tag(TRIGGER_TAG),
+            AriaRole::Tooltip,
+            Some(format!("{TIP_TITLE}. {TIP_BODY}")),
+            state.visible,
+        )
     }
 }
 
