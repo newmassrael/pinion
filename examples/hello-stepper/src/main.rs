@@ -340,10 +340,7 @@ impl WidgetA11y for StepperView {
                 .with_name(STEPS[i])
                 .with_state(AccessState {
                     focused: group_focused && i == active_idx,
-                    disabled: matches!(step_state, RadioState::Disabled),
-                    hovered: matches!(step_state, RadioState::Hover),
-                    pressed: matches!(step_state, RadioState::Pressed),
-                    checked: None,
+                    ..AccessState::from_interaction(step_state, None)
                 });
             if selected {
                 button = button.with_current(AriaCurrent::Step);

@@ -209,10 +209,7 @@ impl WidgetA11y for HelloCommandsTui {
     fn access_node(state: &ButtonState, focused: Option<&str>) -> Vec<AccessNode> {
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(state, ButtonState::Disabled),
-            hovered: matches!(state, ButtonState::Hover),
-            pressed: matches!(state, ButtonState::Pressed),
-            checked: None,
+            ..AccessState::from_interaction(state, None)
         };
         vec![
             AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Button)

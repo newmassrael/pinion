@@ -26,14 +26,14 @@
 //! constants, so the magic numbers still live in exactly one place.
 
 use pinion_core::theme::{ColorRole, Theme};
-use pinion_core::widgets::button::ButtonState;
-use pinion_core::widgets::checkbox::CheckboxState;
-use pinion_core::widgets::disclosure::DisclosureState;
-use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::slider::SliderState;
-use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::Color;
+
+// R755 — the interaction-posture trait lifted down to `pinion-core` so the
+// a11y layer can share it (see `pinion_core::widgets::interaction`). Re-
+// exported here so the generic `state_layer` overlay and every existing
+// `use pinion_widget_paint::state_layer::InteractionState` caller keep
+// compiling against the same path.
+pub use pinion_core::widgets::interaction::InteractionState;
 
 /// Material 3 hover state-layer opacity — the cursor-over overlay fraction
 /// lerped from the resting fill toward `OnSurface`. M3 canonical 8 %.
@@ -45,105 +45,6 @@ pub const PRESSED: f32 = 0.12;
 /// Material 3 disabled state-layer opacity — the fade fraction toward
 /// `Surface`. M3 canonical 38 %.
 pub const DISABLED: f32 = 0.38;
-
-/// The interaction posture a widget-state enum exposes to the shared
-/// [`state_layer`] overlay. Implemented for every gallery state enum;
-/// `SliderState` (and the other drag-driven enums) map their `Dragging`
-/// posture onto [`Self::is_pressed`] so the pressed overlay applies while a
-/// thumb is held, exactly as M3 specifies.
-pub trait InteractionState {
-    /// The pointer is hovering (but not pressed/dragging or disabled).
-    fn is_hovered(&self) -> bool;
-    /// The control is being actuated (pressed, or a thumb is being dragged).
-    fn is_pressed(&self) -> bool;
-    /// The control is disabled.
-    fn is_disabled(&self) -> bool;
-}
-
-impl InteractionState for RadioState {
-    fn is_hovered(&self) -> bool {
-        matches!(self, Self::Hover)
-    }
-    fn is_pressed(&self) -> bool {
-        matches!(self, Self::Pressed)
-    }
-    fn is_disabled(&self) -> bool {
-        matches!(self, Self::Disabled)
-    }
-}
-
-impl InteractionState for ButtonState {
-    fn is_hovered(&self) -> bool {
-        matches!(self, Self::Hover)
-    }
-    fn is_pressed(&self) -> bool {
-        matches!(self, Self::Pressed)
-    }
-    fn is_disabled(&self) -> bool {
-        matches!(self, Self::Disabled)
-    }
-}
-
-impl InteractionState for CheckboxState {
-    fn is_hovered(&self) -> bool {
-        matches!(self, Self::Hover)
-    }
-    fn is_pressed(&self) -> bool {
-        matches!(self, Self::Pressed)
-    }
-    fn is_disabled(&self) -> bool {
-        matches!(self, Self::Disabled)
-    }
-}
-
-impl InteractionState for ToggleState {
-    fn is_hovered(&self) -> bool {
-        matches!(self, Self::Hover)
-    }
-    fn is_pressed(&self) -> bool {
-        matches!(self, Self::Pressed)
-    }
-    fn is_disabled(&self) -> bool {
-        matches!(self, Self::Disabled)
-    }
-}
-
-impl InteractionState for SliderState {
-    fn is_hovered(&self) -> bool {
-        matches!(self, Self::Hover)
-    }
-    /// A held thumb (`Dragging`) is the slider's pressed posture.
-    fn is_pressed(&self) -> bool {
-        matches!(self, Self::Dragging)
-    }
-    fn is_disabled(&self) -> bool {
-        matches!(self, Self::Disabled)
-    }
-}
-
-impl InteractionState for DisclosureState {
-    fn is_hovered(&self) -> bool {
-        matches!(self, Self::Hover)
-    }
-    fn is_pressed(&self) -> bool {
-        matches!(self, Self::Pressed)
-    }
-    fn is_disabled(&self) -> bool {
-        matches!(self, Self::Disabled)
-    }
-}
-
-impl InteractionState for ListboxItemState {
-    fn is_hovered(&self) -> bool {
-        matches!(self, Self::Hover)
-    }
-    fn is_pressed(&self) -> bool {
-        matches!(self, Self::Pressed)
-    }
-    fn is_disabled(&self) -> bool {
-        matches!(self, Self::Disabled)
-    }
-}
 
 /// The common-case M3 state-layer overlay: tint `base` toward `OnSurface`
 /// by [`HOVER`] / [`PRESSED`], or toward `Surface` by [`DISABLED`]; an
@@ -172,6 +73,9 @@ pub fn state_layer<S: InteractionState + Copy>(base: Color, state: S, theme: &Th
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::widgets::button::ButtonState;
+    use pinion_core::widgets::radio::RadioState;
+    use pinion_core::widgets::slider::SliderState;
 
     #[test]
     fn idle_is_untinted() {

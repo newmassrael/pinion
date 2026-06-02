@@ -693,10 +693,7 @@ impl WidgetA11y for ComboView {
                         .with_size_of_set(set_size)
                         .with_state(AccessState {
                             focused: input_focused && active == Some(abs),
-                            disabled: matches!(state.options[abs], ListboxItemState::Disabled),
-                            hovered: matches!(state.options[abs], ListboxItemState::Hover),
-                            pressed: matches!(state.options[abs], ListboxItemState::Pressed),
-                            checked: None,
+                            ..AccessState::from_interaction(state.options[abs], None)
                         }),
                 );
             }

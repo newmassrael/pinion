@@ -17043,6 +17043,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R755 — InteractionState trait lifted from pinion-widget-paint to pinion-core SSOT + new AccessState::from_interaction; 24 posture sites routed through one definition shared by the M3 state-layer overlay and the a11y layer
+
+**Changes**:
+- lift `InteractionState` trait + per-enum impls from `pinion-widget-paint::state_layer` down to `pinion_core::widgets::interaction` so the a11y layer (core-only dep) can reach the same posture SSOT
+- add 8th impl for `ColorAreaState` (Dragging=pressed, mirroring SliderState) + blanket `impl InteractionState for &T` so owned/borrowed callers share one path
+- `state_layer` re-exports the trait so the M3 overlay and all existing callers compile unchanged
+- new `AccessState::from_interaction(state, checked)` (pinion-a11y) maps disabled/hovered/pressed from the trait; `focused` stays orthogonal via struct-update spread
+- retrofit 24 posture sites (`hovered: matches!(state, X::Hover)` triad) across 2 a11y helpers + button_a11y_state + 21 examples to route through `from_interaction`
+- leave divergent consumers untouched: range-slider (per-thumb `active` gating) + 3 TextFieldState sites (no Hover/Pressed variants)
+
+
+
+**Verification**:
+- `cargo check --workspace --all-targets` clean; clippy `--all-targets --features pinion-runtime/vello` `-D pedantic` clean
+- `cargo test --workspace` 35/35 binaries pass incl. new `interaction` posture tests + `AccessState::from_interaction` test
+- headless demo sweep PASS (no a11y-state regression: from_interaction output byte-identical to prior hand-rolled literals)
+- repo-wide grep confirms 0 remaining posture `hovered: matches!` sites outside the lifted SSOT + doc comments
+
+
+
+**Impact**: §5.40, §5.50
+
+
+**Carry forward**:
+- range-slider AccessState diverges (per-thumb `active==thumb` pressed gating + hardcoded hovered:false) — intentional, not a from_interaction consumer; 2nd per-thumb consumer would justify a thumb-aware variant
+- TextFieldState (Idle/Focused/Editing/Disabled) has no Hover/Pressed posture — its access_node keeps the disabled-only literal; not an InteractionState enum by design
+- per-step/per-link Tab variant + chip catalog (input chip/Card/Rating/Badge) carry forward from R750/R753/R754 unchanged
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

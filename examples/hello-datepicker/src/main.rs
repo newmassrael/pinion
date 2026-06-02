@@ -507,10 +507,7 @@ impl WidgetA11y for DatePickerView {
                     .with_size_of_set(u32::from(days))
                     .with_state(AccessState {
                         focused: cell_focused,
-                        disabled: matches!(interaction, RadioState::Disabled),
-                        hovered: matches!(interaction, RadioState::Hover),
-                        pressed: matches!(interaction, RadioState::Pressed),
-                        checked: None,
+                        ..AccessState::from_interaction(interaction, None)
                     }),
             );
         }

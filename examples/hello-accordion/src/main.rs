@@ -320,10 +320,7 @@ impl WidgetA11y for AccordionView {
                     .with_expanded(expanded)
                     .with_state(AccessState {
                         focused: focused == Some(SECTION_TAGS[i]),
-                        disabled: matches!(interaction, DisclosureState::Disabled),
-                        hovered: matches!(interaction, DisclosureState::Hover),
-                        pressed: matches!(interaction, DisclosureState::Pressed),
-                        checked: None,
+                        ..AccessState::from_interaction(interaction, None)
                     })
             })
             .collect()

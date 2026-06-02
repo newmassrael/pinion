@@ -325,10 +325,7 @@ impl WidgetA11y for DiscView {
             .with_value(AccessValue::Float { value: state.value, min: 0.0, max: 1.0 })
             .with_state(AccessState {
                 focused: focused == Some(TAG),
-                disabled: matches!(state.interaction, SliderState::Disabled),
-                hovered: matches!(state.interaction, SliderState::Hover),
-                pressed: matches!(state.interaction, SliderState::Dragging),
-                checked: None,
+                ..AccessState::from_interaction(state.interaction, None)
             })]
     }
 }

@@ -66,10 +66,7 @@ pub fn navigation_link_nodes(
             .with_name(link.label)
             .with_state(AccessState {
                 focused: link.focused,
-                disabled: matches!(link.state, RadioState::Disabled),
-                hovered: matches!(link.state, RadioState::Hover),
-                pressed: matches!(link.state, RadioState::Pressed),
-                checked: None,
+                ..AccessState::from_interaction(link.state, None)
             });
         if link.current {
             node = node.with_current(AriaCurrent::Page);

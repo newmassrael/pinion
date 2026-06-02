@@ -633,10 +633,7 @@ impl WidgetA11y for ComboView {
                             // The active descendant is reported focused while
                             // the trigger (the combobox) owns shell focus.
                             focused: trigger_focused && i == active,
-                            disabled: matches!(item_state, ListboxItemState::Disabled),
-                            hovered: matches!(item_state, ListboxItemState::Hover),
-                            pressed: matches!(item_state, ListboxItemState::Pressed),
-                            checked: None,
+                            ..AccessState::from_interaction(item_state, None)
                         }),
                 );
             }

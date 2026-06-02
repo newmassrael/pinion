@@ -288,10 +288,7 @@ impl WidgetA11y for SliderVerticalView {
         let (interaction, value) = (state.0, state.1);
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(interaction, SliderState::Disabled),
-            hovered: matches!(interaction, SliderState::Hover),
-            pressed: matches!(interaction, SliderState::Dragging),
-            checked: None,
+            ..AccessState::from_interaction(interaction, None)
         };
         vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
             .with_value(AccessValue::Float { value, min: 0.0, max: 1.0 })

@@ -14,6 +14,7 @@
 //! builder rather than every widget impl.
 
 use pinion_core::scene::Rect;
+use pinion_core::widgets::interaction::InteractionState;
 
 use crate::role::{AriaCurrent, AriaRole, AutoComplete, SortDirection};
 
@@ -450,6 +451,30 @@ pub struct AccessState {
     pub checked: Option<bool>,
 }
 
+impl AccessState {
+    /// Build the disabled / hovered / pressed posture from a widget-state
+    /// enum's [`InteractionState`] impl, plus the `aria-checked`/`aria-pressed`
+    /// bit (`checked`). This is the R755 SSOT for the posture mapping that was
+    /// previously hand-copied as `hovered: matches!(state, X::Hover)` … into
+    /// 24 `access_node` sites across the gallery — the same posture the
+    /// Material 3 state-layer overlay reads through the very same trait.
+    ///
+    /// `focused` is orthogonal (it comes from the focus manager / active
+    /// descendant, not from the interaction enum) and stays at its `false`
+    /// default; consumers that track focus override it via struct-update
+    /// syntax: `AccessState { focused: …, ..AccessState::from_interaction(s, c) }`.
+    #[must_use]
+    pub fn from_interaction<S: InteractionState>(state: S, checked: Option<bool>) -> Self {
+        Self {
+            focused: false,
+            disabled: state.is_disabled(),
+            hovered: state.is_hovered(),
+            pressed: state.is_pressed(),
+            checked,
+        }
+    }
+}
+
 /// Numeric / boolean / string value carried by an `AccessNode`.
 ///
 /// Lockstep with the introspect schema (§5.21): a checkbox's
@@ -527,6 +552,29 @@ mod tests {
         assert_eq!(labeled.value_text.as_deref(), Some("Medium"));
         // Coexists with the numeric value — the two are complementary.
         assert!(matches!(labeled.value, Some(AccessValue::Float { .. })));
+    }
+
+    #[test]
+    fn from_interaction_maps_posture_and_leaves_focus_default() {
+        use pinion_core::widgets::radio::RadioState;
+        // Hover posture -> hovered only; focused stays false (orthogonal).
+        let s = AccessState::from_interaction(RadioState::Hover, Some(true));
+        assert_eq!(
+            s,
+            AccessState {
+                focused: false,
+                disabled: false,
+                hovered: true,
+                pressed: false,
+                checked: Some(true),
+            }
+        );
+        // Disabled posture; checked None.
+        let d = AccessState::from_interaction(RadioState::Disabled, None);
+        assert!(d.disabled && !d.hovered && !d.pressed && d.checked.is_none());
+        // Struct-update syntax overrides focus without disturbing posture.
+        let f = AccessState { focused: true, ..AccessState::from_interaction(RadioState::Pressed, None) };
+        assert!(f.focused && f.pressed && !f.hovered && !f.disabled);
     }
 
     #[test]

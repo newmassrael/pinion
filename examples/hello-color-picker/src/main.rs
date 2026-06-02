@@ -507,10 +507,7 @@ impl WidgetA11y for ColorPickerView {
             .with_value(AccessValue::Text(hex_label(selected)))
             .with_state(AccessState {
                 focused: focused == Some(SV_TAG),
-                disabled: matches!(sv_state, ColorAreaState::Disabled),
-                hovered: matches!(sv_state, ColorAreaState::Hover),
-                pressed: matches!(sv_state, ColorAreaState::Dragging),
-                checked: None,
+                ..AccessState::from_interaction(sv_state, None)
             });
         let hue_node = AccessNode::new(HUE_TAG, AriaRole::Slider)
             .with_name("Hue")

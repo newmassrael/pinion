@@ -63,11 +63,8 @@ pub fn toggle_button_group_nodes(
                 .with_name(seg.label)
                 .with_state(AccessState {
                     focused: focused == Some(seg.tag),
-                    disabled: matches!(seg.state, ToggleState::Disabled),
-                    hovered: matches!(seg.state, ToggleState::Hover),
-                    pressed: matches!(seg.state, ToggleState::Pressed),
                     // R733 — `Some(on)` on a `button` role = aria-pressed.
-                    checked: Some(seg.on),
+                    ..AccessState::from_interaction(seg.state, Some(seg.on))
                 }),
         );
     }

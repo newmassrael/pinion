@@ -206,10 +206,7 @@ impl WidgetA11y for HelloToggleTui {
         let (interaction, on) = *state;
         let access_state = AccessState {
             focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(interaction, ToggleState::Disabled),
-            hovered: matches!(interaction, ToggleState::Hover),
-            pressed: matches!(interaction, ToggleState::Pressed),
-            checked: Some(on),
+            ..AccessState::from_interaction(interaction, Some(on))
         };
         vec![AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Switch)
             .with_value(AccessValue::Bool(on))

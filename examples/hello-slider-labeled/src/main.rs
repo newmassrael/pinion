@@ -388,10 +388,7 @@ impl WidgetA11y for LabeledView {
             .with_value_text(label_for(state.value))
             .with_state(AccessState {
                 focused: focused == Some(TAG),
-                disabled: matches!(state.interaction, SliderState::Disabled),
-                hovered: matches!(state.interaction, SliderState::Hover),
-                pressed: matches!(state.interaction, SliderState::Dragging),
-                checked: None,
+                ..AccessState::from_interaction(state.interaction, None)
             })]
     }
 }

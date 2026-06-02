@@ -580,10 +580,7 @@ impl WidgetA11y for TableView {
                         .with_name(name)
                         .with_state(AccessState {
                             focused: cell_focused,
-                            disabled: matches!(interaction, RadioState::Disabled),
-                            hovered: matches!(interaction, RadioState::Hover),
-                            pressed: matches!(interaction, RadioState::Pressed),
-                            checked: None,
+                            ..AccessState::from_interaction(interaction, None)
                         }),
                 );
             }

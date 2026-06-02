@@ -325,10 +325,7 @@ impl WidgetA11y for SegmentedView {
             let radio_tag = format!("{PRIMARY_TAG}#{i}");
             let radio_access_state = AccessState {
                 focused: group_focused && i == active_idx,
-                disabled: matches!(radio_state, RadioState::Disabled),
-                hovered: matches!(radio_state, RadioState::Hover),
-                pressed: matches!(radio_state, RadioState::Pressed),
-                checked: Some(selected),
+                ..AccessState::from_interaction(radio_state, Some(selected))
             };
             nodes.push(
                 AccessNode::new(&radio_tag, AriaRole::RadioButton)

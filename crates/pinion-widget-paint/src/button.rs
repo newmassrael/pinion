@@ -467,10 +467,7 @@ pub fn read_button_focused(scene: &Scene, tag: &str) -> bool {
 pub fn button_a11y_state(state: ButtonState, focused: bool) -> AccessState {
     AccessState {
         focused,
-        hovered: matches!(state, ButtonState::Hover),
-        pressed: matches!(state, ButtonState::Pressed),
-        disabled: matches!(state, ButtonState::Disabled),
-        checked: None,
+        ..AccessState::from_interaction(state, None)
     }
 }
 

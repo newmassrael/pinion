@@ -308,10 +308,7 @@ impl WidgetA11y for ListBoxMultiView {
             let option_tag = format!("{PRIMARY_TAG}#{i}");
             let access_state = AccessState {
                 focused: list_focused && i == active_idx,
-                disabled: matches!(item_state, ListboxItemState::Disabled),
-                hovered: matches!(item_state, ListboxItemState::Hover),
-                pressed: matches!(item_state, ListboxItemState::Pressed),
-                checked: None,
+                ..AccessState::from_interaction(item_state, None)
             };
             nodes.push(
                 AccessNode::new(&option_tag, AriaRole::ListBoxOption)

@@ -2559,13 +2559,9 @@ impl WidgetA11y for TodoMvcView {
             nodes.push(
                 AccessNode::new(tag, AriaRole::RadioButton).with_state(AccessState {
                     focused: group_focused_here && idx == active_descendant_idx,
-                    disabled: matches!(radio_state, RadioState::Disabled),
-                    hovered: matches!(radio_state, RadioState::Hover),
-                    pressed: matches!(radio_state, RadioState::Pressed),
-                    // W3C-canonical: RadioButton uses `aria-checked`
-                    // for the selected-bit (Some(true) = engaged,
-                    // Some(false) = inactive).
-                    checked: Some(*mode == current_filter),
+                    // W3C-canonical: RadioButton uses `aria-checked` for the
+                    // selected-bit (Some(true) = engaged, Some(false) = inactive).
+                    ..AccessState::from_interaction(radio_state, Some(*mode == current_filter))
                 }),
             );
         }
