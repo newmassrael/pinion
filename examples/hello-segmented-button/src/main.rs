@@ -277,25 +277,12 @@ impl WidgetCore for SegmentedView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        // R51.57 §5.39 — single tab stop; arrow / Home / End / shortcut
-        // keys route only when the group itself is focused so sibling
-        // controls keep their keymaps.
-        if focused != Some(Self::tag()) {
-            return false;
-        }
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(idx) = resolve_target_index(node.handle.introspect(), key) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        // Select the target segment (mutual exclusion + `"selected"`
-        // intent) through the shared composite activation cycle.
-        rc::drive_activate(intro, idx);
-        true
+        // R51.57 §5.39 — single tab stop through the shared R751 roving-key
+        // shell; `resolve_target_index` (arrow / Home / End / shortcut) routes
+        // only when the group is focused, so sibling controls keep their
+        // keymaps. Selects the target segment (mutual exclusion + `"selected"`
+        // intent) on the activate edge.
+        rc::roving_key(scene, focused, Self::tag(), key, resolve_target_index)
     }
 
     fn fmt_state_log(state: &GroupState) -> String {

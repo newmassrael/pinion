@@ -84,6 +84,7 @@ members = [
     "examples/hello-dock-panels",
     "examples/hello-dock-panels-editor",
     "examples/hello-stepper",
+    "examples/hello-nav-rail",
 ]
 exclude = ["vendor/sce"]
 

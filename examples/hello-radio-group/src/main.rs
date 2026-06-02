@@ -280,31 +280,13 @@ impl WidgetCore for RadioGroupView {
     }
 
     fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
-        // R51.57 §5.39 — ARIA radio-group roving tabindex. The group
-        // is a single tab stop (`focusable_tags()` default returns
-        // just `Self::tag()` per the §5.39 caveat on composite focus),
-        // and Arrow / Home / End / a / b / c keys route only when the
-        // group itself is focused. Sibling controls on the same
-        // screen no longer alias the radio-group's keymap.
-        if focused != Some(Self::tag()) {
-            return false;
-        }
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let target_index = resolve_target_index(node.handle.introspect(), key);
-        let Some(idx) = target_index else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        // ARIA radio-group keyboard activation through the shared R732
-        // composite cycle: `RadioGroup::send` enforces mutual exclusion
-        // on the activate edge and fires the `"selected"` intent only on
-        // the real selection-change transition.
-        rc::drive_activate(intro, idx);
-        true
+        // R51.57 §5.39 — ARIA radio-group roving tabindex through the shared
+        // R751 roving-key shell: the group is a single tab stop, and
+        // `resolve_target_index` (Arrow / Home / End / a / b / c) routes only
+        // when the group itself is focused, so sibling controls keep their
+        // keymaps. `RadioGroup::send` enforces mutual exclusion on the
+        // activate edge and fires `"selected"` only on a real change.
+        rc::roving_key(scene, focused, Self::tag(), key, resolve_target_index)
     }
 
     fn fmt_state_log(state: &GroupState) -> String {

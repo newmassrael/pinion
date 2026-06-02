@@ -305,22 +305,10 @@ impl WidgetCore for StepperView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        if focused != Some(Self::tag()) {
-            return false;
-        }
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(idx) = resolve_target_index(node.handle.introspect(), key) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        // Navigate to the target step (1-of-N exclusion + `"selected"`
-        // intent) through the shared composite activation cycle.
-        rc::drive_activate(intro, idx);
-        true
+        // Navigate to the resolved step through the shared roving-key shell
+        // (1-of-N exclusion + `"selected"` intent); `resolve_target_index`
+        // is this stepper's opinionated ArrowLeft/Right + Home/End key map.
+        rc::roving_key(scene, focused, Self::tag(), key, resolve_target_index)
     }
 
     fn fmt_state_log(state: &StepperState) -> String {

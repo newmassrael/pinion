@@ -16896,6 +16896,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R751 — R751 §5.38 §5.40 vertical navigation rail (hello-nav-rail): a Navigation landmark of destination Links with an M3 active-indicator pill + aria-current=page, the 2nd Navigation/Link consumer (clearing the R731 carry) and another RadioGroupExternal roving consumer; pivoted from pagination because its prev/next needs a bespoke coordinator (substrate friction). The mechanical apply_key roving shell reached 5 byte-identical consumers so it was lifted to rc::roving_key (a lift R750's incomplete self-grep missed)
+
+**Changes**:
+- hello-nav-rail: §5.38 §5.40 vertical navigation rail — a Navigation of destination Links, aria-current=page on active
+- 2nd Navigation/Link consumer (after breadcrumb) — clears R731 carry, validates the pair per the second-consumer rule
+- M3 active-indicator pill (SurfaceContainerHighest, secondaryContainer approx) — the rail's distinguishing paint
+- substrate-0: reuses RadioGroupExternal roving (active = 1-of-N) + R750 rc::state_layer for the pill hover/pressed tint
+- Rule-of-Three lift: rc::roving_key mechanical apply_key shell — 5 consumers (breadcrumb/radio-group/segmented/stepper/nav-rail)
+- R750 self-grep missed this shell (only checked state_layer); R751 clears it — the incomplete-self-grep failure mode
+
+
+
+**Verification**:
+- workspace cargo test 0-fail; clippy -D pedantic (pinion-runtime/vello) clean; sweep 98/98 incl r751_nav_rail
+- 9 hello-nav-rail unit; r751_nav_rail.py RPC + PINION_SCREENSHOT pixel (active pill SurfaceContainerHighest vs Surface)
+- live native XTEST: real click destination-2 swapped the active pill 0->2 (grey<->Surface), proving real hit-routing
+- behaviour-preserving roving_key lift re-verified on 6 rebuilt-release demos (r705/r728/r731/r733/r750/r751 PASS)
+
+
+
+**Impact**: §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- per-link-Tab APG variant deferred (each destination in normal Tab order needs per-destination focusable externals); v1 = single-tab-stop roving
+- nav-rail icons omitted (no icon-font per project rule) — label + active-pill only; icon slot additive when a path/glyph-icon consumer arrives
+- Navigation/Link access_node now 2 identical consumers (breadcrumb+nav-rail) — access_node loop lift deferred to 3rd Nav/Link consumer
+- Pagination still deferred: prev/next needs a bespoke coordinator (datepicker precedent) or an N-button Signal model — not substrate-0, premature for 1 consumer
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

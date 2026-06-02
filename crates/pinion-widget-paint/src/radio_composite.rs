@@ -26,7 +26,43 @@ use pinion_a11y::{AccessAction, AccessFocus};
 use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::{Color, WidgetStateName};
+use pinion_core::{Color, Scene, WidgetStateName};
+
+/// The shared roving-key `apply_key` shell for a composite radio widget:
+/// when `focused` names this widget's `tag`, resolve `key` to a target cell
+/// index through the per-binding `resolve` map (the *opinionated* part —
+/// which arrows step, `Home`/`End`, etc.) and drive the activation cycle on
+/// that cell. Returns whether the key was consumed.
+///
+/// Lifted at the Rule of Three (R751): breadcrumb (R731), segmented button
+/// (R728), radio-group (R51.44), stepper (R750), and nav-rail (R751) all
+/// carried this exact mechanical shell — only `resolve` (the key→index map)
+/// and the widget's `tag` differed. (R750's self-grep lifted the
+/// [`state_layer`] overlay but missed this shell; R751 clears it — the
+/// incomplete-self-grep failure mode the 3rd-consumer mandate warns of.)
+#[must_use]
+pub fn roving_key(
+    scene: &mut Scene,
+    focused: Option<&str>,
+    tag: &str,
+    key: &str,
+    resolve: impl Fn(Option<&dyn ExternalIntrospect>, &str) -> Option<usize>,
+) -> bool {
+    if focused != Some(tag) {
+        return false;
+    }
+    let Scene::External(node) = scene else {
+        return false;
+    };
+    let Some(idx) = resolve(node.handle.introspect(), key) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    drive_activate(intro, idx);
+    true
+}
 
 /// The shared M3 state-layer overlay for a composite radio cell: tint
 /// `base` toward `OnSurface` by the hover (0.08) / pressed (0.12) opacity,
