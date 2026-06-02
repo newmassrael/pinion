@@ -19,6 +19,7 @@ pub mod style;
 pub mod text_scale;
 pub mod theme;
 pub mod topology;
+pub mod undo;
 pub mod widget_core;
 pub mod widgets;
 

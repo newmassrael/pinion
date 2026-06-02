@@ -4245,6 +4245,41 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### §5.52. Undo/redo command stack (R748)
+
+
+
+**Intent**: A reactive QUndoStack/QUndoCommand-peer undo/redo history: reversible commands with introspectable labels on one linear branch, shared by Rc between reducer, view, and an RPC coordinator.
+
+
+**Rationale**:
+- UndoCommand trait (label/redo/undo) = QUndoCommand peer; object-safe, edits coexist on one timeline
+- SignalEdit<T> = common command: snapshot a Signal before/after, restore on undo/redo
+- UndoStack reactive: each mutation bumps a revision Signal so can_undo/can_redo grey buttons out
+- push truncates the redo branch (single-branch); optional capacity drops the oldest from the front
+- label keeps history queryable as data (§2 #7): AI reads index/labels via UndoStackExternal
+- 2 consumers: hello-undo (SignalEdit<i64>) + ViewSortFilterExternal (SortFilterEdit compound edit)
+- non-SignalEdit SortFilterEdit earns trait erasure; merge + macro transactions additive (deferred)
+
+
+
+
+
+
+
+**Impact scope**: §5.40, §5.12, §5.23
+
+
+
+**Bindings**:
+- [implements] crates/pinion-core/src/undo.rs:UndoStack
+- [implements] crates/pinion-core/src/undo.rs:UndoCommand
+- [implements] crates/pinion-core/src/widgets/view_order.rs:SortFilterEdit
+
+
+
+
+
 ### §5.6. Reuse path (early cascade-emit vs Rust-native then port)
 
 
@@ -16731,6 +16766,41 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - keyboard roving / sort-header Tab-stop — pointer + RPC + AT this slice (R730/R746 defer).
 - view-side scrollbar assembly + windowed a11y stay per-binding (R746.3 audit: layer straddle /
 - no a11y-assembly precedent; honest defer).
+
+
+
+### R748 — R748 §5.52 undo/redo command stack (QUndoStack/QUndoCommand peer): reactive UndoStack + UndoCommand trait + SignalEdit<T> + use_undo_stack + UndoStackExternal, with 2 consumers (hello-undo counter via SignalEdit, hello-virtual-sort sort/filter via the compound SortFilterEdit).
+
+**Changes**:
+- New pinion-core::undo (§5.52): UndoCommand trait + SignalEdit<T> + reactive UndoStack
+- UndoStack = QUndoStack peer: push truncates redo branch, optional front-drop capacity
+- UndoStack reactive: each mutation bumps a revision Signal so can_undo/can_redo repaint
+- UndoCommand label keeps the history queryable as data (§2 #7) for AI introspection
+- use_undo_stack hook + UndoStackExternal (query index/labels, invoke undo/redo/clear)
+- ViewSortFilterExternal.with_undo records sort/filter as SortFilterEdit (2nd consumer)
+- SortFilterEdit = compound non-SignalEdit command; earns the trait erasure
+- hello-undo demo: counter editor; +/- record SignalEdit; Undo/Redo grey out reactively
+- hello-virtual-sort: undo stack + UndoStackExternal extra; sort/filter reversible over RPC
+
+
+
+**Verification**:
+- pinion-core undo 8 unit + view_order 14 unit (incl undo) + hello-undo 4 unit PASS
+- r748_undo.py E2E PASS: boot/record/undo-redo via RPC + buttons/decrement/truncate/clear
+- r747_virtual_sort.py §G PASS: sort+filter reversible via UndoStackExternal undo/redo
+- live native XTEST: real + clicks index 0->2, real Undo click ->1 with redo enabled
+- cargo test --workspace 0-fail + clippy --all-targets -D pedantic (vello) clean
+- full headless demo sweep 96/96 PASS
+
+
+
+**Impact**: §5.52, §5.40, §5.12
+
+
+**Carry forward**:
+- Command merge/coalescing (typing collapses to one step) additive: no consumer yet
+- Macro (group N edits as one) transactions additive: backward-compatible later
+- 3rd UndoCommand consumer = DockReorganizeIntent (R687 carry) when dock tear-off lands
 
 
 

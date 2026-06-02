@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R748 §5.52 undo/redo command stack consumer: pinion-forge renderer
+  manifest for hello-undo. Same single-source-of-truth template as the
+  other hello-* renderers; only the struct name diverges.
+  backend=vello + default Area antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloUndoRenderer"
+        backend="vello"/>

@@ -26,6 +26,7 @@ members = [
     "examples/hello-variable-list",
     "examples/hello-virtual-select",
     "examples/hello-virtual-sort",
+    "examples/hello-undo",
     "examples/hello-gradient",
     "examples/hello-path",
     "examples/hello-snackbar",

@@ -176,6 +176,29 @@ def body() -> None:
         after = sort_dir(tf)
         assert before != after, f"clicked sort header changed the sort ({before} → {after})"
 
+        # ── (G) R748 §5.52: sort/filter changes are reversible ──────────
+        # The ViewSortFilterExternal records every mutation onto a shared
+        # UndoStack (the SortFilterEdit command — the 2nd UndoCommand
+        # consumer); the UndoStackExternal surfaces the history.
+        undo = "/vsort_undo_stack/external"
+        # All the (B)-(F) sort/filter ops recorded; the stack is non-empty.
+        assert tf.query(f"{undo}/count") > 0, "sort/filter ops recorded onto the undo stack"
+        assert_eq(tf.query(f"{undo}/can_undo"), True, "history is undoable")
+        before = sort_dir(tf)
+        # One more cycle, then undo it: the sort returns to `before`.
+        cycled = tf.invoke(f"/{SORT_TAG}/external/cycle_sort", None)
+        assert cycled != before, f"cycle changed the sort ({before} -> {cycled})"
+        assert tf.query(f"{undo}/undo_label").startswith("Sort"), "the edit is labelled a Sort"
+        assert_eq(tf.invoke(f"{undo}/undo", None), True, "undo the cycle")
+        assert_eq(sort_dir(tf), before, "undo reverted the sort to its prior value")
+        assert_eq(tf.invoke(f"{undo}/redo", None), True, "redo re-applies the cycle")
+        assert_eq(sort_dir(tf), cycled, "redo restored the cycled sort")
+        # A filter change is a distinct, reversible edit on the same timeline.
+        tf.invoke(f"/{SORT_TAG}/external/set_filter", 2)
+        assert_eq(view_len(tf), 2000, "Charlie filter -> 2000 rows")
+        assert_eq(tf.invoke(f"{undo}/undo", None), True, "undo the filter")
+        assert_eq(view_len(tf), N, "undo restored the full (unfiltered) view")
+
 
 if __name__ == "__main__":
     run_demo("R747 §5.27 §5.40 — sort/filter on a virtualized list", body)

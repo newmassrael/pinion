@@ -50,6 +50,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::undo::{use_undo_stack, UndoStack, UndoStackExternal};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::view_order::{
@@ -89,6 +90,12 @@ const SORT_TAG: &str = "vsort";
 const SORT_REGION: &str = "cycle";
 const SCROLL_KEY: &str = "vlist_scroll";
 const SCROLLBAR_TAG: &str = "vlist_scrollbar";
+/// R748 §5.52 — the sort/filter view config's undo history. The
+/// [`ViewSortFilterExternal`] records each sort/filter change here, so
+/// `invoke "undo"` / `"redo"` on [`UNDO_STACK_TAG`] step the config.
+const UNDO_KEY: &str = "vsort_undo";
+/// The [`UndoStackExternal`] anchor — the AI-first sort/filter history.
+const UNDO_STACK_TAG: &str = "vsort_undo_stack";
 
 /// Five filter categories. Source row `i` belongs to `CATEGORIES[i % 5]`.
 const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
@@ -118,6 +125,14 @@ fn use_list_order() -> Rc<ViewOrderState> {
         let cats = (0..N).map(row_category).collect::<Vec<usize>>();
         (keys, cats)
     })
+}
+
+/// R748 §5.52 — the shared sort/filter [`UndoStack`]. The
+/// [`ViewSortFilterExternal`] records onto it; the [`UndoStackExternal`]
+/// surfaces it to RPC. Both reach the same `Rc` (the `use_undo_stack`
+/// sharing).
+fn use_sort_undo() -> Rc<UndoStack> {
+    use_undo_stack(UNDO_KEY)
 }
 
 /// One virtualized row. `source` is the data index (the row's identity); the
@@ -273,7 +288,11 @@ impl WidgetCore for VirtualSortView {
     /// the scrollbar peer.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         vec![
-            ExtraExternal::new(SORT_TAG, Box::new(ViewSortFilterExternal::new(use_list_order()))),
+            ExtraExternal::new(
+                SORT_TAG,
+                Box::new(ViewSortFilterExternal::new(use_list_order()).with_undo(use_sort_undo())),
+            ),
+            ExtraExternal::new(UNDO_STACK_TAG, Box::new(UndoStackExternal::new(use_sort_undo()))),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
         ]
     }

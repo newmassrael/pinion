@@ -65,6 +65,7 @@
 //!   free function over closures (the second proxy consumer proves the
 //!   shape; premature here).
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -73,6 +74,7 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::reactive::{Owner, Signal};
+use crate::undo::{UndoCommand, UndoStack};
 
 /// R747 §5.40 — cycle a sort key the way a clicked sort header does:
 /// unsorted → ascending → descending → unsorted.
@@ -319,6 +321,61 @@ pub fn use_view_order(
         })
 }
 
+/// The undoable `(sort, filter)` configuration of a [`ViewOrderState`].
+pub type ViewConfig = (Option<bool>, Option<usize>);
+
+/// R748 §5.52 — a reversible `(sort, filter)` change of a shared
+/// [`ViewOrderState`]: the **second** [`UndoCommand`] consumer and the
+/// witness that the trait earns its erasure. Unlike
+/// [`SignalEdit`](crate::undo::SignalEdit) it is a *compound* edit (it moves
+/// two signals at once) targeting `ViewOrderState`'s public setters rather
+/// than a single `Signal`. `redo` / `undo` restore the whole captured
+/// config, so a sort cycle and a filter change recorded onto one
+/// [`UndoStack`] unwind independently on a single Ctrl+Z timeline.
+pub struct SortFilterEdit {
+    state: Rc<ViewOrderState>,
+    before: ViewConfig,
+    after: ViewConfig,
+    label: Cow<'static, str>,
+}
+
+impl SortFilterEdit {
+    /// Capture the current `(sort, filter)` as the `before` snapshot; the
+    /// edit moves the state to `after` when recorded onto an [`UndoStack`].
+    #[must_use]
+    pub fn capture(
+        state: &Rc<ViewOrderState>,
+        after: ViewConfig,
+        label: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self {
+            state: Rc::clone(state),
+            before: (state.sort(), state.filter()),
+            after,
+            label: label.into(),
+        }
+    }
+
+    fn apply(&self, (sort, filter): ViewConfig) {
+        self.state.set_sort(sort);
+        self.state.set_filter(filter);
+    }
+}
+
+impl UndoCommand for SortFilterEdit {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        self.apply(self.after);
+    }
+
+    fn undo(&self) {
+        self.apply(self.before);
+    }
+}
+
 /// R747 §5.27 §5.40 — the sort/filter **proxy coordinator** External: a thin
 /// adapter that surfaces the shared [`ViewOrderState`] to the §5.12
 /// `scene/query` / `scene/intervene` / `scene/invoke` paths and the R51.42
@@ -336,6 +393,10 @@ pub fn use_view_order(
 #[derive(Clone)]
 pub struct ViewSortFilterExternal {
     state: Rc<ViewOrderState>,
+    /// When attached (via [`with_undo`](Self::with_undo)) every sort/filter
+    /// mutation is recorded as a reversible [`SortFilterEdit`] instead of
+    /// mutating the state directly (R748 §5.52).
+    undo: Option<Rc<UndoStack>>,
 }
 
 impl core::fmt::Debug for ViewSortFilterExternal {
@@ -344,15 +405,61 @@ impl core::fmt::Debug for ViewSortFilterExternal {
             .field("sort", &sort_dir_str(self.state.sort()))
             .field("filter", &self.state.filter())
             .field("view_len", &self.state.view_len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 impl ViewSortFilterExternal {
-    /// Wrap the shared [`ViewOrderState`] (from [`use_view_order`]).
+    /// Wrap the shared [`ViewOrderState`] (from [`use_view_order`]). Sort and
+    /// filter mutate the state directly (the R747 behavior); attach an
+    /// [`UndoStack`] with [`with_undo`](Self::with_undo) to make them
+    /// reversible.
     #[must_use]
     pub fn new(state: Rc<ViewOrderState>) -> Self {
-        Self { state }
+        Self { state, undo: None }
+    }
+
+    /// Route every sort/filter mutation through `stack` as a reversible
+    /// [`SortFilterEdit`] (R748 §5.52), so `invoke "undo"` / `invoke "redo"`
+    /// on the stack step the view config back and forth.
+    #[must_use]
+    pub fn with_undo(mut self, stack: Rc<UndoStack>) -> Self {
+        self.undo = Some(stack);
+        self
+    }
+
+    /// Apply a `(sort, filter)` config, recording it as a reversible
+    /// [`SortFilterEdit`] when an undo stack is attached, else mutating the
+    /// shared state directly.
+    fn apply_config(&self, after: ViewConfig, label: impl Into<Cow<'static, str>>) {
+        if let Some(stack) = &self.undo {
+            stack.record(SortFilterEdit::capture(&self.state, after, label));
+        } else {
+            self.state.set_sort(after.0);
+            self.state.set_filter(after.1);
+        }
+    }
+
+    /// Cycle the sort (recorded when an undo stack is attached).
+    fn apply_cycle_sort(&self) {
+        let after = (cycle_sort(self.state.sort()), self.state.filter());
+        self.apply_config(after, format!("Sort {}", sort_dir_str(after.0)));
+    }
+
+    /// Set the sort directly (admin / restore; recorded when attached).
+    fn apply_set_sort(&self, sort: Option<bool>) {
+        let after = (sort, self.state.filter());
+        self.apply_config(after, format!("Sort {}", sort_dir_str(sort)));
+    }
+
+    /// Set / clear the filter (recorded when attached).
+    fn apply_set_filter(&self, filter: Option<usize>) {
+        let after = (self.state.sort(), filter);
+        let label = match filter {
+            Some(c) => format!("Filter {c}"),
+            None => "Show all".to_string(),
+        };
+        self.apply_config(after, label);
     }
 
     /// The shared state handle (the view reaches the same `Rc` via
@@ -373,7 +480,7 @@ impl ViewSortFilterExternal {
             return;
         };
         if matches!(event_name, "PointerUp" | "KeyboardActivate") {
-            self.state.cycle_sort();
+            self.apply_cycle_sort();
         }
     }
 
@@ -463,7 +570,7 @@ impl ExternalIntrospect for ViewSortFilterExternal {
             // Admin / restore: set the sort from its string form.
             "sort_dir" => match value {
                 IntrospectValue::Text(ref s) => {
-                    self.state.set_sort(sort_dir_from_str(s));
+                    self.apply_set_sort(sort_dir_from_str(s));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -471,11 +578,11 @@ impl ExternalIntrospect for ViewSortFilterExternal {
             // Admin / restore: set (Int) or clear (Null) the filter.
             "filter" => match value {
                 IntrospectValue::Int(i) => {
-                    self.state.set_filter(usize::try_from(i).ok());
+                    self.apply_set_filter(usize::try_from(i).ok());
                     Ok(())
                 }
                 IntrospectValue::Null => {
-                    self.state.set_filter(None);
+                    self.apply_set_filter(None);
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -489,18 +596,18 @@ impl ExternalIntrospect for ViewSortFilterExternal {
         match path {
             // AI-first sort cycle — returns the resulting sort_dir string.
             "cycle_sort" => {
-                self.state.cycle_sort();
+                self.apply_cycle_sort();
                 Ok(IntrospectValue::Text(sort_dir_str(self.state.sort()).into()))
             }
             // AI-first filter — Int sets the category, Null clears; returns
             // the resulting view_len in one round-trip.
             "set_filter" => match args {
                 IntrospectValue::Int(i) => {
-                    self.state.set_filter(usize::try_from(i).ok());
+                    self.apply_set_filter(usize::try_from(i).ok());
                     Ok(self.view_len_value())
                 }
                 IntrospectValue::Null => {
-                    self.state.set_filter(None);
+                    self.apply_set_filter(None);
                     Ok(self.view_len_value())
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -717,5 +824,35 @@ mod tests {
             e.invoke("cycle_sort", IntrospectValue::Null),
             Ok(IntrospectValue::Text("none".into())),
         );
+    }
+
+    #[test]
+    fn with_undo_records_sort_and_filter_reversibly() {
+        Owner::new().run(|| {
+            let st = state();
+            let stack = Rc::new(UndoStack::new());
+            let mut e = ViewSortFilterExternal::new(Rc::clone(&st)).with_undo(Rc::clone(&stack));
+
+            // Each mutation is recorded as one reversible edit.
+            assert_eq!(
+                e.invoke("cycle_sort", IntrospectValue::Null),
+                Ok(IntrospectValue::Text("ascending".into())),
+            );
+            e.invoke("set_filter", IntrospectValue::Int(1)).expect("filter set");
+            assert_eq!(st.sort(), Some(true));
+            assert_eq!(st.filter(), Some(1));
+            assert_eq!(stack.len(), 2, "two recorded edits");
+
+            // Undo unwinds in reverse: filter first, then sort.
+            assert!(stack.undo());
+            assert_eq!(st.filter(), None, "undo reverts the filter");
+            assert_eq!(st.sort(), Some(true), "sort still applied");
+            assert!(stack.undo());
+            assert_eq!(st.sort(), None, "undo reverts the sort");
+
+            // Redo replays the sort forward.
+            assert!(stack.redo());
+            assert_eq!(st.sort(), Some(true), "redo re-applies the sort");
+        });
     }
 }
