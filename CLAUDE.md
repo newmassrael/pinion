@@ -26,14 +26,14 @@ pinion synthesizes interactive UIs **and games** from:
 
 | Phase | Target | Current |
 |---|---|---:|
-| **A. Foundation** (§1-§4 spec + first composed multi-widget apps) | "Hello-world apps possible" — todomvc + settings panel | **~85%** (R666 land; R667 settings panel = 종료) |
-| **B. Professional GUI** (Qt / Flutter / Compose / React-class) | Multi-window + DCC/IDE/CAD-grade widget catalog + pro-tool performance | **10%** |
+| **A. Foundation** (§1-§4 spec + first composed multi-widget apps) | "Hello-world apps possible" — todomvc + settings panel | **~97%** (R666 todomvc + R667 settings-panel + R668 close = finalised) |
+| **B. Professional GUI** (Qt / Flutter / Compose / React-class) | Multi-window + DCC/IDE/CAD-grade widget catalog + pro-tool performance | **~27%** (multi-window / DevTools / dock-editor + ~35 Tier-1 widgets done; OS-native integration + Model/View-at-scale + API stabilisation remain) |
 | **C. Game engine substrate** (§2 #4 entry) | Immediate-mode game loop ↔ retained widget tree dual; 3D scene graph; asset pipeline; physics; audio; gamepad; PBR | **0%** |
 | **D. AAA game maker** | Unreal-class editor **self-hosted in pinion**; visual scripting; Nanite/Lumen-class rendering; multiplayer netcode | **0%** |
 
 **True north**: AAA game shippable + Unreal-class editor self-hosted in pinion itself, with AI-introspection 1st-class through every phase.
 
-Current weighted progress against true north: **~6.75%** (Phase A 85% × 5% phase-weight + Phase B 10% × 25% + Phase C 0% × 35% + Phase D 0% × 35%). R667 land 후 ~7.5%.
+Current weighted progress against true north: **~11.6%** (Phase A 97% × 5% phase-weight + Phase B 27% × 25% + Phase C 0% × 35% + Phase D 0% × 35%), as of R752. Figures are soft self-estimates, not a measured metric.
 
 R655-R666 todomvc + R667 settings-panel = Phase A finalisation. R700+ = Phase B entry (multi-window first). R1000+ = Phase C entry (ImmediateModeNode + game loop). R2500+ = Phase D entry (editor self-hosted dogfood).
 
