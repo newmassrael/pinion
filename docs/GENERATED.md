@@ -16594,6 +16594,49 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R747 — Sort/filter on the virtualized list (Qt QSortFilterProxyModel shape): new widgets::view_order with compute_order (stable visual->source permutation) + ViewSortFilterExternal value-holder proxy (sort=Option<bool> per R730 table, no parallel SortDirection enum; no §5.20 intent per the Table-sort precedent). hello-virtual-sort composes the proxy with the R746 VirtualSelectExternal (2nd consumer) so selection held by source index follows a re-sort. Witness: select a source, sort, the same data item stays selected at its new visual position.
+
+**Changes**:
+- new `widgets::view_order`: `compute_order` (stable visual→source permutation) + `ViewSortFilterExternal`
+- sort = `Option<bool>` (R730 table convention; no parallel `SortDirection` enum re-declared)
+- filter = single category subset; proxy serves query(sort_dir/filter/view_len/count/source_at.N) + invoke
+- proxy is a value/config holder (no §5.20 intent, no IntentEmitter) — Table-sort precedent, not selection
+- hello-virtual-sort composes primary VirtualSelectExternal (R746 2nd consumer) + vsort proxy + scrollbar
+- view recomputes order via shared `compute_order` SSOT, memoized on (sort,filter) via Owner::cache
+- selection held by source index → re-sort moves a selected row's visual slot, keeps it selected
+
+
+
+**Verification**:
+- view_order: 12 unit (compute_order asc/desc/filter/compose, External query/invoke/intervene)
+- hello-virtual-sort: 5 unit (window/regroup/selection-follows-sort/filter/a11y posinset)
+- RPC E2E (tools/demos/r747_virtual_sort.py): 42 assertions PASS — sort regroups window, proxy
+- source_at matches render, selection ⊥ sort ⊥ filter ⊥ virtualization, clicked header cycles
+- live native XTEST (DISPLAY=:0): native row click → selected source; native header click →
+- sort cycles ascending + selection survives (observed via RPC introspection)
+- cargo test --workspace 0-fail; clippy -D pedantic (vello) clean
+
+
+
+**Impact**: §5.27, §5.40
+
+
+**Carry forward**:
+- multi-column sort / compound (multi-facet) filter — single key + single category this slice;
+- additive when a consumer needs them (compute_order is the shape, not yet a trait).
+- formal Model/View proxy trait — `compute_order` is a free fn over closures; the R730 table's
+- `order()` is a 2nd ordering instance but with a 2-D cell-key model, so the shared trait shape is
+- not yet clear (premature [[abstraction-needs-second-consumer]]; unify at a 3rd ordering consumer).
+- order recomputed in BOTH the proxy (for query) and the view (for paint) via the shared
+- `compute_order` SSOT — the table reads its order back through introspect, but a 10k-row order is
+- too large to project, so the view recomputes deterministically. Reactive-shared order is a heavier
+- substrate, deferred (evidence-first).
+- keyboard roving / sort-header Tab-stop — pointer + RPC + AT this slice (R730/R746 keyboard-defer).
+- view-side scrollbar assembly + windowed-list a11y stay per-binding (R746.3 audit: hook/paint layer
+- straddle + no a11y-assembly precedent; honest defer).
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
