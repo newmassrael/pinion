@@ -392,8 +392,8 @@ pub struct UndoStackExternal {
 impl core::fmt::Debug for UndoStackExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("UndoStackExternal")
-            .field("index", &self.stack.index.get())
-            .field("len", &self.stack.commands.borrow().len())
+            .field("index", &self.stack.index())
+            .field("len", &self.stack.len())
             .finish_non_exhaustive()
     }
 }
@@ -415,7 +415,7 @@ impl UndoStackExternal {
     /// The current cursor as an `IntrospectValue::Int` — the uniform return
     /// for the mutating `invoke` paths.
     fn index_value(&self) -> IntrospectValue {
-        IntrospectValue::Int(i64::try_from(self.stack.index.get()).unwrap_or(i64::MAX))
+        IntrospectValue::Int(i64::try_from(self.stack.index()).unwrap_or(i64::MAX))
     }
 
     /// A label `Option` as `Text` / `Null`.
@@ -470,32 +470,21 @@ impl ExternalIntrospect for UndoStackExternal {
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
+        // Every slot delegates to the shared [`UndoStack`]'s public API —
+        // the single source of truth for "what does can_undo / a label
+        // mean". The reactive accessors are safe to call from the RPC path:
+        // `Signal::get` with no current owner simply does not subscribe and
+        // returns the value (so there is no separate non-reactive branch to
+        // keep in step).
         match path {
-            "can_undo" => Some(IntrospectValue::Bool(self.stack.index.get() > 0)),
-            "can_redo" => Some(IntrospectValue::Bool(
-                self.stack.index.get() < self.stack.commands.borrow().len(),
-            )),
+            "can_undo" => Some(IntrospectValue::Bool(self.stack.can_undo())),
+            "can_redo" => Some(IntrospectValue::Bool(self.stack.can_redo())),
             "index" => Some(self.index_value()),
             "count" => Some(IntrospectValue::Int(
-                i64::try_from(self.stack.commands.borrow().len()).unwrap_or(i64::MAX),
+                i64::try_from(self.stack.len()).unwrap_or(i64::MAX),
             )),
-            // `undo_label`/`redo_label` go through the non-reactive cells
-            // directly (RPC has no owner scope to subscribe); the reactive
-            // `UndoStack::undo_label` is for views.
-            "undo_label" => {
-                let cursor = self.stack.index.get();
-                let commands = self.stack.commands.borrow();
-                Some(Self::label_value(
-                    (cursor > 0).then(|| commands[cursor - 1].label()),
-                ))
-            }
-            "redo_label" => {
-                let cursor = self.stack.index.get();
-                let commands = self.stack.commands.borrow();
-                Some(Self::label_value(
-                    (cursor < commands.len()).then(|| commands[cursor].label()),
-                ))
-            }
+            "undo_label" => Some(Self::label_value(self.stack.undo_label())),
+            "redo_label" => Some(Self::label_value(self.stack.redo_label())),
             _ => None,
         }
     }

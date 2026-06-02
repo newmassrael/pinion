@@ -73,7 +73,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use crate::reactive::{Owner, Signal};
+use crate::reactive::{batch, Owner, Signal};
 use crate::undo::{UndoCommand, UndoStack};
 
 /// R747 §5.40 — cycle a sort key the way a clicked sort header does:
@@ -296,6 +296,20 @@ impl ViewOrderState {
         self.filter.set(filter);
         self.view_len()
     }
+
+    /// Set the whole `(sort, filter)` config atomically. Wrapped in
+    /// [`batch`] so a view subscribed to **both** `sort` and `filter`
+    /// re-runs **once**, not once per axis — the
+    /// [`ScrollState`](crate::widgets::scroll::ScrollState) multi-axis
+    /// convention ([[signal-batch-atomic-multi-axis-update]]). The single
+    /// source of truth for a dual-axis write, shared by the undoable
+    /// [`SortFilterEdit`] and the direct (no-undo) external path.
+    pub fn set_config(&self, (sort, filter): ViewConfig) {
+        batch(|| {
+            self.sort.set(sort);
+            self.filter.set(filter);
+        });
+    }
 }
 
 /// R747 §5.27 §5.40 — resolve the shared [`ViewOrderState`] for `key`,
@@ -356,9 +370,8 @@ impl SortFilterEdit {
         }
     }
 
-    fn apply(&self, (sort, filter): ViewConfig) {
-        self.state.set_sort(sort);
-        self.state.set_filter(filter);
+    fn apply(&self, config: ViewConfig) {
+        self.state.set_config(config);
     }
 }
 
@@ -435,8 +448,7 @@ impl ViewSortFilterExternal {
         if let Some(stack) = &self.undo {
             stack.record(SortFilterEdit::capture(&self.state, after, label));
         } else {
-            self.state.set_sort(after.0);
-            self.state.set_filter(after.1);
+            self.state.set_config(after);
         }
     }
 

@@ -16835,6 +16835,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R749.1 — R749.1 audit-clearance: 3 textbook-correctness fixes on the R748/R749 undo work surfaced by a user SSOT/hack audit - UndoStackExternal delegates to UndoStack's public API (SSOT), ViewOrderState::set_config batches the dual-axis write (reactive::batch convention), and hello-undo drops the fmt_state_log Owner::new() hack that always logged 0.
+
+**Changes**:
+- SSOT: UndoStackExternal query/Debug delegate to UndoStack public API
+- (was re-deriving can_undo/can_redo/labels into the stack's private cells)
+- batch: ViewOrderState::set_config wraps sort+filter in reactive::batch
+- (multi-axis convention); SortFilterEdit + direct path both route through it
+- hack: drop hello-undo fmt_state_log Owner::new().run (fresh owner = empty
+- cache -> counter()/stack() resolved new holders -> always logged 0)
+
+
+
+**Verification**:
+- undo 9 unit + view_order 14 + hello-undo 4 + workspace cargo test 0-fail
+- r748_undo.py + r747_virtual_sort.py §G re-PASS (behavior unchanged by the refactor)
+- clippy --workspace --all-targets -D pedantic (vello) clean
+- full headless demo sweep 96/96 PASS
+
+
+
+**Impact**: §5.52, §5.40
+
+
+**Carry forward**:
+- None new - this round clears 3 smells the user audit surfaced; no new debt
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

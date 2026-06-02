@@ -300,13 +300,6 @@ impl WidgetCore for UndoView {
         }
         Vec::new()
     }
-
-    fn fmt_state_log(_state: &UndoViewState) -> String {
-        Owner::new().run(|| {
-            let st = stack();
-            format!("counter={} cursor={}/{}", counter().get(), st.index(), st.len())
-        })
-    }
 }
 
 impl WidgetA11y for UndoView {
