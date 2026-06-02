@@ -254,12 +254,11 @@ impl WidgetA11y for BreadcrumbView {
     /// active crumb is the `aria-activedescendant` (the roving model; see
     /// the module docs for the per-link-Tab alternative).
     fn access_focus_target(state: &TrailState, focused: Option<&str>) -> Option<AccessFocus> {
-        if focused == Some(<Self as WidgetCore>::tag()) {
-            let idx = rc::active_index(&state.rows, state.focused);
-            Some(rc::composite_focus(<Self as WidgetCore>::tag(), idx))
-        } else {
-            focused.map(AccessFocus::atomic)
-        }
+        rc::composite_focus_target(
+            <Self as WidgetCore>::tag(),
+            focused,
+            rc::active_index(&state.rows, state.focused),
+        )
     }
 
     /// §5.40 composite child action dispatch — an AT `Click` / `Default`
@@ -270,13 +269,7 @@ impl WidgetA11y for BreadcrumbView {
         sub_tag: &str,
         action: AccessAction,
     ) -> bool {
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        rc::child_invoke(intro, sub_tag, action, N)
+        rc::composite_child_invoke(scene, sub_tag, action, N)
     }
 }
 

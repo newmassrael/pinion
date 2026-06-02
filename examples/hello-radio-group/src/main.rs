@@ -45,7 +45,7 @@ use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene, WidgetCore};
 use pinion_a11y::{
-    AccessAction, AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y,
+    radiogroup_radio_nodes, AccessAction, AccessFocus, AccessNode, RadioCell, WidgetA11y,
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::radio_composite as rc;
@@ -333,26 +333,23 @@ impl WidgetA11y for RadioGroupView {
     fn access_node(state: &GroupState, focused: Option<&str>) -> Vec<AccessNode> {
         let group_focused = focused == Some(<Self as WidgetCore>::tag());
         let active_idx = rc::active_index(&state.rows, state.focused);
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
-        let mut group = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::RadioGroup)
-            .with_name("Subscription tier");
-        for i in 0..N {
-            group = group.with_child(format!("{PRIMARY_TAG}#{i}"));
-        }
-        nodes.push(group);
-        for (i, (radio_state, selected)) in state.rows.iter().copied().enumerate() {
-            let radio_tag = format!("{PRIMARY_TAG}#{i}");
-            let radio_access_state = AccessState {
+        let tags: Vec<String> = (0..N).map(|i| format!("{PRIMARY_TAG}#{i}")).collect();
+        // `label: None` — radio names come from `enrich_names_from_scene`
+        // (the painted `tier_label` `TextNode`), so the lifted builder
+        // leaves the name unset for name-from-contents.
+        let cells: Vec<RadioCell<'_>> = state
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(i, (radio_state, selected))| RadioCell {
+                tag: &tags[i],
+                label: None,
+                state: *radio_state,
+                selected: *selected,
                 focused: group_focused && i == active_idx,
-                ..AccessState::from_interaction(radio_state, Some(selected))
-            };
-            nodes.push(
-                AccessNode::new(&radio_tag, AriaRole::RadioButton)
-                    .with_value(AccessValue::Bool(selected))
-                    .with_state(radio_access_state),
-            );
-        }
-        nodes
+            })
+            .collect();
+        radiogroup_radio_nodes(<Self as WidgetCore>::tag(), "Subscription tier", &cells)
     }
 
     /// R51.66 / R51.71 §5.40 — composite focus model. When the
@@ -369,12 +366,11 @@ impl WidgetA11y for RadioGroupView {
         state: &GroupState,
         focused: Option<&str>,
     ) -> Option<AccessFocus> {
-        if focused == Some(<Self as WidgetCore>::tag()) {
-            let idx = rc::active_index(&state.rows, state.focused);
-            Some(rc::composite_focus(<Self as WidgetCore>::tag(), idx))
-        } else {
-            focused.map(AccessFocus::atomic)
-        }
+        rc::composite_focus_target(
+            <Self as WidgetCore>::tag(),
+            focused,
+            rc::active_index(&state.rows, state.focused),
+        )
     }
 
     /// R51.70 §5.40 — composite child action dispatch. Mirrors the
@@ -393,13 +389,7 @@ impl WidgetA11y for RadioGroupView {
     /// active row visually. Other actions decline so the shell
     /// stays in charge of the fallback chain.
     fn access_child_invoke(scene: &mut Scene, _parent_tag: &str, sub_tag: &str, action: AccessAction) -> bool {
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        rc::child_invoke(intro, sub_tag, action, N)
+        rc::composite_child_invoke(scene, sub_tag, action, N)
     }
 }
 
@@ -447,6 +437,7 @@ fn main() {
 #[cfg(test)]
 mod a11y_tests {
     use super::*;
+    use pinion_a11y::{AccessValue, AriaRole};
 
     fn unselected_state() -> GroupState {
         GroupState::idle()

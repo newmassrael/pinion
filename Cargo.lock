@@ -2144,6 +2144,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-rating"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-richtext"
 version = "0.0.1"
 dependencies = [

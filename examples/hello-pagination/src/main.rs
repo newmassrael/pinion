@@ -339,12 +339,11 @@ impl WidgetA11y for PaginationView {
     /// §5.40 composite focus model — the Navigation landmark is the focus
     /// target and the active page is the `aria-activedescendant`.
     fn access_focus_target(state: &PageState, focused: Option<&str>) -> Option<AccessFocus> {
-        if focused == Some(<Self as WidgetCore>::tag()) {
-            let idx = rc::active_index(&state.pages, state.focused);
-            Some(rc::composite_focus(<Self as WidgetCore>::tag(), idx))
-        } else {
-            focused.map(AccessFocus::atomic)
-        }
+        rc::composite_focus_target(
+            <Self as WidgetCore>::tag(),
+            focused,
+            rc::active_index(&state.pages, state.focused),
+        )
     }
 
     /// §5.40 composite child action dispatch — an AT `Click` / `Default` on

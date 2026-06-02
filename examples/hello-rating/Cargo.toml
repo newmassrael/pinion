@@ -1,0 +1,33 @@
+[package]
+name = "hello-rating"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R758 §5.38 §5.40 star rating — a cumulative N-star selector over RadioGroupExternal with hover preview (radiogroup topology), 1st star-paint consumer"
+publish = false
+
+[[bin]]
+name = "hello-rating"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R758 §5.38 — the radio_composite (rc) coordinator helpers the rating
+# reuses (roving_key / read_rows / step / active_index / child_invoke).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

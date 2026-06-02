@@ -17172,6 +17172,41 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R758 — R758 §5.38 cumulative star rating (hello-rating) over RadioGroupExternal with inline cumulative star paint + hover preview (1st star-paint consumer); a user SSOT audit then completed the composite radio-group a11y lift my 3b self-grep had missed: rc::composite_focus_target (7 consumers) + rc::composite_child_invoke (6; pagination bespoke) + pinion_a11y::radiogroup_radio_nodes (3, the radio-family analogue of navigation_link_nodes / toggle_button_group_nodes), refactoring the radio-group/segmented/rating family so all five composite axes (read_rows/roving_key/access_node/focus_target/child_invoke) are single-sourced
+
+**Changes**:
+- new hello-rating: 5-star cumulative rating over RadioGroupExternal; 0 new interaction substrate
+- inline cumulative star paint + hover preview (1st consumer); fill = hovered else committed
+- keyboard reuses rc::roving_key (single-tab axis); digit 1-5 set, Arrow raise/lower, Home/End
+- SSOT audit found composite radio-group a11y had un-lifted axes across the radio family
+- lift rc::composite_focus_target (7 consumers) + rc::composite_child_invoke (6; pagination bespoke)
+- lift pinion_a11y::radiogroup_radio_nodes (3) mirroring navigation_link_nodes
+- refactor radio-group/segmented/rating access_node + 7 focus_target/child_invoke through the lifts
+
+
+
+**Verification**:
+- pinion-a11y radiogroup 4 tests + radio_composite 4 wrapper tests (focus_target/child_invoke)
+- hello-rating 14/14, radio-group 28, segmented 23 green after all three lifts
+- workspace cargo test green; clippy --workspace --features pinion-runtime/vello -D pedantic clean
+- demo r758_rating.py ~35 assertions; headless Xvfb sweep PASS (103/103)
+- AI-first: hover star k previews k+1 filled (glyph count + state.k=Hover); click commits
+- live-pixel boot: filled-star=Accent, empty hollow=Surface, window=Surface (introspect<->screen)
+- radio family now SSOT-clean: read_rows/roving_key/access_node/focus_target/child_invoke lifted
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- star paint inline (1st consumer); lift to pinion_widget_paint::star at the 2nd star consumer
+- continuous/half-star rating = slider topology (role=slider) is the deferred peer (consumer 0)
+- preview tint = committed tint; distinct preview tone deferred (the extent change is the feedback)
+- pagination access_child_invoke stays bespoke (prev/next not radio cells; numeric via child_invoke)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

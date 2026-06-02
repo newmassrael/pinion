@@ -180,6 +180,57 @@ pub fn child_invoke(
     }
 }
 
+/// The complete [`pinion_a11y::WidgetA11y::access_focus_target`] body for a
+/// composite radio-group binding: when the group (`group_tag`) holds shell
+/// focus, report the parent as the focus target with
+/// `"<group_tag>#<active_idx>"` as the `aria-activedescendant` (the
+/// roving-tabindex model); otherwise pass any sibling focus through
+/// atomically.
+///
+/// R758 §5.40 — lifted at the 7th byte-identical consumer (radio-group /
+/// segmented / nav-rail / breadcrumb / stepper / pagination / rating all
+/// carried this exact if/else over [`composite_focus`]). The caller
+/// computes `active_idx` from its own state projection (via
+/// [`active_index`]); the focus-model policy lives here once.
+#[must_use]
+pub fn composite_focus_target(
+    group_tag: &str,
+    focused: Option<&str>,
+    active_idx: usize,
+) -> Option<AccessFocus> {
+    if focused == Some(group_tag) {
+        Some(composite_focus(group_tag, active_idx))
+    } else {
+        focused.map(AccessFocus::atomic)
+    }
+}
+
+/// The complete [`pinion_a11y::WidgetA11y::access_child_invoke`] body for a
+/// composite radio-group binding whose root paint node is the single
+/// `Scene::External`: descend to the composite handle and dispatch the AT
+/// `action` to cell `sub_tag` via [`child_invoke`]. Returns `false` when
+/// the scene root is not an external / exposes no introspection — the same
+/// decline path each binding spelled out by hand.
+///
+/// R758 §5.40 — lifted at the 6th byte-identical consumer. Bindings whose
+/// `access_child_invoke` also dispatches *non-cell* sub-targets (e.g.
+/// pagination's `prev` / `next` chevrons) keep their bespoke `match` and
+/// may still delegate the numeric-cell arm to [`child_invoke`].
+pub fn composite_child_invoke(
+    scene: &mut Scene,
+    sub_tag: &str,
+    action: AccessAction,
+    n: usize,
+) -> bool {
+    let Scene::External(node) = scene else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    child_invoke(intro, sub_tag, action, n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +308,44 @@ mod tests {
         assert!(!child_invoke(&mut g, "9", AccessAction::Click, 3));
         assert!(!child_invoke(&mut g, "foo", AccessAction::Click, 3));
         assert!(!child_invoke(&mut g, "0", AccessAction::Increment, 3));
+    }
+
+    // ── R758 composite a11y wrapper lifts ──────────────────────────────
+
+    #[test]
+    fn composite_focus_target_parent_when_group_focused() {
+        let f = composite_focus_target("nav", Some("nav"), 2).expect("group focused -> Some");
+        assert_eq!(f.focus_tag, "nav");
+        assert_eq!(f.active_descendant.as_deref(), Some("nav#2"));
+    }
+
+    #[test]
+    fn composite_focus_target_atomic_for_sibling_and_none_for_unfocused() {
+        let sibling = composite_focus_target("nav", Some("save_btn"), 0)
+            .expect("a focused sibling -> Some(atomic)");
+        assert_eq!(sibling.focus_tag, "save_btn");
+        assert!(sibling.active_descendant.is_none(), "atomic carries no descendant");
+        assert!(composite_focus_target("nav", None, 0).is_none(), "no focus -> None");
+    }
+
+    #[test]
+    fn composite_child_invoke_descends_external_and_dispatches() {
+        use pinion_core::scene::ExternalNode;
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(group())).with_tag("nav"));
+        assert!(composite_child_invoke(&mut scene, "2", AccessAction::Click, 3));
+        let Scene::External(node) = &scene else { unreachable!() };
+        assert_eq!(
+            node.handle.introspect().and_then(selected_index),
+            Some(2),
+            "AT click on cell 2 selects it through the lifted wrapper",
+        );
+    }
+
+    #[test]
+    fn composite_child_invoke_declines_non_external_root() {
+        use pinion_core::scene::ContainerNode;
+        let mut not_external = Scene::Container(ContainerNode::new(vec![]));
+        assert!(!composite_child_invoke(&mut not_external, "0", AccessAction::Click, 3));
     }
 }
