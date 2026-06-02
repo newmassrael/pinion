@@ -287,39 +287,26 @@ impl WidgetCore for AccordionSingleView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        let Some(idx) = focused_section(focused) else {
+        let Some((idx, focused_tag)) = focused_section(focused).zip(focused) else {
             return false;
         };
-        match key {
-            "Space" | "Enter" => {
-                let Scene::External(node) = scene else {
-                    return false;
-                };
-                let Some(intro) = node.handle.introspect_mut() else {
-                    return false;
-                };
-                intro
-                    .invoke("send", IntrospectValue::Text(format!("{idx}:KeyboardActivate")))
-                    .is_ok()
-            }
-            "ArrowDown" | "ArrowRight" => {
-                pinion_core::focus_request::request(ROW_TAGS[(idx + 1) % N]);
-                true
-            }
-            "ArrowUp" | "ArrowLeft" => {
-                pinion_core::focus_request::request(ROW_TAGS[(idx + N - 1) % N]);
-                true
-            }
-            "Home" => {
-                pinion_core::focus_request::request(ROW_TAGS[0]);
-                true
-            }
-            "End" => {
-                pinion_core::focus_request::request(ROW_TAGS[N - 1]);
-                true
-            }
-            _ => false,
+        if matches!(key, "Space" | "Enter") {
+            // Composite activation: one External, the focused row's
+            // `{idx}:KeyboardActivate` sub-event. This stays per-binding
+            // (the composite sub-index wire form is local).
+            let Scene::External(node) = scene else {
+                return false;
+            };
+            let Some(intro) = node.handle.introspect_mut() else {
+                return false;
+            };
+            return intro
+                .invoke("send", IntrospectValue::Text(format!("{idx}:KeyboardActivate")))
+                .is_ok();
         }
+        // R757 §5.39 — the WAI-ARIA roving-tabindex navigation is the
+        // shared [`pinion_core::focus_request::rove`] SSOT.
+        pinion_core::focus_request::rove(ROW_TAGS.as_slice(), focused_tag, key)
     }
 
     fn fmt_state_log(state: &AccordionState) -> String {

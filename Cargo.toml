@@ -50,6 +50,7 @@ members = [
     "examples/hello-radio-group",
     "examples/hello-filter-chip",
     "examples/hello-input-chip",
+    "examples/hello-card",
     "examples/hello-segmented-button",
     "examples/hello-segmented-multi",
     "examples/hello-listbox",

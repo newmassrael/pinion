@@ -254,39 +254,22 @@ impl WidgetCore for AccordionView {
         let Some(focused_tag) = focused else {
             return false;
         };
-        let Some(idx) = SECTION_TAGS.iter().position(|t| *t == focused_tag) else {
-            return false;
-        };
-        match key {
-            "Space" | "Enter" => {
-                let Some(node) = scene.find_external_with_tag_mut(SECTION_TAGS[idx]) else {
-                    return false;
-                };
-                let Some(intro) = node.handle.introspect_mut() else {
-                    return false;
-                };
-                intro
-                    .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
-                    .is_ok()
-            }
-            "ArrowDown" | "ArrowRight" => {
-                pinion_core::focus_request::request(SECTION_TAGS[(idx + 1) % N]);
-                true
-            }
-            "ArrowUp" | "ArrowLeft" => {
-                pinion_core::focus_request::request(SECTION_TAGS[(idx + N - 1) % N]);
-                true
-            }
-            "Home" => {
-                pinion_core::focus_request::request(SECTION_TAGS[0]);
-                true
-            }
-            "End" => {
-                pinion_core::focus_request::request(SECTION_TAGS[N - 1]);
-                true
-            }
-            _ => false,
+        if matches!(key, "Space" | "Enter") {
+            let Some(node) = scene.find_external_with_tag_mut(focused_tag) else {
+                return false;
+            };
+            let Some(intro) = node.handle.introspect_mut() else {
+                return false;
+            };
+            return intro
+                .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
+                .is_ok();
         }
+        // R757 §5.39 — the WAI-ARIA roving-tabindex navigation (next /
+        // previous / first / last, wrapping) is the shared
+        // [`pinion_core::focus_request::rove`] SSOT; only the disclosure
+        // *activation* above stays per-binding.
+        pinion_core::focus_request::rove(SECTION_TAGS.as_slice(), focused_tag, key)
     }
 
     fn fmt_state_log(state: &AccordionState) -> String {

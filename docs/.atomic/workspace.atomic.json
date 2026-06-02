@@ -28050,6 +28050,78 @@
         "[Button;N]-owned-by-external posture array remains a 1st-consumer inline pattern"
       ]
     },
+    "R757": {
+      "decision_summary": "R757 §5.38 Material 3 cards (hello-card): elevated/filled/outlined clickable surfaces reusing ButtonExternal with an inline card-surface skin (1st card-paint consumer composing the R711 elevation ramp + R752 state-layer SSOTs), plus a 3rd-consumer lift of the per-item-tab-stop roving navigation to pinion_core::focus_request::rove (orthogonal to rc::roving_key's single-tab-stop axis), refactoring hello-accordion + accordion-single + hello-card through it",
+      "changes_bullets": [
+        "new hello-card example: M3 cards in 3 variants (elevated/filled/outlined) as clickable surfaces",
+        "each card reuses ButtonExternal (identical Idle/Hover/Pressed grammar) — no second SCXML",
+        "3 cards composed via create_extra_externals (hello-accordion mould), tagged card_{variant}",
+        "card_surface_style inline (1st card-paint consumer): elevation ramp + state-layer + variant",
+        "elevated casts L1 shadow bumping to L2 on hover; filled flat tone; outlined flat + border",
+        "a11y: 3 Button nodes via button_a11y_state SSOT; names from each headline (contents)",
+        "each card own Tab stop; Space/Enter activate; Arrow/Home/End rove focus between cards",
+        "lift per-item-tab-stop roving to pinion_core::focus_request::rove (3rd identical consumer)",
+        "refactor hello-accordion + accordion-single + hello-card through rove SSOT (no 3rd copy)",
+        "rove orthogonal to rc::roving_key: per-item shell-focus move vs single-tab internal cursor"
+      ],
+      "verification_bullets": [
+        "pinion-core focus_request 10/10 (5 new rove tests: wrap next/prev, Home/End, non-nav, absent)",
+        "hello-card 17/17 unit: variant skins, shadow/border/tone, focus roving, a11y, names",
+        "hello-accordion 15/15 + accordion-single 19/19 green after rove refactor (behaviour unchanged)",
+        "workspace cargo test green; clippy --workspace --features pinion-runtime/vello -D pedantic clean",
+        "demo r757_card.py ~40 assertions; headless Xvfb sweep PASS",
+        "AI-first: scene/hover drives only that card (state introspect); full click arc via send",
+        "keyboard roving observed via focus/get (Arrow wrap, Home/End); each card independent Tab stop",
+        "variant features data-verified: elevated shadows=2, others [], outlined border, hover bumps blur",
+        "live-pixel boot: window=Surface, filled interior=SurfaceContainerHighest (introspect<->screen)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.39",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "card-surface paint inline (1st consumer); lift to pinion_widget_paint::card at 2nd consumer",
+        "static card = card_surface_style(Idle) + no external; trivial variant deferred (consumer 0)",
+        "card_X.click intent is fire-and-forget; real apps hook nav/selection (emit unit-tested in button)",
+        "Disabled card variant not demonstrated (all 3 enabled); additive when a consumer needs it"
+      ],
+      "publishable_decision_summary": "R757 §5.38 Material 3 cards (hello-card): elevated/filled/outlined clickable surfaces reusing ButtonExternal with an inline card-surface skin (1st card-paint consumer composing the R711 elevation ramp + R752 state-layer SSOTs), plus a 3rd-consumer lift of the per-item-tab-stop roving navigation to pinion_core::focus_request::rove (orthogonal to rc::roving_key's single-tab-stop axis), refactoring hello-accordion + accordion-single + hello-card through it",
+      "publishable_changes_bullets": [
+        "new hello-card example: M3 cards in 3 variants (elevated/filled/outlined) as clickable surfaces",
+        "each card reuses ButtonExternal (identical Idle/Hover/Pressed grammar) — no second SCXML",
+        "3 cards composed via create_extra_externals (hello-accordion mould), tagged card_{variant}",
+        "card_surface_style inline (1st card-paint consumer): elevation ramp + state-layer + variant",
+        "elevated casts L1 shadow bumping to L2 on hover; filled flat tone; outlined flat + border",
+        "a11y: 3 Button nodes via button_a11y_state SSOT; names from each headline (contents)",
+        "each card own Tab stop; Space/Enter activate; Arrow/Home/End rove focus between cards",
+        "lift per-item-tab-stop roving to pinion_core::focus_request::rove (3rd identical consumer)",
+        "refactor hello-accordion + accordion-single + hello-card through rove SSOT (no 3rd copy)",
+        "rove orthogonal to rc::roving_key: per-item shell-focus move vs single-tab internal cursor"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core focus_request 10/10 (5 new rove tests: wrap next/prev, Home/End, non-nav, absent)",
+        "hello-card 17/17 unit: variant skins, shadow/border/tone, focus roving, a11y, names",
+        "hello-accordion 15/15 + accordion-single 19/19 green after rove refactor (behaviour unchanged)",
+        "workspace cargo test green; clippy --workspace --features pinion-runtime/vello -D pedantic clean",
+        "demo r757_card.py ~40 assertions; headless Xvfb sweep PASS",
+        "AI-first: scene/hover drives only that card (state introspect); full click arc via send",
+        "keyboard roving observed via focus/get (Arrow wrap, Home/End); each card independent Tab stop",
+        "variant features data-verified: elevated shadows=2, others [], outlined border, hover bumps blur",
+        "live-pixel boot: window=Surface, filled interior=SurfaceContainerHighest (introspect<->screen)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.39",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "card-surface paint inline (1st consumer); lift to pinion_widget_paint::card at 2nd consumer",
+        "static card = card_surface_style(Idle) + no external; trivial variant deferred (consumer 0)",
+        "card_X.click intent is fire-and-forget; real apps hook nav/selection (emit unit-tested in button)",
+        "Disabled card variant not demonstrated (all 3 enabled); additive when a consumer needs it"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
