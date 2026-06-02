@@ -25,7 +25,7 @@
 //! here (the 1st chip-paint consumer; a 2nd chip consumer — input / assist
 //! chips — would trigger a `pinion_widget_paint::chip` lift, the
 //! inline-first rule). The hover / pressed / disabled overlay routes
-//! through the shared [`state_layer`] SSOT (R752), not raw opacity
+//! through the shared [`state_layer`](pinion_widget_paint::state_layer) SSOT (R752), not raw opacity
 //! literals.
 //!
 //! Palette note: M3 filter chips fill the selected state with a
@@ -53,7 +53,7 @@ use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::toggle_group;
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::state_layer;
+use pinion_widget_paint::chip::{self, CHIP_HEIGHT, OUTLINE_W};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloFilterChipRenderer, HelloFilterChipRendererError);
@@ -90,19 +90,15 @@ const LABELS: [&str; N] = ["Nearby", "Open now", "Top rated", "Offers"];
 /// unselected (outlined) chip to verify in live pixels.
 const BOOT_ON: [bool; N] = [true, false, true, false];
 
+/// Filter-chip width — fixed (filter-bar reads as an even strip). Filter-
+/// specific, so it stays local; the chip height / radius / inner gap /
+/// outline width come from the shared [`pinion_widget_paint::chip`]
+/// substrate (R756 lift).
 const CHIP_W: u32 = 104;
-const CHIP_H: u32 = 36;
-/// M3 chip corner radius — 8 px, the spec value. Deliberately *not* the
-/// fully-rounded stadium the segmented button uses, so the two skins read
-/// as different widgets.
-const CHIP_RADIUS: u32 = 8;
-/// Gap between detached chips (no enclosing track).
+/// Gap between detached chips (no enclosing track). Filter-specific.
 const CHIP_GAP: u32 = 8;
-/// Unselected chip outline width.
-const OUTLINE_W: u32 = 1;
 const LABEL_FONT_PX: u32 = 15;
 const CHECK_FONT_PX: u32 = 13;
-const INNER_GAP: u32 = 6;
 /// U+2713 CHECK MARK — the M3 filter-chip "selected" leading affordance.
 /// Named const + escape per the non-ASCII-source rule (raw glyph only in
 /// doc strings).
@@ -162,7 +158,7 @@ fn view(state: ChipBarState, _frame: &Frame) -> Scene {
 
 /// One chip — selected (Accent fill, leading check, no border) or
 /// unselected (transparent fill, `Outline` border), with the shared
-/// hover / pressed / disabled [`state_layer`] overlay. Tagged `chip_{index}`
+/// hover / pressed / disabled [`state_layer`](pinion_widget_paint::state_layer) overlay. Tagged `chip_{index}`
 /// so a cursor routes straight to that chip's `ToggleExternal`.
 fn chip(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
     let ink = chip_ink(theme, on, state);
@@ -179,36 +175,30 @@ fn chip(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
         Rect::default(),
         TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(ink),
     )));
-    let mut style = BoxStyle::filled(chip_fill(theme, state, on)).with_corner_radius(CHIP_RADIUS);
-    if let Some(border) = chip_border(theme, on) {
-        style = style.with_border(border);
-    }
+    // R756 — chip container skin (state-layer-tinted fill, CHIP_RADIUS,
+    // optional outline) + inner layout come from the shared
+    // `pinion_widget_paint::chip` substrate; this binding supplies only the
+    // base fill (the filter-chip affordance) and the fixed CHIP_W width.
+    let style = chip::chip_style(chip_fill_base(theme, on), chip_border(theme, on), state, theme);
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(CHIP_TAGS[index])
             .with_style(style)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_gap(INNER_GAP)
-                    .with_size(Size::px(CHIP_W, CHIP_H)),
-            ),
+            .with_layout(chip::chip_layout(Size::px(CHIP_W, CHIP_HEIGHT), None)),
     )
 }
 
-/// Selected chip fill = `Accent` (see palette note in the module docs);
-/// unselected = transparent (window surface shows through). The
-/// hover / pressed / disabled overlay is the shared R752 [`state_layer`]
-/// SSOT (no raw opacity literals).
-fn chip_fill(theme: &Theme, state: ToggleState, on: bool) -> Color {
-    let base = if on {
+/// Selected chip resting fill = `Accent` (see palette note in the module
+/// docs); unselected = transparent (window surface shows through). The
+/// hover / pressed / disabled overlay is applied by [`chip::chip_style`]
+/// through the shared R752 [`state_layer`](pinion_widget_paint::state_layer) SSOT (no raw opacity literals
+/// here), so this is just the base-color chooser.
+fn chip_fill_base(theme: &Theme, on: bool) -> Color {
+    if on {
         theme.resolve(ColorRole::Accent)
     } else {
         Color::rgba(0, 0, 0, 0)
-    };
-    state_layer::state_layer(base, state, theme)
+    }
 }
 
 /// Unselected chips carry the M3 filter-chip `Outline` border; selected

@@ -17073,6 +17073,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R756 — M3 input chips (hello-input-chip): removable preset tokens with a trailing composite-delete x carrying real hover/pressed feedback; 2nd-consumer lift of the chip body to pinion_widget_paint::chip with the filter chip retrofitted as 1st consumer
+
+**Changes**:
+- lift the shared M3 chip body to new `pinion_widget_paint::chip` (tokens CHIP_RADIUS/CHIP_HEIGHT/INNER_GAP/OUTLINE_W + `chip_style` state-layer-tinted BoxStyle + `chip_layout` centered row) — 2nd-consumer lift per [[abstraction-needs-second-consumer]]
+- retrofit `hello-filter-chip` onto the lifted helper (1st consumer); split `chip_fill` into base-color chooser, state-layer now applied inside `chip_style`; pixels unchanged
+- new `hello-input-chip` example: 5 removable preset recipient tokens, each a content-hug outlined chip with a trailing `×` delete affordance carrying real M3 hover/pressed state-layer feedback
+- `ChipDeleteExternal` (single primary at `chip_delete`) owns the `Signal<Vec<InputChip>>` delete + a per-chip `[Button; N]` posture array; R51.42 composite `chip_delete#<id>` wire forwards `<id>:<EventName>`; button-like Pressed->Hover click edge commits the delete (pointer-capture + cancel-off-target)
+- variant specifics stay per-callsite (ink/children/fill choice genuinely diverge — filter leading-check/Accent vs input trailing-×/transparent-outlined)
+
+
+
+**Verification**:
+- `cargo check --workspace --all-targets` clean; clippy `--all-targets --features pinion-runtime/vello` `-D pedantic` clean
+- `cargo test --workspace` all pass incl. 4 chip-paint unit tests + 13 hello-input-chip tests (delete/posture/keyboard/a11y) + 8 retrofitted filter-chip tests
+- `tools/demos/r756_input_chip.py` PASS (>=30 assertions): boot collection, AI-first hover-posture introspection (state:<id>), composite-delete via click, typed-id delete invoke, keyboard delete, stale-tag no-op, boot-frame live-pixel surface parity
+- full headless demo sweep PASS (101 demos)
+- 3rd-consumer self-grep: chip_style/chip_layout = exactly 2 consumers (correct lift); parse_send_payload reused not duplicated; [Button;N]-in-external is a novel 1st-consumer pattern (inline-first)
+
+
+
+**Impact**: §5.35, §5.38, §5.40
+
+
+**Carry forward**:
+- add-via-textfield flow deferred (carry) — input chip ships removable presets only; the TextField-Enter-pushes-a-chip composition is a separate composed app
+- chip body is delete-only (× is the sole affordance); a selectable-body input chip (composite select + delete sub-targets) defers until a consumer needs it [[abstraction-needs-second-consumer]]
+- `[Button; N]`-owned-by-external posture array is a 1st-consumer pattern (inline-first); a 2nd external-owns-button-array consumer would justify a substrate lift
+- dynamic add => monotonic-id counter (todomvc use_next_id precedent) needed; seeded-only ids 1..=N suffice here since deletes never re-add
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
