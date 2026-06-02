@@ -148,6 +148,53 @@ pub fn rove(tags: &[&'static str], focused: &str, key: &str) -> bool {
     true
 }
 
+/// R760 §5.39 — keyboard handler for a group of **independently-focusable,
+/// individually-activatable tab stops** (a list of buttons: accordion
+/// headers, clickable cards, FABs). `Space` / `Enter` activates the
+/// `focused` target by sending it a plain `"KeyboardActivate"` event
+/// through the §5.15 introspect channel (the button-activation edge); the
+/// Arrow / `Home` / `End` keys rove shell focus via [`rove`]. Returns
+/// whether `key` was consumed.
+///
+/// Lifted at the 3rd byte-identical consumer (`hello-accordion` R697,
+/// `hello-card` R757, `hello-fab` R760) per the R727 / R732 self-grep
+/// mandate. The R757 [`rove`] doc deferred activation as "per-binding
+/// because the activation semantics diverge"; the re-audit at this 3rd
+/// consumer found the divergence lives in each *`External`'s response* to
+/// `KeyboardActivate` (a disclosure toggles, a card / FAB fires `click`),
+/// **not** in the `apply_key` *wiring*, which is identical — so the wiring
+/// lifts here while the per-widget statechart response stays in the
+/// widget. `hello-accordion-single` is *not* a consumer: its sub-targets
+/// are composite, so it sends `"{idx}:KeyboardActivate"` (a divergent wire
+/// payload that genuinely stays per-binding, the pagination-child_invoke
+/// precedent).
+#[must_use]
+pub fn activate_or_rove(
+    scene: &mut crate::scene::Scene,
+    tags: &[&'static str],
+    focused: Option<&str>,
+    key: &str,
+) -> bool {
+    let Some(focused_tag) = focused else {
+        return false;
+    };
+    if matches!(key, "Space" | "Enter") {
+        let Some(node) = scene.find_external_with_tag_mut(focused_tag) else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        return intro
+            .invoke(
+                "send",
+                crate::external::IntrospectValue::Text("KeyboardActivate".to_string()),
+            )
+            .is_ok();
+    }
+    rove(tags, focused_tag, key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,5 +281,88 @@ mod tests {
         let _ = drain();
         assert!(!rove(&TAGS, "not_here", "ArrowRight"));
         assert_eq!(drain(), None, "an unknown focused tag emits no focus request");
+    }
+
+    // ── activate_or_rove (R760 button-cluster keyboard SSOT) ──────────
+
+    use crate::scene::{ContainerNode, ExternalNode, Scene};
+    use crate::widgets::button::ButtonExternal;
+
+    const BTN_TAGS: [&str; 2] = ["b0", "b1"];
+
+    /// A two-button cluster scene mirroring the shell's boot composition
+    /// (`Scene::Container([primary, ...extras])`).
+    fn button_cluster() -> Scene {
+        let children = BTN_TAGS
+            .iter()
+            .map(|t| Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())).with_tag(*t)))
+            .collect();
+        Scene::Container(ContainerNode::new(children))
+    }
+
+    /// The button's `state` introspect slot as a raw name string.
+    fn button_state_name(scene: &Scene, tag: &str) -> String {
+        let intro = scene
+            .find_external_with_tag(tag)
+            .and_then(|n| n.handle.introspect())
+            .expect("button external present");
+        match intro.query("state") {
+            Some(crate::external::IntrospectValue::Text(s)) => s,
+            _ => panic!("button exposes a Text state"),
+        }
+    }
+
+    #[test]
+    fn activate_or_rove_space_activates_the_focused_button() {
+        let mut scene = button_cluster();
+        // Enter the focused button first so the activation edge has a
+        // posture to act on (Idle -> Hover -> ... the click edge needs an
+        // entered button); drive PointerEnter via the send wire.
+        if let Some(n) = scene.find_external_with_tag_mut("b0") {
+            let _ = n.handle.introspect_mut().unwrap().invoke(
+                "send",
+                crate::external::IntrospectValue::Text("PointerEnter".to_string()),
+            );
+        }
+        assert!(
+            activate_or_rove(&mut scene, &BTN_TAGS, Some("b0"), "Space"),
+            "Space activates the focused button",
+        );
+        // KeyboardActivate is accepted by the button statechart (the
+        // witness that the send wire routed); the cluster sibling is
+        // untouched.
+        assert_eq!(button_state_name(&scene, "b1"), "Idle", "sibling untouched");
+    }
+
+    #[test]
+    fn activate_or_rove_enter_is_also_an_activation_key() {
+        let mut scene = button_cluster();
+        assert!(activate_or_rove(&mut scene, &BTN_TAGS, Some("b0"), "Enter"));
+    }
+
+    #[test]
+    fn activate_or_rove_arrow_delegates_to_rove() {
+        let _ = drain();
+        let mut scene = button_cluster();
+        assert!(
+            activate_or_rove(&mut scene, &BTN_TAGS, Some("b0"), "ArrowRight"),
+            "an arrow key roves",
+        );
+        assert_eq!(drain().as_deref(), Some("b1"), "rove emitted the next-sibling focus request");
+    }
+
+    #[test]
+    fn activate_or_rove_returns_false_without_focus() {
+        let mut scene = button_cluster();
+        assert!(!activate_or_rove(&mut scene, &BTN_TAGS, None, "Space"));
+        assert!(!activate_or_rove(&mut scene, &BTN_TAGS, None, "ArrowRight"));
+    }
+
+    #[test]
+    fn activate_or_rove_unknown_key_is_not_consumed() {
+        let _ = drain();
+        let mut scene = button_cluster();
+        assert!(!activate_or_rove(&mut scene, &BTN_TAGS, Some("b0"), "x"));
+        assert_eq!(drain(), None, "a non-activation non-nav key emits nothing");
     }
 }

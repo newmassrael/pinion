@@ -241,6 +241,12 @@ pub struct ButtonStyle {
     pub size: Option<Size>,
     /// Label font size (logical pixels).
     pub label_font_size_px: u32,
+    /// (R760 §5.16) Material elevation level (`0` = flat, no shadow — the
+    /// default for every non-FAB button). A positive level paints the
+    /// shared [`elevation`](crate::elevation::elevation) (key + ambient)
+    /// shadow ramp behind the surface — the M3 FAB's resting / raised
+    /// lift. This is the "elevation" axis the type doc anticipated.
+    pub elevation_level: u8,
 }
 
 impl ButtonStyle {
@@ -254,6 +260,7 @@ impl ButtonStyle {
             padding: Rect::default(),
             size: None,
             label_font_size_px: 14,
+            elevation_level: 0,
         }
     }
 
@@ -282,6 +289,16 @@ impl ButtonStyle {
     #[must_use]
     pub const fn with_label_font_size_px(mut self, size: u32) -> Self {
         self.label_font_size_px = size;
+        self
+    }
+
+    /// (R760 §5.16) Set the Material elevation level (`0` = flat, the
+    /// default). A positive level casts the shared
+    /// [`elevation`](crate::elevation::elevation) shadow ramp behind the
+    /// surface — the M3 FAB lift.
+    #[must_use]
+    pub const fn with_elevation(mut self, level: u8) -> Self {
+        self.elevation_level = level;
         self
     }
 }
@@ -333,6 +350,12 @@ pub fn view_button(
     let mut box_style = BoxStyle::filled(fill).with_corner_radius(style.corner_radius);
     if focused {
         box_style = box_style.with_border(Border::new(colors.focus_ring, FOCUS_RING_WIDTH));
+    }
+    // (R760 §5.16) An elevated button (the M3 FAB) casts the shared
+    // elevation shadow ramp; a flat button (level 0) leaves the surface
+    // shadowless, byte-identical to the pre-R760 output.
+    if style.elevation_level > 0 {
+        box_style = box_style.with_shadows(crate::elevation::elevation(style.elevation_level));
     }
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
@@ -635,6 +658,32 @@ mod tests {
             panic!("child must be the label Text");
         };
         assert_eq!(label.style.fg_color, c.label_disabled);
+    }
+
+    // R760 §5.16 — elevation axis (the M3 FAB lift).
+
+    #[test]
+    fn r760_default_button_is_flat() {
+        let c = explicit_colors();
+        let style = ButtonStyle::m3_default("b");
+        assert_eq!(style.elevation_level, 0, "the default level is flat");
+        let scene = view_button("x", ButtonState::Idle, 0.0, false, &c, &style);
+        let Scene::Container(outer) = &scene else { panic!("Container") };
+        assert!(outer.style.shadows.is_empty(), "a flat button casts no shadow");
+    }
+
+    #[test]
+    fn r760_elevated_button_casts_the_shared_ramp() {
+        let c = explicit_colors();
+        let style = ButtonStyle::m3_default("fab").with_elevation(3);
+        let scene = view_button("+", ButtonState::Idle, 0.0, false, &c, &style);
+        let Scene::Container(outer) = &scene else { panic!("Container") };
+        assert_eq!(
+            outer.style.shadows,
+            crate::elevation::elevation(3),
+            "an elevated button casts the shared elevation ramp at its level",
+        );
+        assert!(!outer.style.shadows.is_empty(), "level 3 is a non-empty shadow list");
     }
 
     // R694 §5.16 §5.39 — keyboard-focus ring.

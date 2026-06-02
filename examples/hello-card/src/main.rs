@@ -329,24 +329,13 @@ impl WidgetCore for CardView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        let Some(focused_tag) = focused else {
-            return false;
-        };
-        if matches!(key, "Space" | "Enter") {
-            let Some(node) = scene.find_external_with_tag_mut(focused_tag) else {
-                return false;
-            };
-            let Some(intro) = node.handle.introspect_mut() else {
-                return false;
-            };
-            return intro
-                .invoke(
-                    "send",
-                    pinion_core::external::IntrospectValue::Text("KeyboardActivate".to_string()),
-                )
-                .is_ok();
-        }
-        pinion_core::focus_request::rove(CARD_TAGS.as_slice(), focused_tag, key)
+        // R760 §5.39 — the mechanical "activate the focused tab stop with
+        // KeyboardActivate, else rove shell focus" keyboard wiring is the
+        // shared [`pinion_core::focus_request::activate_or_rove`] SSOT
+        // (lifted at its 3rd consumer: accordion + card + fab). The card's
+        // *response* to KeyboardActivate (firing the `click` intent) lives
+        // in its ButtonExternal statechart, not in this wiring.
+        pinion_core::focus_request::activate_or_rove(scene, CARD_TAGS.as_slice(), focused, key)
     }
 
     fn fmt_state_log(state: &CardStates) -> String {

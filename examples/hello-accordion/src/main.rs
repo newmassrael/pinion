@@ -251,25 +251,13 @@ impl WidgetCore for AccordionView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        let Some(focused_tag) = focused else {
-            return false;
-        };
-        if matches!(key, "Space" | "Enter") {
-            let Some(node) = scene.find_external_with_tag_mut(focused_tag) else {
-                return false;
-            };
-            let Some(intro) = node.handle.introspect_mut() else {
-                return false;
-            };
-            return intro
-                .invoke("send", IntrospectValue::Text("KeyboardActivate".to_string()))
-                .is_ok();
-        }
-        // R757 §5.39 — the WAI-ARIA roving-tabindex navigation (next /
-        // previous / first / last, wrapping) is the shared
-        // [`pinion_core::focus_request::rove`] SSOT; only the disclosure
-        // *activation* above stays per-binding.
-        pinion_core::focus_request::rove(SECTION_TAGS.as_slice(), focused_tag, key)
+        // R760 §5.39 — the mechanical "activate the focused tab stop with
+        // KeyboardActivate, else rove shell focus" keyboard wiring is the
+        // shared [`pinion_core::focus_request::activate_or_rove`] SSOT
+        // (lifted at its 3rd consumer: accordion + card + fab). The
+        // disclosure's *response* to KeyboardActivate (toggling open /
+        // closed) lives in its statechart, not in this wiring.
+        pinion_core::focus_request::activate_or_rove(scene, SECTION_TAGS.as_slice(), focused, key)
     }
 
     fn fmt_state_log(state: &AccordionState) -> String {

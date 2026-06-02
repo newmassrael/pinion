@@ -17241,6 +17241,40 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R760 — R760 §5.38 FAB (hello-fab): the Material 3 Floating Action Button in four size variants (small/standard/large/extended) reusing ButtonExternal (R738 same-statechart) and the M3 button paint substrate — view_button + ButtonColors::accent — rather than hand-rolling a surface; the only new paint is the elevation_level axis the ButtonStyle type doc anticipated, added to view_button (additive, default 0 = every flat button unchanged). A mandatory 3b self-grep across the keyboard axis found the byte-identical activate-or-rove apply_key body at its 3rd consumer and lifted it to pinion_core::focus_request::activate_or_rove, refactoring hello-accordion + hello-card through it (hello-accordion-single stays bespoke: its composite {idx}:KeyboardActivate payload genuinely diverges)
+
+**Changes**:
+- new hello-fab: M3 FAB small/standard/large/extended; reuses a ButtonExternal cluster (hello-card mould)
+- FAB surface reuses view_button + ButtonColors::accent — zero new paint (use-substrate, not hand-rolled)
+- add the anticipated ButtonStyle elevation_level axis (additive, default 0); view_button casts the ramp
+- mandatory 3b self-grep across the keyboard axis found the activate-or-rove apply_key body at its 3rd consumer
+- lift pinion_core::focus_request::activate_or_rove (Space/Enter sends KeyboardActivate to focused, else rove)
+- refactor hello-accordion + hello-card through it; accordion-single stays bespoke (composite payload)
+- a11y: N Button nodes with explicit names (icon FABs have no text to enrich), surviving scene enrichment
+
+
+
+**Verification**:
+- pinion-widget-paint elevation axis 2 tests; pinion-core focus_request activate_or_rove 5 tests
+- hello-fab 15 tests; hello-accordion 15 + hello-card 17 green after the activate_or_rove refactor
+- workspace cargo test green (115 suites); clippy --features pinion-runtime/vello -D pedantic clean
+- demo r760_fab.py ~60 assertions; headless Xvfb sweep PASS (105/105)
+- AI-first: per-FAB state introspected; hover drives only that FAB + lifts elevation L3->L4; full click arc
+- live-pixel boot: every FAB interior = accent container tone, window = Surface (introspect<->screen parity)
+
+
+
+**Impact**: §5.16, §5.38, §5.39, §5.40
+
+
+**Carry forward**:
+- FAB painted keyboard-focus ring deferred (R690 shared shell-focus-paint carry); a11y reports focus precisely
+- color-tier variants (surface/secondary/tertiary FAB) need palette tiers absent here (R753 carry); accent only
+- FAB menu / speed-dial (expandable FAB) + lowered/static elevation variants deferred (consumer 0)
+- activate_or_rove sends plain "KeyboardActivate"; a parameterized activation event waits for a real consumer
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

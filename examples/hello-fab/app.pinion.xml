@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R760 §5.38 §5.40 — pinion-forge renderer manifest for hello-fab.
+  Same single-source-of-truth template that emits HelloSegmentedButtonRenderer;
+  only the struct name diverges. backend=vello + default Area antialiasing
+  (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloFabRenderer"
+        backend="vello"/>
