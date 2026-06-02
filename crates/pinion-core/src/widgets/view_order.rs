@@ -15,6 +15,24 @@
 //! visual position while keeping it selected — selection ⊥ ordering, both
 //! data-indexed.
 //!
+//! ## One reactive source of truth ([`ViewOrderState`] + [`use_view_order`])
+//!
+//! The `(sort, filter)` and the derived `order` permutation are held **once**
+//! in a reactive [`ViewOrderState`] — the exact `ScrollState` /
+//! [`use_scroll_state`](crate::widgets::scroll::use_scroll_state) pattern this
+//! crate already uses to share an interactive axis between an `External` and a
+//! view. The [`ViewSortFilterExternal`] is a thin adapter that *mutates* the
+//! shared state on `invoke` / a clicked header; the view and the a11y tree
+//! *read* the same state through `use_view_order(key)` (the same `Rc`), so the
+//! `order` is computed **once** (memoized on `(sort, filter)`) and the rows
+//! the view paints are the same rows the proxy's `query("source_at.<n>")`
+//! reports — by construction, not by two code paths happening to agree.
+//! Reading `sort()` / `filter()` / `order()` inside a view auto-subscribes to
+//! the underlying `Signal`s, so a sort/filter change repaints exactly as a
+//! scroll-offset change does — no `read_state` projection of the order is
+//! needed (the order is not state to copy; R746.1: a reactive `Signal`
+//! already drives the repaint).
+//!
 //! ## Sort representation (`Option<bool>`, the R730 table convention)
 //!
 //! The sort key is `Option<bool>`: `None` = source order, `Some(true)` =
@@ -39,24 +57,28 @@
 //!
 //! - **Single sort key, single filter facet.** Multi-column sort and
 //!   compound filters are additive when a consumer needs them.
-//! - **O(n log n) per recompute, cached.** The proxy recomputes [`order`]
+//! - **O(n log n) per recompute, cached.** The proxy recomputes the order
 //!   only when the sort or filter changes (not per frame); a stable sort
 //!   keeps equal-key rows in source order so re-sorting is deterministic.
 //! - **No `Model` trait.** The source is the consumer's per-row key + a
-//!   category accessor, not a retained trait object — `compute_order` is a
+//!   category column, not a retained trait object — `compute_order` is a
 //!   free function over closures (the second proxy consumer proves the
 //!   shape; premature here).
+
+use std::cell::RefCell;
+use std::rc::Rc;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use crate::reactive::{Owner, Signal};
 
 /// R747 §5.40 — cycle a sort key the way a clicked sort header does:
 /// unsorted → ascending → descending → unsorted.
 ///
 /// The free-function peer of [`Table::cycle_sort`](crate::widgets::table);
-/// shared so the proxy External and any binding agree on the cycle.
+/// shared so the proxy and any binding agree on the cycle.
 #[must_use]
 pub fn cycle_sort(sort: Option<bool>) -> Option<bool> {
     match sort {
@@ -125,47 +147,50 @@ pub fn compute_order<K: Ord>(
     order
 }
 
-/// R747 §5.27 §5.40 — the sort/filter **proxy coordinator** External.
-///
-/// A plain value/config holder (no interaction statechart) like
-/// [`SpinButtonExternal`](crate::widgets::spin_button): operability is "set
-/// the sort / filter", driven by the AI-first `invoke` paths and the R51.42
-/// composite pointer channel (a clicked sort header). It holds the source
-/// keys + categories, the current `(sort, filter)`, and the derived
-/// [`order`](Self::order) permutation (recomputed only on a config change).
-///
-/// Unlike a *selection* coordinator it emits **no** §5.20 intent — sort and
-/// filter are display reconfigurations observed through `query`
-/// (`sort_dir` / `filter` / `view_len` / `source_at.<pos>`), exactly as the
-/// R730 table surfaces sort through `query` and reserves the `"selected"`
-/// intent for selection. (Category-correct contract: this is a *value*
-/// holder, not a selection coordinator.)
-#[derive(Debug, Clone)]
-pub struct ViewSortFilterExternal {
-    /// Per-source-row sort key (the display label). Length is the source
-    /// count.
-    keys: Vec<String>,
-    /// Per-source-row filter category id. Same length as `keys`.
-    categories: Vec<usize>,
-    /// Active sort: `None` source order / `Some(true)` asc / `Some(false)`
-    /// desc.
+/// The memoized `order` for one `(sort, filter)` pair — recomputed only when
+/// the config changes.
+struct OrderCache {
     sort: Option<bool>,
-    /// Active filter category, or `None` for "show all".
     filter: Option<usize>,
-    /// Cached visual → source permutation for the current `(sort, filter)`.
-    /// Recomputed by [`recompute`](Self::recompute) on every config change.
-    order: Vec<usize>,
+    order: Rc<Vec<usize>>,
+    valid: bool,
 }
 
-impl ViewSortFilterExternal {
-    /// Construct a proxy over a dataset whose source row `i` has sort key
-    /// `keys[i]` and filter category `categories[i]`. Starts unsorted,
-    /// unfiltered (the view shows the full dataset in source order).
+impl Default for OrderCache {
+    fn default() -> Self {
+        Self { sort: None, filter: None, order: Rc::new(Vec::new()), valid: false }
+    }
+}
+
+/// R747 §5.27 §5.40 — the reactive **single source of truth** for a list's
+/// sort/filter view order.
+///
+/// Holds the source sort keys + categories (materialized once), the active
+/// `(sort, filter)` as reactive [`Signal`]s, and the derived `order`
+/// permutation (memoized). This is the `ScrollState` of the view-order axis:
+/// created once via [`use_view_order`], it is shared by the
+/// [`ViewSortFilterExternal`] (which mutates it) and the view / a11y tree
+/// (which read it) through the same `Rc`. Reading [`sort`](Self::sort) /
+/// [`filter`](Self::filter) / [`order`](Self::order) inside a view-fn
+/// auto-subscribes, so a config change repaints exactly like a scroll-offset
+/// change.
+pub struct ViewOrderState {
+    tag: Option<&'static str>,
+    keys: Vec<String>,
+    categories: Vec<usize>,
+    sort: Signal<Option<bool>>,
+    filter: Signal<Option<usize>>,
+    order: RefCell<OrderCache>,
+}
+
+impl ViewOrderState {
+    /// Construct over a dataset whose source row `i` has sort key `keys[i]`
+    /// and filter category `categories[i]`. Starts unsorted, unfiltered.
     ///
     /// # Panics
     ///
-    /// Panics if `keys` and `categories` differ in length — they are the
-    /// two attribute columns of the same dataset and must agree.
+    /// Panics if `keys` and `categories` differ in length — they are the two
+    /// attribute columns of the same dataset and must agree.
     #[must_use]
     pub fn new(keys: Vec<String>, categories: Vec<usize>) -> Self {
         assert_eq!(
@@ -173,8 +198,27 @@ impl ViewSortFilterExternal {
             categories.len(),
             "keys and categories describe the same rows",
         );
-        let order = (0..keys.len()).collect();
-        Self { keys, categories, sort: None, filter: None, order }
+        Self {
+            tag: None,
+            keys,
+            categories,
+            sort: Signal::new(None),
+            filter: Signal::new(None),
+            order: RefCell::new(OrderCache::default()),
+        }
+    }
+
+    /// As [`new`](Self::new) but records the `use_view_order` cache key, for
+    /// symmetry with [`ScrollState::with_tag`](crate::widgets::scroll::ScrollState::with_tag).
+    #[must_use]
+    pub fn with_tag(key: &'static str, keys: Vec<String>, categories: Vec<usize>) -> Self {
+        Self { tag: Some(key), ..Self::new(keys, categories) }
+    }
+
+    /// The `use_view_order` cache key, or `None` when constructed directly.
+    #[must_use]
+    pub fn tag(&self) -> Option<&'static str> {
+        self.tag
     }
 
     /// Source row count (filter-independent).
@@ -183,94 +227,160 @@ impl ViewSortFilterExternal {
         self.keys.len()
     }
 
-    /// Active sort state.
+    /// Active sort state. Subscribes when read inside a view-fn.
     #[must_use]
     pub fn sort(&self) -> Option<bool> {
-        self.sort
+        self.sort.get()
     }
 
-    /// Active filter category, or `None`.
+    /// Active filter category (or `None`). Subscribes when read inside a
+    /// view-fn.
     #[must_use]
     pub fn filter(&self) -> Option<usize> {
-        self.filter
+        self.filter.get()
+    }
+
+    /// The visual → source permutation for the current `(sort, filter)`,
+    /// recomputed only when the config changes (memoized). Subscribes to the
+    /// `sort` + `filter` `Signal`s, so a view that calls this repaints on a
+    /// config change. Cheap `Rc` clone on a cache hit.
+    #[must_use]
+    pub fn order(&self) -> Rc<Vec<usize>> {
+        let sort = self.sort.get();
+        let filter = self.filter.get();
+        let mut cache = self.order.borrow_mut();
+        if !cache.valid || cache.sort != sort || cache.filter != filter {
+            cache.order = Rc::new(compute_order(
+                self.keys.len(),
+                sort,
+                |i| self.keys[i].as_str(),
+                |i| filter.is_none_or(|f| self.categories[i] == f),
+            ));
+            cache.sort = sort;
+            cache.filter = filter;
+            cache.valid = true;
+        }
+        Rc::clone(&cache.order)
     }
 
     /// Number of rows in the current view (rows passing the filter).
     #[must_use]
     pub fn view_len(&self) -> usize {
-        self.order.len()
-    }
-
-    /// The visual → source permutation for the current `(sort, filter)`.
-    #[must_use]
-    pub fn order(&self) -> &[usize] {
-        &self.order
+        self.order().len()
     }
 
     /// Source data index painted at visual position `view_pos`, or `None`
-    /// when out of range (≥ [`view_len`](Self::view_len)).
+    /// when out of range.
     #[must_use]
     pub fn source_at(&self, view_pos: usize) -> Option<usize> {
-        self.order.get(view_pos).copied()
+        self.order().get(view_pos).copied()
     }
 
-    /// Recompute [`order`](Self::order) from the current `(sort, filter)`.
-    /// The single place the permutation is derived — `key` returns `&str`
-    /// so the stable sort never clones a key.
-    fn recompute(&mut self) {
-        let filter = self.filter;
-        self.order = compute_order(
-            self.keys.len(),
-            self.sort,
-            |i| self.keys[i].as_str(),
-            |i| filter.is_none_or(|f| self.categories[i] == f),
-        );
+    /// Set the sort directly (admin / restore). A `Signal` write repaints
+    /// every view that read [`sort`](Self::sort) / [`order`](Self::order).
+    pub fn set_sort(&self, sort: Option<bool>) {
+        self.sort.set(sort);
     }
 
-    /// Cycle the sort (unsorted → asc → desc → unsorted) and recompute.
-    /// The clicked-header + `invoke "cycle_sort"` path.
-    pub fn cycle_sort(&mut self) {
-        self.sort = cycle_sort(self.sort);
-        self.recompute();
+    /// Cycle the sort (unsorted → asc → desc → unsorted) — the clicked-header
+    /// + `invoke "cycle_sort"` path.
+    pub fn cycle_sort(&self) {
+        self.sort.set(cycle_sort(self.sort.get()));
     }
 
-    /// Set the sort directly (the admin / restore channel) and recompute.
-    pub fn set_sort(&mut self, sort: Option<bool>) {
-        if sort != self.sort {
-            self.sort = sort;
-            self.recompute();
-        }
-    }
-
-    /// Set the filter category (`None` clears) and recompute. Returns the
-    /// resulting [`view_len`](Self::view_len).
-    pub fn set_filter(&mut self, filter: Option<usize>) -> usize {
-        if filter != self.filter {
-            self.filter = filter;
-            self.recompute();
-        }
+    /// Set the filter category (`None` clears). Returns the resulting
+    /// [`view_len`](Self::view_len).
+    pub fn set_filter(&self, filter: Option<usize>) -> usize {
+        self.filter.set(filter);
         self.view_len()
+    }
+}
+
+/// R747 §5.27 §5.40 — resolve the shared [`ViewOrderState`] for `key`,
+/// building it once via `data` (the source keys + categories). Mirrors
+/// [`use_scroll_state`](crate::widgets::scroll::use_scroll_state): the
+/// `External` and the view both call this with the same `key` and receive the
+/// same `Rc`, so the order is one source of truth.
+///
+/// # Panics
+///
+/// Panics if no current [`Owner`] is set (call from within a `view` / a
+/// `create_extra_externals` hook — both run inside a `root_owner.run`).
+#[must_use]
+pub fn use_view_order(
+    key: &'static str,
+    data: impl FnOnce() -> (Vec<String>, Vec<usize>),
+) -> Rc<ViewOrderState> {
+    Owner::current()
+        .expect("use_view_order requires an active Owner scope")
+        .cache(key, || {
+            let (keys, categories) = data();
+            ViewOrderState::with_tag(key, keys, categories)
+        })
+}
+
+/// R747 §5.27 §5.40 — the sort/filter **proxy coordinator** External: a thin
+/// adapter that surfaces the shared [`ViewOrderState`] to the §5.12
+/// `scene/query` / `scene/intervene` / `scene/invoke` paths and the R51.42
+/// composite pointer channel (a clicked sort header).
+///
+/// Like [`SpinButtonExternal`](crate::widgets::spin_button) it owns no
+/// interaction statechart and emits **no** §5.20 intent — sort and filter are
+/// display reconfigurations observed through `query` (`sort_dir` / `filter` /
+/// `view_len` / `source_at.<pos>`), exactly as the R730 table surfaces sort
+/// through `query` and reserves the `"selected"` intent for selection
+/// (category-correct contract: a *value* holder, not a selection
+/// coordinator). All state lives in the shared [`ViewOrderState`] — the
+/// external holds only the `Rc`, so the view paints the same `order` this
+/// external reports.
+#[derive(Clone)]
+pub struct ViewSortFilterExternal {
+    state: Rc<ViewOrderState>,
+}
+
+impl core::fmt::Debug for ViewSortFilterExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ViewSortFilterExternal")
+            .field("sort", &sort_dir_str(self.state.sort()))
+            .field("filter", &self.state.filter())
+            .field("view_len", &self.state.view_len())
+            .finish()
+    }
+}
+
+impl ViewSortFilterExternal {
+    /// Wrap the shared [`ViewOrderState`] (from [`use_view_order`]).
+    #[must_use]
+    pub fn new(state: Rc<ViewOrderState>) -> Self {
+        Self { state }
+    }
+
+    /// The shared state handle (the view reaches the same `Rc` via
+    /// [`use_view_order`]).
+    #[must_use]
+    pub fn state(&self) -> &Rc<ViewOrderState> {
+        &self.state
     }
 
     /// Drive the composite pointer channel: a clicked sort header routes the
     /// pointer arc here; on the activation edge (`PointerUp` /
     /// `KeyboardActivate`) the sort cycles. Every other arc event is a
-    /// harmless no-op (no hover/press feedback at the header level).
-    fn handle_send(&mut self, payload: &str) {
+    /// harmless no-op.
+    fn handle_send(&self, payload: &str) {
         let Some((_region, event_name)) =
             crate::composite_tag::parse_send_payload::<String>(payload)
         else {
             return;
         };
         if matches!(event_name, "PointerUp" | "KeyboardActivate") {
-            self.cycle_sort();
+            self.state.cycle_sort();
         }
     }
 
     /// `view_len` as an `IntrospectValue::Int` — the uniform return for the
     /// mutating `invoke` paths.
     fn view_len_value(&self) -> IntrospectValue {
-        IntrospectValue::Int(i64::try_from(self.view_len()).unwrap_or(i64::MAX))
+        IntrospectValue::Int(i64::try_from(self.state.view_len()).unwrap_or(i64::MAX))
     }
 }
 
@@ -296,9 +406,8 @@ impl External for ViewSortFilterExternal {
     }
 
     // A value/config holder emits no §5.20 intent (see the type doc); the
-    // sort / filter value changes only through `invoke` / `intervene`, which
-    // the framework already follows with a repaint, so the widget is never
-    // independently dirty.
+    // sort / filter `Signal` writes already repaint every subscribed view, so
+    // the widget is never independently dirty.
 }
 
 impl ExternalIntrospect for ViewSortFilterExternal {
@@ -328,21 +437,22 @@ impl ExternalIntrospect for ViewSortFilterExternal {
             let value = rest
                 .parse::<usize>()
                 .ok()
-                .and_then(|p| self.source_at(p))
+                .and_then(|p| self.state.source_at(p))
                 .and_then(|src| i64::try_from(src).ok())
                 .map_or(IntrospectValue::Null, IntrospectValue::Int);
             return Some(value);
         }
         match path {
-            "sort_dir" => Some(IntrospectValue::Text(sort_dir_str(self.sort).into())),
+            "sort_dir" => Some(IntrospectValue::Text(sort_dir_str(self.state.sort()).into())),
             "filter" => Some(
-                self.filter
+                self.state
+                    .filter()
                     .and_then(|f| i64::try_from(f).ok())
                     .map_or(IntrospectValue::Null, IntrospectValue::Int),
             ),
             "view_len" => Some(self.view_len_value()),
             "count" => Some(IntrospectValue::Int(
-                i64::try_from(self.count()).unwrap_or(i64::MAX),
+                i64::try_from(self.state.count()).unwrap_or(i64::MAX),
             )),
             _ => None,
         }
@@ -353,7 +463,7 @@ impl ExternalIntrospect for ViewSortFilterExternal {
             // Admin / restore: set the sort from its string form.
             "sort_dir" => match value {
                 IntrospectValue::Text(ref s) => {
-                    self.set_sort(sort_dir_from_str(s));
+                    self.state.set_sort(sort_dir_from_str(s));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -361,11 +471,11 @@ impl ExternalIntrospect for ViewSortFilterExternal {
             // Admin / restore: set (Int) or clear (Null) the filter.
             "filter" => match value {
                 IntrospectValue::Int(i) => {
-                    self.set_filter(usize::try_from(i).ok());
+                    self.state.set_filter(usize::try_from(i).ok());
                     Ok(())
                 }
                 IntrospectValue::Null => {
-                    self.set_filter(None);
+                    self.state.set_filter(None);
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -379,19 +489,18 @@ impl ExternalIntrospect for ViewSortFilterExternal {
         match path {
             // AI-first sort cycle — returns the resulting sort_dir string.
             "cycle_sort" => {
-                self.cycle_sort();
-                Ok(IntrospectValue::Text(sort_dir_str(self.sort).into()))
+                self.state.cycle_sort();
+                Ok(IntrospectValue::Text(sort_dir_str(self.state.sort()).into()))
             }
             // AI-first filter — Int sets the category, Null clears; returns
-            // the resulting view_len so the caller sees the outcome in one
-            // round-trip.
+            // the resulting view_len in one round-trip.
             "set_filter" => match args {
                 IntrospectValue::Int(i) => {
-                    self.set_filter(usize::try_from(i).ok());
+                    self.state.set_filter(usize::try_from(i).ok());
                     Ok(self.view_len_value())
                 }
                 IntrospectValue::Null => {
-                    self.set_filter(None);
+                    self.state.set_filter(None);
                     Ok(self.view_len_value())
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -401,7 +510,7 @@ impl ExternalIntrospect for ViewSortFilterExternal {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
                     self.handle_send(payload);
-                    Ok(IntrospectValue::Text(sort_dir_str(self.sort).into()))
+                    Ok(IntrospectValue::Text(sort_dir_str(self.state.sort()).into()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -458,8 +567,6 @@ mod tests {
         let k = keys();
         // Descending by key (high → low): C11,C08,C05,C02 then B10..B01
         // then A09..A00 — i.e. source indices 11,8,5,2,10,7,4,1,9,6,3,0.
-        // Within an (impossible here, keys distinct) key tie the source
-        // index would stay ascending.
         let order = compute_order(12, Some(false), |i| k[i].as_str(), |_| true);
         assert_eq!(order, vec![11, 8, 5, 2, 10, 7, 4, 1, 9, 6, 3, 0]);
     }
@@ -467,7 +574,6 @@ mod tests {
     #[test]
     fn filter_keeps_only_matching_category_in_source_order() {
         let c = cats();
-        // Filter category 1 (B rows): source indices 1,4,7,10, unsorted.
         let order = compute_order(12, None, |i| i, |i| c[i] == 1);
         assert_eq!(order, vec![1, 4, 7, 10]);
     }
@@ -476,56 +582,71 @@ mod tests {
     fn filter_then_sort_composes() {
         let k = keys();
         let c = cats();
-        // Category 2 (C rows) descending: C rows are 2,5,8,11 with keys
-        // C02,C05,C08,C11 → descending = 11,8,5,2.
+        // Category 2 (C rows) descending: keys C02,C05,C08,C11 → 11,8,5,2.
         let order = compute_order(12, Some(false), |i| k[i].as_str(), |i| c[i] == 2);
         assert_eq!(order, vec![11, 8, 5, 2]);
     }
 
+    fn state() -> Rc<ViewOrderState> {
+        Rc::new(ViewOrderState::new(keys(), cats()))
+    }
+
     fn ext() -> ViewSortFilterExternal {
-        ViewSortFilterExternal::new(keys(), cats())
+        ViewSortFilterExternal::new(state())
     }
 
     #[test]
-    fn new_starts_unsorted_unfiltered_identity() {
-        let e = ext();
-        assert_eq!(e.count(), 12);
-        assert_eq!(e.sort(), None);
-        assert_eq!(e.filter(), None);
-        assert_eq!(e.view_len(), 12);
-        assert_eq!(e.order(), &(0..12).collect::<Vec<_>>()[..]);
-        assert_eq!(e.source_at(0), Some(0));
-        assert_eq!(e.source_at(12), None);
+    fn state_starts_unsorted_unfiltered_identity() {
+        let s = state();
+        assert_eq!(s.count(), 12);
+        assert_eq!(s.sort(), None);
+        assert_eq!(s.filter(), None);
+        assert_eq!(s.view_len(), 12);
+        assert_eq!(&*s.order(), &(0..12).collect::<Vec<_>>());
+        assert_eq!(s.source_at(0), Some(0));
+        assert_eq!(s.source_at(12), None);
     }
 
     #[test]
-    fn cycle_sort_reorders_and_recomputes() {
-        let mut e = ext();
-        e.cycle_sort(); // ascending
-        assert_eq!(e.sort(), Some(true));
-        assert_eq!(e.order(), &[0, 3, 6, 9, 1, 4, 7, 10, 2, 5, 8, 11][..]);
-        e.cycle_sort(); // descending
-        assert_eq!(e.sort(), Some(false));
-        assert_eq!(e.source_at(0), Some(11), "descending paints C11 (source 11) first");
-        e.cycle_sort(); // back to source order
-        assert_eq!(e.sort(), None);
-        assert_eq!(e.order(), &(0..12).collect::<Vec<_>>()[..]);
+    fn cycle_sort_reorders_and_memoizes() {
+        let s = state();
+        let first = s.order();
+        // Cache hit returns the same Rc while the config is unchanged.
+        assert!(Rc::ptr_eq(&first, &s.order()), "order memoized across reads");
+        s.cycle_sort(); // ascending
+        assert_eq!(s.sort(), Some(true));
+        assert_eq!(&*s.order(), &[0, 3, 6, 9, 1, 4, 7, 10, 2, 5, 8, 11]);
+        s.cycle_sort(); // descending
+        assert_eq!(s.sort(), Some(false));
+        assert_eq!(s.source_at(0), Some(11), "descending paints C11 (source 11) first");
+        s.cycle_sort(); // back to source order
+        assert_eq!(s.sort(), None);
+        assert_eq!(&*s.order(), &(0..12).collect::<Vec<_>>());
     }
 
     #[test]
     fn set_filter_shrinks_view_and_reports_len() {
-        let mut e = ext();
-        assert_eq!(e.set_filter(Some(0)), 4, "category 0 has 4 rows");
-        assert_eq!(e.view_len(), 4);
-        assert_eq!(e.order(), &[0, 3, 6, 9][..]);
-        // Clearing restores the full view.
-        assert_eq!(e.set_filter(None), 12);
-        assert_eq!(e.view_len(), 12);
+        let s = state();
+        assert_eq!(s.set_filter(Some(0)), 4, "category 0 has 4 rows");
+        assert_eq!(s.view_len(), 4);
+        assert_eq!(&*s.order(), &[0, 3, 6, 9]);
+        assert_eq!(s.set_filter(None), 12);
+        assert_eq!(s.view_len(), 12);
+    }
+
+    #[test]
+    fn external_shares_the_same_state() {
+        // The external mutates the shared state; a separately-held handle to
+        // the SAME Rc observes the change (the use_view_order sharing).
+        let s = state();
+        let mut e = ViewSortFilterExternal::new(Rc::clone(&s));
+        e.invoke("cycle_sort", IntrospectValue::Null).unwrap();
+        assert_eq!(s.sort(), Some(true), "external + view share one source of truth");
     }
 
     #[test]
     fn query_surfaces_sort_filter_view_len_and_source_map() {
-        let mut e = ext();
+        let e = ext();
         assert_eq!(e.query("sort_dir"), Some(IntrospectValue::Text("none".into())));
         assert_eq!(e.query("filter"), Some(IntrospectValue::Null));
         assert_eq!(e.query("view_len"), Some(IntrospectValue::Int(12)));
@@ -537,13 +658,6 @@ mod tests {
             "out-of-range view position is present-but-empty, not absent",
         );
         assert_eq!(e.query("nope"), None, "undeclared path is genuinely absent");
-        e.cycle_sort();
-        assert_eq!(
-            e.query("sort_dir"),
-            Some(IntrospectValue::Text("ascending".into())),
-        );
-        assert_eq!(e.query("source_at.0"), Some(IntrospectValue::Int(0)));
-        assert_eq!(e.query("source_at.4"), Some(IntrospectValue::Int(1)));
     }
 
     #[test]
@@ -551,12 +665,12 @@ mod tests {
         let mut e = ext();
         e.intervene("sort_dir", IntrospectValue::Text("descending".into()))
             .expect("sort_dir set");
-        assert_eq!(e.sort(), Some(false));
+        assert_eq!(e.state().sort(), Some(false));
         e.intervene("filter", IntrospectValue::Int(2)).expect("filter set");
-        assert_eq!(e.filter(), Some(2));
-        assert_eq!(e.view_len(), 4);
+        assert_eq!(e.state().filter(), Some(2));
+        assert_eq!(e.state().view_len(), 4);
         e.intervene("filter", IntrospectValue::Null).expect("filter clear");
-        assert_eq!(e.filter(), None);
+        assert_eq!(e.state().filter(), None);
         assert_eq!(
             e.intervene("view_len", IntrospectValue::Int(1)),
             Err(InterveneError::ReadOnly),
@@ -589,7 +703,7 @@ mod tests {
         // Composite send: only the activation edge cycles.
         e.invoke("send", IntrospectValue::Text("cycle:PointerEnter".into()))
             .expect("enter is a no-op");
-        assert_eq!(e.sort(), Some(true), "hover did not change the sort");
+        assert_eq!(e.state().sort(), Some(true), "hover did not change the sort");
         assert_eq!(
             e.invoke("send", IntrospectValue::Text("cycle:PointerUp".into())),
             Ok(IntrospectValue::Text("descending".into())),

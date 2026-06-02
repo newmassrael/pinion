@@ -27333,6 +27333,66 @@
         "straddle + no a11y-assembly precedent; honest defer)."
       ]
     },
+    "R747.1": {
+      "decision_summary": "Fold the R747 sort/filter proxy onto a reactive ViewOrderState single-source-of-truth, matching the ScrollState/use_scroll_state pattern the codebase already uses to share an interactive axis between an External and a view (the scrollbar is a sibling extra-external in the same binding doing exactly this). The first R747 cut computed the order twice (proxy for query, view for paint) and materialized the dataset three times, kept consistent only by both calling row_label — an SSOT smell a user audit surfaced. Now ViewSortFilterExternal is a thin adapter over a shared Rc<ViewOrderState>; order is computed once and read by view + a11y + RPC-query; sort/filter are Signals so the view repaints reactively (no read_state projection). Behaviour identical.",
+      "changes_bullets": [
+        "new reactive ViewOrderState (sort/filter Signals + memoized order) + use_view_order hook",
+        "ViewSortFilterExternal is now a thin adapter over a shared Rc<ViewOrderState> (attach pattern)",
+        "order computed ONCE in ViewOrderState; view + a11y + RPC-query read the same Rc",
+        "binding State collapses to Option<usize> (selection); sort/filter read reactively, not projected",
+        "removes the dual order computation + triple dataset materialization of the first R747 cut"
+      ],
+      "verification_bullets": [
+        "view_order 13 unit (adds order memoization + external-shares-state); binding 5 unit",
+        "RPC E2E r747_virtual_sort.py 42 assert PASS against a freshly built binary (reactive-Signal",
+        "repaint path: sort/filter via RPC repaint the window, proxy source_at matches the render)",
+        "live native XTEST: native row click -> selected source; native header click -> sort cycles +",
+        "selection survives (observed via RPC introspection)",
+        "cargo test --workspace 0-fail; clippy -D pedantic (vello) clean; headless sweep 95/95"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "multi-column sort / multi-facet filter — single key + single category this slice (additive).",
+        "formal Model/View proxy trait — compute_order is a free fn; R730 table order() is a 2nd ordering",
+        "instance but 2-D cell-key, so the shared trait shape is not yet clear (3rd consumer unifies).",
+        "keyboard roving / sort-header Tab-stop — pointer + RPC + AT this slice (R730/R746 defer).",
+        "view-side scrollbar assembly + windowed a11y stay per-binding (R746.3 audit: layer straddle /",
+        "no a11y-assembly precedent; honest defer)."
+      ],
+      "publishable_decision_summary": "Fold the R747 sort/filter proxy onto a reactive ViewOrderState single-source-of-truth, matching the ScrollState/use_scroll_state pattern the codebase already uses to share an interactive axis between an External and a view (the scrollbar is a sibling extra-external in the same binding doing exactly this). The first R747 cut computed the order twice (proxy for query, view for paint) and materialized the dataset three times, kept consistent only by both calling row_label — an SSOT smell a user audit surfaced. Now ViewSortFilterExternal is a thin adapter over a shared Rc<ViewOrderState>; order is computed once and read by view + a11y + RPC-query; sort/filter are Signals so the view repaints reactively (no read_state projection). Behaviour identical.",
+      "publishable_changes_bullets": [
+        "new reactive ViewOrderState (sort/filter Signals + memoized order) + use_view_order hook",
+        "ViewSortFilterExternal is now a thin adapter over a shared Rc<ViewOrderState> (attach pattern)",
+        "order computed ONCE in ViewOrderState; view + a11y + RPC-query read the same Rc",
+        "binding State collapses to Option<usize> (selection); sort/filter read reactively, not projected",
+        "removes the dual order computation + triple dataset materialization of the first R747 cut"
+      ],
+      "publishable_verification_bullets": [
+        "view_order 13 unit (adds order memoization + external-shares-state); binding 5 unit",
+        "RPC E2E r747_virtual_sort.py 42 assert PASS against a freshly built binary (reactive-Signal",
+        "repaint path: sort/filter via RPC repaint the window, proxy source_at matches the render)",
+        "live native XTEST: native row click -> selected source; native header click -> sort cycles +",
+        "selection survives (observed via RPC introspection)",
+        "cargo test --workspace 0-fail; clippy -D pedantic (vello) clean; headless sweep 95/95"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "multi-column sort / multi-facet filter — single key + single category this slice (additive).",
+        "formal Model/View proxy trait — compute_order is a free fn; R730 table order() is a 2nd ordering",
+        "instance but 2-D cell-key, so the shared trait shape is not yet clear (3rd consumer unifies).",
+        "keyboard roving / sort-header Tab-stop — pointer + RPC + AT this slice (R730/R746 defer).",
+        "view-side scrollbar assembly + windowed a11y stay per-binding (R746.3 audit: layer straddle /",
+        "no a11y-assembly precedent; honest defer)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -40468,5 +40528,5 @@
       "reason": "design clarification — Intent.payload consumed by V::update reducer, not threaded through SCXML invoke send (R51.159 carry resolved as design choice)"
     }
   },
-  "schema_version": 5
+  "schema_version": 6
 }

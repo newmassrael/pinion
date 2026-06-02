@@ -40,7 +40,6 @@
 //! 10,000-row order is too large to project, so the view recomputes through
 //! the shared [`compute_order`] SSOT instead.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
@@ -53,10 +52,12 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::view_order::{compute_order, sort_dir_str, ViewSortFilterExternal};
+use pinion_core::widgets::view_order::{
+    sort_dir_str, use_view_order, ViewOrderState, ViewSortFilterExternal,
+};
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::widgets::virtual_select::VirtualSelectExternal;
-use pinion_core::{Frame, Owner, Scene, WidgetCore};
+use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -88,10 +89,6 @@ const SORT_TAG: &str = "vsort";
 const SORT_REGION: &str = "cycle";
 const SCROLL_KEY: &str = "vlist_scroll";
 const SCROLLBAR_TAG: &str = "vlist_scrollbar";
-/// [`Owner::cache`] key for the memoized source keys (built once).
-const KEYS_KEY: &str = "vsort_keys";
-/// [`Owner::cache`] key for the order memo (recomputed on `(sort, filter)`).
-const ORDER_KEY: &str = "vsort_order";
 
 /// Five filter categories. Source row `i` belongs to `CATEGORIES[i % 5]`.
 const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
@@ -109,44 +106,18 @@ fn row_label(i: usize) -> String {
     format!("{} \u{00B7} {i:05}", CATEGORIES[row_category(i)])
 }
 
-/// The source sort keys, built once and shared across frames (the stable
-/// sort then borrows `&str` keys without per-comparison allocation).
-fn source_keys() -> Rc<Vec<String>> {
-    Owner::current()
-        .expect("view runs in an Owner scope")
-        .cache(KEYS_KEY, || (0..N).map(row_label).collect::<Vec<String>>())
-}
-
-/// Memoized visual→source permutation for `(sort, filter)`.
-#[derive(Default)]
-struct OrderMemo {
-    sort: Option<bool>,
-    filter: Option<usize>,
-    order: Rc<Vec<usize>>,
-    valid: bool,
-}
-
-/// The current visual→source order for `(sort, filter)`, recomputed only
-/// when the config changes (shared by the view and the a11y tree, which run
-/// in the same Owner scope). Cheap `Rc` clone on a cache hit.
-fn current_order(sort: Option<bool>, filter: Option<usize>) -> Rc<Vec<usize>> {
-    let keys = source_keys();
-    let memo = Owner::current()
-        .expect("view runs in an Owner scope")
-        .cache(ORDER_KEY, || RefCell::new(OrderMemo::default()));
-    let mut m = memo.borrow_mut();
-    if !m.valid || m.sort != sort || m.filter != filter {
-        m.order = Rc::new(compute_order(
-            N,
-            sort,
-            |i| keys[i].as_str(),
-            |i| filter.is_none_or(|f| row_category(i) == f),
-        ));
-        m.sort = sort;
-        m.filter = filter;
-        m.valid = true;
-    }
-    Rc::clone(&m.order)
+/// The shared [`ViewOrderState`] — the single source of truth for the
+/// list's sort/filter view order. The view, the a11y tree, and the
+/// [`ViewSortFilterExternal`] all reach the same `Rc` through this hook (the
+/// `use_scroll_state` pattern), so the order is computed once and the rows
+/// the view paints are the rows the proxy's `query` reports. The source keys
+/// + categories are materialized once, here, on first resolution.
+fn use_list_order() -> Rc<ViewOrderState> {
+    use_view_order(SORT_TAG, || {
+        let keys = (0..N).map(row_label).collect::<Vec<String>>();
+        let cats = (0..N).map(row_category).collect::<Vec<usize>>();
+        (keys, cats)
+    })
 }
 
 /// One virtualized row. `source` is the data index (the row's identity); the
@@ -220,17 +191,21 @@ fn sort_header(sort: Option<bool>, filter: Option<usize>, theme: &Theme) -> Scen
     )
 }
 
-/// view-fn (§6.3): pure sync mapping `(selected, sort, filter) -> Scene`.
-/// The dataset is virtual — `view_virtual_list` windows over the *view*
-/// length (`order.len()`), and each visual position resolves to its source
-/// index through the memoized [`current_order`].
+/// view-fn (§6.3): pure sync mapping `selected -> Scene`. The dataset is
+/// virtual — `view_virtual_list` windows over the *view* length
+/// (`order.len()`), and each visual position resolves to its source index
+/// through the shared [`ViewOrderState`]. Sort/filter live in that reactive
+/// holder (read here, not projected into `State`), so a sort/filter change
+/// repaints through the `Signal` subscription exactly as scroll does.
 #[allow(clippy::trivially_copy_pass_by_ref)] // mirrors the WidgetCore::view `&Frame` signature
-fn view(state: SortViewState, _frame: &Frame) -> Scene {
+fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     let scroll_state = use_scroll_state(SCROLL_KEY);
     let theme = use_theme(THEME_TAG).theme_animated();
-    let SortViewState { selected, sort, filter } = state;
 
-    let order = current_order(sort, filter);
+    let view_order = use_list_order();
+    let sort = view_order.sort();
+    let filter = view_order.filter();
+    let order = view_order.order();
     let view_len = order.len();
 
     let header = sort_header(sort, filter, &theme);
@@ -276,21 +251,15 @@ fn view(state: SortViewState, _frame: &Frame) -> Scene {
     )
 }
 
-/// The widget's projected state: the selected **source** index plus the
-/// active sort + filter. All `Copy` per the §6.3 projection contract; the
-/// order permutation itself is derived (memoized) in the view from these,
-/// never projected (a 10,000-entry permutation is not state to copy).
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-struct SortViewState {
-    selected: Option<usize>,
-    sort: Option<bool>,
-    filter: Option<usize>,
-}
-
 struct VirtualSortView;
 
 impl WidgetCore for VirtualSortView {
-    type State = SortViewState;
+    /// The widget's projected state is just the selected **source** index
+    /// (like `hello-virtual-select`). Sort/filter are an auxiliary reactive
+    /// axis held in the shared [`ViewOrderState`] — read in the view, not
+    /// projected here (the order is not state to copy; a config change
+    /// repaints through its `Signal`, like scroll offset).
+    type State = Option<usize>;
     type Event = ();
 
     /// Primary = the index-held selection coordinator (R746), at
@@ -299,13 +268,12 @@ impl WidgetCore for VirtualSortView {
         Box::new(VirtualSelectExternal::new(N))
     }
 
-    /// Extras: the sort/filter proxy (holding the same deterministic source
-    /// keys the view recomputes from) and the scrollbar peer.
+    /// Extras: the sort/filter proxy (a thin adapter over the **same**
+    /// shared [`ViewOrderState`] the view reads via [`use_list_order`]) and
+    /// the scrollbar peer.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        let keys = (0..N).map(row_label).collect::<Vec<String>>();
-        let cats = (0..N).map(row_category).collect::<Vec<usize>>();
         vec![
-            ExtraExternal::new(SORT_TAG, Box::new(ViewSortFilterExternal::new(keys, cats))),
+            ExtraExternal::new(SORT_TAG, Box::new(ViewSortFilterExternal::new(use_list_order()))),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
         ]
     }
@@ -314,38 +282,21 @@ impl WidgetCore for VirtualSortView {
         LIST_TAG
     }
 
-    /// Project the selected source index (primary) + sort/filter (the
-    /// `vsort` proxy) off the scene. A change in any of the three raises the
-    /// §5.20 transition and repaints; scroll offset + scrollbar phase
-    /// repaint via their own reactive `Signal` subscriptions.
-    fn read_state(scene: &Scene) -> SortViewState {
-        let selected = scene
+    /// Project the selected source index off the primary coordinator. A
+    /// selection change raises the §5.20 transition and repaints; sort /
+    /// filter / scroll repaint via their own reactive `Signal` subscriptions
+    /// the view opens.
+    fn read_state(scene: &Scene) -> Option<usize> {
+        scene
             .find_external_with_tag(LIST_TAG)
             .and_then(|node| node.handle.introspect())
             .and_then(|intro| match intro.query("selected") {
                 Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
                 _ => None,
-            });
-        let (sort, filter) = scene
-            .find_external_with_tag(SORT_TAG)
-            .and_then(|node| node.handle.introspect())
-            .map_or((None, None), |intro| {
-                let sort = match intro.query("sort_dir") {
-                    Some(IntrospectValue::Text(s)) => {
-                        pinion_core::widgets::view_order::sort_dir_from_str(&s)
-                    }
-                    _ => None,
-                };
-                let filter = match intro.query("filter") {
-                    Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
-                    _ => None,
-                };
-                (sort, filter)
-            });
-        SortViewState { selected, sort, filter }
+            })
     }
 
-    fn view(state: SortViewState, frame: &Frame) -> Scene {
+    fn view(state: Option<usize>, frame: &Frame) -> Scene {
         view(state, frame)
     }
 
@@ -364,16 +315,11 @@ impl WidgetCore for VirtualSortView {
         "pinion hello-virtual-sort (R747 §5.27 §5.40 sort/filter virtualization)"
     }
 
-    fn fmt_state_log(state: &SortViewState) -> String {
-        let sel = match state.selected {
-            Some(i) => format!("row {i}"),
-            None => "none".to_string(),
-        };
-        let filt = match state.filter {
-            Some(c) => CATEGORIES[c % CATEGORIES.len()],
-            None => "all",
-        };
-        format!("selected={sel} sort={} filter={filt}", sort_dir_str(state.sort))
+    fn fmt_state_log(state: &Option<usize>) -> String {
+        match state {
+            Some(i) => format!("selected=source {i}"),
+            None => "selected=none".to_string(),
+        }
     }
 }
 
@@ -383,10 +329,12 @@ impl WidgetA11y for VirtualSortView {
     /// rendered window; each visible row is an [`AriaRole::ListItem`] at its
     /// **visual** `aria-posinset` with `aria-selected = (source == selected)`.
     /// The sort header is a [`AriaRole::Button`] naming the active sort.
-    fn access_node(state: &SortViewState, _focused: Option<&str>) -> Vec<AccessNode> {
-        let SortViewState { selected, sort, filter } = *state;
+    fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
+        let selected = *selected;
         let scroll_state = use_scroll_state(SCROLL_KEY);
-        let order = current_order(sort, filter);
+        let view_order = use_list_order();
+        let sort = view_order.sort();
+        let order = view_order.order();
         let view_len = order.len();
         let window =
             compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, view_len, ROW_PITCH, OVERSCAN);
@@ -436,9 +384,17 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Owner;
 
-    fn run_view(state: SortViewState) -> Scene {
-        Owner::new().run(|| view(state, &Frame::default()))
+    /// Render the view with the shared [`ViewOrderState`] pre-set to `sort` /
+    /// `filter` (mutated within the same Owner scope the view reads from).
+    fn render(selected: Option<usize>, sort: Option<bool>, filter: Option<usize>) -> Scene {
+        Owner::new().run(|| {
+            let vo = use_list_order();
+            vo.set_sort(sort);
+            vo.set_filter(filter);
+            view(selected, &Frame::default())
+        })
     }
 
     /// Find the `vlist#<source>` row container and return its fill color.
@@ -485,7 +441,7 @@ mod tests {
 
     #[test]
     fn boot_renders_small_window_in_source_order() {
-        let scene = run_view(SortViewState::default());
+        let scene = render(None, None, None);
         let sources = present_sources(&scene);
         assert!(sources.len() < 30, "virtualized: small window, got {}", sources.len());
         // Unsorted: visual order == source order at the top.
@@ -494,8 +450,7 @@ mod tests {
 
     #[test]
     fn ascending_sort_regroups_window_by_category() {
-        let state = SortViewState { sort: Some(true), ..Default::default() };
-        let scene = run_view(state);
+        let scene = render(None, Some(true), None);
         let sources = present_sources(&scene);
         // Ascending by "Alpha · …": the first visible sources are the
         // Alpha rows 0,5,10,15,… (category 0 = every 5th source index).
@@ -509,13 +464,9 @@ mod tests {
         // Select source 5 (an Alpha row). Unsorted it sits at visual pos 5;
         // ascending it jumps to visual pos 1 — but it is the SAME data row,
         // still Accent in both.
-        let unsorted = run_view(SortViewState { selected: Some(5), ..Default::default() });
+        let unsorted = render(Some(5), None, None);
         assert_eq!(row_fill(&unsorted, 5), Some(accent), "source 5 selected unsorted");
-        let sorted = run_view(SortViewState {
-            selected: Some(5),
-            sort: Some(true),
-            ..Default::default()
-        });
+        let sorted = render(Some(5), Some(true), None);
         assert_eq!(row_fill(&sorted, 5), Some(accent), "source 5 still selected after sort");
         // Its visual position moved: now second in the Alpha block.
         assert_eq!(present_sources(&sorted)[1], 5);
@@ -525,7 +476,7 @@ mod tests {
     fn filter_shrinks_the_view_to_one_category() {
         // Filter to category 1 (Bravo = sources 1,6,11,…). Every rendered
         // row must be a Bravo source (≡ 1 mod 5).
-        let scene = run_view(SortViewState { filter: Some(1), ..Default::default() });
+        let scene = render(None, None, Some(1));
         let sources = present_sources(&scene);
         assert!(!sources.is_empty());
         assert!(
@@ -538,8 +489,11 @@ mod tests {
     fn a11y_marks_selected_source_and_visual_posinset() {
         // Source 5 selected, ascending: it is visual position 2 (posinset 2)
         // in the Alpha block and carries aria-selected.
-        let state = SortViewState { selected: Some(5), sort: Some(true), ..Default::default() };
-        let nodes = Owner::new().run(|| VirtualSortView::access_node(&state, None));
+        let nodes = Owner::new().run(|| {
+            let vo = use_list_order();
+            vo.set_sort(Some(true));
+            VirtualSortView::access_node(&Some(5), None)
+        });
         // nodes[0] = sort button, nodes[1] = list, rest = items.
         assert_eq!(nodes[0].role, AriaRole::Button);
         assert_eq!(nodes[1].role, AriaRole::List);
