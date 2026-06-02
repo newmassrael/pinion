@@ -42,6 +42,60 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::widgets::IntentEmitter;
+
+/// R746 §5.27 §5.38 — the plain index holder wrapped by
+/// [`VirtualSelectExternal`].
+///
+/// Pure single-select-by-index state, no interaction statechart and no
+/// §5.20 queue of its own — the [`IntentEmitter`] wrapper owns the pending
+/// intents (exactly as [`RadioGroup`](crate::widgets::radio_group) is the
+/// plain widget inside `IntentEmitter<RadioGroup>`). Holding the selection
+/// as a **data index** (not a per-leaf bit) is what decouples it from
+/// materialization; `item_count` bounds every mutation so a malformed wire
+/// payload can never select a non-existent row.
+#[derive(Debug, Clone)]
+struct VirtualSelect {
+    /// Selected data index, or `None` when nothing is selected.
+    selected: Option<usize>,
+    /// Total dataset size — the validity bound for any selection.
+    item_count: usize,
+}
+
+impl VirtualSelect {
+    fn new(item_count: usize) -> Self {
+        Self { selected: None, item_count }
+    }
+
+    /// Set the selection to `index` (single-select). Out-of-range indices
+    /// are ignored. Returns `true` if the selection changed — the caller
+    /// ([`VirtualSelectExternal::select`]) turns that into the §5.20 intent.
+    fn select(&mut self, index: usize) -> bool {
+        if index >= self.item_count || self.selected == Some(index) {
+            return false;
+        }
+        self.selected = Some(index);
+        true
+    }
+
+    fn clear(&mut self) -> bool {
+        let had = self.selected.is_some();
+        self.selected = None;
+        had
+    }
+
+    fn set_selected(&mut self, index: Option<usize>) -> bool {
+        let next = match index {
+            Some(i) if i < self.item_count => Some(i),
+            _ => None,
+        };
+        if next == self.selected {
+            return false;
+        }
+        self.selected = next;
+        true
+    }
+}
 
 /// R746 §5.27 §5.38 — single-select-by-index coordinator for a virtualized
 /// list.
@@ -61,17 +115,26 @@ use crate::intent::Intent;
 /// ([`set_selected`](Self::set_selected) / [`clear`](Self::clear)) is
 /// silent, exactly as [`selection::replace_selection`](crate::widgets::selection::replace_selection)
 /// is (restoration is not interaction).
-#[derive(Debug, Clone)]
+///
+/// The §5.20 pending queue is owned by the shared
+/// [`IntentEmitter`] wrapper — the same one
+/// `RadioGroupExternal` / `ListBoxExternal` / `TableExternal` use — rather
+/// than a hand-rolled `pending: Vec<Intent>` field (the pre-R51.5
+/// anti-pattern that `IntentEmitter` exists to eliminate; R746.3 brought
+/// this lone outlier back into that SSOT). This widget is a plain holder,
+/// so it does *not* implement [`WidgetTransition`](crate::widgets::WidgetTransition)
+/// auto-dispatch — it pushes the intent explicitly on the interaction edge.
 pub struct VirtualSelectExternal {
-    /// Selected data index, or `None` when nothing is selected.
-    selected: Option<usize>,
-    /// Total dataset size — the validity bound for any selection.
-    item_count: usize,
-    /// §5.20 `"selected"` intents queued by interaction
-    /// ([`select`](Self::select)), drained by the framework via
-    /// [`drain_intents`](External::drain_intents). Admin mutations do not
-    /// queue.
-    pending: Vec<Intent>,
+    em: IntentEmitter<VirtualSelect>,
+}
+
+impl core::fmt::Debug for VirtualSelectExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VirtualSelectExternal")
+            .field("selected", &self.selected())
+            .field("item_count", &self.item_count())
+            .finish()
+    }
 }
 
 impl VirtualSelectExternal {
@@ -79,19 +142,19 @@ impl VirtualSelectExternal {
     /// selected.
     #[must_use]
     pub fn new(item_count: usize) -> Self {
-        Self { selected: None, item_count, pending: Vec::new() }
+        Self { em: IntentEmitter::new(VirtualSelect::new(item_count)) }
     }
 
     /// The selected data index, or `None`.
     #[must_use]
     pub fn selected(&self) -> Option<usize> {
-        self.selected
+        self.em.inner.selected
     }
 
     /// Total dataset size.
     #[must_use]
     pub fn item_count(&self) -> usize {
-        self.item_count
+        self.em.inner.item_count
     }
 
     /// Set the selection to `index` (single-select) — the **interaction**
@@ -99,12 +162,11 @@ impl VirtualSelectExternal {
     /// ignored. On a real change, queues a §5.20 `"selected"` intent
     /// carrying the new index. Returns `true` if the selection changed.
     pub fn select(&mut self, index: usize) -> bool {
-        if index >= self.item_count || self.selected == Some(index) {
+        if !self.em.inner.select(index) {
             return false;
         }
-        self.selected = Some(index);
         if let Ok(i) = i64::try_from(index) {
-            self.pending
+            self.em
                 .push(Intent::new_static("selected", IntrospectValue::Int(i)));
         }
         true
@@ -112,24 +174,14 @@ impl VirtualSelectExternal {
 
     /// Clear the selection. Returns `true` if something was selected.
     pub fn clear(&mut self) -> bool {
-        let had = self.selected.is_some();
-        self.selected = None;
-        had
+        self.em.inner.clear()
     }
 
     /// Replace the selection directly (the admin / persisted-restore /
     /// form-default channel — not an interaction). `None` or an
     /// out-of-range index clears. Returns `true` if it changed.
     pub fn set_selected(&mut self, index: Option<usize>) -> bool {
-        let next = match index {
-            Some(i) if i < self.item_count => Some(i),
-            _ => None,
-        };
-        if next == self.selected {
-            return false;
-        }
-        self.selected = next;
-        true
+        self.em.inner.set_selected(index)
     }
 
     /// Drive the composite pointer channel: on the activation edge
@@ -151,7 +203,7 @@ impl VirtualSelectExternal {
     /// The selected index as an `IntrospectValue` (`Int` or `Null`) — the
     /// uniform return for the mutating `invoke` paths.
     fn selected_value(&self) -> IntrospectValue {
-        self.selected
+        self.selected()
             .and_then(|i| i64::try_from(i).ok())
             .map_or(IntrospectValue::Null, IntrospectValue::Int)
     }
@@ -184,16 +236,14 @@ impl External for VirtualSelectExternal {
     /// [`ListBox`](crate::widgets::listbox) honour, so AI / automation see
     /// the selection on the intent channel.
     fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
-        for intent in self.pending.drain(..) {
-            sink(intent);
-        }
+        self.em.drain(sink);
     }
 
     /// Dirty exactly while a `"selected"` intent awaits draining; the
     /// selection value itself only changes through `invoke` / `intervene`,
     /// which the framework already follows with a repaint.
     fn is_dirty(&self) -> bool {
-        !self.pending.is_empty()
+        self.em.is_dirty()
     }
 }
 
@@ -217,7 +267,7 @@ impl ExternalIntrospect for VirtualSelectExternal {
             // `Null` (present-but-empty), not absence.
             "selected" => Some(self.selected_value()),
             "item_count" => Some(
-                i64::try_from(self.item_count)
+                i64::try_from(self.item_count())
                     .map_or(IntrospectValue::Null, IntrospectValue::Int),
             ),
             _ => None,

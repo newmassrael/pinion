@@ -16562,6 +16562,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R746.3 — Bring the lone outlier VirtualSelectExternal into the IntentEmitter SSOT: a self-audit per the R747 entry directive found that R746.2 added the selected intent via a hand-rolled pending:Vec<Intent>+drain+is_dirty triple — the exact pre-R51.5 anti-pattern IntentEmitter exists to eliminate, while all 18 other intent-emitting widgets use the substrate. Wrap an inner VirtualSelect holder in IntentEmitter<W>; behaviour byte-identical.
+
+**Changes**:
+- wrap inner `VirtualSelect` holder in `IntentEmitter<W>` — the shared §5.20 pending queue
+- drop hand-rolled `pending: Vec<Intent>` + manual `drain_intents` loop + manual `is_dirty`
+- inner `VirtualSelect` owns pure `select`/`clear`/`set_selected`; External pushes intent on edge
+- hand-written `Debug` mirrors `RadioGroupExternal` (`IntentEmitter` derives neither Debug nor Clone)
+- behaviour byte-identical: 12/12 unit incl. `selected`-intent + `is_dirty` contract tests unchanged
+
+
+
+**Verification**:
+- cargo test --workspace: 0 fail (12/12 virtual_select unit unchanged)
+- clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean
+- headless demo sweep: 94/94 PASS
+- hello-virtual-select E2E (tools/demos/r746_virtual_select.py): PASS — selection by
+- data index survives windowing; §5.20 intent path intact
+
+
+
+**Impact**: §5.27, §5.38, §5.20
+
+
+**Carry forward**:
+- VirtualSelect is a plain holder (no WidgetTransition statechart) so it pushes intents
+- explicitly on the interaction edge rather than via IntentEmitter::dispatch auto-detect;
+- the generic push/drain/is_dirty tier needs no WidgetTransition bound, so reuse is clean.
+- multi-select-by-index / keyboard roving / VirtualSelectExternal rename: unchanged R746 carry
+- (evidence-first, real consumer gated).
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
