@@ -36,9 +36,10 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::pagination::PaginationExternal;
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::{Color, Frame, Scene, WidgetCore};
+use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::radio_composite as rc;
 use pinion_widget_paint::state_layer::state_layer;
@@ -85,6 +86,10 @@ struct PageState {
     focused: Option<usize>,
     can_prev: bool,
     can_next: bool,
+    /// Chevron interaction postures (drive the hover / pressed state-layer;
+    /// `Disabled` at the clamped ends).
+    prev_state: ButtonState,
+    next_state: ButtonState,
 }
 
 impl PageState {
@@ -94,6 +99,8 @@ impl PageState {
             focused: None,
             can_prev: false,
             can_next: false,
+            prev_state: ButtonState::Idle,
+            next_state: ButtonState::Idle,
         }
     }
 }
@@ -103,11 +110,11 @@ impl PageState {
 fn view(state: PageState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let mut row: Vec<Scene> = Vec::with_capacity(N + 2);
-    row.push(arrow("prev", PREV_GLYPH, state.can_prev, &theme));
+    row.push(arrow("prev", PREV_GLYPH, state.prev_state, &theme));
     for i in 0..N {
         row.push(page_cell(i, state.pages[i].0, state.pages[i].1, &theme));
     }
-    row.push(arrow("next", NEXT_GLYPH, state.can_next, &theme));
+    row.push(arrow("next", NEXT_GLYPH, state.next_state, &theme));
     // PRIMARY_TAG on the pager row so `{path:"pagination"}` AI routing +
     // `rect_for_tag` AT bounds attach to the Navigation landmark.
     let bar = Scene::Container(
@@ -167,14 +174,20 @@ fn page_cell(index: usize, st: RadioState, current: bool, theme: &Theme) -> Scen
 }
 
 /// A previous / next chevron, tagged `"pagination#prev"` / `"pagination#next"`.
-/// `enabled` chevrons paint in `OnSurface`; clamped (disabled) chevrons in
-/// the muted on-surface tone (the `aria-disabled` end state).
-fn arrow(which: &str, glyph: &str, enabled: bool, theme: &Theme) -> Scene {
-    let ink = if enabled {
-        theme.resolve(ColorRole::OnSurface)
-    } else {
+/// An enabled chevron paints its glyph in `OnSurface` over a circular M3
+/// state-layer that fills on hover (8 %) / press (12 %); a `Disabled`
+/// chevron (clamped end) paints muted with no overlay — the `aria-disabled`
+/// end state, and the button ignores pointer input so it never hovers.
+fn arrow(which: &str, glyph: &str, st: ButtonState, theme: &Theme) -> Scene {
+    let disabled = matches!(st, ButtonState::Disabled);
+    let ink = if disabled {
         theme.resolve(ColorRole::OnSurfaceMuted)
+    } else {
+        theme.resolve(ColorRole::OnSurface)
     };
+    // The circular hover / pressed overlay, via the shared R752 state-layer
+    // SSOT (transparent base → Idle/Disabled paint clear, Hover/Pressed tint).
+    let overlay = state_layer(Color::rgba(0, 0, 0, 0), st, theme);
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             glyph,
@@ -182,6 +195,7 @@ fn arrow(which: &str, glyph: &str, enabled: bool, theme: &Theme) -> Scene {
             TextStyle::new().with_size_px(ARROW_FONT_PX).with_fg(ink),
         ))])
         .with_tag(format!("{PRIMARY_TAG}#{which}"))
+        .with_style(BoxStyle::filled(overlay).with_corner_radius(CELL_RADIUS))
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
@@ -196,6 +210,15 @@ fn arrow(which: &str, glyph: &str, enabled: bool, theme: &Theme) -> Scene {
 /// `TextNode`; the accessible names are `"Page <n>"` (built in
 /// `access_node`).
 const PAGE_LABELS: [&str; N] = ["1", "2", "3", "4", "5"];
+
+/// Read a chevron's [`ButtonState`] from the coordinator's introspect slot
+/// (`prev.state` / `next.state`), defaulting to `Idle` if absent.
+fn read_button_state(intro: &dyn pinion_core::external::ExternalIntrospect, path: &str) -> ButtonState {
+    match intro.query(path) {
+        Some(IntrospectValue::Text(name)) => ButtonState::from_name_or_default(&name),
+        _ => ButtonState::Idle,
+    }
+}
 
 struct PaginationView;
 
@@ -223,6 +246,8 @@ impl WidgetCore for PaginationView {
         out.focused = rc::focused_index(intro);
         out.can_prev = matches!(intro.query("can_prev"), Some(IntrospectValue::Bool(true)));
         out.can_next = matches!(intro.query("can_next"), Some(IntrospectValue::Bool(true)));
+        out.prev_state = read_button_state(intro, "prev.state");
+        out.next_state = read_button_state(intro, "next.state");
         out
     }
 

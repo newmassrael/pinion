@@ -60,10 +60,12 @@ use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::{Color, Scene};
 
 /// R691 §5.50 — M3 hover state-layer weight for the active (keyboard /
-/// hovered) dropdown item, painted as an `OnSurface` overlay at 8 %
-/// over the dropdown surface (the M3 `hover` token; pressed = 12 %,
-/// disabled = 38 % land additively).
-const ACTIVE_ITEM_STATE_LAYER: f32 = 0.08;
+/// hovered) dropdown item, painted as an `OnSurface` overlay over the
+/// dropdown surface. A divergent state-layer consumer (active-item, not a
+/// standard interaction enum), so it keeps its own arm but references the
+/// shared [`crate::state_layer::HOVER`] token (R754.1 — clears an R752
+/// residual where this held a raw `0.08`).
+const ACTIVE_ITEM_STATE_LAYER: f32 = crate::state_layer::HOVER;
 
 /// R691 §5.50 — Material 3 `MenuBar` dimensions. Mirrors the
 /// [`crate::tabs::TabsStyle`] carrier pattern so the widget catalog

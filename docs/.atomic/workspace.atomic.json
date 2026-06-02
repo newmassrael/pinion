@@ -27854,6 +27854,50 @@
         "Fixed-N pages; dynamic count + ellipsis windowing (1 2 ... 9 10) deferred (no consumer)"
       ]
     },
+    "R754.1": {
+      "decision_summary": "Audit fix: pagination prev/next interaction feedback + clear R752 state-layer residuals",
+      "changes_bullets": [
+        "Pagination prev/next now real Buttons: M3 hover/press state-layer + pointer-capture (R741)",
+        "Disabled chevron at clamped ends ignores pointer; click via Button WidgetTransition::detect SSOT",
+        "prev.state/next.state introspect added; chevron paints the shared state_layer overlay",
+        "menu.rs + hello-tooltip raw 0.08 -> state_layer::HOVER (clears R752 by-dep-sweep residual)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0-fail; clippy --workspace --all-targets -D pedantic (vello) clean",
+        "pagination 12 unit (incl hover/press/disabled-ignore) + hello-pagination 5; sweep 100/100",
+        "Live native XTEST: next chevron white->(235,235,235) hover overlay on mouse-over; click steps 2->3"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "R755 = bigger SSOT debt: 24-file widget-state -> AccessState posture mapping duplicated",
+        "InteractionState trait stuck in widget-paint -> move to core + AccessState::from_interaction",
+        "Pagination still fixed-N; dynamic count + ellipsis windowing deferred (no consumer)"
+      ],
+      "publishable_decision_summary": "Audit fix: pagination prev/next interaction feedback + clear R752 state-layer residuals",
+      "publishable_changes_bullets": [
+        "Pagination prev/next now real Buttons: M3 hover/press state-layer + pointer-capture (R741)",
+        "Disabled chevron at clamped ends ignores pointer; click via Button WidgetTransition::detect SSOT",
+        "prev.state/next.state introspect added; chevron paints the shared state_layer overlay",
+        "menu.rs + hello-tooltip raw 0.08 -> state_layer::HOVER (clears R752 by-dep-sweep residual)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0-fail; clippy --workspace --all-targets -D pedantic (vello) clean",
+        "pagination 12 unit (incl hover/press/disabled-ignore) + hello-pagination 5; sweep 100/100",
+        "Live native XTEST: next chevron white->(235,235,235) hover overlay on mouse-over; click steps 2->3"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R755 = bigger SSOT debt: 24-file widget-state -> AccessState posture mapping duplicated",
+        "InteractionState trait stuck in widget-paint -> move to core + AccessState::from_interaction",
+        "Pagination still fixed-N; dynamic count + ellipsis windowing deferred (no consumer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -17016,6 +17016,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R754.1 — Audit fix: pagination prev/next interaction feedback + clear R752 state-layer residuals
+
+**Changes**:
+- Pagination prev/next now real Buttons: M3 hover/press state-layer + pointer-capture (R741)
+- Disabled chevron at clamped ends ignores pointer; click via Button WidgetTransition::detect SSOT
+- prev.state/next.state introspect added; chevron paints the shared state_layer overlay
+- menu.rs + hello-tooltip raw 0.08 -> state_layer::HOVER (clears R752 by-dep-sweep residual)
+
+
+
+**Verification**:
+- cargo test --workspace 0-fail; clippy --workspace --all-targets -D pedantic (vello) clean
+- pagination 12 unit (incl hover/press/disabled-ignore) + hello-pagination 5; sweep 100/100
+- Live native XTEST: next chevron white->(235,235,235) hover overlay on mouse-over; click steps 2->3
+
+
+
+**Impact**: §5.38, §5.50
+
+
+**Carry forward**:
+- R755 = bigger SSOT debt: 24-file widget-state -> AccessState posture mapping duplicated
+- InteractionState trait stuck in widget-paint -> move to core + AccessState::from_interaction
+- Pagination still fixed-N; dynamic count + ellipsis windowing deferred (no consumer)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

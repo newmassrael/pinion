@@ -1,5 +1,5 @@
 //! R754 §5.38 — `Pagination`: a single-select page coordinator with
-//! clamping previous / next controls.
+//! interactive, clamping previous / next controls.
 //!
 //! A pagination control is, at its core, a single-select group of numbered
 //! page links (exactly one page is *current*) — so the N page cells reuse
@@ -11,30 +11,53 @@
 //! What pagination adds is **previous / next** stepping. Unlike the cyclic
 //! arrow roving of a radio group, prev / next *clamp* at the ends (page 0
 //! has no previous, the last page has no next), and they are their own
-//! pointer targets. This wrapper owns the page [`RadioGroupExternal`] and
-//! routes the composite `'#'`-split wire (R51.42) so a click on the paint
-//! tag `"{tag}#prev"` / `"{tag}#next"` arrives as `"prev:<Event>"` /
-//! `"next:<Event>"` and steps the current page on the `PointerUp` edge —
-//! the single-coordinator pattern `DatePickerExternal` established for its
-//! previous / next-month buttons. Page-cell sends (`"<i>:<Event>"`),
-//! queries and intervene delegate straight to the inner group, so the
-//! whole introspect surface AI clients and the view read is the radio
-//! group's, plus `can_prev` / `can_next`.
+//! pointer targets. Each is a real [`Button`] (R754.1) — so the chevrons
+//! show the M3 hover / pressed state-layer, carry pointer-capture
+//! (jitter-robust, the R741 rule), and sit in the `Disabled` state at the
+//! clamped ends where they ignore pointer input entirely. This wrapper owns
+//! the page [`RadioGroupExternal`] plus the two buttons and routes the
+//! composite `'#'`-split wire (R51.42): a click on the paint tag
+//! `"{tag}#prev"` / `"{tag}#next"` arrives as `"prev:<Event>"` /
+//! `"next:<Event>"` and drives that button; on the button's click edge
+//! (`Pressed -> Hover`, detected through the button's own
+//! [`WidgetTransition::detect`] SSOT) the current page steps. Page-cell
+//! sends (`"<i>:<Event>"`), queries and intervene delegate straight to the
+//! inner group, so the whole introspect surface AI clients and the view
+//! read is the radio group's, plus `can_prev` / `can_next` and the
+//! `prev.state` / `next.state` button postures.
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::widgets::button::{Button, ButtonEvent, ButtonState};
 use crate::widgets::radio::{RadioEvent, RadioState};
 use crate::widgets::radio_group::RadioGroupExternal;
+use crate::widgets::WidgetTransition;
+use crate::{WidgetEventName, WidgetStateName};
 
 /// A pagination coordinator: N page cells (a [`RadioGroupExternal`]) plus
-/// clamping previous / next stepping. See the module docs.
-#[derive(Debug)]
+/// two clamping previous / next [`Button`]s. See the module docs.
 pub struct PaginationExternal {
     pages: RadioGroupExternal,
+    prev: Button,
+    next: Button,
     count: usize,
+}
+
+// `Button` wraps a non-`Debug` SCXML `Widget`, so derive is unavailable;
+// the [`External`] supertrait requires `Debug`, so format the observable
+// posture (count / current / chevron states) by hand.
+impl core::fmt::Debug for PaginationExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PaginationExternal")
+            .field("count", &self.count)
+            .field("current", &self.current())
+            .field("prev", &self.prev.state())
+            .field("next", &self.next.state())
+            .finish_non_exhaustive()
+    }
 }
 
 impl PaginationExternal {
@@ -42,6 +65,8 @@ impl PaginationExternal {
     /// selected (clamped into range). The current page is seeded through
     /// the `KeyboardActivate` edge so the boot frame paints a clean current
     /// cell with no hover / pressed residue (the R728 boot-seed lesson).
+    /// The previous / next buttons are immediately synced to the clamped
+    /// ends (page 0 → prev `Disabled`).
     ///
     /// # Panics
     /// Never panics; an out-of-range `current` is clamped.
@@ -51,7 +76,9 @@ impl PaginationExternal {
         if count > 0 {
             pages.send(current.min(count - 1), RadioEvent::KeyboardActivate);
         }
-        Self { pages, count }
+        let mut me = Self { pages, prev: Button::new(), next: Button::new(), count };
+        me.sync_enabled();
+        me
     }
 
     /// Total page count.
@@ -79,12 +106,24 @@ impl PaginationExternal {
         self.count > 0 && self.current() + 1 < self.count
     }
 
+    /// The previous button's interaction posture (drives the chevron's
+    /// state-layer overlay; `Disabled` at the first page).
+    #[must_use]
+    pub fn prev_state(&self) -> ButtonState {
+        self.prev.state()
+    }
+
+    /// The next button's interaction posture.
+    #[must_use]
+    pub fn next_state(&self) -> ButtonState {
+        self.next.state()
+    }
+
     /// Step the current page by `delta`, **clamping** at the ends (no
     /// wrap-around — unlike the cyclic arrow roving). A step that would
-    /// leave the range is a no-op, so a `prev` press on page 0 (or `next`
-    /// on the last page) does nothing. The new page is activated through
-    /// the `KeyboardActivate` edge, firing the §5.20 `"selected"` intent on
-    /// a real change.
+    /// leave the range is a no-op. The new page is activated through the
+    /// `KeyboardActivate` edge, firing the §5.20 `"selected"` intent on a
+    /// real change, then the prev / next enabled state is re-synced.
     pub fn step(&mut self, delta: i32) {
         if self.count == 0 {
             return;
@@ -93,16 +132,17 @@ impl PaginationExternal {
         let max = i32::try_from(self.count - 1).unwrap_or(0);
         let target = (cur + delta).clamp(0, max);
         if target != cur {
-            // `target` is in `0..=max`, so the conversion never fails.
             let target = usize::try_from(target).unwrap_or(0);
             self.pages.send(target, RadioEvent::KeyboardActivate);
         }
+        self.sync_enabled();
     }
 
     /// Drive a [`RadioEvent`] on page cell `index` (the page-cell pointer
-    /// arc). Mirrors [`RadioGroupExternal::send`].
+    /// arc). Mirrors [`RadioGroupExternal::send`]; re-syncs prev / next.
     pub fn send_page(&mut self, index: usize, event: RadioEvent) {
         self.pages.send(index, event);
+        self.sync_enabled();
     }
 
     /// Page cell `index`'s interaction state.
@@ -121,6 +161,39 @@ impl PaginationExternal {
     #[must_use]
     pub fn focused_index(&self) -> Option<usize> {
         self.pages.focused_index()
+    }
+
+    /// Re-sync each chevron's `Disabled` posture to the clamped ends. A
+    /// disabled [`Button`] ignores pointer input (no hover, no click), so
+    /// the clamp is enforced at the interaction layer too, not only by
+    /// [`Self::step`]'s arithmetic.
+    fn sync_enabled(&mut self) {
+        let (can_prev, can_next) = (self.can_prev(), self.can_next());
+        Self::sync_button(&mut self.prev, can_prev);
+        Self::sync_button(&mut self.next, can_next);
+    }
+
+    fn sync_button(button: &mut Button, enabled: bool) {
+        let disabled = matches!(button.state(), ButtonState::Disabled);
+        if enabled && disabled {
+            button.send(ButtonEvent::Enable);
+        } else if !enabled && !disabled {
+            button.send(ButtonEvent::Disable);
+        }
+    }
+
+    /// Drive a chevron button with one wire event; step on the click edge.
+    /// Returns the (unused) outcome shape for the wire.
+    fn drive_chevron(button: &mut Button, event_name: &str) -> bool {
+        let Some(ev) = ButtonEvent::from_name(event_name) else {
+            return false;
+        };
+        let before = button.state();
+        button.send(ev);
+        let after = button.state();
+        // Reuse the Button's own click rule (Pressed -> Hover ⇒ "click")
+        // rather than re-deriving it — the WidgetTransition SSOT.
+        !<Button as WidgetTransition>::detect(before, ev, after).is_empty()
     }
 
     fn pages_introspect(&self) -> &dyn ExternalIntrospect {
@@ -155,7 +228,9 @@ impl External for PaginationExternal {
 
     fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
         // Page-selection `"selected"` intents (including those a prev /
-        // next step produces) flow through the inner group's emitter.
+        // next step produces) flow through the inner group's emitter. The
+        // chevron buttons are plain logical widgets (no intent buffer); a
+        // chevron click surfaces only as the resulting page `"selected"`.
         self.pages.drain_intents(sink);
     }
 
@@ -174,6 +249,8 @@ impl ExternalIntrospect for PaginationExternal {
             ("selected.<index>", "bool"),
             ("can_prev", "bool"),
             ("can_next", "bool"),
+            ("prev.state", "string"),
+            ("next.state", "string"),
             ("send", "string"),
         ])
     }
@@ -182,6 +259,8 @@ impl ExternalIntrospect for PaginationExternal {
         match path {
             "can_prev" => Some(IntrospectValue::Bool(self.can_prev())),
             "can_next" => Some(IntrospectValue::Bool(self.can_next())),
+            "prev.state" => Some(IntrospectValue::Text(self.prev.state().as_name().to_string())),
+            "next.state" => Some(IntrospectValue::Text(self.next.state().as_name().to_string())),
             // count / selected_index / focused_index / state.<i> /
             // selected.<i> are the page group's surface verbatim.
             _ => self.pages_introspect().query(path),
@@ -190,8 +269,12 @@ impl ExternalIntrospect for PaginationExternal {
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         // selected_index / focused_index restore is the page group's admin
-        // surface (no `"selected"` intent).
-        self.pages_introspect_mut().intervene(path, value)
+        // surface (no `"selected"` intent). Re-sync the chevrons afterward.
+        let outcome = self.pages_introspect_mut().intervene(path, value);
+        if outcome.is_ok() {
+            self.sync_enabled();
+        }
+        outcome
     }
 
     fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
@@ -199,24 +282,29 @@ impl ExternalIntrospect for PaginationExternal {
             "send" => match args {
                 IntrospectValue::Text(s) => {
                     // Composite nav sub-tags: `"{tag}#prev"` / `"{tag}#next"`
-                    // arrive as `"prev:<Event>"` / `"next:<Event>"`. Step on
-                    // the `PointerUp` edge; the other cycle events
-                    // (Enter / Down / Leave) are accepted no-ops so the full
-                    // pointer cycle a click produces is not rejected.
+                    // arrive as `"prev:<Event>"` / `"next:<Event>"`. Drive
+                    // the chevron button (hover / press / capture); step on
+                    // its click edge. A `Disabled` button (clamped end)
+                    // ignores the events, so no step occurs.
                     if let Some(ev) = s.strip_prefix("prev:") {
-                        if ev == "PointerUp" {
+                        if Self::drive_chevron(&mut self.prev, ev) {
                             self.step(-1);
                         }
                         return Ok(IntrospectValue::Null);
                     }
                     if let Some(ev) = s.strip_prefix("next:") {
-                        if ev == "PointerUp" {
+                        if Self::drive_chevron(&mut self.next, ev) {
                             self.step(1);
                         }
                         return Ok(IntrospectValue::Null);
                     }
-                    // Page cell `"<i>:<Event>"` — delegate to the group.
-                    self.pages_introspect_mut().invoke("send", IntrospectValue::Text(s))
+                    // Page cell `"<i>:<Event>"` — delegate to the group,
+                    // then re-sync the chevrons (the current page may have
+                    // moved to / from an end).
+                    let outcome =
+                        self.pages_introspect_mut().invoke("send", IntrospectValue::Text(s));
+                    self.sync_enabled();
+                    outcome
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -237,6 +325,13 @@ mod tests {
             RadioEvent::PointerLeave,
         ] {
             p.send_page(idx, ev);
+        }
+    }
+
+    /// Drive the full pointer click cycle on a chevron through the wire.
+    fn click_chevron(p: &mut PaginationExternal, which: &str) {
+        for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+            let _ = p.invoke("send", IntrospectValue::Text(format!("{which}:{ev}")));
         }
     }
 
@@ -294,36 +389,57 @@ mod tests {
     }
 
     #[test]
-    fn wire_prev_next_step_on_pointer_up_only() {
+    fn wire_chevron_click_steps_the_page() {
         let mut p = PaginationExternal::new(5, 2);
-        // Down / Enter / Leave are accepted no-ops.
+        click_chevron(&mut p, "next");
+        assert_eq!(p.current(), 3, "next chevron click steps forward");
+        click_chevron(&mut p, "prev");
+        assert_eq!(p.current(), 2, "prev chevron click steps back");
+    }
+
+    #[test]
+    fn chevron_hover_and_press_track_button_state() {
+        let mut p = PaginationExternal::new(5, 2);
         let _ = p.invoke("send", IntrospectValue::Text("next:PointerEnter".into()));
+        assert_eq!(p.next_state(), ButtonState::Hover, "next chevron hovers");
         let _ = p.invoke("send", IntrospectValue::Text("next:PointerDown".into()));
-        assert_eq!(p.current(), 2, "no step before PointerUp");
+        assert_eq!(p.next_state(), ButtonState::Pressed, "next chevron presses");
+        assert_eq!(p.current(), 2, "no step until the click edge (PointerUp)");
         let _ = p.invoke("send", IntrospectValue::Text("next:PointerUp".into()));
-        assert_eq!(p.current(), 3, "next steps on PointerUp");
-        let _ = p.invoke("send", IntrospectValue::Text("prev:PointerUp".into()));
-        assert_eq!(p.current(), 2, "prev steps back on PointerUp");
+        assert_eq!(p.current(), 3, "click edge steps");
     }
 
     #[test]
-    fn wire_page_cell_delegates_to_group() {
+    fn disabled_chevron_ignores_pointer_no_hover_no_step() {
+        // Page 0: prev is at the clamped end -> Disabled.
         let mut p = PaginationExternal::new(5, 0);
-        for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
-            let _ = p.invoke("send", IntrospectValue::Text(format!("4:{ev}")));
-        }
-        assert_eq!(p.current(), 4, "page-cell wire selects via the group");
+        assert_eq!(p.prev_state(), ButtonState::Disabled, "prev disabled on page 0");
+        let _ = p.invoke("send", IntrospectValue::Text("prev:PointerEnter".into()));
+        assert_eq!(p.prev_state(), ButtonState::Disabled, "disabled prev does not hover");
+        click_chevron(&mut p, "prev");
+        assert_eq!(p.current(), 0, "disabled prev does not step");
     }
 
     #[test]
-    fn query_surface_matches_the_group_plus_can_prev_next() {
+    fn stepping_to_an_end_disables_that_chevron() {
+        let mut p = PaginationExternal::new(3, 1);
+        assert_eq!(p.next_state(), ButtonState::Idle, "next enabled mid-range");
+        click_chevron(&mut p, "next"); // -> page 2 (last)
+        assert_eq!(p.current(), 2);
+        assert_eq!(p.next_state(), ButtonState::Disabled, "next disabled at the last page");
+        assert_ne!(p.prev_state(), ButtonState::Disabled, "prev now enabled");
+    }
+
+    #[test]
+    fn query_surface_matches_the_group_plus_can_prev_next_and_button_states() {
         let p = PaginationExternal::new(4, 0);
         assert_eq!(p.query("count"), Some(IntrospectValue::Int(4)));
         assert_eq!(p.query("selected_index"), Some(IntrospectValue::Int(0)));
         assert_eq!(p.query("can_prev"), Some(IntrospectValue::Bool(false)));
         assert_eq!(p.query("can_next"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(p.query("prev.state"), Some(IntrospectValue::Text("Disabled".into())));
+        assert_eq!(p.query("next.state"), Some(IntrospectValue::Text("Idle".into())));
         assert_eq!(p.query("selected.0"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(p.query("selected.1"), Some(IntrospectValue::Bool(false)));
     }
 
     #[test]

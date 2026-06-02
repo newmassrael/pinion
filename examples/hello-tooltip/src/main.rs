@@ -119,8 +119,10 @@ const OFFLINE_TIP_SIZE: (u32, u32) = (220, 28);
 
 /// M3 keyboard focus-ring width (mirrors the R694 button ring).
 const FOCUS_RING_WIDTH: u32 = 3;
-/// M3 hover state-layer weight (`onSurface` over the surface at 8 %).
-const HOVER_STATE_LAYER: f32 = 0.08;
+/// M3 hover state-layer weight (`onSurface` over the surface). References
+/// the shared state-layer SSOT (R754.1 — clears an R752 residual where this
+/// held a raw `0.08`).
+const HOVER_STATE_LAYER: f32 = pinion_widget_paint::state_layer::HOVER;
 
 /// Per-control tooltip posture read back from the state scene for the
 /// view + a11y: is the tooltip shown, does the control hold keyboard
