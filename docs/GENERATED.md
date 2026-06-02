@@ -16863,6 +16863,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R750 — R750 §5.38 §5.40 horizontal stepper (hello-stepper): a Group of step Buttons with aria-current=step, the 2nd AriaCurrent consumer (exercising AriaCurrent::Step, minted in R731 for exactly this widget) and another standalone RadioGroupExternal roving consumer; the RadioState M3 state-layer overlay reached 3 byte-identical consumers (radio-group/breadcrumb/stepper) so it was lifted to rc::state_layer (also retrofitting hello-radio), with the segmented button correctly left inline for its divergent Disabled arm
+
+**Changes**:
+- hello-stepper: §5.38 §5.40 horizontal stepper — a Group of step Buttons with aria-current=step on the active step
+- 2nd AriaCurrent consumer: exercises AriaCurrent::Step, the variant R731 minted for a stepper while only Page had a consumer
+- substrate-0 interaction: reuses RadioGroupExternal roving (current step = 1-of-N selection), the breadcrumb/segmented cohort
+- tri-state indicator paint: completed (check glyph) / current / upcoming (outlined) circles + Accent/Outline connectors
+- Rule-of-Three lift: rc::state_layer M3 state-layer overlay SSOT; radio-group/breadcrumb/stepper/radio retrofit to it
+- segmented-button overlay correctly NOT shared (divergent Disabled-folds-Idle arm, transparent base) — honest 3-not-4
+
+
+
+**Verification**:
+- workspace cargo test 0-fail; clippy -D pedantic (pinion-runtime/vello) clean
+- demo sweep 97/97 incl r750_stepper; 10 hello-stepper unit tests green
+- r750_stepper.py: 35+ RPC assertions + PINION_SCREENSHOT pixel (current Accent vs upcoming SurfaceContainerHighest circle)
+- live native XTEST: real click at step-2 circle flipped grey (230,224,233) to Accent (25,114,202), step-0 unchanged
+- behaviour-preserving rc::state_layer lift re-verified on rebuilt release binaries (r705/r731/r750 PASS)
+
+
+
+**Impact**: §5.38, §5.40, §5.50
+
+
+**Carry forward**:
+- Link/Navigation roles still 1 consumer (breadcrumb); pagination = future 2nd consumer (R731 carry partly cleared: stepper=step)
+- per-step-Tab APG variant (each step in normal Tab order) deferred — needs per-step focusable externals
+- linear (non-skippable) stepper + Back/Next nav buttons — additive; R750 is the non-linear clickable model only
+- stepper circle/connector paint inline (1st consumer); lift to pinion_widget_paint at 2nd per gradient/elevation inline-first
+- segmented-button state-layer stays inline (divergent Disabled arm) — not folded into rc::state_layer SSOT
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

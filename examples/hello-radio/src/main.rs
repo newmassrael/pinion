@@ -39,6 +39,7 @@ use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
+use pinion_widget_paint::radio_composite as rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloRadioRenderer, HelloRadioRendererError);
@@ -74,12 +75,7 @@ fn radio_border_color(theme: &Theme, state: RadioState, selected: bool) -> Color
     } else {
         theme.resolve(ColorRole::Outline)
     };
-    match state {
-        RadioState::Idle => base,
-        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        RadioState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
+    rc::state_layer(base, state, theme)
 }
 
 /// view-fn (§6.3): pure sync mapping `(RadioState, bool) -> Scene`.

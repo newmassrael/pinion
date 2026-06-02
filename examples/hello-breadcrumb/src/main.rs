@@ -128,12 +128,7 @@ fn crumb(index: usize, state: RadioState, selected: bool, theme: &Theme) -> Scen
     } else {
         theme.resolve(ColorRole::Accent)
     };
-    let color = match state {
-        RadioState::Idle => base,
-        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        RadioState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    };
+    let color = rc::state_layer(base, state, theme);
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             CRUMBS[index],

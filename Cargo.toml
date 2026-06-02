@@ -83,6 +83,7 @@ members = [
     "examples/hello-immediate-mode-canvas",
     "examples/hello-dock-panels",
     "examples/hello-dock-panels-editor",
+    "examples/hello-stepper",
 ]
 exclude = ["vendor/sce"]
 

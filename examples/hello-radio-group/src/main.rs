@@ -154,12 +154,7 @@ fn radio_border_color(theme: &Theme, state: RadioState, selected: bool) -> Color
     } else {
         theme.resolve(ColorRole::Outline)
     };
-    match state {
-        RadioState::Idle => base,
-        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        RadioState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
+    rc::state_layer(base, state, theme)
 }
 
 fn radio_row(index: usize, state: RadioState, selected: bool, theme: &Theme) -> Scene {

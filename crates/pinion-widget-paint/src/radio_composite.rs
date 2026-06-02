@@ -24,8 +24,30 @@
 
 use pinion_a11y::{AccessAction, AccessFocus};
 use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::WidgetStateName;
+use pinion_core::{Color, WidgetStateName};
+
+/// The shared M3 state-layer overlay for a composite radio cell: tint
+/// `base` toward `OnSurface` by the hover (0.08) / pressed (0.12) opacity,
+/// or toward `Surface` by the disabled (0.38) opacity; `Idle` is `base`
+/// untinted (`Color::lerp` in linear space, [[color-lerp-linear-space]]).
+///
+/// Lifted at the Rule of Three (R750): `hello-radio-group`
+/// (`radio_border_color`), `hello-breadcrumb` (`crumb`), and `hello-stepper`
+/// (`step`) carried this exact 4-arm match byte-identically. The segmented
+/// button (`segment_fill`) intentionally folds `Disabled` into `Idle` — its
+/// base is the transparent track, so a disabled pill has nothing to tint —
+/// and so keeps its own divergent 3-arm overlay, correctly NOT shared.
+#[must_use]
+pub fn state_layer(base: Color, state: RadioState, theme: &Theme) -> Color {
+    match state {
+        RadioState::Idle => base,
+        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        RadioState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+    }
+}
 
 /// Drive the full WAI-ARIA activation cycle (`PointerEnter` → `Down` →
 /// `Up` → `Leave`) against cell `idx` through the composite `"<i>:<Event>"`
