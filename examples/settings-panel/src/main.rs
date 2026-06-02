@@ -53,7 +53,7 @@ use pinion_core::widgets::caret_blink::CaretBlink;
 use pinion_core::widgets::checkbox::{CheckboxExternal, CheckboxState};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
-use pinion_core::widgets::scrollbar::{use_scrollbar_interaction, ScrollBarExternal};
+use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::widgets::slider::{SliderExternal, SliderState};
 use pinion_core::widgets::text_edit::TextEditState;
@@ -935,7 +935,7 @@ fn view_profile_section(
 /// of-switches), composing one [`view_checkbox`] row per channel
 /// inside a [`Scene::Scroll`] viewport so an arbitrary channel
 /// count is supported without breaking the detail-pane layout. The
-/// 4th [`ScrollBarExternal`] consumer rides this section's viewport.
+/// 4th `ScrollBarExternal` consumer rides this section's viewport.
 ///
 /// `interactions` carries each channel's SCXML statechart projection
 /// (Idle / Hover / Pressed / Disabled) freshly walked from the
@@ -1014,7 +1014,7 @@ fn view_notifications_section(
 /// (R669) M3-defined viewport dimensions for the notifications
 /// scrollable list. 6 channels × (~48 px row + 8 px gap) ≈ 336 px;
 /// viewport at 280 px guarantees overflow on every Phase A render
-/// so the 4th [`ScrollBarExternal`] consumer is exercised.
+/// so the 4th `ScrollBarExternal` consumer is exercised.
 const NOTIF_VIEWPORT_W: u32 = 480;
 const NOTIF_VIEWPORT_H: u32 = 280;
 /// Gap between notifications rows in logical pixels. Tighter than
@@ -1359,23 +1359,17 @@ impl WidgetCore for SettingsPanelView {
             notif_externals.push(ExtraExternal::new(*tag, Box::new(ext)));
         }
 
-        // R669 §5.45 — 4th `ScrollBarExternal` consumer (notifications
-        // viewport overflow). attach_state binds the same
+        // R669 §5.45 — 4th scrollbar consumer (notifications viewport
+        // overflow). R746 §5.45 — the wiring is the shared
+        // `scrollbar_extra_external` substrate: it binds the same
         // `ScrollState` the section's `view_vertical_scrollbar` paint
-        // walker reads, so drag interactions on the visible thumb
-        // mutate the shared `ScrollState::offset` slot and the next
-        // paint walks the new offset. attach_interaction wires the
-        // M3 thumb state-layer ramp (idle → hover → dragging).
-        let notif_scroll_state = use_notif_scrollbar();
-        let notif_scrollbar = ScrollBarExternal::new()
-            .attach_state(notif_scroll_state)
-            .attach_interaction(use_scrollbar_interaction(NOTIF_SCROLLBAR_TAG));
-
+        // walker reads (drag mutates the shared offset) + the M3 thumb
+        // state-layer interaction mirror, registered under NOTIF_SCROLLBAR_TAG.
         let mut all = vec![
             ExtraExternal::new(NAV_TAG, Box::new(nav_group)),
             ExtraExternal::new(THEME_TOGGLE_TAG, Box::new(theme_toggle)),
             ExtraExternal::new(FONT_SLIDER_TAG, Box::new(font_slider)),
-            ExtraExternal::new(NOTIF_SCROLLBAR_TAG, Box::new(notif_scrollbar)),
+            scrollbar_extra_external(use_notif_scrollbar(), NOTIF_SCROLLBAR_TAG),
         ];
         all.append(&mut notif_externals);
         all

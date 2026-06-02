@@ -52,7 +52,7 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
-use pinion_core::widgets::scrollbar::{use_scrollbar_interaction, ScrollBarExternal};
+use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::{compute_visible_range_variable, RowOffsets};
 use pinion_core::{Frame, Owner, Scene, WidgetCore};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
@@ -238,14 +238,9 @@ impl WidgetCore for VariableListView {
         Box::new(StubExternal::new())
     }
 
-    /// Sibling [`ScrollBarExternal`] sharing the list's `Rc<ScrollState>`.
+    /// Sibling `ScrollBarExternal` sharing the list's `Rc<ScrollState>`.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        let scroll_state = use_scroll_state(SCROLL_KEY);
-        let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-        let scrollbar = ScrollBarExternal::new()
-            .attach_state(scroll_state)
-            .attach_interaction(scrollbar_interaction);
-        vec![ExtraExternal::new(SCROLLBAR_TAG, Box::new(scrollbar))]
+        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
     }
 
     fn tag() -> &'static str {

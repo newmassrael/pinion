@@ -74,7 +74,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::listbox::ListBoxExternal;
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::scroll::use_scroll_state;
-use pinion_core::widgets::scrollbar::{use_scrollbar_interaction, ScrollBarExternal};
+use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::WidgetStateName;
 // R659 §5.45 — `build_scrollbar_visual` lifted to
@@ -115,7 +115,7 @@ const PRIMARY_TAG: &str = "main_list";
 /// attached `Rc<ScrollState>`, not the tag string).
 const SCROLL_KEY: &str = "main_list_scroll";
 /// (R55.D.5 §5.45) Paint-side tag for the visible scrollbar peer +
-/// state-scene tag for the matching [`ScrollBarExternal`]. The
+/// state-scene tag for the matching `ScrollBarExternal`. The
 /// substrate registers the external under this tag through
 /// [`WidgetCore::create_extra_externals`]; the view fn attaches the
 /// same tag to the scrollbar visual `Container` so the input router's
@@ -446,7 +446,7 @@ impl WidgetCore for ListBoxView {
         Box::new(ListBoxExternal::new(N))
     }
 
-    /// (R55.D.5 §5.45) Sibling [`ScrollBarExternal`] for the
+    /// (R55.D.5 §5.45) Sibling `ScrollBarExternal` for the
     /// `main_list` scroll container — registered alongside the primary
     /// `ListBoxExternal` so the substrate composes the state scene as
     /// `Container([primary, scrollbar])`. The scrollbar shares the
@@ -463,16 +463,12 @@ impl WidgetCore for ListBoxView {
     /// → `ScrollState::scroll_to` clamps and writes; the next paint
     /// re-runs the view fn against the new offset.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        let scroll_state = use_scroll_state(SCROLL_KEY);
-        // R660 §5.45 — shared interaction-state mirror so the view fn
-        // (write-once at register time, read-every-paint after) sees
-        // the live Hover / Dragging transitions the SCXML state
-        // machine drives.
-        let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
-        let scrollbar = ScrollBarExternal::new()
-            .attach_state(scroll_state)
-            .attach_interaction(scrollbar_interaction);
-        vec![ExtraExternal::new(SCROLLBAR_TAG, Box::new(scrollbar))]
+        // R746 §5.45 — the scrollbar peer wiring (state + interaction-state
+        // mirror, registered under SCROLLBAR_TAG) is the shared
+        // `scrollbar_extra_external` substrate; the interaction Signal it
+        // attaches is the same one the view fn reads every paint for the
+        // live Hover / Dragging state-layer.
+        vec![scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG)]
     }
 
     fn tag() -> &'static str {

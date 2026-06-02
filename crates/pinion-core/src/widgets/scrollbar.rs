@@ -787,6 +787,37 @@ impl Default for ScrollBarExternal {
     }
 }
 
+/// R746 §5.45 — assemble the canonical scrollbar peer
+/// [`ExtraExternal`](crate::widget_core::ExtraExternal): a
+/// [`ScrollBarExternal`] bound to `scroll` (so drag mutates the shared
+/// offset) and to the `scrollbar_tag`'s
+/// [`ScrollBarInteractionSignal`] (the M3 idle→hover→dragging state-layer
+/// mirror), registered under `scrollbar_tag`.
+///
+/// This is the byte-identical wiring six bindings (`hello-listbox`,
+/// `hello-virtual-list`, `hello-variable-list`, `hello-virtual-select`,
+/// `settings-panel`, `todomvc`) repeated inline before R746 — pure
+/// mechanical composition with no per-binding opinion, so it lives at the
+/// substrate next to its parts ([[abstraction-needs-second-consumer]]:
+/// well past the Rule of Three). The caller still owns *which*
+/// [`ScrollState`] (it resolves `use_scroll_state(key)` with its own key)
+/// and passes it in, mirroring how `ScrollNode::from_state` takes the
+/// state rather than a key.
+#[must_use]
+pub fn scrollbar_extra_external(
+    scroll: Rc<ScrollState>,
+    scrollbar_tag: &'static str,
+) -> crate::widget_core::ExtraExternal {
+    crate::widget_core::ExtraExternal::new(
+        scrollbar_tag,
+        Box::new(
+            ScrollBarExternal::new()
+                .attach_state(scroll)
+                .attach_interaction(use_scrollbar_interaction(scrollbar_tag)),
+        ),
+    )
+}
+
 impl core::fmt::Debug for ScrollBarExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ScrollBarExternal")

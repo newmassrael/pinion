@@ -57,7 +57,7 @@ use pinion_core::widgets::scroll::use_scroll_state;
 // drag-able (4th ExtraExternal after delete + toggle + filter).
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::radio_group::RadioGroupExternal;
-use pinion_core::widgets::scrollbar::{use_scrollbar_interaction, ScrollBarExternal};
+use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::theme::{use_theme, ColorRole, Theme};
@@ -2269,14 +2269,9 @@ impl WidgetCore for TodoMvcView {
                 Box::new(TodoToggleExternal::new(todos.clone())),
             ),
             ExtraExternal::new(FILTER_TAG, Box::new(filter_group)),
-            ExtraExternal::new(
-                SCROLLBAR_TAG,
-                Box::new(
-                    ScrollBarExternal::new()
-                        .attach_state(scroll_state)
-                        .attach_interaction(use_scrollbar_interaction(SCROLLBAR_TAG)),
-                ),
-            ),
+            // R746 §5.45 — shared scrollbar peer wiring (state + M3
+            // interaction-state mirror, registered under SCROLLBAR_TAG).
+            scrollbar_extra_external(scroll_state, SCROLLBAR_TAG),
             ExtraExternal::new(ITEM_TAG, Box::new(TodoEditExternal::new(todos))),
             ExtraExternal::new(
                 EDIT_TF_TAG,

@@ -16455,6 +16455,48 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R746 — R746 adds selection to the virtualized list (section 5.27 Model/View): VirtualSelectExternal holds the selected row by DATA INDEX, decoupled from materialization, because the R735.1 leaf-based selection substrate cannot virtualize. hello-virtual-select proves selection survives while rows window in and out (select row 3, scroll away, still selected; select deep row 5000 unmaterialized). A self-grep surfaced the scrollbar peer wiring duplicated across 6 bindings; lifted scrollbar_extra_external into widgets::scrollbar.
+
+**Changes**:
+- New pinion_core::widgets::virtual_select::VirtualSelectExternal — selection by DATA INDEX
+- Held as Option<usize> decoupled from materialization; R735.1 leaf-based selection can't virtualize
+- Plain holder (no SCXML, operable-not-statechart R734): send + select/clear + intervene + query
+- query("selected") returns Null when empty (a schema path returning None = UnknownIntrospectPath)
+- +10 core unit tests: deep-index-without-materialization, activation-edge-only, out-of-range guard
+- New example hello-virtual-select: 10000-row single-select by index over R744 view_virtual_list
+- Selected row paints Accent/OnAccent (M3 selected); unselected zebra; aria-selected on the ListItem
+- Self-grep (R727/R732): scrollbar peer wiring byte-identical across 6 bindings
+- Lifted scrollbar_extra_external(scroll, tag) into pinion_core::widgets::scrollbar
+- Refactored 6 consumers (listbox/virtual-list/variable-list/virtual-select/settings/todomvc)
+
+
+
+**Verification**:
+- cargo test --workspace: 0 fail; core virtual_select 10/10, example 4/4
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)
+- demo sweep 94/94 (added r746_virtual_select.py; todomvc/settings/listbox exercise the lift)
+- r746 demo 30+ asserts: boot unselected; click row 3 selects; click row 6 moves single selection
+- selection ⊥ virtualization: select 3, scroll 4000px away (row 3 leaves tree), selected STILL 3
+- invoke select 5000 (never materialized at boot) selects; scroll to it and it renders
+- scroll round-trip top: row 3 rendered again, selection intact; clear -> null; out-of-range ignored
+- composite send wire "8:PointerUp" selects row 8 (same path the click produces)
+- live pixels: windowed rows paint (zebra tones distinct)
+- live native XTEST left-click on :0 real focused window: clicked row -> Accent, neighbor unchanged
+
+
+
+**Impact**: §5.27, §5.38, §5.45
+
+
+**Carry forward**:
+- Multi-select by index deferred: single this slice; additive (index set + aria-multiselectable)
+- Keyboard roving over windowed list (focus-by-index + scroll-into-view) deferred (R730 defer)
+- VirtualSelectExternal name is consumer-tied; generic index-select — rename if a non-list consumer
+- view-side scrollbar assembly + BarPhase projection stay per-binding (divergent viewport/state)
+- Measured row height + Scene::VirtualList IR variant still R750+ (R745 carry stands)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
