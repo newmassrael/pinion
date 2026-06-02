@@ -48,6 +48,7 @@
 
 pub mod action;
 pub mod focus;
+pub mod navigation;
 pub mod node;
 pub mod role;
 pub mod scene_label;
@@ -63,6 +64,7 @@ mod test_fixtures;
 
 pub use action::{translate_action, AccessAction, PinionAccessAction};
 pub use focus::AccessFocus;
+pub use navigation::{navigation_link_nodes, NavLink};
 pub use node::{AccessNode, AccessState, AccessValue};
 pub use role::{AriaCurrent, AriaRole, AutoComplete, SortDirection};
 pub use scene_label::enrich_names_from_scene;

@@ -46,7 +46,7 @@ use pinion_core::widgets::radio::{RadioEvent, RadioState};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene, WidgetCore};
 use pinion_a11y::{
-    AccessAction, AccessFocus, AccessNode, AccessState, AriaCurrent, AriaRole, WidgetA11y,
+    navigation_link_nodes, AccessAction, AccessFocus, AccessNode, NavLink, WidgetA11y,
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::radio_composite as rc;
@@ -235,30 +235,21 @@ impl WidgetA11y for NavRailView {
     fn access_node(state: &RailState, focused: Option<&str>) -> Vec<AccessNode> {
         let nav_focused = focused == Some(<Self as WidgetCore>::tag());
         let active_idx = rc::active_index(&state.rows, state.focused);
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
-        let mut nav = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Navigation)
-            .with_name("Primary");
-        for i in 0..N {
-            nav = nav.with_child(format!("{PRIMARY_TAG}#{i}"));
-        }
-        nodes.push(nav);
-        for (i, (dest_state, selected)) in state.rows.iter().copied().enumerate() {
-            let dest_tag = format!("{PRIMARY_TAG}#{i}");
-            let mut link = AccessNode::new(&dest_tag, AriaRole::Link)
-                .with_name(DESTINATIONS[i])
-                .with_state(AccessState {
-                    focused: nav_focused && i == active_idx,
-                    disabled: matches!(dest_state, RadioState::Disabled),
-                    hovered: matches!(dest_state, RadioState::Hover),
-                    pressed: matches!(dest_state, RadioState::Pressed),
-                    checked: None,
-                });
-            if selected {
-                link = link.with_current(AriaCurrent::Page);
-            }
-            nodes.push(link);
-        }
-        nodes
+        let tags: Vec<String> = (0..N).map(|i| format!("{PRIMARY_TAG}#{i}")).collect();
+        let links: Vec<NavLink<'_>> = state
+            .rows
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, (dest_state, selected))| NavLink {
+                tag: &tags[i],
+                label: DESTINATIONS[i],
+                state: dest_state,
+                current: selected,
+                focused: nav_focused && i == active_idx,
+            })
+            .collect();
+        navigation_link_nodes(<Self as WidgetCore>::tag(), "Primary", &links)
     }
 
     /// §5.40 composite focus model — when the rail owns focus, the
@@ -325,6 +316,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_a11y::{AriaCurrent, AriaRole};
     use pinion_core::external::IntrospectValue;
     use pinion_core::scene::ExternalNode;
 

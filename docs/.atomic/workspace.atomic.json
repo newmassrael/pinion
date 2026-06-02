@@ -27806,6 +27806,54 @@
         "Per-chip-Tab single model; single-tab roving-toolbar chip-set variant deferred (no consumer)"
       ]
     },
+    "R754": {
+      "decision_summary": "Lift navigation_link_nodes a11y substrate (3rd consumer); Material 3 pagination widget",
+      "changes_bullets": [
+        "Lift pinion_a11y::navigation_link_nodes (nav landmark + N links + aria-current) as one SSOT",
+        "Refactor hello-breadcrumb (R731) + hello-nav-rail (R751) onto the substrate; no 3rd copy",
+        "New pinion_core::widgets::pagination::PaginationExternal (RadioGroup pages + clamping prev/next)",
+        "New hello-pagination: M3 pager, 3rd Navigation/Link consumer; prev/next = aria-disabled end links",
+        "Pagination keyboard clamps (no wrap) to match prev/next; current page = aria-current=page"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0-fail; clippy --workspace --all-targets -D pedantic (vello) clean",
+        "Unit: navigation 3 + pagination 10 + hello-pagination 5; breadcrumb/nav-rail refactor green",
+        "Demo sweep 100/100; new r754_pagination.py 40+ assertions (clamp + 1-of-N + can_prev/next)",
+        "Live native XTEST on :0: click page -> current Accent circle moves 2->0, neighbour unchanged"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "prev/next have no per-button hover posture (static chevrons, datepicker precedent); add on demand",
+        "Per-page-link Tab variant deferred (single-tab roving; breadcrumb/nav-rail/stepper family carry)",
+        "Fixed-N pages; dynamic count + ellipsis windowing (1 2 ... 9 10) deferred (no consumer)"
+      ],
+      "publishable_decision_summary": "Lift navigation_link_nodes a11y substrate (3rd consumer); Material 3 pagination widget",
+      "publishable_changes_bullets": [
+        "Lift pinion_a11y::navigation_link_nodes (nav landmark + N links + aria-current) as one SSOT",
+        "Refactor hello-breadcrumb (R731) + hello-nav-rail (R751) onto the substrate; no 3rd copy",
+        "New pinion_core::widgets::pagination::PaginationExternal (RadioGroup pages + clamping prev/next)",
+        "New hello-pagination: M3 pager, 3rd Navigation/Link consumer; prev/next = aria-disabled end links",
+        "Pagination keyboard clamps (no wrap) to match prev/next; current page = aria-current=page"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0-fail; clippy --workspace --all-targets -D pedantic (vello) clean",
+        "Unit: navigation 3 + pagination 10 + hello-pagination 5; breadcrumb/nav-rail refactor green",
+        "Demo sweep 100/100; new r754_pagination.py 40+ assertions (clamp + 1-of-N + can_prev/next)",
+        "Live native XTEST on :0: click page -> current Accent circle moves 2->0, neighbour unchanged"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "prev/next have no per-button hover posture (static chevrons, datepicker precedent); add on demand",
+        "Per-page-link Tab variant deferred (single-tab roving; breadcrumb/nav-rail/stepper family carry)",
+        "Fixed-N pages; dynamic count + ellipsis windowing (1 2 ... 9 10) deferred (no consumer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -2032,6 +2032,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-pagination"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-path"
 version = "0.0.1"
 dependencies = [

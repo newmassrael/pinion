@@ -16987,6 +16987,35 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R754 — Lift navigation_link_nodes a11y substrate (3rd consumer); Material 3 pagination widget
+
+**Changes**:
+- Lift pinion_a11y::navigation_link_nodes (nav landmark + N links + aria-current) as one SSOT
+- Refactor hello-breadcrumb (R731) + hello-nav-rail (R751) onto the substrate; no 3rd copy
+- New pinion_core::widgets::pagination::PaginationExternal (RadioGroup pages + clamping prev/next)
+- New hello-pagination: M3 pager, 3rd Navigation/Link consumer; prev/next = aria-disabled end links
+- Pagination keyboard clamps (no wrap) to match prev/next; current page = aria-current=page
+
+
+
+**Verification**:
+- cargo test --workspace 0-fail; clippy --workspace --all-targets -D pedantic (vello) clean
+- Unit: navigation 3 + pagination 10 + hello-pagination 5; breadcrumb/nav-rail refactor green
+- Demo sweep 100/100; new r754_pagination.py 40+ assertions (clamp + 1-of-N + can_prev/next)
+- Live native XTEST on :0: click page -> current Accent circle moves 2->0, neighbour unchanged
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- prev/next have no per-button hover posture (static chevrons, datepicker precedent); add on demand
+- Per-page-link Tab variant deferred (single-tab roving; breadcrumb/nav-rail/stepper family carry)
+- Fixed-N pages; dynamic count + ellipsis windowing (1 2 ... 9 10) deferred (no consumer)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
