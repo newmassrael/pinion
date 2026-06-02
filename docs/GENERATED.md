@@ -16529,6 +16529,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R746.2 — R746.2 audit correction (user re-asked hack/smell/SSOT): VirtualSelectExternal, a selection coordinator, emitted no §5.20 'selected' intent — yet the whole selection family (RadioGroup/ListBox/Table) does, and it is load-bearing (AI observes selection on the intent channel; todomvc drives V::update off it). I had copied SpinButtonExternal, a value-holder — the wrong precedent. Added a pending-intent queue: the interaction path (select via click/invoke) queues a 'selected' intent with the index; the admin restore path (set_selected/clear/intervene) stays silent, matching selection::replace_selection.
+
+**Changes**:
+- Deeper audit (user re-asked SSOT/textbook): VirtualSelectExternal emitted no §5.20 intent
+- The selection family (RadioGroup/ListBox/Table) emits a "selected" intent via drain_intents
+- Load-bearing: AI observes selection on the intent channel; todomvc drives V::update off it
+- I copied SpinButtonExternal (a value-holder) — wrong precedent for a selection coordinator
+- Fix: a pending-intent queue (plain-holder analogue of RadioGroup IntentEmitter)
+- select() (interaction: click + AI invoke) queues "selected" with the index on real change
+- set_selected/clear/intervene (admin restore) stay silent — matches replace_selection
+- drain_intents drains the queue; is_dirty tracks pending; +2 unit tests (emit + silent)
+- Consolidated the selected_value helper into the main impl block (tidier)
+
+
+
+**Verification**:
+- cargo test --workspace: 0 fail; core virtual_select 12/12 (emit / admin-silent / is_dirty)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)
+- sweep r746: PASS (selection behaviour unchanged; the intent is additive)
+- intent witnessed by unit test (scene/intents from a running shell is racy, R51.169)
+- matches RadioGroup external_first_activate_emits_selected_intent_with_index contract
+
+
+
+**Impact**: §5.27, §5.38, §5.20
+
+
+**Carry forward**:
+- slot name "selected" follows Table (vs RadioGroup "selected_index"); dual precedent, kept
+- hello-virtual-select does not reduce on the intent (display); emitted for AI/2nd consumers
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

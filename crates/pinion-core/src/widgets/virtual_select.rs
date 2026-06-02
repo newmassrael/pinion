@@ -41,6 +41,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use crate::intent::Intent;
 
 /// R746 §5.27 §5.38 — single-select-by-index coordinator for a virtualized
 /// list.
@@ -49,12 +50,28 @@ use crate::external::{
 /// independent of which rows are currently materialized. `item_count`
 /// bounds every mutation: an out-of-range index is rejected (a malformed
 /// wire payload can never select a non-existent row).
+///
+/// Like every selection coordinator in the catalogue
+/// ([`RadioGroup`](crate::widgets::radio_group) /
+/// [`ListBox`](crate::widgets::listbox) / [`Table`](crate::widgets::table))
+/// it emits a §5.20 `"selected"` intent (the new index as
+/// [`IntrospectValue::Int`]) on the *interaction* path so AI / automation
+/// observe the selection on the intent channel — not only by polling
+/// `query("selected")`. The admin restore path
+/// ([`set_selected`](Self::set_selected) / [`clear`](Self::clear)) is
+/// silent, exactly as [`selection::replace_selection`](crate::widgets::selection::replace_selection)
+/// is (restoration is not interaction).
 #[derive(Debug, Clone)]
 pub struct VirtualSelectExternal {
     /// Selected data index, or `None` when nothing is selected.
     selected: Option<usize>,
     /// Total dataset size — the validity bound for any selection.
     item_count: usize,
+    /// §5.20 `"selected"` intents queued by interaction
+    /// ([`select`](Self::select)), drained by the framework via
+    /// [`drain_intents`](External::drain_intents). Admin mutations do not
+    /// queue.
+    pending: Vec<Intent>,
 }
 
 impl VirtualSelectExternal {
@@ -62,7 +79,7 @@ impl VirtualSelectExternal {
     /// selected.
     #[must_use]
     pub fn new(item_count: usize) -> Self {
-        Self { selected: None, item_count }
+        Self { selected: None, item_count, pending: Vec::new() }
     }
 
     /// The selected data index, or `None`.
@@ -77,13 +94,19 @@ impl VirtualSelectExternal {
         self.item_count
     }
 
-    /// Set the selection to `index` (single-select). Out-of-range indices
-    /// are ignored. Returns `true` if the selection actually changed.
+    /// Set the selection to `index` (single-select) — the **interaction**
+    /// path (pointer click / AI `invoke`). Out-of-range indices are
+    /// ignored. On a real change, queues a §5.20 `"selected"` intent
+    /// carrying the new index. Returns `true` if the selection changed.
     pub fn select(&mut self, index: usize) -> bool {
         if index >= self.item_count || self.selected == Some(index) {
             return false;
         }
         self.selected = Some(index);
+        if let Ok(i) = i64::try_from(index) {
+            self.pending
+                .push(Intent::new_static("selected", IntrospectValue::Int(i)));
+        }
         true
     }
 
@@ -124,6 +147,14 @@ impl VirtualSelectExternal {
             self.select(index);
         }
     }
+
+    /// The selected index as an `IntrospectValue` (`Int` or `Null`) — the
+    /// uniform return for the mutating `invoke` paths.
+    fn selected_value(&self) -> IntrospectValue {
+        self.selected
+            .and_then(|i| i64::try_from(i).ok())
+            .map_or(IntrospectValue::Null, IntrospectValue::Int)
+    }
 }
 
 impl External for VirtualSelectExternal {
@@ -147,16 +178,22 @@ impl External for VirtualSelectExternal {
         Some(self)
     }
 
-    /// Selection is observed through the introspect channel + the binding's
-    /// `read_state` projection (which raises the §5.20 transition), never
-    /// broadcast as an External intent — the `SpinButtonExternal` model.
-    fn drain_intents(&mut self, _sink: &mut dyn FnMut(crate::intent::Intent)) {}
+    /// Drain the queued §5.20 `"selected"` intents (one per interaction
+    /// that changed the selection) — the same contract
+    /// [`RadioGroup`](crate::widgets::radio_group) /
+    /// [`ListBox`](crate::widgets::listbox) honour, so AI / automation see
+    /// the selection on the intent channel.
+    fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+        for intent in self.pending.drain(..) {
+            sink(intent);
+        }
+    }
 
-    /// The selection never changes on its own; every mutation arrives via
-    /// `invoke` / `intervene`, which the framework already follows with a
-    /// repaint. So the coordinator is never self-dirty.
+    /// Dirty exactly while a `"selected"` intent awaits draining; the
+    /// selection value itself only changes through `invoke` / `intervene`,
+    /// which the framework already follows with a repaint.
     fn is_dirty(&self) -> bool {
-        false
+        !self.pending.is_empty()
     }
 }
 
@@ -242,16 +279,6 @@ impl ExternalIntrospect for VirtualSelectExternal {
             },
             _ => Err(InvokeError::UnknownPath),
         }
-    }
-}
-
-impl VirtualSelectExternal {
-    /// The selected index as an `IntrospectValue` (`Int` or `Null`) — the
-    /// uniform return for the mutating `invoke` paths.
-    fn selected_value(&self) -> IntrospectValue {
-        self.selected
-            .and_then(|i| i64::try_from(i).ok())
-            .map_or(IntrospectValue::Null, IntrospectValue::Int)
     }
 }
 
@@ -369,6 +396,44 @@ mod tests {
             s.intervene("nope", IntrospectValue::Int(0)),
             Err(InterveneError::UnknownPath),
         );
+    }
+
+    fn drained(s: &mut VirtualSelectExternal) -> Vec<Intent> {
+        let mut out = Vec::new();
+        s.drain_intents(&mut |i| out.push(i));
+        out
+    }
+
+    #[test]
+    fn interaction_emits_selected_intent_admin_is_silent() {
+        let mut s = VirtualSelectExternal::new(100);
+        // Interaction (select) emits one "selected" intent with the index.
+        assert!(s.select(7));
+        let intents = drained(&mut s);
+        assert_eq!(intents.len(), 1, "one selected intent per interaction");
+        assert_eq!(intents[0], Intent::new_static("selected", IntrospectValue::Int(7)));
+        assert!(drained(&mut s).is_empty(), "drain is idempotent (queue emptied)");
+        // A no-op re-select emits nothing.
+        assert!(!s.select(7));
+        assert!(drained(&mut s).is_empty(), "unchanged selection emits nothing");
+        // Composite send (the click wire) is also an interaction → emits.
+        s.handle_send("9:PointerUp");
+        assert_eq!(drained(&mut s).len(), 1, "composite send emits on activation");
+        // Admin paths (intervene / set_selected / clear) are SILENT.
+        s.intervene("selected", IntrospectValue::Int(3)).unwrap();
+        s.set_selected(Some(5));
+        s.clear();
+        assert!(drained(&mut s).is_empty(), "admin restore/clear is silent on §5.20");
+    }
+
+    #[test]
+    fn is_dirty_tracks_pending_intent() {
+        let mut s = VirtualSelectExternal::new(10);
+        assert!(!s.is_dirty(), "clean at rest");
+        s.select(2);
+        assert!(s.is_dirty(), "dirty while a selected intent is queued");
+        let _ = drained(&mut s);
+        assert!(!s.is_dirty(), "clean after drain");
     }
 
     #[test]
