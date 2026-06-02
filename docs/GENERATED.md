@@ -17275,6 +17275,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R760.1 — R760.1 user SSOT/textbook audit clearance: the R759/R760 self-grep missed two minor smells, now cleared (behaviour-preserving) — hello-card's apply_key doc still described the pre-R760 inline-activation structure that the activate_or_rove lift made stale, and hello-badge::read_badge re-walked the scene once per introspect slot instead of resolving the external once (the hello-progress multi-slot-reader precedent). The deeper audit confirmed two earlier claims hold: accordion-single's bespoke activation is genuine divergence (it sends a composite {idx}:KeyboardActivate payload to the root DisclosureGroup coordinator, not a plain event to the focused tag, so it correctly stays out of activate_or_rove), and the FAB does not fork the state-layer SSOT (it reuses m3_button_fill, which tints toward the per-family OnAccent target while the HOVER/PRESSED/DISABLED opacity tokens remain single-sourced in state_layer)
+
+**Changes**:
+- hello-card apply_key doc rewritten: both activate + rove now route through activate_or_rove (was stale)
+- hello-badge read_badge resolves the external once then reads 3 slots (the hello-progress reader shape)
+- drop read_badge dead post-query re-clamps (the introspect slots are always u32-range)
+- fab hover_progress uses a plain if-expression for readability over the bool->u8->f32 cast
+- audit confirmed accordion-single bespoke is genuine: composite {idx}: payload to the root coordinator
+- audit confirmed FAB reuses m3_button_fill (OnAccent target); state-layer opacity tokens stay single-sourced
+
+
+
+**Verification**:
+- hello-badge 11 + hello-card 17 + hello-fab 15 tests green (the fixes are behaviour-preserving)
+- clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean
+- r759_badge / r757_card / r760_fab demos re-run PASS (no behaviour change from the cleanups)
+
+
+
+**Impact**: §5.38, §5.39, §5.40
+
+
+**Carry forward**:
+- no new debt; the standing R760 / R759 carries are unchanged (FAB focus ring, badge paint lift, etc.)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

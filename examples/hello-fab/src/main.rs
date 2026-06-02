@@ -126,7 +126,7 @@ fn view_fab(i: usize, state: ButtonState, focused: bool, theme: &Theme) -> Scene
     let colors = ButtonColors::accent(theme);
     // Discrete hover (no spring): 1.0 on Hover, 0.0 otherwise — m3_button_fill
     // lands on the same endpoints a spring would settle to.
-    let hover_progress = f32::from(u8::from(matches!(state, ButtonState::Hover)));
+    let hover_progress = if matches!(state, ButtonState::Hover) { 1.0 } else { 0.0 };
     let style = ButtonStyle::m3_default(FAB_TAGS[i])
         .with_corner_radius(RADII[i])
         .with_size(fab_size(i))

@@ -289,21 +289,29 @@ fn view(state: &BadgeStates, _frame: &Frame) -> Scene {
     )
 }
 
-/// Read one badge's axes from its `External` introspect slots.
+/// Read one badge's axes from its `External` introspect slots. Resolves
+/// the tagged external **once** (the hello-progress multi-slot reader
+/// shape — not one scene walk per slot), then reads `count` / `max` /
+/// `dot`. The query values are always in `u32` range (the slots store a
+/// `u32`), so an absent external falls back to the empty-badge defaults.
 fn read_badge(scene: &Scene, tag: &str) -> BadgeData {
-    let q = |path: &str| {
-        scene
-            .find_external_with_tag(tag)
-            .and_then(|node| node.handle.introspect())
-            .and_then(|intro| intro.query(path))
+    let Some(intro) = scene
+        .find_external_with_tag(tag)
+        .and_then(|node| node.handle.introspect())
+    else {
+        return BadgeData { count: 0, max: BadgeExternal::DEFAULT_MAX, dot: false };
     };
-    let count = q("count").and_then(|v| v.as_i64()).unwrap_or(0);
-    let max = q("max").and_then(|v| v.as_i64()).unwrap_or(i64::from(BadgeExternal::DEFAULT_MAX));
-    let dot = matches!(q("dot"), Some(IntrospectValue::Bool(true)));
+    let u32_slot = |path: &str, default: u32| {
+        intro
+            .query(path)
+            .and_then(|v| v.as_i64())
+            .and_then(|n| u32::try_from(n).ok())
+            .unwrap_or(default)
+    };
     BadgeData {
-        count: u32::try_from(count.max(0)).unwrap_or(0),
-        max: u32::try_from(max.max(1)).unwrap_or(BadgeExternal::DEFAULT_MAX),
-        dot,
+        count: u32_slot("count", 0),
+        max: u32_slot("max", BadgeExternal::DEFAULT_MAX),
+        dot: matches!(intro.query("dot"), Some(IntrospectValue::Bool(true))),
     }
 }
 

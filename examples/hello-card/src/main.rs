@@ -310,19 +310,20 @@ impl WidgetCore for CardView {
     /// `apply_key` discipline — keys route only when one of our cards
     /// owns focus):
     ///
-    /// - `Space` / `Enter` — activate the focused card (button
-    ///   activation edge, emits the `click` intent); the activation
-    ///   *semantics* are widget-specific so this branch stays here;
+    /// - `Space` / `Enter` — activate the focused card (the button
+    ///   activation edge, emitting the `click` intent);
     /// - `ArrowRight` / `ArrowDown` / `ArrowLeft` / `ArrowUp` /
-    ///   `Home` / `End` — rove focus between the cards (wrapping),
-    ///   delegated to the shared [`pinion_core::focus_request::rove`]
-    ///   SSOT (R757 lift — the same WAI-ARIA roving-tabindex topology
-    ///   `hello-accordion` uses).
+    ///   `Home` / `End` — rove focus between the cards (wrapping).
     ///
-    /// Focus moves are requested through the R664
-    /// [`pinion_core::focus_request`] mailbox; the shell drains it after
-    /// this dispatch and applies it via the same `FocusManager` path a
-    /// mouse press uses.
+    /// Both go through the shared
+    /// [`pinion_core::focus_request::activate_or_rove`] SSOT (R760 lift —
+    /// the mechanical "activate the focused tab stop, else rove" wiring
+    /// `hello-accordion` + `hello-fab` also use). The card's *response* to
+    /// `KeyboardActivate` (firing the `click` intent) lives in its
+    /// `ButtonExternal` statechart. Rove focus moves are requested through
+    /// the R664 [`pinion_core::focus_request`] mailbox; the shell drains it
+    /// after this dispatch and applies it via the same `FocusManager` path
+    /// a mouse press uses.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
