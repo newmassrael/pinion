@@ -44,7 +44,7 @@
 //! scrollbar.
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
-use pinion_core::external::{External, IntrospectValue, StubExternal};
+use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -89,18 +89,15 @@ const SCROLL_KEY: &str = "vlist_scroll";
 /// Paint + state tag for the interactive scrollbar peer.
 const SCROLLBAR_TAG: &str = "vlist_scrollbar";
 
-/// Cached projection: the scrollbar peer's interaction phase. Scroll
-/// *offset* changes repaint through the reactive `ScrollState`
-/// subscription the view fn opens (so this state need not carry it); the
-/// scrollbar's hover / drag phase is the one bit of widget state worth
-/// surfacing for the transition log. `Copy` for the §6.3 projection
-/// contract.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum BarPhase {
-    Idle,
-    Hover,
-    Dragging,
-}
+// This is a display-only list: it has no widget state of its own
+// (`type State = ()`). Every repaint trigger is a reactive `Signal`
+// subscription the view opens — the theme provider, the `ScrollState`
+// offset (`scroll.offset_y()`), and the scrollbar peer's
+// `ScrollBarInteractionSignal` (`.get()`). The scrollbar's hover / drag
+// phase belongs to the scrollbar External (queryable at
+// `/vlist_scrollbar/external/state`); re-projecting it into this widget's
+// state would be a redundant copy that also re-declares the canonical
+// `ScrollBarState` enum.
 
 /// One virtualized row: a zebra-striped strip carrying its index label.
 /// Tagged `"vlist#<i>"` so `enrich_names_from_scene` derives the AT name
@@ -145,11 +142,11 @@ fn row_label(index: usize) -> String {
     format!("Item {index:05} \u{00B7} {}", CATEGORIES[index % CATEGORIES.len()])
 }
 
-/// view-fn (§6.3): pure sync mapping `BarPhase -> Scene`. The dataset is
-/// virtual — `view_virtual_list` invokes [`build_row`] only for the
+/// view-fn (§6.3): pure sync mapping (stateless) `() -> Scene`. The dataset
+/// is virtual — `view_virtual_list` invokes [`build_row`] only for the
 /// indices in the current scroll window.
 #[allow(clippy::trivially_copy_pass_by_ref)]
-fn view(_phase: BarPhase, _frame: &Frame) -> Scene {
+fn view(_state: (), _frame: &Frame) -> Scene {
     let scroll_state = use_scroll_state(SCROLL_KEY);
     let theme = use_theme(THEME_TAG).theme_animated();
 
@@ -203,7 +200,10 @@ fn view(_phase: BarPhase, _frame: &Frame) -> Scene {
 struct VirtualListView;
 
 impl WidgetCore for VirtualListView {
-    type State = BarPhase;
+    /// Display-only: no widget state of its own. Repaints are driven by the
+    /// theme / scroll-offset / scrollbar-interaction `Signal` subscriptions
+    /// the view opens, not by state change-detection.
+    type State = ();
     type Event = ();
 
     /// The list has no per-item or aggregate widget statechart — the
@@ -226,25 +226,12 @@ impl WidgetCore for VirtualListView {
         LIST_TAG
     }
 
-    /// Project the scrollbar peer's interaction phase. The scroll offset
-    /// drives repaints through the reactive `ScrollState` subscription
-    /// the view + a11y open, so it is not part of the change-detection
-    /// state; the bar phase is.
-    fn read_state(scene: &Scene) -> BarPhase {
-        let Some(node) = scene.find_external_with_tag(SCROLLBAR_TAG) else {
-            return BarPhase::Idle;
-        };
-        let Some(intro) = node.handle.introspect() else {
-            return BarPhase::Idle;
-        };
-        match intro.query("state") {
-            Some(IntrospectValue::Text(s)) if s == "Dragging" => BarPhase::Dragging,
-            Some(IntrospectValue::Text(s)) if s == "Hover" => BarPhase::Hover,
-            _ => BarPhase::Idle,
-        }
-    }
+    /// No widget state to project — the scroll offset and the scrollbar
+    /// peer's interaction phase each drive their own repaints through the
+    /// reactive `Signal` subscriptions the view opens.
+    fn read_state(_scene: &Scene) {}
 
-    fn view(state: BarPhase, frame: &Frame) -> Scene {
+    fn view(state: (), frame: &Frame) -> Scene {
         view(state, frame)
     }
 
@@ -262,12 +249,8 @@ impl WidgetCore for VirtualListView {
         "pinion hello-virtual-list (R744 §5.27 Model/View virtualization)"
     }
 
-    fn fmt_state_log(state: &BarPhase) -> String {
-        match state {
-            BarPhase::Idle => "scrollbar=idle".to_string(),
-            BarPhase::Hover => "scrollbar=hover".to_string(),
-            BarPhase::Dragging => "scrollbar=dragging".to_string(),
-        }
+    fn fmt_state_log(_state: &()) -> String {
+        "display-only (no widget state)".to_string()
     }
 }
 
@@ -279,7 +262,7 @@ impl WidgetA11y for VirtualListView {
     /// scrolls — the canonical AT model for a virtualized list (the full
     /// extent is conveyed by `aria-setsize`, the rendered window by the
     /// present `listitem` nodes).
-    fn access_node(_state: &BarPhase, _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         // Same windowing source as the view fn (runs owner-wrapped, so
         // `use_scroll_state` resolves the live offset) — the a11y tree
         // and the painted tree never diverge on which rows exist.
@@ -328,7 +311,7 @@ mod tests {
     use pinion_core::Owner;
 
     fn run_view() -> Scene {
-        Owner::new().run(|| view(BarPhase::Idle, &Frame::default()))
+        Owner::new().run(|| view((), &Frame::default()))
     }
 
     fn find_scroll(scene: &Scene) -> Option<&pinion_core::scene::ScrollNode> {
@@ -387,7 +370,7 @@ mod tests {
         // `access_node` reads the live scroll offset via `use_scroll_state`,
         // which the substrate wraps in `root_owner.run` (substrate.rs);
         // mirror that wrap here.
-        let nodes = Owner::new().run(|| VirtualListView::access_node(&BarPhase::Idle, None));
+        let nodes = Owner::new().run(|| VirtualListView::access_node(&(), None));
         // First node = the list container.
         assert_eq!(nodes[0].role, AriaRole::List);
         assert_eq!(

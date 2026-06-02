@@ -44,7 +44,7 @@
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
-use pinion_core::external::{External, IntrospectValue, StubExternal};
+use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -115,16 +115,12 @@ fn list_offsets() -> Rc<RowOffsets> {
         })
 }
 
-/// Cached projection: the scrollbar peer's interaction phase (scroll
-/// *offset* repaints through the reactive `ScrollState` subscription the
-/// view opens, so it is not part of this state). `Copy` for the §6.3
-/// projection contract.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum BarPhase {
-    Idle,
-    Hover,
-    Dragging,
-}
+// Display-only list: no widget state of its own (`type State = ()`). Every
+// repaint trigger is a reactive `Signal` subscription the view opens — the
+// theme, the `ScrollState` offset, and the scrollbar peer's
+// `ScrollBarInteractionSignal` (`.get()`). The scrollbar's phase belongs to
+// the scrollbar External (queryable); re-projecting it would be a redundant
+// copy that also re-declares the canonical `ScrollBarState`.
 
 /// One variable-height row: a strip whose height comes from
 /// [`row_height`], tinted by its height tier so taller rows read as a
@@ -170,11 +166,11 @@ fn row_label(index: usize, height: u32) -> String {
     format!("Row {index:05} \u{00B7} {height}px")
 }
 
-/// view-fn (§6.3): pure sync mapping `BarPhase -> Scene`. The dataset is
-/// virtual — `view_variable_virtual_list` invokes [`build_row`] only for
+/// view-fn (§6.3): pure sync mapping (stateless) `() -> Scene`. The dataset
+/// is virtual — `view_variable_virtual_list` invokes [`build_row`] only for
 /// the indices in the current scroll window.
 #[allow(clippy::trivially_copy_pass_by_ref)]
-fn view(_phase: BarPhase, _frame: &Frame) -> Scene {
+fn view(_state: (), _frame: &Frame) -> Scene {
     let scroll_state = use_scroll_state(SCROLL_KEY);
     let offsets = list_offsets();
     let theme = use_theme(THEME_TAG).theme_animated();
@@ -227,7 +223,9 @@ fn view(_phase: BarPhase, _frame: &Frame) -> Scene {
 struct VariableListView;
 
 impl WidgetCore for VariableListView {
-    type State = BarPhase;
+    /// Display-only: no widget state of its own. Repaints are driven by the
+    /// theme / scroll-offset / scrollbar-interaction `Signal` subscriptions.
+    type State = ();
     type Event = ();
 
     /// No per-item or aggregate widget statechart — the scroll position
@@ -247,23 +245,11 @@ impl WidgetCore for VariableListView {
         LIST_TAG
     }
 
-    /// Project the scrollbar peer's interaction phase; the scroll offset
-    /// drives repaints through the reactive `ScrollState` subscription.
-    fn read_state(scene: &Scene) -> BarPhase {
-        let Some(node) = scene.find_external_with_tag(SCROLLBAR_TAG) else {
-            return BarPhase::Idle;
-        };
-        let Some(intro) = node.handle.introspect() else {
-            return BarPhase::Idle;
-        };
-        match intro.query("state") {
-            Some(IntrospectValue::Text(s)) if s == "Dragging" => BarPhase::Dragging,
-            Some(IntrospectValue::Text(s)) if s == "Hover" => BarPhase::Hover,
-            _ => BarPhase::Idle,
-        }
-    }
+    /// No widget state to project — scroll offset + scrollbar phase each
+    /// drive their own repaints through the view's reactive subscriptions.
+    fn read_state(_scene: &Scene) {}
 
-    fn view(state: BarPhase, frame: &Frame) -> Scene {
+    fn view(state: (), frame: &Frame) -> Scene {
         view(state, frame)
     }
 
@@ -281,12 +267,8 @@ impl WidgetCore for VariableListView {
         "pinion hello-variable-list (R745 §5.27 variable-height virtualization)"
     }
 
-    fn fmt_state_log(state: &BarPhase) -> String {
-        match state {
-            BarPhase::Idle => "scrollbar=idle".to_string(),
-            BarPhase::Hover => "scrollbar=hover".to_string(),
-            BarPhase::Dragging => "scrollbar=dragging".to_string(),
-        }
+    fn fmt_state_log(_state: &()) -> String {
+        "display-only (no widget state)".to_string()
     }
 }
 
@@ -297,7 +279,7 @@ impl WidgetA11y for VariableListView {
     /// absolute `aria-posinset`. The window is resolved from the same
     /// cached [`RowOffsets`] the view fn uses, so the a11y tree and the
     /// painted tree never diverge on which rows exist.
-    fn access_node(_state: &BarPhase, _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let offsets = list_offsets();
         let window =
@@ -344,7 +326,7 @@ mod tests {
     use super::*;
 
     fn run_view() -> Scene {
-        Owner::new().run(|| view(BarPhase::Idle, &Frame::default()))
+        Owner::new().run(|| view((), &Frame::default()))
     }
 
     fn find_scroll(scene: &Scene) -> Option<&pinion_core::scene::ScrollNode> {
@@ -413,7 +395,7 @@ mod tests {
 
     #[test]
     fn a11y_list_reports_full_setsize_with_windowed_items() {
-        let nodes = Owner::new().run(|| VariableListView::access_node(&BarPhase::Idle, None));
+        let nodes = Owner::new().run(|| VariableListView::access_node(&(), None));
         assert_eq!(nodes[0].role, AriaRole::List);
         assert_eq!(
             nodes[0].size_of_set,

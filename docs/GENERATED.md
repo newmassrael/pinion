@@ -16497,6 +16497,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R746.1 — R746.1 audit correction (user hack/smell/SSOT review): the BarPhase scrollbar-phase projection in the three virtualization bindings was both redundant (the scrollbar interaction is a reactive Signal the view already auto-subscribes to via .get(), so it drives its own repaints — hello-listbox proves this) and an SSOT violation (it re-declared the canonical ScrollBarState enum and duplicated the decode fragment across 3 bindings). Removed it: the two display-only lists now carry type State = (), hello-virtual-select carries State = Option<usize> (the selection only). No behaviour change.
+
+**Changes**:
+- Audit (user hack/smell/SSOT review) found the BarPhase projection both redundant AND anti-SSOT
+- 3 bindings (hello-virtual-list/-variable-list/-virtual-select) re-declared a local BarPhase enum
+- Anti-SSOT: a canonical ScrollBarState enum already exists in widgets::scrollbar (re-declaration)
+- Redundant: ScrollBarInteractionSignal is reactive; the view .get() auto-subscribes (drives repaint)
+- Proof: wheel changes offset not BarPhase yet rows re-window = repaints are already Signal-driven
+- hello-listbox precedent: no BarPhase projection, its scrollbar hover/drag works via the Signal
+- Fix: the two display-only lists -> type State = (); hello-virtual-select -> State = Option<usize>
+- Removed 3 BarPhase enum re-declarations + 3 byte-identical read_state decode fragments
+- No behaviour change: scroll + scrollbar phase repaint via their reactive Signal subscriptions
+
+
+
+**Verification**:
+- cargo test --workspace: 0 fail (hello-virtual-list 4/4, hello-variable-list 6/6, virtual-select 3/3)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)
+- sweep r744 + r745 + r746: 3/3 PASS — scrolling still works, proving BarPhase was redundant
+- display-only lists now carry no widget state; scrollbar phase stays queryable on its own External
+
+
+
+**Impact**: §5.27, §5.45
+
+
+**Carry forward**:
+- view-side scrollbar assembly (style+view_vertical_scrollbar) still per-binding (viewport diff)
+- That assembly is genuinely divergent (per-binding viewport_h), not mechanical — honest no-lift
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

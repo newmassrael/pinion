@@ -75,23 +75,14 @@ const LIST_TAG: &str = "vlist";
 const SCROLL_KEY: &str = "vlist_scroll";
 const SCROLLBAR_TAG: &str = "vlist_scrollbar";
 
-/// Cached projection of the widget state worth change-detecting: the
-/// selected data index + the scrollbar peer's interaction phase. Scroll
-/// *offset* repaints through the reactive `ScrollState` subscription. `Copy`
-/// for the §6.3 projection contract.
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-struct ListState {
-    selected: Option<usize>,
-    bar: BarPhase,
-}
-
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
-enum BarPhase {
-    #[default]
-    Idle,
-    Hover,
-    Dragging,
-}
+// The widget's only state is the selected data index (`Option<usize>`,
+// `Copy` per the §6.3 projection contract). The scrollbar peer's
+// interaction phase is NOT projected here: its `ScrollBarInteractionSignal`
+// is a reactive `Signal` the view auto-subscribes to via `.get()`, so it
+// already drives its own repaints (hello-listbox does the same). Scroll
+// *offset* likewise repaints through the reactive `ScrollState`
+// subscription the view opens. Re-projecting either would be a redundant
+// copy of state the scrollbar External already owns.
 
 /// One virtualized row. The selected row paints in the Accent tone
 /// (M3 selected state layer); unselected rows zebra-stripe. Tagged
@@ -135,14 +126,13 @@ fn row_label(index: usize) -> String {
     format!("Item {index:05} \u{00B7} {}", CATEGORIES[index % CATEGORIES.len()])
 }
 
-/// view-fn (§6.3): pure sync mapping `ListState -> Scene`. The dataset is
-/// virtual — `view_virtual_list` invokes [`build_row`] only for the
-/// indices in the current scroll window, each tinted by `state.selected`.
+/// view-fn (§6.3): pure sync mapping `selected index -> Scene`. The dataset
+/// is virtual — `view_virtual_list` invokes [`build_row`] only for the
+/// indices in the current scroll window, each tinted by `selected`.
 #[allow(clippy::trivially_copy_pass_by_ref)] // mirrors the WidgetCore::view `&Frame` signature
-fn view(state: ListState, _frame: &Frame) -> Scene {
+fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     let scroll_state = use_scroll_state(SCROLL_KEY);
     let theme = use_theme(THEME_TAG).theme_animated();
-    let selected = state.selected;
 
     let list = view_virtual_list(
         &scroll_state,
@@ -183,7 +173,9 @@ fn view(state: ListState, _frame: &Frame) -> Scene {
 struct VirtualSelectView;
 
 impl WidgetCore for VirtualSelectView {
-    type State = ListState;
+    /// The selected data index — the widget's entire state. `None` when
+    /// nothing is selected.
+    type State = Option<usize>;
     type Event = ();
 
     /// The primary External is the index-held selection coordinator,
@@ -202,31 +194,21 @@ impl WidgetCore for VirtualSelectView {
         LIST_TAG
     }
 
-    /// Project the selected data index off the primary coordinator + the
-    /// scrollbar peer's phase. A selection change (`Option<usize>` differs)
-    /// raises the §5.20 transition and repaints; scroll offset repaints via
-    /// the reactive `ScrollState` subscription.
-    fn read_state(scene: &Scene) -> ListState {
-        let selected = scene
+    /// Project the selected data index off the primary coordinator. A
+    /// selection change (`Option<usize>` differs) raises the §5.20
+    /// transition and repaints; scroll offset + scrollbar phase repaint via
+    /// their own reactive `Signal` subscriptions the view opens.
+    fn read_state(scene: &Scene) -> Option<usize> {
+        scene
             .find_external_with_tag(LIST_TAG)
             .and_then(|node| node.handle.introspect())
             .and_then(|intro| match intro.query("selected") {
                 Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
                 _ => None,
-            });
-        let bar = scene
-            .find_external_with_tag(SCROLLBAR_TAG)
-            .and_then(|node| node.handle.introspect())
-            .and_then(|intro| intro.query("state"))
-            .map_or(BarPhase::Idle, |v| match v {
-                IntrospectValue::Text(s) if s == "Dragging" => BarPhase::Dragging,
-                IntrospectValue::Text(s) if s == "Hover" => BarPhase::Hover,
-                _ => BarPhase::Idle,
-            });
-        ListState { selected, bar }
+            })
     }
 
-    fn view(state: ListState, frame: &Frame) -> Scene {
+    fn view(state: Option<usize>, frame: &Frame) -> Scene {
         view(state, frame)
     }
 
@@ -244,8 +226,8 @@ impl WidgetCore for VirtualSelectView {
         "pinion hello-virtual-select (R746 §5.27 selectable virtualization)"
     }
 
-    fn fmt_state_log(state: &ListState) -> String {
-        match state.selected {
+    fn fmt_state_log(state: &Option<usize>) -> String {
+        match state {
             Some(i) => format!("selected=row {i}"),
             None => "selected=none".to_string(),
         }
@@ -257,7 +239,7 @@ impl WidgetA11y for VirtualSelectView {
     /// parent (`aria-setsize = N`, no `aria-multiselectable`) over the
     /// rendered window; each visible row is an [`AriaRole::ListItem`] with
     /// `aria-posinset` and `aria-selected = (index == selected)`.
-    fn access_node(state: &ListState, _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let window =
             compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, N, ROW_PITCH, OVERSCAN);
@@ -277,7 +259,7 @@ impl WidgetA11y for VirtualSelectView {
                 AccessNode::new(format!("{LIST_TAG}#{index}"), AriaRole::ListItem)
                     .with_position_in_set(posinset)
                     .with_size_of_set(total)
-                    .with_selected(state.selected == Some(index)),
+                    .with_selected(*selected == Some(index)),
             );
         }
         nodes
@@ -305,7 +287,7 @@ mod tests {
     use pinion_core::Owner;
 
     fn run_view(selected: Option<usize>) -> Scene {
-        Owner::new().run(|| view(ListState { selected, bar: BarPhase::Idle }, &Frame::default()))
+        Owner::new().run(|| view(selected, &Frame::default()))
     }
 
     /// Find the `vlist#<i>` row container and return its fill color.
@@ -347,9 +329,7 @@ mod tests {
 
     #[test]
     fn a11y_marks_selected_row_aria_selected() {
-        let nodes = Owner::new().run(|| {
-            VirtualSelectView::access_node(&ListState { selected: Some(1), bar: BarPhase::Idle }, None)
-        });
+        let nodes = Owner::new().run(|| VirtualSelectView::access_node(&Some(1), None));
         assert_eq!(nodes[0].role, AriaRole::List);
         // Find the listitem for index 1 (posinset 2) and assert selected.
         let item1 = nodes[1..]
@@ -364,11 +344,4 @@ mod tests {
         assert_eq!(item0.selected, Some(false), "unselected row carries aria-selected=false");
     }
 
-    #[test]
-    fn read_state_default_is_unselected() {
-        // A fresh scene with the coordinator at its default reports None.
-        let state = ListState::default();
-        assert_eq!(state.selected, None);
-        assert_eq!(state.bar, BarPhase::Idle);
-    }
 }
