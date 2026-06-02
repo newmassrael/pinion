@@ -428,6 +428,27 @@ def body() -> None:
         assert snap_a == snap_b, "H.1 back-to-back topology queries are identical"
         assert _panel_ids(snap_a) == _panel_ids(snap_b), "H.2 panel order stable"
 
+        # ─── (I) R749 §5.52 reorganize undo/redo ─────────────────────
+        # `DockReorganizeExternal::with_undo` records each gesture as a
+        # reversible SignalEdit<DockTopology> (the 3rd UndoCommand consumer
+        # — editor workspace history); the UndoStackExternal surfaces it.
+        _section("I: reorganize undo/redo")
+        undo = "/dock_undo_stack/external"
+        before_i = _panel_ids(_topology(tf))
+        # A symbolic swap is recorded onto the shared history.
+        _reorganize(tf, _OUTLINER, _CONSOLE, "Center")
+        after_i = _panel_ids(_topology(tf))
+        assert after_i != before_i, "I.1 reorganize changed the layout"
+        assert int(tf.query(f"{undo}/count")) >= 1, "I.2 reorganize recorded onto the undo stack"
+        assert tf.query(f"{undo}/can_undo") is True, "I.3 history is undoable"
+        assert tf.query(f"{undo}/undo_label") is not None, "I.4 the edit carries a label"
+        # Undo restores the prior layout; redo re-applies it.
+        assert tf.invoke(f"{undo}/undo", None) is True, "I.5 undo stepped the cursor back"
+        assert _panel_ids(_topology(tf)) == before_i, "I.6 undo restored the layout"
+        assert tf.query(f"{undo}/can_redo") is True, "I.7 the undone edit is redoable"
+        assert tf.invoke(f"{undo}/redo", None) is True, "I.8 redo stepped the cursor forward"
+        assert _panel_ids(_topology(tf)) == after_i, "I.9 redo re-applied the layout"
+
         print("[demo] r686_dock_reorganize: all sections PASS")
 
 

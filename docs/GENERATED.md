@@ -4275,6 +4275,7 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - [implements] crates/pinion-core/src/undo.rs:UndoStack
 - [implements] crates/pinion-core/src/undo.rs:UndoCommand
 - [implements] crates/pinion-core/src/widgets/view_order.rs:SortFilterEdit
+- [implements] crates/pinion-widget-paint/src/dock.rs:DockReorganizeExternal::with_undo
 
 
 
@@ -16801,6 +16802,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 - Command merge/coalescing (typing collapses to one step) additive: no consumer yet
 - Macro (group N edits as one) transactions additive: backward-compatible later
 - 3rd UndoCommand consumer = DockReorganizeIntent (R687 carry) when dock tear-off lands
+
+
+
+### R749 — R749 §5.52 3rd undo consumer: DockReorganizeExternal::with_undo records each dock reorganize as a reversible SignalEdit<DockTopology> onto a shared UndoStack (editor workspace history / Phase D seed); hello-dock-panels-editor wires the stack + UndoStackExternal so panel moves are reversible over RPC.
+
+**Changes**:
+- DockReorganizeExternal::with_undo (§5.52): record each reorganize as SignalEdit<DockTopology>
+- 3rd UndoCommand consumer = editor workspace history (Ctrl+Z over panel moves; Phase D seed)
+- SignalEdit works directly on the complex DockTopology (Clone+PartialEq+Serialize already)
+- hello-dock-panels-editor: undo stack + UndoStackExternal at dock_undo_stack; reorganize reversible
+
+
+
+**Verification**:
+- pinion-widget-paint dock r749_with_undo_makes_reorganize_reversible unit PASS
+- editor 32 unit PASS (extra-external count 5->6 with UndoStackExternal)
+- r686_dock_reorganize.py §I PASS: reorganize -> undo restores layout -> redo re-applies
+- no new interactive pointer surface (reorganize+undo both RPC/AI-first) so no live XTEST
+- cargo test --workspace 0-fail + clippy --all-targets -D pedantic (vello) clean
+- full headless demo sweep 96/96 PASS
+
+
+
+**Impact**: §5.52, §5.45, §5.16
+
+
+**Carry forward**:
+- Live mouse drag-to-reorganize still RPC-only (R687 carry); undo is RPC/AI-first too
+- Toolbar Undo/Redo buttons deferred until live-drag tear-off round (premature now)
+- split_seq stays monotonic across undo (ids never reused) - no collision, no rollback needed
 
 
 

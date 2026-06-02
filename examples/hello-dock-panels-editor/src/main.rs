@@ -52,6 +52,7 @@ use pinion_core::style::{
     AlignItems, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::undo::{use_undo_stack, UndoStack, UndoStackExternal};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
@@ -105,6 +106,12 @@ const SPLIT_INNER_H_TAG: &str = "editor_split_inner_h";
 /// RPC-as-primary-path); the external mutates the shared topology
 /// `Signal`, and the view fn's reactive subscription re-renders.
 const DOCK_REORGANIZE_TAG: &str = "dock_reorganize";
+/// (R749 §5.52) The [`UndoStackExternal`] anchor — the editor's reorganize
+/// workspace history (Ctrl+Z over panel moves). AI clients drive it via
+/// `scene/invoke /dock_undo_stack/external/undo` (and `redo`).
+const DOCK_UNDO_TAG: &str = "dock_undo_stack";
+/// `use_undo_stack` key for the shared reorganize history.
+const DOCK_UNDO_KEY: &str = "editor_dock_undo";
 
 // ─── intent tag constants ─────────────────────────────────────────────
 
@@ -195,6 +202,14 @@ fn use_editor_topology() -> Rc<Signal<DockTopology>> {
     Owner::current()
         .expect("hello-dock-panels-editor: view fn runs inside owner scope")
         .cache("editor_topology", || Signal::new(build_editor_topology()))
+}
+
+/// (R749 §5.52) The shared reorganize [`UndoStack`] — the editor's
+/// workspace history. The [`DockReorganizeExternal`] records each applied
+/// gesture onto it; the [`UndoStackExternal`] surfaces undo/redo to RPC.
+/// Both reach the same `Rc` (the `use_undo_stack` sharing).
+fn use_dock_undo() -> Rc<UndoStack> {
+    use_undo_stack(DOCK_UNDO_KEY)
 }
 
 fn use_viewport_click_counter() -> Rc<Signal<u32>> {
@@ -514,9 +529,16 @@ impl WidgetCore for DockPanelsEditorView {
         });
         // (R686 §5.45) The drag-to-reorganize handle — shares the
         // topology signal so an applied gesture re-renders the view.
+        // (R749 §5.52) `with_undo` records each reorganize onto the shared
+        // history, making panel moves reversible (the 3rd UndoCommand
+        // consumer); the `UndoStackExternal` surfaces undo/redo to RPC.
         externals.push(ExtraExternal::new(
             DOCK_REORGANIZE_TAG,
-            Box::new(DockReorganizeExternal::new(topology_signal)),
+            Box::new(DockReorganizeExternal::new(topology_signal).with_undo(use_dock_undo())),
+        ));
+        externals.push(ExtraExternal::new(
+            DOCK_UNDO_TAG,
+            Box::new(UndoStackExternal::new(use_dock_undo())),
         ));
         externals
     }
@@ -826,14 +848,16 @@ mod tests {
     fn r686_editor_create_extra_externals_registers_4_splitters_plus_reorganize() {
         run_in_owner(|| {
             let externals = <DockPanelsEditorView as WidgetCore>::create_extra_externals();
-            // 4 SplitterExternals + 1 DockReorganizeExternal (R686).
-            assert_eq!(externals.len(), 5);
+            // 4 SplitterExternals + 1 DockReorganizeExternal (R686) +
+            // 1 UndoStackExternal (R749 §5.52 reorganize history).
+            assert_eq!(externals.len(), 6);
             let tags: Vec<&str> = externals.iter().map(|e| e.tag.as_ref()).collect();
             assert!(tags.contains(&SPLIT_OUTER_TAG));
             assert!(tags.contains(&SPLIT_INNER_V_TAG));
             assert!(tags.contains(&SPLIT_MIDDLE_H_TAG));
             assert!(tags.contains(&SPLIT_INNER_H_TAG));
             assert!(tags.contains(&DOCK_REORGANIZE_TAG));
+            assert!(tags.contains(&DOCK_UNDO_TAG));
         });
     }
 

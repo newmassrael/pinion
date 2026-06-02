@@ -78,6 +78,7 @@ use pinion_core::theme::{ColorRole, Theme};
 use std::rc::Rc;
 
 use pinion_core::reactive::Signal;
+use pinion_core::undo::{SignalEdit, UndoStack};
 
 use crate::splitter::{view_splitter, SplitterOrientation, SplitterStyle};
 
@@ -1399,6 +1400,13 @@ pub struct DockReorganizeExternal {
     /// Last gesture outcome, surfaced via `query("last_outcome")` for
     /// AI clients to confirm an apply succeeded / why it was rejected.
     last_outcome: RefCell<Option<String>>,
+    /// (R749 §5.52) When attached via [`with_undo`](Self::with_undo) each
+    /// applied reorganize is recorded as a reversible
+    /// [`SignalEdit<DockTopology>`] onto this stack (the **third**
+    /// [`UndoCommand`](pinion_core::undo::UndoCommand) consumer — editor
+    /// workspace history), instead of mutating the topology signal
+    /// directly. `None` = the R686 direct-mutate behavior.
+    undo: Option<Rc<UndoStack>>,
 }
 
 impl core::fmt::Debug for DockReorganizeExternal {
@@ -1423,7 +1431,19 @@ impl DockReorganizeExternal {
             split_seq: Cell::new(0),
             reorganize_ratio: DEFAULT_REORGANIZE_RATIO,
             last_outcome: RefCell::new(None),
+            undo: None,
         }
+    }
+
+    /// (R749 §5.52) Record every applied reorganize onto `stack` as a
+    /// reversible [`SignalEdit<DockTopology>`], so `invoke "undo"` /
+    /// `"redo"` on the stack step the whole layout back and forth — the
+    /// editor's workspace history (Phase D seed). Without this the
+    /// external mutates the topology signal directly (the R686 behavior).
+    #[must_use]
+    pub fn with_undo(mut self, stack: Rc<UndoStack>) -> Self {
+        self.undo = Some(stack);
+        self
     }
 
     /// Diagnostic: how many splits this external has minted so far.
@@ -1455,7 +1475,14 @@ impl DockReorganizeExternal {
         }
         let summary = format!("{} -> {}", intent.source(), intent.target());
         *self.last_outcome.borrow_mut() = Some(summary.clone());
-        self.topology.set(next);
+        // (R749 §5.52) When an undo stack is attached, record the topology
+        // change as a reversible edit (which applies it); else mutate the
+        // signal directly (the R686 path).
+        if let Some(stack) = &self.undo {
+            stack.record(SignalEdit::to(&self.topology, next, summary.clone()));
+        } else {
+            self.topology.set(next);
+        }
         Ok(summary)
     }
 }
@@ -3735,6 +3762,28 @@ mod reorganize_tests {
         assert!(matches!(result, IntrospectValue::Text(_)));
         // The shared signal now holds the swapped topology.
         assert_eq!(signal.get().panel_ids(), vec!["b", "a", "c"]);
+    }
+
+    #[test]
+    fn r749_with_undo_makes_reorganize_reversible() {
+        use pinion_core::undo::UndoStack;
+        let signal = Rc::new(Signal::new(abc_topology()));
+        let stack = Rc::new(UndoStack::new());
+        let mut ext = DockReorganizeExternal::new(Rc::clone(&signal)).with_undo(Rc::clone(&stack));
+        assert_eq!(signal.get().panel_ids(), vec!["a", "b", "c"], "boot layout");
+        // Swap a <-> b: recorded as one reversible topology edit.
+        ext.invoke(
+            "reorganize",
+            IntrospectValue::Json(serde_json::json!({"source":"a","target":"b","zone":"Center"})),
+        )
+        .unwrap();
+        assert_eq!(signal.get().panel_ids(), vec!["b", "a", "c"], "reorganize applied");
+        assert_eq!(stack.len(), 1, "one recorded edit");
+        // Undo restores the prior layout; redo re-applies it.
+        assert!(stack.undo());
+        assert_eq!(signal.get().panel_ids(), vec!["a", "b", "c"], "undo restored the layout");
+        assert!(stack.redo());
+        assert_eq!(signal.get().panel_ids(), vec!["b", "a", "c"], "redo re-applied");
     }
 
     #[test]
