@@ -1,27 +1,23 @@
 [package]
-name = "hello-segmented-multi"
+name = "hello-filter-chip"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R733 §5.38 §5.40 multi-select Material 3 segmented button — N independent ToggleExternals (toggle-button group) lowering to a WAI-ARIA group of aria-pressed buttons; first aria-pressed consumer"
+description = "R753 §5.38 §5.40 Material 3 filter chips — 2nd consumer of the toggle_group toggle-button-group substrate (multi-select aria-pressed); detached outlined chip paint"
 publish = false
 
 [[bin]]
-name = "hello-segmented-multi"
+name = "hello-filter-chip"
 path = "src/main.rs"
 
 [dependencies]
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 # R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
-# R752 §5.50 — the Material 3 state-layer SSOT. This binding is a
-# *divergent* consumer (it folds Disabled into the resting transparent
-# track), so it keeps its own hover/pressed arm but references the shared
-# HOVER / PRESSED tokens instead of raw 0.08 / 0.12 literals — exactly as
-# the state_layer module docs prescribe. R753 repays an R752 miss: the
-# by-dep R752 sweep skipped this no-widget-paint-dep file.
+# R752 §5.50 — the Material 3 state-layer SSOT (hover / pressed / disabled
+# overlay), shared instead of re-deriving raw 0.08 / 0.12 / 0.38 literals.
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 vello = { workspace = true }

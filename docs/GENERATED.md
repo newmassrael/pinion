@@ -16958,6 +16958,35 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R753 — Lift toggle_group toggle-button-group substrate; Material 3 filter chips as 2nd consumer
+
+**Changes**:
+- Lift pinion_core::widgets::toggle_group (apply_key/read_toggle/boot_toggle, WAI-ARIA APG group)
+- Lift pinion_a11y::toggle_button_group_nodes (group + N aria-pressed buttons as one SSOT)
+- hello-segmented-multi (R733) refactored onto substrate; no 3rd copy; only joined-track paint inline
+- New hello-filter-chip: M3 detached outlined filter chips, 2nd toggle_group consumer; paint inline
+- Repay R752 miss: segmented-multi references state_layer HOVER/PRESSED tokens (was raw 0.08/0.12)
+
+
+
+**Verification**:
+- cargo test --workspace 0-fail; clippy --workspace --all-targets -D pedantic (vello) clean
+- Unit: toggle_group 9 + a11y nodes 3 + filter-chip 8 + segmented-multi 7 green
+- Demo sweep 99/99; new r753_filter_chip.py 40+ assertions incl style.border outline introspection
+- Live native XTEST on :0: click chip -> fill white->Accent (25,118,210) exact; neighbour unchanged
+
+
+
+**Impact**: §5.38, §5.40
+
+
+**Carry forward**:
+- Chip paint inline (1st consumer); 2nd chip variant triggers pinion_widget_paint::chip lift
+- Selected fill = Accent; palette lacks SecondaryContainer tier; secondary-tier expansion is follow-up
+- Per-chip-Tab single model; single-tab roving-toolbar chip-set variant deferred (no consumer)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
