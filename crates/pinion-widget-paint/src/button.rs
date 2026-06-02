@@ -67,22 +67,15 @@ use pinion_core::external::IntrospectValue;
 use pinion_core::WidgetStateName;
 use pinion_a11y::AccessState;
 
-/// (R686.B §5.16) Material 3 hover state-layer opacity — the cursor-
-/// over overlay fraction lerped from the resting fill toward the
-/// [`ButtonColors::state_layer`] colour. M3 canonical 8 %.
-pub const HOVER_STATE_LAYER: f32 = 0.08;
-
-/// (R686.B §5.16) Material 3 pressed state-layer opacity. M3
-/// canonical 12 %.
-pub const PRESSED_STATE_LAYER: f32 = 0.12;
-
-/// (R686.B §5.16) Material 3 disabled state-layer opacity — the
-/// fade fraction the [`ButtonColors::filled_tonal`] /
-/// [`ButtonColors::new`] disabled-fill helpers apply when a consumer
-/// wants the "fade toward a background" disabled appearance (the
-/// editor instead switches to a distinct surface tier, expressed via
-/// an explicit [`ButtonColors::fill_disabled`]). M3 canonical 38 %.
-pub const DISABLED_STATE_LAYER: f32 = 0.38;
+// (R686.B → R752 §5.50) The M3 state-layer opacity tokens now live once in
+// the cross-cutting [`crate::state_layer`] SSOT; re-exported here under the
+// historical `*_STATE_LAYER` names so `button`'s role-specific overlay (it
+// tints toward [`ButtonColors::state_layer`], not `OnSurface`, so it keeps
+// its own arms) and existing `button::HOVER_STATE_LAYER` paths still resolve
+// against the single definition.
+pub use crate::state_layer::{
+    DISABLED as DISABLED_STATE_LAYER, HOVER as HOVER_STATE_LAYER, PRESSED as PRESSED_STATE_LAYER,
+};
 
 /// (R694 §5.16 §5.39) Keyboard-focus indicator ring width in logical
 /// pixels. Material 3's focus indicator is a 3-dp outline; pinion paints

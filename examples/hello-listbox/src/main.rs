@@ -90,6 +90,8 @@ use pinion_core::{Frame, Owner, Scene, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
+use pinion_widget_paint::state_layer::{HOVER, PRESSED};
+
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloListboxRenderer, HelloListboxRendererError);
 
@@ -353,8 +355,8 @@ fn listbox_row(
         )
     } else {
         let fill = match state {
-            ListboxItemState::Pressed => row_base.lerp(on_surface, 0.12),
-            ListboxItemState::Hover => row_base.lerp(on_surface, 0.08),
+            ListboxItemState::Pressed => row_base.lerp(on_surface, PRESSED),
+            ListboxItemState::Hover => row_base.lerp(on_surface, HOVER),
             ListboxItemState::Disabled => row_base.lerp(surface, 0.38),
             ListboxItemState::Idle => {
                 if focused {

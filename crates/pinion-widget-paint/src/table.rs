@@ -139,12 +139,7 @@ pub fn row_fill(theme: &Theme, state: RadioState, selected: bool, row_index: usi
         // Transparent so an unselected even row shows the block fill.
         Color::rgba(0, 0, 0, 0)
     };
-    match state {
-        RadioState::Idle => base,
-        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        RadioState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
+    crate::state_layer::state_layer(base, state, theme)
 }
 
 /// One cell: a left-aligned label inside a fixed-size box. `tag` is the

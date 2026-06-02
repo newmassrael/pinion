@@ -55,6 +55,7 @@ use pinion_a11y::{
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::radio_composite as rc;
+use pinion_widget_paint::state_layer::state_layer;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloStepperRenderer, HelloStepperRendererError);
@@ -188,7 +189,7 @@ fn step(index: usize, phase: Phase, state: RadioState, theme: &Theme) -> Scene {
             Some(Border::new(theme.resolve(ColorRole::Outline), 1)),
         ),
     };
-    let fill = rc::state_layer(fill_base, state, theme);
+    let fill = state_layer(fill_base, state, theme);
     let glyph = if phase == Phase::Completed {
         CHECK.to_string()
     } else {

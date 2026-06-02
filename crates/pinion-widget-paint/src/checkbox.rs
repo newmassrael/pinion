@@ -100,12 +100,7 @@ impl Default for CheckboxStyle {
 #[must_use]
 pub fn checkbox_accent_for(theme: &Theme, state: CheckboxState) -> Color {
     let base = theme.resolve(ColorRole::Accent);
-    match state {
-        CheckboxState::Idle => base,
-        CheckboxState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        CheckboxState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        CheckboxState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
+    crate::state_layer::state_layer(base, state, theme)
 }
 
 /// (R668 §5.50) Border color ramp — anchors on [`ColorRole::Outline`]
@@ -115,12 +110,7 @@ pub fn checkbox_accent_for(theme: &Theme, state: CheckboxState) -> Color {
 #[must_use]
 pub fn checkbox_outline_for(theme: &Theme, state: CheckboxState) -> Color {
     let base = theme.resolve(ColorRole::Outline);
-    match state {
-        CheckboxState::Idle => base,
-        CheckboxState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        CheckboxState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        CheckboxState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
+    crate::state_layer::state_layer(base, state, theme)
 }
 
 /// (R668 §5.50) Compose the M3 filled-`Checkbox` paint scene fragment.

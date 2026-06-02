@@ -112,12 +112,7 @@ impl Default for DisclosureStyle {
 #[must_use]
 pub fn disclosure_header_for(theme: &Theme, state: DisclosureState) -> Color {
     let base = theme.resolve(ColorRole::SurfaceContainerHigh);
-    match state {
-        DisclosureState::Idle => base,
-        DisclosureState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        DisclosureState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        DisclosureState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
+    crate::state_layer::state_layer(base, state, theme)
 }
 
 /// (R696 §5.50) Compose the M3 disclosure paint scene fragment.

@@ -47,6 +47,7 @@ use pinion_a11y::{
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::radio_composite as rc;
+use pinion_widget_paint::state_layer::state_layer;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloBreadcrumbRenderer, HelloBreadcrumbRendererError);
@@ -128,7 +129,7 @@ fn crumb(index: usize, state: RadioState, selected: bool, theme: &Theme) -> Scen
     } else {
         theme.resolve(ColorRole::Accent)
     };
-    let color = rc::state_layer(base, state, theme);
+    let color = state_layer(base, state, theme);
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             CRUMBS[index],

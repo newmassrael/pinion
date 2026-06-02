@@ -49,6 +49,7 @@ use pinion_a11y::{
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::radio_composite as rc;
+use pinion_widget_paint::state_layer::state_layer;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloRadioGroupRenderer, HelloRadioGroupRendererError);
@@ -154,7 +155,7 @@ fn radio_border_color(theme: &Theme, state: RadioState, selected: bool) -> Color
     } else {
         theme.resolve(ColorRole::Outline)
     };
-    rc::state_layer(base, state, theme)
+    state_layer(base, state, theme)
 }
 
 fn radio_row(index: usize, state: RadioState, selected: bool, theme: &Theme) -> Scene {

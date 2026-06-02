@@ -56,6 +56,8 @@ use pinion_a11y::{
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::radio_composite as rc;
 
+use pinion_widget_paint::state_layer::{HOVER, PRESSED};
+
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSegmentedButtonRenderer, HelloSegmentedButtonRendererError);
 
@@ -189,8 +191,8 @@ fn segment_fill(theme: &Theme, state: RadioState, selected: bool) -> Color {
     };
     match state {
         RadioState::Idle | RadioState::Disabled => base,
-        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), HOVER),
+        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), PRESSED),
     }
 }
 

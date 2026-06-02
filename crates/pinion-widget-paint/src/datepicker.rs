@@ -155,12 +155,7 @@ pub fn day_cell_fill(theme: &Theme, state: RadioState, selected: bool) -> Color 
         // Transparent so an unselected resting cell shows the block fill.
         Color::rgba(0, 0, 0, 0)
     };
-    match state {
-        RadioState::Idle => base,
-        RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        RadioState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
+    crate::state_layer::state_layer(base, state, theme)
 }
 
 /// One blank (non-interactive) grid cell — a fixed-size transparent box.

@@ -290,6 +290,9 @@ mod a11y_tests {
     #[test]
     fn r57_x_checkbox_hover_overlay_lerps_toward_on_surface() {
         let theme = Theme::light();
+        // Literal 0.08 on purpose: a test must verify the token value
+        // independently, not echo the `state_layer::HOVER` const the
+        // implementation uses (that would be circular).
         let expected = theme
             .resolve(ColorRole::Accent)
             .lerp(theme.resolve(ColorRole::OnSurface), 0.08);

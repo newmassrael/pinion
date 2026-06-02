@@ -107,6 +107,8 @@ use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::text_field as tf_paint;
 
+use pinion_widget_paint::state_layer::{HOVER, PRESSED};
+
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloNumberInputRenderer, HelloNumberInputRendererError);
 
@@ -298,8 +300,8 @@ fn stepper_fill(theme: &Theme, state: ButtonState) -> pinion_core::Color {
     let base = theme.resolve(ColorRole::SurfaceContainerHighest);
     match state {
         ButtonState::Idle | ButtonState::Disabled => base,
-        ButtonState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        ButtonState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+        ButtonState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), HOVER),
+        ButtonState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), PRESSED),
     }
 }
 

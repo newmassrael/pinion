@@ -112,6 +112,8 @@ use pinion_widget_paint::tree_view::{
     view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
 };
 
+use pinion_widget_paint::state_layer::{HOVER, PRESSED};
+
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
 vello_renderer_impl!(HelloDockPanelsRenderer, HelloDockPanelsRendererError);
@@ -429,8 +431,8 @@ fn view_viewport_raw(state: ButtonState, theme: &Theme) -> Scene {
     let idle_fill = theme.resolve(ColorRole::SurfaceContainerHighest);
     let btn_fill: Color = match state {
         ButtonState::Idle => idle_fill,
-        ButtonState::Hover => idle_fill.lerp(on_surface, 0.08),
-        ButtonState::Pressed => idle_fill.lerp(on_surface, 0.12),
+        ButtonState::Hover => idle_fill.lerp(on_surface, HOVER),
+        ButtonState::Pressed => idle_fill.lerp(on_surface, PRESSED),
         ButtonState::Disabled => idle_fill.lerp(surface, 0.38),
     };
     let label = match state {

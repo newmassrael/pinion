@@ -79,6 +79,8 @@ use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarS
 // pinion-forge codegen output. Defines `pub struct TodoMvcRenderer`
 // + async `new<W: Into<wgpu::SurfaceTarget<'static>>>` + sync
 // `render(&vello::Scene, peniko::Color)` + sync `resize(u32, u32)`.
+use pinion_widget_paint::state_layer::{HOVER, PRESSED};
+
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
 // R51.30 — bridge the inherent renderer methods into the
@@ -1390,8 +1392,8 @@ fn build_filter_row(
                 (transparent, on_surface, Some(Border::new(outline, 1)))
             };
             fill = match radio_state {
-                RadioState::Hover => fill.lerp(on_surface, 0.08),
-                RadioState::Pressed => fill.lerp(on_surface, 0.12),
+                RadioState::Hover => fill.lerp(on_surface, HOVER),
+                RadioState::Pressed => fill.lerp(on_surface, PRESSED),
                 RadioState::Disabled | RadioState::Idle => fill,
             };
             let mut style = BoxStyle::filled(fill).with_corner_radius(4);

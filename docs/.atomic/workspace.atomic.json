@@ -27708,6 +27708,56 @@
         "Pagination still deferred: prev/next needs a bespoke coordinator (datepicker precedent) or an N-button Signal model — not substrate-0, premature for 1 consumer"
       ]
     },
+    "R752": {
+      "decision_summary": "R752 §5.50 state-layer SSOT substrate: the M3 overlay opacity tokens (hover 0.08 / pressed 0.12 / disabled 0.38) were duplicated as raw literals across ~16 files and 6 state enums; a user SSOT audit found R750's rc::state_layer lift had only consolidated a partial RadioState slice (undercounted 3 vs 7 consumers) and left identical copies in the same crate's datepicker/table modules. R752 homes the tokens once in a new state_layer module with a generic state_layer<S: InteractionState> over all gallery state enums, routes the entire pinion-widget-paint crate + dep-carrying examples through it, and honestly documents the divergent (scrollbar/button/fold) and dep-free-demo exceptions",
+      "changes_bullets": [
+        "new state_layer module: HOVER/PRESSED/DISABLED M3 token consts defined once + InteractionState trait + generic state_layer<S>",
+        "consolidated ALL of pinion-widget-paint: button/checkbox/slider/datepicker/table/disclosure/scrollbar/radio_composite route through the SSOT",
+        "corrects R750 overclaim: rc::state_layer was a partial RadioState slice that LEFT datepicker.rs/table.rs copies inline in the same crate; removed + delegated",
+        "examples: 8 dep-carrying binaries route token literals through HOVER/PRESSED/DISABLED consts; divergent ones (fold/thumb/scrollbar) keep custom arms but source tokens",
+        "3 dep-free leaf demos (spinbutton/popover/immediate-mode-canvas) keep literals — proportionality: no crate dep for 2 constants, documented exception",
+        "test expectations keep literal 0.08 etc. on purpose — independent verification, not the circular SSOT-const echo"
+      ],
+      "verification_bullets": [
+        "workspace cargo test 0-fail; clippy -D pedantic (pinion-runtime/vello) clean; sweep 98/98 behaviour-preserving across the gallery",
+        "state_layer module 3 unit tests (idle untinted / hover-pressed-disabled match tokens / slider Dragging = pressed layer)",
+        "single token home: remaining 0.08/0.12/0.38 literals are only test expectations + 3 dep-free demos + scrollbar-specific 0.16/0.62",
+        "user SSOT audit triggered this: R750's \"3 byte-identical consumers to SSOT\" undercounted (7) and left in-crate copies — verify-seed-claims-audit-first"
+      ],
+      "impact_refs": [
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "3 dep-free leaf demos keep literal opacities (proportionality over a crate dep for 2 consts); if tokens ever move to pinion-core they could reference them",
+        "scrollbar Dragging 0.16 / Disabled 0.62 are scrollbar-specific M3 values (not the shared state-layer tokens) — stay literal by design",
+        "button keeps custom overlay arms (tints toward role-specific ButtonColors::state_layer, not OnSurface) but sources the token consts via re-export",
+        "ColorAreaState has no state-layer overlay site (drag-only) so no InteractionState impl yet — additive when a consumer needs it"
+      ],
+      "publishable_decision_summary": "R752 §5.50 state-layer SSOT substrate: the M3 overlay opacity tokens (hover 0.08 / pressed 0.12 / disabled 0.38) were duplicated as raw literals across ~16 files and 6 state enums; a user SSOT audit found R750's rc::state_layer lift had only consolidated a partial RadioState slice (undercounted 3 vs 7 consumers) and left identical copies in the same crate's datepicker/table modules. R752 homes the tokens once in a new state_layer module with a generic state_layer<S: InteractionState> over all gallery state enums, routes the entire pinion-widget-paint crate + dep-carrying examples through it, and honestly documents the divergent (scrollbar/button/fold) and dep-free-demo exceptions",
+      "publishable_changes_bullets": [
+        "new state_layer module: HOVER/PRESSED/DISABLED M3 token consts defined once + InteractionState trait + generic state_layer<S>",
+        "consolidated ALL of pinion-widget-paint: button/checkbox/slider/datepicker/table/disclosure/scrollbar/radio_composite route through the SSOT",
+        "corrects R750 overclaim: rc::state_layer was a partial RadioState slice that LEFT datepicker.rs/table.rs copies inline in the same crate; removed + delegated",
+        "examples: 8 dep-carrying binaries route token literals through HOVER/PRESSED/DISABLED consts; divergent ones (fold/thumb/scrollbar) keep custom arms but source tokens",
+        "3 dep-free leaf demos (spinbutton/popover/immediate-mode-canvas) keep literals — proportionality: no crate dep for 2 constants, documented exception",
+        "test expectations keep literal 0.08 etc. on purpose — independent verification, not the circular SSOT-const echo"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test 0-fail; clippy -D pedantic (pinion-runtime/vello) clean; sweep 98/98 behaviour-preserving across the gallery",
+        "state_layer module 3 unit tests (idle untinted / hover-pressed-disabled match tokens / slider Dragging = pressed layer)",
+        "single token home: remaining 0.08/0.12/0.38 literals are only test expectations + 3 dep-free demos + scrollbar-specific 0.16/0.62",
+        "user SSOT audit triggered this: R750's \"3 byte-identical consumers to SSOT\" undercounted (7) and left in-crate copies — verify-seed-claims-audit-first"
+      ],
+      "publishable_impact_refs": [
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "3 dep-free leaf demos keep literal opacities (proportionality over a crate dep for 2 consts); if tokens ever move to pinion-core they could reference them",
+        "scrollbar Dragging 0.16 / Disabled 0.62 are scrollbar-specific M3 values (not the shared state-layer tokens) — stay literal by design",
+        "button keeps custom overlay arms (tints toward role-specific ButtonColors::state_layer, not OnSurface) but sources the token consts via re-export",
+        "ColorAreaState has no state-layer overlay site (drag-only) so no InteractionState impl yet — additive when a consumer needs it"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -170,7 +170,9 @@ fn thumb_fill_for_state(theme: &Theme, interaction: ScrollBarState) -> pinion_co
     let base = theme.resolve(ColorRole::Outline);
     match interaction {
         ScrollBarState::Idle => base,
-        ScrollBarState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+        // Hover is the shared M3 8% token; Dragging (0.16) is the
+        // scrollbar-specific dragged opacity, not a shared state-layer token.
+        ScrollBarState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), crate::state_layer::HOVER),
         ScrollBarState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.16),
         ScrollBarState::Disabled => base.lerp(
             theme.resolve(ColorRole::SurfaceContainerHighest),

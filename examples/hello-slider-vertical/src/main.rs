@@ -41,6 +41,8 @@ use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::slider::{read_slider_state, slider_apply_key};
 
+use pinion_widget_paint::state_layer::{DISABLED, HOVER, PRESSED};
+
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloSliderVerticalRenderer, HelloSliderVerticalRendererError);
 
@@ -58,9 +60,9 @@ fn slider_accent_for(theme: &Theme, state: SliderState) -> Color {
     let base = theme.resolve(ColorRole::Accent);
     match state {
         SliderState::Idle => base,
-        SliderState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        SliderState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+        SliderState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), HOVER),
+        SliderState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), PRESSED),
+        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), DISABLED),
     }
 }
 // Vertical track: 8 wide × 200 tall — same Material rail thinness
@@ -102,14 +104,14 @@ fn view(state: SliderState, value: f32, _frame: &Frame) -> Scene {
     let unfilled_color: Color = match state {
         SliderState::Disabled => theme
             .resolve(ColorRole::SurfaceContainerHighest)
-            .lerp(theme.resolve(ColorRole::Surface), 0.38),
+            .lerp(theme.resolve(ColorRole::Surface), DISABLED),
         _ => theme.resolve(ColorRole::SurfaceContainerHighest),
     };
     let on_accent = theme.resolve(ColorRole::OnAccent);
     let thumb_fill: Color = match state {
         SliderState::Idle | SliderState::Hover => on_accent,
         SliderState::Dragging => on_accent.lerp(theme.resolve(ColorRole::Accent), 0.2),
-        SliderState::Disabled => on_accent.lerp(theme.resolve(ColorRole::Surface), 0.38),
+        SliderState::Disabled => on_accent.lerp(theme.resolve(ColorRole::Surface), DISABLED),
     };
     // R51.154 §5.3 — value = 1.0 → thumb at top → all space below
     // it is filled; value = 0.0 → thumb at bottom → no fill.

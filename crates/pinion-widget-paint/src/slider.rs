@@ -134,12 +134,9 @@ pub fn slider_apply_key(
 #[must_use]
 pub fn slider_accent_for(theme: &Theme, state: SliderState) -> Color {
     let base = theme.resolve(ColorRole::Accent);
-    match state {
-        SliderState::Idle => base,
-        SliderState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-        SliderState::Dragging => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
-        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
-    }
+    // Canonical common-case overlay (SliderState::Dragging is the pressed
+    // posture; see the `InteractionState` impl) — the shared SSOT.
+    crate::state_layer::state_layer(base, state, theme)
 }
 
 /// R738 §5.38 §5.50 — the *inactive* (unfilled) track color: M3
@@ -148,8 +145,12 @@ pub fn slider_accent_for(theme: &Theme, state: SliderState) -> Color {
 #[must_use]
 pub fn slider_track_inactive(theme: &Theme, state: SliderState) -> Color {
     let base = theme.resolve(ColorRole::SurfaceContainerHighest);
+    // Divergent: the inactive track carries no hover/pressed overlay (only
+    // the disabled fade), so it keeps its own arms but sources the token.
     match state {
-        SliderState::Disabled => base.lerp(theme.resolve(ColorRole::Surface), 0.38),
+        SliderState::Disabled => {
+            base.lerp(theme.resolve(ColorRole::Surface), crate::state_layer::DISABLED)
+        }
         _ => base,
     }
 }
@@ -164,7 +165,9 @@ pub fn slider_thumb_fill(theme: &Theme, state: SliderState) -> Color {
     match state {
         SliderState::Idle | SliderState::Hover => on_accent,
         SliderState::Dragging => on_accent.lerp(theme.resolve(ColorRole::Accent), 0.2),
-        SliderState::Disabled => on_accent.lerp(theme.resolve(ColorRole::Surface), 0.38),
+        SliderState::Disabled => {
+            on_accent.lerp(theme.resolve(ColorRole::Surface), crate::state_layer::DISABLED)
+        }
     }
 }
 

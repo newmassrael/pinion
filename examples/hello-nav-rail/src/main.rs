@@ -18,7 +18,7 @@
 //! (selected index = active destination) with **no new interaction
 //! substrate** — the same composition the breadcrumb / segmented button /
 //! stepper use. The hover / pressed pill tint reuses the R750
-//! [`rc::state_layer`] M3 overlay SSOT.
+//! [`state_layer`] M3 overlay SSOT.
 //!
 //! ## Keyboard model (honest carry — shared with breadcrumb)
 //!
@@ -50,6 +50,7 @@ use pinion_a11y::{
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::radio_composite as rc;
+use pinion_widget_paint::state_layer::state_layer;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloNavRailRenderer, HelloNavRailRendererError);
@@ -125,14 +126,14 @@ fn view(state: RailState, _frame: &Frame) -> Scene {
 /// (`SurfaceContainerHighest`, an M3-approximate of `secondaryContainer`
 /// which pinion's palette does not carry) with an emphasised `OnSurface`
 /// label; inactive destinations are transparent with an `OnSurfaceMuted`
-/// label. The hover / pressed tint reuses the shared [`rc::state_layer`].
+/// label. The hover / pressed tint reuses the shared [`state_layer`].
 fn destination(index: usize, state: RadioState, active: bool, theme: &Theme) -> Scene {
     let pill_base = if active {
         theme.resolve(ColorRole::SurfaceContainerHighest)
     } else {
         Color::rgba(0, 0, 0, 0)
     };
-    let pill_fill = rc::state_layer(pill_base, state, theme);
+    let pill_fill = state_layer(pill_base, state, theme);
     let label_color = if active {
         theme.resolve(ColorRole::OnSurface)
     } else {

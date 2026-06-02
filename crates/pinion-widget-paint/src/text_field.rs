@@ -186,9 +186,11 @@ fn field_fill_for(theme: &Theme, interaction: TextFieldState) -> Color {
         TextFieldState::Focused | TextFieldState::Editing => {
             theme.resolve(ColorRole::SurfaceContainerHigh)
         }
+        // Divergent: TextFieldState has no hover/pressed posture, only the
+        // disabled fade — keep the custom arm but source the shared token.
         TextFieldState::Disabled => theme
             .resolve(ColorRole::SurfaceContainerHighest)
-            .lerp(theme.resolve(ColorRole::Surface), 0.38),
+            .lerp(theme.resolve(ColorRole::Surface), crate::state_layer::DISABLED),
     }
 }
 

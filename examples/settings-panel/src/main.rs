@@ -74,6 +74,8 @@ use pinion_widget_paint::slider::{
 use pinion_widget_paint::text_field as tf_paint;
 use pinion_widget_paint::text_field::TextFieldStyle;
 
+use pinion_widget_paint::state_layer::{HOVER, PRESSED};
+
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
 vello_renderer_impl!(SettingsPanelRenderer, SettingsPanelRendererError);
@@ -663,18 +665,18 @@ fn nav_row_fill(theme: &Theme, state: RadioState, is_selected: bool) -> Color {
         // (closest mapped role is SurfaceContainerHighest).
         let base = theme.resolve(ColorRole::SurfaceContainerHighest);
         match state {
-            RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), 0.08),
-            RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+            RadioState::Hover => base.lerp(theme.resolve(ColorRole::OnSurface), HOVER),
+            RadioState::Pressed => base.lerp(theme.resolve(ColorRole::OnSurface), PRESSED),
             _ => base,
         }
     } else {
         match state {
             RadioState::Hover => theme
                 .resolve(ColorRole::Surface)
-                .lerp(theme.resolve(ColorRole::OnSurface), 0.08),
+                .lerp(theme.resolve(ColorRole::OnSurface), HOVER),
             RadioState::Pressed => theme
                 .resolve(ColorRole::Surface)
-                .lerp(theme.resolve(ColorRole::OnSurface), 0.12),
+                .lerp(theme.resolve(ColorRole::OnSurface), PRESSED),
             _ => Color::TRANSPARENT,
         }
     }
