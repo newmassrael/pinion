@@ -16,9 +16,14 @@
 //! `table` modules — the partial-lift smell R752 clears.)
 //!
 //! This module owns the tokens **once** ([`HOVER`] / [`PRESSED`] /
-//! [`DISABLED`]) and a single generic [`state_layer`] over the
-//! [`InteractionState`] trait, so every common-case consumer tints through
-//! one definition. Consumers whose tint **diverges** from the common case —
+//! [`DISABLED`]) and a single generic [`state_layer`] overlay function. The
+//! [`InteractionState`] trait it tints over was **lifted to
+//! `pinion_core::widgets::interaction` in R755** so the a11y layer (which
+//! depends only on `pinion-core`) can share the same posture mapping via
+//! `AccessState::from_interaction`; this module **re-exports** the trait so
+//! the overlay function and every existing caller path are unchanged.
+//! Every common-case consumer tints through this one definition. Consumers
+//! whose tint **diverges** from the common case —
 //! the segmented button / todomvc fold `Disabled` into the resting fill
 //! (their base is the transparent track, nothing to tint); `button` tints
 //! toward a role-specific [`ButtonColors::state_layer`] rather than

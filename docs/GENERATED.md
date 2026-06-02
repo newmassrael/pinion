@@ -17104,6 +17104,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R756.1 — SSOT audit follow-up: declare (not lift) the composite-delete-over-collection duplication between ChipDeleteExternal and TodoDeleteExternal as a deferred-to-3rd-consumer lift, and clear 3 minor smells (stale state_layer doc, dishonest state:<id> schema, mid-file const)
+
+**Changes**:
+- declare (not lift) the composite-delete-over-collection duplication: ChipDeleteExternal (R756) is the 2nd consumer of TodoDeleteExternal's shape; shared core is a CompositeCollection<T: HasId> lift candidate deferred to the 3rd consumer (commit-policy divergence = premature to parameterize over 2) [[abstraction-needs-second-consumer]]
+- cross-reference the deferred lift from both sites (ChipDeleteExternal doc + TodoDeleteExternal doc) so the duplication is discoverable
+- fix stale state_layer.rs module doc: note the InteractionState trait was lifted to pinion-core in R755 (re-exported here), not defined here
+- honest introspect schema: advertise ChipDeleteExternal's parameterized read key as `state:<id>` (was a flat `state`) so §5.21 schema matches what query accepts
+- move CLOSE_HIT const into the top const block (was declared mid-file)
+
+
+
+**Verification**:
+- user SSOT audit ([[verify-seed-claims-audit-first]]) surfaced the undeclared 2nd composite-delete consumer; this round records the deliberate defer + clears 3 minor smells
+- zero behavioral change (doc comments + schema-metadata string + const relocation only)
+- clippy `-D pedantic`(vello) clean + affected-crate tests (hello-input-chip/todomvc/pinion-widget-paint) pass + full demo sweep re-run green
+
+
+
+**Impact**: §5.35, §5.38, §5.50
+
+
+**Carry forward**:
+- composite-delete-over-collection lift owed at the 3rd id-keyed removable-collection consumer (tag-input field / editable table rows): lift CompositeCollection<T: HasId> + retrofit todo + chip + new consumer; commit policy is the seam
+- add-via-textfield input-chip flow still deferred (R756 carry)
+- [Button;N]-owned-by-external posture array remains a 1st-consumer inline pattern
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -1447,6 +1447,13 @@ fn build_filter_row(
 /// `Command` channel so the next paint cycle observes the mutation
 /// directly (the standard pinion convention for paint-side hit events,
 /// mirroring hello-listbox's per-row selection wire).
+///
+/// SSOT note: `hello-input-chip`'s `ChipDeleteExternal` (R756) is the 2nd
+/// composite-delete-over-`Signal<Vec>` consumer of this shape. The shared
+/// core (retain-by-id + count/ids/delete schema + `parse_send_payload` send)
+/// is a `CompositeCollection<T: HasId>` lift candidate, deliberately deferred
+/// to the 3rd consumer — see that type's doc for the rationale + commit-policy
+/// seam ([[abstraction-needs-second-consumer]]).
 #[derive(Debug)]
 pub struct TodoDeleteExternal {
     todos: Rc<Signal<Vec<TodoItem>>>,

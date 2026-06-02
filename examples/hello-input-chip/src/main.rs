@@ -106,6 +106,8 @@ const CLOSE_FONT_PX: u32 = 14;
 /// Horizontal padding inside a content-hugging input chip (left + right
 /// insets); the chip width then tracks `label + gap + ×`.
 const CHIP_PAD_X: u32 = 12;
+/// `×` hit-target square (centred inside the chip's trailing slot).
+const CLOSE_HIT: u32 = 24;
 
 /// U+2715 MULTIPLICATION X — the M3 input-chip trailing "remove" affordance.
 /// Named const + escape per the non-ASCII-source rule (raw glyph only in doc
@@ -297,9 +299,6 @@ fn close_ink(theme: &Theme, state: ButtonState) -> Color {
     }
 }
 
-/// `×` hit-target square (centred inside the chip's trailing slot).
-const CLOSE_HIT: u32 = 24;
-
 /// Per-chip `×` delete handler + button-posture owner. Single external
 /// registered under [`DELETE_TAG`]; the R51.42 §5.35 composite-tag wire
 /// forwards every `chip_delete#<id>` pointer event as `"<id>:<EventName>"`.
@@ -314,6 +313,25 @@ const CLOSE_HIT: u32 = 24;
 /// Synchronous-pure delete — bypasses the §5.23 R27 `update` reducer so the
 /// next paint observes the mutation directly (standard pinion convention for
 /// paint-side hit events, mirroring `todomvc`'s `TodoDeleteExternal`).
+///
+/// ## SSOT note — 2nd composite-delete-over-collection consumer (declared defer, R756.1)
+///
+/// This external structurally mirrors `todomvc`'s `TodoDeleteExternal`: the
+/// `Signal<Vec<T>>` + `delete_by_id` (`retain`), the `count` / `ids` query,
+/// the typed `delete` invoke, and the `parse_send_payload` send-id extraction
+/// are the same shape (~80 % of the body). That shared core is a lift
+/// candidate — a `CompositeCollection<T: HasId>` substrate composed by both
+/// bindings, with the **commit policy** as the consumer-supplied seam (the one
+/// genuine divergence: todo commits on `PointerDown`; this chip commits on the
+/// `Button` `Pressed → Hover` edge so the `×` carries hover/press feedback).
+///
+/// Deliberately **deferred to the 3rd consumer** ([[abstraction-needs-second-consumer]]):
+/// parameterising over two impls whose commit semantics diverge is premature —
+/// the divergence is precisely the part an abstraction would have to
+/// special-case, so lifting now would trade one duplication for a leaky seam.
+/// When a 3rd id-keyed removable collection lands (a tag-input field, editable
+/// table rows), lift the shared core then and retrofit todo + chip + the new
+/// consumer together.
 pub struct ChipDeleteExternal {
     chips: Rc<Signal<Vec<InputChip>>>,
     /// One `Button` SCXML per seeded chip id, indexed by `id - 1`.
@@ -431,7 +449,11 @@ impl ExternalIntrospect for ChipDeleteExternal {
         IntrospectSchema::new(&[
             ("count", "int"),
             ("ids", "json"),
-            ("state", "string"),
+            // Parameterized read key — queried as `state:<id>` (e.g.
+            // `state:2`) for chip `<id>`'s `×` button-posture variant name;
+            // the literal key advertises the `:<id>` suffix so the introspect
+            // contract (§5.21) matches what `query` actually accepts.
+            ("state:<id>", "string"),
             ("send", "string"),
             ("delete", "int"),
         ])
