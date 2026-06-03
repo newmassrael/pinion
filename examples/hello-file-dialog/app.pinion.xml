@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R761 §3 §5.15 FileDialog consumer: pinion-forge renderer manifest for
+  hello-file-dialog. Emits `HelloFileDialogRenderer` (Vello-backed).
+  Same manifest shape as hello-snackbar — only the struct name diverges;
+  the scene structure lives entirely in the binding's view fn.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloFileDialogRenderer"
+        backend="vello"/>

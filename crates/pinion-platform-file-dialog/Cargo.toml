@@ -1,0 +1,38 @@
+[package]
+name = "pinion-platform-file-dialog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R761 §3 §5.15 — platform file-dialog bridge for the pinion_core FileDialog trait; wraps the `rfd` cross-platform crate (xdg-desktop-portal / GTK on Linux, NSOpenPanel on macOS, IFileDialog on Windows) under one Rust ecosystem-canonical surface"
+publish = false
+
+[dependencies]
+# R761 §5.15 — `pinion_core::FileDialog` trait that this crate's
+# `RfdFileDialog` second-consumer impl satisfies. Pinion's scripted
+# first impl (R761 `ScriptedFileDialog`) stays the headless / CI
+# default; this crate adds the platform-backed impl for real desktop
+# UX (the OS-native Open / Save / Pick-folder modal).
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# R761 §5.15 — `rfd` (Rusty File Dialog) is the canonical
+# cross-platform native-dialog crate in the Rust ecosystem (egui,
+# iced, Bevy tooling all consume it). It funnels macOS `NSOpenPanel`,
+# Windows `IFileDialog`, and Linux GTK / xdg-desktop-portal under one
+# async surface — same textbook decision as `arboard` for the R56.2.b
+# clipboard bridge and `winit::event::Ime` for the IME bridge
+# ([[arboard-canonical-platform-clipboard]] / [[winit-ime-canonical-platform-bridge]]).
+#
+# `default-features = false` + `xdg-portal` (instead of the alternative
+# `gtk3` backend) deliberately avoids a hard dependency on the system
+# `libgtk-3-dev` headers: the portal backend talks to
+# `xdg-desktop-portal` over D-Bus, so the crate builds on a headless
+# Linux box (CI / sandbox) without GTK installed. rfd drives the
+# portal's async calls through its bundled `pollster` block-on executor
+# (the `xdg-portal` feature pulls it in), so no external async-runtime
+# feature is required. On macOS / Windows the portal feature is a no-op
+# and the native `NSOpenPanel` / `IFileDialog` panels are used directly.
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
+
+[lints]
+workspace = true

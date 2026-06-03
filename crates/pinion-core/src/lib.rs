@@ -5,6 +5,7 @@ pub mod command;
 pub mod composite_tag;
 pub mod event;
 pub mod external;
+pub mod file_dialog;
 pub mod focus_request;
 pub mod frame;
 pub mod input;
@@ -39,6 +40,10 @@ pub use animation::{
 pub use clipboard::{Clipboard, ClipboardSelection, InMemoryClipboard};
 pub use command::Command;
 pub use event::Event;
+pub use file_dialog::{
+    DialogKind, FileDialog, FileDialogFuture, FileDialogRequest, FileFilter, ScriptedCall,
+    ScriptedFileDialog,
+};
 pub use renderer::WidgetRenderer;
 pub use external::External;
 pub use widget_core::{WidgetCore, WidgetEventName, WidgetStateName, WidgetTag};

@@ -17302,6 +17302,40 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R761 — R761 §3 §5.15 — native FileDialog substrate (open/save/pick-folder behind the External(opaque) escape hatch): FileDialog trait + ScriptedFileDialog mock in pinion-core, RfdFileDialog rfd bridge in pinion-platform-file-dialog, hello-file-dialog as first production Resource consumer. Closes the foundational file-I/O gap for Phase B pro-tools + self-hosted editor; result delivery via §5.22 Resource async-reactive carrier; AI-first observation via scene/snapshot scene-as-data.
+
+**Changes**:
+- pinion-core::file_dialog: FileDialog trait (open/save/pick-folder, !Send UI-thread-modal FileDialogFuture)
+- FileFilter + FileDialogRequest (title/filters/suggested-name/start-dir builder) + DialogKind wire names
+- ScriptedFileDialog mock: FIFO outcome queue + call log; InMemoryStorage-isomorphic headless RPC-drivable channel
+- pinion-platform-file-dialog crate: RfdFileDialog wraps rfd 0.17 xdg-portal (no GTK headers) → native dialogs
+- hello-file-dialog: 3 buttons drive dialogs via Resource<Option<DialogOutcome>,String> (1st production Resource consumer)
+- result delivery = §5.22 Resource async-reactive carrier (Loading=open/Ready(Some|None)/Error); ImmediateSpawner drives ready future
+- AI-first: outcome rendered as role=status line, observed scene-as-data via scene/snapshot (no new RPC verb needed)
+
+
+
+**Verification**:
+- cargo test --workspace green: +9 pinion-core file_dialog + 2 native crate + 7 hello-file-dialog R761 suites
+- clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)
+- rfd native crate builds clean -j2 (rfd 0.17 xdg-portal/pollster, no libgtk-3-dev), 2 trait-level tests
+- r761_file_dialog demo PASS (42 assert: open/save/pick select+cancel, FIFO, keyboard Enter, queue exhaustion)
+- additive pinion-core change (new module + exports, 0 existing-symbol change) → no existing-demo impact; full 106-demo sweep deferred to push-time
+
+
+
+**Impact**: §3, §5.15
+
+
+**Carry forward**:
+- macOS/Windows native dialogs are GUI-thread-!Send → need a main-thread executor variant; Linux xdg-portal future OK
+- shell per-frame LocalSpawner pump for deferred native futures — ImmediateSpawner drives only ready (scripted) futures
+- runtime answer-the-dialog RPC verb (AI injects chosen path live) — demo pre-seeds script + observes; observe-only suffices now
+- ImmediateSpawner ~= test BlockingSpawner (2 copies cross-crate) → lift to pinion-core canonical at 2nd production consumer
+- multi-select open_files + per-platform filter MIME + dialog-result history — additive when a consumer appears
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
