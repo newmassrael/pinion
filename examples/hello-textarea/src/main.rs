@@ -46,7 +46,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::External;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle};
@@ -277,30 +277,10 @@ impl WidgetCore for TextAreaView {
             }
             _ => {}
         }
-        // Forward everything else to the External (modifier-aware Json
-        // shape so native Shift+Arrow / Ctrl+A reach the substrate's
-        // selection arms — R763).
-        let Some(node) = scene.find_external_with_tag_mut(TA_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        let args = if modifiers == pinion_core::Modifiers::empty() {
-            IntrospectValue::Text(key.to_owned())
-        } else {
-            IntrospectValue::Json(serde_json::json!({
-                "key": key,
-                "shift": modifiers.shift_key(),
-                "ctrl": modifiers.control_key(),
-                "alt": modifiers.alt_key(),
-                "meta": modifiers.meta_key(),
-            }))
-        };
-        match intro.invoke("key", args) {
-            Ok(IntrospectValue::Bool(handled)) => handled,
-            _ => false,
-        }
+        // R764.1 — forward everything else through the lifted SSOT
+        // (modifier-aware: Shift+Arrow / Ctrl+A reach the substrate's
+        // selection arms).
+        tf_paint::forward_key_to_field(scene, TA_TAG, key, modifiers)
     }
 
     /// R56.2.a §5.13 — platform IME composition (mirror of
@@ -313,28 +293,8 @@ impl WidgetCore for TextAreaView {
         if focused != Some(TA_TAG) {
             return false;
         }
-        let Some(node) = scene.find_external_with_tag_mut(TA_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        let args = match event {
-            pinion_core::CompositionEvent::Start => {
-                IntrospectValue::Json(serde_json::json!({ "action": "start" }))
-            }
-            pinion_core::CompositionEvent::Update(text) => {
-                IntrospectValue::Json(serde_json::json!({ "action": "update", "data": text }))
-            }
-            pinion_core::CompositionEvent::Commit(text) => {
-                IntrospectValue::Json(serde_json::json!({ "action": "end", "data": text }))
-            }
-            pinion_core::CompositionEvent::Cancel => {
-                IntrospectValue::Json(serde_json::json!({ "action": "cancel" }))
-            }
-            _ => return false,
-        };
-        intro.invoke("composition", args).is_ok()
+        // R764.1 §5.38 §5.13 — reformat + forward through the lifted SSOT.
+        tf_paint::forward_composition_to_field(scene, TA_TAG, event)
     }
 
     fn fmt_state_log(state: &(TextFieldState, u32)) -> String {

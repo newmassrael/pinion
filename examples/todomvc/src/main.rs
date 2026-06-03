@@ -419,16 +419,10 @@ fn apply_key_textfield(scene: &mut Scene, key: &str) -> bool {
         }
         return true;
     }
-    let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
-        return false;
-    };
-    match intro.invoke("key", IntrospectValue::Text(key.to_owned())) {
-        Ok(IntrospectValue::Bool(handled)) => handled,
-        _ => false,
-    }
+    // R764.1 §5.38 — forward through the lifted SSOT. The "add todo"
+    // field takes no modifier shortcuts, so the empty-modifier (bare
+    // Text) wire shape is behaviour-identical to the pre-lift call.
+    tf_paint::forward_key_to_field(scene, TF_TAG, key, pinion_core::Modifiers::empty())
 }
 
 /// `apply_key` `FILTER_TAG` arm — W3C ARIA Authoring Practices
@@ -497,18 +491,15 @@ fn apply_key_edit(scene: &mut Scene, key: &str) -> bool {
             cancel_edit();
             true
         }
-        _ => {
-            let Some(node) = scene.find_external_with_tag_mut(EDIT_TF_TAG) else {
-                return false;
-            };
-            let Some(intro) = node.handle.introspect_mut() else {
-                return false;
-            };
-            match intro.invoke("key", IntrospectValue::Text(key.to_owned())) {
-                Ok(IntrospectValue::Bool(handled)) => handled,
-                _ => false,
-            }
-        }
+        // R764.1 §5.38 — forward through the lifted SSOT (empty
+        // modifiers = bare Text, behaviour-identical to the pre-lift
+        // call; Enter/Escape are intercepted above).
+        _ => tf_paint::forward_key_to_field(
+            scene,
+            EDIT_TF_TAG,
+            key,
+            pinion_core::Modifiers::empty(),
+        ),
     }
 }
 
@@ -2416,31 +2407,9 @@ impl WidgetCore for TodoMvcView {
             Some(EDIT_TF_TAG) => EDIT_TF_TAG,
             _ => return false,
         };
-        let Some(node) = scene.find_external_with_tag_mut(target) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        let args = match event {
-            pinion_core::CompositionEvent::Start => {
-                IntrospectValue::Json(serde_json::json!({ "action": "start" }))
-            }
-            pinion_core::CompositionEvent::Update(text) => IntrospectValue::Json(
-                serde_json::json!({ "action": "update", "data": text }),
-            ),
-            pinion_core::CompositionEvent::Commit(text) => IntrospectValue::Json(
-                serde_json::json!({ "action": "end", "data": text }),
-            ),
-            pinion_core::CompositionEvent::Cancel => {
-                IntrospectValue::Json(serde_json::json!({ "action": "cancel" }))
-            }
-            // `CompositionEvent` is `#[non_exhaustive]`; defer
-            // any future variant (delete_surrounding etc.) to the
-            // shell's fallback by reporting unhandled here.
-            _ => return false,
-        };
-        intro.invoke("composition", args).is_ok()
+        // R764.1 §5.38 §5.13 — reformat + forward through the lifted SSOT
+        // (the focus→target resolution above stays binding policy).
+        tf_paint::forward_composition_to_field(scene, target, event)
     }
 
     /// R56.2.e — X11/Wayland canonical middle-click PRIMARY paste.

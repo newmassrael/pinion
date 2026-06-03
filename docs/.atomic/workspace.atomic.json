@@ -28676,6 +28676,50 @@
         "aria-multiline a11y refinement deferred (2nd textarea consumer per abstraction-needs-second-consumer)"
       ]
     },
+    "R764.1": {
+      "decision_summary": "R764.1 audit clearance — TextField key-forward + composition-forward SSOT lift to tf_paint (5+3 hand-rolled sites -> 2 helpers); R764 self-grep missed the base forward pattern",
+      "changes_bullets": [
+        "tf_paint::forward_key_to_field — SSOT for TextField key dispatch (find_external + introspect + Text/Json modifier args + invoke key + match Bool)",
+        "tf_paint::forward_composition_to_field — SSOT for IME composition forward (CompositionEvent -> invoke composition Json)",
+        "retrofit 5 key sites (hello-textfield/textarea, todomvc TF_TAG+EDIT_TF_TAG, combobox-editable INPUT) + 3 composition sites (textfield/textarea/todomvc)",
+        "behaviour-preserving: empty modifiers = bare Text (todomvc/combobox unchanged); textfield/textarea pass real modifiers (R763)",
+        "removed now-unused serde_json dep + import from hello-textfield + hello-textarea"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (119 ok suites)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean",
+        "behaviour-preserving: textfield type/select/compose + r762/r763 + r764 + 8 todomvc + r717 combobox demos all PASS",
+        "audit trigger = user hack/smell/SSOT review; R764 self-grep checked only the 2-copy Json variant, missed the 5-copy base forward (R758-class axis incompleteness)"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "hit-test glue (rect_for_tag + byte_for_field_point) stays binding-side (2 consumer + pinion-shell rect_for_tag dep; R657 field-rect-walk-binding-side precedent) — legitimate precedented-defer, not a smell",
+        "textarea apply_middle_click (X11 PRIMARY paste) not wired (1-consumer feature gap, hello-textfield only); additive when a 2nd middle-click consumer lands"
+      ],
+      "publishable_decision_summary": "R764.1 audit clearance — TextField key-forward + composition-forward SSOT lift to tf_paint (5+3 hand-rolled sites -> 2 helpers); R764 self-grep missed the base forward pattern",
+      "publishable_changes_bullets": [
+        "tf_paint::forward_key_to_field — SSOT for TextField key dispatch (find_external + introspect + Text/Json modifier args + invoke key + match Bool)",
+        "tf_paint::forward_composition_to_field — SSOT for IME composition forward (CompositionEvent -> invoke composition Json)",
+        "retrofit 5 key sites (hello-textfield/textarea, todomvc TF_TAG+EDIT_TF_TAG, combobox-editable INPUT) + 3 composition sites (textfield/textarea/todomvc)",
+        "behaviour-preserving: empty modifiers = bare Text (todomvc/combobox unchanged); textfield/textarea pass real modifiers (R763)",
+        "removed now-unused serde_json dep + import from hello-textfield + hello-textarea"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (119 ok suites)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean",
+        "behaviour-preserving: textfield type/select/compose + r762/r763 + r764 + 8 todomvc + r717 combobox demos all PASS",
+        "audit trigger = user hack/smell/SSOT review; R764 self-grep checked only the 2-copy Json variant, missed the 5-copy base forward (R758-class axis incompleteness)"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hit-test glue (rect_for_tag + byte_for_field_point) stays binding-side (2 consumer + pinion-shell rect_for_tag dep; R657 field-rect-walk-binding-side precedent) — legitimate precedented-defer, not a smell",
+        "textarea apply_middle_click (X11 PRIMARY paste) not wired (1-consumer feature gap, hello-textfield only); additive when a 2nd middle-click consumer lands"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

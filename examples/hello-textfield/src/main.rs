@@ -392,41 +392,12 @@ impl WidgetCore for TextFieldView {
         if focused != Some(TF_TAG) {
             return false;
         }
-        let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        // R763 §5.22 — forward the held modifiers so native Shift+Arrow
-        // / Shift+Home / Ctrl+A drive the substrate's modifier-aware
-        // selection arms. The `invoke("key", ...)` Json shape carries
-        // the four W3C `KeyboardEvent` modifier bits; the bare Text
-        // shape means "no modifiers" (its caret-motion arms collapse
-        // any selection). Pre-R763 this binding dropped `_modifiers`
-        // and always sent Text, so native keyboard selection silently
-        // did not extend — only the RPC Json path (hello_textfield_select)
-        // exercised the substrate's Shift arms.
-        let args = if modifiers == pinion_core::Modifiers::empty() {
-            IntrospectValue::Text(key.to_owned())
-        } else {
-            IntrospectValue::Json(serde_json::json!({
-                "key": key,
-                "shift": modifiers.shift_key(),
-                "ctrl": modifiers.control_key(),
-                "alt": modifiers.alt_key(),
-                "meta": modifiers.meta_key(),
-            }))
-        };
-        match intro.invoke("key", args) {
-            Ok(IntrospectValue::Bool(handled)) => handled,
-            // `Bool(false)` for unrecognized keys lands here; any
-            // other shape (TypeMismatch / UnknownPath) is a substrate
-            // bug — return false to defer to the shell's fallback
-            // chain so a misconfiguration does not silently consume
-            // the key.
-            _ => false,
-        }
+        // R764.1 §5.38 §5.22 — forward through the lifted SSOT
+        // (`tf_paint::forward_key_to_field`); `modifiers` carries the
+        // four W3C bits so native Shift+Arrow / Ctrl+A reach the
+        // substrate's selection arms (R763). The roving-tabindex guard
+        // above keeps the forward scoped to this widget's focus.
+        tf_paint::forward_key_to_field(scene, TF_TAG, key, modifiers)
     }
 
     /// R56.2.a §5.13 §5.38 — delegate platform IME composition events
@@ -468,31 +439,8 @@ impl WidgetCore for TextFieldView {
         if focused != Some(TF_TAG) {
             return false;
         }
-        let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        let args = match event {
-            pinion_core::CompositionEvent::Start => {
-                IntrospectValue::Json(serde_json::json!({ "action": "start" }))
-            }
-            pinion_core::CompositionEvent::Update(text) => IntrospectValue::Json(
-                serde_json::json!({ "action": "update", "data": text }),
-            ),
-            pinion_core::CompositionEvent::Commit(text) => IntrospectValue::Json(
-                serde_json::json!({ "action": "end", "data": text }),
-            ),
-            pinion_core::CompositionEvent::Cancel => {
-                IntrospectValue::Json(serde_json::json!({ "action": "cancel" }))
-            }
-            // `CompositionEvent` is `#[non_exhaustive]`; defer
-            // any future variant (delete_surrounding etc.) to the
-            // shell's fallback by reporting unhandled here.
-            _ => return false,
-        };
-        intro.invoke("composition", args).is_ok()
+        // R764.1 §5.38 §5.13 — reformat + forward through the lifted SSOT.
+        tf_paint::forward_composition_to_field(scene, TF_TAG, event)
     }
 
     /// R56.2.e §5.13 §5.22 — middle-mouse-button paste from PRIMARY.

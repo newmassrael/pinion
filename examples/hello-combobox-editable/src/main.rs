@@ -490,16 +490,9 @@ fn activate_active(scene: &mut Scene, state: &ComboViewState, filtered: &[usize]
 /// Delegate `key` to the text field's edit dispatch. Returns whether the
 /// field recognized it (W3C `defaultPrevented` semantic).
 fn delegate_to_field(scene: &mut Scene, key: &str) -> bool {
-    let Some(node) = scene.find_external_with_tag_mut(INPUT_TAG) else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
-        return false;
-    };
-    matches!(
-        intro.invoke("key", IntrospectValue::Text(key.to_owned())),
-        Ok(IntrospectValue::Bool(true))
-    )
+    // R764.1 §5.38 — forward through the lifted SSOT (empty modifiers =
+    // bare Text, behaviour-identical to the pre-lift call).
+    tf_paint::forward_key_to_field(scene, INPUT_TAG, key, pinion_core::Modifiers::empty())
 }
 
 struct ComboView;

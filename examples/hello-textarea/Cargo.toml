@@ -20,7 +20,6 @@ pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", v
 pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 vello = { workspace = true }
-serde_json = { workspace = true }
 
 [dev-dependencies]
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }

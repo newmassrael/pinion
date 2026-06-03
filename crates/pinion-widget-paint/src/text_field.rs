@@ -61,7 +61,7 @@ use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
-use pinion_core::{Color, Scene, WidgetStateName};
+use pinion_core::{Color, CompositionEvent, Modifiers, Scene, WidgetStateName};
 use pinion_text::{
     byte_offset_for_line_move, byte_offset_for_point, caret_rect_for_byte_offset,
     selection_rects_for_range, CaretRect, LayoutCache,
@@ -767,6 +767,91 @@ pub fn byte_for_field_vertical_move(
     let mut cache = layout_cache.borrow_mut();
     let layout = cache.layout(effective_text.as_str(), &text_style, None);
     byte_offset_for_line_move(layout, visual_caret_byte, delta)
+}
+
+/// R764.1 §5.38 §5.22 — forward a W3C `KeyboardEvent.key` to the
+/// `TextField`-class External tagged `tag`, the SSOT every `TextField`
+/// binding's `WidgetCore::apply_key` routes a recognised key through.
+/// Pre-R764.1 this `find_external_with_tag_mut` then `introspect_mut`
+/// then `invoke("key", …)` then match-`Bool` block was hand-rolled in 5
+/// sites across 4 bindings (hello-textfield, hello-textarea, todomvc
+/// `TF_TAG` and `EDIT_TF_TAG`, hello-combobox-editable `INPUT_TAG`).
+///
+/// Empty `modifiers` sends the bare [`IntrospectValue::Text`] wire shape
+/// (the R56.1.d single-keystroke path); any held modifier sends the
+/// R56.1.f.0 Json shape carrying the four W3C bits so `Shift+Arrow` /
+/// `Ctrl+A` reach the substrate's modifier-aware selection arms.
+///
+/// Returns the External's recognition result (the W3C `defaultPrevented`
+/// semantic the binding propagates from `apply_key`): `true` only on
+/// `Ok(Bool(true))`, `false` on an unrecognised key or any non-`Bool`
+/// shape (a substrate misconfiguration defers to the shell fallback
+/// chain rather than silently swallowing the key). The binding keeps its
+/// own `focused == Some(<my tag>)` roving-tabindex guard before calling.
+#[must_use]
+pub fn forward_key_to_field(
+    scene: &mut Scene,
+    tag: &str,
+    key: &str,
+    modifiers: Modifiers,
+) -> bool {
+    let Some(node) = scene.find_external_with_tag_mut(tag) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    let args = if modifiers == Modifiers::empty() {
+        IntrospectValue::Text(key.to_owned())
+    } else {
+        IntrospectValue::Json(serde_json::json!({
+            "key": key,
+            "shift": modifiers.shift_key(),
+            "ctrl": modifiers.control_key(),
+            "alt": modifiers.alt_key(),
+            "meta": modifiers.meta_key(),
+        }))
+    };
+    matches!(intro.invoke("key", args), Ok(IntrospectValue::Bool(true)))
+}
+
+/// R764.1 §5.38 §5.13 — forward a platform [`CompositionEvent`] to the
+/// `TextField`-class External tagged `tag`, the SSOT every `TextField`
+/// binding's `WidgetView::apply_composition` routes through. Reformats
+/// the typed enum into the R56.1.g.2 `invoke("composition", Json{action,
+/// data?})` wire shape so the platform IME path (winit `WindowEvent::Ime`)
+/// and the AI-client `scene/invoke` path land on one substrate funnel.
+/// Pre-R764.1 this block was hand-rolled in 3 bindings (hello-textfield,
+/// hello-textarea, todomvc).
+///
+/// Returns `true` when the invoke channel accepts the event; a future
+/// `#[non_exhaustive]` `CompositionEvent` variant returns `false`
+/// (defers to the shell fallback). The binding keeps its own focus
+/// guard before calling.
+#[must_use]
+pub fn forward_composition_to_field(
+    scene: &mut Scene,
+    tag: &str,
+    event: &CompositionEvent,
+) -> bool {
+    let Some(node) = scene.find_external_with_tag_mut(tag) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    let args = match event {
+        CompositionEvent::Start => serde_json::json!({ "action": "start" }),
+        CompositionEvent::Update(text) => {
+            serde_json::json!({ "action": "update", "data": text })
+        }
+        CompositionEvent::Commit(text) => serde_json::json!({ "action": "end", "data": text }),
+        CompositionEvent::Cancel => serde_json::json!({ "action": "cancel" }),
+        // `CompositionEvent` is `#[non_exhaustive]`; a future variant
+        // (delete_surrounding etc.) defers to the shell fallback.
+        _ => return false,
+    };
+    intro.invoke("composition", IntrospectValue::Json(args)).is_ok()
 }
 
 /// (R657 §5.16) Convenience helper extracting `(TextFieldState,

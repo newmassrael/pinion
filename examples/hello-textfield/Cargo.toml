@@ -49,14 +49,10 @@ pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.
 # (R46.3.3 fully-qualified codegen path); the `vello_renderer_impl!`
 # macro expansion also names `::vello::Scene` and `::vello::peniko::Color`.
 vello = { workspace = true }
-# R56.2.a §5.13 §5.38 — `WidgetView::apply_composition` formats the
-# R56.1.g.2 invoke wire-shape `Json{action, data?}` via the
-# `serde_json::json!` macro so the platform IME path (winit
-# `WindowEvent::Ime` → pinion-shell `apply_composition`) lands on
-# the same substrate funnel the AI client `scene/invoke` route
-# uses. Workspace version pin shared with pinion-rpc (the
-# R56.1.g.2 parser also reads `serde_json::Value`).
-serde_json = { workspace = true }
+# R764.1 §5.38 — the IME composition + modifier key-forward Json
+# building moved into `pinion_widget_paint::text_field`
+# (`forward_composition_to_field` / `forward_key_to_field`), so this
+# binding no longer constructs `serde_json` values directly.
 
 [dev-dependencies]
 # R55.G.22 §5.49 — `pinion_core::test_fixtures::assert_widget_view_carries_tag`

@@ -17492,6 +17492,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R764.1 — R764.1 audit clearance — TextField key-forward + composition-forward SSOT lift to tf_paint (5+3 hand-rolled sites -> 2 helpers); R764 self-grep missed the base forward pattern
+
+**Changes**:
+- tf_paint::forward_key_to_field — SSOT for TextField key dispatch (find_external + introspect + Text/Json modifier args + invoke key + match Bool)
+- tf_paint::forward_composition_to_field — SSOT for IME composition forward (CompositionEvent -> invoke composition Json)
+- retrofit 5 key sites (hello-textfield/textarea, todomvc TF_TAG+EDIT_TF_TAG, combobox-editable INPUT) + 3 composition sites (textfield/textarea/todomvc)
+- behaviour-preserving: empty modifiers = bare Text (todomvc/combobox unchanged); textfield/textarea pass real modifiers (R763)
+- removed now-unused serde_json dep + import from hello-textfield + hello-textarea
+
+
+
+**Verification**:
+- cargo test --workspace -j2 green (119 ok suites)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean
+- behaviour-preserving: textfield type/select/compose + r762/r763 + r764 + 8 todomvc + r717 combobox demos all PASS
+- audit trigger = user hack/smell/SSOT review; R764 self-grep checked only the 2-copy Json variant, missed the 5-copy base forward (R758-class axis incompleteness)
+
+
+
+**Impact**: §5.38
+
+
+**Carry forward**:
+- hit-test glue (rect_for_tag + byte_for_field_point) stays binding-side (2 consumer + pinion-shell rect_for_tag dep; R657 field-rect-walk-binding-side precedent) — legitimate precedented-defer, not a smell
+- textarea apply_middle_click (X11 PRIMARY paste) not wired (1-consumer feature gap, hello-textfield only); additive when a 2nd middle-click consumer lands
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

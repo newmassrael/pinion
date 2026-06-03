@@ -2382,7 +2382,6 @@ dependencies = [
  "pinion-shell",
  "pinion-text",
  "pinion-widget-paint",
- "serde_json",
  "vello",
 ]
 
@@ -2397,7 +2396,6 @@ dependencies = [
  "pinion-shell",
  "pinion-text",
  "pinion-widget-paint",
- "serde_json",
  "vello",
 ]
 
