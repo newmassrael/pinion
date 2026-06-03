@@ -54,6 +54,17 @@
 //! `field_shaping` SSOT so paint and caret/hit-test geometry shape one
 //! identical run-aware `Layout`.
 //!
+//! R768 adds **apply-to-selection**: a colour-swatch toolbar under the
+//! field. Select a range, click a swatch → that span takes the swatch's
+//! colour via
+//! [`TextEditState::apply_style_run`](pinion_core::widgets::text_edit::TextEditState::apply_style_run)
+//! (Qt `setCharFormat` semantics — the overlay carves existing runs and
+//! merges abutting identical spans); the clear swatch strips formatting.
+//! The same operation is the AI-first `apply-style` / `clear-style`
+//! invoke funnel on [`TextFieldExternal`], so a `scene/invoke` drives the
+//! identical path. A runs-only change (no text edit) repaints through the
+//! reactive `style_runs` `Signal`.
+//!
 //! ## Try it
 //!
 //! ```text
@@ -64,7 +75,8 @@
 //! line. Keep typing on one line past the box edge → it soft-wraps to
 //! the next visual line. `ArrowUp` / `ArrowDown` move between lines
 //! (hold `Shift` to select); drag across lines to select a multi-line
-//! band.
+//! band. Select a word and click a colour swatch under the field to
+//! recolour it; the bordered swatch clears formatting.
 
 use std::rc::Rc;
 
@@ -72,9 +84,9 @@ use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
 use pinion_core::external::External;
 use pinion_core::reactive::Owner;
-use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, StyleRun, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
+    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::caret_blink::use_caret_blink;
@@ -104,6 +116,36 @@ const TITLE_FONT_SIZE_PX: u32 = 18;
 const STATUS_FONT_SIZE_PX: u32 = 12;
 const ROW_GAP: u32 = 16;
 
+/// R768 — an (R, G, B) ink triple shared by the seed runs + toolbar.
+type Rgb = (u8, u8, u8);
+/// R768 — a toolbar swatch: its tag + ink (`None` = the clear swatch).
+type Swatch = (&'static str, Option<Rgb>);
+
+// R767 §5.36 — the three seed colours (leading word of each line) shared
+// by `create_external`'s run seed and the R768 toolbar swatches so the
+// "apply to selection" affordance recolours text into the same palette.
+const INK_RED: Rgb = (0xD0, 0x28, 0x28);
+const INK_GREEN: Rgb = (0x1F, 0x8A, 0x34);
+const INK_BLUE: Rgb = (0x26, 0x4C, 0xD8);
+
+// R768 §5.36 §5.22 — colour-apply toolbar. Each swatch is a tagged,
+// non-focusable `BoxNode` (a decoration — clicking it never steals focus
+// from the field, so the selection survives); the press hook routes a
+// hit to `TextEditState::apply_style_run` over the live selection. The
+// last swatch (`None`) clears formatting back to the base style.
+const SW_RED: &str = "swatch_red";
+const SW_GREEN: &str = "swatch_green";
+const SW_BLUE: &str = "swatch_blue";
+const SW_CLEAR: &str = "swatch_clear";
+const SWATCH_SIZE: u32 = 28;
+const SWATCH_GAP: u32 = 10;
+const SWATCHES: [Swatch; 4] = [
+    (SW_RED, Some(INK_RED)),
+    (SW_GREEN, Some(INK_GREEN)),
+    (SW_BLUE, Some(INK_BLUE)),
+    (SW_CLEAR, None),
+];
+
 /// R764 §5.22 — single source of truth for the textarea's
 /// [`TextFieldStyle`]. The view fn, the pointer hooks, and the
 /// vertical-nav `apply_key` arm all shape against this *identical*
@@ -111,6 +153,88 @@ const ROW_GAP: u32 = 16;
 /// stay one cache entry (the R762.1 `field_shaping` SSOT discipline).
 fn ta_style() -> tf_paint::TextFieldStyle {
     tf_paint::TextFieldStyle::m3_multiline(TA_ROWS)
+}
+
+/// R768 §5.36 — the colour-only [`TextStyle`] a swatch (and the R767
+/// seed) applies: the field's base font size with the given ink, every
+/// other field at its default so the run is metric-neutral (no glyph-
+/// metric shift, so paint and caret/hit-test geometry stay one layout).
+fn swatch_text_style(rgb: Rgb) -> TextStyle {
+    TextStyle::new()
+        .with_size_px(ta_style().font_size_px)
+        .with_fg(Color::rgb(rgb.0, rgb.1, rgb.2))
+}
+
+/// R768 §5.36 §5.22 — the formatting toolbar: a row of colour swatches
+/// plus a clear swatch. Each swatch is a tagged decoration `BoxNode`;
+/// the press hook ([`TextAreaView::position_caret_for_point`]) resolves
+/// a click to its tag and applies the colour to the live selection.
+fn toolbar(theme: &pinion_core::theme::Theme) -> Scene {
+    let swatch = |tag: &'static str, fill: Color, border: bool| {
+        let mut style = BoxStyle::filled(fill).with_corner_radius(6);
+        if border {
+            style = style.with_border(pinion_core::style::Border::new(
+                theme.resolve(ColorRole::OnSurfaceMuted),
+                1,
+            ));
+        }
+        Scene::Box(
+            BoxNode::new(Rect::default(), style)
+                .with_tag(tag)
+                .with_layout(LayoutStyle::new().with_size(Size::px(SWATCH_SIZE, SWATCH_SIZE))),
+        )
+    };
+    let children = SWATCHES
+        .iter()
+        .map(|&(tag, ink)| match ink {
+            // Clear swatch: a neutral bordered surface (no icon-font rule
+            // — the bordered empty box reads as "no fill / remove").
+            None => swatch(tag, theme.resolve(ColorRole::SurfaceContainerHighest), true),
+            Some(rgb) => swatch(tag, Color::rgb(rgb.0, rgb.1, rgb.2), false),
+        })
+        .collect();
+    Scene::Container(
+        ContainerNode::new(children).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_gap(SWATCH_GAP),
+        ),
+    )
+}
+
+/// R768 §5.36 §5.22 — toolbar press router. Returns `true` when `(x, y)`
+/// landed on a swatch (the press is swallowed — no caret move): a colour
+/// swatch applies its ink to the current selection, the clear swatch
+/// strips it. A press with no active selection is still swallowed (the
+/// toolbar owns that pixel) but is a no-op — formatting needs a range.
+/// Returns `false` when no swatch was hit, so the caller falls through
+/// to caret positioning.
+fn try_toolbar_press(scene: &Scene, x: f32, y: f32) -> bool {
+    for (tag, ink) in SWATCHES {
+        let Some(rect) = pinion_shell::rect_for_tag(scene, tag) else {
+            continue;
+        };
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "swatch rect coords are small screen pixels; f32 is exact below 2^23"
+        )]
+        let inside = x >= rect.x as f32
+            && x < (rect.x + rect.w) as f32
+            && y >= rect.y as f32
+            && y < (rect.y + rect.h) as f32;
+        if !inside {
+            continue;
+        }
+        if let Some((start, end)) = use_text_edit_state(TA_TAG).selection_range() {
+            let edit = use_text_edit_state(TA_TAG);
+            match ink {
+                Some(rgb) => edit.apply_style_run(start, end, swatch_text_style(rgb)),
+                None => edit.clear_style_runs(start, end),
+            }
+        }
+        return true;
+    }
+    false
 }
 
 /// R56.2.b §5.22 — `Sized` wrapper around `Box<dyn Clipboard>` so the
@@ -199,7 +323,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     ));
 
     Scene::Container(
-        ContainerNode::new(vec![title, field, status])
+        ContainerNode::new(vec![title, field, toolbar(&theme), status])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
@@ -230,12 +354,10 @@ impl WidgetCore for TextAreaView {
             // metrics). The runs ride along through edits — typing before
             // "first" shifts all three right, deleting a styled word drops
             // its run — via the TextEditState FormatRange maintenance.
-            let fs = ta_style().font_size_px;
-            let coloured = |c: Color| TextStyle::new().with_size_px(fs).with_fg(c);
             text_state.set_style_runs(vec![
-                StyleRun::new(0, 5, coloured(Color::rgb(0xD0, 0x28, 0x28))), // "first"  red
-                StyleRun::new(11, 17, coloured(Color::rgb(0x1F, 0x8A, 0x34))), // "second" green
-                StyleRun::new(23, 28, coloured(Color::rgb(0x26, 0x4C, 0xD8))), // "third"  blue
+                StyleRun::new(0, 5, swatch_text_style(INK_RED)), // "first"  red
+                StyleRun::new(11, 17, swatch_text_style(INK_GREEN)), // "second" green
+                StyleRun::new(23, 28, swatch_text_style(INK_BLUE)), // "third"  blue
             ]);
         }
         let blink = use_caret_blink(TA_TAG);
@@ -265,7 +387,7 @@ impl WidgetCore for TextAreaView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-textarea (R764 §5.22)"
+        "pinion hello-textarea (R768 §5.36 §5.22)"
     }
 
     /// R764 §5.22 / R766 — multi-line key handling. Five keys diverge
@@ -453,6 +575,14 @@ impl WidgetView for TextAreaView {
         extend: bool,
     ) -> Option<usize> {
         if focused != Some(TA_TAG) {
+            return None;
+        }
+        // R768 §5.36 §5.22 — toolbar swatch router runs before caret
+        // positioning: a press on a colour swatch applies it to the live
+        // selection (and is swallowed, leaving caret + selection intact)
+        // — the click peer of the AI-first `apply-style` invoke funnel,
+        // both reaching `TextEditState::apply_style_run`.
+        if try_toolbar_press(scene, x, y) {
             return None;
         }
         let byte = hit_test_area_byte(*state, scene, x, y)?;

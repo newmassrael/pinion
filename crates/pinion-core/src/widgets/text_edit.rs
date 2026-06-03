@@ -84,6 +84,7 @@ use std::rc::Rc;
 
 use crate::reactive::{batch, Owner, Signal};
 use crate::scene::StyleRun;
+use crate::style::TextStyle;
 
 /// R56.1.b §5.38 §5.22 — Reactive text + caret pair for one
 /// [`TextField`](crate::widgets::text_field::TextField).
@@ -455,6 +456,63 @@ impl TextEditState {
     /// byte order; the edit mutators maintain whatever shape is set
     /// here across subsequent inserts / deletes.
     pub fn set_style_runs(&self, runs: Vec<StyleRun>) {
+        self.style_runs.set(runs);
+    }
+
+    /// R768 §5.36 §5.22 — apply `style` to the byte range `[start, end)`
+    /// as one styled run: the rich-text "apply formatting to the
+    /// selection" primitive (Qt `QTextCursor::setCharFormat` semantics).
+    /// Existing runs are carved around the range and a run carrying
+    /// `style` is laid in; adjacent runs that end up with an identical
+    /// style coalesce, so re-applying the same format across a former
+    /// split leaves no seam.
+    ///
+    /// `start` / `end` are clamped to `[0, text.len()]` and snapped to
+    /// `char` boundaries; an empty (or inverted) range is a no-op. The
+    /// text buffer is untouched — only the styling changes.
+    ///
+    /// Reactive: a view-fn reading [`style_runs`](Self::style_runs) (the
+    /// field paint) re-runs, so a formatting change with **no** text edit
+    /// still repaints — the runs-only mutation path the
+    /// [`style_runs`](Self::style_runs) field doc anticipated.
+    pub fn apply_style_run(&self, start: usize, end: usize, style: TextStyle) {
+        let buf = self.text.get();
+        let a = clamp_to_char_boundary(&buf, start);
+        let b = clamp_to_char_boundary(&buf, end);
+        if a >= b {
+            return;
+        }
+        let mut runs = self.style_runs.get();
+        overlay_style_run(
+            &mut runs,
+            StyleRun::new(
+                u32::try_from(a).unwrap_or(u32::MAX),
+                u32::try_from(b).unwrap_or(u32::MAX),
+                style,
+            ),
+        );
+        self.style_runs.set(runs);
+    }
+
+    /// R768 §5.36 §5.22 — remove all styling over the byte range
+    /// `[start, end)` (rich-text "clear formatting"), returning those
+    /// bytes to the field's base style. Runs straddling a boundary are
+    /// split; runs fully inside are dropped. The text is untouched (this
+    /// is **not** a deletion — no offset shifts). `start` / `end` are
+    /// clamped + `char`-snapped; an empty / inverted range is a no-op.
+    pub fn clear_style_runs(&self, start: usize, end: usize) {
+        let buf = self.text.get();
+        let a = clamp_to_char_boundary(&buf, start);
+        let b = clamp_to_char_boundary(&buf, end);
+        if a >= b {
+            return;
+        }
+        let mut runs = self.style_runs.get();
+        subtract_style_range(
+            &mut runs,
+            u32::try_from(a).unwrap_or(u32::MAX),
+            u32::try_from(b).unwrap_or(u32::MAX),
+        );
         self.style_runs.set(runs);
     }
 
@@ -1164,6 +1222,75 @@ fn clip_runs_for_delete(runs: &mut Vec<StyleRun>, start: usize, end: usize) {
     runs.retain(|r| r.start < r.end);
 }
 
+/// R768 §5.36 §5.22 — subtract the byte range `[start, end)` from the
+/// styled-run list's *style coverage* (the "clear formatting over a
+/// range" core, and the carve-a-hole first half of [`overlay_style_run`]).
+///
+/// Unlike [`clip_runs_for_delete`] — which models a *text* deletion and
+/// pulls every trailing run left by the removed length — this leaves the
+/// text (and therefore all offsets outside the range) untouched and only
+/// strips the styling inside `[start, end)`. A run straddling a boundary
+/// is split: the part before `start` and the part at-or-after `end`
+/// survive; the covered middle is dropped. Runs fully inside vanish; runs
+/// fully outside are kept verbatim. An empty / inverted range is a no-op.
+fn subtract_style_range(runs: &mut Vec<StyleRun>, start: u32, end: u32) {
+    if start >= end {
+        return;
+    }
+    let mut out = Vec::with_capacity(runs.len() + 1);
+    for r in runs.drain(..) {
+        if r.end <= start || r.start >= end {
+            out.push(r); // disjoint from the cleared range
+        } else {
+            if r.start < start {
+                out.push(StyleRun::new(r.start, start, r.style.clone()));
+            }
+            if r.end > end {
+                out.push(StyleRun::new(end, r.end, r.style));
+            }
+            // the [max(start, r.start), min(end, r.end)) middle is dropped
+        }
+    }
+    *runs = out;
+}
+
+/// R768 §5.36 §5.22 — coalesce adjacent runs that carry an identical
+/// style into one span. Assumes `runs` is sorted ascending by `start`
+/// and non-overlapping (the [`overlay_style_run`] post-condition). Two
+/// runs merge when the first ends exactly where the second begins and
+/// their styles compare equal — the canonical `FormatRange`
+/// normalisation that keeps the list minimal, so re-applying the same
+/// colour across a former split leaves no redundant seam.
+fn merge_adjacent_runs(runs: &mut Vec<StyleRun>) {
+    let mut i = 0;
+    while i + 1 < runs.len() {
+        if runs[i].end == runs[i + 1].start && runs[i].style == runs[i + 1].style {
+            let merged_end = runs[i + 1].end;
+            runs[i].end = merged_end;
+            runs.remove(i + 1);
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// R768 §5.36 §5.22 — overlay one [`StyleRun`] onto the list (Qt
+/// `QTextCursor::setCharFormat` semantics): the bytes in `new`'s range
+/// take `new`'s style wholesale, every previously-styled byte outside it
+/// is preserved. Implemented as [`subtract_style_range`] (carve a hole
+/// for `new`) + insert + sort-by-start + [`merge_adjacent_runs`], so the
+/// list stays ordered, non-overlapping, and minimal. An empty / inverted
+/// `new` range is a no-op.
+fn overlay_style_run(runs: &mut Vec<StyleRun>, new: StyleRun) {
+    if new.start >= new.end {
+        return;
+    }
+    subtract_style_range(runs, new.start, new.end);
+    runs.push(new);
+    runs.sort_by_key(|r| r.start);
+    merge_adjacent_runs(runs);
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.b §5.38 §5.22 — `TextEditState` regression battery.
@@ -1177,7 +1304,7 @@ mod tests {
     };
     use crate::reactive::{Effect, Owner};
     use crate::scene::StyleRun;
-    use crate::style::TextStyle;
+    use crate::style::{Color, TextStyle};
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -2419,5 +2546,129 @@ mod tests {
         s.set_style_runs(vec![run(0, 5)]);
         s.set_text("brand new".to_owned());
         assert!(s.style_runs().is_empty(), "a wholesale set_text clears the now-invalid runs");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R768 §5.36 §5.22 — apply / clear styled runs over a range
+    // (rich-text formatting; setCharFormat + clearFormat semantics)
+    // ─────────────────────────────────────────────────────────────
+
+    /// A colour-distinct run over `[s, e)` so merge / split tests can
+    /// tell two spans apart by style (the default-styled [`run`] helper
+    /// cannot distinguish adjacent spans for the merge assertions).
+    fn crun(s: u32, e: u32, rgb: (u8, u8, u8)) -> StyleRun {
+        StyleRun::new(s, e, TextStyle::new().with_fg(Color::rgb(rgb.0, rgb.1, rgb.2)))
+    }
+
+    const RED: (u8, u8, u8) = (0xD0, 0x28, 0x28);
+    const BLUE: (u8, u8, u8) = (0x26, 0x4C, 0xD8);
+
+    #[test]
+    fn r768_apply_over_unstyled_gap_adds_a_run() {
+        let s = TextEditState::with_initial("hello world".to_owned());
+        s.apply_style_run(6, 11, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+        assert_eq!(run_spans(&s), vec![(6, 11)], "applying over plain text adds one run");
+    }
+
+    #[test]
+    fn r768_apply_inside_a_run_splits_it_into_three() {
+        let s = TextEditState::with_initial("hello world".to_owned());
+        s.set_style_runs(vec![crun(0, 11, RED)]);
+        // Recolour the middle "lo wo" → red | blue | red.
+        s.apply_style_run(3, 8, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 3), (3, 8), (8, 11)],
+            "overlaying inside a run carves it into before | new | after",
+        );
+        let runs = s.style_runs();
+        assert_eq!(runs[1].style.fg_color, Color::rgb(BLUE.0, BLUE.1, BLUE.2), "middle is the new ink");
+        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "flanks keep the old ink");
+    }
+
+    #[test]
+    fn r768_apply_same_style_to_adjacent_merges() {
+        let s = TextEditState::with_initial("hello world".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        // Apply the identical red to the abutting "[5, 11)" — the seam
+        // dissolves into one span (FormatRange minimisation).
+        s.apply_style_run(5, 11, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+        assert_eq!(run_spans(&s), vec![(0, 11)], "adjacent identical styles coalesce");
+    }
+
+    #[test]
+    fn r768_apply_different_style_to_adjacent_keeps_two() {
+        let s = TextEditState::with_initial("hello world".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        s.apply_style_run(5, 11, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
+        assert_eq!(run_spans(&s), vec![(0, 5), (5, 11)], "abutting distinct styles stay separate");
+    }
+
+    #[test]
+    fn r768_apply_overlapping_existing_runs_replaces_coverage() {
+        let s = TextEditState::with_initial("hello world!!".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED), crun(6, 11, BLUE)]);
+        // A wide blue overlay swallows the red run and the gap; the
+        // trailing tail of the old blue run survives, then merges.
+        s.apply_style_run(2, 9, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 2), (2, 11)],
+            "overlay carves the red run and merges with the abutting blue tail",
+        );
+    }
+
+    #[test]
+    fn r768_clear_inside_a_run_splits_without_shifting() {
+        let s = TextEditState::with_initial("hello world".to_owned());
+        s.set_style_runs(vec![crun(0, 11, RED)]);
+        s.clear_style_runs(3, 8);
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 3), (8, 11)],
+            "clearing a middle range splits the run and drops the covered styling (no offset shift)",
+        );
+        assert_eq!(s.text(), "hello world", "clear-formatting never edits the text");
+    }
+
+    #[test]
+    fn r768_clear_whole_coverage_empties_runs() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        s.clear_style_runs(0, 5);
+        assert!(s.style_runs().is_empty(), "clearing a run's full extent drops it");
+    }
+
+    #[test]
+    fn r768_apply_empty_range_is_a_noop() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        s.apply_style_run(3, 3, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
+        assert_eq!(run_spans(&s), vec![(0, 5)], "a collapsed range leaves the runs untouched");
+    }
+
+    #[test]
+    fn r768_apply_clamps_out_of_range_bytes() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.apply_style_run(2, 999, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+        assert_eq!(run_spans(&s), vec![(2, 5)], "end clamps to text.len()");
+    }
+
+    #[test]
+    fn r768_apply_runs_only_mutation_repaints_via_signal() {
+        // A formatting change with no text edit still notifies the
+        // style_runs Signal subscribers (the runs-only repaint path).
+        let owner = Owner::new();
+        let s = Rc::new(TextEditState::with_initial("hello".to_owned()));
+        let runs_seen = Rc::new(Cell::new(0usize));
+        let st = Rc::clone(&s);
+        let seen = Rc::clone(&runs_seen);
+        let _e = Effect::new(&owner, move || {
+            let _ = st.style_runs();
+            seen.set(seen.get() + 1);
+        });
+        let before = runs_seen.get();
+        s.apply_style_run(0, 5, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+        assert!(runs_seen.get() > before, "a runs-only apply re-runs a style_runs subscriber");
     }
 }

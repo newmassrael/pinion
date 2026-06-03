@@ -116,6 +116,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::scene::Rect;
+use crate::style::{Color, TextStyle};
 use crate::widgets::caret_blink::CaretBlink;
 use crate::widgets::text_edit::TextEditState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -1072,6 +1073,19 @@ impl ExternalIntrospect for TextFieldExternal {
             // selection" convention so AI clients can drive the
             // same code path the shell's middle-click handler hits.
             ("paste-primary", "boolean"),
+            // R768 §5.36 §5.22 — rich-text formatting actions over a
+            // byte range. `apply-style` takes Json
+            // `{"start": int, "end": int, "fg": "#rrggbb", "size"?: int}`
+            // and overlays one colour [`StyleRun`] on the range
+            // (setCharFormat); `clear-style` takes
+            // `{"start": int, "end": int}` and strips styling back to
+            // the base. Both return `Bool(handled)` (`false` when no
+            // [`TextEditState`] is attached) — the AI-first peer of the
+            // toolbar's apply-to-selection click.
+            //
+            // [`StyleRun`]: crate::scene::StyleRun
+            ("apply-style", "boolean"),
+            ("clear-style", "boolean"),
         ])
     }
 
@@ -1364,6 +1378,49 @@ impl ExternalIntrospect for TextFieldExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R768 §5.36 §5.22 — apply one colour styled run over a byte
+            // range (setCharFormat). The Json wire shape mirrors the
+            // `selection` slot's `{"start", "end"}` plus the run's visual
+            // fields: `"fg"` is a CSS colour string parsed by
+            // [`Color::from_hex`] (the same parser scene styles use), and
+            // optional `"size"` overrides the run font size (default
+            // 16px). The non-colour fields stay at their defaults so the
+            // run is metric-neutral (colour-only), matching the
+            // hello-textarea seed runs. Returns `Bool(true)` when the
+            // range was styled, `Bool(false)` when no [`TextEditState`]
+            // is attached; `TypeMismatch` on a non-Json arg or an
+            // unparseable payload (mirror of the `key` / `composition`
+            // arg-shape discipline).
+            //
+            // [`Color::from_hex`]: crate::style::Color::from_hex
+            "apply-style" => match args {
+                IntrospectValue::Json(ref obj) => match parse_apply_style_json(obj) {
+                    Some((start, end, style)) => Ok(IntrospectValue::Bool(
+                        self.text_state().is_some_and(|s| {
+                            s.apply_style_run(start, end, style);
+                            true
+                        }),
+                    )),
+                    None => Err(InvokeError::TypeMismatch),
+                },
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R768 §5.36 §5.22 — clear styling over a byte range
+            // (clearFormat). Json `{"start", "end"}`; returns
+            // `Bool(true)` when a state is attached (the range's runs are
+            // stripped back to the base style), `Bool(false)` otherwise.
+            "clear-style" => match args {
+                IntrospectValue::Json(ref obj) => match parse_clear_style_json(obj) {
+                    Some((start, end)) => Ok(IntrospectValue::Bool(
+                        self.text_state().is_some_and(|s| {
+                            s.clear_style_runs(start, end);
+                            true
+                        }),
+                    )),
+                    None => Err(InvokeError::TypeMismatch),
+                },
+                _ => Err(InvokeError::TypeMismatch),
+            },
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1561,15 +1618,64 @@ impl TextFieldExternal {
 /// missing / non-integer / negative, or if the integer falls outside
 /// `usize` range (the unreachable 2^64-overflow guard).
 fn parse_selection_intervene_json(value: &serde_json::Value) -> Option<(usize, usize)> {
-    let obj = value.as_object()?;
+    parse_byte_range_json(value.as_object()?)
+}
+
+/// R768 §5.36 §5.22 — shared `{"start", "end"}` non-negative-integer
+/// byte-range extraction. The `selection` intervene, `apply-style`, and
+/// `clear-style` invoke wire shapes all carry the same integer pair
+/// (mirror of W3C `selectionStart` / `selectionEnd`), so the decode
+/// lives in one place — a slot rename can't silently desync the three
+/// call sites ([[snapshot-vs-drain-api-duality]] decode-SSOT). Returns
+/// `None` if either slot is missing / non-integer / negative / outside
+/// `usize` (the unreachable 2^64-overflow guard).
+fn parse_byte_range_json(
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> Option<(usize, usize)> {
     let start_i64 = obj.get("start")?.as_i64()?;
     let end_i64 = obj.get("end")?.as_i64()?;
     if start_i64 < 0 || end_i64 < 0 {
         return None;
     }
-    let start = usize::try_from(start_i64).ok()?;
-    let end = usize::try_from(end_i64).ok()?;
-    Some((start, end))
+    Some((
+        usize::try_from(start_i64).ok()?,
+        usize::try_from(end_i64).ok()?,
+    ))
+}
+
+/// R768 §5.36 §5.22 — extract the `(start, end, style)` payload from the
+/// `apply-style` invoke arg. Wire shape:
+///
+/// ```json
+/// {
+///   "start": 0,          // required, non-negative integer
+///   "end":   5,          // required, non-negative integer
+///   "fg":    "#d02828",  // required, CSS colour (Color::from_hex)
+///   "size":  16          // optional, run font size in px (default 16)
+/// }
+/// ```
+///
+/// The built [`TextStyle`] overrides only the colour (and optionally the
+/// size); every other field stays at its default so the run is
+/// metric-neutral (colour-only) like the seed runs. Returns `None` if
+/// the range is malformed, `"fg"` is missing / not a parseable colour
+/// string, or `"size"` is present but not a `u32`-range integer.
+fn parse_apply_style_json(value: &serde_json::Value) -> Option<(usize, usize, TextStyle)> {
+    let obj = value.as_object()?;
+    let (start, end) = parse_byte_range_json(obj)?;
+    let fg = Color::from_hex(obj.get("fg")?.as_str()?)?;
+    let mut style = TextStyle::new().with_fg(fg);
+    if let Some(size_v) = obj.get("size") {
+        style = style.with_size_px(u32::try_from(size_v.as_u64()?).ok()?);
+    }
+    Some((start, end, style))
+}
+
+/// R768 §5.36 §5.22 — extract the `(start, end)` range from the
+/// `clear-style` invoke arg (the `{"start", "end"}` shape shared via
+/// [`parse_byte_range_json`]).
+fn parse_clear_style_json(value: &serde_json::Value) -> Option<(usize, usize)> {
+    parse_byte_range_json(value.as_object()?)
 }
 
 fn parse_key_invoke_json(
@@ -1827,7 +1933,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_nine_slots() {
+    fn external_schema_declares_eleven_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
@@ -1836,12 +1942,15 @@ mod tests {
         // R56.1.g.2 grew the surface: + preedit (W3C CompositionEvent
         // .data mirror) + composition (W3C CompositionEvent action
         // dispatch surface).
+        // R56.2.e grew the surface: + paste-primary (PRIMARY paste).
+        // R768 grew the surface: + apply-style + clear-style (rich-text
+        // setCharFormat / clearFormat over a byte range).
         // The schema shape is stable across bare and wired-up
         // TextFields — text/caret/selection/preedit queries return
         // None / intervene returns ReadOnly when no TextEditState is
-        // attached; the key invoke returns `Bool(false)` for bare
-        // TextFields; the composition invoke still drives SCXML for
-        // bare TextFields.
+        // attached; the key / apply-style / clear-style invokes return
+        // `Bool(false)` for bare TextFields; the composition invoke
+        // still drives SCXML for bare TextFields.
         let tfx = TextFieldExternal::new();
         let schema = tfx.schema();
         assert_eq!(
@@ -1856,6 +1965,8 @@ mod tests {
                 ("key", "string"),
                 ("composition", "string"),
                 ("paste-primary", "boolean"),
+                ("apply-style", "boolean"),
+                ("clear-style", "boolean"),
             ],
         );
     }
@@ -2317,6 +2428,8 @@ mod r56_1_d_tests {
 
     use super::{apply_key, TextField, TextFieldExternal};
     use crate::external::{External, ExternalIntrospect, IntrospectValue, InvokeError};
+    use crate::scene::StyleRun;
+    use crate::style::{Color, TextStyle};
     use crate::widgets::text_edit::TextEditState;
     use std::rc::Rc;
 
@@ -2623,6 +2736,107 @@ mod r56_1_d_tests {
             .invoke("key", IntrospectValue::Text("a".to_string()))
             .unwrap();
         assert_eq!(result, IntrospectValue::Bool(false));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R768 §5.36 §5.22 — invoke("apply-style" / "clear-style", ...)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r768_invoke_apply_style_overlays_a_colour_run() {
+        let state = Rc::new(TextEditState::with_initial("hello world".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        let result = tfx
+            .invoke(
+                "apply-style",
+                IntrospectValue::Json(serde_json::json!({
+                    "start": 6, "end": 11, "fg": "#d02828",
+                })),
+            )
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Bool(true));
+        let runs = state.style_runs();
+        assert_eq!(runs.len(), 1, "one run applied");
+        assert_eq!((runs[0].start, runs[0].end), (6, 11));
+        assert_eq!(runs[0].style.fg_color, Color::rgb(0xD0, 0x28, 0x28));
+    }
+
+    #[test]
+    fn r768_invoke_apply_style_honours_optional_size() {
+        let state = Rc::new(TextEditState::with_initial("hello".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        tfx.invoke(
+            "apply-style",
+            IntrospectValue::Json(serde_json::json!({
+                "start": 0, "end": 5, "fg": "#264cd8", "size": 24,
+            })),
+        )
+        .unwrap();
+        assert_eq!(state.style_runs()[0].style.font_size_px, 24, "size override threads through");
+    }
+
+    #[test]
+    fn r768_invoke_clear_style_strips_a_range() {
+        let state = Rc::new(TextEditState::with_initial("hello world".to_string()));
+        state.set_style_runs(vec![StyleRun::new(
+            0,
+            11,
+            TextStyle::new().with_fg(Color::rgb(0xD0, 0x28, 0x28)),
+        )]);
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        let result = tfx
+            .invoke(
+                "clear-style",
+                IntrospectValue::Json(serde_json::json!({ "start": 3, "end": 8 })),
+            )
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Bool(true));
+        let spans: Vec<(u32, u32)> =
+            state.style_runs().iter().map(|r| (r.start, r.end)).collect();
+        assert_eq!(spans, vec![(0, 3), (8, 11)], "clear splits the run without shifting");
+    }
+
+    #[test]
+    fn r768_invoke_apply_style_on_bare_field_returns_bool_false() {
+        let mut tfx = TextFieldExternal::new();
+        let result = tfx
+            .invoke(
+                "apply-style",
+                IntrospectValue::Json(serde_json::json!({
+                    "start": 0, "end": 1, "fg": "#000000",
+                })),
+            )
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Bool(false), "unbound widget reports no-op");
+    }
+
+    #[test]
+    fn r768_invoke_apply_style_rejects_bad_payload() {
+        let state = Rc::new(TextEditState::with_initial("hi".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(state);
+        // Missing "fg".
+        assert!(matches!(
+            tfx.invoke(
+                "apply-style",
+                IntrospectValue::Json(serde_json::json!({ "start": 0, "end": 2 })),
+            ),
+            Err(InvokeError::TypeMismatch)
+        ));
+        // Non-Json arg.
+        assert!(matches!(
+            tfx.invoke("apply-style", IntrospectValue::Text("nope".to_string())),
+            Err(InvokeError::TypeMismatch)
+        ));
+        // Unparseable colour.
+        assert!(matches!(
+            tfx.invoke(
+                "apply-style",
+                IntrospectValue::Json(serde_json::json!({
+                    "start": 0, "end": 2, "fg": "octarine",
+                })),
+            ),
+            Err(InvokeError::TypeMismatch)
+        ));
     }
 
     #[test]

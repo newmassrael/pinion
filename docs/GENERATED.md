@@ -17671,6 +17671,43 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R768 — R768 rich-text apply-to-selection: setCharFormat overlay substrate + invoke funnel + colour toolbar
+
+**Changes**:
+- TextEditState apply_style_run/clear_style_runs overlay a StyleRun over a byte range (setCharFormat)
+- pure free fns: subtract_style_range (carve hole, no shift) + overlay_style_run + merge_adjacent_runs
+- overlay = subtract + insert + sort + merge-identical; clear = subtract only; char-clamp; empty no-op
+- runs-only mutation repaints via the reactive style_runs Signal (formatting needs no text edit)
+- TextFieldExternal invoke funnel: apply-style {start,end,fg,size?} + clear-style {start,end}
+- fg via Color::from_hex (CSS parser scene styles use); size optional 16; bad payload = TypeMismatch
+- lifted parse_byte_range_json (3rd consumer: selection-intervene + apply + clear) = one decode SSOT
+- hello-textarea: red/green/blue/clear swatch toolbar; press-hook router applies to selection
+- swatch press + scene/invoke both reach TextEditState::apply_style_run (single substrate SSOT)
+
+
+
+**Verification**:
+- pinion-core +15 unit tests: 10 substrate (gap/split/merge/overlap/clear/clamp/Signal) + 5 invoke
+- r768 demo ~38 assert: toolbar rects + split/merge/clear invoke + swatch-click recolour + live-pixel
+- every apply asserts the text buffer is byte-identical (formatting orthogonal to content)
+- workspace test green (-j2) + clippy -D pedantic (vello) clean + sibling demos r765/766/767 re-PASS
+- r764 batch FAIL = documented fixed-sleep race (old demo); 5/5 PASS in isolation
+- schema-count test renamed nine_slots -> eleven_slots (numeric-count rename convention)
+
+
+
+**Impact**: §5.36, §5.22
+
+
+**Carry forward**:
+- toolbar swatches are decorations (no per-swatch a11y); AI apply path = apply-style invoke (complete)
+- swatches -> focusable ButtonExternals w/ a11y = follow-up (composed-app); not a substrate debt
+- field-level merge (mergeCharFormat: bold keeping colour) = next slice; R768 = setCharFormat
+- is_some_and text_state guard 2-copy (apply+clear) = below Rule-of-Three, honest defer
+- R766 carries persist: hit-test glue 2-copy / aria-multiline a11y / TUI multi-line / wheel-scroll
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

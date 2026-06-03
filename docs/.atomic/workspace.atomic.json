@@ -28978,6 +28978,70 @@
         "R768 apply-to-selection now lands on a reactive Signal (runs-only repaint works) + apply_style_run"
       ]
     },
+    "R768": {
+      "decision_summary": "R768 rich-text apply-to-selection: setCharFormat overlay substrate + invoke funnel + colour toolbar",
+      "changes_bullets": [
+        "TextEditState apply_style_run/clear_style_runs overlay a StyleRun over a byte range (setCharFormat)",
+        "pure free fns: subtract_style_range (carve hole, no shift) + overlay_style_run + merge_adjacent_runs",
+        "overlay = subtract + insert + sort + merge-identical; clear = subtract only; char-clamp; empty no-op",
+        "runs-only mutation repaints via the reactive style_runs Signal (formatting needs no text edit)",
+        "TextFieldExternal invoke funnel: apply-style {start,end,fg,size?} + clear-style {start,end}",
+        "fg via Color::from_hex (CSS parser scene styles use); size optional 16; bad payload = TypeMismatch",
+        "lifted parse_byte_range_json (3rd consumer: selection-intervene + apply + clear) = one decode SSOT",
+        "hello-textarea: red/green/blue/clear swatch toolbar; press-hook router applies to selection",
+        "swatch press + scene/invoke both reach TextEditState::apply_style_run (single substrate SSOT)"
+      ],
+      "verification_bullets": [
+        "pinion-core +15 unit tests: 10 substrate (gap/split/merge/overlap/clear/clamp/Signal) + 5 invoke",
+        "r768 demo ~38 assert: toolbar rects + split/merge/clear invoke + swatch-click recolour + live-pixel",
+        "every apply asserts the text buffer is byte-identical (formatting orthogonal to content)",
+        "workspace test green (-j2) + clippy -D pedantic (vello) clean + sibling demos r765/766/767 re-PASS",
+        "r764 batch FAIL = documented fixed-sleep race (old demo); 5/5 PASS in isolation",
+        "schema-count test renamed nine_slots -> eleven_slots (numeric-count rename convention)"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "toolbar swatches are decorations (no per-swatch a11y); AI apply path = apply-style invoke (complete)",
+        "swatches -> focusable ButtonExternals w/ a11y = follow-up (composed-app); not a substrate debt",
+        "field-level merge (mergeCharFormat: bold keeping colour) = next slice; R768 = setCharFormat",
+        "is_some_and text_state guard 2-copy (apply+clear) = below Rule-of-Three, honest defer",
+        "R766 carries persist: hit-test glue 2-copy / aria-multiline a11y / TUI multi-line / wheel-scroll"
+      ],
+      "publishable_decision_summary": "R768 rich-text apply-to-selection: setCharFormat overlay substrate + invoke funnel + colour toolbar",
+      "publishable_changes_bullets": [
+        "TextEditState apply_style_run/clear_style_runs overlay a StyleRun over a byte range (setCharFormat)",
+        "pure free fns: subtract_style_range (carve hole, no shift) + overlay_style_run + merge_adjacent_runs",
+        "overlay = subtract + insert + sort + merge-identical; clear = subtract only; char-clamp; empty no-op",
+        "runs-only mutation repaints via the reactive style_runs Signal (formatting needs no text edit)",
+        "TextFieldExternal invoke funnel: apply-style {start,end,fg,size?} + clear-style {start,end}",
+        "fg via Color::from_hex (CSS parser scene styles use); size optional 16; bad payload = TypeMismatch",
+        "lifted parse_byte_range_json (3rd consumer: selection-intervene + apply + clear) = one decode SSOT",
+        "hello-textarea: red/green/blue/clear swatch toolbar; press-hook router applies to selection",
+        "swatch press + scene/invoke both reach TextEditState::apply_style_run (single substrate SSOT)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core +15 unit tests: 10 substrate (gap/split/merge/overlap/clear/clamp/Signal) + 5 invoke",
+        "r768 demo ~38 assert: toolbar rects + split/merge/clear invoke + swatch-click recolour + live-pixel",
+        "every apply asserts the text buffer is byte-identical (formatting orthogonal to content)",
+        "workspace test green (-j2) + clippy -D pedantic (vello) clean + sibling demos r765/766/767 re-PASS",
+        "r764 batch FAIL = documented fixed-sleep race (old demo); 5/5 PASS in isolation",
+        "schema-count test renamed nine_slots -> eleven_slots (numeric-count rename convention)"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "toolbar swatches are decorations (no per-swatch a11y); AI apply path = apply-style invoke (complete)",
+        "swatches -> focusable ButtonExternals w/ a11y = follow-up (composed-app); not a substrate debt",
+        "field-level merge (mergeCharFormat: bold keeping colour) = next slice; R768 = setCharFormat",
+        "is_some_and text_state guard 2-copy (apply+clear) = below Rule-of-Three, honest defer",
+        "R766 carries persist: hit-test glue 2-copy / aria-multiline a11y / TUI multi-line / wheel-scroll"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -42113,5 +42177,5 @@
       "reason": "design clarification — Intent.payload consumed by V::update reducer, not threaded through SCXML invoke send (R51.159 carry resolved as design choice)"
     }
   },
-  "schema_version": 6
+  "schema_version": 7
 }
