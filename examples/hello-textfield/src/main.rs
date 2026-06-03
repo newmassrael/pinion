@@ -388,7 +388,7 @@ impl WidgetCore for TextFieldView {
     /// `hello-listbox`: keys only flow when this widget owns focus,
     /// avoiding the broadcast-to-every-widget aliasing that
     /// pre-R51.x `apply_key` suffered.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, modifiers: pinion_core::Modifiers) -> bool {
         if focused != Some(TF_TAG) {
             return false;
         }
@@ -398,7 +398,27 @@ impl WidgetCore for TextFieldView {
         let Some(intro) = node.handle.introspect_mut() else {
             return false;
         };
-        match intro.invoke("key", IntrospectValue::Text(key.to_owned())) {
+        // R763 §5.22 — forward the held modifiers so native Shift+Arrow
+        // / Shift+Home / Ctrl+A drive the substrate's modifier-aware
+        // selection arms. The `invoke("key", ...)` Json shape carries
+        // the four W3C `KeyboardEvent` modifier bits; the bare Text
+        // shape means "no modifiers" (its caret-motion arms collapse
+        // any selection). Pre-R763 this binding dropped `_modifiers`
+        // and always sent Text, so native keyboard selection silently
+        // did not extend — only the RPC Json path (hello_textfield_select)
+        // exercised the substrate's Shift arms.
+        let args = if modifiers == pinion_core::Modifiers::empty() {
+            IntrospectValue::Text(key.to_owned())
+        } else {
+            IntrospectValue::Json(serde_json::json!({
+                "key": key,
+                "shift": modifiers.shift_key(),
+                "ctrl": modifiers.control_key(),
+                "alt": modifiers.alt_key(),
+                "meta": modifiers.meta_key(),
+            }))
+        };
+        match intro.invoke("key", args) {
             Ok(IntrospectValue::Bool(handled)) => handled,
             // `Bool(false)` for unrecognized keys lands here; any
             // other shape (TypeMismatch / UnknownPath) is a substrate
@@ -623,41 +643,104 @@ impl WidgetView for TextFieldView {
         ))
     }
 
-    /// R762 §5.36 §5.38 — reverse of [`Self::ime_caret_rect`]: on a
-    /// press inside the focused field, hit-test the cursor to a byte
-    /// offset and move the caret there (click-to-position). Mirrors the
-    /// IME impl's binding-side field-rect walk + shared
-    /// [`tf_paint::byte_for_field_point`] helper (the same
-    /// `splice_preedit` + style + `LayoutCache` the visible caret is
-    /// built from), so the glyph a click lands on and the byte it
-    /// resolves to stay one SSOT.
+    /// R762 §5.36 §5.38 / R763 §5.22 — reverse of
+    /// [`Self::ime_caret_rect`]: on a press inside the focused field,
+    /// hit-test the cursor to a byte offset and either move the caret
+    /// there (plain press → click-to-position, collapsing any selection)
+    /// or — when Shift is held (`extend`) — extend the selection from
+    /// the existing anchor to the hit byte (Shift-click). Returns the
+    /// pinned selection anchor the shell stores to drive a subsequent
+    /// drag. Both branches resolve the byte through the shared
+    /// [`hit_test_field_byte`] helper (the `tf_paint::byte_for_field_point`
+    /// SSOT — same `splice_preedit` + style + `LayoutCache` the visible
+    /// caret is built from), so the glyph a click lands on and the byte
+    /// it resolves to stay one SSOT.
     fn position_caret_for_point(
         state: &(TextFieldState, u32),
         scene: &Scene,
         focused: Option<&str>,
         x: f32,
         y: f32,
+        extend: bool,
+    ) -> Option<usize> {
+        if focused != Some(TF_TAG) {
+            return None;
+        }
+        let byte = hit_test_field_byte(*state, scene, x, y)?;
+        let edit = use_text_edit_state(TF_TAG);
+        if extend {
+            // Shift-click: keep the existing anchor (latch the current
+            // caret as the anchor when none) and move the focus end to
+            // the hit byte. The retained anchor is returned so a drag
+            // started by the shift-press continues from it.
+            let anchor = edit.selection_anchor().unwrap_or_else(|| edit.caret());
+            edit.set_selection(anchor, byte);
+            Some(anchor)
+        } else {
+            // Plain press: collapse to a caret at the hit byte; that
+            // byte becomes the drag anchor.
+            edit.set_caret(byte);
+            Some(byte)
+        }
+    }
+
+    /// R763 §5.36 §5.22 — drag selection: while the button stays held
+    /// after [`Self::position_caret_for_point`], the shell replays this
+    /// for every cursor move. Hit-test the cursor and extend the
+    /// selection from the pinned `anchor` (returned by the press) to the
+    /// hit byte through the shared [`hit_test_field_byte`] SSOT, so a
+    /// drag sweeps a live selection band. Returns `true` when the
+    /// selection changed so the shell repaints only on real movement.
+    fn select_drag_to_point(
+        state: &(TextFieldState, u32),
+        scene: &Scene,
+        focused: Option<&str>,
+        anchor: usize,
+        x: f32,
+        y: f32,
     ) -> bool {
         if focused != Some(TF_TAG) {
             return false;
         }
-        let (interaction, _caret_byte) = *state;
-        let Some(field_rect) = pinion_shell::rect_for_tag(scene, TF_TAG) else {
+        let Some(byte) = hit_test_field_byte(*state, scene, x, y) else {
             return false;
         };
-        let theme = use_theme(THEME_TAG).theme_animated();
-        let byte = tf_paint::byte_for_field_point(
-            TF_TAG,
-            interaction,
-            x,
-            y,
-            field_rect,
-            &theme,
-            &tf_paint::TextFieldStyle::m3_filled(),
-        );
-        use_text_edit_state(TF_TAG).set_caret(byte);
-        true
+        let edit = use_text_edit_state(TF_TAG);
+        let before = (edit.caret(), edit.selection_anchor());
+        edit.set_selection(anchor, byte);
+        before != (edit.caret(), edit.selection_anchor())
     }
+}
+
+/// R762 §5.36 §5.38 / R763 §5.22 — shared pointer hit-test: resolve a
+/// window-local pixel point to a byte offset in the field's text via
+/// the [`tf_paint::byte_for_field_point`] SSOT (the same
+/// `splice_preedit` + style + `LayoutCache` the visible caret is built
+/// from). Returns `None` until the field rect is in the paint scene.
+/// The single hit-test funnel shared by the press
+/// ([`TextFieldView::position_caret_for_point`]) and drag
+/// ([`TextFieldView::select_drag_to_point`]) hooks — divergence between
+/// the two would let a drag select to a different byte than the press
+/// caret landed on. Runs inside the shell root-owner scope (the
+/// `use_theme` hook resolves there).
+fn hit_test_field_byte(
+    state: (TextFieldState, u32),
+    scene: &Scene,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    let (interaction, _caret_byte) = state;
+    let field_rect = pinion_shell::rect_for_tag(scene, TF_TAG)?;
+    let theme = use_theme(THEME_TAG).theme_animated();
+    Some(tf_paint::byte_for_field_point(
+        TF_TAG,
+        interaction,
+        x,
+        y,
+        field_rect,
+        &theme,
+        &tf_paint::TextFieldStyle::m3_filled(),
+    ))
 }
 
 // R698 §5.16 §5.38 — TextField state <-> SCXML id mapping now routes
@@ -812,6 +895,56 @@ mod tests {
                 format!("{scene_start:?}"),
                 format!("{scene_end:?}"),
                 "caret rect must differ at byte 0 vs byte 5",
+            );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R763 §5.22 — native keyboard modifier forwarding
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r763_native_shift_arrow_extends_selection() {
+        use pinion_core::scene::ExternalNode;
+        use pinion_core::WidgetCore;
+        with_owner(|| {
+            // The External attaches the same `use_text_edit_state(TF_TAG)`
+            // Rc this test reads (one owner-cached holder per tag), so
+            // mutations through `apply_key` surface on `edit`.
+            let edit = use_text_edit_state(TF_TAG);
+            edit.set_text("hello".to_owned());
+            edit.set_caret(5);
+            let mut scene = Scene::External(
+                ExternalNode::new(TextFieldView::create_external()).with_tag(TF_TAG),
+            );
+            let shift = pinion_core::Modifiers {
+                shift: true,
+                ctrl: false,
+                alt: false,
+                meta: false,
+            };
+            // Pre-R763 the binding dropped `_modifiers` and always sent
+            // the bare Text invoke shape, so native Shift+ArrowLeft
+            // collapsed instead of extending. R763 forwards the Json
+            // shape carrying the shift bit.
+            assert!(TextFieldView::apply_key(&mut scene, Some(TF_TAG), "ArrowLeft", shift));
+            assert_eq!(
+                edit.selection_range(),
+                Some((4, 5)),
+                "native Shift+ArrowLeft extends one char left",
+            );
+            // Plain ArrowLeft (no modifiers) keeps the bare Text shape
+            // and collapses the selection to its start.
+            assert!(TextFieldView::apply_key(
+                &mut scene,
+                Some(TF_TAG),
+                "ArrowLeft",
+                pinion_core::Modifiers::empty(),
+            ));
+            assert_eq!(
+                edit.selection_range(),
+                None,
+                "plain ArrowLeft collapses the selection",
             );
         });
     }

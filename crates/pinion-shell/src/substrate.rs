@@ -326,6 +326,40 @@ pub struct ShellCore<V: WidgetView> {
     /// [`Self::fragment_cache_stats_for_window`] without crossing the
     /// substrate ↔ vello boundary (the stats struct is GUI-agnostic).
     fragment_cache_stats_per_window: HashMap<String, FragmentCacheStats>,
+
+    /// R763 §5.36 §5.22 — in-progress pointer-driven text selection.
+    ///
+    /// Set on a press inside a focused text field — the binding's
+    /// [`WidgetView::position_caret_for_point`] hook returns the byte
+    /// offset of the pinned selection anchor (the press point for a
+    /// plain drag, the retained far end for a Shift-click). While the
+    /// button stays held, every `cursor_moved` extends the selection
+    /// from this anchor to the byte under the cursor through
+    /// [`WidgetView::select_drag_to_point`]; the release clears it.
+    /// `None` when no text drag is active.
+    ///
+    /// The anchor byte is opaque to the shell — the binding produced
+    /// it and the binding consumes it; the shell only owns the
+    /// press → move → release gesture lifecycle (the same role it
+    /// plays for the [`pinion_runtime::InputRouter`] drag sessions and
+    /// modifier cache). A mouse-single-pointer model (the canonical
+    /// desktop text-selection case, mirror of the R719 positionless
+    /// `PointerLeave` assumption); the `pid` / `window_id` are stored
+    /// so a stray cross-window or multi-pointer move cannot extend the
+    /// wrong field's selection.
+    text_select_drag: Option<TextSelectDrag>,
+}
+
+/// R763 §5.36 §5.22 — shell-owned state of an active pointer text
+/// selection drag (see [`ShellCore::text_select_drag`]).
+struct TextSelectDrag {
+    /// Window whose press started the drag; a `cursor_moved` on any
+    /// other window is ignored for selection extension.
+    window_id: String,
+    /// Pointer that pressed; only this pointer's moves extend.
+    pid: PointerId,
+    /// Byte offset of the pinned selection anchor (binding-opaque).
+    anchor: usize,
 }
 
 /// R682.B §5.16 — re-export of the GUI-agnostic
@@ -429,6 +463,7 @@ impl<V: WidgetView> ShellCore<V> {
             last_paint_instants: HashMap::new(),
             target_fps_per_window: HashMap::new(),
             fragment_cache_stats_per_window: HashMap::new(),
+            text_select_drag: None,
         }
     }
 
@@ -1098,6 +1133,9 @@ impl<V: WidgetView> ShellCore<V> {
     ) {
         let tail = self.core.cursor_moved_for_window(window_id, pid, x, y);
         self.handle_tail(&tail);
+        // R763 §5.36 §5.22 — extend an in-flight pointer text selection
+        // to the new cursor byte (no-op unless a press armed a drag).
+        self.extend_text_selection_on_drag(window_id, pid, x, y);
     }
 
     /// R51.80 §5.35 — winit `CursorLeft` dispatch decoupled from
@@ -1139,21 +1177,31 @@ impl<V: WidgetView> ShellCore<V> {
         self.handle_tail(&tail);
     }
 
-    /// R762 §5.36 §5.38 — after a press focuses a widget, ask the
-    /// binding to hit-test the press location into a text-field caret
-    /// offset. Reverse of the IME caret publish (`publish_ime_for_window`):
-    /// the `V::position_caret_for_point` hook runs in the root-owner
-    /// scope so `use_text_edit_state` / `use_text_field_layout_cache`
-    /// resolve, hit-tests the cursor against the field's shaped layout,
-    /// and moves the caret (`TextEditState::set_caret`). A `true` return
-    /// (caret moved) requests a redraw so the next frame paints the new
-    /// caret. Covers native winit clicks and the `scene/click` drain —
-    /// both reach here through [`Self::mouse_pressed_for_window`].
+    /// R762 §5.36 §5.38 / R763 §5.22 — after a press focuses a widget,
+    /// ask the binding to hit-test the press location into a text-field
+    /// caret offset and (for a Shift-press) extend the selection.
+    /// Reverse of the IME caret publish (`publish_ime_for_window`): the
+    /// `V::position_caret_for_point` hook runs in the root-owner scope
+    /// so `use_text_edit_state` / `use_text_field_layout_cache` resolve,
+    /// hit-tests the cursor against the field's shaped layout, and
+    /// moves the caret (`TextEditState::set_caret`) — or, when the
+    /// Shift modifier is held (`self.modifiers.shift`), extends the
+    /// selection from the existing anchor (`set_selection`). It returns
+    /// `Some(anchor_byte)` — the pinned end the shell stores to drive a
+    /// subsequent drag — when the press landed on this widget's text.
+    ///
+    /// R763: a returned anchor arms [`Self::text_select_drag`] so each
+    /// later `cursor_moved` extends the selection while the button is
+    /// held (`select_drag_to_point`); a press that resolves no text
+    /// disarms it. Covers native winit clicks and the `scene/click` /
+    /// `scene/drag` drains — all reach here through
+    /// [`Self::mouse_pressed_for_window`].
     #[allow(
         clippy::cast_possible_truncation,
         reason = "window-local logical-pixel cursor coords fit f32 in every realistic viewport"
     )]
     fn position_caret_after_press(&mut self, window_id: &str, pid: PointerId) {
+        self.text_select_drag = None;
         let Some(focused) = self.focus.focused().map(str::to_owned) else {
             return;
         };
@@ -1161,8 +1209,9 @@ impl<V: WidgetView> ShellCore<V> {
             return;
         };
         let state = *self.cached_state();
+        let extend = self.modifiers.shift_key();
         let owner = self.root_owner().clone();
-        let moved = {
+        let anchor = {
             let Some(paint) = self.core.last_paint_scene_for_window(window_id) else {
                 return;
             };
@@ -1173,10 +1222,68 @@ impl<V: WidgetView> ShellCore<V> {
                     Some(focused.as_str()),
                     cx as f32,
                     cy as f32,
+                    extend,
                 )
             })
         };
-        if moved {
+        if let Some(anchor) = anchor {
+            self.text_select_drag = Some(TextSelectDrag {
+                window_id: window_id.to_owned(),
+                pid,
+                anchor,
+            });
+            self.request_redraw_for_window(window_id);
+        }
+    }
+
+    /// R763 §5.36 §5.22 — extend the active pointer text selection.
+    /// Called from [`Self::cursor_moved_for_window`] on every move
+    /// while a press armed [`Self::text_select_drag`]. Hit-tests the
+    /// cursor to a byte and asks the binding to set the selection from
+    /// the stored anchor to that byte (`select_drag_to_point` →
+    /// `TextEditState::set_selection`). A `cursor_moved` on a different
+    /// window or pointer than the one that started the drag is ignored
+    /// (the stored `window_id` / `pid` guard). Requests a redraw when
+    /// the selection changed so the next frame repaints the band.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "window-local logical-pixel cursor coords fit f32 in every realistic viewport"
+    )]
+    fn extend_text_selection_on_drag(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        x: f64,
+        y: f64,
+    ) {
+        let Some(drag) = self.text_select_drag.as_ref() else {
+            return;
+        };
+        if drag.window_id != window_id || drag.pid != pid {
+            return;
+        }
+        let anchor = drag.anchor;
+        let Some(focused) = self.focus.focused().map(str::to_owned) else {
+            return;
+        };
+        let state = *self.cached_state();
+        let owner = self.root_owner().clone();
+        let changed = {
+            let Some(paint) = self.core.last_paint_scene_for_window(window_id) else {
+                return;
+            };
+            owner.run(|| {
+                V::select_drag_to_point(
+                    &state,
+                    paint,
+                    Some(focused.as_str()),
+                    anchor,
+                    x as f32,
+                    y as f32,
+                )
+            })
+        };
+        if changed {
             self.request_redraw_for_window(window_id);
         }
     }
@@ -1193,6 +1300,16 @@ impl<V: WidgetView> ShellCore<V> {
     pub fn mouse_released_for_window(&mut self, window_id: &str, pid: PointerId) {
         let tail = self.core.pointer_up_for_window(window_id, pid);
         self.handle_tail(&tail);
+        // R763 §5.36 §5.22 — the press → move → release gesture ends;
+        // the selection it produced persists in the TextEditState, but
+        // no further move extends it.
+        if self
+            .text_select_drag
+            .as_ref()
+            .is_some_and(|d| d.window_id == window_id && d.pid == pid)
+        {
+            self.text_select_drag = None;
+        }
     }
 
     /// R51.80 §5.35 — abstract touch event dispatch (R51.108 §5.41
@@ -1345,6 +1462,30 @@ impl<V: WidgetView> ShellCore<V> {
                         self.core.tick_animations_for_window(window_id, step);
                         remaining -= step;
                     }
+                }
+                // R763 §5.49 §5.39 — `scene/modifiers`: the winit
+                // `WindowEvent::ModifiersChanged` RPC peer. Sets the
+                // shell's absolute modifier cache so a subsequent
+                // `scene/click` (Shift-click extend), `scene/drag`, or
+                // `scene/key` press reads the held modifiers exactly as
+                // a real key-down would — modifiers are tracked
+                // out-of-band (their own winit event), so the mirror is
+                // a standalone state setter, not a per-click field.
+                // Persists until the next `scene/modifiers` (a real
+                // key-up sends an empty state); closes the R742.2
+                // RPC-modifier-channel gap for every input path.
+                DeferredInput::SetModifiers {
+                    shift,
+                    ctrl,
+                    alt,
+                    meta,
+                } => {
+                    self.set_modifiers(Modifiers {
+                        shift,
+                        ctrl,
+                        alt,
+                        meta,
+                    });
                 }
                 DeferredInput::Key { x, y, ref key } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);

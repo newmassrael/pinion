@@ -498,6 +498,25 @@ pub enum DeferredInput {
     /// theme-fade demo). The caller-injected `dt` keeps the §2 #3
     /// dry-run guarantee intact (same as `Tween::tick` / `Frame::dt`).
     Tick { dt: f32 },
+    /// R763 §5.49 §5.39 — `scene/modifiers` injection: the winit
+    /// `WindowEvent::ModifiersChanged` RPC peer. Sets the embedder's
+    /// absolute modifier cache (`ShellCore::set_modifiers`) so a
+    /// subsequent `scene/click` (Shift-click selection-extend),
+    /// `scene/drag`, or `scene/key` press reads the held modifiers
+    /// exactly as a real key-down would. Modifiers are tracked
+    /// out-of-band — they have their own winit event, not a per-click
+    /// field — so the mirror is a standalone absolute-state setter that
+    /// persists until the next `scene/modifiers` (a real key-up sends
+    /// the empty state). Closes the R742.2 RPC-modifier-channel gap for
+    /// every input path (`§2` invariant #2: every input a human makes
+    /// has an RPC peer — a human can hold Shift, an AI client now can
+    /// too).
+    SetModifiers {
+        shift: bool,
+        ctrl: bool,
+        alt: bool,
+        meta: bool,
+    },
 }
 
 impl<'a> DispatchContext<'a> {
@@ -887,6 +906,17 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
             (
                 handle_scene_tick(inbox, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
+        "scene/modifiers" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_modifiers(inbox, request.params.as_ref()),
                 HandlerKind::Mutate,
             )
         }
@@ -1398,6 +1428,51 @@ fn handle_scene_tick(
     }
     #[allow(clippy::cast_possible_truncation)]
     inbox.push(DeferredInput::Tick { dt: dt as f32 });
+    Ok(Value::Null)
+}
+
+/// R763 §5.49 §5.39 — `scene/modifiers` handler: enqueue a
+/// [`DeferredInput::SetModifiers`] the embedder drains into
+/// `ShellCore::set_modifiers`, the winit `ModifiersChanged` RPC peer.
+///
+/// Params shape — each key optional, absent = released (`false`),
+/// mirroring `winit::keyboard::ModifiersState` (an absolute snapshot,
+/// not a delta):
+///
+/// ```json
+/// { "shift": <bool>, "ctrl": <bool>, "alt": <bool>, "meta": <bool> }
+/// ```
+///
+/// `{}` (or no params) clears every modifier — the canonical "all keys
+/// up" reset a demo issues after a Shift-click. A non-boolean value for
+/// any present key is rejected so a malformed call fails loudly rather
+/// than silently dropping the held state.
+fn handle_scene_modifiers(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    // Each key defaults to `false` (released) when absent; a present
+    // non-boolean is a malformed call.
+    let read_bit = |name: &str| -> Result<bool, RpcError> {
+        match params.and_then(|p| p.get(name)) {
+            None | Some(Value::Null) => Ok(false),
+            Some(Value::Bool(b)) => Ok(*b),
+            Some(_) => Err(RpcError::invalid_params("params.<modifier> must be a boolean")),
+        }
+    };
+    let shift = read_bit("shift")?;
+    let ctrl = read_bit("ctrl")?;
+    let alt = read_bit("alt")?;
+    let meta = read_bit("meta")?;
+    inbox.push(DeferredInput::SetModifiers {
+        shift,
+        ctrl,
+        alt,
+        meta,
+    });
     Ok(Value::Null)
 }
 

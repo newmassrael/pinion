@@ -17425,6 +17425,40 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R763 — R763 §5.36 §5.22 pointer text selection — drag-to-select + Shift-click-extend + scene/modifiers RPC (winit ModifiersChanged peer, closes R742.2 modifier-channel gap)
+
+**Changes**:
+- position_caret_for_point hook gains extend param + returns Option<usize> drag anchor (R762 evolve)
+- new select_drag_to_point hook: cursor_moved while button held extends selection from press anchor
+- ShellCore.text_select_drag tracks the press -> move -> release gesture (window id + pid + anchor)
+- shell press arms the drag, cursor_moved extends, release clears; native winit + scene/drag converge
+- scene/modifiers RPC = winit ModifiersChanged peer; DeferredInput::SetModifiers; shell set_modifiers drain
+- shift-click reads the shell modifier cache; closes R742.2 RPC modifier channel for click/drag/key
+- hello-textfield: hit_test_field_byte SSOT helper shared by press + drag hooks (byte_for_field_point)
+- hello-textfield apply_key forwards modifiers via Json shape; native Shift+Arrow / Ctrl+A now extend
+- rpc_verify.modifiers() helper; r763 demo (42 assert: drag / shift-click / reversed / latch / replace)
+
+
+
+**Verification**:
+- cargo test --workspace -j2 green (118 ok suites; +3 scene/modifiers dispatch + r763 binding test)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean
+- r763 demo PASS (42 assert); r762 / select / type / compose / clipboard demos PASS (no regression)
+- live-pixel guard: scene/drag select-all -> 2175 accent band pixels on :0 (before=0), sel={0,11}
+
+
+
+**Impact**: §5.36, §5.22, §5.39, §5.49
+
+
+**Carry forward**:
+- TUI scene/modifiers = wildcard no-op (TUI has no pointer selection + already drops Key modifiers)
+- todomvc edit-in-place has no click-caret/drag-select (no position_caret_for_point override); future
+- drag past the window edge stops extending (no pointer capture v1); within-window drag full coverage
+- multi-line selection-rect decomposition + styled-run edit-state = evidence-first (real rich-editor)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

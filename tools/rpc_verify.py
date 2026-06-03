@@ -474,6 +474,38 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         """
         self.request("scene/pointer_leave")
 
+    def modifiers(
+        self,
+        *,
+        shift: bool = False,
+        ctrl: bool = False,
+        alt: bool = False,
+        meta: bool = False,
+    ) -> None:
+        """`scene/modifiers` typed wrapper (R763 §5.39 §5.49).
+
+        The winit `WindowEvent::ModifiersChanged` RPC peer: sets the
+        shell's *absolute* modifier cache so a subsequent `click()` /
+        `drag()` / `key()` press reads the held modifiers exactly as a
+        real key-down would. Modifiers are tracked out-of-band (their
+        own event, not a per-click field), so this is a standalone state
+        setter that persists until the next call — issue
+        `modifiers()` (all released) afterwards to mirror the key-up, the
+        same way a real session releases Shift after a Shift-click.
+
+        Canonical Shift-click-extend sequence::
+
+            tf.modifiers(shift=True)
+            tf.click(at=(x, y))      # press reads shift -> extend
+            tf.modifiers()           # release Shift
+
+        Closes the R742.2 RPC-modifier-channel gap for every input path.
+        """
+        self.request(
+            "scene/modifiers",
+            {"shift": shift, "ctrl": ctrl, "alt": alt, "meta": meta},
+        )
+
     def tick(self, dt: float) -> None:
         """`scene/tick` typed wrapper (R724 §5.28).
 

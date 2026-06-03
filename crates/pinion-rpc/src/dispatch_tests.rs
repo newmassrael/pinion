@@ -744,6 +744,75 @@ fn scene_tick_rejects_negative_and_nan_dt() {
     }
 }
 
+// ---- R763 §5.49 §5.39 — scene/modifiers (DeferredInput::SetModifiers) ----
+
+#[test]
+fn scene_modifiers_enqueues_absolute_state() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/modifiers","params":{"shift":true,"ctrl":true},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::SetModifiers {
+        shift,
+        ctrl,
+        alt,
+        meta,
+    } = inbox[0]
+    else {
+        panic!("expected SetModifiers variant, got {:?}", inbox[0]);
+    };
+    // Present keys carry through; absent keys default to released.
+    assert!(shift, "shift present true");
+    assert!(ctrl, "ctrl present true");
+    assert!(!alt, "alt absent -> released");
+    assert!(!meta, "meta absent -> released");
+}
+
+#[test]
+fn scene_modifiers_empty_params_releases_all() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/modifiers","params":{},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 1);
+    assert_eq!(
+        inbox[0],
+        DeferredInput::SetModifiers {
+            shift: false,
+            ctrl: false,
+            alt: false,
+            meta: false,
+        },
+        "empty params = all modifiers released (key-up reset)",
+    );
+}
+
+#[test]
+fn scene_modifiers_rejects_non_boolean() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/modifiers","params":{"shift":1},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_some(), "non-boolean modifier must error");
+    assert!(inbox.is_empty(), "no SetModifiers enqueued on malformed call");
+}
+
 // ---- R695 §5.49 §5.35 — scene/hover (DeferredInput::Hover) ----
 
 #[test]
