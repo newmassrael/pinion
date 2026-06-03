@@ -175,6 +175,52 @@ fn text_fg_for(theme: &Theme, interaction: TextFieldState) -> Color {
     }
 }
 
+/// R762 §5.36 §5.38 — the spliced caret/preedit view + resolved text
+/// style for a field's content, produced by [`field_shaping`].
+struct FieldShaping {
+    /// Committed buffer with the IME preedit spliced in at the caret
+    /// (== committed text when no composition is active).
+    effective_text: String,
+    /// Caret byte within `effective_text` (preedit-end while composing).
+    visual_caret_byte: usize,
+    /// Byte range of the spliced preedit within `effective_text`.
+    preedit_byte_range: Option<(usize, usize)>,
+    /// Resolved text style — the style component of the `LayoutCache` key.
+    text_style: TextStyle,
+}
+
+/// R762 §5.36 §5.38 — **single source** for a text field's `LayoutCache`
+/// key + spliced caret/preedit projection. The three places that shape a
+/// field's content — paint ([`view_field`]), the forward caret rect
+/// ([`ime_caret_rect_for`]), and the reverse pixel→byte hit-test
+/// ([`byte_for_field_point`]) — MUST derive the *identical*
+/// `(effective_text, text_style)` so they all hit one shared
+/// [`Layout`](pinion_text::Layout). Any divergence misaligns the caret /
+/// hit-test geometry with the painted glyphs (decode-must-match-encode,
+/// R743.1) or silently re-shapes on a cache miss. This helper is that one
+/// derivation; callers borrow [`use_text_field_layout_cache`] and call
+/// `.layout(shaping.effective_text.as_str(), &shaping.text_style, None)`
+/// themselves so each `Layout` borrow stays local to its use.
+fn field_shaping(
+    tag: &'static str,
+    caret_byte: usize,
+    interaction: TextFieldState,
+    theme: &Theme,
+    style: &TextFieldStyle,
+) -> FieldShaping {
+    let (effective_text, visual_caret_byte, preedit_byte_range) =
+        use_text_edit_state(tag).splice_preedit(caret_byte);
+    let text_style = TextStyle::new()
+        .with_size_px(style.font_size_px)
+        .with_fg(text_fg_for(theme, interaction));
+    FieldShaping {
+        effective_text,
+        visual_caret_byte,
+        preedit_byte_range,
+        text_style,
+    }
+}
+
 /// (R657 §5.16) Material 3 `TextField` filled-variant container fill.
 /// `SurfaceContainerHighest` (idle) lifts one tier to
 /// `SurfaceContainerHigh` when focused/editing for an elevated
@@ -283,17 +329,18 @@ pub fn view_field(
     let text_state = use_text_edit_state(tag);
     let blink = use_caret_blink(tag);
 
-    // R56.2.f §5.38 §5.22 — preedit splice: the composed view of
-    // "committed buffer + spliced preedit" the user sees during IME
-    // composition. When no composition is active, effective_text ==
-    // committed text and the range is None. Mirrors W3C
-    // compositionupdate canonical caret-at-preedit-end semantics.
-    let (effective_text, visual_caret_byte, preedit_byte_range) =
-        text_state.splice_preedit(caret_byte as usize);
-
-    let text_style = TextStyle::new()
-        .with_size_px(style.font_size_px)
-        .with_fg(text_fg_for(theme, interaction));
+    // R762 — the (effective_text, text_style) cache-key derivation is
+    // the `field_shaping` SSOT shared with `ime_caret_rect_for` +
+    // `byte_for_field_point` so paint / caret / hit-test shape one
+    // identical Layout. `effective_text` splices the IME preedit in at
+    // the caret (== committed text when idle); `preedit_byte_range`
+    // drives the composition underline.
+    let FieldShaping {
+        effective_text,
+        visual_caret_byte,
+        preedit_byte_range,
+        text_style,
+    } = field_shaping(tag, caret_byte as usize, interaction, theme, style);
 
     // Shape once via the shared LayoutCache, derive caret +
     // selection + preedit pixel rects from the same Layout.
@@ -517,15 +564,14 @@ pub fn ime_caret_rect_for(
     theme: &Theme,
     style: &TextFieldStyle,
 ) -> CaretRect {
-    let text_state = use_text_edit_state(tag);
-    let (effective_text, visual_caret_byte, _preedit_byte_range) =
-        text_state.splice_preedit(caret_byte as usize);
-
-    // Mirror view_field's text style so the (text, style, max_width)
-    // LayoutCache key matches and the lookup is a same-frame hit.
-    let text_style = TextStyle::new()
-        .with_size_px(style.font_size_px)
-        .with_fg(text_fg_for(theme, interaction));
+    // R762 — shared `field_shaping` SSOT: identical (text, style) key as
+    // `view_field` so this forward caret rect addresses the painted Layout.
+    let FieldShaping {
+        effective_text,
+        visual_caret_byte,
+        text_style,
+        ..
+    } = field_shaping(tag, caret_byte as usize, interaction, theme, style);
 
     let layout_cache = use_text_field_layout_cache();
     let caret_local = {
@@ -603,15 +649,15 @@ pub fn byte_for_field_point(
     theme: &Theme,
     style: &TextFieldStyle,
 ) -> usize {
-    let text_state = use_text_edit_state(tag);
-    let (effective_text, _visual_caret_byte, _preedit_byte_range) =
-        text_state.splice_preedit(text_state.caret());
-
-    // Mirror view_field's text style so the (text, style, max_width)
-    // LayoutCache key matches and the lookup is a same-frame hit.
-    let text_style = TextStyle::new()
-        .with_size_px(style.font_size_px)
-        .with_fg(text_fg_for(theme, interaction));
+    // R762 — shared `field_shaping` SSOT: identical (text, style) key as
+    // `view_field` so the hit-test resolves against the painted Layout
+    // (the glyph a click lands on == the byte returned).
+    let caret = use_text_edit_state(tag).caret();
+    let FieldShaping {
+        effective_text,
+        text_style,
+        ..
+    } = field_shaping(tag, caret, interaction, theme, style);
 
     // window-coord point → text-local layout-space: subtract the field
     // origin and the text padding the forward helper added.

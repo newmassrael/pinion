@@ -17369,6 +17369,32 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R762.1 — R762.1 audit clearance — field_shaping SSOT lift: the (effective_text via splice_preedit + text_style) LayoutCache-key derivation was byte-identical across view_field (paint), ime_caret_rect_for (forward caret), and byte_for_field_point (R762 reverse hit-test) = 3 copies of a correctness-critical key (paint/caret/hit-test must shape one identical Layout, decode-must-match-encode). Lifted to one field_shaping helper; behaviour-preserving. Found by user SSOT audit; R762 self-grep undercounted by comparing only byte_for vs ime, missing view_field as a consumer.
+
+**Changes**:
+- field_shaping(tag,caret_byte,interaction,theme,style)->FieldShaping SSOT in pinion-widget-paint
+- view_field (paint) + ime_caret_rect_for (caret) + byte_for_field_point (R762 hit-test) all derive cache key through it
+- was 3 byte-identical copies of (splice_preedit + text_style) -> the painted/caret/hit-test Layout must be one
+- divergence-is-a-bug (decode must match encode, R743.1), not opinionated -> lift due at 2nd, R762 made it 3rd
+
+
+
+**Verification**:
+- pinion-widget-paint 409 tests green (behaviour-preserving lift)
+- clippy --workspace clean; r762 click-caret + hello_textfield_select + _compose (IME) demos PASS
+- caret / hit-test / IME all shape one identical Layout through field_shaping (the SSOT's purpose)
+- found by user 'hack/smell/SSOT?' audit; R762 self-grep undercounted (compared byte_for vs ime only, missed view_field)
+
+
+
+**Impact**: §5.36, §5.38
+
+
+**Carry forward**:
+- LayoutKey fg_color over-specification (R713 carry) now centralized in field_shaping -> the shape-key/paint-metadata split lands in one place
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
