@@ -55,7 +55,7 @@ use pinion_core::external::IntrospectValue;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::caret_blink::use_caret_blink;
@@ -131,6 +131,22 @@ pub struct TextFieldStyle {
     /// governs vertical alignment so a tall box top-anchors instead
     /// of centring the whole block.
     pub multi_line: bool,
+    /// R765 §5.22 §5.36 — soft-wrap the content at the field's inner
+    /// width (`field_w - 2 * field_pad`). `false` (default for the
+    /// single-line filled field) leaves the layout unbounded
+    /// (`max_width = None`): the text lays out on one visual line per
+    /// `\n` and an over-long line runs unwrapped past the box edge —
+    /// the pre-R765 behaviour, byte-identical. `true` (default for
+    /// [`Self::m3_multiline`]) bounds the parley layout so a line that
+    /// exceeds the inner width breaks onto additional *visual* lines
+    /// (the canonical textarea `wrap="soft"` model). The flag feeds the
+    /// [`field_shaping`] SSOT, so paint, the caret rect, the pointer
+    /// hit-test, and vertical caret navigation all shape against the
+    /// *same* wrapped [`Layout`](pinion_text::Layout) — wrapped-line
+    /// caret/selection/hit-test geometry stays consistent for free
+    /// because parley resolves cursor moves and point hits over visual
+    /// lines.
+    pub soft_wrap: bool,
 }
 
 impl TextFieldStyle {
@@ -149,6 +165,7 @@ impl TextFieldStyle {
             preedit_bg_alpha: 0x40,
             preedit_underline_thickness: 1,
             multi_line: false,
+            soft_wrap: false,
         }
     }
 
@@ -157,9 +174,13 @@ impl TextFieldStyle {
     /// content) and a `rows`-tall box. The height is
     /// `rows * line_height + 2 * field_pad` where `line_height` is
     /// derived from `font_size_px` with the M3 ~1.4 body line-height
-    /// ratio, so a `rows`-row textarea shows exactly that many lines
-    /// of hard-wrapped text without clipping. `rows` is clamped to
-    /// `>= 1`.
+    /// ratio, so the box is `rows` visual lines tall. R765 enables
+    /// [`soft_wrap`](Self::soft_wrap) here, so an over-long line breaks
+    /// onto more visual lines than there are `\n`s; when the wrapped
+    /// content is taller than the `rows`-line box it is clipped to the
+    /// box and scrolled vertically to keep the caret visible
+    /// (R765 scroll-to-caret — see [`vertical_scroll_offset`]). `rows`
+    /// is clamped to `>= 1`.
     #[must_use]
     pub const fn m3_multiline(rows: u32) -> Self {
         let base = Self::m3_filled();
@@ -171,6 +192,11 @@ impl TextFieldStyle {
         Self {
             field_h: rows * line_height + 2 * base.field_pad,
             multi_line: true,
+            // A textarea soft-wraps at the inner width by default
+            // (HTML `<textarea wrap="soft">`); an explicit no-wrap
+            // (horizontal-scroll) variant would set this false once a
+            // consumer needs it.
+            soft_wrap: true,
             ..base
         }
     }
@@ -227,6 +253,12 @@ struct FieldShaping {
     preedit_byte_range: Option<(usize, usize)>,
     /// Resolved text style — the style component of the `LayoutCache` key.
     text_style: TextStyle,
+    /// R765 — the wrap width component of the `LayoutCache` key:
+    /// `Some(field_w - 2 * field_pad)` when `style.soft_wrap`, else
+    /// `None` (unbounded). Every consumer (paint / caret / hit-test /
+    /// vertical move) passes this same value to `cache.layout` so they
+    /// shape one identical wrapped `Layout`.
+    max_width: Option<u32>,
 }
 
 /// R762 §5.36 §5.38 — **single source** for a text field's `LayoutCache`
@@ -253,11 +285,20 @@ fn field_shaping(
     let text_style = TextStyle::new()
         .with_size_px(style.font_size_px)
         .with_fg(text_fg_for(theme, interaction));
+    // R765 — soft-wrap bound: the inner content width (box minus both
+    // pads). `field_w` is the field's explicit logical width, so the
+    // wrap width is known at view-fn time (no layout-pass round-trip).
+    // `saturating_sub` guards a degenerate `field_pad * 2 > field_w`
+    // style from underflowing to a huge wrap width.
+    let max_width = style
+        .soft_wrap
+        .then(|| style.field_w.saturating_sub(2 * style.field_pad));
     FieldShaping {
         effective_text,
         visual_caret_byte,
         preedit_byte_range,
         text_style,
+        max_width,
     }
 }
 
@@ -334,6 +375,46 @@ fn saturating_f32_to_u32(v: f32) -> u32 {
     }
 }
 
+/// R765 §5.22 §5.36 — pure vertical scroll offset that keeps the caret
+/// visible in a soft-wrapping multi-line field. The field box exposes
+/// `field_h - 2*field_pad` content pixels; once the wrapped content is
+/// taller, the content scrolls up by this many pixels so the caret's
+/// bottom edge stays inside the visible window.
+///
+/// Defined as a **pure function** of the shared `field_shaping`
+/// [`Layout`](pinion_text::Layout) + caret — there is no stored scroll
+/// state. Paint (the visible offset), the pointer hit-test
+/// ([`byte_for_field_point`], which adds it back to reach content
+/// space), and the IME caret rect ([`ime_caret_rect_for`], which
+/// subtracts it to reach window space) each recompute the identical
+/// value from the same Layout, so all three agree without a side
+/// channel and the result stays `dry_run`-deterministic. The rule pins
+/// the caret to the bottom edge once content overflows
+/// (`caret_bottom - viewport_h`, clamped to `[0, content_h -
+/// viewport_h]`). Single-line fields never scroll (returns 0), so their
+/// paint / hit-test / caret geometry is byte-identical to pre-R765.
+fn vertical_scroll_offset(
+    layout: &pinion_text::Layout,
+    caret_byte: usize,
+    style: &TextFieldStyle,
+) -> u32 {
+    if !style.multi_line {
+        return 0;
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "caret_width fits f32 losslessly (small u32)"
+    )]
+    let caret_w = style.caret_width as f32;
+    let caret = caret_rect_for_byte_offset(layout, caret_byte, caret_w);
+    let caret_bottom = saturating_f32_to_u32(caret.y)
+        .saturating_add(saturating_f32_to_u32(caret.height).max(style.font_size_px));
+    let content_h = saturating_f32_to_u32(layout.height());
+    let viewport_h = style.field_h.saturating_sub(2 * style.field_pad);
+    let max_scroll = content_h.saturating_sub(viewport_h);
+    caret_bottom.saturating_sub(viewport_h).min(max_scroll)
+}
+
 /// (R657 §5.16 §5.38) Build the `TextField` paint Container — the
 /// rectangular input visual with text + caret + selection band +
 /// preedit underline overlays.
@@ -380,15 +461,16 @@ pub fn view_field(
         visual_caret_byte,
         preedit_byte_range,
         text_style,
+        max_width,
     } = field_shaping(tag, caret_byte as usize, interaction, theme, style);
 
     // Shape once via the shared LayoutCache, derive caret +
     // selection + preedit pixel rects from the same Layout.
     let layout_cache = use_text_field_layout_cache();
     let selection_range = text_state.selection_range();
-    let (caret_pixel_rect, selection_pixel, preedit_pixel) = {
+    let (caret_pixel_rect, selection_pixel, preedit_pixel, scroll_y) = {
         let mut cache = layout_cache.borrow_mut();
-        let layout = cache.layout(effective_text.as_str(), &text_style, None);
+        let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
         #[allow(
             clippy::cast_precision_loss,
             reason = "caret_width fits f32 losslessly (small u32)"
@@ -431,7 +513,12 @@ pub fn view_field(
             let pre_h = saturating_f32_to_u32(start_rect.height).max(style.font_size_px);
             (start_x, pre_y, end_x.saturating_sub(start_x), pre_h)
         });
-        (caret, selection, preedit_p)
+        // R765 — keep the caret visible when wrapped content overflows
+        // the box. Computed from the SAME Layout/caret the hit-test and
+        // IME helpers recompute, so the visible scroll and the click /
+        // caret inverses agree (see `vertical_scroll_offset`).
+        let scroll_y = vertical_scroll_offset(layout, visual_caret_byte, style);
+        (caret, selection, preedit_p, scroll_y)
     };
     let (caret_layout_x, caret_layout_y, caret_box_height) = caret_pixel_rect;
 
@@ -442,11 +529,28 @@ pub fn view_field(
     // at x=0 inside the padded field. During composition the
     // rendered text is the composed `effective_text`, not the raw
     // text_state.text() buffer.
-    let text_node = Scene::Text(pinion_core::scene::TextNode::styled(
+    //
+    // R765 — soft-wrap must constrain the PAINTED text too, not just
+    // the geometry layout. The painted `Scene::Text` is laid out
+    // independently by taffy's measure callback, which only wraps when
+    // it is handed a `Definite` width. Without an explicit width the
+    // flex text child is probed as `MaxContent` (unbounded) and runs
+    // off the right edge on one line, while the caret/selection
+    // geometry (shaped at `max_width`) believes the text wrapped —
+    // caret drops down, glyphs run right. Pinning the text node's
+    // width to the same `max_width` makes taffy wrap the painted glyphs
+    // at the identical break points, so paint and geometry agree.
+    let mut text_node = pinion_core::scene::TextNode::styled(
         effective_text.clone(),
         Rect::default(),
         text_style,
-    ));
+    );
+    if let Some(wrap_w) = max_width {
+        text_node = text_node.with_layout(
+            LayoutStyle::new().with_size(Size::auto().with_width(SizeValue::Px(wrap_w))),
+        );
+    }
+    let text_node = Scene::Text(text_node);
 
     // Caret painted only when focused/editing AND blink phase is
     // visible. R56.1.h ties blink's enabled gate to SCXML state, so
@@ -458,14 +562,22 @@ pub fn view_field(
 
     let mut field_children: Vec<Scene> = Vec::with_capacity(4);
     let pad = style.field_pad;
+    // R765 — single-line anchors its absolute overlays at `pad` within
+    // the field's border box (the field's own padding positions the
+    // flow text node at `pad`). Multi-line instead nests the content in
+    // a `Scene::Scroll` whose viewport already sits at `pad` (the field
+    // padding positions the Scroll), so the overlays inside that scroll
+    // content anchor at 0 — the `pad` lives in the Scroll's placement,
+    // not in each band's offset.
+    let inner_pad = if style.multi_line { 0 } else { pad };
 
     // R56.1.f.3 §5.22 — selection rect paints BEFORE text_node so
     // glyphs render on top. Vello composites children in vector
     // order (later children paint atop earlier).
     for &(sel_x, sel_y, sel_w, sel_h) in &selection_pixel {
         if sel_w > 0 {
-            let sel_left = pad.saturating_add(sel_x);
-            let sel_top = pad.saturating_add(sel_y);
+            let sel_left = inner_pad.saturating_add(sel_x);
+            let sel_top = inner_pad.saturating_add(sel_y);
             let selection_box = Scene::Box(
                 BoxNode::new(
                     Rect::default(),
@@ -485,8 +597,8 @@ pub fn view_field(
     // (same layering rule as selection band).
     if let Some((pre_x, pre_y, pre_w, pre_h)) = preedit_pixel {
         if pre_w > 0 {
-            let pre_left = pad.saturating_add(pre_x);
-            let pre_top = pad.saturating_add(pre_y);
+            let pre_left = inner_pad.saturating_add(pre_x);
+            let pre_top = inner_pad.saturating_add(pre_y);
             let preedit_bg = Scene::Box(
                 BoxNode::new(
                     Rect::default(),
@@ -508,8 +620,8 @@ pub fn view_field(
     // node so the line sits over the descender region.
     if let Some((pre_x, pre_y, pre_w, pre_h)) = preedit_pixel {
         if pre_w > 0 {
-            let pre_left = pad.saturating_add(pre_x);
-            let underline_top = pad
+            let pre_left = inner_pad.saturating_add(pre_x);
+            let underline_top = inner_pad
                 .saturating_add(pre_y)
                 .saturating_add(pre_h)
                 .saturating_sub(style.preedit_underline_thickness);
@@ -526,8 +638,8 @@ pub fn view_field(
     }
 
     if caret_painted {
-        let caret_left = pad.saturating_add(caret_layout_x);
-        let caret_top = pad.saturating_add(caret_layout_y);
+        let caret_left = inner_pad.saturating_add(caret_layout_x);
+        let caret_top = inner_pad.saturating_add(caret_layout_y);
         let caret_box = Scene::Box(
             BoxNode::new(
                 Rect::default(),
@@ -542,8 +654,40 @@ pub fn view_field(
         field_children.push(caret_box);
     }
 
+    // R765 §5.22 §5.45 — multi-line: clip the (possibly overflowing)
+    // wrapped content to the inner box and scroll it vertically so the
+    // caret stays visible. The `Scene::Scroll` viewport sits inside the
+    // field's padding (the field padding positions it at `pad`); the
+    // content nested in it carries the band/caret overlays anchored at
+    // `inner_pad` (= 0). `scroll_y` (pure fn of caret + layout) shifts
+    // the content up. Single-line keeps the flat child list — no Scroll,
+    // byte-identical to pre-R765.
+    let root_children: Vec<Scene> = if style.multi_line {
+        let inner_w = style.field_w.saturating_sub(2 * style.field_pad);
+        let inner_h = style.field_h.saturating_sub(2 * style.field_pad);
+        let content = Scene::Container(
+            ContainerNode::new(field_children).with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Start)
+                    .with_align_items(AlignItems::Start),
+            ),
+        );
+        #[allow(
+            clippy::cast_possible_wrap,
+            reason = "scroll_y <= content_h; UI content height never approaches i32::MAX"
+        )]
+        let offset_y = scroll_y as i32;
+        vec![Scene::Scroll(
+            pinion_core::scene::ScrollNode::new(Rect::new(0, 0, inner_w, inner_h), content)
+                .with_offset(0, offset_y),
+        )]
+    } else {
+        field_children
+    };
+
     Scene::Container(
-        ContainerNode::new(field_children)
+        ContainerNode::new(root_children)
             .with_tag(tag.to_owned())
             // R51.69 §5.40 — explicit accessible-name (WAI-ARIA
             // `aria-label`) pinned at the field container so the
@@ -630,20 +774,30 @@ pub fn ime_caret_rect_for(
         effective_text,
         visual_caret_byte,
         text_style,
+        max_width,
         ..
     } = field_shaping(tag, caret_byte as usize, interaction, theme, style);
 
     let layout_cache = use_text_field_layout_cache();
-    let caret_local = {
+    let (caret_local, scroll_y) = {
         let mut cache = layout_cache.borrow_mut();
-        let layout = cache.layout(effective_text.as_str(), &text_style, None);
+        let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
         #[allow(
             clippy::cast_precision_loss,
             reason = "caret_width fits f32 losslessly (small u32)"
         )]
         let cw = style.caret_width as f32;
-        caret_rect_for_byte_offset(layout, visual_caret_byte, cw)
+        // R765 — subtract the same scroll offset the paint applied so the
+        // platform IME caret rect tracks the on-screen caret when the
+        // multi-line field has scrolled.
+        let scroll_y = vertical_scroll_offset(layout, visual_caret_byte, style);
+        (caret_rect_for_byte_offset(layout, visual_caret_byte, cw), scroll_y)
     };
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "scroll_y <= content_h; never approaches 2^24 logical px"
+    )]
+    let scroll_y_f = scroll_y as f32;
 
     #[allow(
         clippy::cast_precision_loss,
@@ -667,7 +821,7 @@ pub fn ime_caret_rect_for(
     let font_size_f = style.font_size_px as f32;
     CaretRect::new(
         field_origin_x_f + pad_f + caret_local.x,
-        field_origin_y_f + pad_f + caret_local.y,
+        field_origin_y_f + pad_f + caret_local.y - scroll_y_f,
         caret_local.width.max(1.0),
         caret_local.height.max(font_size_f),
     )
@@ -715,7 +869,9 @@ pub fn byte_for_field_point(
     let caret = use_text_edit_state(tag).caret();
     let FieldShaping {
         effective_text,
+        visual_caret_byte,
         text_style,
+        max_width,
         ..
     } = field_shaping(tag, caret, interaction, theme, style);
 
@@ -726,8 +882,18 @@ pub fn byte_for_field_point(
 
     let layout_cache = use_text_field_layout_cache();
     let mut cache = layout_cache.borrow_mut();
-    let layout = cache.layout(effective_text.as_str(), &text_style, None);
-    byte_offset_for_point(layout, local_x, local_y)
+    let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
+    // R765 — the content is scrolled up by `scroll_y` on screen, so a
+    // window point maps to a content-space point `scroll_y` lower. Add it
+    // back (same pure offset the paint applied) before resolving the
+    // byte, so a click on a scrolled line lands on the glyph under it.
+    let scroll_y = vertical_scroll_offset(layout, visual_caret_byte, style);
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "scroll_y <= content_h; never approaches 2^24 logical px"
+    )]
+    let scroll_y_f = scroll_y as f32;
+    byte_offset_for_point(layout, local_x, local_y + scroll_y_f)
 }
 
 /// R764 §5.36 §5.22 — vertical caret navigation for a multi-line field:
@@ -761,11 +927,12 @@ pub fn byte_for_field_vertical_move(
         effective_text,
         text_style,
         visual_caret_byte,
+        max_width,
         ..
     } = field_shaping(tag, caret, interaction, theme, style);
     let layout_cache = use_text_field_layout_cache();
     let mut cache = layout_cache.borrow_mut();
-    let layout = cache.layout(effective_text.as_str(), &text_style, None);
+    let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
     byte_offset_for_line_move(layout, visual_caret_byte, delta)
 }
 
@@ -1003,6 +1170,106 @@ mod tests {
             assert!(
                 Rc::ptr_eq(&a, &b),
                 "Owner::cache dedup — both calls return the same Rc",
+            );
+        });
+    }
+
+    #[test]
+    fn m3_filled_does_not_soft_wrap() {
+        // R765 — the single-line filled field stays unbounded so its
+        // LayoutCache key is byte-identical to the pre-R765 `None`.
+        assert!(!TextFieldStyle::m3_filled().soft_wrap);
+    }
+
+    #[test]
+    fn m3_multiline_soft_wraps() {
+        // R765 — a textarea soft-wraps at the inner width by default.
+        assert!(TextFieldStyle::m3_multiline(3).soft_wrap);
+    }
+
+    #[test]
+    fn field_shaping_single_line_is_unbounded() {
+        // R765 — soft_wrap = false threads `None` to every consumer's
+        // `cache.layout` (the pre-R765 unbounded layout).
+        with_owner(|| {
+            let theme = Theme::light();
+            let shaping = field_shaping(
+                "tf_test",
+                0,
+                TextFieldState::Idle,
+                &theme,
+                &TextFieldStyle::m3_filled(),
+            );
+            assert_eq!(shaping.max_width, None);
+        });
+    }
+
+    #[test]
+    fn field_shaping_multiline_bounds_inner_width() {
+        // R765 — the wrap width is the box minus both pads, known at
+        // view-fn time from the explicit `field_w` (no layout pass).
+        with_owner(|| {
+            let theme = Theme::light();
+            let style = TextFieldStyle::m3_multiline(3);
+            let shaping = field_shaping(
+                "ta_test",
+                0,
+                TextFieldState::Idle,
+                &theme,
+                &style,
+            );
+            assert_eq!(
+                shaping.max_width,
+                Some(style.field_w - 2 * style.field_pad),
+            );
+        });
+    }
+
+    #[test]
+    fn soft_wrap_breaks_long_line_into_visual_lines() {
+        // R765 — the structural payoff: a long line with no `\n`
+        // exceeds the 344 px inner width and parley breaks it onto
+        // additional *visual* lines. The same content unbounded
+        // (`None`) stays one visual line, proving the wrap — not a `\n`
+        // — drives the break.
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "ta_wrap";
+            let long = "the quick brown fox jumps over the lazy dog repeatedly today";
+            use_text_edit_state(tag).insert(long);
+            let style = TextFieldStyle::m3_multiline(3);
+            let shaping = field_shaping(
+                tag,
+                long.len(),
+                TextFieldState::Editing,
+                &theme,
+                &style,
+            );
+            let cache = use_text_field_layout_cache();
+            let mut cache = cache.borrow_mut();
+            let wrapped_lines = {
+                let wrapped = cache.layout(
+                    shaping.effective_text.as_str(),
+                    &shaping.text_style,
+                    shaping.max_width,
+                );
+                wrapped.lines().count()
+            };
+            assert!(
+                wrapped_lines > 1,
+                "soft-wrap breaks the long no-newline line: got {wrapped_lines}",
+            );
+            let flat_lines = {
+                let flat = cache.layout(
+                    shaping.effective_text.as_str(),
+                    &shaping.text_style,
+                    None,
+                );
+                flat.lines().count()
+            };
+            assert_eq!(
+                flat_lines, 1,
+                "unbounded layout keeps the no-newline line on one visual line",
             );
         });
     }

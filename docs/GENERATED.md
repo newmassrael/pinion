@@ -17520,6 +17520,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R765 — R765 §5.22 §5.36 §5.45 textarea soft-wrap at width + scroll-to-caret
+
+**Changes**:
+- TextFieldStyle.soft_wrap (m3_filled=false / m3_multiline=true); field_shaping threads max_width SSOT
+- painted Scene::Text pinned to inner width so taffy wraps glyphs at the same break as caret geometry
+- vertical_scroll_offset pure fn (caret_bottom - viewport_h, clamped); paint/hit-test/ime recompute it
+- multi-line nests content in Scene::Scroll (clip to inner box) + offset_y; single-line bit-identical
+- hello-textarea auto-soft-wraps with no binding change; doc + Try-it note updated
+
+
+
+**Verification**:
+- cargo test --workspace green (119 ok suites; +5 widget-paint soft-wrap/scroll-offset tests)
+- clippy --workspace --all-targets -D pedantic (vello) clean
+- r765 demo PASS 49 assert: short-fits-1-line vs long-wraps, overflow clip+scroll, hit-test, vertical-nav
+- r764 multi-line demo no regression; single-line textfield/todomvc/combobox bit-identical (soft_wrap=false)
+- live-pixel :0 (ffmpeg+PIL): right_spill=0, wrap_span=117px, clip_gap=0 (wraps in box, clipped at bottom)
+
+
+
+**Impact**: §5.22, §5.36, §5.45
+
+
+**Carry forward**:
+- horizontal scroll for single-line over-long text deferred (no wrap; consumer-driven)
+- desired-column (h_pos) not persisted across vertical moves (R764 carry d still open)
+- Home/End move to buffer ends not line-relative (R764 carry e still open)
+- scroll pins caret to bottom edge on overflow; minimal-scroll-with-prev would need stored state
+- TUI multi-line soft-wrap/scroll = wildcard no-op (terminal has no parley layout; Vello-only)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

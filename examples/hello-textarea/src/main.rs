@@ -26,11 +26,19 @@
 //!   the geometry-free `TextEditState` path the horizontal arrows use.
 //! - **`Enter` inserts a newline** — the one binding-level divergence
 //!   from a single-line field (where `Enter` would submit / be ignored).
+//! - **Soft-wrap at width** (R765) — [`TextFieldStyle::m3_multiline`]
+//!   sets `soft_wrap = true`, so a long line with no `\n` breaks onto
+//!   additional *visual* lines at the box's inner width. This needed no
+//!   binding change: the `field_shaping` SSOT threads the wrap width to
+//!   paint, the caret rect, the hit-test, and vertical nav, so parley
+//!   resolves wrapped-line caret/selection/point geometry for free.
 //!
 //! Click-to-position, drag-select, and Shift-click all reuse the R762 /
 //! R763 hooks unchanged — `byte_for_field_point` hit-tests against the
 //! multi-line layout (parley `Cursor::from_point` already picks the line
 //! by `y`), so a click on line 3 lands on line 3 with no extra work.
+//! Soft-wrapped lines are visual lines like any other, so `ArrowUp` /
+//! `ArrowDown` and pointer hits cross wrap boundaries with no extra work.
 //!
 //! ## Try it
 //!
@@ -39,8 +47,10 @@
 //! ```
 //!
 //! Tab in → caret blinks. Type → text inserts; `Enter` starts a new
-//! line. `ArrowUp` / `ArrowDown` move between lines (hold `Shift` to
-//! select); drag across lines to select a multi-line band.
+//! line. Keep typing on one line past the box edge → it soft-wraps to
+//! the next visual line. `ArrowUp` / `ArrowDown` move between lines
+//! (hold `Shift` to select); drag across lines to select a multi-line
+//! band.
 
 use std::rc::Rc;
 
