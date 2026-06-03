@@ -311,13 +311,46 @@ def body() -> None:
         )
         # Caret (last line) projected through the scroll must stay inside
         # the visible viewport — the whole point of scroll-to-caret.
-        caret_screen = g["caret_y"] - g["offset_y"]
+        end_offset = g["offset_y"]
+        caret_screen = g["caret_y"] - end_offset
         assert 0 <= caret_screen <= g["viewport_h"], (
             f"caret stays visible after scrolling (screen y {caret_screen} "
             f"in 0..{g['viewport_h']})"
         )
         assert caret_screen + g["caret_h"] <= g["viewport_h"] + 2, (
             "caret bottom does not spill below the visible box"
+        )
+
+        # Canonical scroll-into-view (NOT pin-to-bottom): one ArrowUp from
+        # End moves the caret UP within the viewport without scrolling the
+        # document — the offset stays put because the caret is still
+        # visible. A pin-to-bottom rule would instead keep the caret glued
+        # to the bottom edge and scroll the document on every move.
+        key(ta, "ArrowUp")
+        g2 = scroll_geometry(ta)
+        assert_eq(
+            g2["offset_y"],
+            end_offset,
+            "ArrowUp within the viewport does NOT scroll (caret-into-view, not pin-to-bottom)",
+        )
+        assert g2["caret_y"] is None or (g2["caret_y"] - g2["offset_y"]) < caret_screen, (
+            "the caret moved UP within the viewport (smaller screen y) without a scroll"
+        )
+
+        # hit-test reads the SAME stored scroll offset paint applied: at
+        # End (scrolled), a click near the TOP of the viewport lands on a
+        # scrolled-in line, not the buffer start (byte 0). Without the
+        # offset the click would resolve to the first line.
+        key(ta, "End")
+        time.sleep(SETTLE)
+        assert scroll_geometry(ta)["offset_y"] > 0, "scrolled at End before hit-test"
+        (hx, hy, hw, hh) = field_rect(ta)
+        ta.click(at=(hx + 5, hy + 12))  # near the top of the visible box
+        time.sleep(SETTLE)
+        c_hit = caret(ta)
+        assert c_hit > 10, (
+            f"click near the viewport top at scroll lands on a scrolled-in line, "
+            f"not the buffer start (byte {c_hit} > 10) — hit-test honours the offset"
         )
 
         # Scrolling back to the top releases the offset (caret-driven).

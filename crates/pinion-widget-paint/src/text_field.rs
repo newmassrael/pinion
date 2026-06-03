@@ -53,12 +53,13 @@ use std::rc::Rc;
 
 use pinion_core::external::IntrospectValue;
 use pinion_core::reactive::Owner;
-use pinion_core::scene::{BoxNode, ContainerNode, Rect};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::caret_blink::use_caret_blink;
+use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Color, CompositionEvent, Modifiers, Scene, WidgetStateName};
@@ -179,7 +180,7 @@ impl TextFieldStyle {
     /// onto more visual lines than there are `\n`s; when the wrapped
     /// content is taller than the `rows`-line box it is clipped to the
     /// box and scrolled vertically to keep the caret visible
-    /// (R765 scroll-to-caret — see [`vertical_scroll_offset`]). `rows`
+    /// (R765 scroll-to-caret — see [`scroll_into_view`]). `rows`
     /// is clamped to `>= 1`.
     #[must_use]
     pub const fn m3_multiline(rows: u32) -> Self {
@@ -375,44 +376,57 @@ fn saturating_f32_to_u32(v: f32) -> u32 {
     }
 }
 
-/// R765 §5.22 §5.36 — pure vertical scroll offset that keeps the caret
-/// visible in a soft-wrapping multi-line field. The field box exposes
-/// `field_h - 2*field_pad` content pixels; once the wrapped content is
-/// taller, the content scrolls up by this many pixels so the caret's
-/// bottom edge stays inside the visible window.
+/// R765 §5.22 §5.45 — canonical **scroll-into-view**: the minimal new
+/// vertical scroll offset that keeps the caret visible given the
+/// *previous* offset. The caret window is `[prev, prev + viewport_h]`
+/// (content-space px). The offset only moves when the caret leaves that
+/// window — scroll up to `caret_top` if the caret is above it, down to
+/// `caret_bottom - viewport_h` if below — and otherwise stays put. So
+/// arrowing or clicking *within* the visible region never scrolls the
+/// document (unlike a pin-to-bottom rule, which glues the caret to the
+/// bottom edge and scrolls on every move). Result is clamped to
+/// `[0, max_scroll]`.
 ///
-/// Defined as a **pure function** of the shared `field_shaping`
-/// [`Layout`](pinion_text::Layout) + caret — there is no stored scroll
-/// state. Paint (the visible offset), the pointer hit-test
-/// ([`byte_for_field_point`], which adds it back to reach content
-/// space), and the IME caret rect ([`ime_caret_rect_for`], which
-/// subtracts it to reach window space) each recompute the identical
-/// value from the same Layout, so all three agree without a side
-/// channel and the result stays `dry_run`-deterministic. The rule pins
-/// the caret to the bottom edge once content overflows
-/// (`caret_bottom - viewport_h`, clamped to `[0, content_h -
-/// viewport_h]`). Single-line fields never scroll (returns 0), so their
-/// paint / hit-test / caret geometry is byte-identical to pre-R765.
-fn vertical_scroll_offset(
-    layout: &pinion_text::Layout,
-    caret_byte: usize,
-    style: &TextFieldStyle,
+/// This is a pure fixpoint (after scrolling the caret to an edge it sits
+/// inside the window, so a second evaluation is a no-op), which is why
+/// the paint view fn can run it against the [`ScrollState`] offset and
+/// converge in at most one extra render. The *previous* offset is the
+/// stored [`ScrollState`] Signal — the single source the hit-test and
+/// IME helpers read back, so they agree with the painted scroll without
+/// recomputation.
+fn scroll_into_view(
+    prev: u32,
+    caret_top: u32,
+    caret_bottom: u32,
+    viewport_h: u32,
+    max_scroll: u32,
 ) -> u32 {
+    let new = if caret_top < prev {
+        caret_top
+    } else if caret_bottom > prev.saturating_add(viewport_h) {
+        caret_bottom.saturating_sub(viewport_h)
+    } else {
+        prev
+    };
+    new.min(max_scroll)
+}
+
+/// R765 §5.45 — the stored vertical scroll offset for a multi-line
+/// field, read back by the pointer hit-test and IME caret helpers so
+/// they project through the *same* offset the paint applied. Single-line
+/// fields never scroll (always 0), so they never touch the
+/// [`ScrollState`] cache slot. The paint view fn is the sole writer
+/// (via [`scroll_into_view`]); this is a pure read.
+fn field_scroll_offset(tag: &'static str, style: &TextFieldStyle) -> u32 {
     if !style.multi_line {
         return 0;
     }
     #[allow(
-        clippy::cast_precision_loss,
-        reason = "caret_width fits f32 losslessly (small u32)"
+        clippy::cast_sign_loss,
+        reason = "ScrollState::offset_y is clamped to [0, max] so it is non-negative"
     )]
-    let caret_w = style.caret_width as f32;
-    let caret = caret_rect_for_byte_offset(layout, caret_byte, caret_w);
-    let caret_bottom = saturating_f32_to_u32(caret.y)
-        .saturating_add(saturating_f32_to_u32(caret.height).max(style.font_size_px));
-    let content_h = saturating_f32_to_u32(layout.height());
-    let viewport_h = style.field_h.saturating_sub(2 * style.field_pad);
-    let max_scroll = content_h.saturating_sub(viewport_h);
-    caret_bottom.saturating_sub(viewport_h).min(max_scroll)
+    let off = use_scroll_state(tag).offset_y().max(0) as u32;
+    off
 }
 
 /// (R657 §5.16 §5.38) Build the `TextField` paint Container — the
@@ -468,7 +482,7 @@ pub fn view_field(
     // selection + preedit pixel rects from the same Layout.
     let layout_cache = use_text_field_layout_cache();
     let selection_range = text_state.selection_range();
-    let (caret_pixel_rect, selection_pixel, preedit_pixel, scroll_y) = {
+    let (caret_pixel_rect, selection_pixel, preedit_pixel, content_h) = {
         let mut cache = layout_cache.borrow_mut();
         let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
         #[allow(
@@ -513,14 +527,45 @@ pub fn view_field(
             let pre_h = saturating_f32_to_u32(start_rect.height).max(style.font_size_px);
             (start_x, pre_y, end_x.saturating_sub(start_x), pre_h)
         });
-        // R765 — keep the caret visible when wrapped content overflows
-        // the box. Computed from the SAME Layout/caret the hit-test and
-        // IME helpers recompute, so the visible scroll and the click /
-        // caret inverses agree (see `vertical_scroll_offset`).
-        let scroll_y = vertical_scroll_offset(layout, visual_caret_byte, style);
-        (caret, selection, preedit_p, scroll_y)
+        (caret, selection, preedit_p, saturating_f32_to_u32(layout.height()))
     };
     let (caret_layout_x, caret_layout_y, caret_box_height) = caret_pixel_rect;
+
+    // R765 §5.45 — scroll-into-view: keep the caret visible when wrapped
+    // content overflows the box. The offset is STORED in the field's
+    // `ScrollState` (the SSOT the hit-test + IME helpers read back), and
+    // only moves when the caret leaves the visible window — the
+    // canonical editor behaviour, not pin-to-bottom. Multi-line only;
+    // single-line never scrolls (offset stays 0, no ScrollState touched).
+    let scroll_y = if style.multi_line {
+        let viewport_h = style.field_h.saturating_sub(2 * style.field_pad);
+        let max_scroll = content_h.saturating_sub(viewport_h);
+        let caret_bottom = caret_layout_y.saturating_add(caret_box_height);
+        let scroll = use_scroll_state(tag);
+        #[allow(
+            clippy::cast_possible_wrap,
+            reason = "max_scroll <= content_h; UI content height never approaches i32::MAX"
+        )]
+        let max_scroll_i = max_scroll as i32;
+        scroll.set_max(0, max_scroll_i);
+        #[allow(
+            clippy::cast_sign_loss,
+            reason = "offset_y is clamped to [0, max] so it is non-negative"
+        )]
+        let prev = scroll.offset_y().max(0) as u32;
+        let new = scroll_into_view(prev, caret_layout_y, caret_bottom, viewport_h, max_scroll);
+        if new != prev {
+            #[allow(
+                clippy::cast_possible_wrap,
+                reason = "new <= max_scroll <= content_h; never approaches i32::MAX"
+            )]
+            let new_i = new as i32;
+            scroll.scroll_to(0, new_i);
+        }
+        new
+    } else {
+        0
+    };
 
     let field_fill = field_fill_for(theme, interaction);
 
@@ -679,7 +724,7 @@ pub fn view_field(
         )]
         let offset_y = scroll_y as i32;
         vec![Scene::Scroll(
-            pinion_core::scene::ScrollNode::new(Rect::new(0, 0, inner_w, inner_h), content)
+            ScrollNode::new(Rect::new(0, 0, inner_w, inner_h), content)
                 .with_offset(0, offset_y),
         )]
     } else {
@@ -779,7 +824,7 @@ pub fn ime_caret_rect_for(
     } = field_shaping(tag, caret_byte as usize, interaction, theme, style);
 
     let layout_cache = use_text_field_layout_cache();
-    let (caret_local, scroll_y) = {
+    let caret_local = {
         let mut cache = layout_cache.borrow_mut();
         let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
         #[allow(
@@ -787,17 +832,16 @@ pub fn ime_caret_rect_for(
             reason = "caret_width fits f32 losslessly (small u32)"
         )]
         let cw = style.caret_width as f32;
-        // R765 — subtract the same scroll offset the paint applied so the
-        // platform IME caret rect tracks the on-screen caret when the
-        // multi-line field has scrolled.
-        let scroll_y = vertical_scroll_offset(layout, visual_caret_byte, style);
-        (caret_rect_for_byte_offset(layout, visual_caret_byte, cw), scroll_y)
+        caret_rect_for_byte_offset(layout, visual_caret_byte, cw)
     };
+    // R765 — subtract the same stored scroll offset the paint applied so
+    // the platform IME caret rect tracks the on-screen caret when the
+    // multi-line field has scrolled.
     #[allow(
         clippy::cast_precision_loss,
         reason = "scroll_y <= content_h; never approaches 2^24 logical px"
     )]
-    let scroll_y_f = scroll_y as f32;
+    let scroll_y_f = field_scroll_offset(tag, style) as f32;
 
     #[allow(
         clippy::cast_precision_loss,
@@ -869,7 +913,6 @@ pub fn byte_for_field_point(
     let caret = use_text_edit_state(tag).caret();
     let FieldShaping {
         effective_text,
-        visual_caret_byte,
         text_style,
         max_width,
         ..
@@ -880,19 +923,19 @@ pub fn byte_for_field_point(
     let local_x = point_x - field_rect.x as f32 - style.field_pad as f32;
     let local_y = point_y - field_rect.y as f32 - style.field_pad as f32;
 
-    let layout_cache = use_text_field_layout_cache();
-    let mut cache = layout_cache.borrow_mut();
-    let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
     // R765 — the content is scrolled up by `scroll_y` on screen, so a
     // window point maps to a content-space point `scroll_y` lower. Add it
-    // back (same pure offset the paint applied) before resolving the
-    // byte, so a click on a scrolled line lands on the glyph under it.
-    let scroll_y = vertical_scroll_offset(layout, visual_caret_byte, style);
+    // back (the same stored offset paint applied via `ScrollState`)
+    // before resolving the byte, so a click on a scrolled line lands on
+    // the glyph under it.
     #[allow(
         clippy::cast_precision_loss,
         reason = "scroll_y <= content_h; never approaches 2^24 logical px"
     )]
-    let scroll_y_f = scroll_y as f32;
+    let scroll_y_f = field_scroll_offset(tag, style) as f32;
+    let layout_cache = use_text_field_layout_cache();
+    let mut cache = layout_cache.borrow_mut();
+    let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
     byte_offset_for_point(layout, local_x, local_y + scroll_y_f)
 }
 
@@ -1223,6 +1266,39 @@ mod tests {
                 Some(style.field_w - 2 * style.field_pad),
             );
         });
+    }
+
+    #[test]
+    fn scroll_into_view_only_scrolls_at_edges() {
+        // R765 §5.45 — the canonical scroll-into-view contract. Window =
+        // [prev, prev + viewport_h]; the offset moves only when the caret
+        // leaves it, never pins the caret to an edge while inside.
+        let vp = 125;
+        // Caret fully inside the window -> offset unchanged (the fix for
+        // the pin-to-bottom defect: arrowing within view does not scroll).
+        assert_eq!(
+            scroll_into_view(50, 60, 86, vp, 300),
+            50,
+            "caret inside the window leaves the offset untouched",
+        );
+        // Caret below the window -> scroll down just enough to reveal it.
+        assert_eq!(
+            scroll_into_view(50, 200, 226, vp, 300),
+            226 - vp,
+            "caret below scrolls to caret_bottom - viewport_h",
+        );
+        // Caret above the window -> scroll up to the caret top.
+        assert_eq!(
+            scroll_into_view(50, 10, 36, vp, 300),
+            10,
+            "caret above scrolls up to caret_top",
+        );
+        // Result is clamped to the content's max scroll.
+        assert_eq!(
+            scroll_into_view(0, 500, 526, vp, 100),
+            100,
+            "offset clamps to max_scroll",
+        );
     }
 
     #[test]

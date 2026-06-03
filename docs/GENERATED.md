@@ -17552,6 +17552,34 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R765.1 — R765.1 §5.45 scroll-into-view audit fix — pin-to-bottom replaced by stored ScrollState
+
+**Changes**:
+- audit (사용자 review) caught R765 scroll = pin-to-bottom: caret glued to viewport bottom, ArrowUp scrolls doc not caret
+- replaced pure caret_bottom-viewport_h with canonical scroll_into_view (scroll only when caret leaves [prev, prev+vp_h])
+- scroll-into-view needs prev offset -> adopt ScrollState substrate (use_scroll_state) over pure recompute
+- paint = sole writer (set_max + scroll_into_view + scroll_to); hit-test/ime read offset_y (stored SSOT, was recompute 3x)
+
+
+
+**Verification**:
+- cargo test --workspace green (+1 scroll_into_view unit test; 415 widget-paint pass)
+- clippy --workspace --all-targets -D pedantic (vello) clean
+- r765 demo 53 assert: ArrowUp from End keeps offset (caret moves up in viewport) + hit-test-at-scroll honours offset
+- observed End->Up caret_screen_y 99->73->47->21->0 then scrolls (scroll-into-view, not pinned)
+- live-pixel :0 no regression (right_spill=0 / wrap_span=117px / clip_gap=0)
+
+
+
+**Impact**: §5.45, §5.22
+
+
+**Carry forward**:
+- wheel/scrollbar independent scroll deferred: ScrollNode::new not from_state (input unwired)
+- when wheel wired, move scroll-into-view nudge from paint to caret-mutation path so wheel-away persists
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
