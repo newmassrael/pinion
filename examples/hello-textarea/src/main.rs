@@ -194,15 +194,14 @@ fn swatch_text_style(rgb: Rgb) -> TextStyle {
         .with_fg(Color::rgb(rgb.0, rgb.1, rgb.2))
 }
 
-/// R769 §5.36 — the field's default char format: the base style unstyled
-/// text paints with. Passed to [`TextEditState::merge_style_run`] so a
-/// bold/italic toggle over *unstyled* bytes resolves their colour from
-/// here (M3 `OnSurface`, the field text ink) rather than dropping to a
-/// hard-coded default.
-fn base_text_style(theme: &pinion_core::theme::Theme) -> TextStyle {
-    TextStyle::new()
-        .with_size_px(ta_style().font_size_px)
-        .with_fg(theme.resolve(ColorRole::OnSurface))
+/// R769 §5.36 / R770.1 — the field's default char format: the base style
+/// unstyled text paints with. Passed to [`TextEditState::merge_style_run`]
+/// so a bold/italic toggle over *unstyled* bytes resolves their colour
+/// from the field's real base. R770.1 — reuse `tf_paint::field_text_style`
+/// (the SSOT `field_shaping` itself shapes against) instead of re-guessing
+/// a `ColorRole`, so the merge base and the paint base can never diverge.
+fn base_text_style(theme: &pinion_core::theme::Theme, interaction: TextFieldState) -> TextStyle {
+    tf_paint::field_text_style(theme, interaction, &ta_style())
 }
 
 /// R768 §5.36 §5.22 / R769 — the formatting toolbar: bold + italic toggle
@@ -287,13 +286,13 @@ fn hit_tag(scene: &Scene, tag: &'static str, x: f32, y: f32) -> bool {
 /// [`TextEditState::style_at`]); the substrate owns the *mechanics*. The
 /// other style fields are preserved, so bolding a coloured word keeps its
 /// colour. No-op when nothing is selected.
-fn apply_toggle(field: ToggleField) {
+fn apply_toggle(field: ToggleField, interaction: TextFieldState) {
     let edit = use_text_edit_state(TA_TAG);
     let Some((start, end)) = edit.selection_range() else {
         return;
     };
     let theme = use_theme(THEME_TAG).theme_animated();
-    let base = base_text_style(&theme);
+    let base = base_text_style(&theme, interaction);
     let at_start = edit.style_at(start);
     match field {
         ToggleField::Bold => {
@@ -317,10 +316,10 @@ fn apply_toggle(field: ToggleField) {
 /// swallowed (the toolbar owns that pixel) but is a no-op — formatting
 /// needs a range. Returns `false` when nothing was hit, so the caller
 /// falls through to caret positioning.
-fn try_toolbar_press(scene: &Scene, x: f32, y: f32) -> bool {
+fn try_toolbar_press(scene: &Scene, x: f32, y: f32, interaction: TextFieldState) -> bool {
     for (tag, field) in TOGGLES {
         if hit_tag(scene, tag, x, y) {
-            apply_toggle(field);
+            apply_toggle(field, interaction);
             return true;
         }
     }
@@ -684,7 +683,7 @@ impl WidgetView for TextAreaView {
         // selection (and is swallowed, leaving caret + selection intact)
         // — the click peer of the AI-first `apply-style` invoke funnel,
         // both reaching `TextEditState::apply_style_run`.
-        if try_toolbar_press(scene, x, y) {
+        if try_toolbar_press(scene, x, y, state.0) {
             return None;
         }
         let byte = hit_test_area_byte(*state, scene, x, y)?;

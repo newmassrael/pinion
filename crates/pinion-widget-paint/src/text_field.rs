@@ -242,6 +242,24 @@ fn text_fg_for(theme: &Theme, interaction: TextFieldState) -> Color {
     }
 }
 
+/// R770.1 §5.36 — the field's **base** (unstyled) text style: the size +
+/// fg an unstyled byte paints with, for the given theme + interaction.
+/// This is the single source of truth `field_shaping` shapes against;
+/// exposed `pub` so a binding's rich-text toolbar passes the *same* base
+/// to [`TextEditState::merge_style_run`](pinion_core::widgets::text_edit::TextEditState::merge_style_run)
+/// — so bolding *unstyled* text resolves its colour from the field's real
+/// base, not a hand-picked `ColorRole` guess (the prior R769 SSOT gap).
+#[must_use]
+pub fn field_text_style(
+    theme: &Theme,
+    interaction: TextFieldState,
+    style: &TextFieldStyle,
+) -> TextStyle {
+    TextStyle::new()
+        .with_size_px(style.font_size_px)
+        .with_fg(text_fg_for(theme, interaction))
+}
+
 /// R762 §5.36 §5.38 — the spliced caret/preedit view + resolved text
 /// style for a field's content, produced by [`field_shaping`].
 struct FieldShaping {
@@ -292,9 +310,7 @@ fn field_shaping(
 ) -> FieldShaping {
     let (effective_text, visual_caret_byte, preedit_byte_range) =
         use_text_edit_state(tag).splice_preedit(caret_byte);
-    let text_style = TextStyle::new()
-        .with_size_px(style.font_size_px)
-        .with_fg(text_fg_for(theme, interaction));
+    let text_style = field_text_style(theme, interaction, style);
     // R765 — soft-wrap bound: the inner content width (box minus both
     // pads). `field_w` is the field's explicit logical width, so the
     // wrap width is known at view-fn time (no layout-pass round-trip).

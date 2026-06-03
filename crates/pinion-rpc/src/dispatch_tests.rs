@@ -734,6 +734,49 @@ fn r770_scene_drop_file_missing_path_rejects() {
     assert!(inbox.is_empty(), "no event enqueued on a rejected request");
 }
 
+// ---- R770.1 §5.36 §5.49 — TextStyle wire round-trip (decode ∘ encode = id) ----
+
+#[test]
+fn r770_1_text_style_json_decode_is_inverse_of_encode() {
+    // The run read (`text_style_to_json`, here) and the `apply-style`
+    // write (`json_to_text_style`, pinion-core) are a decode-mirrors-
+    // encode pair — an AI round-trips a run: snapshot → mutate → write.
+    // This test pins them in sync (R743.1: decode is the inverse of
+    // encode; R615 from_hex/to_hex precedent).
+    use pinion_core::style::{
+        Color, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextOverflow,
+        TextStyle,
+    };
+    use pinion_core::widgets::text_field::json_to_text_style;
+
+    let mut a = TextStyle::new();
+    a.fg_color = Color::rgba(0xD0, 0x28, 0x28, 0xC0);
+    a.font_size_px = 24;
+    a.font_weight = FontWeight::BOLD;
+    a.font_style = FontStyle::Italic;
+
+    let mut b = TextStyle::new();
+    b.font_style = FontStyle::Oblique(Some(-14));
+    b.line_height = LineHeight::Px(30);
+    b.letter_spacing = 3;
+    b.text_align = TextAlign::Center;
+    b.decoration = TextDecoration::none().with_underline(true).with_strikethrough(true);
+    b.overflow = TextOverflow::Ellipsis;
+    b.font_family = Some(std::borrow::Cow::Borrowed("Inter"));
+
+    let mut c = TextStyle::new();
+    c.line_height = LineHeight::MultiplierX100(150);
+    c.font_style = FontStyle::Oblique(None);
+    c.text_align = TextAlign::Justify;
+    c.overflow = TextOverflow::Clip;
+
+    for sample in [TextStyle::new(), a, b, c] {
+        let encoded = text_style_to_json(&sample);
+        let decoded = json_to_text_style(encoded.as_object().unwrap());
+        assert_eq!(decoded, sample, "json_to_text_style must invert text_style_to_json");
+    }
+}
+
 // ---- R51.196 §5.49 — scene/click v1 (DeferredInput::Click) ----
 
 #[test]

@@ -50,6 +50,7 @@ from rpc_verify import (
     read_png_rgba8,
     png_pixel,
     run_demo,
+    wait_until,
 )
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -177,6 +178,28 @@ def body() -> None:
         click_tag(ta, sw_rects[TB_BOLD])
         assert_eq(run_at(ta, 0)["style"]["font_weight"], 400, "second B click un-bolds")
         assert_eq(_color(run_at(ta, 0)["style"]), RED, "un-bold still keeps red")
+
+        # ── Phase 3b — AI-semantic bold via apply-style full style (R770.1)
+        # An AI reads a run's *full* style, sets font_weight, writes it
+        # back via apply-style {start,end,style:{...}} — no pixel click,
+        # no colour loss. Proves bold/italic is RPC-settable semantically
+        # (the colour-only shorthand could not) and that the read/write
+        # shapes round-trip.
+        run0_style = dict(run_at(ta, 0)["style"])
+        run0_style["font_weight"] = 700
+        ta.invoke("/external/apply-style", {"start": 0, "end": 5, "style": run0_style})
+        wait_until(
+            lambda: run_at(ta, 0)["style"]["font_weight"] == 700,
+            desc="apply-style full-style set bold via RPC (no click)",
+        )
+        assert_eq(_color(run_at(ta, 0)["style"]), RED, "full-style write preserved the colour (round-trip)")
+        # Restore the seeded normal weight so later phases see byte 0 = 400.
+        run0_style["font_weight"] = 400
+        ta.invoke("/external/apply-style", {"start": 0, "end": 5, "style": run0_style})
+        wait_until(
+            lambda: run_at(ta, 0)["style"]["font_weight"] == 400,
+            desc="restore normal weight via RPC",
+        )
 
         # ── Phase 4 — bold + italic the green "second": both set ──────
         select(ta, 11, 17)

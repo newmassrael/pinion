@@ -116,7 +116,9 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::scene::Rect;
-use crate::style::{Color, TextStyle};
+use crate::style::{
+    Color, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
+};
 use crate::widgets::caret_blink::CaretBlink;
 use crate::widgets::text_edit::TextEditState;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -1378,19 +1380,25 @@ impl ExternalIntrospect for TextFieldExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
-            // R768 §5.36 §5.22 — apply one colour styled run over a byte
-            // range (setCharFormat). The Json wire shape mirrors the
-            // `selection` slot's `{"start", "end"}` plus the run's visual
-            // fields: `"fg"` is a CSS colour string parsed by
-            // [`Color::from_hex`] (the same parser scene styles use), and
-            // optional `"size"` overrides the run font size (default
-            // 16px). The non-colour fields stay at their defaults so the
-            // run is metric-neutral (colour-only), matching the
-            // hello-textarea seed runs. Returns `Bool(true)` when the
-            // range was styled, `Bool(false)` when no [`TextEditState`]
-            // is attached; `TypeMismatch` on a non-Json arg or an
-            // unparseable payload (mirror of the `key` / `composition`
-            // arg-shape discipline).
+            // R768 §5.36 §5.22 / R770.1 — apply one styled run over a byte
+            // range (`setCharFormat`). The Json wire shape carries
+            // `{"start", "end"}` plus the style in one of two forms:
+            //
+            // - **`"style"` object** (R770.1, canonical) — the *exact*
+            //   shape a run's read emits (`scene/snapshot`), decoded by
+            //   [`json_to_text_style`]. Round-trippable: an AI reads a
+            //   run's full style, mutates any field (bold / italic / size
+            //   / colour / decoration), and writes it back. This is what
+            //   makes every character format — not just colour —
+            //   RPC-settable, the AI-first peer of the toolbar.
+            // - **`"fg"` (+ optional `"size"`) shorthand** (R768) — the
+            //   common recolour; `"fg"` is a CSS colour
+            //   ([`Color::from_hex`]), other fields default.
+            //
+            // Returns `Bool(true)` when the range was styled, `Bool(false)`
+            // when no [`TextEditState`] is attached; `TypeMismatch` on a
+            // non-Json arg or an unparseable shorthand payload (mirror of
+            // the `key` / `composition` arg-shape discipline).
             //
             // [`Color::from_hex`]: crate::style::Color::from_hex
             "apply-style" => match args {
@@ -1655,20 +1663,149 @@ fn parse_byte_range_json(
 /// }
 /// ```
 ///
-/// The built [`TextStyle`] overrides only the colour (and optionally the
-/// size); every other field stays at its default so the run is
-/// metric-neutral (colour-only) like the seed runs. Returns `None` if
-/// the range is malformed, `"fg"` is missing / not a parseable colour
-/// string, or `"size"` is present but not a `u32`-range integer.
+/// Two style forms are accepted:
+///
+/// - **Canonical `"style"` object** — the *exact* shape a run's read
+///   emits (`style_run_to_json` / `text_style_to_json` in pinion-rpc), so
+///   an AI round-trips a run: read its full style via `scene/snapshot`,
+///   mutate any character-format field (e.g. set `font_weight` to bold),
+///   write it back. This is what makes bold / italic / size / decoration
+///   RPC-settable, and keeps the read/write a decode-mirrors-encode pair
+///   ([`json_to_text_style`]). Wholesale (`setCharFormat`) — fields the
+///   object omits fall back to the `TextStyle::new()` default.
+/// - **`fg` (+ optional `size`) shorthand** — the common recolour case
+///   (R768), kept for ergonomics. `fg` is a CSS colour ([`Color::from_hex`]).
+///
+/// Returns `None` if the range is malformed or (shorthand path) `"fg"` is
+/// missing / unparseable / `"size"` is not a `u32`-range integer.
 fn parse_apply_style_json(value: &serde_json::Value) -> Option<(usize, usize, TextStyle)> {
     let obj = value.as_object()?;
     let (start, end) = parse_byte_range_json(obj)?;
+    if let Some(style_obj) = obj.get("style").and_then(serde_json::Value::as_object) {
+        return Some((start, end, json_to_text_style(style_obj)));
+    }
     let fg = Color::from_hex(obj.get("fg")?.as_str()?)?;
     let mut style = TextStyle::new().with_fg(fg);
     if let Some(size_v) = obj.get("size") {
         style = style.with_size_px(u32::try_from(size_v.as_u64()?).ok()?);
     }
     Some((start, end, style))
+}
+
+/// R770.1 §5.36 §5.49 — decode a wire `style` object back into a
+/// [`TextStyle`]. The exact inverse of `text_style_to_json` (pinion-rpc),
+/// so a run round-trips: snapshot → mutate → `apply-style`. Each field is
+/// applied onto a `TextStyle::new()` base; a missing / unparseable field
+/// keeps the default (a partial object is a wholesale set-with-defaults,
+/// matching [`TextEditState::apply_style_run`]'s `setCharFormat`
+/// semantics). The encode lives in pinion-rpc; a round-trip test there
+/// pins the pair in sync (the R615 `from_hex`/`to_hex` precedent —
+/// decode is the inverse of encode, drift-guarded by a test).
+#[must_use]
+pub fn json_to_text_style(obj: &serde_json::Map<String, serde_json::Value>) -> TextStyle {
+    let mut s = TextStyle::new();
+    if let Some(v) = obj.get("font_family") {
+        s.font_family = v.as_str().map(|f| std::borrow::Cow::Owned(f.to_string()));
+    }
+    if let Some(px) = obj.get("font_size_px").and_then(serde_json::Value::as_u64) {
+        if let Ok(px) = u32::try_from(px) {
+            s.font_size_px = px;
+        }
+    }
+    if let Some(c) = obj.get("fg_color").and_then(json_to_color) {
+        s.fg_color = c;
+    }
+    if let Some(w) = obj.get("font_weight").and_then(serde_json::Value::as_u64) {
+        if let Ok(w) = u16::try_from(w) {
+            s.font_weight = FontWeight(w);
+        }
+    }
+    if let Some(fs) = obj.get("font_style").and_then(json_to_font_style) {
+        s.font_style = fs;
+    }
+    if let Some(lh) = obj.get("line_height").and_then(json_to_line_height) {
+        s.line_height = lh;
+    }
+    if let Some(ls) = obj.get("letter_spacing").and_then(serde_json::Value::as_i64) {
+        if let Ok(ls) = i32::try_from(ls) {
+            s.letter_spacing = ls;
+        }
+    }
+    if let Some(ta) = obj.get("text_align").and_then(serde_json::Value::as_str) {
+        s.text_align = match ta {
+            "Center" => TextAlign::Center,
+            "End" => TextAlign::End,
+            "Justify" => TextAlign::Justify,
+            _ => TextAlign::Start,
+        };
+    }
+    if let Some(d) = obj.get("decoration").and_then(serde_json::Value::as_object) {
+        s.decoration = TextDecoration {
+            underline: d.get("underline").and_then(serde_json::Value::as_bool).unwrap_or(false),
+            strikethrough: d
+                .get("strikethrough")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        };
+    }
+    if let Some(o) = obj.get("overflow").and_then(serde_json::Value::as_str) {
+        s.overflow = match o {
+            "Clip" => TextOverflow::Clip,
+            "Ellipsis" => TextOverflow::Ellipsis,
+            _ => TextOverflow::Visible,
+        };
+    }
+    s
+}
+
+/// Decode the `{r, g, b, a}` colour object `color_to_json` emits.
+fn json_to_color(v: &serde_json::Value) -> Option<Color> {
+    let o = v.as_object()?;
+    let ch = |k: &str| {
+        o.get(k)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| u8::try_from(n).ok())
+    };
+    Some(Color::rgba(ch("r")?, ch("g")?, ch("b")?, ch("a").unwrap_or(0xff)))
+}
+
+/// Decode `font_style_to_json`: `"Normal"` / `"Italic"` /
+/// `{kind:"Oblique", angle: int|null}`.
+fn json_to_font_style(v: &serde_json::Value) -> Option<FontStyle> {
+    match v {
+        serde_json::Value::String(s) => match s.as_str() {
+            "Normal" => Some(FontStyle::Normal),
+            "Italic" => Some(FontStyle::Italic),
+            _ => None,
+        },
+        serde_json::Value::Object(o)
+            if o.get("kind").and_then(serde_json::Value::as_str) == Some("Oblique") =>
+        {
+            let angle = match o.get("angle") {
+                Some(serde_json::Value::Null) | None => None,
+                Some(a) => Some(i16::try_from(a.as_i64()?).ok()?),
+            };
+            Some(FontStyle::Oblique(angle))
+        }
+        _ => None,
+    }
+}
+
+/// Decode `line_height_to_json`: `"Normal"` / `{kind:"Px", value}` /
+/// `{kind:"MultiplierX100", value}`.
+fn json_to_line_height(v: &serde_json::Value) -> Option<LineHeight> {
+    match v {
+        serde_json::Value::String(s) if s == "Normal" => Some(LineHeight::Normal),
+        serde_json::Value::Object(o) => {
+            let value = o.get("value").and_then(serde_json::Value::as_u64)?;
+            match o.get("kind").and_then(serde_json::Value::as_str)? {
+                "Px" => Some(LineHeight::Px(u32::try_from(value).ok()?)),
+                "MultiplierX100" => Some(LineHeight::MultiplierX100(u16::try_from(value).ok()?)),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// R768 §5.36 §5.22 — extract the `(start, end)` range from the
@@ -2429,7 +2566,7 @@ mod r56_1_d_tests {
     use super::{apply_key, TextField, TextFieldExternal};
     use crate::external::{External, ExternalIntrospect, IntrospectValue, InvokeError};
     use crate::scene::StyleRun;
-    use crate::style::{Color, TextStyle};
+    use crate::style::{Color, FontStyle, FontWeight, TextStyle};
     use crate::widgets::text_edit::TextEditState;
     use std::rc::Rc;
 
@@ -2837,6 +2974,33 @@ mod r56_1_d_tests {
             ),
             Err(InvokeError::TypeMismatch)
         ));
+    }
+
+    #[test]
+    fn r770_1_invoke_apply_style_full_object_sets_weight_and_style() {
+        // R770.1 — the full `style` object form makes bold / italic
+        // RPC-settable (the colour-only shorthand could not). The AI
+        // reads a run's style, sets font_weight / font_style, writes back.
+        let state = Rc::new(TextEditState::with_initial("hello".to_string()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        let result = tfx
+            .invoke(
+                "apply-style",
+                IntrospectValue::Json(serde_json::json!({
+                    "start": 0, "end": 5,
+                    "style": {
+                        "font_weight": 700,
+                        "font_style": "Italic",
+                        "fg_color": {"r": 0xD0, "g": 0x28, "b": 0x28, "a": 255},
+                    }
+                })),
+            )
+            .unwrap();
+        assert_eq!(result, IntrospectValue::Bool(true));
+        let runs = state.style_runs();
+        assert_eq!(runs[0].style.font_weight, FontWeight::BOLD, "weight set via full style");
+        assert_eq!(runs[0].style.font_style, FontStyle::Italic, "italic set via full style");
+        assert_eq!(runs[0].style.fg_color, Color::rgb(0xD0, 0x28, 0x28), "colour set via full style");
     }
 
     #[test]

@@ -17773,6 +17773,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R770.1 — R770.1 audit clearance: apply-style full-style wire-form (bold/italic RPC-settable, read/write symmetric) + field_text_style SSOT
+
+**Changes**:
+- apply-style accepts full `style` object (mirror style_run_to_json read) via json_to_text_style
+- bold/italic/size/decoration now RPC-settable — R768 colour-only shorthand could not (asymmetric)
+- json_to_text_style = exact inverse of text_style_to_json (color/font_style/line_height parsers)
+- tf_paint::field_text_style pub SSOT: field_shaping + binding merge-base share (fixes R769 re-guess)
+- base_text_style(theme,interaction) reuses field_text_style; press router threads interaction
+
+
+
+**Verification**:
+- pinion-rpc round-trip: text_style_to_json then json_to_text_style = id over 4 samples
+- pinion-core full-style invoke: apply-style {style:{font_weight:700,font_style:Italic}} bold+italic
+- r769 demo +AI-semantic-bold phase (read run -> set weight -> apply-style -> verify, no pixel click)
+- workspace test green (-j2) + clippy -D pedantic (vello) clean + r768 shorthand + siblings re-PASS
+
+
+
+**Impact**: §5.36, §5.49
+
+
+**Carry forward**:
+- clears R769 carry (a): bold/italic now has a semantic RPC path; AI-merge-via-apply-style now true
+- clears R769 OnSurface SSOT dup (merge base == paint base via field_text_style)
+- toggle/swatch decoration a11y (role=button) still deferred (composed-app, not substrate debt)
+- R770 carries persist: native file-DnD untestable / window-scoped / per-path a11y; R766 carries
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:
