@@ -17613,6 +17613,37 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R767 — R767 rich-text editing slice: TextEditState styled-run FormatRange model + run-aware field paint (field_shaping SSOT); hello-textarea seeds colour runs
+
+**Changes**:
+- TextEditState.style_runs RefCell<Vec<StyleRun>> + getter/set_style_runs (FormatRange model)
+- shift_runs_for_insert (inherit-left) + clip_runs_for_delete (interval-subtract, drop-empty)
+- maintenance wired into insert/backspace/delete_forward; set_text clears runs (offsets invalid)
+- field_shaping threads preedit-shifted runs; consumers use layout_with_runs (paint+geom one Layout)
+- view_field paints runs (one Vello run per StyleRun); hello-textarea seeds 3 colour runs
+
+
+
+**Verification**:
+- cargo test --workspace green (+9 maintenance: shift/clip/inherit/drop/type-replace/set_text-clear)
+- cargo clippy --workspace --all-targets -D pedantic (vello) clean
+- r767 demo 31 assert: 3 runs from:paint + run-aware hit-test + shift/restore/drop + 3-ink pixel
+- r764/r765/r766 sibling demos re-PASS (seed cleared early; colour-only = no geometry change)
+
+
+
+**Impact**: §5.22, §5.36, §5.38
+
+
+**Carry forward**:
+- runs are non-reactive RefCell (co-change with the text Signal, like goal_column's Cell)
+- apply-to-selection toolbar needs independent reactivity + Owner-snapshot -> serde Signal (R768)
+- metric runs (bold/size) work via run-aware geometry threading; seed colour-only for demo clarity
+- styled-run caret/hit-test reuses R762-766 substrate (parley spans runs in one Layout)
+- aria-multiline / per-run a11y still open (R765 carry); styled-run selection-apply is R768
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

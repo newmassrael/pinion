@@ -53,7 +53,7 @@ use std::rc::Rc;
 
 use pinion_core::external::IntrospectValue;
 use pinion_core::reactive::Owner;
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode, StyleRun};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
 };
@@ -260,6 +260,15 @@ struct FieldShaping {
     /// vertical move) passes this same value to `cache.layout` so they
     /// shape one identical wrapped `Layout`.
     max_width: Option<u32>,
+    /// R767 §5.36 — the field's styled runs (rich text), with offsets
+    /// shifted for any spliced IME preedit so they line up with
+    /// `effective_text`. Empty for a plain single-style field. Every
+    /// consumer shapes with `cache.layout_with_runs(.., &runs, ..)` so
+    /// paint *and* caret / hit-test / vertical-move geometry use one
+    /// identical run-aware `Layout` — a run that changes glyph metrics
+    /// (bold / size) then moves the caret correctly, not just its colour
+    /// ([[two-text-layouts-paint-vs-geometry]]).
+    runs: Vec<StyleRun>,
 }
 
 /// R762 §5.36 §5.38 — **single source** for a text field's `LayoutCache`
@@ -294,12 +303,31 @@ fn field_shaping(
     let max_width = style
         .soft_wrap
         .then(|| style.field_w.saturating_sub(2 * style.field_pad));
+    // R767 — the field's styled runs, shifted past any spliced IME
+    // preedit so their byte ranges align with `effective_text` (the runs
+    // are stored over the committed buffer; `splice_preedit` inserts the
+    // preedit at the caret, so runs at/after that point move right by the
+    // preedit length — the same affinity `TextEditState::insert` uses).
+    let mut runs = use_text_edit_state(tag).style_runs();
+    if let Some((ps, pe)) = preedit_byte_range {
+        let splice = u32::try_from(ps).unwrap_or(u32::MAX);
+        let plen = u32::try_from(pe.saturating_sub(ps)).unwrap_or(0);
+        for r in &mut runs {
+            if r.start >= splice {
+                r.start = r.start.saturating_add(plen);
+            }
+            if r.end >= splice {
+                r.end = r.end.saturating_add(plen);
+            }
+        }
+    }
     FieldShaping {
         effective_text,
         visual_caret_byte,
         preedit_byte_range,
         text_style,
         max_width,
+        runs,
     }
 }
 
@@ -476,6 +504,7 @@ pub fn view_field(
         preedit_byte_range,
         text_style,
         max_width,
+        runs,
     } = field_shaping(tag, caret_byte as usize, interaction, theme, style);
 
     // Shape once via the shared LayoutCache, derive caret +
@@ -484,7 +513,7 @@ pub fn view_field(
     let selection_range = text_state.selection_range();
     let (caret_pixel_rect, selection_pixel, preedit_pixel, content_h) = {
         let mut cache = layout_cache.borrow_mut();
-        let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
+        let layout = cache.layout_with_runs(effective_text.as_str(), &text_style, &runs, max_width);
         #[allow(
             clippy::cast_precision_loss,
             reason = "caret_width fits f32 losslessly (small u32)"
@@ -590,6 +619,15 @@ pub fn view_field(
         Rect::default(),
         text_style,
     );
+    // R767 §5.36 — paint the field's styled runs (rich text). The paint
+    // adapter emits one Vello glyph run per `StyleRun` (R713); the same
+    // `runs` were just shaped into the caret / selection geometry above
+    // (via `layout_with_runs`), so paint and geometry agree even when a
+    // run changes glyph metrics. `runs` is the `field_shaping` value
+    // (already preedit-shifted), so no per-site adjustment here.
+    if !runs.is_empty() {
+        text_node = text_node.with_runs(runs);
+    }
     if let Some(wrap_w) = max_width {
         text_node = text_node.with_layout(
             LayoutStyle::new().with_size(Size::auto().with_width(SizeValue::Px(wrap_w))),
@@ -820,13 +858,14 @@ pub fn ime_caret_rect_for(
         visual_caret_byte,
         text_style,
         max_width,
+        runs,
         ..
     } = field_shaping(tag, caret_byte as usize, interaction, theme, style);
 
     let layout_cache = use_text_field_layout_cache();
     let caret_local = {
         let mut cache = layout_cache.borrow_mut();
-        let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
+        let layout = cache.layout_with_runs(effective_text.as_str(), &text_style, &runs, max_width);
         #[allow(
             clippy::cast_precision_loss,
             reason = "caret_width fits f32 losslessly (small u32)"
@@ -915,6 +954,7 @@ pub fn byte_for_field_point(
         effective_text,
         text_style,
         max_width,
+        runs,
         ..
     } = field_shaping(tag, caret, interaction, theme, style);
 
@@ -935,7 +975,7 @@ pub fn byte_for_field_point(
     let scroll_y_f = field_scroll_offset(tag, style) as f32;
     let layout_cache = use_text_field_layout_cache();
     let mut cache = layout_cache.borrow_mut();
-    let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
+    let layout = cache.layout_with_runs(effective_text.as_str(), &text_style, &runs, max_width);
     byte_offset_for_point(layout, local_x, local_y + scroll_y_f)
 }
 
@@ -982,11 +1022,12 @@ pub fn byte_for_field_vertical_move(
         text_style,
         visual_caret_byte,
         max_width,
+        runs,
         ..
     } = field_shaping(tag, caret, interaction, theme, style);
     let layout_cache = use_text_field_layout_cache();
     let mut cache = layout_cache.borrow_mut();
-    let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
+    let layout = cache.layout_with_runs(effective_text.as_str(), &text_style, &runs, max_width);
     byte_offset_for_line_move(layout, visual_caret_byte, delta, goal)
 }
 
@@ -1024,11 +1065,12 @@ pub fn byte_for_field_line_boundary(
         text_style,
         visual_caret_byte,
         max_width,
+        runs,
         ..
     } = field_shaping(tag, caret, interaction, theme, style);
     let layout_cache = use_text_field_layout_cache();
     let mut cache = layout_cache.borrow_mut();
-    let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
+    let layout = cache.layout_with_runs(effective_text.as_str(), &text_style, &runs, max_width);
     byte_offset_for_line_boundary(layout, visual_caret_byte, end)
 }
 

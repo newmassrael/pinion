@@ -40,6 +40,20 @@
 //! Soft-wrapped lines are visual lines like any other, so `ArrowUp` /
 //! `ArrowDown` and pointer hits cross wrap boundaries with no extra work.
 //!
+//! R766 adds the **goal column** (`ArrowUp` / `ArrowDown` hold the
+//! horizontal column across a short line) + **visual-line `Home` / `End`**
+//! (with `Ctrl+Home` / `Ctrl+End` for the document boundaries).
+//!
+//! R767 adds **rich-text editing**: the textarea seeds three colour
+//! [`StyleRun`](pinion_core::scene::StyleRun) spans (the leading word of
+//! each line) into
+//! [`TextEditState::set_style_runs`](pinion_core::widgets::text_edit::TextEditState::set_style_runs).
+//! The runs ride along through edits (insert shifts them, deleting a
+//! styled word drops its run) via the `TextEditState` `FormatRange`
+//! maintenance, and [`tf_paint::view_field`] threads them through the
+//! `field_shaping` SSOT so paint and caret/hit-test geometry shape one
+//! identical run-aware `Layout`.
+//!
 //! ## Try it
 //!
 //! ```text
@@ -58,8 +72,10 @@ use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
 use pinion_core::external::External;
 use pinion_core::reactive::Owner;
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle};
+use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
+use pinion_core::style::{
+    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
+};
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
@@ -208,6 +224,19 @@ impl WidgetCore for TextAreaView {
         if text_state.text().is_empty() {
             text_state.set_text("first line\nsecond line\nthird line".to_owned());
             text_state.set_caret(0);
+            // R767 §5.36 — seed rich styled runs over the leading word of
+            // each line (colour-only: same size/weight as the field base,
+            // so the runs read as rich formatting without changing glyph
+            // metrics). The runs ride along through edits — typing before
+            // "first" shifts all three right, deleting a styled word drops
+            // its run — via the TextEditState FormatRange maintenance.
+            let fs = ta_style().font_size_px;
+            let coloured = |c: Color| TextStyle::new().with_size_px(fs).with_fg(c);
+            text_state.set_style_runs(vec![
+                StyleRun::new(0, 5, coloured(Color::rgb(0xD0, 0x28, 0x28))), // "first"  red
+                StyleRun::new(11, 17, coloured(Color::rgb(0x1F, 0x8A, 0x34))), // "second" green
+                StyleRun::new(23, 28, coloured(Color::rgb(0x26, 0x4C, 0xD8))), // "third"  blue
+            ]);
         }
         let blink = use_caret_blink(TA_TAG);
         let clipboard = use_clipboard(TA_TAG);

@@ -79,10 +79,11 @@
 //! observe the text content without going through the `send` invoke
 //! channel.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::reactive::{batch, Owner, Signal};
+use crate::scene::StyleRun;
 
 /// R56.1.b §5.38 §5.22 — Reactive text + caret pair for one
 /// [`TextField`](crate::widgets::text_field::TextField).
@@ -189,6 +190,42 @@ pub struct TextEditState {
     /// the goal column, it is pure caret-navigation scratch state, so
     /// arming / clearing it must never trigger a re-paint cascade.
     goal_column: Cell<Option<f32>>,
+    /// R767 §5.36 §5.22 — **styled runs** for rich-text editing: an
+    /// ordered, non-overlapping list of [`StyleRun`] spans over the
+    /// current [`text`](Self::text) byte buffer (the Qt `FormatRange`
+    /// model — each run is a fully-resolved [`TextStyle`] over a UTF-8
+    /// byte range). Empty (the default) is the single-style fast path;
+    /// the field's paint threads the runs into the
+    /// [`layout_with_runs`](pinion_text) shaping the visible caret /
+    /// hit-test share, so paint and geometry stay one layout.
+    ///
+    /// Maintained across edits: [`Self::insert`] shifts runs at/after
+    /// the caret, [`Self::backspace`] / [`Self::delete_forward`] clip
+    /// runs against the removed range — the canonical editor contract
+    /// that a styled span tracks *its text*, not a fixed byte offset.
+    /// Applying / clearing formatting over a range is a later slice
+    /// ([`Self::set_style_runs`] is the substrate seam in the meantime).
+    ///
+    /// A non-reactive [`RefCell`] (mirror of [`goal_column`](Self::goal_column)'s
+    /// [`Cell`]), **not** a [`Signal`]. The runs change only as a
+    /// side-effect of an edit ([`insert`](Self::insert) /
+    /// [`backspace`](Self::backspace) / [`delete_forward`](Self::delete_forward)),
+    /// and every such edit also writes the [`text`](Self::text) signal —
+    /// so the field's `text()` subscription already drives the repaint
+    /// that re-reads the runs. There is no R767 consumer that mutates
+    /// runs *without* a text edit, so an independent reactive channel
+    /// would be premature ([[abstraction-needs-second-consumer]]).
+    ///
+    /// **Honest deferral**: because it is not a `Signal`, the runs are
+    /// not captured by [`Owner::snapshot`](crate::reactive::Owner) — a
+    /// `scene/simulate` dry-run that edits a rich field would not restore
+    /// them on rollback (the same latent gap [`goal_column`](Self::goal_column)
+    /// carries). The first consumer that applies formatting over a range
+    /// *without* a text edit (the toolbar bold/colour path) needs both
+    /// independent reactivity and dry-run restoration; that consumer
+    /// promotes this to a serde-backed `Signal` (which entails deriving
+    /// `serde` on the [`TextStyle`](crate::style::TextStyle) family).
+    style_runs: RefCell<Vec<StyleRun>>,
 }
 
 impl TextEditState {
@@ -206,6 +243,7 @@ impl TextEditState {
             preedit_buffer: Signal::new(None),
             tag: None,
             goal_column: Cell::new(None),
+            style_runs: RefCell::new(Vec::new()),
         }
     }
 
@@ -242,6 +280,7 @@ impl TextEditState {
             preedit_buffer: Signal::new(None),
             tag: None,
             goal_column: Cell::new(None),
+            style_runs: RefCell::new(Vec::new()),
         }
     }
 
@@ -390,6 +429,26 @@ impl TextEditState {
         self.goal_column.set(x);
     }
 
+    /// R767 §5.36 §5.22 — current styled runs (rich-text formatting).
+    /// Subscribes like [`Self::text`]: a view-fn reading the runs
+    /// re-runs when an edit shifts / clips them. Empty for a plain
+    /// single-style field. See the [`style_runs`](Self::style_runs)
+    /// field doc for the maintenance contract.
+    #[must_use]
+    pub fn style_runs(&self) -> Vec<StyleRun> {
+        self.style_runs.borrow().clone()
+    }
+
+    /// R767 §5.36 §5.22 — replace the styled-run list wholesale. The
+    /// substrate seam for seeding a rich field's initial formatting and
+    /// (later) for applying / clearing formatting over a range. The
+    /// caller supplies fully-resolved, ideally non-overlapping runs in
+    /// byte order; the edit mutators maintain whatever shape is set
+    /// here across subsequent inserts / deletes.
+    pub fn set_style_runs(&self, runs: Vec<StyleRun>) {
+        *self.style_runs.borrow_mut() = runs;
+    }
+
     /// Replace the buffer with `new_text`. The caret is clamped
     /// to the nearest `char` boundary at-or-below the new text
     /// length (so a `set_text` shorter than the current text moves
@@ -416,6 +475,10 @@ impl TextEditState {
             self.caret_pos.set(clamped_caret);
             self.selection_anchor.set(None);
             self.preedit_buffer.set(None);
+            // R767 — a wholesale text replace invalidates every byte
+            // offset the runs referenced; clear them (the caller re-seeds
+            // via set_style_runs if the new text is styled).
+            self.style_runs.borrow_mut().clear();
         });
     }
 
@@ -464,19 +527,26 @@ impl TextEditState {
             buf.drain(start..end);
             buf.insert_str(start, s);
             let new_caret = start + s.len();
+            let mut runs = self.style_runs.borrow().clone();
+            clip_runs_for_delete(&mut runs, start, end);
+            shift_runs_for_insert(&mut runs, start, s.len());
             batch(|| {
                 self.text.set(buf);
                 self.caret_pos.set(new_caret);
                 self.selection_anchor.set(None);
+                *self.style_runs.borrow_mut() = runs;
             });
             return;
         }
         let snapped = clamp_to_char_boundary(&buf, caret);
         buf.insert_str(snapped, s);
         let new_caret = snapped + s.len();
+        let mut runs = self.style_runs.borrow().clone();
+        shift_runs_for_insert(&mut runs, snapped, s.len());
         batch(|| {
             self.text.set(buf);
             self.caret_pos.set(new_caret);
+            *self.style_runs.borrow_mut() = runs;
         });
     }
 
@@ -496,10 +566,13 @@ impl TextEditState {
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
             buf.drain(start..end);
+            let mut runs = self.style_runs.borrow().clone();
+            clip_runs_for_delete(&mut runs, start, end);
             batch(|| {
                 self.text.set(buf);
                 self.caret_pos.set(start);
                 self.selection_anchor.set(None);
+                *self.style_runs.borrow_mut() = runs;
             });
             return;
         }
@@ -508,9 +581,12 @@ impl TextEditState {
         }
         let prev = prev_char_boundary(&buf, caret);
         buf.drain(prev..caret);
+        let mut runs = self.style_runs.borrow().clone();
+        clip_runs_for_delete(&mut runs, prev, caret);
         batch(|| {
             self.text.set(buf);
             self.caret_pos.set(prev);
+            *self.style_runs.borrow_mut() = runs;
         });
     }
 
@@ -529,10 +605,13 @@ impl TextEditState {
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
             buf.drain(start..end);
+            let mut runs = self.style_runs.borrow().clone();
+            clip_runs_for_delete(&mut runs, start, end);
             batch(|| {
                 self.text.set(buf);
                 self.caret_pos.set(start);
                 self.selection_anchor.set(None);
+                *self.style_runs.borrow_mut() = runs;
             });
             return;
         }
@@ -541,10 +620,15 @@ impl TextEditState {
         }
         let next = next_char_boundary(&buf, caret);
         buf.drain(caret..next);
-        // Caret stays — only the text changes. Single `Signal::set`
-        // means no `batch` needed (the contract is "atomic multi-
-        // axis", a single-axis write is already atomic).
-        self.text.set(buf);
+        let mut runs = self.style_runs.borrow().clone();
+        clip_runs_for_delete(&mut runs, caret, next);
+        // Text + runs both change: batch the two `Signal::set`s so a
+        // subscriber re-runs once (the R55.G.24 atomic-multi-axis
+        // contract — runs maintenance promoted this from a single write).
+        batch(|| {
+            self.text.set(buf);
+            *self.style_runs.borrow_mut() = runs;
+        });
     }
 
     /// Move the caret one `char` to the left (towards `0`).
@@ -1018,6 +1102,59 @@ fn next_char_boundary(text: &str, pos: usize) -> usize {
     i
 }
 
+/// R767 §5.36 §5.22 — shift styled runs for an insertion of `len` bytes
+/// at byte offset `at` (the [`TextEditState::insert`] maintenance step).
+///
+/// Bytes at or after `at` move right by `len`. A run that *contains*
+/// `at` grows to include the inserted text (typing inside a styled span
+/// inherits it); a run that *starts* at `at` is pushed right (the
+/// insertion sits before it, so it does not inherit) — the canonical
+/// "insert inherits the run to its left" affinity, expressed by the
+/// symmetric `>= at` test on both endpoints.
+fn shift_runs_for_insert(runs: &mut [StyleRun], at: usize, len: usize) {
+    let (at, len) = (
+        u32::try_from(at).unwrap_or(u32::MAX),
+        u32::try_from(len).unwrap_or(0),
+    );
+    for r in runs.iter_mut() {
+        if r.start >= at {
+            r.start = r.start.saturating_add(len);
+        }
+        if r.end >= at {
+            r.end = r.end.saturating_add(len);
+        }
+    }
+}
+
+/// R767 §5.36 §5.22 — clip styled runs against a deletion of the byte
+/// range `[start, end)` (the backspace / delete / selection-drain
+/// maintenance step). Each run endpoint is interval-subtracted: an
+/// endpoint before the range is untouched, one inside is clamped to the
+/// range start, one after shifts left by the deleted length. Runs that
+/// collapse to empty (fully inside the deleted range) are dropped — a
+/// styled span tracks its text, and deleting all of it removes the span.
+fn clip_runs_for_delete(runs: &mut Vec<StyleRun>, start: usize, end: usize) {
+    let (a, b) = (
+        u32::try_from(start).unwrap_or(u32::MAX),
+        u32::try_from(end).unwrap_or(u32::MAX),
+    );
+    let d = b.saturating_sub(a);
+    let clip = |p: u32| {
+        if p <= a {
+            p
+        } else if p >= b {
+            p - d
+        } else {
+            a
+        }
+    };
+    for r in runs.iter_mut() {
+        r.start = clip(r.start);
+        r.end = clip(r.end);
+    }
+    runs.retain(|r| r.start < r.end);
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.b §5.38 §5.22 — `TextEditState` regression battery.
@@ -1030,8 +1167,21 @@ mod tests {
         use_text_edit_state, TextEditState,
     };
     use crate::reactive::{Effect, Owner};
+    use crate::scene::StyleRun;
+    use crate::style::TextStyle;
     use std::cell::Cell;
     use std::rc::Rc;
+
+    /// R767 — a default-styled run over `[s, e)` for the maintenance
+    /// battery (the style itself is irrelevant to shift / clip).
+    fn run(s: u32, e: u32) -> StyleRun {
+        StyleRun::new(s, e, TextStyle::default())
+    }
+
+    /// `(start, end)` pairs of a state's runs, for terse assertions.
+    fn run_spans(st: &TextEditState) -> Vec<(u32, u32)> {
+        st.style_runs().iter().map(|r| (r.start, r.end)).collect()
+    }
 
     // ─────────────────────────────────────────────────────────────
     // Initial state + construction
@@ -2158,5 +2308,107 @@ mod tests {
         assert_eq!(eff, "abX");
         assert_eq!(vc, 3, "splice clamps to text.len(), preedit_end = 2 + 1 = 3");
         assert_eq!(range, Some((2, 3)));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R767 §5.36 §5.22 — styled-run edit maintenance (FormatRange)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r767_insert_before_run_shifts_it_right() {
+        let s = TextEditState::with_initial("hello world".to_owned());
+        s.set_style_runs(vec![run(6, 11)]); // "world"
+        s.set_caret(0);
+        s.insert("XX"); // 2 bytes at the buffer start
+        assert_eq!(run_spans(&s), vec![(8, 13)], "a run after the insert shifts right by len");
+    }
+
+    #[test]
+    fn r767_insert_inside_run_grows_it() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![run(0, 5)]);
+        s.set_caret(2);
+        s.insert("XX"); // inside the run
+        assert_eq!(run_spans(&s), vec![(0, 7)], "typing inside a styled span extends it");
+    }
+
+    #[test]
+    fn r767_insert_at_run_end_inherits_left() {
+        let s = TextEditState::with_initial("ab".to_owned());
+        s.set_style_runs(vec![run(0, 2)]);
+        s.set_caret(2); // at the run end
+        s.insert("X");
+        assert_eq!(run_spans(&s), vec![(0, 3)], "insert at a run's end extends it (inherit-left)");
+    }
+
+    #[test]
+    fn r767_insert_at_run_start_does_not_inherit() {
+        let s = TextEditState::with_initial("ab".to_owned());
+        s.set_style_runs(vec![run(0, 2)]);
+        s.set_caret(0); // at the run start
+        s.insert("X");
+        assert_eq!(
+            run_spans(&s),
+            vec![(1, 3)],
+            "insert at a run's start pushes it right (the new text is outside the span)",
+        );
+    }
+
+    #[test]
+    fn r767_backspace_inside_run_shrinks_it() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![run(0, 5)]);
+        s.set_caret(5);
+        s.backspace(); // delete byte [4, 5)
+        assert_eq!(s.text(), "hell");
+        assert_eq!(run_spans(&s), vec![(0, 4)], "deleting a byte inside a run shrinks its end");
+    }
+
+    #[test]
+    fn r767_deleting_a_whole_run_drops_it() {
+        let s = TextEditState::with_initial("ab".to_owned());
+        s.set_style_runs(vec![run(0, 2)]);
+        s.set_selection(0, 2);
+        s.delete_forward(); // drains the whole run's text
+        assert!(s.style_runs().is_empty(), "a run whose text is fully deleted is dropped");
+    }
+
+    #[test]
+    fn r767_delete_spanning_two_runs_clips_both() {
+        // "aabbcc": run0 "aa" [0,2), run1 "cc" [4,6). Delete [1,5)
+        // ("abbc") -> text "ac", run0 clips to [0,1), run1 to [1,2).
+        let s = TextEditState::with_initial("aabbcc".to_owned());
+        s.set_style_runs(vec![run(0, 2), run(4, 6)]);
+        s.set_selection(1, 5);
+        s.delete_forward();
+        assert_eq!(s.text(), "ac");
+        assert_eq!(
+            run_spans(&s),
+            vec![(0, 1), (1, 2)],
+            "a delete spanning two runs clips the first and shifts/clips the second",
+        );
+    }
+
+    #[test]
+    fn r767_type_to_replace_selection_maintains_runs() {
+        // Replace the styled "world" with "WORLD!" (drain then insert at
+        // the same offset): the run clips to empty over the drained span,
+        // then the inserted text shifts the trailing run.
+        let s = TextEditState::with_initial("hi world end".to_owned());
+        s.set_style_runs(vec![run(3, 8), run(9, 12)]); // "world", "end"
+        s.set_selection(3, 8);
+        s.insert("WORLD!"); // 6 bytes replace the 5-byte "world"
+        assert_eq!(s.text(), "hi WORLD! end");
+        // run0 ("world") drained to empty -> dropped; "end" run shifts +1
+        // (net delta +1 from the 5->6 replace) to [10, 13).
+        assert_eq!(run_spans(&s), vec![(10, 13)], "trailing run tracks the net length change");
+    }
+
+    #[test]
+    fn r767_set_text_clears_runs() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![run(0, 5)]);
+        s.set_text("brand new".to_owned());
+        assert!(s.style_runs().is_empty(), "a wholesale set_text clears the now-invalid runs");
     }
 }
