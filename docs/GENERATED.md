@@ -17708,6 +17708,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R769 — R769 field-level merge (mergeCharFormat): merge_style_run substrate + bold/italic toggle toolbar
+
+**Changes**:
+- merge_style_run(start,end,base,mutate) = Qt mergeCharFormat (per-field transform, keep others)
+- field_merge_runs: split range into effective sub-spans (run or base), mutate each, overlay+merge
+- covered byte transforms its run style; uncovered resolves against base (field default) first
+- style_at(byte)->Option<TextStyle>: run covering a byte (or None); toolbar reads toggle direction
+- hello-textarea B/I toggle buttons (merge) beside swatches; press-hook routes via merge_style_run
+- toggle policy (direction via style_at) in binding; substrate owns mechanics (R743 scaffold/policy)
+- lifted hit_tag: one rect-contains test shared by toggle + swatch routing
+
+
+
+**Verification**:
+- pinion-core +8 unit: keep-colour/over-base/mixed/coalesce/reversible/italic/style_at/empty
+- r769 demo ~34 assert: toolbar + bold-keeps-colour + toggle + bold+italic + base + geometry + pixel
+- bold is metric-affecting: a click after bolding-all still lands on the right byte (one layout)
+- every toggle leaves the text byte-identical (formatting ⊥ content)
+- workspace test green (-j2) + clippy -D pedantic (vello) clean + sibling demos r764-r768 PASS
+
+
+
+**Impact**: §5.36, §5.22
+
+
+**Carry forward**:
+- toggle buttons are decorations (no role=button a11y, like R768 swatches); not a substrate debt
+- AI merge path = compose via R768 apply-style + run reads; merge-style invoke redundant, deferred
+- toggle direction from selection start (style_at); mixed-selection all-or-nothing = future refinement
+- R766 carries persist: hit-test glue 2-copy / aria-multiline a11y / TUI multi-line / wheel-scroll
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

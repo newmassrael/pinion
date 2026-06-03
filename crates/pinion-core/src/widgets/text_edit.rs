@@ -516,6 +516,61 @@ impl TextEditState {
         self.style_runs.set(runs);
     }
 
+    /// R769 §5.36 §5.22 — merge a per-field style transform over the byte
+    /// range `[start, end)` (Qt `mergeCharFormat`): the toolbar "toggle
+    /// **bold** / *italic* over the selection while keeping its colour"
+    /// primitive. Each affected byte's other styling is preserved; only
+    /// the field(s) `mutate` touches change. Covered bytes transform
+    /// their run's style; uncovered bytes resolve against `base` (the
+    /// field's default char format — pass the same base style the field
+    /// paints unstyled text with) before the transform.
+    ///
+    /// The caller owns the *policy* (which field, and the toggle
+    /// direction — read [`Self::style_at`] to decide); this substrate
+    /// owns the *mechanics* (sub-span resolution + overlay + merge). The
+    /// R768 [`Self::apply_style_run`] is the wholesale `setCharFormat`
+    /// peer (replaces every field); this preserves untouched ones.
+    /// `start` / `end` are clamped + `char`-snapped; empty range no-op.
+    pub fn merge_style_run(
+        &self,
+        start: usize,
+        end: usize,
+        base: &TextStyle,
+        mutate: impl Fn(&mut TextStyle),
+    ) {
+        let buf = self.text.get();
+        let a = clamp_to_char_boundary(&buf, start);
+        let b = clamp_to_char_boundary(&buf, end);
+        if a >= b {
+            return;
+        }
+        let mut runs = self.style_runs.get();
+        field_merge_runs(
+            &mut runs,
+            u32::try_from(a).unwrap_or(u32::MAX),
+            u32::try_from(b).unwrap_or(u32::MAX),
+            base,
+            mutate,
+        );
+        self.style_runs.set(runs);
+    }
+
+    /// R769 §5.36 §5.22 — the resolved style of the run covering `byte`,
+    /// or `None` if the byte is unstyled (renders with the field base).
+    /// A toolbar reads this at the selection start to decide a toggle's
+    /// direction (e.g. "is the selection already bold → un-bold it").
+    /// `byte` is a raw offset; callers pass an already-`char`-aligned
+    /// caret / selection byte.
+    #[must_use]
+    pub fn style_at(&self, byte: usize) -> Option<TextStyle> {
+        let b = u32::try_from(byte).unwrap_or(u32::MAX);
+        self.style_runs
+            .get()
+            .into_iter()
+            .find(|r| r.start <= b && b < r.end)
+            .map(|r| r.style)
+    }
+
     /// Replace the buffer with `new_text`. The caret is clamped
     /// to the nearest `char` boundary at-or-below the new text
     /// length (so a `set_text` shorter than the current text moves
@@ -1287,6 +1342,58 @@ fn overlay_style_run(runs: &mut Vec<StyleRun>, new: StyleRun) {
     }
     subtract_style_range(runs, new.start, new.end);
     runs.push(new);
+    runs.sort_by_key(|r| r.start);
+    merge_adjacent_runs(runs);
+}
+
+/// R769 §5.36 §5.22 — merge a per-field style transform over the byte
+/// range `[start, end)` (Qt `QTextCursor::mergeCharFormat` semantics):
+/// every byte keeps its other styling and only the field(s) `mutate`
+/// touches change. A byte already covered by a run has `mutate` applied
+/// to *that run's* resolved style; an uncovered byte resolves against
+/// `base` (the field's default char format — the style unstyled text
+/// paints with) before `mutate`, so e.g. bolding plain coloured text
+/// yields `base.fg + bold` rather than dropping the colour. The
+/// `[start, end)` span is rebuilt from its (possibly several) effective
+/// sub-spans, then abutting identical results coalesce. Unlike
+/// [`overlay_style_run`] (wholesale `setCharFormat`), this preserves each
+/// sub-span's untouched fields. Empty / inverted range is a no-op.
+fn field_merge_runs(
+    runs: &mut Vec<StyleRun>,
+    start: u32,
+    end: u32,
+    base: &TextStyle,
+    mutate: impl Fn(&mut TextStyle),
+) {
+    if start >= end {
+        return;
+    }
+    runs.sort_by_key(|r| r.start);
+    // Split [start, end) into effective sub-spans: a covered slice takes
+    // its run's style, a gap takes `base`. `runs` is non-overlapping +
+    // sorted, so `cursor` walks left-to-right without backtracking.
+    let mut pieces: Vec<StyleRun> = Vec::new();
+    let mut cursor = start;
+    for r in runs.iter() {
+        if r.end <= start || r.start >= end {
+            continue;
+        }
+        let lo = r.start.max(start);
+        let hi = r.end.min(end);
+        if cursor < lo {
+            pieces.push(StyleRun::new(cursor, lo, base.clone()));
+        }
+        pieces.push(StyleRun::new(lo, hi, r.style.clone()));
+        cursor = hi;
+    }
+    if cursor < end {
+        pieces.push(StyleRun::new(cursor, end, base.clone()));
+    }
+    for p in &mut pieces {
+        mutate(&mut p.style);
+    }
+    subtract_style_range(runs, start, end);
+    runs.extend(pieces);
     runs.sort_by_key(|r| r.start);
     merge_adjacent_runs(runs);
 }
@@ -2652,6 +2759,125 @@ mod tests {
         let s = TextEditState::with_initial("hello".to_owned());
         s.apply_style_run(2, 999, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
         assert_eq!(run_spans(&s), vec![(2, 5)], "end clamps to text.len()");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R769 §5.36 §5.22 — field-level merge (mergeCharFormat) + style_at
+    // ─────────────────────────────────────────────────────────────
+
+    /// A plausible field base char format: 16px text in the given ink.
+    fn base_ink(rgb: (u8, u8, u8)) -> TextStyle {
+        TextStyle::new().with_fg(Color::rgb(rgb.0, rgb.1, rgb.2))
+    }
+
+    const INK_BASE: (u8, u8, u8) = (0x10, 0x10, 0x10);
+
+    #[test]
+    fn r769_merge_bold_over_run_keeps_its_colour() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        s.merge_style_run(0, 5, &base_ink(INK_BASE), |st| {
+            st.font_weight = crate::style::FontWeight::BOLD;
+        });
+        let runs = s.style_runs();
+        assert_eq!(run_spans(&s), vec![(0, 5)], "the run span is preserved");
+        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour kept");
+        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "now bold");
+    }
+
+    #[test]
+    fn r769_merge_bold_over_unstyled_uses_base() {
+        let s = TextEditState::with_initial("hello world".to_owned());
+        // No runs: the [6,11) "world" is unstyled → resolves against base.
+        s.merge_style_run(6, 11, &base_ink(INK_BASE), |st| {
+            st.font_weight = crate::style::FontWeight::BOLD;
+        });
+        let runs = s.style_runs();
+        assert_eq!(run_spans(&s), vec![(6, 11)], "a run materialises over the bolded gap");
+        assert_eq!(runs[0].style.fg_color, Color::rgb(INK_BASE.0, INK_BASE.1, INK_BASE.2), "base ink");
+        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "base + bold");
+    }
+
+    #[test]
+    fn r769_merge_over_mixed_coverage_preserves_each_subspan() {
+        let s = TextEditState::with_initial("hello world".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]); // "hello" red, " world" unstyled
+        // Bold [3, 8): covered [3,5) keeps red, gap [5,8) takes base.
+        s.merge_style_run(3, 8, &base_ink(INK_BASE), |st| {
+            st.font_weight = crate::style::FontWeight::BOLD;
+        });
+        assert_eq!(run_spans(&s), vec![(0, 3), (3, 5), (5, 8)], "split into normal | red-bold | base-bold");
+        let runs = s.style_runs();
+        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::NORMAL, "untouched flank stays normal");
+        assert_eq!(runs[1].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "covered slice keeps red");
+        assert_eq!(runs[1].style.font_weight, crate::style::FontWeight::BOLD, "covered slice is bold");
+        assert_eq!(runs[2].style.fg_color, Color::rgb(INK_BASE.0, INK_BASE.1, INK_BASE.2), "gap took base ink");
+        assert_eq!(runs[2].style.font_weight, crate::style::FontWeight::BOLD, "gap is bold");
+    }
+
+    #[test]
+    fn r769_merge_pieces_with_equal_result_coalesce() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        // Two abutting same-colour runs (set_style_runs does not merge).
+        s.set_style_runs(vec![crun(0, 2, RED), crun(2, 5, RED)]);
+        s.merge_style_run(0, 5, &base_ink(INK_BASE), |st| {
+            st.font_weight = crate::style::FontWeight::BOLD;
+        });
+        assert_eq!(run_spans(&s), vec![(0, 5)], "identical bolded pieces coalesce into one span");
+    }
+
+    #[test]
+    fn r769_merge_is_reversible_round_trips_to_original() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        let original = s.style_runs();
+        s.merge_style_run(0, 5, &base_ink(INK_BASE), |st| {
+            st.font_weight = crate::style::FontWeight::BOLD;
+        });
+        s.merge_style_run(0, 5, &base_ink(INK_BASE), |st| {
+            st.font_weight = crate::style::FontWeight::NORMAL;
+        });
+        assert_eq!(s.style_runs(), original, "bold then un-bold returns the exact original runs");
+    }
+
+    #[test]
+    fn r769_merge_italic_independent_of_weight() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        s.merge_style_run(0, 5, &base_ink(INK_BASE), |st| {
+            st.font_weight = crate::style::FontWeight::BOLD;
+        });
+        s.merge_style_run(0, 5, &base_ink(INK_BASE), |st| {
+            st.font_style = crate::style::FontStyle::Italic;
+        });
+        let runs = s.style_runs();
+        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "weight survives a later italic merge");
+        assert_eq!(runs[0].style.font_style, crate::style::FontStyle::Italic, "italic applied");
+        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour survives both merges");
+    }
+
+    #[test]
+    fn r769_style_at_reports_covering_run_or_none() {
+        let s = TextEditState::with_initial("hello world".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        assert_eq!(
+            s.style_at(2).map(|st| st.fg_color),
+            Some(Color::rgb(RED.0, RED.1, RED.2)),
+            "a covered byte reports its run style",
+        );
+        assert!(s.style_at(7).is_none(), "an unstyled byte reports None");
+        assert!(s.style_at(5).is_none(), "the exclusive end byte is outside the run");
+    }
+
+    #[test]
+    fn r769_merge_empty_range_is_a_noop() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        let before = s.style_runs();
+        s.merge_style_run(3, 3, &base_ink(INK_BASE), |st| {
+            st.font_weight = crate::style::FontWeight::BOLD;
+        });
+        assert_eq!(s.style_runs(), before, "a collapsed range leaves the runs untouched");
     }
 
     #[test]

@@ -65,6 +65,16 @@
 //! identical path. A runs-only change (no text edit) repaints through the
 //! reactive `style_runs` `Signal`.
 //!
+//! R769 adds **field-level merge** (`mergeCharFormat`): **B** / **I**
+//! toggle buttons. Selecting a coloured word and clicking **B** makes it
+//! bold *while keeping its colour* — the toggle changes only the weight,
+//! via
+//! [`TextEditState::merge_style_run`](pinion_core::widgets::text_edit::TextEditState::merge_style_run)
+//! (covered bytes transform their run; unstyled bytes resolve against the
+//! field base). The toggle direction is read from the selection start
+//! with `style_at`. Bold / italic are metric-affecting runs, so the
+//! `field_shaping` SSOT keeps the caret + hit-test geometry exact.
+//!
 //! ## Try it
 //!
 //! ```text
@@ -75,8 +85,9 @@
 //! line. Keep typing on one line past the box edge → it soft-wraps to
 //! the next visual line. `ArrowUp` / `ArrowDown` move between lines
 //! (hold `Shift` to select); drag across lines to select a multi-line
-//! band. Select a word and click a colour swatch under the field to
-//! recolour it; the bordered swatch clears formatting.
+//! band. Select a word and click **B** / **I** to bold / italicise it
+//! (keeping its colour), or a colour swatch to recolour it; the bordered
+//! swatch clears formatting.
 
 use std::rc::Rc;
 
@@ -84,9 +95,10 @@ use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
 use pinion_core::external::External;
 use pinion_core::reactive::Owner;
-use pinion_core::scene::{BoxNode, ContainerNode, Rect, StyleRun, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
+    LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::caret_blink::use_caret_blink;
@@ -146,6 +158,23 @@ const SWATCHES: [Swatch; 4] = [
     (SW_CLEAR, None),
 ];
 
+// R769 §5.36 §5.22 — field-level merge (mergeCharFormat) toggle buttons:
+// bold / italic over the selection, *preserving* its colour. Unlike the
+// colour swatches (wholesale setCharFormat) these route through
+// `TextEditState::merge_style_run`, which keeps untouched fields.
+const TB_BOLD: &str = "toggle_bold";
+const TB_ITALIC: &str = "toggle_italic";
+
+/// R769 — which text field a toggle button flips.
+#[derive(Clone, Copy)]
+enum ToggleField {
+    Bold,
+    Italic,
+}
+
+const TOGGLES: [(&str, ToggleField); 2] =
+    [(TB_BOLD, ToggleField::Bold), (TB_ITALIC, ToggleField::Italic)];
+
 /// R764 §5.22 — single source of truth for the textarea's
 /// [`TextFieldStyle`]. The view fn, the pointer hooks, and the
 /// vertical-nav `apply_key` arm all shape against this *identical*
@@ -165,34 +194,66 @@ fn swatch_text_style(rgb: Rgb) -> TextStyle {
         .with_fg(Color::rgb(rgb.0, rgb.1, rgb.2))
 }
 
-/// R768 §5.36 §5.22 — the formatting toolbar: a row of colour swatches
-/// plus a clear swatch. Each swatch is a tagged decoration `BoxNode`;
-/// the press hook ([`TextAreaView::position_caret_for_point`]) resolves
-/// a click to its tag and applies the colour to the live selection.
+/// R769 §5.36 — the field's default char format: the base style unstyled
+/// text paints with. Passed to [`TextEditState::merge_style_run`] so a
+/// bold/italic toggle over *unstyled* bytes resolves their colour from
+/// here (M3 `OnSurface`, the field text ink) rather than dropping to a
+/// hard-coded default.
+fn base_text_style(theme: &pinion_core::theme::Theme) -> TextStyle {
+    TextStyle::new()
+        .with_size_px(ta_style().font_size_px)
+        .with_fg(theme.resolve(ColorRole::OnSurface))
+}
+
+/// R768 §5.36 §5.22 / R769 — the formatting toolbar: bold + italic toggle
+/// buttons (field-level `mergeCharFormat`) then a row of colour swatches
+/// (wholesale `setCharFormat`) + a clear swatch. Each control is a tagged
+/// decoration; the press hook ([`TextAreaView::position_caret_for_point`])
+/// resolves a click to its tag and applies it to the live selection.
 fn toolbar(theme: &pinion_core::theme::Theme) -> Scene {
-    let swatch = |tag: &'static str, fill: Color, border: bool| {
+    let cell = |tag: &'static str, fill: Color, border: bool, child: Vec<Scene>| {
         let mut style = BoxStyle::filled(fill).with_corner_radius(6);
         if border {
-            style = style.with_border(pinion_core::style::Border::new(
-                theme.resolve(ColorRole::OnSurfaceMuted),
-                1,
-            ));
+            style = style.with_border(Border::new(theme.resolve(ColorRole::OnSurfaceMuted), 1));
         }
-        Scene::Box(
-            BoxNode::new(Rect::default(), style)
+        Scene::Container(
+            ContainerNode::new(child)
                 .with_tag(tag)
-                .with_layout(LayoutStyle::new().with_size(Size::px(SWATCH_SIZE, SWATCH_SIZE))),
+                .with_style(style)
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_size(Size::px(SWATCH_SIZE, SWATCH_SIZE))
+                        .with_justify(JustifyContent::Center)
+                        .with_align_items(AlignItems::Center),
+                ),
         )
     };
-    let children = SWATCHES
-        .iter()
-        .map(|&(tag, ink)| match ink {
-            // Clear swatch: a neutral bordered surface (no icon-font rule
-            // — the bordered empty box reads as "no fill / remove").
-            None => swatch(tag, theme.resolve(ColorRole::SurfaceContainerHighest), true),
-            Some(rgb) => swatch(tag, Color::rgb(rgb.0, rgb.1, rgb.2), false),
-        })
-        .collect();
+    // R769 — bold / italic toggle buttons, labelled with a "B" / "I"
+    // glyph rendered in the very style they toggle (no icon font).
+    let label = |text: &'static str, style: TextStyle| {
+        vec![Scene::Text(TextNode::styled(text, Rect::default(), style))]
+    };
+    let on = theme.resolve(ColorRole::OnSurface);
+    let surface = theme.resolve(ColorRole::SurfaceContainerHighest);
+    let bold_btn = cell(
+        TB_BOLD,
+        surface,
+        true,
+        label("B", TextStyle::new().with_fg(on).with_weight(FontWeight::BOLD)),
+    );
+    let italic_btn = cell(
+        TB_ITALIC,
+        surface,
+        true,
+        label("I", TextStyle::new().with_fg(on).with_style(FontStyle::Italic)),
+    );
+    let mut children = vec![bold_btn, italic_btn];
+    children.extend(SWATCHES.iter().map(|&(tag, ink)| match ink {
+        // Clear swatch: a neutral bordered surface (the bordered empty
+        // box reads as "no fill / remove").
+        None => cell(tag, surface, true, Vec::new()),
+        Some(rgb) => cell(tag, Color::rgb(rgb.0, rgb.1, rgb.2), false, Vec::new()),
+    }));
     Scene::Container(
         ContainerNode::new(children).with_layout(
             LayoutStyle::new()
@@ -202,37 +263,78 @@ fn toolbar(theme: &pinion_core::theme::Theme) -> Scene {
     )
 }
 
-/// R768 §5.36 §5.22 — toolbar press router. Returns `true` when `(x, y)`
-/// landed on a swatch (the press is swallowed — no caret move): a colour
-/// swatch applies its ink to the current selection, the clear swatch
-/// strips it. A press with no active selection is still swallowed (the
-/// toolbar owns that pixel) but is a no-op — formatting needs a range.
-/// Returns `false` when no swatch was hit, so the caller falls through
-/// to caret positioning.
-fn try_toolbar_press(scene: &Scene, x: f32, y: f32) -> bool {
-    for (tag, ink) in SWATCHES {
-        let Some(rect) = pinion_shell::rect_for_tag(scene, tag) else {
-            continue;
-        };
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "swatch rect coords are small screen pixels; f32 is exact below 2^23"
-        )]
-        let inside = x >= rect.x as f32
+/// R768/R769 — does `(x, y)` land on the toolbar control tagged `tag`?
+/// One rect-contains test shared by the swatch + toggle press routing.
+fn hit_tag(scene: &Scene, tag: &'static str, x: f32, y: f32) -> bool {
+    let Some(rect) = pinion_shell::rect_for_tag(scene, tag) else {
+        return false;
+    };
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "toolbar rect coords are small screen pixels; f32 is exact below 2^23"
+    )]
+    {
+        x >= rect.x as f32
             && x < (rect.x + rect.w) as f32
             && y >= rect.y as f32
-            && y < (rect.y + rect.h) as f32;
-        if !inside {
-            continue;
+            && y < (rect.y + rect.h) as f32
+    }
+}
+
+/// R769 §5.36 §5.22 — flip `field` over the live selection via
+/// [`TextEditState::merge_style_run`]. *Policy* lives here (the toggle
+/// direction is read from the selection start via
+/// [`TextEditState::style_at`]); the substrate owns the *mechanics*. The
+/// other style fields are preserved, so bolding a coloured word keeps its
+/// colour. No-op when nothing is selected.
+fn apply_toggle(field: ToggleField) {
+    let edit = use_text_edit_state(TA_TAG);
+    let Some((start, end)) = edit.selection_range() else {
+        return;
+    };
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let base = base_text_style(&theme);
+    let at_start = edit.style_at(start);
+    match field {
+        ToggleField::Bold => {
+            let now_bold = at_start.is_some_and(|st| st.font_weight == FontWeight::BOLD);
+            let target = if now_bold { FontWeight::NORMAL } else { FontWeight::BOLD };
+            edit.merge_style_run(start, end, &base, move |st| st.font_weight = target);
         }
-        if let Some((start, end)) = use_text_edit_state(TA_TAG).selection_range() {
-            let edit = use_text_edit_state(TA_TAG);
-            match ink {
-                Some(rgb) => edit.apply_style_run(start, end, swatch_text_style(rgb)),
-                None => edit.clear_style_runs(start, end),
+        ToggleField::Italic => {
+            let now_italic = at_start.is_some_and(|st| st.font_style == FontStyle::Italic);
+            let target = if now_italic { FontStyle::Normal } else { FontStyle::Italic };
+            edit.merge_style_run(start, end, &base, move |st| st.font_style = target);
+        }
+    }
+}
+
+/// R768 §5.36 §5.22 / R769 — toolbar press router. Returns `true` when
+/// `(x, y)` landed on a toolbar control (the press is swallowed — no
+/// caret move): a toggle button flips bold/italic over the selection
+/// (merge), a colour swatch sets its ink (overlay), the clear swatch
+/// strips formatting. A press with no active selection is still
+/// swallowed (the toolbar owns that pixel) but is a no-op — formatting
+/// needs a range. Returns `false` when nothing was hit, so the caller
+/// falls through to caret positioning.
+fn try_toolbar_press(scene: &Scene, x: f32, y: f32) -> bool {
+    for (tag, field) in TOGGLES {
+        if hit_tag(scene, tag, x, y) {
+            apply_toggle(field);
+            return true;
+        }
+    }
+    for (tag, ink) in SWATCHES {
+        if hit_tag(scene, tag, x, y) {
+            if let Some((start, end)) = use_text_edit_state(TA_TAG).selection_range() {
+                let edit = use_text_edit_state(TA_TAG);
+                match ink {
+                    Some(rgb) => edit.apply_style_run(start, end, swatch_text_style(rgb)),
+                    None => edit.clear_style_runs(start, end),
+                }
             }
+            return true;
         }
-        return true;
     }
     false
 }
@@ -387,7 +489,7 @@ impl WidgetCore for TextAreaView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-textarea (R768 §5.36 §5.22)"
+        "pinion hello-textarea (R769 §5.36 §5.22)"
     }
 
     /// R764 §5.22 / R766 — multi-line key handling. Five keys diverge
