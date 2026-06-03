@@ -622,6 +622,42 @@ impl WidgetView for TextFieldView {
             &tf_paint::TextFieldStyle::m3_filled(),
         ))
     }
+
+    /// R762 §5.36 §5.38 — reverse of [`Self::ime_caret_rect`]: on a
+    /// press inside the focused field, hit-test the cursor to a byte
+    /// offset and move the caret there (click-to-position). Mirrors the
+    /// IME impl's binding-side field-rect walk + shared
+    /// [`tf_paint::byte_for_field_point`] helper (the same
+    /// `splice_preedit` + style + `LayoutCache` the visible caret is
+    /// built from), so the glyph a click lands on and the byte it
+    /// resolves to stay one SSOT.
+    fn position_caret_for_point(
+        state: &(TextFieldState, u32),
+        scene: &Scene,
+        focused: Option<&str>,
+        x: f32,
+        y: f32,
+    ) -> bool {
+        if focused != Some(TF_TAG) {
+            return false;
+        }
+        let (interaction, _caret_byte) = *state;
+        let Some(field_rect) = pinion_shell::rect_for_tag(scene, TF_TAG) else {
+            return false;
+        };
+        let theme = use_theme(THEME_TAG).theme_animated();
+        let byte = tf_paint::byte_for_field_point(
+            TF_TAG,
+            interaction,
+            x,
+            y,
+            field_rect,
+            &theme,
+            &tf_paint::TextFieldStyle::m3_filled(),
+        );
+        use_text_edit_state(TF_TAG).set_caret(byte);
+        true
+    }
 }
 
 // R698 §5.16 §5.38 — TextField state <-> SCXML id mapping now routes

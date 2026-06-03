@@ -17336,6 +17336,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R762 — R762 §5.36 §5.38 — pointer caret hit-test substrate: byte_offset_for_point (pixel->byte, inverse of caret_rect_for_byte_offset via parley Cursor::from_point, style-agnostic over R713 styled runs) + click-to-position-caret wired at mouse_pressed_for_window (native winit + scene/click converge, one path) through new WidgetView::position_caret_for_point hook + tf_paint::byte_for_field_point. Foundation for rich-text selection; immediate single-style TextField consumer (clicking now positions the caret). Drag-select + styled-run edit-state deferred to R763 (evidence-first).
+
+**Changes**:
+- pinion_text::byte_offset_for_point(layout,x,y)->usize: pixel->byte hit-test, inverse of caret_rect_for_byte_offset
+- wraps parley Cursor::from_point; style-agnostic (parley Layout spans R713 styled runs) -> serves rich-text too
+- InputRouter::cursor_position + CoreShell::cursor_position_for_window: last press cursor accessors
+- WidgetView::position_caret_for_point hook (default false) = reverse of ime_caret_rect; shell calls on press
+- shell mouse_pressed_for_window wires it: native winit + scene/click converge here, one path, no native-only branch
+- tf_paint::byte_for_field_point: window-coord -> text-local -> byte (mirrors ime_caret_rect_for splice+style+cache SSOT)
+- hello-textfield position_caret_for_point impl -> set_caret; clicking the field now moves the caret
+
+
+
+**Verification**:
+- pinion-text/runtime/shell/widget-paint/hello-textfield tests green (+6 byte_offset_for_point caret tests)
+- clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)
+- r762_textfield_click_caret demo PASS (clamp L/R, monotonic 12-step x sweep, reposition, insert-after-click)
+- click-driven demo sample regression-free (shared press-path change; non-textfield bindings hit default-false hook)
+- native parity by construction: native + scene/click converge at mouse_pressed_for_window (no native-only branch)
+
+
+
+**Impact**: §5.36, §5.38
+
+
+**Carry forward**:
+- drag-select + shift-click-extend: need shell drag-anchor (pointer-move while pressed) or modifier channel (R742.2 gap); R763
+- styled-run EDIT state (TextEditState carrying runs) + multi-line selection-rect decomposition: evidence-first, real rich-editor consumer
+- byte_for_field_point <-> ime_caret_rect_for share shape-setup (2 consumer) -> lift at 3rd field-layout consumer (R763 selection-rect)
+- multi-line TextField (y-axis line hit-test) deferred (single-line today; byte_offset_for_point already handles multi-line layout)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

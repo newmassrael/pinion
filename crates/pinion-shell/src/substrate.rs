@@ -1135,7 +1135,50 @@ impl<V: WidgetView> ShellCore<V> {
     pub fn mouse_pressed_for_window(&mut self, window_id: &str, pid: PointerId) {
         let tail = self.core.pointer_down_for_window(window_id, pid);
         self.click_to_focus_for_window(window_id, pid);
+        self.position_caret_after_press(window_id, pid);
         self.handle_tail(&tail);
+    }
+
+    /// R762 §5.36 §5.38 — after a press focuses a widget, ask the
+    /// binding to hit-test the press location into a text-field caret
+    /// offset. Reverse of the IME caret publish (`publish_ime_for_window`):
+    /// the `V::position_caret_for_point` hook runs in the root-owner
+    /// scope so `use_text_edit_state` / `use_text_field_layout_cache`
+    /// resolve, hit-tests the cursor against the field's shaped layout,
+    /// and moves the caret (`TextEditState::set_caret`). A `true` return
+    /// (caret moved) requests a redraw so the next frame paints the new
+    /// caret. Covers native winit clicks and the `scene/click` drain —
+    /// both reach here through [`Self::mouse_pressed_for_window`].
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "window-local logical-pixel cursor coords fit f32 in every realistic viewport"
+    )]
+    fn position_caret_after_press(&mut self, window_id: &str, pid: PointerId) {
+        let Some(focused) = self.focus.focused().map(str::to_owned) else {
+            return;
+        };
+        let Some((cx, cy)) = self.core.cursor_position_for_window(window_id, pid) else {
+            return;
+        };
+        let state = *self.cached_state();
+        let owner = self.root_owner().clone();
+        let moved = {
+            let Some(paint) = self.core.last_paint_scene_for_window(window_id) else {
+                return;
+            };
+            owner.run(|| {
+                V::position_caret_for_point(
+                    &state,
+                    paint,
+                    Some(focused.as_str()),
+                    cx as f32,
+                    cy as f32,
+                )
+            })
+        };
+        if moved {
+            self.request_redraw_for_window(window_id);
+        }
     }
 
     /// R51.80 §5.35 — winit `MouseInput { Released, Left }` dispatch.

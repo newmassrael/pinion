@@ -528,6 +528,38 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         None
     }
 
+    /// R762 §5.36 §5.38 — pointer-driven caret positioning hook. The
+    /// shell calls this on a press (native winit `MouseInput` and the
+    /// `scene/click` deferred-input drain both converge here through
+    /// `mouse_pressed_for_window`), after click-to-focus, with the
+    /// press location in **window-local logical pixels**.
+    ///
+    /// Reverse of [`ime_caret_rect`](Self::ime_caret_rect): a text-input
+    /// widget hit-tests `(x, y)` against its shaped layout (via
+    /// `pinion_widget_paint::byte_for_field_point` /
+    /// `pinion_text::byte_offset_for_point`) and moves its caret to the
+    /// resolved byte offset (`TextEditState::set_caret`). It mutates
+    /// (like `apply_key`) rather than returning a value, so the binding
+    /// owns the "is this my field + move its caret" decision through the
+    /// `use_text_edit_state(tag)` it already holds.
+    ///
+    /// `focused != Some(<my tag>)` should short-circuit to `false`.
+    /// Return `true` when the caret moved (the shell requests a redraw);
+    /// `false` when the press was not on this widget's text. Runs inside
+    /// the shell root-owner scope so `use_text_edit_state` /
+    /// `use_text_field_layout_cache` resolve.
+    ///
+    /// Default returns `false` — only text-input widgets override.
+    fn position_caret_for_point(
+        _state: &<Self as WidgetCore>::State,
+        _scene: &Scene,
+        _focused: Option<&str>,
+        _x: f32,
+        _y: f32,
+    ) -> bool {
+        false
+    }
+
     /// R670 §5.16 §5.41 — Phase B (R700+) multi-window foundation.
     ///
     /// Returns the [`WindowSpec`] list the shell creates per binding

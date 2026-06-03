@@ -29,6 +29,56 @@
 use crate::Layout;
 use parley::{Affinity, Cursor};
 
+/// R762 §5.36 §5.38 — closed-form **pixel → byte** hit-test: the inverse
+/// of [`caret_rect_for_byte_offset`]. Maps a layout-space point
+/// `(x, y)` to the UTF-8 byte offset of the nearest caret insertion
+/// position, wrapping [`parley::Cursor::from_point`] +
+/// [`parley::Cursor::index`].
+///
+/// This is the substrate the paint backend reads when a pointer-down /
+/// drag lands inside a text field: the binding converts the click from
+/// window-local pixels to text-local layout-space (subtracting the
+/// field's post-layout origin + padding + horizontal scroll), then this
+/// helper returns the byte offset to feed
+/// [`TextEditState::set_caret`](pinion_core::widgets::text_edit::TextEditState::set_caret)
+/// (click-to-position) or
+/// [`set_selection`](pinion_core::widgets::text_edit::TextEditState::set_selection)
+/// (drag-select).
+///
+/// ## Style-agnostic (works over styled runs)
+///
+/// `layout` is a fully-shaped parley [`Layout`]; parley already spans
+/// the R713 [`StyleRun`](pinion_core::scene::StyleRun) multi-style runs
+/// inside one layout (it splits shaping per run but exposes a single
+/// cluster space). So the same hit-test serves both the single-style
+/// `TextField` and a future multi-style rich-text editor — the byte
+/// offset it returns is independent of which run the point fell in.
+///
+/// ## Clamping
+///
+/// `parley::Cursor::from_point` is total: a point left of / above the
+/// text clamps to byte 0, a point right of / below the last line clamps
+/// to `text.len()`. The returned offset always lands on a char
+/// boundary (parley resolves to a cluster edge), so it is safe to pass
+/// straight into the char-boundary-clamping
+/// [`TextEditState`](pinion_core::widgets::text_edit::TextEditState)
+/// setters without a second clamp.
+///
+/// ## Example
+///
+/// ```ignore
+/// // Round-trips with `caret_rect_for_byte_offset`:
+/// let layout = cache.layout("hello", &style, None);
+/// let caret = pinion_text::caret_rect_for_byte_offset(layout, 3, 1.0);
+/// let mid_y = caret.y + caret.height * 0.5;
+/// let byte = pinion_text::byte_offset_for_point(layout, caret.x, mid_y);
+/// assert_eq!(byte, 3);
+/// ```
+#[must_use]
+pub fn byte_offset_for_point(layout: &Layout, x: f32, y: f32) -> usize {
+    Cursor::from_point(layout, x, y).index()
+}
+
 /// Caret rectangle in layout-space (f32 coordinates).
 ///
 /// `x` / `y` are the top-left corner of the cursor rect; `width` /
@@ -163,7 +213,7 @@ mod tests {
     //! to build real parley shaped runs, then asserts on the
     //! geometry produced by the closed-form helper.
 
-    use super::{caret_rect_for_byte_offset, CaretRect};
+    use super::{byte_offset_for_point, caret_rect_for_byte_offset, CaretRect};
     use crate::LayoutCache;
     use pinion_core::style::TextStyle;
 
@@ -355,5 +405,88 @@ mod tests {
         const RECT: CaretRect = CaretRect::new(0.0, 0.0, 1.0, 1.0);
         assert!((RECT.x).abs() < f32::EPSILON);
         assert!((RECT.width - 1.0).abs() < f32::EPSILON);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R762 §5.36 §5.38 — byte_offset_for_point (pixel → byte hit-test)
+    // ────────────────────────────────────────────────────────────────
+
+    /// Mid-line y for a layout's first line — every single-line fixture
+    /// here shares one line, so the caret rect at byte 0 gives a y that
+    /// sits inside it.
+    fn mid_y(layout: &crate::Layout) -> f32 {
+        let r = caret_rect_for_byte_offset(layout, 0, 1.0);
+        r.y + r.height * 0.5
+    }
+
+    #[test]
+    fn r762_hit_test_point_before_origin_clamps_to_zero() {
+        let mut cache = shape("hello");
+        let layout = layout_for(&mut cache, "hello");
+        let y = mid_y(layout);
+        assert_eq!(byte_offset_for_point(layout, -50.0, y), 0);
+    }
+
+    #[test]
+    fn r762_hit_test_point_far_right_clamps_to_text_len() {
+        let mut cache = shape("hello");
+        let layout = layout_for(&mut cache, "hello");
+        let y = mid_y(layout);
+        assert_eq!(byte_offset_for_point(layout, 100_000.0, y), "hello".len());
+    }
+
+    #[test]
+    fn r762_hit_test_round_trips_with_caret_rect_ascii() {
+        // The inverse contract: hit-testing at the caret x of byte `i`
+        // returns `i`. ASCII guarantees one byte per cluster + monotone
+        // advance, so every boundary round-trips exactly.
+        let mut cache = shape("abcde");
+        let layout = layout_for(&mut cache, "abcde");
+        let y = mid_y(layout);
+        for i in 0..="abcde".len() {
+            let caret = caret_rect_for_byte_offset(layout, i, 1.0);
+            let hit = byte_offset_for_point(layout, caret.x, y);
+            assert_eq!(hit, i, "hit-test at caret x of byte {i} must return {i}");
+        }
+    }
+
+    #[test]
+    fn r762_hit_test_midglyph_resolves_to_nearest_boundary() {
+        // A point in the right half of a glyph resolves to the trailing
+        // boundary (downstream affinity); the left half to the leading
+        // boundary. We assert the point just past a glyph's start sits
+        // on a valid boundary <= the next one.
+        let mut cache = shape("abcde");
+        let layout = layout_for(&mut cache, "abcde");
+        let y = mid_y(layout);
+        let a = caret_rect_for_byte_offset(layout, 1, 1.0); // after 'a'
+        let near_start = byte_offset_for_point(layout, a.x - a.height * 0.1, y);
+        assert!(near_start <= 1, "left-of-boundary hit stays <= 1 (got {near_start})");
+    }
+
+    #[test]
+    fn r762_hit_test_multibyte_lands_on_char_boundary() {
+        // "안녕" = 6 bytes, char boundaries at 0/3/6. Hit-testing at the
+        // caret x of byte 3 returns 3 (a boundary), never a mid-codepoint
+        // index.
+        let mut cache = shape("\u{C548}\u{B155}");
+        let layout = layout_for(&mut cache, "\u{C548}\u{B155}");
+        let y = mid_y(layout);
+        let caret = caret_rect_for_byte_offset(layout, 3, 1.0);
+        let hit = byte_offset_for_point(layout, caret.x, y);
+        assert!(
+            "\u{C548}\u{B155}".is_char_boundary(hit),
+            "hit offset {hit} must be a char boundary",
+        );
+        assert_eq!(hit, 3, "hit at the mid caret x returns the 3-byte boundary");
+    }
+
+    #[test]
+    fn r762_hit_test_empty_text_returns_zero() {
+        let mut cache = shape("");
+        let layout = layout_for(&mut cache, "");
+        let y = mid_y(layout);
+        assert_eq!(byte_offset_for_point(layout, 0.0, y), 0);
+        assert_eq!(byte_offset_for_point(layout, 50.0, y), 0);
     }
 }

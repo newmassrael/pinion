@@ -62,7 +62,7 @@ use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Color, Scene, WidgetStateName};
-use pinion_text::{caret_rect_for_byte_offset, CaretRect, LayoutCache};
+use pinion_text::{byte_offset_for_point, caret_rect_for_byte_offset, CaretRect, LayoutCache};
 
 /// (R657 §5.16) Owner-cache key for the shared
 /// [`LayoutCache`](pinion_text::LayoutCache). The pre-lift bindings
@@ -565,6 +565,63 @@ pub fn ime_caret_rect_for(
         caret_local.width.max(1.0),
         caret_local.height.max(font_size_f),
     )
+}
+
+/// R762 §5.36 §5.38 — **reverse** of [`ime_caret_rect_for`]: hit-test a
+/// window-coord pointer point to the UTF-8 byte offset under it, for
+/// click-to-position-caret. Subtracts the field origin + padding to
+/// reach text-local layout-space, reshapes the *same* `(text, style,
+/// width)` [`view_field`] used (same-frame `LayoutCache` hit, no extra
+/// shape), and feeds [`byte_offset_for_point`].
+///
+/// `point_x` / `point_y` are window-local logical pixels (the
+/// shell-side cursor position on press). The returned offset is a char
+/// boundary (parley resolves to a cluster edge), safe to pass straight
+/// into [`TextEditState::set_caret`](pinion_core::widgets::text_edit::TextEditState::set_caret).
+/// A point left of / before the text clamps to 0, past the end clamps
+/// to `text.len()` (parley `Cursor::from_point` is total).
+///
+/// Mirrors the IME forward helper exactly so the screen caret a click
+/// lands on and the byte it resolves to stay one SSOT — the same
+/// `splice_preedit` + style + cache the visible caret is built from.
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope (same shape as
+/// [`ime_caret_rect_for`] / [`view_field`] — only test paths trigger).
+#[must_use]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "field_rect.{x,y} + field_pad are small u32 viewport coords; never approach 2^24 logical px"
+)]
+pub fn byte_for_field_point(
+    tag: &'static str,
+    interaction: TextFieldState,
+    point_x: f32,
+    point_y: f32,
+    field_rect: Rect,
+    theme: &Theme,
+    style: &TextFieldStyle,
+) -> usize {
+    let text_state = use_text_edit_state(tag);
+    let (effective_text, _visual_caret_byte, _preedit_byte_range) =
+        text_state.splice_preedit(text_state.caret());
+
+    // Mirror view_field's text style so the (text, style, max_width)
+    // LayoutCache key matches and the lookup is a same-frame hit.
+    let text_style = TextStyle::new()
+        .with_size_px(style.font_size_px)
+        .with_fg(text_fg_for(theme, interaction));
+
+    // window-coord point → text-local layout-space: subtract the field
+    // origin and the text padding the forward helper added.
+    let local_x = point_x - field_rect.x as f32 - style.field_pad as f32;
+    let local_y = point_y - field_rect.y as f32 - style.field_pad as f32;
+
+    let layout_cache = use_text_field_layout_cache();
+    let mut cache = layout_cache.borrow_mut();
+    let layout = cache.layout(effective_text.as_str(), &text_style, None);
+    byte_offset_for_point(layout, local_x, local_y)
 }
 
 /// (R657 §5.16) Convenience helper extracting `(TextFieldState,

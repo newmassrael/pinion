@@ -1281,6 +1281,21 @@ impl<V: WidgetCore> CoreShell<V> {
         self.routers.get(window_id).and_then(|r| r.hover_target(pid))
     }
 
+    /// R762 §5.36 §5.38 — last cursor position for `pid` on the
+    /// addressed window's [`InputRouter`]. The press path reads this to
+    /// hit-test a click into a text-field caret offset (`cursor_moved`
+    /// always lands before `pointer_down`, so it is the press location).
+    #[must_use]
+    pub fn cursor_position_for_window(
+        &self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> Option<(f64, f64)> {
+        self.routers
+            .get(window_id)
+            .and_then(|r| r.cursor_position(pid))
+    }
+
     /// (R684 §5.35 §5.41 §5.16) Per-window passthrough to
     /// [`InputRouter::has_last_paint_scene`] — `true` once the
     /// named window's router has received a paint scene via

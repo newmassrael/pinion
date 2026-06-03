@@ -344,6 +344,18 @@ impl InputRouter {
         self.hover_targets.get(&id).map(String::as_str)
     }
 
+    /// R762 §5.36 §5.38 — last known cursor position (window-local
+    /// logical pixels) for `id`, when the pointer has reported a move.
+    /// The press handlers read this to feed text hit-test
+    /// (click-to-position-caret) — `cursor_moved` runs before
+    /// `pointer_down` in every press path (native winit `MouseInput`
+    /// and the `scene/click` deferred-input drain), so the stored
+    /// position is the press location.
+    #[must_use]
+    pub fn cursor_position(&self, id: PointerId) -> Option<(f64, f64)> {
+        self.cursors.get(&id).copied()
+    }
+
     /// R51.34 §5.35 — current capture-lock target tag for `id`, when
     /// that pointer claimed a widget via
     /// [`External::wants_pointer_capture`] on its most recent
