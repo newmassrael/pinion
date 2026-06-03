@@ -1107,6 +1107,46 @@ impl<V: WidgetView> ShellCore<V> {
         self.handle_tail(&tail);
     }
 
+    /// R770 §5.15 — run an OS file-drag/drop `WidgetView` hook in the
+    /// root-owner scope and request a redraw on the addressed window if
+    /// the binding handled it. Shared mechanics for the three
+    /// `file_*_for_window` entry points (the winit + RPC arcs both reach
+    /// these): snapshot the `Copy` cached state, run the hook under
+    /// `root_owner.run` (so `use_*` reactive hooks resolve, mirroring the
+    /// `V::position_caret_for_point` press path), redraw if `true`.
+    fn run_file_hook(
+        &mut self,
+        window_id: &str,
+        hook: impl FnOnce(&<V as pinion_core::WidgetCore>::State) -> bool,
+    ) {
+        let state = *self.cached_state();
+        let owner = self.root_owner().clone();
+        if owner.run(|| hook(&state)) {
+            self.request_redraw_for_window(window_id);
+        }
+    }
+
+    /// R770 §5.15 — winit `HoveredFile` / `scene/hover_file` entry: a file
+    /// is dragged over `window_id`. Routes `path` to
+    /// [`WidgetView::on_file_hover`].
+    pub fn file_hover_for_window(&mut self, window_id: &str, path: &str) {
+        self.run_file_hook(window_id, |state| V::on_file_hover(state, path));
+    }
+
+    /// R770 §5.15 — winit `HoveredFileCancelled` / `scene/hover_file_cancel`
+    /// entry: a file drag left `window_id` without dropping. Routes to
+    /// [`WidgetView::on_file_hover_cancel`].
+    pub fn file_hover_cancel_for_window(&mut self, window_id: &str) {
+        self.run_file_hook(window_id, |state| V::on_file_hover_cancel(state));
+    }
+
+    /// R770 §5.15 — winit `DroppedFile` / `scene/drop_file` entry: a file
+    /// was dropped on `window_id`. Routes `path` to
+    /// [`WidgetView::on_file_drop`].
+    pub fn file_drop_for_window(&mut self, window_id: &str, path: &str) {
+        self.run_file_hook(window_id, |state| V::on_file_drop(state, path));
+    }
+
     /// R51.80 §5.35 — winit `CursorMoved` dispatch decoupled from
     /// winit at the [`ShellCore`] surface. Forwards through
     /// [`CoreShell::cursor_moved`] (which performs the router walk +
@@ -1534,6 +1574,21 @@ impl<V: WidgetView> ShellCore<V> {
                         }
                     }
                     self.mouse_released_for_window(window_id, PointerId::MOUSE);
+                }
+                // R770 §5.49 §5.15 — OS file drag-drop mirrors. Each runs
+                // the matching `WidgetView` file hook in the root-owner
+                // scope (the same arc winit's `HoveredFile` /
+                // `HoveredFileCancelled` / `DroppedFile` take). Window-
+                // scoped + (for drop/hover) path-carrying; no cursor move
+                // since winit's file DnD reports no drop coordinate.
+                DeferredInput::FileHover { ref path } => {
+                    self.file_hover_for_window(window_id, path);
+                }
+                DeferredInput::FileHoverCancel => {
+                    self.file_hover_cancel_for_window(window_id);
+                }
+                DeferredInput::FileDrop { ref path } => {
+                    self.file_drop_for_window(window_id, path);
                 }
                 _ => {}
             }

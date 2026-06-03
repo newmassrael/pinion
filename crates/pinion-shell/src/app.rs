@@ -884,6 +884,33 @@ impl<V: WidgetView> AppShell<V> {
         slot.last_ime_cursor_area = Some(rect_tuple);
     }
 
+    /// R770 §5.15 — route the three winit file-DnD events to the
+    /// binding's `WidgetView` file hooks via [`ShellCore`]. winit
+    /// normalises the platform file-DnD (X11 `XdndDrop` / Wayland
+    /// data-device / macOS `NSDraggingDestination` / Windows
+    /// `IDropTarget`) into window-scoped events (path, no drop
+    /// coordinate); the `scene/hover_file` / `scene/hover_file_cancel` /
+    /// `scene/drop_file` RPC peers reach the same `ShellCore` methods
+    /// (§2 invariant #2). Split out of `window_event` so that dispatch
+    /// stays under the line cap; the caller's arm guarantees one of these
+    /// three variants, so the wildcard is unreachable in practice.
+    fn handle_file_dnd(&mut self, spec_id: &str, event: &WindowEvent) {
+        match event {
+            WindowEvent::HoveredFile(path) => {
+                self.core
+                    .file_hover_for_window(spec_id, &path.to_string_lossy());
+            }
+            WindowEvent::HoveredFileCancelled => {
+                self.core.file_hover_cancel_for_window(spec_id);
+            }
+            WindowEvent::DroppedFile(path) => {
+                self.core
+                    .file_drop_for_window(spec_id, &path.to_string_lossy());
+            }
+            _ => {}
+        }
+    }
+
     /// R51.78 §5.39 — pressed-key routing surface. Translates the
     /// winit-specific [`Key`] enum into the winit-free
     /// [`ShellCore::handle_focus_traverse`] /
@@ -1492,6 +1519,18 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             }
             WindowEvent::CursorLeft { .. } => {
                 self.core.cursor_left_for_window(spec_id, PointerId::MOUSE);
+            }
+            // R770 §5.15 — OS file drag-drop (winit normalises the
+            // platform file-DnD into three window-scoped events). One
+            // delegating arm keeps `window_event` under the line cap; the
+            // body lives in `handle_file_dnd`.
+            ev @ (WindowEvent::HoveredFile(_)
+            | WindowEvent::HoveredFileCancelled
+            | WindowEvent::DroppedFile(_)) => {
+                // `spec_id` borrows `self.windows`; the `&mut self`
+                // helper needs an owned id (file events are rare).
+                let sid = spec_id.to_owned();
+                self.handle_file_dnd(&sid, &ev);
             }
             WindowEvent::MouseInput {
                 state: ElementState::Pressed,

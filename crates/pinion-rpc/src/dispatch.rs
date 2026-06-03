@@ -452,6 +452,29 @@ pub enum DeferredInput {
         to_y: f64,
         steps: u32,
     },
+    /// R770 §5.49 §5.15 — `scene/hover_file` injection: the winit
+    /// `WindowEvent::HoveredFile(PathBuf)` RPC peer. A file is being
+    /// dragged *over* the window (the OS reports the path, not a drop
+    /// position — winit's file-DnD is window-scoped, like
+    /// [`Self::PointerLeave`]). The embedder runs
+    /// [`WidgetView::on_file_hover`] so a drop-zone can light up its
+    /// "release to drop" affordance before the user lets go.
+    FileHover { path: String },
+    /// R770 §5.49 §5.15 — `scene/hover_file_cancel` injection: the winit
+    /// `WindowEvent::HoveredFileCancelled` peer. The drag left the window
+    /// (or was cancelled) without a drop; the embedder runs
+    /// [`WidgetView::on_file_hover_cancel`] so the drop-zone clears its
+    /// affordance. Positionless + path-less, like a file-DnD
+    /// [`Self::PointerLeave`].
+    FileHoverCancel,
+    /// R770 §5.49 §5.15 — `scene/drop_file` injection: the winit
+    /// `WindowEvent::DroppedFile(PathBuf)` peer. A file was dropped on the
+    /// window; the embedder runs [`WidgetView::on_file_drop`] with the
+    /// path. winit delivers one event per file (a multi-file drop arrives
+    /// as several `DroppedFile`s), so each injection carries one path —
+    /// the canonical OS "drag a file from the file manager into the app"
+    /// path (§5.15 input-forwarding contract, item 5).
+    FileDrop { path: String },
     /// R695 §5.49 §5.35 — `scene/hover` injection. The embedder applies
     /// a single `cursor_moved(MOUSE, x, y)` and nothing else, so the
     /// `InputRouter` re-resolves its hover target and fires the
@@ -897,6 +920,39 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
             (handle_scene_pointer_leave(inbox), HandlerKind::Mutate)
+        }
+        "scene/hover_file" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_file_event(inbox, request.params.as_ref(), FileEventKind::Hover),
+                HandlerKind::Mutate,
+            )
+        }
+        "scene/hover_file_cancel" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_file_event(inbox, request.params.as_ref(), FileEventKind::Cancel),
+                HandlerKind::Mutate,
+            )
+        }
+        "scene/drop_file" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_file_event(inbox, request.params.as_ref(), FileEventKind::Drop),
+                HandlerKind::Mutate,
+            )
         }
         "scene/tick" => {
             #[allow(
@@ -1401,6 +1457,49 @@ fn handle_scene_pointer_leave(
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     inbox.push(DeferredInput::PointerLeave);
+    Ok(Value::Null)
+}
+
+/// R770 §5.49 §5.15 — which winit file-DnD event a `scene/*_file` method
+/// mirrors. `Hover` / `Drop` carry a `path`; `Cancel` is positionless +
+/// path-less.
+#[derive(Clone, Copy)]
+enum FileEventKind {
+    Hover,
+    Cancel,
+    Drop,
+}
+
+/// R770 §5.49 §5.15 — shared handler for the three OS file-drag-drop RPC
+/// peers (`scene/hover_file` / `scene/hover_file_cancel` /
+/// `scene/drop_file`). `Hover` / `Drop` require a `params.path` string
+/// (the dragged file); `Cancel` ignores params. Enqueues the matching
+/// [`DeferredInput`] for the embedder to drain into the
+/// [`WidgetView`](pinion-shell) file hooks — the AI-first peers of a
+/// human dragging a file from the OS file manager onto the window.
+fn handle_scene_file_event(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+    kind: FileEventKind,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let event = match kind {
+        FileEventKind::Cancel => DeferredInput::FileHoverCancel,
+        FileEventKind::Hover | FileEventKind::Drop => {
+            let params = require_params(params)?;
+            let Some(path) = params.get("path").and_then(Value::as_str) else {
+                return Err(RpcError::invalid_params("params.path missing or not a string"));
+            };
+            let path = path.to_string();
+            match kind {
+                FileEventKind::Drop => DeferredInput::FileDrop { path },
+                _ => DeferredInput::FileHover { path },
+            }
+        }
+    };
+    inbox.push(event);
     Ok(Value::Null)
 }
 

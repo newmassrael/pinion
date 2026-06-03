@@ -669,6 +669,71 @@ fn r666_scene_key_multi_codepoint_named_string_still_routes_as_named() {
     }
 }
 
+// ---- R770 §5.49 §5.15 — OS file drag-drop RPC peers ----
+
+#[test]
+fn r770_scene_drop_file_enqueues_file_drop_with_path() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/drop_file","params":{"path":"/tmp/report.pdf"},"id":770}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    let DeferredInput::FileDrop { ref path } = inbox[0] else {
+        panic!("expected FileDrop, got {:?}", inbox[0]);
+    };
+    assert_eq!(path, "/tmp/report.pdf");
+}
+
+#[test]
+fn r770_scene_hover_file_enqueues_file_hover_with_path() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/hover_file","params":{"path":"/tmp/a.png"},"id":771}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::FileHover { ref path } = inbox[0] else {
+        panic!("expected FileHover, got {:?}", inbox[0]);
+    };
+    assert_eq!(path, "/tmp/a.png");
+}
+
+#[test]
+fn r770_scene_hover_file_cancel_enqueues_cancel_without_params() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/hover_file_cancel","id":772}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert!(matches!(inbox[0], DeferredInput::FileHoverCancel));
+}
+
+#[test]
+fn r770_scene_drop_file_missing_path_rejects() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/drop_file","params":{},"id":773}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_some(), "missing path must reject");
+    assert!(inbox.is_empty(), "no event enqueued on a rejected request");
+}
+
 // ---- R51.196 §5.49 — scene/click v1 (DeferredInput::Click) ----
 
 #[test]

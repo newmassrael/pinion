@@ -17741,6 +17741,38 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R770 — R770 OS file drag-drop: WidgetView file hooks + winit wiring + scene/*_file RPC peers + hello-filedrop
+
+**Changes**:
+- DeferredInput FileHover/FileHoverCancel/FileDrop + scene hover_file/hover_file_cancel/drop_file
+- WidgetView on_file_hover/on_file_hover_cancel/on_file_drop hooks (default no-op), root-owner scope
+- ShellCore file_*_for_window + run_file_hook helper (lift the snapshot+owner.run+redraw 3-copy)
+- app.rs winit HoveredFile / HoveredFileCancelled / DroppedFile arms route to the ShellCore file hooks
+- handle_scene_file_event shared by all three RPC peers; hover/drop carry path, cancel is path-less
+- winit file-DnD is window-scoped (path, no drop coordinate) so the hooks are positionless
+- new example hello-filedrop: drop-zone highlights on hover + lists dropped paths via reactive Signal
+
+
+
+**Verification**:
+- pinion-rpc +4 unit (drop/hover/cancel enqueue + missing-path reject) + hello-filedrop +3 unit
+- r770 demo 30 assert + 11 wait_until: idle/hover/cancel/drop/multiple/populated/unicode/bulk + pixel
+- drop-zone state is scene-as-data (hint text + path Text + count) — verified without OCR
+- workspace test green (-j2) + clippy -D pedantic (vello) clean
+
+
+
+**Impact**: §5.15, §5.49
+
+
+**Carry forward**:
+- native winit file-DnD wired but not auto-testable (no XTEST for file DnD); RPC peers = tested path
+- drop is window-scoped (winit gives no coordinate) → no sub-widget routing; per-widget = future
+- hello-filedrop dropped paths = scene Text (no per-path a11y node); zone is a single Group role
+- R766 carries persist: hit-test glue 2-copy / aria-multiline a11y / TUI multi-line / wheel-scroll
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -1970,6 +1970,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-filedrop"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-filter-chip"
 version = "0.0.1"
 dependencies = [

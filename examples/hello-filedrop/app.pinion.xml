@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R770 §5.15 — pinion-forge renderer manifest for hello-filedrop.
+  Emits `HelloFileDropRenderer` (Vello-backed wrapper).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloFileDropRenderer"
+        backend="vello"/>

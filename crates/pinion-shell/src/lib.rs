@@ -602,6 +602,41 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         false
     }
 
+    /// R770 §5.15 — OS file-drag hover hook. The shell calls this when a
+    /// file is dragged *over* the window (winit
+    /// `WindowEvent::HoveredFile`, or the `scene/hover_file` RPC peer),
+    /// with the dragged file's `path`. winit's file-DnD is window-scoped
+    /// — the OS reports the path but not a drop coordinate — so this is
+    /// positionless (a drop-zone widget lights up its whole-window
+    /// "release to drop" affordance). Mutate reactive state (a
+    /// `use_*`-backed `Signal`) and return `true` to request a redraw;
+    /// the default returns `false` (the binding ignores file drags).
+    /// Runs inside the shell root-owner scope so `use_*` hooks resolve.
+    fn on_file_hover(_state: &<Self as WidgetCore>::State, _path: &str) -> bool {
+        false
+    }
+
+    /// R770 §5.15 — OS file-drag cancel hook. The shell calls this when a
+    /// drag leaves the window without dropping (winit
+    /// `WindowEvent::HoveredFileCancelled`, or `scene/hover_file_cancel`):
+    /// the drop-zone clears the affordance [`on_file_hover`] raised.
+    /// Positionless + path-less. Return `true` to request a redraw;
+    /// default `false`.
+    fn on_file_hover_cancel(_state: &<Self as WidgetCore>::State) -> bool {
+        false
+    }
+
+    /// R770 §5.15 — OS file drop hook. The shell calls this when a file is
+    /// dropped on the window (winit `WindowEvent::DroppedFile`, or the
+    /// `scene/drop_file` RPC peer), with the dropped file's `path`. winit
+    /// delivers one event per file (a multi-file drop arrives as several
+    /// calls). Mutate reactive state (e.g. push the path onto a
+    /// `Signal<Vec<String>>`) and return `true` to request a redraw;
+    /// default `false`. Runs inside the shell root-owner scope.
+    fn on_file_drop(_state: &<Self as WidgetCore>::State, _path: &str) -> bool {
+        false
+    }
+
     /// R670 §5.16 §5.41 — Phase B (R700+) multi-window foundation.
     ///
     /// Returns the [`WindowSpec`] list the shell creates per binding
