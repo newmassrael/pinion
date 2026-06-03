@@ -1613,6 +1613,22 @@ impl<V: WidgetView> ShellCore<V> {
         {
             self.redraw_requested = true;
         }
+        // R761.1 §5.22 — drain the owner-scoped `LocalTaskPump` one step
+        // per frame so deferred async work (a native file dialog awaiting
+        // an xdg-portal reply, any `Resource::fetch_with`) advances on
+        // the UI thread. We gate on whether any task existed *before* the
+        // poll: if so, request another frame — either the task is still
+        // pending (re-poll next frame) or it just resolved here (after
+        // `V::view`), flipping its `Resource` Signal, so the next frame
+        // must re-view to paint the result. The loop idles once the pump
+        // drains (same "stay awake while active" contract as the
+        // animation check above). v1 busy-polls with `Waker::noop`; a
+        // wake-channel waker is a forward refinement (R761.1 carry).
+        let task_pump = self.core.root_owner().local_task_pump();
+        if task_pump.has_pending() {
+            task_pump.poll();
+            self.redraw_requested = true;
+        }
         // R705.1 §2 #7 — this paint just consumed the current reactive
         // state (the `V::view` run above re-subscribed `root_owner` to
         // every `Signal` it read). Reset the dirty flag so the NEXT

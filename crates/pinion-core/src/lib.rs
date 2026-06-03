@@ -51,8 +51,9 @@ pub use frame::Frame;
 pub use input::{CompositionEvent, Modifiers};
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
-    is_simulating, Computed, Effect, FetchToken, IntoIntrospectValue, JsonValue, LocalSpawner,
-    Owner, OwnerSnapshot, Resource, ResourceState, Signal, SignalExternal,
+    is_simulating, use_local_task_pump, Computed, Effect, FetchToken, IntoIntrospectValue,
+    JsonValue, LocalSpawner, LocalTaskPump, Owner, OwnerSnapshot, Resource, ResourceState, Signal,
+    SignalExternal,
     SimulationGuard, SnapshotRestoreError, SnapshotableSignal, batch,
 };
 pub use revision::SceneRevision;

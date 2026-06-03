@@ -50,11 +50,12 @@
 //! widget — the same placement rationale as [`Storage`](crate::Storage)
 //! and [`Clipboard`](crate::Clipboard).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::task::{Context, Poll};
 
 /// R761 §5.15 — boxed UI-thread future returned by every [`FileDialog`]
 /// method.
@@ -268,11 +269,45 @@ pub struct ScriptedCall {
 /// matching [`InMemoryStorage`](crate::InMemoryStorage).
 #[derive(Debug, Default)]
 pub struct ScriptedFileDialog {
-    /// FIFO of outcomes the next calls will return. An empty queue
-    /// resolves [`None`] (modelling a user who cancels).
-    queued: RefCell<VecDeque<Option<PathBuf>>>,
+    /// FIFO of scripted responses the next calls will return. An empty
+    /// queue resolves [`None`] (modelling a user who cancels).
+    queued: RefCell<VecDeque<ScriptedResponse>>,
     /// Append-only log of every call, for introspection / assertions.
     calls: RefCell<Vec<ScriptedCall>>,
+}
+
+/// R761.1 §5.15 — one queued scripted response: the outcome plus how
+/// many `Pending` polls precede it. `pending_polls == 0` resolves
+/// immediately (the common path); `> 0` models a *deferred* native
+/// dialog future (an `rfd::AsyncFileDialog` awaiting an xdg-portal
+/// reply), exercising the UI-thread [`LocalTaskPump`](crate::LocalTaskPump)
+/// keep-alive that re-polls it each frame until it resolves.
+#[derive(Debug)]
+struct ScriptedResponse {
+    outcome: Option<PathBuf>,
+    pending_polls: u32,
+}
+
+/// R761.1 §5.15 — future that yields `Pending` `remaining` times then
+/// `Ready(outcome)`. The deterministic stand-in for a deferred native
+/// dialog reply; lets a headless RPC demo prove the shell pump drives a
+/// multi-frame future to completion (the dialog reads `Loading` until
+/// the count hits zero, then `Ready`).
+struct DeferredOutcome {
+    remaining: Cell<u32>,
+    outcome: Option<PathBuf>,
+}
+
+impl Future for DeferredOutcome {
+    type Output = Option<PathBuf>;
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<PathBuf>> {
+        if self.remaining.get() == 0 {
+            Poll::Ready(self.outcome.clone())
+        } else {
+            self.remaining.set(self.remaining.get() - 1);
+            Poll::Pending
+        }
+    }
 }
 
 impl ScriptedFileDialog {
@@ -287,12 +322,29 @@ impl ScriptedFileDialog {
     /// [`None`] (the user cancels). Outcomes are consumed in FIFO order
     /// by subsequent [`FileDialog`] calls.
     pub fn queue(&self, outcome: Option<PathBuf>) {
-        self.queued.borrow_mut().push_back(outcome);
+        self.queued.borrow_mut().push_back(ScriptedResponse {
+            outcome,
+            pending_polls: 0,
+        });
     }
 
     /// Queue a successful selection (`Some(path)`).
     pub fn queue_selection(&self, path: impl Into<PathBuf>) {
         self.queue(Some(path.into()));
+    }
+
+    /// R761.1 — queue a selection that resolves only after
+    /// `pending_polls` `Pending` polls: a deterministic stand-in for a
+    /// *deferred* native dialog future (`rfd::AsyncFileDialog` awaiting
+    /// an xdg-portal reply). The dialog reads `Loading` until the count
+    /// reaches zero, then `Ready(path)` — exercising the UI-thread
+    /// [`LocalTaskPump`](crate::LocalTaskPump) keep-alive that drives a
+    /// multi-frame future to completion.
+    pub fn queue_deferred_selection(&self, path: impl Into<PathBuf>, pending_polls: u32) {
+        self.queued.borrow_mut().push_back(ScriptedResponse {
+            outcome: Some(path.into()),
+            pending_polls,
+        });
     }
 
     /// Queue a cancellation (`None`). Equivalent to leaving the queue
@@ -336,8 +388,24 @@ impl ScriptedFileDialog {
             kind,
             request: request.clone(),
         });
-        let outcome = self.queued.borrow_mut().pop_front().flatten();
-        Box::pin(core::future::ready(outcome))
+        match self.queued.borrow_mut().pop_front() {
+            // Empty queue == the user cancelled.
+            None => Box::pin(core::future::ready(None)),
+            // Immediate response (the common scripted path).
+            Some(ScriptedResponse {
+                outcome,
+                pending_polls: 0,
+            }) => Box::pin(core::future::ready(outcome)),
+            // Deferred response: Pending for `pending_polls` polls,
+            // driven to completion by the shell's per-frame pump.
+            Some(ScriptedResponse {
+                outcome,
+                pending_polls,
+            }) => Box::pin(DeferredOutcome {
+                remaining: Cell::new(pending_polls),
+                outcome,
+            }),
+        }
     }
 }
 
@@ -402,6 +470,24 @@ mod tests {
             Some(PathBuf::from("/a/b.txt")),
         );
         assert_eq!(d.queued_len(), 0);
+    }
+
+    #[test]
+    fn r761_1_deferred_selection_pends_then_resolves() {
+        // A deferred response yields Pending `pending_polls` times then
+        // Ready — the deterministic stand-in for a native dialog future
+        // the shell pump drives across frames.
+        let d = ScriptedFileDialog::new();
+        d.queue_deferred_selection("/slow.dat", 2);
+        let mut fut = d.open_file(&FileDialogRequest::new());
+        let waker: &Waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        assert!(Pin::new(&mut fut).poll(&mut cx).is_pending(), "poll 1 Pending");
+        assert!(Pin::new(&mut fut).poll(&mut cx).is_pending(), "poll 2 Pending");
+        match Pin::new(&mut fut).poll(&mut cx) {
+            Poll::Ready(out) => assert_eq!(out, Some(PathBuf::from("/slow.dat"))),
+            Poll::Pending => panic!("poll 3 must resolve the deferred outcome"),
+        }
     }
 
     #[test]

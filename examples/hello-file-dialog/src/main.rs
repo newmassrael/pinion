@@ -21,13 +21,12 @@
 //! Three [`ButtonExternal`]s emit `"<tag>.click"` intents;
 //! [`FileDialogView::update`] maps each onto a dialog call and feeds the
 //! returned [`FileDialogFuture`](pinion_core::FileDialogFuture) into the
-//! shared [`Resource`] via [`Resource::fetch_with`]. The scripted mock's
-//! future is immediately ready, so an [`ImmediateSpawner`] drives it to
-//! completion on the UI thread. A real
-//! [`RfdFileDialog`](https://docs.rs/) future is deferred and needs a
-//! per-frame `LocalSpawner` pump — that shell wiring is the R761 carry;
-//! this binding's spawner panics loudly on a `Pending` future so the
-//! limitation can never silently regress.
+//! shared [`Resource`] via [`Resource::fetch_with`], driven by the
+//! owner-scoped [`LocalTaskPump`](pinion_core::LocalTaskPump) the shell
+//! polls each frame (R761.1). The scripted mock's future is immediately
+//! ready (resolves on the first poll); a real native `RfdFileDialog`
+//! future yields `Pending` until the portal replies and resolves over
+//! subsequent frames — the *same* pump, no per-binding `block_on`.
 //!
 //! ## Verification
 //!
@@ -48,18 +47,15 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{
-    DialogKind, FileDialog, FileDialogRequest, FileFilter, Frame, LocalSpawner, Scene, ScriptedFileDialog,
-    WidgetCore,
+    use_local_task_pump, DialogKind, FileDialog, FileDialogRequest, FileFilter, Frame, Scene,
+    ScriptedFileDialog, WidgetCore,
 };
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
     button_a11y_state, read_button_focused, read_button_state, ButtonColors, ButtonStyle,
 };
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
 use std::rc::Rc;
-use std::task::{Context, Poll, Waker};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloFileDialogRenderer, HelloFileDialogRendererError);
@@ -93,29 +89,6 @@ struct DialogOutcome {
     path: Option<String>,
 }
 
-/// R761 — production [`LocalSpawner`] that drives an immediately-ready
-/// future to completion on the calling (UI) thread, using the stable
-/// `Waker::noop`. Sufficient for the [`ScriptedFileDialog`] mock whose
-/// futures are `core::future::ready`. A genuinely deferred native dialog
-/// future would yield `Pending`; we panic loudly there rather than spin,
-/// because driving a deferred future needs a per-frame pump (R761 carry)
-/// — the same shape as the `BlockingSpawner` test helper in
-/// `reactive::resource`.
-struct ImmediateSpawner;
-
-impl LocalSpawner for ImmediateSpawner {
-    fn spawn_local(&self, mut future: Pin<Box<dyn Future<Output = ()> + 'static>>) {
-        let mut cx = Context::from_waker(Waker::noop());
-        match future.as_mut().poll(&mut cx) {
-            Poll::Ready(()) => {}
-            Poll::Pending => panic!(
-                "hello-file-dialog drives only the immediately-ready ScriptedFileDialog; \
-                 a deferred native dialog future needs a per-frame LocalSpawner pump (R761 carry)"
-            ),
-        }
-    }
-}
-
 /// The scripted dialog backend for this view scope (seeded once with the
 /// demo's deterministic choice sequence). Shared by the reducer (which
 /// invokes it) and tests.
@@ -143,7 +116,11 @@ fn result() -> Rc<Resource<Option<DialogOutcome>, String>> {
 /// of choices the user makes, in order"), so the demo clicks
 /// Open → Open → Save → Pick to walk it: select, cancel, select, select.
 fn seed_demo_script(scripted: &ScriptedFileDialog) {
-    scripted.queue_selection("/projects/alpha.pinion.xml"); // 1: Open → selected
+    // 1: Open → selected, but *deferred* (resolves after 30 Pending
+    // polls) — a deterministic stand-in for a native dialog future so the
+    // demo can observe the shell `LocalTaskPump` keep-alive driving a
+    // multi-frame future Loading → Ready (R761.1).
+    scripted.queue_deferred_selection("/projects/alpha.pinion.xml", 30);
     scripted.queue_cancel(); //                               2: Open → cancelled
     scripted.queue_selection("/exports/diagram.svg"); //      3: Save → selected
     scripted.queue_selection("/home/user/assets"); //         4: Pick → selected
@@ -177,7 +154,12 @@ fn run_dialog(kind: DialogKind, action: &'static str) {
         DialogKind::SaveFile => backend.save_file(&request),
         DialogKind::PickFolder => backend.pick_folder(&request),
     };
-    result().fetch_with(&ImmediateSpawner, async move {
+    // R761.1 — drive the dialog future through the shared owner-scoped
+    // `LocalTaskPump` (the shell polls it each frame). The scripted mock
+    // resolves on the first poll; a native `RfdFileDialog` future (which
+    // yields `Pending` until the portal replies) resolves over subsequent
+    // frames — the same path, no per-binding `block_on`.
+    result().fetch_with(&*use_local_task_pump(), async move {
         let chosen = future.await;
         Ok::<Option<DialogOutcome>, String>(Some(DialogOutcome {
             action: action.to_owned(),
@@ -454,11 +436,23 @@ mod tests {
         assert_eq!(status_text(&scene).as_deref(), Some("No file chosen yet"));
     }
 
+    /// Drive the owner-scoped `LocalTaskPump` to completion — what the
+    /// shell does once per frame (R761.1). The demo's first scripted
+    /// outcome is deferred (30 Pending polls), so loop generously.
+    fn drain_pump() {
+        for _ in 0..64 {
+            if !use_local_task_pump().poll() {
+                break;
+            }
+        }
+    }
+
     #[test]
     fn r761_open_renders_scripted_path() {
         let owner = Owner::new();
         let scene = owner.run(|| {
             run_dialog(DialogKind::OpenFile, "open");
+            drain_pump();
             view(idle(), &Frame::new())
         });
         assert_eq!(
@@ -471,8 +465,9 @@ mod tests {
     fn r761_second_open_is_cancelled_per_fifo() {
         let owner = Owner::new();
         let scene = owner.run(|| {
-            run_dialog(DialogKind::OpenFile, "open"); // consumes selection
+            run_dialog(DialogKind::OpenFile, "open"); // consumes selection (deferred)
             run_dialog(DialogKind::OpenFile, "open"); // consumes cancel
+            drain_pump();
             view(idle(), &Frame::new())
         });
         assert_eq!(status_text(&scene).as_deref(), Some("Open cancelled"));
@@ -490,6 +485,7 @@ mod tests {
                 (DialogKind::PickFolder, "pick"),
             ] {
                 run_dialog(kind, action);
+                drain_pump();
                 out.push(status_line());
             }
             out

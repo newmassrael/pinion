@@ -20,6 +20,7 @@ use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::task::{Context, Waker};
 
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
@@ -200,6 +201,131 @@ where
     pub fn is_current(&self) -> bool {
         self.current_generation.get() == self.generation
     }
+}
+
+/// R761.1 §5.22 — production [`LocalSpawner`]: the UI-thread cooperative
+/// task pump the R26/R37 spec anticipated ("the framework integrator
+/// spawns the future"). [`spawn_local`](LocalSpawner::spawn_local)
+/// **enqueues** a future; [`poll`](Self::poll), driven once per frame by
+/// the shell, advances every queued future one step and drops the ones
+/// that completed.
+///
+/// This is what makes a *deferred* future (one that yields `Pending`
+/// until off-thread work completes — e.g. a native `rfd::AsyncFileDialog`
+/// awaiting an `xdg-desktop-portal` D-Bus reply) actually resolve on the
+/// UI thread: each frame re-polls it until it is `Ready`, then the
+/// wrapping [`Resource::fetch_with`] driver writes the value through its
+/// [`FetchToken`]. A binding's immediately-ready future (the scripted
+/// test path) completes on the first poll.
+///
+/// ## Waker
+///
+/// v1 polls with the stable `Waker::noop`, so a queued future is only
+/// advanced when [`poll`](Self::poll) runs — never self-woken. The shell
+/// therefore keeps requesting frames while [`has_pending`](Self::has_pending)
+/// is `true` (same "stay awake while active" contract as
+/// [`Owner::any_animation_active`](super::owner::Owner)). A wake-channel
+/// waker that requests a single redraw on completion (avoiding the
+/// busy-poll while a dialog is open) is a forward refinement; modal
+/// dialogs are short-lived, so the busy-poll cost is bounded.
+///
+/// ## Re-entrancy
+///
+/// [`poll`](Self::poll) takes the queue out before polling, so a future
+/// that spawns another task during its own poll (e.g. a completion that
+/// triggers an `Effect` that starts a follow-up fetch) does not
+/// re-entrantly borrow the queue. Survivors and newly-spawned tasks are
+/// merged back afterward.
+///
+/// Single-thread (`RefCell`, `!Send`): matches the `!Send` payload
+/// contract of [`LocalSpawner`] and the UI-thread reactive runtime (§6.3).
+#[derive(Default)]
+pub struct LocalTaskPump {
+    pending: std::cell::RefCell<Vec<Pin<Box<dyn Future<Output = ()> + 'static>>>>,
+}
+
+impl LocalTaskPump {
+    /// Construct an empty pump.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of queued (not-yet-completed) tasks.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.pending.borrow().len()
+    }
+
+    /// `true` when no tasks are queued.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.pending.borrow().is_empty()
+    }
+
+    /// `true` when at least one task is still queued — the shell reads
+    /// this to keep the frame loop awake while async work is in flight.
+    #[must_use]
+    pub fn has_pending(&self) -> bool {
+        !self.is_empty()
+    }
+
+    /// Advance every queued future one poll. Futures that resolve are
+    /// dropped; futures that yield `Pending` are retained for the next
+    /// frame. Returns [`has_pending`](Self::has_pending) *after* this
+    /// poll so the caller can decide whether to schedule another frame.
+    pub fn poll(&self) -> bool {
+        // Take the queue out so a task that spawns another during its
+        // own poll does not re-entrantly borrow `pending`.
+        let mut taken = core::mem::take(&mut *self.pending.borrow_mut());
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        taken.retain_mut(|task| task.as_mut().poll(&mut cx).is_pending());
+
+        // Merge survivors with anything spawned during the poll (which
+        // landed in the now-empty `pending`).
+        let mut pending = self.pending.borrow_mut();
+        taken.append(&mut pending);
+        *pending = taken;
+        !pending.is_empty()
+    }
+}
+
+impl core::fmt::Debug for LocalTaskPump {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("LocalTaskPump")
+            .field("pending", &self.len())
+            .finish()
+    }
+}
+
+impl LocalSpawner for LocalTaskPump {
+    /// Enqueue `future`; it is driven to completion by subsequent
+    /// [`poll`](LocalTaskPump::poll) calls (unlike a `block_on` spawner,
+    /// this returns immediately without advancing the future).
+    fn spawn_local(&self, future: Pin<Box<dyn Future<Output = ()> + 'static>>) {
+        self.pending.borrow_mut().push(future);
+    }
+}
+
+/// R761.1 §5.22 — hook returning the active owner scope's shared
+/// [`LocalTaskPump`]. Bindings drive a [`Resource`] with a deferred
+/// future via `resource.fetch_with(&*use_local_task_pump(), fut)`; the
+/// shell polls the *same* pump each frame (through
+/// [`Owner::local_task_pump`](super::owner::Owner::local_task_pump)), so
+/// the future actually advances. Both the immediately-ready scripted
+/// path and a deferred native (`rfd`) future resolve through this one
+/// spawner — no per-binding `block_on` helper.
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope (same shape as
+/// the other `use_*` hooks).
+#[must_use]
+pub fn use_local_task_pump() -> Rc<LocalTaskPump> {
+    super::owner::Owner::current()
+        .expect("use_local_task_pump requires an active Owner scope")
+        .local_task_pump()
 }
 
 #[cfg(test)]
@@ -406,5 +532,116 @@ mod tests {
         r.fetch_with(&BlockingSpawner, async { Ok::<i32, String>(7) });
         assert!(owner.is_dirty());
         assert_eq!(r.state(), ResourceState::Ready(7));
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R761.1 §5.22 — LocalTaskPump (production deferred-future driver)
+    // ────────────────────────────────────────────────────────────────
+
+    /// Future that yields `Pending` `remaining` times, then `Ready(value)`.
+    /// Models a deferred task (e.g. a native dialog awaiting a portal
+    /// reply) without a real async runtime.
+    struct Defer {
+        remaining: Cell<u32>,
+        value: i32,
+    }
+
+    impl Future for Defer {
+        type Output = i32;
+        fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<i32> {
+            if self.remaining.get() == 0 {
+                Poll::Ready(self.value)
+            } else {
+                self.remaining.set(self.remaining.get() - 1);
+                Poll::Pending
+            }
+        }
+    }
+
+    #[test]
+    fn r761_1_pump_drives_ready_future_in_one_poll() {
+        let pump = LocalTaskPump::new();
+        let flag = Rc::new(Cell::new(false));
+        let f = Rc::clone(&flag);
+        pump.spawn_local(Box::pin(async move { f.set(true); }));
+        assert!(pump.has_pending());
+        assert_eq!(pump.len(), 1);
+        assert!(!pump.poll(), "an immediately-ready future completes in one poll");
+        assert!(pump.is_empty());
+        assert!(flag.get(), "the task body ran");
+    }
+
+    #[test]
+    fn r761_1_pump_drives_deferred_future_across_polls() {
+        let pump = LocalTaskPump::new();
+        let out = Rc::new(Cell::new(0));
+        let o = Rc::clone(&out);
+        pump.spawn_local(Box::pin(async move {
+            let v = Defer {
+                remaining: Cell::new(2),
+                value: 42,
+            }
+            .await;
+            o.set(v);
+        }));
+        assert!(pump.poll(), "still pending after poll 1");
+        assert_eq!(out.get(), 0);
+        assert!(pump.poll(), "still pending after poll 2");
+        assert_eq!(out.get(), 0);
+        assert!(!pump.poll(), "deferred future resolves on poll 3");
+        assert_eq!(out.get(), 42, "the awaited value lands");
+        assert!(pump.is_empty());
+    }
+
+    #[test]
+    fn r761_1_resource_loads_through_pump_loading_then_ready() {
+        // The R761 file-dialog shape: a deferred future feeds a Resource
+        // through fetch_with + the pump. State stays Loading across the
+        // Pending polls, then flips to Ready — exactly the lifecycle a
+        // native RfdFileDialog future drives (the scripted mock collapses
+        // to the one-poll path above).
+        let pump = LocalTaskPump::new();
+        let r = Resource::<i32, String>::ready(0);
+        r.fetch_with(&pump, async {
+            let v = Defer {
+                remaining: Cell::new(1),
+                value: 7,
+            }
+            .await;
+            Ok::<i32, String>(v)
+        });
+        assert_eq!(r.state(), ResourceState::Loading, "fetch_with marks Loading");
+        assert_eq!(pump.len(), 1);
+        assert!(pump.poll(), "Defer still pending after poll 1");
+        assert_eq!(r.state(), ResourceState::Loading);
+        assert!(!pump.poll(), "resolves on poll 2");
+        assert_eq!(r.state(), ResourceState::Ready(7));
+        assert!(pump.is_empty());
+    }
+
+    #[test]
+    fn r761_1_pump_is_reentrancy_safe_when_task_spawns_during_poll() {
+        let pump = Rc::new(LocalTaskPump::new());
+        let inner = Rc::clone(&pump);
+        let ran = Rc::new(Cell::new(0));
+        let r1 = Rc::clone(&ran);
+        let r2 = Rc::clone(&ran);
+        pump.spawn_local(Box::pin(async move {
+            r1.set(r1.get() + 1);
+            // Spawn a follow-up while this task is being polled — must
+            // not re-entrantly borrow the queue.
+            inner.spawn_local(Box::pin(async move { r2.set(r2.get() + 1); }));
+        }));
+        assert!(pump.poll(), "follow-up task queued during poll stays pending");
+        assert_eq!(ran.get(), 1);
+        assert!(!pump.poll(), "follow-up task runs on the next poll");
+        assert_eq!(ran.get(), 2);
+    }
+
+    #[test]
+    fn r761_1_pump_default_and_debug() {
+        let pump = LocalTaskPump::default();
+        assert!(pump.is_empty());
+        assert!(format!("{pump:?}").contains("pending: 0"));
     }
 }

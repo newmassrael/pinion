@@ -112,9 +112,16 @@ def body() -> None:
         assert find_text(snap, "Pick folder") is not None, "Pick-folder label present"
         assert_three_buttons(snap, "boot")
 
-        # ── Open → scripted selection #1 ─────────────────────────────
+        # ── Open → DEFERRED selection #1 (R761.1) ────────────────────
+        # The first scripted outcome is deferred (30 Pending polls), a
+        # stand-in for a native dialog future. The shell LocalTaskPump
+        # keep-alive must drive it across frames: status reads Loading
+        # ("Choosing a file…") first, then resolves to the path — proving
+        # a multi-frame async future drives end-to-end through the live
+        # shell (not just the synchronous scripted path).
         d.click(path=OPEN_TAG)
-        snap = wait_status(d, "Opened: /projects/alpha.pinion.xml", "open #1 selected")
+        wait_status(d, "Choosing a file…", "deferred dialog shows Loading")
+        snap = wait_status(d, "Opened: /projects/alpha.pinion.xml", "deferred #1 resolved")
         assert status_of(snap) != "No file chosen yet", "status changed off boot"
         assert_three_buttons(snap, "after open #1")
 

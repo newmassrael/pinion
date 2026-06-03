@@ -1061,6 +1061,24 @@ impl Owner {
         })
     }
 
+    /// R761.1 §5.22 — the owner-scoped [`LocalTaskPump`](super::resource::LocalTaskPump),
+    /// lazily created on first access. One shared instance per owner:
+    /// bindings enqueue async work through it (via `use_local_task_pump`
+    /// / [`Resource::fetch_with`](super::resource::Resource::fetch_with)),
+    /// and the shell drains it once per frame by calling
+    /// [`LocalTaskPump::poll`](super::resource::LocalTaskPump::poll) on
+    /// the *same* instance this returns — both go through [`Self::cache`]
+    /// under one private key, so the producer (binding) and the driver
+    /// (shell) never desync. This is the production side of the R26/R37
+    /// "framework integrator provides the spawner" contract.
+    #[must_use]
+    pub fn local_task_pump(&self) -> Rc<super::resource::LocalTaskPump> {
+        self.cache(
+            "__pinion.reactive.local_task_pump",
+            super::resource::LocalTaskPump::new,
+        )
+    }
+
     /// R51.150 §5.22 — `true` when (`V`, `key`) has been populated by
     /// a previous [`Owner::cache::<V>`](Self::cache) call on this
     /// owner.

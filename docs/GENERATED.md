@@ -17336,6 +17336,36 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R761.1 — R761.1 native-driver clearance — LocalTaskPump production LocalSpawner + shell per-frame pump wiring, so the native RfdFileDialog (a deferred future) is end-to-end drivable (R761 carry (b): was a compiling crate with no production driver). Owner::local_task_pump shared instance + use_local_task_pump hook (binding producer + shell driver share it); shell paint cycle polls it each frame with keep-alive-while-pending (mirrors any_animation_active). ScriptedFileDialog::queue_deferred_selection (Pending N polls) lets the headless demo prove a multi-frame future drives Loading->Ready through the live shell.
+
+**Changes**:
+- pinion_core::LocalTaskPump: production LocalSpawner (enqueue-on-spawn + poll()-per-frame drives deferred futures)
+- Owner::local_task_pump() shared instance + use_local_task_pump() hook: binding producer + shell driver share it
+- shell paint cycle polls root_owner pump each frame + keep-alive-while-pending (mirrors any_animation_active)
+- hello-file-dialog uses the pump (drops binding-local ImmediateSpawner); native RfdFileDialog now drivable
+- ScriptedFileDialog::queue_deferred_selection (Pending N polls) = deterministic deferred-dialog stand-in
+
+
+
+**Verification**:
+- LocalTaskPump unit tests: deferred Pending->Ready across polls + Resource Loading->Ready + re-entrancy (5)
+- file_dialog deferred unit test + 10 file_dialog tests green
+- r761 demo PASS: deferred #1 shows Loading then resolves via live-shell pump keep-alive (end-to-end multi-frame async)
+- clippy -D pedantic clean; non-textfield demo (button) regression-free (shared paint-cycle change)
+- clears R761 carry (b): native RfdFileDialog was a compiling crate with no production driver -> now drivable
+
+
+
+**Impact**: §3, §5.15, §5.22
+
+
+**Carry forward**:
+- v1 busy-polls with Waker::noop (shell stays awake while pending); wake-channel waker (poll only on completion) = refinement
+- multi-window polls the shared root pump per-window-paint (harmless over-poll); per-frame-once dedup is a micro-opt
+- macOS/Windows native dialogs stay GUI-thread-!Send (Linux xdg-portal future is Send-or-pumpable); R761 carry (a) stands
+
+
+
 ### R762 — R762 §5.36 §5.38 — pointer caret hit-test substrate: byte_offset_for_point (pixel->byte, inverse of caret_rect_for_byte_offset via parley Cursor::from_point, style-agnostic over R713 styled runs) + click-to-position-caret wired at mouse_pressed_for_window (native winit + scene/click converge, one path) through new WidgetView::position_caret_for_point hook + tf_paint::byte_for_field_point. Foundation for rich-text selection; immediate single-style TextField consumer (clicking now positions the caret). Drag-select + styled-run edit-state deferred to R763 (evidence-first).
 
 **Changes**:
