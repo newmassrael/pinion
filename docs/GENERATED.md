@@ -17459,6 +17459,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R764 — R764 §5.22 §5.36 multi-line TextField (textarea) — per-line selection-band decomposition + vertical caret navigation + Enter-newline; new hello-textarea consumer
+
+**Changes**:
+- pinion-text: selection_rects_for_range (parley Selection::geometry per-line bands) + byte_offset_for_line_move (move_lines vertical nav)
+- view_field selection paint generalized to per-line bands (single-line = 1 band, bit-identical to pre-R764)
+- TextFieldStyle: multi_line flag (top-align) + m3_multiline(rows) ctor; tf_paint::byte_for_field_vertical_move helper
+- hello-textarea: new consumer — Enter inserts \n, ArrowUp/Down vertical nav (Shift extends), drag/click across lines
+- hit-test (byte_for_field_point) + per-line bands reused verbatim against the multi-line layout (parley picks line by y)
+- r764 demo (32 assert: vertical nav line-starts + multi-line drag + Enter + per-line click); +6 pinion-text + 3 binding tests
+
+
+
+**Verification**:
+- cargo test --workspace -j2 green (119 ok suites; +6 pinion-text line/selection + 3 hello-textarea binding tests)
+- cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean
+- r764 demo PASS (32 assert); r762 / r763 / select single-line demos PASS (per-line decomposition = 1 band, no regression)
+- live-pixel guard: multi-line drag-select -> accent band 78 rows ~3 line-heights tall on :0 (single-line ~25), sel={0,33}
+
+
+
+**Impact**: §5.36, §5.22, §5.38
+
+
+**Carry forward**:
+- hit-test glue + apply_key Json-forward = 2-copy (hello-textfield/textarea); can't lift to tf_paint (pinion-shell rect_for_tag dep); 3rd consumer or shell helper round
+- soft-wrap at field width deferred (v1 = hard newlines only, max_advance=None); add max_advance when a wrap consumer lands
+- in-field vertical scroll-to-caret deferred (fixed-rows box; caret past last visible row clips); ScrollNode wrap when consumer needs
+- desired-column (h_pos) not persisted across vertical moves (recomputed per move; drifts through short lines); store in TextEditState when needed
+- Home/End line-relative deferred (substrate move_home/end target buffer ends; multi-line wants line ends)
+- aria-multiline a11y refinement deferred (2nd textarea consumer per abstraction-needs-second-consumer)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

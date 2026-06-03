@@ -27,7 +27,7 @@
 //! decides clamp policy).
 
 use crate::Layout;
-use parley::{Affinity, Cursor};
+use parley::{Affinity, Cursor, Selection};
 
 /// R762 §5.36 §5.38 — closed-form **pixel → byte** hit-test: the inverse
 /// of [`caret_rect_for_byte_offset`]. Maps a layout-space point
@@ -206,6 +206,75 @@ pub fn caret_rect_for_byte_offset(
     }
 }
 
+/// R764 §5.36 §5.22 — per-line selection rectangles for the byte range
+/// `[start, end)` against a shaped [`Layout`], wrapping
+/// [`parley::Selection::geometry`]. A single-line range yields one
+/// rect; a range that spans hard line breaks (or soft wraps) yields one
+/// rect per visual line — the partial first line, full middle lines,
+/// and partial last line a text editor paints as the selection band.
+///
+/// This is the multi-line generalisation of the single-band selection
+/// rect the §5.38 `TextField` paint computed by hand from two
+/// [`caret_rect_for_byte_offset`] calls (which is only correct when
+/// both ends sit on the same line). Returns rects in layout-space f32;
+/// the paint backend translates to pixels with the same transform it
+/// uses for glyph runs. An empty (collapsed) range returns no rects.
+///
+/// The ends are passed in any order — parley swaps internally so the
+/// caller may hand `(anchor, caret)` directly without normalising.
+#[must_use]
+pub fn selection_rects_for_range(layout: &Layout, start: usize, end: usize) -> Vec<CaretRect> {
+    if start == end {
+        return Vec::new();
+    }
+    let selection = Selection::new(
+        Cursor::from_byte_index(layout, start, Affinity::Downstream),
+        Cursor::from_byte_index(layout, end, Affinity::Downstream),
+    );
+    selection
+        .geometry(layout)
+        .into_iter()
+        .map(|(bbox, _line_ix)| {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "layout-space coords fit f32 in every realistic UI viewport"
+            )]
+            CaretRect::new(
+                bbox.x0 as f32,
+                bbox.y0 as f32,
+                bbox.width() as f32,
+                bbox.height() as f32,
+            )
+        })
+        .collect()
+}
+
+/// R764 §5.36 §5.22 — byte offset after moving the caret `delta` visual
+/// lines from `byte` (vertical caret navigation: `ArrowUp` = `-1`,
+/// `ArrowDown` = `+1`), wrapping [`parley::Selection::move_lines`]. parley
+/// maintains the horizontal target position for the move and clamps to
+/// line start / end at the document boundaries (moving up from the
+/// first line lands at byte 0, down from the last line at `text.len()`).
+///
+/// Vertical navigation is inherently geometry-dependent — it needs the
+/// shaped [`Layout`] to know which byte sits at the same x on the
+/// adjacent line — so it cannot live on the geometry-free
+/// [`TextEditState`](pinion_core::widgets::text_edit::TextEditState)
+/// `apply_key` path the way `ArrowLeft` / `ArrowRight` do; a multi-line
+/// binding resolves the new caret here (it holds the layout cache) and
+/// feeds it to `set_caret` / `set_selection`.
+///
+/// The returned offset is a char boundary (parley resolves to a cluster
+/// edge) so it is safe to pass straight into the `TextEditState`
+/// setters.
+#[must_use]
+pub fn byte_offset_for_line_move(layout: &Layout, byte: usize, delta: isize) -> usize {
+    Selection::from_byte_index(layout, byte, Affinity::Downstream)
+        .move_lines(layout, delta, false)
+        .focus()
+        .index()
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.b.2 §5.36 §5.38 — `caret_rect_for_byte_offset` regression
@@ -213,7 +282,10 @@ mod tests {
     //! to build real parley shaped runs, then asserts on the
     //! geometry produced by the closed-form helper.
 
-    use super::{byte_offset_for_point, caret_rect_for_byte_offset, CaretRect};
+    use super::{
+        byte_offset_for_line_move, byte_offset_for_point, caret_rect_for_byte_offset,
+        selection_rects_for_range, CaretRect,
+    };
     use crate::LayoutCache;
     use pinion_core::style::TextStyle;
 
@@ -234,6 +306,77 @@ mod tests {
     fn layout_for<'a>(cache: &'a mut LayoutCache, text: &str) -> &'a crate::Layout {
         let style = TextStyle::default();
         cache.layout(text, &style, None)
+    }
+
+    // R764 §5.36 §5.22 — selection_rects_for_range + line move.
+
+    #[test]
+    fn r764_selection_collapsed_range_has_no_rects() {
+        let mut cache = shape("hello");
+        let layout = layout_for(&mut cache, "hello");
+        assert!(
+            selection_rects_for_range(layout, 3, 3).is_empty(),
+            "a collapsed (start == end) range yields no selection rects",
+        );
+    }
+
+    #[test]
+    fn r764_selection_single_line_is_one_band() {
+        let mut cache = shape("hello");
+        let layout = layout_for(&mut cache, "hello");
+        let rects = selection_rects_for_range(layout, 1, 4);
+        assert_eq!(rects.len(), 1, "a single-line selection is one band");
+        assert!(rects[0].width > 0.0, "band has positive width");
+        assert!(rects[0].height > 0.0, "band spans the line box");
+    }
+
+    #[test]
+    fn r764_selection_spanning_newline_is_multiple_bands() {
+        // "abc\nxyz" — byte 1 (line 0) .. byte 6 (line 1) spans the
+        // hard line break, so parley yields one rect per visual line.
+        let mut cache = shape("abc\nxyz");
+        let layout = layout_for(&mut cache, "abc\nxyz");
+        let rects = selection_rects_for_range(layout, 1, 6);
+        assert!(
+            rects.len() >= 2,
+            "a selection across a newline yields a band per line (got {})",
+            rects.len(),
+        );
+        // The bands sit on distinct lines (increasing y).
+        assert!(
+            rects[1].y > rects[0].y,
+            "the second band is on a lower line (y {} > {})",
+            rects[1].y,
+            rects[0].y,
+        );
+    }
+
+    #[test]
+    fn r764_line_move_down_lands_on_next_line() {
+        // "abc\nxyz": line 0 = bytes 0..3, '\n' = byte 3, line 1 = 4..7.
+        let mut cache = shape("abc\nxyz");
+        let layout = layout_for(&mut cache, "abc\nxyz");
+        let moved = byte_offset_for_line_move(layout, 1, 1);
+        assert!(
+            (4..=7).contains(&moved),
+            "ArrowDown from line 0 lands on line 1 (byte {moved} in 4..=7)",
+        );
+    }
+
+    #[test]
+    fn r764_line_move_up_lands_on_previous_line() {
+        let mut cache = shape("abc\nxyz");
+        let layout = layout_for(&mut cache, "abc\nxyz");
+        let moved = byte_offset_for_line_move(layout, 5, -1);
+        assert!(moved <= 3, "ArrowUp from line 1 lands on line 0 (byte {moved} <= 3)");
+    }
+
+    #[test]
+    fn r764_line_move_up_from_first_line_clamps_to_start() {
+        let mut cache = shape("abc\nxyz");
+        let layout = layout_for(&mut cache, "abc\nxyz");
+        // Moving up from the first line clamps to the line start (byte 0).
+        assert_eq!(byte_offset_for_line_move(layout, 2, -1), 0);
     }
 
     #[test]

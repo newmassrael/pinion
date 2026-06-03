@@ -2372,6 +2372,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-textarea"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-platform-clipboard",
+ "pinion-shell",
+ "pinion-text",
+ "pinion-widget-paint",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-textfield"
 version = "0.0.1"
 dependencies = [

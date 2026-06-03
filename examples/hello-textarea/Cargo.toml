@@ -1,0 +1,32 @@
+[package]
+name = "hello-textarea"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R764 §5.22 §5.36 multi-line TextField (textarea) consumer — Enter inserts a newline, ArrowUp/Down navigate lines, drag/Shift selects across lines; demonstrates the per-line selection-band decomposition + vertical caret navigation substrate"
+publish = false
+
+[[bin]]
+name = "hello-textarea"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

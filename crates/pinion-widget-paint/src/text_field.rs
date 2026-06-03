@@ -62,7 +62,10 @@ use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Color, Scene, WidgetStateName};
-use pinion_text::{byte_offset_for_point, caret_rect_for_byte_offset, CaretRect, LayoutCache};
+use pinion_text::{
+    byte_offset_for_line_move, byte_offset_for_point, caret_rect_for_byte_offset,
+    selection_rects_for_range, CaretRect, LayoutCache,
+};
 
 /// (R657 §5.16) Owner-cache key for the shared
 /// [`LayoutCache`](pinion_text::LayoutCache). The pre-lift bindings
@@ -115,6 +118,19 @@ pub struct TextFieldStyle {
     /// Preedit underline thickness in logical pixels (default 1 —
     /// the canonical IME underline shape).
     pub preedit_underline_thickness: u32,
+    /// R764 §5.22 — multi-line (textarea) mode. `false` (default) is
+    /// the single-line filled `TextField`: the content is
+    /// vertically *centred* in the 40 px field box (text origin ≈
+    /// `field_pad`). `true` is the textarea: the content is
+    /// top-aligned so the text block's origin is exactly
+    /// `(field_pad, field_pad)`, matching the absolute-positioned
+    /// caret / per-line selection bands (which anchor at
+    /// `field_pad + layout_y`). The text already lays out across
+    /// multiple visual lines whenever it carries `\n` (parley breaks
+    /// on explicit newlines regardless of this flag) — the flag only
+    /// governs vertical alignment so a tall box top-anchors instead
+    /// of centring the whole block.
+    pub multi_line: bool,
 }
 
 impl TextFieldStyle {
@@ -132,6 +148,30 @@ impl TextFieldStyle {
             selection_alpha: 0xA0,
             preedit_bg_alpha: 0x40,
             preedit_underline_thickness: 1,
+            multi_line: false,
+        }
+    }
+
+    /// R764 §5.22 — Material 3 multi-line (textarea) defaults: the
+    /// filled-field tokens with `multi_line = true` (top-aligned
+    /// content) and a `rows`-tall box. The height is
+    /// `rows * line_height + 2 * field_pad` where `line_height` is
+    /// derived from `font_size_px` with the M3 ~1.4 body line-height
+    /// ratio, so a `rows`-row textarea shows exactly that many lines
+    /// of hard-wrapped text without clipping. `rows` is clamped to
+    /// `>= 1`.
+    #[must_use]
+    pub const fn m3_multiline(rows: u32) -> Self {
+        let base = Self::m3_filled();
+        // M3 body line-height ≈ 1.4 × font size (24 px for the 18 px
+        // body-medium token); integer-rounded to keep the box a whole
+        // number of logical pixels.
+        let line_height = base.font_size_px * 7 / 5;
+        let rows = if rows == 0 { 1 } else { rows };
+        Self {
+            field_h: rows * line_height + 2 * base.field_pad,
+            multi_line: true,
+            ..base
         }
     }
 }
@@ -361,15 +401,27 @@ pub fn view_field(
             saturating_f32_to_u32(rect.y),
             height_floor,
         );
-        let selection = selection_range.map(|(start, end)| {
-            let start_rect = caret_rect_for_byte_offset(layout, start, cw);
-            let end_rect = caret_rect_for_byte_offset(layout, end, cw);
-            let start_x = saturating_f32_to_u32(start_rect.x);
-            let end_x = saturating_f32_to_u32(end_rect.x);
-            let sel_y = saturating_f32_to_u32(start_rect.y);
-            let sel_h = saturating_f32_to_u32(start_rect.height).max(style.font_size_px);
-            (start_x, sel_y, end_x.saturating_sub(start_x), sel_h)
-        });
+        // R764 §5.22 — per-line selection bands. `selection_rects_for_range`
+        // (parley `Selection::geometry`) yields one rect per visual line,
+        // so a multi-line selection paints a partial first line, full
+        // middle lines, and partial last line. A single-line selection
+        // collapses to one rect — bit-identical to the pre-R764 single
+        // band (the same start_x..end_x on one line).
+        let selection: Vec<(u32, u32, u32, u32)> = selection_range
+            .map(|(start, end)| {
+                selection_rects_for_range(layout, start, end)
+                    .into_iter()
+                    .map(|r| {
+                        (
+                            saturating_f32_to_u32(r.x),
+                            saturating_f32_to_u32(r.y),
+                            saturating_f32_to_u32(r.width),
+                            saturating_f32_to_u32(r.height).max(style.font_size_px),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let preedit_p = preedit_byte_range.map(|(start, end)| {
             let start_rect = caret_rect_for_byte_offset(layout, start, cw);
             let end_rect = caret_rect_for_byte_offset(layout, end, cw);
@@ -410,7 +462,7 @@ pub fn view_field(
     // R56.1.f.3 §5.22 — selection rect paints BEFORE text_node so
     // glyphs render on top. Vello composites children in vector
     // order (later children paint atop earlier).
-    if let Some((sel_x, sel_y, sel_w, sel_h)) = selection_pixel {
+    for &(sel_x, sel_y, sel_w, sel_h) in &selection_pixel {
         if sel_w > 0 {
             let sel_left = pad.saturating_add(sel_x);
             let sel_top = pad.saturating_add(sel_y);
@@ -504,7 +556,15 @@ pub fn view_field(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
                     .with_justify(JustifyContent::Start)
-                    .with_align_items(AlignItems::Center)
+                    // R764 §5.22 — single-line centres the content in the
+                    // 40 px box; multi-line top-aligns so the text block's
+                    // origin is (pad, pad), matching the absolute caret /
+                    // per-line selection bands anchored at pad + layout_y.
+                    .with_align_items(if style.multi_line {
+                        AlignItems::Start
+                    } else {
+                        AlignItems::Center
+                    })
                     .with_size(Size::px(style.field_w, style.field_h))
                     .with_padding(Rect::new(
                         style.field_pad,
@@ -668,6 +728,45 @@ pub fn byte_for_field_point(
     let mut cache = layout_cache.borrow_mut();
     let layout = cache.layout(effective_text.as_str(), &text_style, None);
     byte_offset_for_point(layout, local_x, local_y)
+}
+
+/// R764 §5.36 §5.22 — vertical caret navigation for a multi-line field:
+/// resolve the byte offset after moving the caret `delta` visual lines
+/// (`ArrowUp` = `-1`, `ArrowDown` = `+1`) from the field's current caret.
+/// Reshapes the *same* `(text, style)` [`view_field`] paints (same-frame
+/// `LayoutCache` hit) and feeds [`byte_offset_for_line_move`].
+///
+/// Mirrors [`byte_for_field_point`] (the pointer hit-test) for the
+/// keyboard vertical axis: both resolve a new caret byte against the
+/// painted Layout via the `field_shaping` SSOT, so the caret a key moves
+/// to and the glyph it lands under stay consistent. The returned offset
+/// is a char boundary, safe for `TextEditState::set_caret` /
+/// `set_selection`. A multi-line binding calls this on ArrowUp/Down
+/// (which need the layout geometry the `apply_key` path lacks).
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope (same shape as
+/// [`byte_for_field_point`] — only test paths trigger).
+#[must_use]
+pub fn byte_for_field_vertical_move(
+    tag: &'static str,
+    interaction: TextFieldState,
+    delta: isize,
+    theme: &Theme,
+    style: &TextFieldStyle,
+) -> usize {
+    let caret = use_text_edit_state(tag).caret();
+    let FieldShaping {
+        effective_text,
+        text_style,
+        visual_caret_byte,
+        ..
+    } = field_shaping(tag, caret, interaction, theme, style);
+    let layout_cache = use_text_field_layout_cache();
+    let mut cache = layout_cache.borrow_mut();
+    let layout = cache.layout(effective_text.as_str(), &text_style, None);
+    byte_offset_for_line_move(layout, visual_caret_byte, delta)
 }
 
 /// (R657 §5.16) Convenience helper extracting `(TextFieldState,
