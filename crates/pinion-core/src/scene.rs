@@ -1406,7 +1406,7 @@ impl BoxNode {
 /// from the node's base style so it inherits the paragraph-level
 /// fields and overrides only the run-level ones.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct StyleRun {
     /// UTF-8 byte offset of the first styled byte (inclusive).
     pub start: u32,

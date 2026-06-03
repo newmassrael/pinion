@@ -79,7 +79,7 @@
 //! observe the text content without going through the `send` invoke
 //! channel.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::reactive::{batch, Owner, Signal};
@@ -206,26 +206,35 @@ pub struct TextEditState {
     /// Applying / clearing formatting over a range is a later slice
     /// ([`Self::set_style_runs`] is the substrate seam in the meantime).
     ///
-    /// A non-reactive [`RefCell`] (mirror of [`goal_column`](Self::goal_column)'s
-    /// [`Cell`]), **not** a [`Signal`]. The runs change only as a
-    /// side-effect of an edit ([`insert`](Self::insert) /
-    /// [`backspace`](Self::backspace) / [`delete_forward`](Self::delete_forward)),
-    /// and every such edit also writes the [`text`](Self::text) signal —
-    /// so the field's `text()` subscription already drives the repaint
-    /// that re-reads the runs. There is no R767 consumer that mutates
-    /// runs *without* a text edit, so an independent reactive channel
-    /// would be premature ([[abstraction-needs-second-consumer]]).
+    /// A reactive [`Signal`] — the same content-state shape as
+    /// [`text`](Self::text) / [`caret_pos`](Self::caret_pos) /
+    /// [`selection_anchor`](Self::selection_anchor), **not** the
+    /// non-reactive scratch shape [`goal_column`](Self::goal_column)
+    /// uses. Two reasons, both from being a content peer of `text`:
     ///
-    /// **Honest deferral**: because it is not a `Signal`, the runs are
-    /// not captured by [`Owner::snapshot`](crate::reactive::Owner) — a
-    /// `scene/simulate` dry-run that edits a rich field would not restore
-    /// them on rollback (the same latent gap [`goal_column`](Self::goal_column)
-    /// carries). The first consumer that applies formatting over a range
-    /// *without* a text edit (the toolbar bold/colour path) needs both
-    /// independent reactivity and dry-run restoration; that consumer
-    /// promotes this to a serde-backed `Signal` (which entails deriving
-    /// `serde` on the [`TextStyle`](crate::style::TextStyle) family).
-    style_runs: RefCell<Vec<StyleRun>>,
+    /// 1. **Consistency** — every other content field of this struct is
+    ///    a `Signal`; the runs are observable content (the field paints
+    ///    them, `scene/snapshot` exposes them), so they share that shape
+    ///    rather than diverging to interior mutability.
+    /// 2. **Reactivity** — a view-fn that reads the runs (the field
+    ///    paint via `field_shaping`) subscribes, so a formatting change
+    ///    re-runs it. R767 edits also write [`text`](Self::text), so a
+    ///    `text` subscriber repaints anyway; but a *runs-only* mutation
+    ///    — applying bold / colour over a selection without a text edit
+    ///    (the next slice) — repaints **only** through this direct
+    ///    subscription, so modelling runs reactively now means that
+    ///    slice needs no state-shape change.
+    ///
+    /// Scope note: like its `text` / `caret` peers, the runs live in the
+    /// §5.22 reactive **sidecar**, which is **outside** the `dry_run`
+    /// determinism guarantee (§5.8 bounds that to scene + SCE state).
+    /// `scene/simulate` restores the scene's External introspect values
+    /// it mutates, not this sidecar — so no snapshot/restore is claimed
+    /// here. `Signal<T>` requires `Serialize + DeserializeOwned`, which
+    /// is why R767.1 derived `serde` on the
+    /// [`TextStyle`](crate::style::TextStyle) family (resolving the
+    /// `Color`-is-serde-but-`TextStyle`-is-not inconsistency it surfaced).
+    style_runs: Signal<Vec<StyleRun>>,
 }
 
 impl TextEditState {
@@ -243,7 +252,7 @@ impl TextEditState {
             preedit_buffer: Signal::new(None),
             tag: None,
             goal_column: Cell::new(None),
-            style_runs: RefCell::new(Vec::new()),
+            style_runs: Signal::new(Vec::new()),
         }
     }
 
@@ -280,7 +289,7 @@ impl TextEditState {
             preedit_buffer: Signal::new(None),
             tag: None,
             goal_column: Cell::new(None),
-            style_runs: RefCell::new(Vec::new()),
+            style_runs: Signal::new(Vec::new()),
         }
     }
 
@@ -436,7 +445,7 @@ impl TextEditState {
     /// field doc for the maintenance contract.
     #[must_use]
     pub fn style_runs(&self) -> Vec<StyleRun> {
-        self.style_runs.borrow().clone()
+        self.style_runs.get()
     }
 
     /// R767 §5.36 §5.22 — replace the styled-run list wholesale. The
@@ -446,7 +455,7 @@ impl TextEditState {
     /// byte order; the edit mutators maintain whatever shape is set
     /// here across subsequent inserts / deletes.
     pub fn set_style_runs(&self, runs: Vec<StyleRun>) {
-        *self.style_runs.borrow_mut() = runs;
+        self.style_runs.set(runs);
     }
 
     /// Replace the buffer with `new_text`. The caret is clamped
@@ -478,7 +487,7 @@ impl TextEditState {
             // R767 — a wholesale text replace invalidates every byte
             // offset the runs referenced; clear them (the caller re-seeds
             // via set_style_runs if the new text is styled).
-            self.style_runs.borrow_mut().clear();
+            self.style_runs.set(Vec::new());
         });
     }
 
@@ -527,26 +536,26 @@ impl TextEditState {
             buf.drain(start..end);
             buf.insert_str(start, s);
             let new_caret = start + s.len();
-            let mut runs = self.style_runs.borrow().clone();
+            let mut runs = self.style_runs.get();
             clip_runs_for_delete(&mut runs, start, end);
             shift_runs_for_insert(&mut runs, start, s.len());
             batch(|| {
                 self.text.set(buf);
                 self.caret_pos.set(new_caret);
                 self.selection_anchor.set(None);
-                *self.style_runs.borrow_mut() = runs;
+                self.style_runs.set(runs);
             });
             return;
         }
         let snapped = clamp_to_char_boundary(&buf, caret);
         buf.insert_str(snapped, s);
         let new_caret = snapped + s.len();
-        let mut runs = self.style_runs.borrow().clone();
+        let mut runs = self.style_runs.get();
         shift_runs_for_insert(&mut runs, snapped, s.len());
         batch(|| {
             self.text.set(buf);
             self.caret_pos.set(new_caret);
-            *self.style_runs.borrow_mut() = runs;
+            self.style_runs.set(runs);
         });
     }
 
@@ -566,13 +575,13 @@ impl TextEditState {
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
             buf.drain(start..end);
-            let mut runs = self.style_runs.borrow().clone();
+            let mut runs = self.style_runs.get();
             clip_runs_for_delete(&mut runs, start, end);
             batch(|| {
                 self.text.set(buf);
                 self.caret_pos.set(start);
                 self.selection_anchor.set(None);
-                *self.style_runs.borrow_mut() = runs;
+                self.style_runs.set(runs);
             });
             return;
         }
@@ -581,12 +590,12 @@ impl TextEditState {
         }
         let prev = prev_char_boundary(&buf, caret);
         buf.drain(prev..caret);
-        let mut runs = self.style_runs.borrow().clone();
+        let mut runs = self.style_runs.get();
         clip_runs_for_delete(&mut runs, prev, caret);
         batch(|| {
             self.text.set(buf);
             self.caret_pos.set(prev);
-            *self.style_runs.borrow_mut() = runs;
+            self.style_runs.set(runs);
         });
     }
 
@@ -605,13 +614,13 @@ impl TextEditState {
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
             buf.drain(start..end);
-            let mut runs = self.style_runs.borrow().clone();
+            let mut runs = self.style_runs.get();
             clip_runs_for_delete(&mut runs, start, end);
             batch(|| {
                 self.text.set(buf);
                 self.caret_pos.set(start);
                 self.selection_anchor.set(None);
-                *self.style_runs.borrow_mut() = runs;
+                self.style_runs.set(runs);
             });
             return;
         }
@@ -620,14 +629,14 @@ impl TextEditState {
         }
         let next = next_char_boundary(&buf, caret);
         buf.drain(caret..next);
-        let mut runs = self.style_runs.borrow().clone();
+        let mut runs = self.style_runs.get();
         clip_runs_for_delete(&mut runs, caret, next);
         // Text + runs both change: batch the two `Signal::set`s so a
         // subscriber re-runs once (the R55.G.24 atomic-multi-axis
         // contract — runs maintenance promoted this from a single write).
         batch(|| {
             self.text.set(buf);
-            *self.style_runs.borrow_mut() = runs;
+            self.style_runs.set(runs);
         });
     }
 

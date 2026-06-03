@@ -17644,6 +17644,33 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R767.1 — R767.1 audit clearance: style_runs RefCell->serde Signal (content-peer consistency + runs-only reactivity for R768); corrected false §2#3 doc claim (sidecar outside dry_run scope)
+
+**Changes**:
+- style_runs RefCell -> reactive Signal (content peer of text/caret; field paint subscribes)
+- serde derive on TextStyle family (8 types: FontWeight..TextOverflow + TextStyle + StyleRun)
+- serde required by Signal<T> bound + resolves the Color-serde-but-TextStyle-not inconsistency
+- field doc fixed: TextEditState sidecar OUTSIDE dry_run scope; no snapshot claim
+
+
+
+**Verification**:
+- cargo test --workspace green; clippy --workspace --all-targets -D pedantic (vello) clean
+- r767 demo 31 assert + r764/r765/r766 re-PASS (Signal swap behaviour-identical, serde additive)
+- audit: Owner::track only in tests + §5.8 caveat -> my "§2#3 violated" premise was false, removed
+
+
+
+**Impact**: §5.22, §5.36
+
+
+**Carry forward**:
+- goal_column stays non-reactive Cell (ephemeral nav scratch, not observable content = correct)
+- TextEditState content sidecar (text/caret/runs) not dry_run snapshot-tracked, by design (§5.8)
+- R768 apply-to-selection now lands on a reactive Signal (runs-only repaint works) + apply_style_run
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -1626,7 +1626,9 @@ impl BoxStyle {
 /// keeps `u16` so the value participates in `Hash` / `Eq` (cache key
 /// stability), then `pinion-text` widens to `f32` at the parley wire
 /// in R47.6.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct FontWeight(pub u16);
 
 impl FontWeight {
@@ -1669,7 +1671,9 @@ impl Default for FontWeight {
 /// `slnt` axis); `Some(deg)` pins a custom slant. R47.6 widens to
 /// `f32` at the parley wire.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum FontStyle {
     /// Upright / "roman" form. Default.
     #[default]
@@ -1688,7 +1692,9 @@ pub enum FontStyle {
 /// (e.g. `MultiplierX100(150)` = 1.5× font size). Fixed point keeps
 /// the enum `Hash + Eq`; R47.6 widens to `f32` at the parley wire.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum LineHeight {
     /// Use the font's preferred line height (= parley `MetricsRelative(1.0)`).
     #[default]
@@ -1707,7 +1713,9 @@ pub enum LineHeight {
 /// Maps to `parley::Alignment` at the R47.6 wire (`paint_text` honour
 /// + `LayoutCache::shape` alignment argument).
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum TextAlign {
     /// Writing-mode start (default — left in LTR, right in RTL).
     #[default]
@@ -1727,7 +1735,9 @@ pub enum TextAlign {
 /// `StyleProperty::Underline(bool)` + `StyleProperty::Strikethrough(bool)`;
 /// offset / brush per-decoration tuning is R47.x carry.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct TextDecoration {
     pub underline: bool,
     pub strikethrough: bool,
@@ -1794,7 +1804,9 @@ impl TextDecoration {
 /// truncates the last line and appends "…". R47.6 wires `Clip` /
 /// `Ellipsis` at the `paint_text` + parley line-break interaction.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum TextOverflow {
     /// Paint glyphs beyond `rect` edge (default — legacy R47.3 behaviour).
     #[default]
@@ -1820,7 +1832,7 @@ pub enum TextOverflow {
 /// `parley::StyleProperty` / `parley::Alignment` at R47.6 (`paint_text`
 /// + `LayoutCache::shape`).
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TextStyle {
     pub font_family: Option<std::borrow::Cow<'static, str>>,
     pub font_size_px: u32,
