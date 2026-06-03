@@ -121,6 +121,15 @@ def key(ta: RpcSubprocess, name: str) -> None:
     time.sleep(SETTLE)
 
 
+def key_ctrl(ta: RpcSubprocess, name: str) -> None:
+    """R766 — Home/End are now visual-line-relative; Ctrl+Home / Ctrl+End
+    reach the DOCUMENT boundaries (byte 0 / text.len()). This demo
+    navigates to the buffer ends, so it uses the Ctrl variants."""
+    ta.modifiers(ctrl=True)
+    key(ta, name)
+    ta.modifiers()
+
+
 def select_all(ta: RpcSubprocess) -> None:
     ta.modifiers(ctrl=True)
     key(ta, "a")
@@ -144,8 +153,8 @@ def visual_line_count_from_start(ta: RpcSubprocess) -> int:
     means we fell off the last line (not a new line). Starting at byte 0
     is itself the first visual line, so the count begins at 1."""
     length = len(text(ta))
-    key(ta, "Home")
-    assert_eq(caret(ta), 0, "Home moves the caret to the buffer start")
+    key_ctrl(ta, "Home")
+    assert_eq(caret(ta), 0, "Ctrl+Home moves the caret to the buffer start")
     count = 1
     prev = 0
     for _ in range(16):  # generous cap; LONG wraps into a handful of lines
@@ -183,7 +192,7 @@ def body() -> None:
         assert_eq(text(ta), SHORT, "short line replaced the buffer")
         assert_eq(text(ta).count("\n"), 0, "short line has no newline")
         # One visual line: ArrowDown from the start clamps to the end.
-        key(ta, "Home")
+        key_ctrl(ta, "Home")
         assert_eq(caret(ta), 0, "caret at start of the short line")
         key(ta, "ArrowDown")
         assert_eq(
@@ -202,7 +211,7 @@ def body() -> None:
         assert_eq(text(ta), LONG, "long line replaced the buffer")
         assert_eq(text(ta).count("\n"), 0, "long line has NO newline (wrap is width-driven)")
 
-        key(ta, "Home")
+        key_ctrl(ta, "Home")
         assert_eq(caret(ta), 0, "caret at start of the long line")
         key(ta, "ArrowDown")
         c_down = caret(ta)
@@ -218,9 +227,9 @@ def body() -> None:
             f"width-driven break with 0 newlines"
         )
 
-        # End reaches the true buffer end regardless of visual wrapping.
-        key(ta, "End")
-        assert_eq(caret(ta), len(LONG), "End reaches the buffer end past the wraps")
+        # Ctrl+End reaches the true buffer end regardless of visual wrapping.
+        key_ctrl(ta, "End")
+        assert_eq(caret(ta), len(LONG), "Ctrl+End reaches the buffer end past the wraps")
 
         # ── hit-test resolves against the wrapped layout ─────────────
         (fx, fy, fw, fh) = field_rect(ta)
@@ -246,7 +255,7 @@ def body() -> None:
         assert c_mid > c_top, "lower visual line resolves to a later byte than the top line"
 
         # ── selection across a wrap boundary ─────────────────────────
-        key(ta, "Home")
+        key_ctrl(ta, "Home")
         assert_eq(selection(ta), None, "selection cleared before shift-nav")
         ta.modifiers(shift=True)
         key(ta, "ArrowDown")
@@ -285,24 +294,24 @@ def body() -> None:
         replace_all(ta, VERYLONG)
         assert_eq(text(ta).count("\n"), 0, "very long line is still one logical line")
 
-        key(ta, "Home")
+        key_ctrl(ta, "Home")
         g = scroll_geometry(ta)
         assert g["content_h"] > g["viewport_h"], (
             f"wrapped content ({g['content_h']}px) overflows the viewport "
             f"({g['viewport_h']}px) — clip + scroll required"
         )
-        assert_eq(g["offset_y"], 0, "at Home the content is scrolled to the top (offset 0)")
+        assert_eq(g["offset_y"], 0, "at the document start the content is scrolled to the top (offset 0)")
         # Caret on screen = viewport_top + caret_content_y - offset; at the
         # top that is just caret_y. It must sit inside the viewport.
         assert g["caret_y"] is not None, "caret painted while focused"
         assert 0 <= g["caret_y"] - g["offset_y"] <= g["viewport_h"], (
-            "caret is visible within the viewport at Home"
+            "caret is visible within the viewport at the document start"
         )
 
-        key(ta, "End")
+        key_ctrl(ta, "End")
         g = scroll_geometry(ta)
         assert g["offset_y"] > 0, (
-            f"at End the content is scrolled down to reveal the last line "
+            f"at the document end the content is scrolled down to reveal the last line "
             f"(offset {g['offset_y']} > 0)"
         )
         max_scroll = g["content_h"] - g["viewport_h"]
@@ -341,9 +350,9 @@ def body() -> None:
         # End (scrolled), a click near the TOP of the viewport lands on a
         # scrolled-in line, not the buffer start (byte 0). Without the
         # offset the click would resolve to the first line.
-        key(ta, "End")
+        key_ctrl(ta, "End")
         time.sleep(SETTLE)
-        assert scroll_geometry(ta)["offset_y"] > 0, "scrolled at End before hit-test"
+        assert scroll_geometry(ta)["offset_y"] > 0, "scrolled at the document end before hit-test"
         (hx, hy, hw, hh) = field_rect(ta)
         ta.click(at=(hx + 5, hy + 12))  # near the top of the visible box
         time.sleep(SETTLE)
@@ -354,7 +363,7 @@ def body() -> None:
         )
 
         # Scrolling back to the top releases the offset (caret-driven).
-        key(ta, "Home")
+        key_ctrl(ta, "Home")
         assert_eq(
             scroll_geometry(ta)["offset_y"],
             0,
@@ -363,7 +372,7 @@ def body() -> None:
 
         # ── soft-wrap is purely visual: round-trip preserves the text ─
         replace_all(ta, LONG)
-        key(ta, "End")
+        key_ctrl(ta, "End")
         assert_eq(text(ta), LONG, "the buffer text is unchanged by wrapping/navigation")
         assert_eq(text(ta).count("\n"), 0, "still a single logical line (no newline injected)")
 

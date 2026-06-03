@@ -17580,6 +17580,39 @@ pub fn use_theme(tag: &'static str) -> Rc<ThemeProvider> {
 
 
 
+### R766 — R766 textarea goal-column persistence + visual-line Home/End (Ctrl=document boundary); clears R765 carry (d)+(e)
+
+**Changes**:
+- TextEditState: goal_column Cell<Option<f32>> non-reactive slot; 12 caret/edit mutators clear it
+- caret.rs byte_offset_for_line_move -> (byte, goal_x); two-step move_lines + from_point override
+- caret.rs byte_offset_for_line_boundary wraps parley line_start/line_end (visual, soft-wrap aware)
+- tf_paint byte_for_field_vertical_move -> (byte, goal_x); reads+persists goal via TextEditState
+- tf_paint byte_for_field_line_boundary new; hello-textarea intercepts Home/End + Ctrl+Home/End
+- vertical move re-arms goal after set_caret; horizontal move/click/edit/Home/End reset it
+
+
+
+**Verification**:
+- cargo test --workspace green (119 groups; +8 goal persist/reset, Home/End visual+Ctrl, shift)
+- cargo clippy --workspace --all-targets -D pedantic (vello) clean
+- r766 demo 46 assert: goal restores col across short line (byte + painted caret-x from:paint)
+- r766: goal resets on h-move/click/edit; visual Home/End per wrapped row; Ctrl Home/End document
+- r764/r765 sibling demos updated (buffer Home/End -> Ctrl) + re-PASS; single-line unchanged
+
+
+
+**Impact**: §5.22, §5.36, §5.38
+
+
+**Carry forward**:
+- R765 carry (d) desired-column persist + (e) Home/End line-relative both CLEARED this round
+- line-move boundary detection assumes uniform line height + delta +/-1 (textarea case; documented)
+- hit-test glue (rect_for_tag + byte_for_field_point) still 2-copy binding-side (R764 carry defer)
+- styled-run edit-state + aria-multiline 2nd-textarea-consumer (R765 carry) still open
+- TUI multi-line caret nav = wildcard no-op (terminal layout absent, Vello-only)
+
+
+
 ### Round 1 — Initial pinion spec capture: 7 framework invariants, 2 opaque escapes, first dogfood, dual license, scaffold
 
 **Changes**:

@@ -64,8 +64,8 @@ use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Color, CompositionEvent, Modifiers, Scene, WidgetStateName};
 use pinion_text::{
-    byte_offset_for_line_move, byte_offset_for_point, caret_rect_for_byte_offset,
-    selection_rects_for_range, CaretRect, LayoutCache,
+    byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
+    caret_rect_for_byte_offset, selection_rects_for_range, CaretRect, LayoutCache,
 };
 
 /// (R657 §5.16) Owner-cache key for the shared
@@ -939,19 +939,28 @@ pub fn byte_for_field_point(
     byte_offset_for_point(layout, local_x, local_y + scroll_y_f)
 }
 
-/// R764 §5.36 §5.22 — vertical caret navigation for a multi-line field:
-/// resolve the byte offset after moving the caret `delta` visual lines
-/// (`ArrowUp` = `-1`, `ArrowDown` = `+1`) from the field's current caret.
-/// Reshapes the *same* `(text, style)` [`view_field`] paints (same-frame
-/// `LayoutCache` hit) and feeds [`byte_offset_for_line_move`].
+/// R764 §5.36 §5.22 / R766 — vertical caret navigation for a multi-line
+/// field: resolve the byte offset after moving the caret `delta` visual
+/// lines (`ArrowUp` = `-1`, `ArrowDown` = `+1`) from the field's current
+/// caret, holding the persistent **goal column**. Reshapes the *same*
+/// `(text, style)` [`view_field`] paints (same-frame `LayoutCache` hit)
+/// and feeds [`byte_offset_for_line_move`].
+///
+/// Returns `(new_byte, goal_x)`. The binding writes `new_byte` to the
+/// caret (`set_caret` / `set_selection`) and then **re-arms** the goal
+/// with `goal_x` (the caret write itself cleared it), so the next move
+/// in the run reuses the same target column — the caret returns to the
+/// original column after crossing a short line instead of drifting. The
+/// current goal is read from
+/// [`TextEditState::goal_column`](pinion_core::widgets::text_edit::TextEditState::goal_column)
+/// here, so the binding need not thread it back in.
 ///
 /// Mirrors [`byte_for_field_point`] (the pointer hit-test) for the
 /// keyboard vertical axis: both resolve a new caret byte against the
-/// painted Layout via the `field_shaping` SSOT, so the caret a key moves
-/// to and the glyph it lands under stay consistent. The returned offset
-/// is a char boundary, safe for `TextEditState::set_caret` /
-/// `set_selection`. A multi-line binding calls this on ArrowUp/Down
-/// (which need the layout geometry the `apply_key` path lacks).
+/// painted Layout via the `field_shaping` SSOT. The returned offset is a
+/// char boundary, safe for `TextEditState::set_caret` / `set_selection`.
+/// A multi-line binding calls this on ArrowUp/Down (which need the
+/// layout geometry the `apply_key` path lacks).
 ///
 /// # Panics
 ///
@@ -962,6 +971,50 @@ pub fn byte_for_field_vertical_move(
     tag: &'static str,
     interaction: TextFieldState,
     delta: isize,
+    theme: &Theme,
+    style: &TextFieldStyle,
+) -> (usize, f32) {
+    let edit = use_text_edit_state(tag);
+    let caret = edit.caret();
+    let goal = edit.goal_column();
+    let FieldShaping {
+        effective_text,
+        text_style,
+        visual_caret_byte,
+        max_width,
+        ..
+    } = field_shaping(tag, caret, interaction, theme, style);
+    let layout_cache = use_text_field_layout_cache();
+    let mut cache = layout_cache.borrow_mut();
+    let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
+    byte_offset_for_line_move(layout, visual_caret_byte, delta, goal)
+}
+
+/// R766 §5.36 §5.22 — visual line boundary (`Home` / `End`) for a
+/// multi-line field: resolve the byte offset of the start (`end =
+/// false`) or end (`end = true`) of the wrapped visual line the caret
+/// sits on. Reshapes the *same* `(text, style)` [`view_field`] paints
+/// and feeds [`byte_offset_for_line_boundary`].
+///
+/// "Visual" is the canonical multi-line `Home` / `End`: on a
+/// soft-wrapped paragraph the caret jumps to the start / end of the
+/// displayed row, not the whole hard-break-delimited line. The single-
+/// line field keeps the geometry-free buffer-absolute
+/// [`move_home`](pinion_core::widgets::text_edit::TextEditState::move_home)
+/// / `move_end` (one visual line ⇒ identical result). Selection
+/// extension (`Shift+Home` / `Shift+End`) is the binding's, exactly like
+/// the vertical-move shift path: it feeds the returned offset to
+/// `set_selection` against the retained anchor.
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope (same shape as
+/// [`byte_for_field_point`] — only test paths trigger).
+#[must_use]
+pub fn byte_for_field_line_boundary(
+    tag: &'static str,
+    interaction: TextFieldState,
+    end: bool,
     theme: &Theme,
     style: &TextFieldStyle,
 ) -> usize {
@@ -976,7 +1029,7 @@ pub fn byte_for_field_vertical_move(
     let layout_cache = use_text_field_layout_cache();
     let mut cache = layout_cache.borrow_mut();
     let layout = cache.layout(effective_text.as_str(), &text_style, max_width);
-    byte_offset_for_line_move(layout, visual_caret_byte, delta)
+    byte_offset_for_line_boundary(layout, visual_caret_byte, end)
 }
 
 /// R764.1 §5.38 §5.22 — forward a W3C `KeyboardEvent.key` to the

@@ -79,6 +79,7 @@
 //! observe the text content without going through the `send` invoke
 //! channel.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::reactive::{batch, Owner, Signal};
@@ -163,6 +164,31 @@ pub struct TextEditState {
     /// [`TextFieldExternal`]: crate::widgets::text_field::TextFieldExternal
     /// [`ScrollState::tag`]: crate::widgets::scroll::ScrollState::tag
     tag: Option<&'static str>,
+    /// R766 §5.22 — **goal column** for multi-line vertical caret
+    /// navigation (`ArrowUp` / `ArrowDown`). Holds the layout-space
+    /// `x` the caret should aim for as it crosses visual lines, so a
+    /// run of vertical moves through a short line and back to a long
+    /// one returns to the original column instead of drifting to the
+    /// short line's end. Mirror of the `h_pos` parley's own
+    /// [`Selection`](parley::Selection) maintains across `move_lines`
+    /// calls — but pinion's caret is a geometry-free byte offset
+    /// reshaped each frame, so the goal cannot ride along inside a
+    /// persisted `Selection`; it lives here instead.
+    ///
+    /// `None` means "no active vertical run" — the next `ArrowUp` /
+    /// `ArrowDown` seeds the goal from the caret's current column. The
+    /// geometry-aware multi-line binding re-arms it (via
+    /// [`Self::set_goal_column`]) after each vertical move; **every**
+    /// caret-repositioning or text-editing mutator below clears it so
+    /// any horizontal move / click / edit / `Home` / `End` resets the
+    /// goal — the canonical "goal column survives only an unbroken
+    /// vertical sequence" contract shared by macOS / Windows / GTK /
+    /// every code editor.
+    ///
+    /// A non-reactive [`Cell`] (not a [`Signal`]): no view-fn renders
+    /// the goal column, it is pure caret-navigation scratch state, so
+    /// arming / clearing it must never trigger a re-paint cascade.
+    goal_column: Cell<Option<f32>>,
 }
 
 impl TextEditState {
@@ -179,6 +205,7 @@ impl TextEditState {
             selection_anchor: Signal::new(None),
             preedit_buffer: Signal::new(None),
             tag: None,
+            goal_column: Cell::new(None),
         }
     }
 
@@ -214,6 +241,7 @@ impl TextEditState {
             selection_anchor: Signal::new(None),
             preedit_buffer: Signal::new(None),
             tag: None,
+            goal_column: Cell::new(None),
         }
     }
 
@@ -315,6 +343,7 @@ impl TextEditState {
     /// `set_selection` call (the R55.G.24 atomic-multi-axis contract;
     /// `selection_anchor` + `caret_pos` collapse into one cascade).
     pub fn set_selection(&self, anchor: usize, focus: usize) {
+        self.goal_column.set(None);
         let text = self.text.get();
         let len = text.len();
         let snapped_anchor = clamp_to_char_boundary(&text, anchor.min(len));
@@ -341,6 +370,26 @@ impl TextEditState {
         self.selection_anchor.set(None);
     }
 
+    /// R766 §5.22 — current vertical-navigation **goal column** (the
+    /// layout-space `x` an `ArrowUp` / `ArrowDown` run aims for).
+    /// `None` when no vertical run is active. See the
+    /// [`goal_column`](Self::goal_column) field doc for the full
+    /// contract. Non-reactive: reading it never subscribes a view-fn.
+    #[must_use]
+    pub fn goal_column(&self) -> Option<f32> {
+        self.goal_column.get()
+    }
+
+    /// R766 §5.22 — arm (or clear, with `None`) the vertical-navigation
+    /// goal column. The geometry-aware multi-line binding calls this
+    /// with `Some(x)` **after** writing the new caret for an `ArrowUp` /
+    /// `ArrowDown` move (the caret write itself cleared the goal), so
+    /// the next vertical move in the run reuses the same target column.
+    /// Non-reactive: arming it never triggers a re-paint.
+    pub fn set_goal_column(&self, x: Option<f32>) {
+        self.goal_column.set(x);
+    }
+
     /// Replace the buffer with `new_text`. The caret is clamped
     /// to the nearest `char` boundary at-or-below the new text
     /// length (so a `set_text` shorter than the current text moves
@@ -358,6 +407,7 @@ impl TextEditState {
     /// `selection_anchor`, `preedit_buffer`) collapse into one
     /// notification cascade via [`batch`].
     pub fn set_text(&self, new_text: String) {
+        self.goal_column.set(None);
         let new_len = new_text.len();
         let cur_caret = self.caret_pos.get();
         let clamped_caret = clamp_to_char_boundary(&new_text, cur_caret.min(new_len));
@@ -380,6 +430,7 @@ impl TextEditState {
     /// caret-affecting operation that is not a Shift-modified
     /// extension collapses to caret-only).
     pub fn set_caret(&self, pos: usize) {
+        self.goal_column.set(None);
         let text = self.text.get();
         let clamped = clamp_to_char_boundary(&text, pos.min(text.len()));
         batch(|| {
@@ -403,6 +454,7 @@ impl TextEditState {
     /// start (macOS / iOS / GTK / Web canonical "type to replace"
     /// behaviour). The selection collapses to `None` post-write.
     pub fn insert(&self, s: &str) {
+        self.goal_column.set(None);
         if s.is_empty() {
             return;
         }
@@ -439,6 +491,7 @@ impl TextEditState {
     /// for `inputType: "deleteContentBackward"` with non-collapsed
     /// selection).
     pub fn backspace(&self) {
+        self.goal_column.set(None);
         let mut buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
@@ -471,6 +524,7 @@ impl TextEditState {
     /// for `inputType: "deleteContentForward"` with non-collapsed
     /// selection).
     pub fn delete_forward(&self) {
+        self.goal_column.set(None);
         let mut buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
@@ -504,6 +558,7 @@ impl TextEditState {
     /// caret. See [`Self::select_left`] for the Shift+ArrowLeft
     /// extension variant.
     pub fn move_left(&self) {
+        self.goal_column.set(None);
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
         if let Some((start, _)) = self.selection_range_against(&text, caret) {
@@ -527,6 +582,7 @@ impl TextEditState {
     /// **selection end** (W3C "collapse to trailing edge"). See
     /// [`Self::select_right`] for the Shift+ArrowRight extension.
     pub fn move_right(&self) {
+        self.goal_column.set(None);
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
         if let Some((_, end)) = self.selection_range_against(&text, caret) {
@@ -547,6 +603,7 @@ impl TextEditState {
     /// canonical on single-line fields). Clears any active
     /// selection (R56.1.f).
     pub fn move_home(&self) {
+        self.goal_column.set(None);
         batch(|| {
             self.caret_pos.set(0);
             self.selection_anchor.set(None);
@@ -557,6 +614,7 @@ impl TextEditState {
     /// canonical on single-line fields). Clears any active
     /// selection (R56.1.f).
     pub fn move_end(&self) {
+        self.goal_column.set(None);
         let len = self.text.get().len();
         batch(|| {
             self.caret_pos.set(len);
@@ -579,6 +637,7 @@ impl TextEditState {
     /// platform. No-op when the caret is already at byte 0 and no
     /// selection is active.
     pub fn select_left(&self) {
+        self.goal_column.set(None);
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
         if caret == 0 {
@@ -603,6 +662,7 @@ impl TextEditState {
     /// R56.1.f §5.22 — extend the selection one `char` to the right
     /// (mirror of [`Self::select_left`]). Shift+ArrowRight canonical.
     pub fn select_right(&self) {
+        self.goal_column.set(None);
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
         if caret >= text.len() {

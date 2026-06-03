@@ -239,18 +239,26 @@ impl WidgetCore for TextAreaView {
         "pinion hello-textarea (R764 §5.22)"
     }
 
-    /// R764 §5.22 — multi-line key handling. Three keys diverge from the
-    /// single-line field; everything else forwards to the External's
-    /// modifier-aware `invoke("key", ...)` channel exactly like
-    /// hello-textfield.
+    /// R764 §5.22 / R766 — multi-line key handling. Five keys diverge
+    /// from the single-line field; everything else forwards to the
+    /// External's modifier-aware `invoke("key", ...)` channel exactly
+    /// like hello-textfield.
     ///
     /// - `Enter` inserts a newline (a single-line field would submit).
     /// - `ArrowUp` / `ArrowDown` move the caret one visual line, holding
-    ///   the horizontal position, via the layout-geometry helper
-    ///   ([`tf_paint::byte_for_field_vertical_move`]). Shift extends the
-    ///   selection from the retained anchor. These run here (not on the
-    ///   `TextEditState` `apply_key` path) because vertical movement
-    ///   needs the shaped layout the binding's cache holds.
+    ///   the **goal column** across the run (R766), via the layout-
+    ///   geometry helper ([`tf_paint::byte_for_field_vertical_move`]).
+    ///   Shift extends the selection from the retained anchor. These run
+    ///   here (not on the `TextEditState` `apply_key` path) because
+    ///   vertical movement needs the shaped layout the binding's cache
+    ///   holds.
+    /// - `Home` / `End` move the caret to the start / end of the current
+    ///   **visual** line (R766, soft-wrap aware) via
+    ///   [`tf_paint::byte_for_field_line_boundary`] — not the buffer
+    ///   ends the single-line field uses. `Ctrl+Home` / `Ctrl+End`
+    ///   promote them to the **document** start / end (byte `0` /
+    ///   `text.len()`), the canonical editor pairing. Shift extends from
+    ///   the anchor (so `Ctrl+Shift+Home` selects to the document start).
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -269,7 +277,7 @@ impl WidgetCore for TextAreaView {
                 let (interaction, _caret) = Self::read_state(scene);
                 let theme = use_theme(THEME_TAG).theme_animated();
                 let delta = if key == "ArrowUp" { -1 } else { 1 };
-                let new_byte = tf_paint::byte_for_field_vertical_move(
+                let (new_byte, goal_x) = tf_paint::byte_for_field_vertical_move(
                     TA_TAG,
                     interaction,
                     delta,
@@ -277,6 +285,47 @@ impl WidgetCore for TextAreaView {
                     &ta_style(),
                 );
                 let edit = use_text_edit_state(TA_TAG);
+                if modifiers.shift_key() {
+                    let anchor = edit.selection_anchor().unwrap_or_else(|| edit.caret());
+                    edit.set_selection(anchor, new_byte);
+                } else {
+                    edit.set_caret(new_byte);
+                }
+                // R766 — re-arm the goal column *after* the caret write
+                // (which cleared it) so a run of ArrowUp/ArrowDown holds
+                // the original column across a short line.
+                edit.set_goal_column(Some(goal_x));
+                return true;
+            }
+            "Home" | "End" => {
+                // R766 §5.22 — Home/End move to the current **visual**
+                // row's start / end (soft-wrap aware), not the buffer ends
+                // the single-line field uses. The Ctrl modifier promotes
+                // them to **document** start / end (the canonical editor
+                // pairing — Home=row, Ctrl+Home=document), keeping the
+                // buffer boundaries reachable in one keystroke. Shift
+                // extends the selection from the retained anchor (so
+                // Ctrl+Shift+Home selects to the document start), exactly
+                // like the vertical moves above.
+                let end = key == "End";
+                let edit = use_text_edit_state(TA_TAG);
+                let new_byte = if modifiers.control_key() {
+                    if end {
+                        edit.text().len()
+                    } else {
+                        0
+                    }
+                } else {
+                    let (interaction, _caret) = Self::read_state(scene);
+                    let theme = use_theme(THEME_TAG).theme_animated();
+                    tf_paint::byte_for_field_line_boundary(
+                        TA_TAG,
+                        interaction,
+                        end,
+                        &theme,
+                        &ta_style(),
+                    )
+                };
                 if modifiers.shift_key() {
                     let anchor = edit.selection_anchor().unwrap_or_else(|| edit.caret());
                     edit.set_selection(anchor, new_byte);
@@ -499,6 +548,153 @@ mod tests {
             ));
             // Line 1 starts at byte 4 ("abc\n" = 4 bytes); column 1 → byte 5.
             assert_eq!(edit.caret(), 5, "ArrowDown lands on the next line at the same column");
+        });
+    }
+
+    /// R766 — `apply_key` for a vertical move re-arms the goal column so
+    /// a subsequent vertical move can reuse it.
+    #[test]
+    fn r766_arrow_down_arms_goal_column() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            edit.set_text("abc\nxyz".to_owned());
+            edit.set_caret(1);
+            let mut scene =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let _ = view((TextFieldState::Focused, 1), &Frame::default());
+            assert!(edit.goal_column().is_none(), "goal column starts unarmed");
+            assert!(TextAreaView::apply_key(
+                &mut scene,
+                Some(TA_TAG),
+                "ArrowDown",
+                pinion_core::Modifiers::empty(),
+            ));
+            assert!(
+                edit.goal_column().is_some(),
+                "ArrowDown re-arms the goal column for the next move",
+            );
+        });
+    }
+
+    /// R766 — the goal column survives a vertical pass through a short
+    /// line: `ArrowDown` into the short line clamps the column,
+    /// `ArrowDown` again into the long line restores a column wider than
+    /// the short line could hold (proving the goal rode along the run).
+    #[test]
+    fn r766_goal_column_restores_column_across_short_line() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            // line 0 "aaaaaaaa" (0..8), '\n' 8, line 1 "bb" (9..11),
+            // '\n' 11, line 2 "cccccccc" (12..20).
+            edit.set_text("aaaaaaaa\nbb\ncccccccc".to_owned());
+            edit.set_caret(5); // line 0, column 5
+            let mut scene =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let _ = view((TextFieldState::Focused, 5), &Frame::default());
+            let down = |scene: &mut Scene| {
+                TextAreaView::apply_key(
+                    scene,
+                    Some(TA_TAG),
+                    "ArrowDown",
+                    pinion_core::Modifiers::empty(),
+                )
+            };
+            assert!(down(&mut scene));
+            let m1 = edit.caret();
+            assert!((9..=11).contains(&m1), "first ArrowDown lands on the short line 1 (got {m1})");
+            assert!(down(&mut scene));
+            let m2 = edit.caret();
+            assert!(m2 >= 12, "second ArrowDown lands on the long line 2 (got {m2})");
+            assert!(
+                m2 - 12 > m1 - 9,
+                "goal column restores a column wider than the short line allowed \
+                 (line2 col {} > line1 col {})",
+                m2 - 12,
+                m1 - 9,
+            );
+        });
+    }
+
+    /// R766 — `Home` / `End` move to the visual line boundary, not the
+    /// buffer ends, and the caret-write clears the goal column.
+    #[test]
+    fn r766_home_end_move_to_visual_line_boundary() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            edit.set_text("abc\nxyz".to_owned()); // line 1 = bytes 4..7
+            edit.set_caret(6); // line 1, between 'y' and 'z'
+            let mut scene =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let _ = view((TextFieldState::Focused, 6), &Frame::default());
+            assert!(TextAreaView::apply_key(
+                &mut scene,
+                Some(TA_TAG),
+                "Home",
+                pinion_core::Modifiers::empty(),
+            ));
+            assert_eq!(edit.caret(), 4, "Home moves to the start of the current visual line");
+            assert!(edit.goal_column().is_none(), "Home (a horizontal move) clears the goal column");
+            assert!(TextAreaView::apply_key(
+                &mut scene,
+                Some(TA_TAG),
+                "End",
+                pinion_core::Modifiers::empty(),
+            ));
+            assert_eq!(edit.caret(), 7, "End moves to the end of the current visual line");
+        });
+    }
+
+    /// R766 — `Ctrl+Home` / `Ctrl+End` move to the document boundaries
+    /// (byte 0 / `text.len()`), not the current visual row.
+    #[test]
+    fn r766_ctrl_home_end_move_to_document_boundary() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            edit.set_text("abc\nxyz".to_owned());
+            edit.set_caret(5); // line 1
+            let mut scene =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let _ = view((TextFieldState::Focused, 5), &Frame::default());
+            let ctrl = pinion_core::Modifiers { ctrl: true, ..pinion_core::Modifiers::empty() };
+            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "Home", ctrl));
+            assert_eq!(edit.caret(), 0, "Ctrl+Home moves to the document start");
+            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "End", ctrl));
+            assert_eq!(edit.caret(), 7, "Ctrl+End moves to the document end");
+            // Ctrl+Shift+Home selects from the caret back to byte 0.
+            let ctrl_shift = pinion_core::Modifiers {
+                ctrl: true,
+                shift: true,
+                ..pinion_core::Modifiers::empty()
+            };
+            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "Home", ctrl_shift));
+            assert_eq!(
+                edit.selection_range(),
+                Some((0, 7)),
+                "Ctrl+Shift+Home selects from the document end back to the start",
+            );
+        });
+    }
+
+    /// R766 — `Shift+Home` extends the selection from the retained
+    /// anchor to the visual line start (mirror of the vertical shift
+    /// path).
+    #[test]
+    fn r766_shift_home_extends_selection_to_line_start() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            edit.set_text("abc\nxyz".to_owned());
+            edit.set_caret(6); // line 1
+            let mut scene =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let _ = view((TextFieldState::Focused, 6), &Frame::default());
+            let mods = pinion_core::Modifiers { shift: true, ..pinion_core::Modifiers::empty() };
+            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "Home", mods));
+            assert_eq!(edit.caret(), 4, "Shift+Home moves the caret to the line start");
+            assert_eq!(
+                edit.selection_range(),
+                Some((4, 6)),
+                "Shift+Home selects from the line start to the original caret",
+            );
         });
     }
 }

@@ -249,30 +249,104 @@ pub fn selection_rects_for_range(layout: &Layout, start: usize, end: usize) -> V
         .collect()
 }
 
-/// R764 §5.36 §5.22 — byte offset after moving the caret `delta` visual
-/// lines from `byte` (vertical caret navigation: `ArrowUp` = `-1`,
-/// `ArrowDown` = `+1`), wrapping [`parley::Selection::move_lines`]. parley
-/// maintains the horizontal target position for the move and clamps to
-/// line start / end at the document boundaries (moving up from the
-/// first line lands at byte 0, down from the last line at `text.len()`).
+/// R764 §5.36 §5.22 / R766 — byte offset after moving the caret `delta`
+/// visual lines from `byte` (vertical caret navigation: `ArrowUp` =
+/// `-1`, `ArrowDown` = `+1`), holding a persistent **goal column**.
 ///
-/// Vertical navigation is inherently geometry-dependent — it needs the
-/// shaped [`Layout`] to know which byte sits at the same x on the
-/// adjacent line — so it cannot live on the geometry-free
-/// [`TextEditState`](pinion_core::widgets::text_edit::TextEditState)
-/// `apply_key` path the way `ArrowLeft` / `ArrowRight` do; a multi-line
-/// binding resolves the new caret here (it holds the layout cache) and
-/// feeds it to `set_caret` / `set_selection`.
+/// Returns `(new_byte, goal_x)`: the resolved char-boundary offset plus
+/// the layout-space `x` the move aimed for. The caller persists
+/// `goal_x` (in
+/// [`TextEditState::set_goal_column`](pinion_core::widgets::text_edit::TextEditState::set_goal_column))
+/// and feeds it back as `goal_x` on the next move in the run so the
+/// caret returns to the original column after crossing a short line —
+/// the canonical "goal column" contract. Pass `goal_x = None` to seed a
+/// fresh run from the caret's current column.
 ///
-/// The returned offset is a char boundary (parley resolves to a cluster
-/// edge) so it is safe to pass straight into the `TextEditState`
+/// ## Why goal-column lives here, not inside the parley `Selection`
+///
+/// parley's [`Selection`](parley::Selection) carries its own `h_pos`
+/// and threads it through consecutive [`move_lines`](parley::Selection::move_lines)
+/// calls. pinion's caret is a geometry-free byte offset reshaped each
+/// frame, so a fresh `Selection::from_byte_index` is built every call
+/// and parley's `h_pos` is lost — each move would re-seed the column
+/// from the (possibly short-line-clamped) current caret and drift. We
+/// therefore persist the goal `x` ourselves and resolve in two steps:
+///
+/// 1. [`move_lines`](parley::Selection::move_lines) finds the target
+///    visual line and handles the document-boundary clamp (up from the
+///    first line / down from the last) exactly — its specialty.
+/// 2. If that landed on a *different* line band (interior move), we
+///    override the drifted column by hit-testing `goal_x` at the centre
+///    of the resolved line via [`byte_offset_for_point`]. At a document
+///    boundary (no line change) parley's `line_start` / `line_end`
+///    result is already canonical, so it is returned as-is.
+///
+/// The line band is detected from [`caret_rect_for_byte_offset`] (whose
+/// `height` spans the full line box): a `y` shift over half a line box
+/// means the band changed. This assumes the uniform line height of a
+/// single-style textarea and the `±1` deltas keyboard navigation emits
+/// (the only caller). The returned offset is a char boundary, safe for
+/// the [`TextEditState`](pinion_core::widgets::text_edit::TextEditState)
 /// setters.
 #[must_use]
-pub fn byte_offset_for_line_move(layout: &Layout, byte: usize, delta: isize) -> usize {
-    Selection::from_byte_index(layout, byte, Affinity::Downstream)
+pub fn byte_offset_for_line_move(
+    layout: &Layout,
+    byte: usize,
+    delta: isize,
+    goal_x: Option<f32>,
+) -> (usize, f32) {
+    let here = caret_rect_for_byte_offset(layout, byte, 1.0);
+    let gx = goal_x.unwrap_or(here.x);
+    if delta == 0 {
+        return (byte, gx);
+    }
+    // Step 1: parley resolves the target line + document-boundary clamp.
+    let moved = Selection::from_byte_index(layout, byte, Affinity::Downstream)
         .move_lines(layout, delta, false)
         .focus()
-        .index()
+        .index();
+    let there = caret_rect_for_byte_offset(layout, moved, 1.0);
+    // No band change ⇒ document boundary (move_lines snapped to
+    // line_start / line_end on the same line): parley's result is the
+    // canonical "to start of first line" / "to end of last line", keep it.
+    if (there.y - here.y).abs() <= here.height * 0.5 {
+        return (moved, gx);
+    }
+    // Step 2: interior move — override the drifted column with the
+    // persisted goal, hit-testing at the centre of the resolved line.
+    let corrected = byte_offset_for_point(layout, gx, there.y + there.height * 0.5);
+    (corrected, gx)
+}
+
+/// R766 §5.36 §5.22 — byte offset of the **visual** line boundary
+/// containing `byte`: the start (`end = false`, the `Home` key) or end
+/// (`end = true`, the `End` key) of the wrapped visual line, wrapping
+/// [`parley::Selection::line_start`] / [`line_end`](parley::Selection::line_end).
+///
+/// "Visual" (not logical) is the canonical multi-line `Home` / `End`:
+/// on a soft-wrapped paragraph the caret moves to the start / end of
+/// the *displayed* row, not the whole hard-break-delimited line, so it
+/// must be resolved against the shaped [`Layout`] — like
+/// [`byte_offset_for_line_move`], it cannot live on the geometry-free
+/// [`TextEditState`](pinion_core::widgets::text_edit::TextEditState).
+/// A single-line field has one visual line, so the boundaries coincide
+/// with byte `0` / `text.len()` (the geometry-free
+/// [`move_home`](pinion_core::widgets::text_edit::TextEditState::move_home)
+/// / `move_end` path it keeps).
+///
+/// Selection extension (`Shift+Home` / `Shift+End`) is left to the
+/// caller, which feeds the returned offset to `set_selection` against
+/// the retained anchor (mirror of the `ArrowUp` / `ArrowDown` shift
+/// path). The returned offset is a char boundary.
+#[must_use]
+pub fn byte_offset_for_line_boundary(layout: &Layout, byte: usize, end: bool) -> usize {
+    let selection = Selection::from_byte_index(layout, byte, Affinity::Downstream);
+    let moved = if end {
+        selection.line_end(layout, false)
+    } else {
+        selection.line_start(layout, false)
+    };
+    moved.focus().index()
 }
 
 #[cfg(test)]
@@ -283,8 +357,8 @@ mod tests {
     //! geometry produced by the closed-form helper.
 
     use super::{
-        byte_offset_for_line_move, byte_offset_for_point, caret_rect_for_byte_offset,
-        selection_rects_for_range, CaretRect,
+        byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
+        caret_rect_for_byte_offset, selection_rects_for_range, CaretRect,
     };
     use crate::LayoutCache;
     use pinion_core::style::TextStyle;
@@ -356,7 +430,7 @@ mod tests {
         // "abc\nxyz": line 0 = bytes 0..3, '\n' = byte 3, line 1 = 4..7.
         let mut cache = shape("abc\nxyz");
         let layout = layout_for(&mut cache, "abc\nxyz");
-        let moved = byte_offset_for_line_move(layout, 1, 1);
+        let (moved, _) = byte_offset_for_line_move(layout, 1, 1, None);
         assert!(
             (4..=7).contains(&moved),
             "ArrowDown from line 0 lands on line 1 (byte {moved} in 4..=7)",
@@ -367,7 +441,7 @@ mod tests {
     fn r764_line_move_up_lands_on_previous_line() {
         let mut cache = shape("abc\nxyz");
         let layout = layout_for(&mut cache, "abc\nxyz");
-        let moved = byte_offset_for_line_move(layout, 5, -1);
+        let (moved, _) = byte_offset_for_line_move(layout, 5, -1, None);
         assert!(moved <= 3, "ArrowUp from line 1 lands on line 0 (byte {moved} <= 3)");
     }
 
@@ -376,7 +450,94 @@ mod tests {
         let mut cache = shape("abc\nxyz");
         let layout = layout_for(&mut cache, "abc\nxyz");
         // Moving up from the first line clamps to the line start (byte 0).
-        assert_eq!(byte_offset_for_line_move(layout, 2, -1), 0);
+        assert_eq!(byte_offset_for_line_move(layout, 2, -1, None).0, 0);
+    }
+
+    // R766 §5.22 — goal-column persistence + visual line boundaries.
+
+    #[test]
+    fn r766_goal_column_restores_after_crossing_short_line() {
+        // line 0 = 8 wide, line 1 = 2 wide (short), line 2 = 8 wide.
+        // Start at column 5 of line 0; ArrowDown into the short line
+        // clamps the column to its end, ArrowDown again into the long
+        // line must restore column 5 because the goal rode along.
+        let text = "aaaaaaaa\nbb\ncccccccc";
+        let mut cache = shape(text);
+        let layout = layout_for(&mut cache, text);
+        let start = 5;
+        let orig_x = caret_rect_for_byte_offset(layout, start, 1.0).x;
+        let (m1, gx) = byte_offset_for_line_move(layout, start, 1, None);
+        let (m2, _) = byte_offset_for_line_move(layout, m1, 1, Some(gx));
+        let final_x = caret_rect_for_byte_offset(layout, m2, 1.0).x;
+        assert!(
+            (final_x - orig_x).abs() < 2.0,
+            "goal column restores the original x after the short line \
+             (orig {orig_x}, final {final_x}, gx {gx})",
+        );
+    }
+
+    #[test]
+    fn r766_without_goal_the_column_drifts_to_the_short_line() {
+        // Same fixture; the contrast case — re-seeding the goal each
+        // move (goal_x = None) drifts the column to the short line's
+        // end, landing left of the original column on the long line.
+        let text = "aaaaaaaa\nbb\ncccccccc";
+        let mut cache = shape(text);
+        let layout = layout_for(&mut cache, text);
+        let start = 5;
+        let orig_x = caret_rect_for_byte_offset(layout, start, 1.0).x;
+        let (m1, _) = byte_offset_for_line_move(layout, start, 1, None);
+        let (m2, _) = byte_offset_for_line_move(layout, m1, 1, None);
+        let drift_x = caret_rect_for_byte_offset(layout, m2, 1.0).x;
+        assert!(
+            drift_x < orig_x - 1.0,
+            "without a persisted goal the column drifts left to the short \
+             line's end (orig {orig_x}, drift {drift_x})",
+        );
+    }
+
+    #[test]
+    fn r766_line_boundary_home_and_end_on_hard_line() {
+        // "abc\nxyz": line 1 = bytes 4..7. Home from inside line 1
+        // lands at its start (4), End at its end (7).
+        let mut cache = shape("abc\nxyz");
+        let layout = layout_for(&mut cache, "abc\nxyz");
+        assert_eq!(
+            byte_offset_for_line_boundary(layout, 6, false),
+            4,
+            "Home moves to the visual line start",
+        );
+        assert_eq!(
+            byte_offset_for_line_boundary(layout, 5, true),
+            7,
+            "End moves to the visual line end",
+        );
+    }
+
+    #[test]
+    fn r766_line_boundary_is_visual_not_logical_under_soft_wrap() {
+        // One hard line that soft-wraps into ≥2 visual rows. Home on a
+        // caret in the second visual row must land *after* byte 0 (the
+        // start of that visual row), proving the boundary is visual.
+        let text = "the quick brown fox jumps over the lazy dog";
+        let mut cache = LayoutCache::new();
+        let style = TextStyle::default();
+        let _ = cache.layout(text, &style, Some(90));
+        let layout = cache.layout(text, &style, Some(90));
+        // Pick a caret near the end (guaranteed to be on a later row).
+        let caret = text.len() - 3;
+        let home = byte_offset_for_line_boundary(layout, caret, false);
+        let end = byte_offset_for_line_boundary(layout, caret, true);
+        assert!(
+            home > 0,
+            "Home on a wrapped row lands at that row's start, not byte 0 (got {home})",
+        );
+        assert!(
+            end <= text.len() && end > home,
+            "End on the same row lands after Home and within the buffer \
+             (home {home}, end {end}, len {})",
+            text.len(),
+        );
     }
 
     #[test]
