@@ -5,8 +5,8 @@
 Reading order when entering this repo:
 
 1. **`docs/SEED_PROMPT.md`** — single-source entry point. Self-contained: 불변 운영 원칙 + 직전 세션 결과 + 다음 텍스트북 캐논 + watch out + lessons. New-session entry = `load` skill OR `@docs/SEED_PROMPT.md 읽고 R<현재 라운드> 진행`. Read this first; everything else is reference.
-2. **`docs/GENERATED.md`** — full spec, auto-rendered from atomic store. Read top to bottom.
-3. **`mnemosyne://concepts/overview`** — Mnemosyne contract; mutations to docs go through typed primitives, never direct edits.
+2. **Mnemosyne atomic store** (`docs/.atomic/workspace.atomic.json`) — full spec SSOT. Read with `mnemosyne-cli query --list-sections` then `mnemosyne-cli query §<id>` (the markdown-doc render `docs/GENERATED.md` was retired in Mnemosyne R395–R400).
+3. **`mnemosyne://concepts/overview`** — Mnemosyne contract; mutations to the store go through typed primitives, never direct edits.
 4. **This `CLAUDE.md`** — project-specific operational rules and structure map.
 5. **`git log --oneline`** — implementation progress since spec phase ended.
 
@@ -63,7 +63,7 @@ backend declaration / repaint trigger / thread ownership / lifecycle callbacks /
 
 ## Decision audit trail
 
-All non-trivial decisions live in the **Mnemosyne atomic store** at `docs/.atomic/workspace.atomic.json`. `docs/GENERATED.md` is the rendered view.
+All non-trivial decisions live in the **Mnemosyne atomic store** at `docs/.atomic/workspace.atomic.json` — the sole directly-validated SSOT. Read it via `mnemosyne-cli query` (the rendered `docs/GENERATED.md` view was retired in Mnemosyne R395–R400).
 
 Spec phase summary:
 
@@ -77,7 +77,7 @@ Spec phase summary:
 | 6 | Cargo workspace skeleton (first impl commit) |
 | 7 | §5.15 External contract (8 items) + §5.12 screenshot RPC method |
 
-**Never edit `docs/GENERATED.md` or files under `docs/.atomic/` directly.** Use the Mnemosyne typed primitives — `set_section_*` etc. via MCP, and append the changelog with the CLI `mnemosyne-cli append-changelog-entry` (the MCP `append_changelog_entry_v2` wrapper is removed: it shells out to a dropped `append-changelog-entry-v2` subcommand and now errors `unknown command`).
+**Never edit files under `docs/.atomic/` directly.** Use the Mnemosyne typed primitives — `set_section_*` etc. via MCP, and append the changelog with the CLI `mnemosyne-cli append-changelog-entry` (the MCP `append_changelog_entry_v2` wrapper is removed: it shells out to a dropped `append-changelog-entry-v2` subcommand and now errors `unknown command`).
 
 ## Repository structure
 
@@ -90,12 +90,11 @@ crates/
   pinion-rpc/           JSON-RPC 2.0 server (7 typed methods + path/filter)
   pinion-cli/           developer CLI binary
 docs/
-  GENERATED.md          human-readable spec (auto-rendered)
-  .atomic/              source of truth (do not hand-edit)
+  .atomic/              spec SSOT (do not hand-edit; read via `mnemosyne-cli query`)
 vendor/
   sce/                  scxml-core-engine submodule, branch=main
 .githooks/              pre-commit, commit-msg, pre-push (active via core.hooksPath)
-mnemosyne.toml          workspace config (docs scope, schema, locale)
+mnemosyne.toml          workspace config (schema, locale, validators, ledgers)
 ```
 
 ## Working contract
@@ -111,7 +110,7 @@ mnemosyne.toml          workspace config (docs scope, schema, locale)
 
 `.githooks/pre-commit` runs:
 
-- `mnemosyne-cli validate-workspace` — T1 cross-ref + T2 frozen ledger + round-trip + GENERATED.md sync
+- `mnemosyne-cli validate-workspace` — T1 cross-ref + T2 frozen ledger + atomic-store consistency (store-direct since Mnemosyne R400)
 - `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — only when staged files include `*.rs`; enforces the workspace.lints baseline (forbid unsafe / deny warnings / clippy::pedantic deny)
 
 `.githooks/pre-push` repeats both gates unconditionally, so amends / rebases / `--no-verify` bypasses cannot publish a state that fails either check.

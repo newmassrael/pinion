@@ -12,8 +12,8 @@
 #   1. `mnemosyne-cli validate-workspace`
 #      - T1 cross-ref orphan delta
 #      - T2 frozen-ledger violations
-#      - Round-trip mandatory dimension
-#      - Atomic ledger consistency (entries / sections / GENERATED.md sync)
+#      - Atomic ledger consistency (entries / sections; store-direct since
+#        Mnemosyne R400 retired the GENERATED.md round-trip)
 #
 #   2. `cargo clippy --workspace --all-targets --features pinion-runtime/vello`
 #      - workspace.lints baseline: forbid unsafe / deny warnings /

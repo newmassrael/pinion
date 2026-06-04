@@ -7,9 +7,9 @@
 > verified rationale. §2–§4 below are retained as the reference workplan for
 > a future deliberate Option-C effort, *if* spec↔code traceability ever
 > becomes a stated goal — they are not a committed plan.
-> Not Mnemosyne-managed (plain `docs/` markdown, outside `docs=[GENERATED.md]`
-> scope and outside the `validate-code-refs` `crates/`+`examples/` scan — so
-> the `§` tokens in here are not validated as code citations).
+> Not Mnemosyne-managed (plain `docs/` markdown, not in the atomic store and
+> outside the `validate-code-refs` `crates/`+`examples/` scan — so the `§`
+> tokens in here are not validated as code citations).
 
 ## 1.1 RESOLUTION (R716, 2026-05-31)
 

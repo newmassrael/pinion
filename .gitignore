@@ -13,10 +13,8 @@ vendor/sce/target/
 
 # Mnemosyne — atomic store sidecar is the SSOT; commit it.
 # .atomic/  ← do NOT ignore; it IS the source of truth post Round 251.
-# docs/GENERATED.md ← do NOT ignore; pinion-gui uses GENERATED.md as the
-# human-readable doc surface (greenfield atomic-first design), so it
-# must be committed so reviewers can read prose without running the CLI.
-# Pre-commit hook enforces atomic-store ↔ GENERATED.md sync.
+# (Mnemosyne R395–R400 retired the rendered docs/GENERATED.md view; humans
+# read the store via `mnemosyne-cli query` instead.)
 
 # Local Claude Code state — settings.local.json, transcripts, etc.
 .claude/

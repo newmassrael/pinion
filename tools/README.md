@@ -96,6 +96,7 @@ root.
 The R51.193 harness primitive and its R51.194-196 carries (snapshot
 Container/Scroll traversal, wheel/key injection, `scene/click` v1 real
 event pipeline) all landed long ago; the RPC surface the demos drive is
-documented in `docs/GENERATED.md`. The live source of truth for the demo
+recorded in the Mnemosyne atomic store (read via `mnemosyne-cli query`).
+The live source of truth for the demo
 suite and per-round verification obligations is `docs/SEED_PROMPT.md`
 (round log + carry list) and `git log`.

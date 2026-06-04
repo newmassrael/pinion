@@ -197,8 +197,7 @@ feat(mnemosyne): R2-R9 spec evolution
 Quantify mutations with validate output deltas:
 - **Entries**: `entries 9 → 12` (atomic ledger growth)
 - **Sections**: `sections 24 → 26`
-- **Validate**: `T1=0`, `RT 1/1`, `T3 warn N → M`
-- **GENERATED.md**: `sync` (cascade verified) or `stale` (needs regen)
+- **Validate**: `T1=0`, `T3 warn N → M` (store-direct since Mnemosyne R400)
 - **Divergence** (R294 publishable/audit split): `divergence=N/M SHA256 match`
 
 ## Key Points
