@@ -97,23 +97,12 @@ pub fn view_virtual_list(
     item_count: usize,
     row_pitch: u32,
     overscan: usize,
-    mut build_row: impl FnMut(usize) -> Scene,
+    build_row: impl FnMut(usize) -> Scene,
 ) -> Scene {
     let window: VisibleWindow =
         compute_visible_range(scroll.offset_y(), viewport.h, item_count, row_pitch, overscan);
     let total_h = content_height(item_count, row_pitch);
-
-    let mut slots: Vec<Scene> = Vec::with_capacity(window.count);
-    for index in window.indices() {
-        let row = build_row(index);
-        // Slot top = index · pitch. `content_height`'s saturation logic
-        // keeps the total in `u32`; an individual slot top is always
-        // below that total, so the same saturating cast is safe.
-        let top = u32::try_from((index as u64).saturating_mul(u64::from(row_pitch)))
-            .unwrap_or(u32::MAX);
-        slots.push(positioned_slot(row, viewport.w, top, row_pitch));
-    }
-
+    let slots = uniform_slots(&window, viewport.w, row_pitch, build_row);
     assemble_windowed(scroll, viewport, total_h, slots)
 }
 
@@ -207,21 +196,13 @@ pub fn view_flex_virtual_list(
     item_count: usize,
     row_pitch: u32,
     overscan: usize,
-    mut build_row: impl FnMut(usize) -> Scene,
+    build_row: impl FnMut(usize) -> Scene,
 ) -> Scene {
     let (measured_w, measured_h) = scroll.measured_viewport();
     let window: VisibleWindow =
         compute_visible_range(scroll.offset_y(), measured_h, item_count, row_pitch, overscan);
     let total_h = content_height(item_count, row_pitch);
-
-    let mut slots: Vec<Scene> = Vec::with_capacity(window.count);
-    for index in window.indices() {
-        let row = build_row(index);
-        let top = u32::try_from((index as u64).saturating_mul(u64::from(row_pitch)))
-            .unwrap_or(u32::MAX);
-        slots.push(positioned_slot(row, measured_w, top, row_pitch));
-    }
-
+    let slots = uniform_slots(&window, measured_w, row_pitch, build_row);
     assemble_windowed_flex(scroll, measured_w, total_h, slots)
 }
 
@@ -267,6 +248,40 @@ pub(crate) fn positioned_slot(row: Scene, width: u32, top: u32, height: u32) -> 
                 .with_size(Size::px(width, height)),
         ),
     )
+}
+
+/// (R775.1 audit-lift) Build the positioned slots for a **uniform-pitch**
+/// window: each visible index `i` is built by `build_row` and lifted into
+/// an absolutely-positioned slot at `(0, i · row_pitch)` framed
+/// `width × row_pitch`.
+///
+/// Shared by the three uniform-pitch assemblies — fixed
+/// ([`view_virtual_list`]), flex ([`view_flex_virtual_list`]), and the
+/// data-grid body (`crate::table::view_virtual_table`) — so the slot-top
+/// geometry (`i · pitch`, saturating) is one source of truth. A divergence
+/// would mis-position rows, so this is the R743.1 / R745
+/// "divergence-is-a-bug" class (lifted on the third consumer per the R758
+/// self-grep mandate), not opinionated style. The variable-pitch list owns
+/// its own loop ([`view_variable_virtual_list`]): its slot top + height
+/// come from the prefix-sum [`RowOffsets`] table, a genuinely different
+/// geometry model.
+pub(crate) fn uniform_slots(
+    window: &VisibleWindow,
+    width: u32,
+    row_pitch: u32,
+    mut build_row: impl FnMut(usize) -> Scene,
+) -> Vec<Scene> {
+    let mut slots: Vec<Scene> = Vec::with_capacity(window.count);
+    for index in window.indices() {
+        let row = build_row(index);
+        // Slot top = index · pitch. `content_height`'s saturation logic
+        // keeps the total in `u32`; an individual slot top is always below
+        // that total, so the same saturating cast is safe.
+        let top = u32::try_from((index as u64).saturating_mul(u64::from(row_pitch)))
+            .unwrap_or(u32::MAX);
+        slots.push(positioned_slot(row, width, top, row_pitch));
+    }
+    slots
 }
 
 /// Build the "full-height sizer inside an auto content-root" content

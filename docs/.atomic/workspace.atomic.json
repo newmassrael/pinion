@@ -29705,6 +29705,50 @@
         "windowed grid a11y is bespoke in the example (1 consumer); 2nd grid consumer triggers helper lift."
       ]
     },
+    "R775.1": {
+      "decision_summary": "R775.1 audit-correction (user hack/smell/SSOT/textbook review): the uniform-pitch windowed slot loop (top=index*pitch -> positioned_slot) was duplicated byte-identically across view_virtual_list, view_flex_virtual_list, and view_virtual_table = a divergence-is-a-bug 3-copy. Lift uniform_slots into virtual_list (pub(crate)); all three call it; the variable-pitch list keeps its own offsets-based loop. Behavior-preserving.",
+      "changes_bullets": [
+        "uniform_slots(window,width,pitch,build_row) lifted into virtual_list (pub(crate)).",
+        "SSOT for the uniform-pitch slot loop (top=index*pitch + positioned_slot): was 3 copies.",
+        "view_virtual_list / view_flex_virtual_list / view_virtual_table all call uniform_slots.",
+        "variable list keeps its own loop (offsets-based top/height = different geometry).",
+        "behavior-preserving lift: widget-paint tests unchanged; windowing sweep identical."
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-widget-paint: 424 passed, 0 failed (unchanged — behavior-preserving lift).",
+        "cargo clippy -p pinion-widget-paint --all-targets: clean (-D pedantic).",
+        "targeted sweep r744/r745/r746/r774/r775: 5/5 PASS (slot positions identical post-lift).",
+        "no new demo: behavior-identical refactor; existing demos cover the windowing E2E (R773.1 class)."
+      ],
+      "impact_refs": [
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "table outer-block chrome (fill+corner_radius+block_pad) = 2-copy opinionated style, defer to 3rd.",
+        "windowed Grid a11y still bespoke (1 consumer); 2nd windowed-grid consumer triggers a helper lift."
+      ],
+      "publishable_decision_summary": "R775.1 audit-correction (user hack/smell/SSOT/textbook review): the uniform-pitch windowed slot loop (top=index*pitch -> positioned_slot) was duplicated byte-identically across view_virtual_list, view_flex_virtual_list, and view_virtual_table = a divergence-is-a-bug 3-copy. Lift uniform_slots into virtual_list (pub(crate)); all three call it; the variable-pitch list keeps its own offsets-based loop. Behavior-preserving.",
+      "publishable_changes_bullets": [
+        "uniform_slots(window,width,pitch,build_row) lifted into virtual_list (pub(crate)).",
+        "SSOT for the uniform-pitch slot loop (top=index*pitch + positioned_slot): was 3 copies.",
+        "view_virtual_list / view_flex_virtual_list / view_virtual_table all call uniform_slots.",
+        "variable list keeps its own loop (offsets-based top/height = different geometry).",
+        "behavior-preserving lift: widget-paint tests unchanged; windowing sweep identical."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-widget-paint: 424 passed, 0 failed (unchanged — behavior-preserving lift).",
+        "cargo clippy -p pinion-widget-paint --all-targets: clean (-D pedantic).",
+        "targeted sweep r744/r745/r746/r774/r775: 5/5 PASS (slot positions identical post-lift).",
+        "no new demo: behavior-identical refactor; existing demos cover the windowing E2E (R773.1 class)."
+      ],
+      "publishable_impact_refs": [
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "table outer-block chrome (fill+corner_radius+block_pad) = 2-copy opinionated style, defer to 3rd.",
+        "windowed Grid a11y still bespoke (1 consumer); 2nd windowed-grid consumer triggers a helper lift."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

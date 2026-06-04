@@ -40,7 +40,7 @@ use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::virtual_list::{compute_visible_range, content_height};
 use pinion_core::Scene;
 
-use crate::virtual_list::{assemble_windowed_flex, positioned_slot};
+use crate::virtual_list::{assemble_windowed_flex, uniform_slots};
 
 /// R707 §5.50 — Material-3 data-table paint dimensions. Mirrors the
 /// [`crate::datepicker::DatePickerStyle`] carrier pattern so binding
@@ -465,19 +465,20 @@ pub fn view_virtual_table(
         compute_visible_range(scroll.offset_y(), measured_h, data.item_count, style.row_height, data.overscan);
     let total_h = content_height(data.item_count, style.row_height);
 
-    let mut slots: Vec<Scene> = Vec::with_capacity(window.count);
-    for data_id in window.indices() {
+    // The uniform-pitch slot geometry (`top = id · row_height`, framed
+    // `total_w × row_height`) is the same windowed-sizer shape the list
+    // bodies use — built via the shared `uniform_slots` (R775.1) so the
+    // grid and the lists cannot disagree on slot placement. Only the row
+    // *content* diverges (a multi-cell `data_row`).
+    let slots = uniform_slots(&window, total_w, style.row_height, |data_id| {
         let cells_text = build_cells(data_id);
         let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
         // Display-only this slice: every row idle + unselected. Zebra
         // parity is by data id (no sort permutation yet).
         let fill = row_fill(theme, RadioState::Idle, false, data_id);
         let fg = row_fg(theme, RadioState::Idle);
-        let row = data_row(tag, data_id, &cell_refs, cols, fill, fg, style);
-        let top = u32::try_from((data_id as u64).saturating_mul(u64::from(style.row_height)))
-            .unwrap_or(u32::MAX);
-        slots.push(positioned_slot(row, total_w, top, style.row_height));
-    }
+        data_row(tag, data_id, &cell_refs, cols, fill, fg, style)
+    });
     let body = assemble_windowed_flex(scroll, total_w, total_h, slots);
     let header = header_row(tag, data.headers, None, theme, style);
 
