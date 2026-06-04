@@ -28,13 +28,19 @@
 //!   [`InputRouter`](pinion_runtime::InputRouter) `'#'`-split routes a
 //!   click on cell `(r, c)` to the table's `"<r>_<c>:<EventName>"` send).
 
+use std::rc::Rc;
+
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
+use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::virtual_list::{compute_visible_range, content_height};
 use pinion_core::Scene;
+
+use crate::virtual_list::{assemble_windowed_flex, positioned_slot};
 
 /// R707 §5.50 — Material-3 data-table paint dimensions. Mirrors the
 /// [`crate::datepicker::DatePickerStyle`] carrier pattern so binding
@@ -391,6 +397,114 @@ pub fn view_table(
     )
 }
 
+/// R775 §5.27 — the "what to render" inputs for a [`view_virtual_table`],
+/// paralleling [`TableData`] for the eager [`view_table`]. Bundling the
+/// column + dataset descriptors keeps the assembly fn under the argument
+/// budget; the per-row cell text comes from the `build_cells` closure
+/// (only the windowed rows are built).
+#[derive(Clone, Copy, Debug)]
+pub struct VirtualTableData<'a> {
+    /// Column header labels; `headers.len()` is the column count.
+    pub headers: &'a [&'a str],
+    /// Total data-row count (decoupled from the rendered window count).
+    pub item_count: usize,
+    /// Rows built beyond the strict visible window on each side.
+    pub overscan: usize,
+}
+
+/// R775 §5.27 — flex-viewport (`AutoSizer`) **virtualized data-grid**.
+///
+/// The R707 [`view_table`] builds one strip per row eagerly — fine at a
+/// dozen rows, impossible at the 10_000-row grids a DCC / IDE inspector
+/// needs. This peer composes the same M3 header + cell visuals but
+/// virtualizes the body over the R774 `AutoSizer` substrate: a fixed
+/// header band above a `flex_grow` [`ScrollNode`] whose content
+/// materializes cell rows for **only** the window the runtime-*measured*
+/// viewport height exposes. Resize the window and the rendered row count
+/// tracks it; scroll and the band slides — exactly the list virtualization
+/// of [`view_flex_virtual_list`](crate::virtual_list::view_flex_virtual_list),
+/// but each windowed slot is a multi-column data row built by
+/// [`data_row`]. The shared windowed-sizer + flex-`ScrollNode` shape is
+/// reused from `crate::virtual_list` (one source of truth, so the
+/// scroll-bound wiring cannot diverge between the list and the grid).
+///
+/// First slice (R775): display-only, columns sized to fit the viewport
+/// width (`headers.len() × style.col_width`, no horizontal scroll), no
+/// sort / selection — data-indexed sort + selection at scale are
+/// follow-ups (mirroring the R744 → R746 list arc).
+///
+/// # Parameters
+///
+/// - `tag` — composite paint-root tag; same cell / header / row tag scheme
+///   as [`view_table`] (`"<tag>_hrow"`, `"<tag>_ch<col>"`,
+///   `"<tag>_row<id>"`, `"<tag>#<id>_<col>"`).
+/// - `scroll` — the reactive [`ScrollState`]; the body windows against its
+///   [`measured_viewport`](pinion_core::widgets::scroll::ScrollState::measured_viewport)
+///   height and the layout pass publishes the flex-measured extent back.
+/// - `data` — the [`VirtualTableData`] (column headers + total row count +
+///   overscan).
+/// - `theme` / `style` — palette + [`TableStyle`] dimensions.
+/// - `build_cells` — invoked once per windowed data-row index; returns the
+///   row's cell texts (a cell beyond the returned length renders blank).
+#[must_use]
+pub fn view_virtual_table(
+    tag: &str,
+    scroll: &Rc<ScrollState>,
+    data: VirtualTableData<'_>,
+    theme: &Theme,
+    style: &TableStyle,
+    mut build_cells: impl FnMut(usize) -> Vec<String>,
+) -> Scene {
+    let cols = data.headers.len();
+    let total_w = u32::try_from(cols).unwrap_or(0).saturating_mul(style.col_width);
+    // AutoSizer: window against the runtime-measured clip height. The
+    // header sits OUTSIDE the scroll (frozen), so the body's measured
+    // height is the window minus the header band.
+    let (_, measured_h) = scroll.measured_viewport();
+    let window =
+        compute_visible_range(scroll.offset_y(), measured_h, data.item_count, style.row_height, data.overscan);
+    let total_h = content_height(data.item_count, style.row_height);
+
+    let mut slots: Vec<Scene> = Vec::with_capacity(window.count);
+    for data_id in window.indices() {
+        let cells_text = build_cells(data_id);
+        let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
+        // Display-only this slice: every row idle + unselected. Zebra
+        // parity is by data id (no sort permutation yet).
+        let fill = row_fill(theme, RadioState::Idle, false, data_id);
+        let fg = row_fg(theme, RadioState::Idle);
+        let row = data_row(tag, data_id, &cell_refs, cols, fill, fg, style);
+        let top = u32::try_from((data_id as u64).saturating_mul(u64::from(style.row_height)))
+            .unwrap_or(u32::MAX);
+        slots.push(positioned_slot(row, total_w, top, style.row_height));
+    }
+    let body = assemble_windowed_flex(scroll, total_w, total_h, slots);
+    let header = header_row(tag, data.headers, None, theme, style);
+
+    Scene::Container(
+        ContainerNode::new(vec![header, body])
+            .with_tag(tag.to_string())
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow))
+                    .with_corner_radius(style.corner_radius),
+            )
+            // flex_grow so the grid fills its parent (the AutoSizer
+            // contract); the body ScrollNode then claims the height left
+            // after the fixed header band.
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_flex_grow(1.0)
+                    .with_padding(Rect::new(
+                        style.block_pad,
+                        style.block_pad,
+                        style.block_pad,
+                        style.block_pad,
+                    )),
+            ),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,5 +690,126 @@ mod tests {
             .lerp(theme.resolve(ColorRole::Accent), 0.16)
             .lerp(theme.resolve(ColorRole::OnSurface), 0.08);
         assert_eq!(row_fill(&theme, RadioState::Hover, true, 0), expected);
+    }
+
+    // ── R775 flex-viewport virtualized data-grid ────────────────────
+
+    const VT_HEADERS: [&str; 3] = ["Index", "Name", "Value"];
+    const VT_N: usize = 10_000;
+
+    fn run_vtable(measured_h: u32, offset_y: i32) -> Scene {
+        let state = Rc::new(ScrollState::new());
+        state.set_measured_viewport(360, measured_h);
+        let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
+        state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
+        state.scroll_to(0, offset_y);
+        let theme = light();
+        let style = TableStyle::m3();
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                &state,
+                VirtualTableData { headers: &VT_HEADERS, item_count: VT_N, overscan: 2 },
+                &theme,
+                &style,
+                |id| vec![format!("{id}"), format!("Row {id}"), format!("v{id}")],
+            )
+        })
+    }
+
+    /// Count `vtbl_row<id>` data-row strips anywhere in the scene.
+    fn count_vt_rows(scene: &Scene) -> usize {
+        fn walk(scene: &Scene, n: &mut usize) {
+            match scene {
+                Scene::Container(c) => {
+                    if c.tag.as_deref().is_some_and(|t| t.starts_with("vtbl_row")) {
+                        *n += 1;
+                    }
+                    for child in &c.children {
+                        walk(child, n);
+                    }
+                }
+                Scene::Scroll(s) => walk(s.content.as_ref(), n),
+                _ => {}
+            }
+        }
+        let mut n = 0;
+        walk(scene, &mut n);
+        n
+    }
+
+    fn find_vt_scroll(scene: &Scene) -> Option<&pinion_core::scene::ScrollNode> {
+        match scene {
+            Scene::Scroll(s) => Some(s),
+            Scene::Container(c) => c.children.iter().find_map(find_vt_scroll),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn r775_virtual_table_windows_body_not_whole_dataset() {
+        let scene = run_vtable(360, 0);
+        let rendered = count_vt_rows(&scene);
+        assert!(rendered >= 9, "covers the visible band, got {rendered}");
+        assert!(rendered < 30, "windowed body, not {VT_N} rows: {rendered}");
+    }
+
+    #[test]
+    fn r775_virtual_table_rendered_count_grows_with_measured_height() {
+        let short = count_vt_rows(&run_vtable(360, 0));
+        let tall = count_vt_rows(&run_vtable(720, 0));
+        assert!(tall > short, "taller viewport => more body rows: {tall} vs {short}");
+        assert!(tall < 40, "still a window: {tall}");
+    }
+
+    #[test]
+    fn r775_virtual_table_header_is_frozen_outside_the_scroll() {
+        // The header row exists OUTSIDE the Scroll content (a sibling of
+        // the flex-grow ScrollNode), so it never scrolls vertically.
+        let scene = run_vtable(360, 0);
+        let Scene::Container(root) = &scene else { panic!("root is a Container") };
+        let header_at_top = matches!(
+            &root.children[0],
+            Scene::Container(c) if c.tag.as_deref() == Some("vtbl_hrow")
+        );
+        assert!(header_at_top, "frozen header band is the first (non-scroll) child");
+        assert!(
+            matches!(&root.children[1], Scene::Scroll(_)),
+            "the body is a sibling ScrollNode below the header",
+        );
+    }
+
+    #[test]
+    fn r775_virtual_table_body_scroll_is_flex_grow() {
+        let scene = run_vtable(360, 0);
+        let scroll = find_vt_scroll(&scene).expect("body is a Scene::Scroll");
+        assert!(
+            (scroll.layout.flex_grow - 1.0).abs() < f32::EPSILON,
+            "body ScrollNode flex-grows to fill below the header",
+        );
+        assert!(scroll.state.is_some(), "scroll carries the state Rc");
+    }
+
+    #[test]
+    fn r775_virtual_table_window_slides_with_offset() {
+        let top = run_vtable(360, 0);
+        let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
+        let deep = run_vtable(360, 100 * pitch);
+        // The deep window must not include row 0 (scrolled out), and the
+        // top window must include it.
+        let has_row0 = |scene: &Scene| {
+            fn walk(s: &Scene) -> bool {
+                match s {
+                    Scene::Container(c) => {
+                        c.tag.as_deref() == Some("vtbl_row0") || c.children.iter().any(walk)
+                    }
+                    Scene::Scroll(s) => walk(s.content.as_ref()),
+                    _ => false,
+                }
+            }
+            walk(scene)
+        };
+        assert!(has_row0(&top), "top window includes row 0");
+        assert!(!has_row0(&deep), "deep window scrolled row 0 out");
     }
 }

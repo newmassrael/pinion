@@ -29637,6 +29637,74 @@
         "hello-virtual-list (R744 fixed const viewport) retained as the fixed-viewport peer; not migrated."
       ]
     },
+    "R775": {
+      "decision_summary": "R775 §5.27 virtualized data-grid: view_virtual_table composes the R774 flex-viewport (AutoSizer) windowing substrate with the R730 column model — a frozen header above a flex-grow ScrollNode body that materializes cell rows for only the measured-viewport window; rendered row count tracks window resize, deep rows never materialize. New hello-virtual-table (10k-row M3 grid, display-only) + windowed Grid a11y.",
+      "changes_bullets": [
+        "view_virtual_table (widget-paint::table): frozen header + flex-viewport virtualized body.",
+        "body windows data rows against scroll.measured_viewport() height (R774 AutoSizer).",
+        "body ScrollNode flex_grow=1.0 fills below the frozen header; first-paint warmup shared.",
+        "VirtualTableData{headers,item_count,overscan} + build_cells closure; only windowed rows built.",
+        "reuses R774 positioned_slot + assemble_windowed_flex (now pub(crate)) = one windowed-sizer SSOT.",
+        "reuses R730 column model: header_row/data_row/row_fill/row_fg, same cell/row/header tags.",
+        "new example hello-virtual-table: 10_000-row M3 grid, 3 cols fit width, display-only.",
+        "a11y: windowed Grid + Row/GridCell/ColumnHeader; row posinset + setsize=N tracks window.",
+        "first slice: display-only, columns fit width, no h-scroll/sort/selection/scrollbar."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: all green, 0 failed.",
+        "new hello-virtual-table +5 unit tests; widget-paint view_virtual_table +5 unit tests.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic).",
+        "RPC demo r775_virtual_table.py: PASS, 36 assert sites (resize B-loop runs x3).",
+        "demo: boot grid+frozen header+windowed body; cells per row; deep rows absent.",
+        "demo: ascending scene/resize => body row count tracks measured clip; header stays.",
+        "demo: wheel/scroll slides body, header frozen; scroll-to-bottom reaches last row.",
+        "demo pixel: header band tonally distinct from a data row.",
+        "unit: windowed body, header frozen outside scroll, body flex_grow, window slides, grid setsize=N."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "horizontal scroll + synced frozen header (columns wider than viewport) deferred (slice fits width).",
+        "sort at scale (data-indexed) + selection at scale = follow-ups, mirroring R744->R746 list arc.",
+        "scrollbar peer omitted (wheel/RPC scroll only) — frozen-header+gutter layout is a follow-up.",
+        "windowed grid a11y is bespoke in the example (1 consumer); 2nd grid consumer triggers helper lift."
+      ],
+      "publishable_decision_summary": "R775 §5.27 virtualized data-grid: view_virtual_table composes the R774 flex-viewport (AutoSizer) windowing substrate with the R730 column model — a frozen header above a flex-grow ScrollNode body that materializes cell rows for only the measured-viewport window; rendered row count tracks window resize, deep rows never materialize. New hello-virtual-table (10k-row M3 grid, display-only) + windowed Grid a11y.",
+      "publishable_changes_bullets": [
+        "view_virtual_table (widget-paint::table): frozen header + flex-viewport virtualized body.",
+        "body windows data rows against scroll.measured_viewport() height (R774 AutoSizer).",
+        "body ScrollNode flex_grow=1.0 fills below the frozen header; first-paint warmup shared.",
+        "VirtualTableData{headers,item_count,overscan} + build_cells closure; only windowed rows built.",
+        "reuses R774 positioned_slot + assemble_windowed_flex (now pub(crate)) = one windowed-sizer SSOT.",
+        "reuses R730 column model: header_row/data_row/row_fill/row_fg, same cell/row/header tags.",
+        "new example hello-virtual-table: 10_000-row M3 grid, 3 cols fit width, display-only.",
+        "a11y: windowed Grid + Row/GridCell/ColumnHeader; row posinset + setsize=N tracks window.",
+        "first slice: display-only, columns fit width, no h-scroll/sort/selection/scrollbar."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: all green, 0 failed.",
+        "new hello-virtual-table +5 unit tests; widget-paint view_virtual_table +5 unit tests.",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic).",
+        "RPC demo r775_virtual_table.py: PASS, 36 assert sites (resize B-loop runs x3).",
+        "demo: boot grid+frozen header+windowed body; cells per row; deep rows absent.",
+        "demo: ascending scene/resize => body row count tracks measured clip; header stays.",
+        "demo: wheel/scroll slides body, header frozen; scroll-to-bottom reaches last row.",
+        "demo pixel: header band tonally distinct from a data row.",
+        "unit: windowed body, header frozen outside scroll, body flex_grow, window slides, grid setsize=N."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "horizontal scroll + synced frozen header (columns wider than viewport) deferred (slice fits width).",
+        "sort at scale (data-indexed) + selection at scale = follow-ups, mirroring R744->R746 list arc.",
+        "scrollbar peer omitted (wheel/RPC scroll only) — frozen-header+gutter layout is a follow-up.",
+        "windowed grid a11y is bespoke in the example (1 consumer); 2nd grid consumer triggers helper lift."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

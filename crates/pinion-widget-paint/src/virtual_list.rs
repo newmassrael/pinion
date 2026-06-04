@@ -233,7 +233,14 @@ pub fn view_flex_virtual_list(
 /// pre-layout is the `flex_grow` sidecar. The cross-axis stretches via
 /// the parent's default [`AlignItems::Stretch`], giving the list its
 /// full width.
-fn assemble_windowed_flex(
+/// (R775 `pub(crate)` for the flex-virtual *table* body) Wrap windowed
+/// `slots` in the sizer + content-root shape, then in a **flex-grow**
+/// `ScrollNode` (no explicit size) so taffy sizes the clip window from the
+/// parent flex. Shared by [`view_flex_virtual_list`] (vertical list) and
+/// `crate::table::view_virtual_table` (data-grid body) so the `AutoSizer`
+/// windowed-sizer shape is one source of truth — a divergence would be a
+/// scroll-bound bug, not a style choice.
+pub(crate) fn assemble_windowed_flex(
     scroll: &Rc<ScrollState>,
     width: u32,
     total_h: u32,
@@ -246,12 +253,13 @@ fn assemble_windowed_flex(
     )
 }
 
-/// Lift a built `row` out of flow into an absolutely-positioned slot at
+/// (R775 `pub(crate)` — shared with the flex-virtual table body) Lift a
+/// built `row` out of flow into an absolutely-positioned slot at
 /// `(0, top)` framed to `width × height` — the R55.D.6 CSS-mirror
 /// positioning wrapper shared by both list assemblies. Absolute children
 /// do not contribute to the sizer's content height, so a sparse window
 /// leaves the scroll extent (fixed by the sizer) intact.
-fn positioned_slot(row: Scene, width: u32, top: u32, height: u32) -> Scene {
+pub(crate) fn positioned_slot(row: Scene, width: u32, top: u32, height: u32) -> Scene {
     Scene::Container(
         ContainerNode::new(vec![row]).with_layout(
             LayoutStyle::new()
