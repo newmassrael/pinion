@@ -29953,6 +29953,52 @@
         "sorted-grid keyboard roving by visual position deferred (nav_select_key roves by source index)"
       ]
     },
+    "R779": {
+      "decision_summary": "R779 reversible data-grid sort (undo/redo): the grid's column sort becomes reversible — GridSortExternal records each sort change (header click / invoke cycle_sort / intervene) as a GridSortEdit onto the shared UndoStack, the 3rd UndoCommand consumer. GridSortEdit is a bespoke typed peer of SortFilterEdit, kept one-typed-command-per-holder (the QUndoCommand convention SignalEdit/SortFilterEdit set) rather than folded into a generic closure-edit (net-negative: erases the typed holder for a two-line reversal). Completes the grid Model/View parity with the list's R747 sort to R748 undo arc.",
+      "changes_bullets": [
+        "GridSortEdit (3rd UndoCommand consumer; bespoke typed peer of SortFilterEdit, similarity declared)",
+        "GridSortExternal +undo +with_undo +apply_sort/apply_cycle_sort: header/invoke/intervene record when attached",
+        "hello-grid-sort: use_undo_stack + GridSortExternal::with_undo + UndoStackExternal extra (vtbl_undo_stack)",
+        "RPC demo r779_grid_sort_undo 40 assert"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (5408 passed; grid_sort +3 undo: edit redo/undo, with_undo records all paths)",
+        "clippy --workspace --all-targets pedantic clean",
+        "r779 40 assert: 3 sort paths record, undo/redo unwind sort+rendered order in lockstep, selection orthogonal, clear",
+        "regression r747(list undo)/r778(grid sort, now undo-attached) PASS"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "\"optionally-undoable mutation\" (with_undo + stack-or-direct) now 2-consumer (view_order+grid_sort): declared,",
+        "defer lift (generic closure-edit erases typed holder + Rc-dyn-Fn = net-negative; Edit type+setter diverge)",
+        "R780 candidates (R778 carry): multi-select index model / column resize+h-scroll / grid filter at scale"
+      ],
+      "publishable_decision_summary": "R779 reversible data-grid sort (undo/redo): the grid's column sort becomes reversible — GridSortExternal records each sort change (header click / invoke cycle_sort / intervene) as a GridSortEdit onto the shared UndoStack, the 3rd UndoCommand consumer. GridSortEdit is a bespoke typed peer of SortFilterEdit, kept one-typed-command-per-holder (the QUndoCommand convention SignalEdit/SortFilterEdit set) rather than folded into a generic closure-edit (net-negative: erases the typed holder for a two-line reversal). Completes the grid Model/View parity with the list's R747 sort to R748 undo arc.",
+      "publishable_changes_bullets": [
+        "GridSortEdit (3rd UndoCommand consumer; bespoke typed peer of SortFilterEdit, similarity declared)",
+        "GridSortExternal +undo +with_undo +apply_sort/apply_cycle_sort: header/invoke/intervene record when attached",
+        "hello-grid-sort: use_undo_stack + GridSortExternal::with_undo + UndoStackExternal extra (vtbl_undo_stack)",
+        "RPC demo r779_grid_sort_undo 40 assert"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (5408 passed; grid_sort +3 undo: edit redo/undo, with_undo records all paths)",
+        "clippy --workspace --all-targets pedantic clean",
+        "r779 40 assert: 3 sort paths record, undo/redo unwind sort+rendered order in lockstep, selection orthogonal, clear",
+        "regression r747(list undo)/r778(grid sort, now undo-attached) PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "\"optionally-undoable mutation\" (with_undo + stack-or-direct) now 2-consumer (view_order+grid_sort): declared,",
+        "defer lift (generic closure-edit erases typed holder + Rc-dyn-Fn = net-negative; Edit type+setter diverge)",
+        "R780 candidates (R778 carry): multi-select index model / column resize+h-scroll / grid filter at scale"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

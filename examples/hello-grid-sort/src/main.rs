@@ -52,6 +52,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::undo::{use_undo_stack, UndoStack, UndoStackExternal};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::grid_sort::{grid_sort_str, use_grid_sort, GridSortExternal, GridSortState};
 use pinion_core::widgets::scroll::use_scroll_state;
@@ -92,6 +93,10 @@ const GRID_TAG: &str = "vtbl";
 const SORT_TAG: &str = "vsort";
 const SCROLL_KEY: &str = "vtbl_scroll";
 const STATUS_TAG: &str = "vtbl_status";
+/// The shared [`UndoStack`] cache key + the [`UndoStackExternal`] anchor
+/// (`invoke "undo"` / `"redo"` on it step the sort timeline).
+const UNDO_KEY: &str = "vtbl_sort_undo";
+const UNDO_STACK_TAG: &str = "vtbl_undo_stack";
 
 const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
 const STATUS: [&str; 3] = ["Idle", "Active", "Done"];
@@ -135,6 +140,13 @@ fn row_cells(id: usize) -> Vec<String> {
 /// materializing its key column).
 fn use_grid_data() -> Rc<GridSortState> {
     use_grid_sort(SORT_TAG, || (NCOLS, (0..N).map(row_cells).collect()))
+}
+
+/// The shared [`UndoStack`] for the sort timeline. The [`GridSortExternal`]
+/// records each sort change onto it; the [`UndoStackExternal`] surfaces the
+/// history to RPC. Both reach the same `Rc` through this hook.
+fn use_sort_undo() -> Rc<UndoStack> {
+    use_undo_stack(UNDO_KEY)
 }
 
 /// The a11y `gridcell` / paint-cell tag for source row `source`, column
@@ -293,14 +305,19 @@ impl WidgetCore for GridSortView {
         Box::new(VirtualSelectExternal::new(N))
     }
 
-    /// Extra = the sort proxy (a thin adapter over the **same** shared
-    /// [`GridSortState`] the view reads via [`use_grid_data`]). The clickable
-    /// column headers route here (sort ⊥ selection).
+    /// Extras: the sort proxy (a thin adapter over the **same** shared
+    /// [`GridSortState`] the view reads via [`use_grid_data`], recording each
+    /// sort change onto the shared [`UndoStack`]) and the undo-stack surface.
+    /// The clickable column headers route to the sort proxy (sort ⊥ selection);
+    /// `invoke "undo"` / `"redo"` on the stack step the sort back and forth.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![ExtraExternal::new(
-            SORT_TAG,
-            Box::new(GridSortExternal::new(use_grid_data())),
-        )]
+        vec![
+            ExtraExternal::new(
+                SORT_TAG,
+                Box::new(GridSortExternal::new(use_grid_data()).with_undo(use_sort_undo())),
+            ),
+            ExtraExternal::new(UNDO_STACK_TAG, Box::new(UndoStackExternal::new(use_sort_undo()))),
+        ]
     }
 
     fn tag() -> &'static str {

@@ -55,6 +55,7 @@
 //!   [`ViewOrderState`](crate::widgets::view_order::ViewOrderState)
 //!   materializing its key column.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -63,6 +64,7 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::reactive::{Owner, Signal};
+use crate::undo::{UndoCommand, UndoStack};
 use crate::widgets::table::{cell_cmp, cycle_col_sort, grid_order_by};
 use crate::widgets::view_order::{sort_dir_from_str, sort_dir_str};
 
@@ -259,6 +261,56 @@ pub fn use_grid_sort(
         })
 }
 
+/// R779 §5.40 §5.52 — a reversible column-sort change of a shared
+/// [`GridSortState`]: the **third** [`UndoCommand`] consumer.
+///
+/// The bespoke peer of [`SortFilterEdit`](crate::widgets::view_order::SortFilterEdit):
+/// both are `{ Rc<holder> + before/after value + label }` whose `redo`/`undo`
+/// restore the captured value through the holder's setter. They are kept as
+/// **separate typed commands** (not folded into one generic closure-edit)
+/// deliberately — the local convention, set by [`SignalEdit`](crate::undo::SignalEdit)
+/// (single `Signal`) vs `SortFilterEdit` (compound `ViewOrderState`), is one
+/// typed `UndoCommand` per holder (the `QUndoCommand`-per-command model): the
+/// reversal body is two trivial lines, so a generic closure-edit would erase
+/// the typed holder and add `Rc<dyn Fn>` indirection for no real saving. This
+/// command restores the single `Option<(col, bool)>` sort key via
+/// [`GridSortState::set_sort`].
+pub struct GridSortEdit {
+    state: Rc<GridSortState>,
+    before: Option<(usize, bool)>,
+    after: Option<(usize, bool)>,
+    label: Cow<'static, str>,
+}
+
+impl GridSortEdit {
+    /// Capture the current sort as the `before` snapshot; the edit moves the
+    /// state to `after` when recorded onto an [`UndoStack`]
+    /// ([`UndoStack::record`] applies it via [`redo`](UndoCommand::redo), so
+    /// the stack is the single mutation path).
+    #[must_use]
+    pub fn capture(
+        state: &Rc<GridSortState>,
+        after: Option<(usize, bool)>,
+        label: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self { state: Rc::clone(state), before: state.sort(), after, label: label.into() }
+    }
+}
+
+impl UndoCommand for GridSortEdit {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        self.state.set_sort(self.after);
+    }
+
+    fn undo(&self) {
+        self.state.set_sort(self.before);
+    }
+}
+
 /// R778 §5.27 §5.40 — the **RPC / pointer adapter** over a shared
 /// [`GridSortState`] (the grid peer of
 /// [`ViewSortFilterExternal`](crate::widgets::view_order::ViewSortFilterExternal)).
@@ -268,10 +320,14 @@ pub fn use_grid_sort(
 /// clicked column header routes its pointer arc here as `"h<col>:<EventName>"`
 /// (the [`GridSendKey::Header`](crate::composite_tag::GridSendKey) wire the
 /// R777 selection coordinator deliberately ignores), and the activation edge
-/// cycles that column's sort.
+/// cycles that column's sort. R779: attach an [`UndoStack`] with
+/// [`with_undo`](Self::with_undo) to make every sort change reversible.
 #[derive(Clone)]
 pub struct GridSortExternal {
     state: Rc<GridSortState>,
+    /// When attached, every sort mutation is recorded as a reversible
+    /// [`GridSortEdit`] instead of mutating the state directly (R779 §5.52).
+    undo: Option<Rc<UndoStack>>,
 }
 
 impl core::fmt::Debug for GridSortExternal {
@@ -284,10 +340,21 @@ impl core::fmt::Debug for GridSortExternal {
 }
 
 impl GridSortExternal {
-    /// Wrap the shared [`GridSortState`] (from [`use_grid_sort`]).
+    /// Wrap the shared [`GridSortState`] (from [`use_grid_sort`]). Sort changes
+    /// mutate the state directly; attach an [`UndoStack`] with
+    /// [`with_undo`](Self::with_undo) to make them reversible.
     #[must_use]
     pub fn new(state: Rc<GridSortState>) -> Self {
-        Self { state }
+        Self { state, undo: None }
+    }
+
+    /// Route every sort mutation through `stack` as a reversible
+    /// [`GridSortEdit`] (R779 §5.52), so `invoke "undo"` / `"redo"` on the
+    /// stack step the column sort back and forth.
+    #[must_use]
+    pub fn with_undo(mut self, stack: Rc<UndoStack>) -> Self {
+        self.undo = Some(stack);
+        self
     }
 
     /// The shared state handle (the view reaches the same `Rc` via
@@ -295,6 +362,25 @@ impl GridSortExternal {
     #[must_use]
     pub fn state(&self) -> &Rc<GridSortState> {
         &self.state
+    }
+
+    /// Apply a sort key, recording it as a reversible [`GridSortEdit`] when an
+    /// undo stack is attached, else mutating the shared state directly. The
+    /// single mutation path for every sort change (header click, `invoke`,
+    /// `intervene`) so the undo timeline captures them all.
+    fn apply_sort(&self, after: Option<(usize, bool)>) {
+        if let Some(stack) = &self.undo {
+            stack.record(GridSortEdit::capture(&self.state, after, format!("Sort {}", grid_sort_str(after))));
+        } else {
+            self.state.set_sort(after);
+        }
+    }
+
+    /// Cycle the sort on `col` (recorded when an undo stack is attached) via
+    /// the [`cycle_col_sort`] SSOT.
+    fn apply_cycle_sort(&self, col: usize) {
+        let after = cycle_col_sort(self.state.sort(), col, self.state.col_count());
+        self.apply_sort(after);
     }
 
     /// Drive the composite pointer channel: a clicked column header routes the
@@ -313,7 +399,7 @@ impl GridSortExternal {
             crate::composite_tag::GridSendKey::parse(key)
         {
             if crate::input::is_activation_event(event_name) {
-                self.state.cycle_sort(col);
+                self.apply_cycle_sort(col);
             }
         }
     }
@@ -404,10 +490,11 @@ impl ExternalIntrospect for GridSortExternal {
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
-            // Admin / restore: set the whole sort from its compound string.
+            // Admin / restore: set the whole sort from its compound string
+            // (recorded onto the undo timeline when a stack is attached).
             "sort" => match value {
                 IntrospectValue::Text(ref s) => {
-                    self.state.set_sort(grid_sort_from_str(s));
+                    self.apply_sort(grid_sort_from_str(s));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -426,7 +513,7 @@ impl ExternalIntrospect for GridSortExternal {
             "cycle_sort" => match args {
                 IntrospectValue::Int(i) => {
                     let col = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
-                    self.state.cycle_sort(col);
+                    self.apply_cycle_sort(col);
                     Ok(IntrospectValue::Text(grid_sort_str(self.state.sort())))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -585,6 +672,63 @@ mod tests {
             ext.intervene("sort", IntrospectValue::Text("none".into())).unwrap();
             assert_eq!(st.sort(), None);
             assert_eq!(ext.intervene("count", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
+        });
+    }
+
+    #[test]
+    fn grid_sort_edit_redo_undo_restore_the_sort() {
+        // The bare command (3rd UndoCommand consumer): redo applies `after`,
+        // undo restores the captured `before`.
+        let st = Rc::new(state());
+        st.set_sort(Some((0, true)));
+        let edit = GridSortEdit::capture(&st, Some((1, false)), "Sort 1:descending");
+        edit.redo();
+        assert_eq!(st.sort(), Some((1, false)), "redo applies the after sort");
+        edit.undo();
+        assert_eq!(st.sort(), Some((0, true)), "undo restores the captured before sort");
+        assert_eq!(edit.label(), "Sort 1:descending");
+    }
+
+    #[test]
+    fn external_with_undo_records_every_sort_path() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let st = Rc::new(state());
+            let stack = Rc::new(UndoStack::new());
+            let mut ext = GridSortExternal::new(Rc::clone(&st)).with_undo(Rc::clone(&stack));
+
+            // Header click cycles + records.
+            ext.invoke("send", IntrospectValue::Text(format!("h0:{}", PointerWireEvent::Up.as_wire_name())))
+                .unwrap();
+            assert_eq!(st.sort(), Some((0, true)));
+            assert!(stack.can_undo(), "the header-click sort is on the undo timeline");
+
+            // invoke + intervene also record onto the same timeline.
+            ext.invoke("cycle_sort", IntrospectValue::Int(0)).unwrap(); // 0:desc
+            ext.intervene("sort", IntrospectValue::Text("1:ascending".into())).unwrap();
+            assert_eq!(st.sort(), Some((1, true)));
+
+            // Unwind the whole timeline: 1:asc -> 0:desc -> 0:asc -> none.
+            stack.undo();
+            assert_eq!(st.sort(), Some((0, false)), "undo the intervene");
+            stack.undo();
+            assert_eq!(st.sort(), Some((0, true)), "undo the cycle");
+            stack.undo();
+            assert_eq!(st.sort(), None, "undo the header click → unsorted");
+            // Redo re-applies forward.
+            stack.redo();
+            assert_eq!(st.sort(), Some((0, true)), "redo re-applies the header click");
+        });
+    }
+
+    #[test]
+    fn external_without_undo_mutates_directly() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let st = Rc::new(state());
+            let mut ext = GridSortExternal::new(Rc::clone(&st));
+            ext.invoke("cycle_sort", IntrospectValue::Int(1)).unwrap();
+            assert_eq!(st.sort(), Some((1, true)), "no undo stack → direct mutation (unchanged behaviour)");
         });
     }
 }
