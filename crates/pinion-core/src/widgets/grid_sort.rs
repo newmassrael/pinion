@@ -96,6 +96,56 @@ pub fn grid_sort_from_str(s: &str) -> Option<(usize, bool)> {
     Some((col, dir))
 }
 
+/// R783 §5.40 — a single-facet **column filter** for a data grid: keep only
+/// rows whose column [`col`](Self::col) cell text equals [`value`](Self::value)
+/// exactly (the canonical column filter — Qt `QSortFilterProxyModel`
+/// `setFilterFixedString` on a column, `TanStack` `columnFilters`). It is the
+/// grid peer of the 1-D proxy's `Option<usize>` category facet
+/// ([`ViewOrderState::filter`](crate::widgets::view_order::ViewOrderState::filter));
+/// the grid expresses the facet as a **column + value** because it already
+/// holds the cell text, so no parallel category column is needed — and the
+/// string value is AI-readable (`set_filter "2=Active"`). Multi-facet /
+/// substring / predicate filters are a later additive axis (one fixed-string
+/// facet here, mirroring the list's single-category first slice).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GridFilter {
+    /// Zero-based column the facet matches on.
+    pub col: usize,
+    /// The exact cell text a row must carry in `col` to pass the filter.
+    pub value: String,
+}
+
+/// R783 §5.40 — render an [`Option<GridFilter>`] as a single wire string:
+/// `"none"` when unfiltered, else `"<col>=<value>"` (e.g. `"2=Active"`). The
+/// compound form lets an admin / AI client read or restore the whole filter in
+/// one round-trip; the peer of [`grid_filter_from_str`]. `=` splits at the
+/// first occurrence, so a value may itself contain `=`.
+#[must_use]
+pub fn grid_filter_str(filter: Option<&GridFilter>) -> String {
+    match filter {
+        None => "none".to_string(),
+        Some(GridFilter { col, value }) => format!("{col}={value}"),
+    }
+}
+
+/// R783 §5.40 — parse an [`Option<GridFilter>`] from its [`grid_filter_str`]
+/// form. A string without a `"<col>=<value>"` shape (no `=`, or a
+/// non-numeric column) yields `None` (unfiltered) — the safe default for a
+/// malformed or `"none"` wire payload. `=` splits at the first occurrence so
+/// the value half is taken verbatim.
+#[must_use]
+pub fn grid_filter_from_str(s: &str) -> Option<GridFilter> {
+    let (col, value) = s.split_once('=')?;
+    let col = col.parse::<usize>().ok()?;
+    Some(GridFilter { col, value: value.to_string() })
+}
+
+/// R783 §5.40 — the [`OrderMemo`] cache key for a [`GridSortState`]: the
+/// active `(sort, filter)` config the visual→source permutation is memoized
+/// against, so the order recomputes only when the sort key *or* the filter
+/// facet changes.
+type GridOrderKey = (Option<(usize, bool)>, Option<GridFilter>);
+
 /// R778 §5.27 §5.40 — the reactive **single source of truth** for a data
 /// grid's column sort view order.
 ///
@@ -114,9 +164,13 @@ pub struct GridSortState {
     cells: Vec<Vec<String>>,
     col_count: usize,
     sort: Signal<Option<(usize, bool)>>,
-    /// Memoized visual→source permutation, recomputed only when the sort key
-    /// changes — the shared [`OrderMemo`] (R780 lift).
-    order: RefCell<OrderMemo<Option<(usize, bool)>>>,
+    /// R783 §5.40 — active single-facet column filter (`None` = unfiltered).
+    /// Subscribed views repaint on a filter change exactly as on a sort change.
+    filter: Signal<Option<GridFilter>>,
+    /// Memoized visual→source permutation, recomputed only when the
+    /// [`GridOrderKey`] (`(sort, filter)`) changes — the shared [`OrderMemo`]
+    /// (R780 lift).
+    order: RefCell<OrderMemo<GridOrderKey>>,
 }
 
 impl GridSortState {
@@ -131,6 +185,7 @@ impl GridSortState {
             cells,
             col_count,
             sort: Signal::new(None),
+            filter: Signal::new(None),
             order: RefCell::new(OrderMemo::new()),
         }
     }
@@ -173,28 +228,47 @@ impl GridSortState {
         self.sort.get()
     }
 
-    /// The visual → source permutation for the current sort, recomputed only
-    /// when the sort changes (memoized). Subscribes to the `sort` `Signal`, so
-    /// a view that calls this repaints on a sort change. Cheap `Rc` clone on a
-    /// cache hit. Sorted through the [`grid_order_by`] / [`cell_cmp`] SSOT (the
-    /// same numeric-aware comparison the eager
-    /// [`Table::order`](crate::widgets::table::Table::order) uses).
+    /// R783 §5.40 — active column filter, or `None` when unfiltered.
+    /// Subscribes when read inside a view-fn.
+    #[must_use]
+    pub fn filter(&self) -> Option<GridFilter> {
+        self.filter.get()
+    }
+
+    /// Whether source row `row` passes the active filter (always `true` when
+    /// unfiltered): its `col` cell text equals the facet value exactly.
+    #[must_use]
+    fn passes_filter(&self, row: usize, filter: Option<&GridFilter>) -> bool {
+        filter.is_none_or(|f| self.cell(row, f.col) == f.value)
+    }
+
+    /// The visual → source permutation for the current `(sort, filter)`,
+    /// recomputed only when either changes (memoized). Subscribes to the
+    /// `sort` + `filter` `Signal`s, so a view that calls this repaints on a
+    /// sort *or* filter change. Cheap `Rc` clone on a cache hit. Ordered
+    /// through the [`grid_order_by`] / [`cell_cmp`] SSOT (filter-then-sort: the
+    /// filter shrinks the row set, the survivors sort by the numeric-aware
+    /// comparison the eager [`Table::order`](crate::widgets::table::Table::order) uses).
     #[must_use]
     pub fn order(&self) -> Rc<Vec<usize>> {
         let sort = self.sort.get();
-        self.order.borrow_mut().get(sort, || {
-            grid_order_by(self.cells.len(), sort, |col, a, b| {
-                cell_cmp(self.cell(a, col), self.cell(b, col))
-            })
+        let filter = self.filter.get();
+        let filter_ref = filter.clone();
+        self.order.borrow_mut().get((sort, filter), || {
+            grid_order_by(
+                self.cells.len(),
+                sort,
+                |col, a, b| cell_cmp(self.cell(a, col), self.cell(b, col)),
+                |row| self.passes_filter(row, filter_ref.as_ref()),
+            )
         })
     }
 
-    /// Number of rows in the current view (no filter, so always
-    /// [`count`](Self::count) — present for symmetry with the 1-D proxy and
-    /// the additive filter follow-up).
+    /// Number of rows in the current view (rows passing the filter); equals
+    /// [`count`](Self::count) when unfiltered, shrinks under an active filter.
     #[must_use]
     pub fn view_len(&self) -> usize {
-        self.count()
+        self.order().len()
     }
 
     /// Source data index painted at visual position `view_pos`, or `None` when
@@ -219,6 +293,20 @@ impl GridSortState {
     /// silent no-op.
     pub fn cycle_sort(&self, col: usize) {
         self.sort.set(cycle_col_sort(self.sort.get(), col, self.col_count));
+    }
+
+    /// R783 §5.40 — set the column filter directly (`None` clears). A
+    /// `Signal` write repaints every view that read [`filter`](Self::filter)
+    /// / [`order`](Self::order). An out-of-range column clamps to `None`
+    /// (unfiltered) so a malformed restore never filters on a phantom column.
+    /// Returns the resulting [`view_len`](Self::view_len) (rows passing the
+    /// filter) so the AI-first `set_filter` path reports the new view size in
+    /// one round-trip (mirrors
+    /// [`ViewOrderState::set_filter`](crate::widgets::view_order::ViewOrderState::set_filter)).
+    pub fn set_filter(&self, filter: Option<GridFilter>) -> usize {
+        let filter = filter.filter(|f| f.col < self.col_count);
+        self.filter.set(filter);
+        self.view_len()
     }
 }
 
@@ -319,6 +407,7 @@ impl core::fmt::Debug for GridSortExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("GridSortExternal")
             .field("sort", &grid_sort_str(self.state.sort()))
+            .field("filter", &grid_filter_str(self.state.filter().as_ref()))
             .field("count", &self.state.count())
             .finish_non_exhaustive()
     }
@@ -396,6 +485,15 @@ impl GridSortExternal {
         let col = self.state.sort().and_then(|(c, _)| i64::try_from(c).ok());
         IntrospectValue::Int(col.unwrap_or(-1))
     }
+
+    /// R783 §5.40 — apply a column filter directly (the single mutation path
+    /// for the header-less filter axis). Unlike the sort, the filter is *not*
+    /// recorded on the undo stack: undoable filter is the same optionally-
+    /// undoable-mutation axis deferred for the 1-D proxy (R779.1 carry), kept
+    /// out of this slice. Returns the resulting view length.
+    fn apply_set_filter(&self, filter: Option<GridFilter>) -> usize {
+        self.state.set_filter(filter)
+    }
 }
 
 impl External for GridSortExternal {
@@ -429,18 +527,23 @@ impl ExternalIntrospect for GridSortExternal {
         // `sort`      — compound "<col>:<dir>" / "none" (query + intervene).
         // `sort_col`  — active column id, or -1 (query only).
         // `sort_dir`  — none/ascending/descending (query only).
+        // `filter`    — compound "<col>=<value>" / "none" (query + intervene).
+        // `view_len`  — rows passing the filter (query only).
         // `count`     — source row count (query only).
         // `cols`      — column count (query only).
         // `source_at` — `source_at.<pos>` visual→source map (query only).
-        // `cycle_sort`/`send` — invoke channels.
+        // `cycle_sort`/`set_filter`/`send` — invoke channels.
         IntrospectSchema::new(&[
             ("sort", "string"),
             ("sort_col", "int"),
             ("sort_dir", "string"),
+            ("filter", "string"),
+            ("view_len", "int"),
             ("count", "int"),
             ("cols", "int"),
             ("source_at", "int"),
             ("cycle_sort", "int"),
+            ("set_filter", "string"),
             ("send", "string"),
         ])
     }
@@ -456,6 +559,12 @@ impl ExternalIntrospect for GridSortExternal {
             "sort_col" => Some(self.sort_col_value()),
             "sort_dir" => Some(IntrospectValue::Text(
                 sort_dir_str(self.state.sort().map(|(_, dir)| dir)).into(),
+            )),
+            "filter" => {
+                Some(IntrospectValue::Text(grid_filter_str(self.state.filter().as_ref())))
+            }
+            "view_len" => Some(IntrospectValue::Int(
+                i64::try_from(self.state.view_len()).unwrap_or(i64::MAX),
             )),
             "count" => Some(IntrospectValue::Int(
                 i64::try_from(self.state.count()).unwrap_or(i64::MAX),
@@ -478,7 +587,20 @@ impl ExternalIntrospect for GridSortExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            "sort_col" | "sort_dir" | "count" | "cols" | "source_at" => {
+            // Admin / restore: set the column filter from its compound string,
+            // or clear it with Null (the header-less filter axis).
+            "filter" => match value {
+                IntrospectValue::Text(ref s) => {
+                    self.apply_set_filter(grid_filter_from_str(s));
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.apply_set_filter(None);
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            "sort_col" | "sort_dir" | "view_len" | "count" | "cols" | "source_at" => {
                 Err(InterveneError::ReadOnly)
             }
             _ => Err(InterveneError::UnknownPath),
@@ -497,6 +619,18 @@ impl ExternalIntrospect for GridSortExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // AI-first column filter: a `"<col>=<value>"` payload filters,
+            // Null clears. Returns the resulting view length (rows passing the
+            // filter) in one round-trip, so an AI client learns the new view
+            // size without a follow-up query.
+            "set_filter" => {
+                let view_len = match args {
+                    IntrospectValue::Text(ref s) => self.apply_set_filter(grid_filter_from_str(s)),
+                    IntrospectValue::Null => self.apply_set_filter(None),
+                    _ => return Err(InvokeError::TypeMismatch),
+                };
+                Ok(IntrospectValue::Int(i64::try_from(view_len).unwrap_or(i64::MAX)))
+            }
             // R51.42 §5.35 composite pointer channel: a clicked column header
             // routes the pointer arc here as `<key>:<EventName>`.
             "send" => match args {
@@ -708,6 +842,99 @@ mod tests {
             let mut ext = GridSortExternal::new(Rc::clone(&st));
             ext.invoke("cycle_sort", IntrospectValue::Int(1)).unwrap();
             assert_eq!(st.sort(), Some((1, true)), "no undo stack → direct mutation (unchanged behaviour)");
+        });
+    }
+
+    // ── R783 §5.40 column filter ──────────────────────────────────────
+
+    // A 6-row × 2-column grid: column 0 is a category facet with repeats
+    // (so a filter keeps a *subset*), column 1 is numeric (so filter-then-sort
+    // composition is observable on the survivors).
+    fn cat_cells() -> Vec<Vec<String>> {
+        vec![
+            vec!["A".to_string(), "30".to_string()], // 0
+            vec!["B".to_string(), "10".to_string()], // 1
+            vec!["A".to_string(), "20".to_string()], // 2
+            vec!["B".to_string(), "5".to_string()],  // 3
+            vec!["A".to_string(), "9".to_string()],  // 4
+            vec!["C".to_string(), "1".to_string()],  // 5
+        ]
+    }
+
+    #[test]
+    fn grid_filter_str_round_trips() {
+        let cases = [None, Some(GridFilter { col: 0, value: "Active".into() })];
+        for f in cases {
+            assert_eq!(grid_filter_from_str(&grid_filter_str(f.as_ref())), f);
+        }
+        assert_eq!(grid_filter_str(None), "none");
+        assert_eq!(grid_filter_str(Some(&GridFilter { col: 2, value: "Done".into() })), "2=Done");
+        assert_eq!(grid_filter_from_str("none"), None, "no '=' → unfiltered");
+        assert_eq!(grid_filter_from_str("x=Done"), None, "non-numeric column → unfiltered");
+        // The value half is verbatim, even if it contains '='.
+        assert_eq!(
+            grid_filter_from_str("1=a=b"),
+            Some(GridFilter { col: 1, value: "a=b".into() }),
+        );
+    }
+
+    #[test]
+    fn filter_keeps_only_matching_rows_in_source_order() {
+        let s = GridSortState::new(2, cat_cells());
+        assert_eq!(s.view_len(), 6, "unfiltered view is the full dataset");
+        assert_eq!(s.set_filter(Some(GridFilter { col: 0, value: "A".into() })), 3);
+        assert_eq!(*s.order(), vec![0, 2, 4], "only category-A rows, in source order");
+        assert_eq!(s.set_filter(None), 6, "clearing restores the full view");
+        assert_eq!(*s.order(), vec![0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn filter_then_sort_composes() {
+        let s = GridSortState::new(2, cat_cells());
+        s.set_filter(Some(GridFilter { col: 0, value: "A".into() }));
+        // Survivors are ids 0,2,4 with numeric col-1 values 30,20,9.
+        s.cycle_sort(1); // ascending numeric over the FILTERED set
+        assert_eq!(*s.order(), vec![4, 2, 0], "filter shrinks, then survivors sort: 9 < 20 < 30");
+        assert_eq!(s.view_len(), 3, "the sort does not change the view size");
+    }
+
+    #[test]
+    fn set_filter_clamps_phantom_column() {
+        let s = GridSortState::new(2, cat_cells());
+        assert_eq!(
+            s.set_filter(Some(GridFilter { col: 9, value: "A".into() })),
+            6,
+            "a filter on a phantom column clamps to unfiltered (full view)",
+        );
+        assert_eq!(s.filter(), None);
+    }
+
+    #[test]
+    fn external_filter_query_intervene_invoke() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let st = Rc::new(GridSortState::new(2, cat_cells()));
+            let mut ext = GridSortExternal::new(Rc::clone(&st));
+            // Boot: unfiltered, full view.
+            assert_eq!(ext.query("filter"), Some(IntrospectValue::Text("none".into())));
+            assert_eq!(ext.query("view_len"), Some(IntrospectValue::Int(6)));
+            // invoke set_filter returns the resulting view length in one trip.
+            assert_eq!(
+                ext.invoke("set_filter", IntrospectValue::Text("0=A".into())),
+                Ok(IntrospectValue::Int(3)),
+            );
+            assert_eq!(ext.query("filter"), Some(IntrospectValue::Text("0=A".into())));
+            assert_eq!(ext.query("view_len"), Some(IntrospectValue::Int(3)));
+            // Null clears via invoke.
+            assert_eq!(ext.invoke("set_filter", IntrospectValue::Null), Ok(IntrospectValue::Int(6)));
+            assert_eq!(st.filter(), None);
+            // intervene sets + clears (admin / restore path).
+            ext.intervene("filter", IntrospectValue::Text("0=B".into())).unwrap();
+            assert_eq!(st.filter(), Some(GridFilter { col: 0, value: "B".into() }));
+            ext.intervene("filter", IntrospectValue::Null).unwrap();
+            assert_eq!(st.filter(), None);
+            // view_len is read-only.
+            assert!(ext.intervene("view_len", IntrospectValue::Int(1)).is_err());
         });
     }
 }

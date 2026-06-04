@@ -24,7 +24,7 @@
 //! `{tag}_ch{col}`, data row `{tag}_row{id}`, grid cell `{tag}#{id}_{col}`.
 
 use crate::node::AccessNode;
-use crate::role::AriaRole;
+use crate::role::{AriaRole, SortDirection};
 use pinion_core::composite_tag::GridSendKey;
 use pinion_core::widgets::virtual_list::VisibleWindow;
 
@@ -215,6 +215,101 @@ pub fn windowed_grid_nodes_multiselected(
     grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Multi(selection))
 }
 
+/// Build a **sorted / filtered** virtualized `grid` (R783 §5.40, lifted from
+/// the inline `hello-grid-sort` + `hello-grid-filter` builders): the same
+/// container + frozen-header + windowed-row topology as
+/// [`windowed_grid_nodes`], but built over a **view-order permutation** rather
+/// than the identity mapping the [`windowed_grid_nodes`] family assumes.
+///
+/// This is the permuted-grid peer R776 carved out as bespoke (a sort / filter
+/// reorders + shrinks the rows, so `posinset` is the **visual** position and
+/// rows are tagged / selected by **source** id — the identity `posinset = id +
+/// 1` no longer holds). The second consumer (`hello-grid-filter` alongside
+/// `hello-grid-sort`) triggers the lift, per R758's a11y-axis self-grep
+/// mandate: the two were byte-identical, and a divergence between them would
+/// be an a11y bug, not a style choice (R743.1 / R745 divergence-is-a-bug).
+///
+/// - `order` — the visual→source permutation (`order[visual] = source id`);
+///   `order.len()` is the current view length (what `aria-setsize` conveys —
+///   the *filtered* count, not the full dataset).
+/// - `sort` — the active `(col, ascending)` sort key; the matching
+///   `columnheader` carries `aria-sort` (none on the others). `None` = no
+///   `aria-sort` glyph.
+/// - `selected` — the selected **source** data-row index, or `None`; each
+///   windowed row carries `aria-selected = (source == selected)`.
+/// - `window` — the [`VisibleWindow`] over the *view* positions (same
+///   `compute_visible_range` over `order.len()` the view fn uses), so the a11y
+///   tree and the painted tree window identically.
+#[must_use]
+pub fn windowed_grid_nodes_sorted(
+    grid_tag: &str,
+    grid_name: &str,
+    headers: &[&str],
+    order: &[usize],
+    sort: Option<(usize, bool)>,
+    selected: Option<usize>,
+    window: &VisibleWindow,
+) -> Vec<AccessNode> {
+    let ncols = headers.len();
+    let total = u32::try_from(order.len()).unwrap_or(u32::MAX);
+    let mut nodes: Vec<AccessNode> =
+        Vec::with_capacity(window.count * (ncols + 1) + ncols + 2);
+
+    // Grid container: header row + the windowed data rows (by source id). The
+    // setsize is the *view* length (the filtered/sorted row count).
+    let mut grid = AccessNode::new(grid_tag, AriaRole::Grid)
+        .with_name(grid_name)
+        .with_size_of_set(total);
+    grid = grid.with_child(format!("{grid_tag}_hrow"));
+    for view_pos in window.indices() {
+        if let Some(&source) = order.get(view_pos) {
+            grid = grid.with_child(format!("{grid_tag}_row{source}"));
+        }
+    }
+    nodes.push(grid);
+
+    // Frozen header row + its columnheaders; the active sort column carries
+    // `aria-sort`.
+    let mut hrow = AccessNode::new(format!("{grid_tag}_hrow"), AriaRole::Row);
+    for col in 0..ncols {
+        hrow = hrow.with_child(format!("{grid_tag}_ch{col}"));
+    }
+    nodes.push(hrow);
+    for (col, label) in headers.iter().enumerate() {
+        let mut ch = AccessNode::new(format!("{grid_tag}_ch{col}"), AriaRole::ColumnHeader)
+            .with_name(*label);
+        if let Some((active, ascending)) = sort {
+            if active == col {
+                ch = ch.with_sort(if ascending {
+                    SortDirection::Ascending
+                } else {
+                    SortDirection::Descending
+                });
+            }
+        }
+        nodes.push(ch);
+    }
+
+    // Windowed data rows: posinset = **visual** position (within the view),
+    // tag + selection by **source** id.
+    for view_pos in window.indices() {
+        let Some(&source) = order.get(view_pos) else { continue };
+        let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
+        let mut row = AccessNode::new(format!("{grid_tag}_row{source}"), AriaRole::Row)
+            .with_position_in_set(posinset)
+            .with_size_of_set(total)
+            .with_selected(selected == Some(source));
+        for col in 0..ncols {
+            row = row.with_child(cell_tag(grid_tag, source, col));
+        }
+        nodes.push(row);
+        for col in 0..ncols {
+            nodes.push(AccessNode::new(cell_tag(grid_tag, source, col), AriaRole::GridCell));
+        }
+    }
+    nodes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -358,6 +453,59 @@ mod tests {
         assert!(decorated[0].multiselectable);
         let d_row = decorated.iter().find(|n| n.tag == "vtbl_row0").unwrap();
         assert_eq!(d_row.selected, Some(false), "decorated row sets aria-selected");
+    }
+
+    // ── R783 permuted (sorted / filtered) variant ───────────────────
+
+    #[test]
+    fn sorted_builds_rows_by_source_with_visual_posinset() {
+        // A reversed 4-row view order over a 4-row dataset, col-1 ascending,
+        // source row 2 selected. posinset tracks VISUAL position; tags +
+        // selection track SOURCE id.
+        let order = [3usize, 2, 1, 0];
+        let nodes = windowed_grid_nodes_sorted(
+            "vtbl",
+            "Sorted grid",
+            &HEADERS,
+            &order,
+            Some((1, true)),
+            Some(2),
+            &window(0, 4),
+        );
+        assert_eq!(nodes[0].role, AriaRole::Grid);
+        assert_eq!(nodes[0].size_of_set, Some(4), "setsize is the VIEW length");
+        // Active column header carries aria-sort=ascending; others none.
+        let ch1 = nodes.iter().find(|n| n.tag == "vtbl_ch1").unwrap();
+        assert_eq!(ch1.sort, Some(SortDirection::Ascending));
+        let ch0 = nodes.iter().find(|n| n.tag == "vtbl_ch0").unwrap();
+        assert_eq!(ch0.sort, None, "inactive column has no aria-sort");
+        // Visual position 1 is source 2 (order[1]) → posinset 2, selected.
+        let src2 = nodes.iter().find(|n| n.tag == "vtbl_row2").unwrap();
+        assert_eq!(src2.position_in_set, Some(2), "posinset = visual position + 1");
+        assert_eq!(src2.selected, Some(true), "the selected SOURCE row is aria-selected");
+        // Source 3 sits at visual 0 → posinset 1, not selected.
+        let src3 = nodes.iter().find(|n| n.tag == "vtbl_row3").unwrap();
+        assert_eq!(src3.position_in_set, Some(1));
+        assert_eq!(src3.selected, Some(false));
+    }
+
+    #[test]
+    fn sorted_setsize_is_the_filtered_view_length() {
+        // A filtered view: only 2 of a larger dataset survive; the order is
+        // those 2 source ids. setsize conveys the VIEW length (2), not the
+        // dataset size, and only the surviving sources get rows.
+        let order = [7usize, 4];
+        let nodes =
+            windowed_grid_nodes_sorted("vtbl", "Filtered grid", &HEADERS, &order, None, None, &window(0, 2));
+        assert_eq!(nodes[0].size_of_set, Some(2), "setsize = filtered view length");
+        let data_rows: Vec<&str> = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
+            .map(|n| n.tag.as_str())
+            .collect();
+        assert_eq!(data_rows, vec!["vtbl_row7", "vtbl_row4"], "only surviving sources, in view order");
+        // No active sort → no aria-sort on any header.
+        assert!(nodes.iter().filter(|n| n.role == AriaRole::ColumnHeader).all(|n| n.sort.is_none()));
     }
 
     #[test]

@@ -44,8 +44,7 @@
 //! so — exactly as the 1-D `hello-virtual-sort` does — the tree is built
 //! inline (R776's view-order-permutation carve-out).
 
-use pinion_a11y::{AccessNode, AriaRole, SortDirection, WidgetA11y};
-use pinion_core::composite_tag::GridSendKey;
+use pinion_a11y::{windowed_grid_nodes_sorted, AccessNode, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -149,13 +148,6 @@ fn use_sort_undo() -> Rc<UndoStack> {
     use_undo_stack(UNDO_KEY)
 }
 
-/// The a11y `gridcell` / paint-cell tag for source row `source`, column
-/// `col` — the [`GridSendKey`] SSOT so the a11y identity matches the painted
-/// cell (and the decoder) exactly.
-fn cell_tag(source: usize, col: usize) -> String {
-    format!("{GRID_TAG}#{}", GridSendKey::Cell { row: source, col }.encode())
-}
-
 /// Status bar above the grid: a literal scene-as-data readout of the active
 /// sort + the selected source row.
 fn status_bar(theme: &Theme, sort: Option<(usize, bool)>, selected: Option<usize>) -> Scene {
@@ -220,73 +212,6 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
     )
-}
-
-/// Build the inline permuted-grid a11y tree (R776 carve-out: the sort
-/// permutation breaks the identity mapping `windowed_grid_nodes_selected`
-/// assumes, so the tree is built here where the visual→source mapping is in
-/// scope — like `hello-virtual-sort`'s inline list tree).
-fn sorted_grid_nodes(
-    order: &[usize],
-    sort: Option<(usize, bool)>,
-    selected: Option<usize>,
-    window: &pinion_core::widgets::virtual_list::VisibleWindow,
-) -> Vec<AccessNode> {
-    let total = u32::try_from(order.len()).unwrap_or(u32::MAX);
-    let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (NCOLS + 1) + NCOLS + 2);
-
-    // Grid container: header row + the windowed data rows (by source id).
-    let mut grid = AccessNode::new(GRID_TAG, AriaRole::Grid)
-        .with_name("Sortable data grid")
-        .with_size_of_set(total);
-    grid = grid.with_child(format!("{GRID_TAG}_hrow"));
-    for view_pos in window.indices() {
-        if let Some(&source) = order.get(view_pos) {
-            grid = grid.with_child(format!("{GRID_TAG}_row{source}"));
-        }
-    }
-    nodes.push(grid);
-
-    // Frozen header row + its columnheaders; the active column carries
-    // `aria-sort`.
-    let mut hrow = AccessNode::new(format!("{GRID_TAG}_hrow"), AriaRole::Row);
-    for col in 0..NCOLS {
-        hrow = hrow.with_child(format!("{GRID_TAG}_ch{col}"));
-    }
-    nodes.push(hrow);
-    for (col, label) in HEADERS.iter().enumerate() {
-        let mut ch =
-            AccessNode::new(format!("{GRID_TAG}_ch{col}"), AriaRole::ColumnHeader).with_name(*label);
-        if let Some((active, ascending)) = sort {
-            if active == col {
-                ch = ch.with_sort(if ascending {
-                    SortDirection::Ascending
-                } else {
-                    SortDirection::Descending
-                });
-            }
-        }
-        nodes.push(ch);
-    }
-
-    // Windowed data rows: posinset = **visual** position, tag + selection by
-    // **source** id.
-    for view_pos in window.indices() {
-        let Some(&source) = order.get(view_pos) else { continue };
-        let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
-        let mut row = AccessNode::new(format!("{GRID_TAG}_row{source}"), AriaRole::Row)
-            .with_position_in_set(posinset)
-            .with_size_of_set(total)
-            .with_selected(selected == Some(source));
-        for col in 0..NCOLS {
-            row = row.with_child(cell_tag(source, col));
-        }
-        nodes.push(row);
-        for col in 0..NCOLS {
-            nodes.push(AccessNode::new(cell_tag(source, col), AriaRole::GridCell));
-        }
-    }
-    nodes
 }
 
 struct GridSortView;
@@ -366,9 +291,10 @@ impl WidgetCore for GridSortView {
 }
 
 impl WidgetA11y for GridSortView {
-    /// WAI-ARIA virtualized `grid` over the current sort order — built inline
-    /// (the sort permutation breaks the lifted helper's identity mapping; see
-    /// [`sorted_grid_nodes`]).
+    /// WAI-ARIA virtualized `grid` over the current sort order via the
+    /// R783-lifted [`windowed_grid_nodes_sorted`] (the permuted-grid peer,
+    /// shared with `hello-grid-filter`): the sort permutation makes `posinset`
+    /// the visual position and tags/selects rows by source id.
     fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll = use_scroll_state(SCROLL_KEY);
         let grid_sort = use_grid_data();
@@ -376,7 +302,15 @@ impl WidgetA11y for GridSortView {
         let order = grid_sort.order();
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, order.len(), ROW_H, OVERSCAN);
-        sorted_grid_nodes(order.as_slice(), sort, *selected, &window)
+        windowed_grid_nodes_sorted(
+            GRID_TAG,
+            "Sortable data grid",
+            &HEADERS,
+            order.as_slice(),
+            sort,
+            *selected,
+            &window,
+        )
     }
 }
 
@@ -398,6 +332,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_a11y::{AriaRole, SortDirection};
     use pinion_core::Owner;
 
     // The sort transition + numeric order are unit-tested in

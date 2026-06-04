@@ -30223,6 +30223,64 @@
         "windowed_grid_nodes_sorted + optionally-undoable lift still deferred (1/2-consumer)"
       ]
     },
+    "R783": {
+      "decision_summary": "R783 §5.40 data-grid filter at scale: GridSortState gains a single-facet column filter (GridFilter col+value) composing with its sort via grid_order_by's new pass predicate; AI-first invoke set_filter; lift windowed_grid_nodes_sorted (permuted-grid a11y peer) from the now-2 inline grid builders",
+      "changes_bullets": [
+        "core: grid_order_by gains a `pass` predicate (filter-then-sort), grid peer of compute_order's pass",
+        "core: GridSortState filter axis — GridFilter{col,value} + set_filter; order memo on (sort,filter)",
+        "core: GridFilter wire codec grid_filter_str/from_str (<col>=<value>); column+value fits the cells",
+        "core: GridSortExternal RPC — query filter/view_len, intervene filter, invoke set_filter",
+        "a11y: lift windowed_grid_nodes_sorted (permuted-grid peer) from the inline grid builders",
+        "a11y: migrate hello-grid-sort + hello-grid-filter off byte-identical inline trees (R758 2nd)",
+        "example: hello-grid-filter — 10k AI-first column filter composing with sort + selection",
+        "demo: r783_grid_filter.py (39 assertions) — filter shrinks view, filter+sort composes"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 5446 passed / 0 failed (R782 5436 +10: grid_sort+example+sorted a11y)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (pedantic)",
+        "new demo r783 (39 assertions) PASS; r778/r779 re-run PASS after the a11y lift",
+        "blast-radius r735/r782 PASS (grid_order_by pass + view_virtual_table predicate preserving)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "undoable filter deferred (R779.1 axis; filter mutates direct, sort still undoable)",
+        "multi-facet / substring filters deferred (single fixed-string column facet this slice)",
+        "MultiSelection [bool;N] bitmap still 2-copy inline (R782 carry); 3rd identical-N re-evaluates",
+        "column resize / h-scroll + frozen-header sync (R775 carry; live drag = R743 XTEST)",
+        "sorted/filtered-grid keyboard roving by visual position deferred (R779 carry)"
+      ],
+      "publishable_decision_summary": "R783 §5.40 data-grid filter at scale: GridSortState gains a single-facet column filter (GridFilter col+value) composing with its sort via grid_order_by's new pass predicate; AI-first invoke set_filter; lift windowed_grid_nodes_sorted (permuted-grid a11y peer) from the now-2 inline grid builders",
+      "publishable_changes_bullets": [
+        "core: grid_order_by gains a `pass` predicate (filter-then-sort), grid peer of compute_order's pass",
+        "core: GridSortState filter axis — GridFilter{col,value} + set_filter; order memo on (sort,filter)",
+        "core: GridFilter wire codec grid_filter_str/from_str (<col>=<value>); column+value fits the cells",
+        "core: GridSortExternal RPC — query filter/view_len, intervene filter, invoke set_filter",
+        "a11y: lift windowed_grid_nodes_sorted (permuted-grid peer) from the inline grid builders",
+        "a11y: migrate hello-grid-sort + hello-grid-filter off byte-identical inline trees (R758 2nd)",
+        "example: hello-grid-filter — 10k AI-first column filter composing with sort + selection",
+        "demo: r783_grid_filter.py (39 assertions) — filter shrinks view, filter+sort composes"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 5446 passed / 0 failed (R782 5436 +10: grid_sort+example+sorted a11y)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (pedantic)",
+        "new demo r783 (39 assertions) PASS; r778/r779 re-run PASS after the a11y lift",
+        "blast-radius r735/r782 PASS (grid_order_by pass + view_virtual_table predicate preserving)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "undoable filter deferred (R779.1 axis; filter mutates direct, sort still undoable)",
+        "multi-facet / substring filters deferred (single fixed-string column facet this slice)",
+        "MultiSelection [bool;N] bitmap still 2-copy inline (R782 carry); 3rd identical-N re-evaluates",
+        "column resize / h-scroll + frozen-header sync (R775 carry; live drag = R743 XTEST)",
+        "sorted/filtered-grid keyboard roving by visual position deferred (R779 carry)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

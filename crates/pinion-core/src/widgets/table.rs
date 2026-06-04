@@ -351,9 +351,12 @@ impl Table {
         // R778 — delegate to the shared `grid_order_by` SSOT; this struct
         // supplies the cell source, the free fn owns the direction +
         // stable-tie-break policy (shared with the virtualized grid).
-        grid_order_by(self.rows.len(), self.sort, |col, a, b| {
-            cell_cmp(self.cell(a, col), self.cell(b, col))
-        })
+        grid_order_by(
+            self.rows.len(),
+            self.sort,
+            |col, a, b| cell_cmp(self.cell(a, col), self.cell(b, col)),
+            |_| true, // the eager table has no filter axis (sort only)
+        )
     }
 }
 
@@ -416,13 +419,21 @@ pub fn cycle_col_sort(
 /// for the grid: that one is single-key + generic [`Ord`] (the 1-D list);
 /// this one is multi-column + numeric-aware ([`cell_cmp`]). They are
 /// deliberately separate vocabularies, not one merged sorter.
+///
+/// R783 §5.40 — `pass` is the **filter** axis (the grid peer of
+/// `compute_order`'s `pass`): a row is kept only when `pass(row)` is `true`,
+/// applied **before** the sort so a filtered view shrinks naturally
+/// (`order.len() ≤ row_count`) and the surviving rows are then ordered. A
+/// display-only / unfiltered grid passes `|_| true`. Filter-then-sort, so the
+/// two axes compose orthogonally (filter the dataset, sort the survivors).
 #[must_use]
 pub fn grid_order_by(
     row_count: usize,
     sort: Option<(usize, bool)>,
     cell_cmp_at: impl Fn(usize, usize, usize) -> core::cmp::Ordering,
+    pass: impl Fn(usize) -> bool,
 ) -> Vec<usize> {
-    let mut idx: Vec<usize> = (0..row_count).collect();
+    let mut idx: Vec<usize> = (0..row_count).filter(|&i| pass(i)).collect();
     let Some((col, ascending)) = sort else {
         return idx;
     };

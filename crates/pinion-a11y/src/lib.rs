@@ -78,6 +78,7 @@ pub use toggle_group::{toggle_button_group_nodes, ToggleSegment};
 pub use tree::{tag_to_node_id, AccessTreeBuilder, ROOT_NODE_ID};
 pub use virtual_grid::{
     windowed_grid_nodes, windowed_grid_nodes_multiselected, windowed_grid_nodes_selected,
+    windowed_grid_nodes_sorted,
 };
 pub use virtual_list::{
     windowed_list_nodes, windowed_list_nodes_multiselected, windowed_list_nodes_selected,
