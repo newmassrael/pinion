@@ -54,8 +54,8 @@
 //!   emits one intent carrying the active thumb's committed value.
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::slider::{SliderAxis, SliderEvent, SliderPolicy, SliderState};
@@ -426,11 +426,10 @@ impl External for RangeSliderExternal {
     }
 
     /// R738 §5.35 — the value spans the whole track, so a drag that
-    /// captured a thumb sub-tag (`range#low` / `range#high`) must
-    /// normalize the cursor against the primary (track) rect, not the
-    /// small thumb rect. See [`External::capture_normalize_against_primary`].
-    fn capture_normalize_against_primary(&self) -> bool {
-        true
+    /// captured a thumb sub-tag (`range#low` / `range#high`) normalizes the
+    /// cursor against the **primary** (track) rect, not the small thumb rect.
+    fn capture_normalize(&self) -> CaptureNormalize<'_> {
+        CaptureNormalize::Primary
     }
 
     /// Feed the widget-relative cursor along the [`SliderAxis`] into the

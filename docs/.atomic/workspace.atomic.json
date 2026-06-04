@@ -30579,6 +30579,48 @@
         "prior: editable rich-text (substrate done, no consumer), ScrollAxis::Both, multi-facet filter"
       ]
     },
+    "R787.1": {
+      "decision_summary": "R787.1 (사용자 교과서/SSOT 감사): unify the two capture-normalize selector hooks (R738 capture_normalize_against_primary bool + R786 capture_normalize_tag Option) into one exhaustive CaptureNormalize{Target|Primary|Tag} enum — one decision modeled by one method, the 'both primary and tag' illegal state made unrepresentable, and the precedence if-else the bool+Option pair required removed; audit also confirmed _ch<col> tag reconstruction + join_path/parent_path are NOT smells (codebase-wide string-protocol convention / documented virtual-path model)",
+      "changes_bullets": [
+        "CaptureNormalize{Target|Primary|Tag(&str)} enum replaces the capture-normalize bool+Option pair",
+        "External::capture_normalize() = one hook; forward_pointer_move matches it (no precedence rule)",
+        "range_slider=Primary, resize=Tag(viewport); the \"both at once\" state is now unrepresentable",
+        "audit cleared (not smell): _ch<col> reconstruct = codebase string-protocol (GridSendKey=click-wire)",
+        "audit cleared (not smell): join_path/parent_path = virtual-/ model; resize calib = 2-consumer peer"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (5499 unchanged = behavior-preserving refactor); clippy pedantic clean",
+        "re-ran r738 (range slider=Primary) + r786 (resize=Tag, incl native XTEST): both variants preserved",
+        "validate-workspace T1=0 / new orphan +0"
+      ],
+      "impact_refs": [
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "no new carry (pure audit-correction); R787 -> R788 carry unchanged",
+        "R788 first = modal file-open DIALOG chrome (scrim+OK/Cancel+R693 trap) over R787 pane"
+      ],
+      "publishable_decision_summary": "R787.1 (사용자 교과서/SSOT 감사): unify the two capture-normalize selector hooks (R738 capture_normalize_against_primary bool + R786 capture_normalize_tag Option) into one exhaustive CaptureNormalize{Target|Primary|Tag} enum — one decision modeled by one method, the 'both primary and tag' illegal state made unrepresentable, and the precedence if-else the bool+Option pair required removed; audit also confirmed _ch<col> tag reconstruction + join_path/parent_path are NOT smells (codebase-wide string-protocol convention / documented virtual-path model)",
+      "publishable_changes_bullets": [
+        "CaptureNormalize{Target|Primary|Tag(&str)} enum replaces the capture-normalize bool+Option pair",
+        "External::capture_normalize() = one hook; forward_pointer_move matches it (no precedence rule)",
+        "range_slider=Primary, resize=Tag(viewport); the \"both at once\" state is now unrepresentable",
+        "audit cleared (not smell): _ch<col> reconstruct = codebase string-protocol (GridSendKey=click-wire)",
+        "audit cleared (not smell): join_path/parent_path = virtual-/ model; resize calib = 2-consumer peer"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (5499 unchanged = behavior-preserving refactor); clippy pedantic clean",
+        "re-ran r738 (range slider=Primary) + r786 (resize=Tag, incl native XTEST): both variants preserved",
+        "validate-workspace T1=0 / new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "no new carry (pure audit-correction); R787 -> R788 carry unchanged",
+        "R788 first = modal file-open DIALOG chrome (scrim+OK/Cancel+R693 trap) over R787 pane"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

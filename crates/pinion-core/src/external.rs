@@ -383,6 +383,25 @@ pub trait ExternalIntrospect {
     }
 }
 
+/// R738 §5.35 / R786 §5.35 — the rect a captured widget's cursor is
+/// normalized against (returned by [`External::capture_normalize`]). One
+/// exhaustive decision rather than the bool + `Option` pair it replaced, so a
+/// widget cannot simultaneously request its primary *and* a named tag (an
+/// illegal state the precedence rule used to resolve silently).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureNormalize<'a> {
+    /// The grabbed (sub-)tag's own rect — the default. Correct for single-tag
+    /// capture widgets and composites whose drag value is sub-region-relative
+    /// (a dock panel tear-off measured against the grabbed header).
+    Target,
+    /// The primary half of the composite tag (`primary#sub` → `primary`). The
+    /// range slider grabs a thumb sub-tag but its value spans the track.
+    Primary,
+    /// An explicitly named element's rect — for a drag whose reference is
+    /// neither the grabbed tag nor its primary (column resize → grid viewport).
+    Tag(&'a str),
+}
+
 /// The 8-point integration contract (§5.15). Items 1-3 are required;
 /// items 4-7 have no-op defaults so authors override selectively.
 ///
@@ -470,54 +489,27 @@ pub trait External: core::fmt::Debug {
         false
     }
 
-    /// R738 §5.15 + §5.35 — capture-cursor normalization surface. When a
-    /// composite widget tags its sub-regions (`primary#sub`) so each is a
-    /// focusable, clickable hit-target, pointer capture pins the grabbed
-    /// *sub-tag*. By default the framework's
-    /// [`InputRouter`](crate#) then normalizes the dragged cursor against
-    /// that sub-region's own rect — correct for a widget whose drag value
-    /// is measured relative to the grabbed region (e.g. a dock panel's
-    /// tear-off fraction, measured against the grabbed header).
+    /// R738 §5.35 / R786 §5.35 — which post-layout rect the framework's
+    /// [`InputRouter`](crate#) normalizes the dragged cursor against while this
+    /// widget holds capture. One exhaustive [`CaptureNormalize`] decision —
+    /// `Target` (default), `Primary`, or `Tag(name)` — so a widget cannot ask
+    /// for two rects at once (the bool + `Option` pair this replaced could).
     ///
-    /// A widget whose drag value spans the **whole** widget overrides
-    /// this to `true`: the dual-thumb range slider tags its thumbs
-    /// `range#low` / `range#high` (so a click focuses a thumb) but the
-    /// value maps across the whole track, so it must normalize the cursor
-    /// against the *primary* (track) rect. Without this, the cursor would
-    /// normalize against the ~18px thumb rect and saturate, so the
-    /// nearest-thumb pick always resolved the far thumb.
-    ///
-    /// Default `false` preserves the established per-sub-region
-    /// normalization (dock tear-off and every single-tag capture widget,
-    /// where `primary == captured tag`, are unaffected).
-    fn capture_normalize_against_primary(&self) -> bool {
-        false
-    }
-
-    /// R786 §5.35 — capture-cursor normalization against an **explicitly named**
-    /// rect, generalizing [`capture_normalize_against_primary`](Self::capture_normalize_against_primary)
-    /// (which selects the captured tag's primary half). When this returns
-    /// `Some(tag)` the framework's [`InputRouter`](crate#) normalizes the dragged
-    /// cursor against *that* tag's post-layout rect instead of the captured
-    /// (sub-)tag or its primary.
-    ///
-    /// The motivating consumer is the column-resize handle
-    /// ([`ColumnResizeExternal`](crate::widgets::column_widths::ColumnResizeExternal)):
-    /// its drag value is a **pixel** delta, so it needs a normalization rect
-    /// whose pixel width is **stable across the drag**. The grabbed cell resizes
-    /// under the drag (its width is what is being changed), so normalizing
-    /// against it would move the basis every frame; the grid **viewport** does
-    /// not resize when a column does, so the handle names it here and converts
-    /// the cursor-fraction delta to pixels with the viewport width it reads from
-    /// the shared scroll state — exactly how the splitter normalizes against its
-    /// stable pane container, not the moving handle.
-    ///
-    /// Precedence: a `Some` here wins over
-    /// [`capture_normalize_against_primary`](Self::capture_normalize_against_primary);
-    /// `None` (the default) falls back to that bool's per-sub-region / primary
-    /// choice, so every existing capture widget is unaffected.
-    fn capture_normalize_tag(&self) -> Option<&str> {
-        None
+    /// - [`CaptureNormalize::Target`] (default): the grabbed (sub-)tag's own
+    ///   rect — correct for a single-tag capture widget and for a composite
+    ///   whose value is sub-region-relative (a dock panel's tear-off fraction).
+    /// - [`CaptureNormalize::Primary`]: the primary half of the composite tag —
+    ///   the dual-thumb range slider tags thumbs `range#low` / `range#high` but
+    ///   the value maps across the whole track, so it normalizes against the
+    ///   primary (track) rect instead of the ~18px thumb.
+    /// - [`CaptureNormalize::Tag`]: an explicitly named element's rect — the
+    ///   column-resize handle's drag is a **pixel** delta needing a rect whose
+    ///   width is **stable across the drag**; the grabbed cell resizes under it,
+    ///   so the handle names the grid viewport (which does not resize when a
+    ///   column does), exactly as the splitter normalizes against its stable
+    ///   pane container, not the moving handle.
+    fn capture_normalize(&self) -> CaptureNormalize<'_> {
+        CaptureNormalize::Target
     }
 
     /// R51.34 §5.15 + §5.35 — pointer-move forward during drag. The

@@ -31,8 +31,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::reactive::{Owner, Signal};
@@ -387,7 +387,7 @@ fn px_to_width(px: f64) -> u32 {
 /// [`SplitterExternal`](../../../pinion_widget_paint/splitter/struct.SplitterExternal.html):
 /// `wants_pointer_capture` opts into the R51.34 capture lock so a drag survives
 /// the cursor straying past the column edge, and
-/// [`capture_normalize_tag`](External::capture_normalize_tag) names the grid
+/// [`capture_normalize`](External::capture_normalize) names the grid
 /// **viewport** (the horizontal scroll node) as the normalization rect — not the
 /// grabbed cell. The cell is what the drag resizes, so its width moves every
 /// frame; the viewport does not resize when a column does, so it is the stable
@@ -413,7 +413,7 @@ pub struct ColumnResizeExternal {
     /// stable pixel reference the cursor-fraction delta scales by.
     h_scroll: Rc<ScrollState>,
     /// The viewport tag the captured cursor is normalized against (the
-    /// horizontal scroll node's tag) — see [`External::capture_normalize_tag`].
+    /// horizontal scroll node's tag) — see [`External::capture_normalize`].
     viewport_tag: Cow<'static, str>,
     drag_start: Cell<Option<ResizeDragStart>>,
     is_dragging: Cell<bool>,
@@ -498,10 +498,9 @@ impl External for ColumnResizeExternal {
     /// Normalize the captured cursor against the grid **viewport** (the
     /// horizontal scroll node), not the grabbed cell or strip. The cell is what
     /// the drag resizes — its width moves every frame — so it cannot be the
-    /// pixel basis; the viewport width is stable across the drag. (R786 §5.35 —
-    /// generalizes the range-slider's `capture_normalize_against_primary`.)
-    fn capture_normalize_tag(&self) -> Option<&str> {
-        Some(self.viewport_tag.as_ref())
+    /// pixel basis; the viewport width is stable across the drag.
+    fn capture_normalize(&self) -> CaptureNormalize<'_> {
+        CaptureNormalize::Tag(self.viewport_tag.as_ref())
     }
 
     /// Translate the captured cursor into a column width.
@@ -847,7 +846,11 @@ mod tests {
     fn resize_normalizes_against_the_viewport_tag() {
         let state = Rc::new(widths());
         let ext = resize_ext(&state, 0);
-        assert_eq!(ext.capture_normalize_tag(), Some("vp"), "drags normalize against the viewport");
+        assert_eq!(
+            ext.capture_normalize(),
+            CaptureNormalize::Tag("vp"),
+            "drags normalize against the viewport",
+        );
         assert!(ext.wants_pointer_capture(), "opts into the capture lock");
     }
 

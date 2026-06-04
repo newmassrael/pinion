@@ -81,7 +81,7 @@ use std::time::Instant;
 
 use pinion_core::composite_tag::split_subindex;
 use pinion_core::event::WheelDelta;
-use pinion_core::external::{DragPayload, DropPoint, IntrospectValue};
+use pinion_core::external::{CaptureNormalize, DragPayload, DropPoint, IntrospectValue};
 use pinion_core::input::PointerWireEvent;
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 
@@ -975,17 +975,14 @@ impl InputRouter {
         // (track) rect, so grabbing a thumb sub-tag still maps the cursor
         // across the full track instead of saturating on the thumb rect.
         //
-        // R786 §5.35 — `capture_normalize_tag` overrides both: a widget
-        // whose drag value is measured against a rect that is neither the
-        // grabbed tag nor its primary (the column-resize handle, whose
-        // pixel delta needs the *stable* viewport rect — the grabbed cell
-        // resizes under the drag) names that rect explicitly.
-        let norm_tag = if let Some(tag) = external.handle.capture_normalize_tag() {
-            tag
-        } else if external.handle.capture_normalize_against_primary() {
-            primary
-        } else {
-            target_tag
+        // R786 §5.35 — `Tag(name)` names a rect that is neither the grabbed
+        // tag nor its primary (the column-resize handle, whose pixel delta
+        // needs the *stable* viewport rect — the grabbed cell resizes under
+        // the drag). One exhaustive decision, no precedence rule.
+        let norm_tag = match external.handle.capture_normalize() {
+            CaptureNormalize::Tag(tag) => tag,
+            CaptureNormalize::Primary => primary,
+            CaptureNormalize::Target => target_tag,
         };
         let Some(rect) = rect_for_tag(paint, norm_tag) else {
             return;
@@ -1393,8 +1390,8 @@ mod tests {
 
     use super::*;
     use pinion_core::external::{
-        Backend, BackendFallback, BackendSupport, ExternalIntrospect, InterveneError,
-        IntrospectSchema, InvokeError, RepaintOwner, ThreadOwnership,
+        Backend, BackendFallback, BackendSupport, CaptureNormalize, ExternalIntrospect,
+        InterveneError, IntrospectSchema, InvokeError, RepaintOwner, ThreadOwnership,
     };
     use pinion_core::scene::{ContainerNode, Rect};
     use pinion_core::style::{BoxStyle, Color};
@@ -1722,8 +1719,8 @@ mod tests {
     struct DragCaptureExternal {
         events: EventLog,
         moves: MoveLog,
-        // R738 — when true, `capture_normalize_against_primary` returns
-        // true (range-slider-style whole-widget normalization).
+        // R738 — when true, `capture_normalize` returns
+        // `CaptureNormalize::Primary` (range-slider-style whole-widget normalization).
         normalize_primary: bool,
     }
 
@@ -1766,8 +1763,12 @@ mod tests {
         fn wants_pointer_capture(&self) -> bool {
             true
         }
-        fn capture_normalize_against_primary(&self) -> bool {
-            self.normalize_primary
+        fn capture_normalize(&self) -> CaptureNormalize<'_> {
+            if self.normalize_primary {
+                CaptureNormalize::Primary
+            } else {
+                CaptureNormalize::Target
+            }
         }
         fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
             self.moves.lock().expect("mutex poisoned").push((x_rel, y_rel));
@@ -2420,8 +2421,8 @@ mod tests {
 
     #[test]
     fn capture_normalize_against_primary_uses_track_rect() {
-        // R738 regression: a capture widget that opts into
-        // `capture_normalize_against_primary` (the dual-thumb range
+        // R738 regression: a capture widget that returns
+        // `CaptureNormalize::Primary` (the dual-thumb range
         // slider) normalizes the dragged cursor against the PRIMARY
         // (track) rect even though capture pinned a thumb sub-tag — so
         // x_rel maps across the whole track instead of saturating on the

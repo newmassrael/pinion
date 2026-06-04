@@ -32,8 +32,9 @@
 //!
 //! Pointer: pressing a thumb captures its sub-tag, but the dragged value
 //! spans the whole track — `RangeSliderExternal` opts into
-//! [`capture_normalize_against_primary`](pinion_core::external::External::capture_normalize_against_primary)
-//! so the cursor normalises against the *track* rect (not the 18px thumb
+//! [`capture_normalize`](pinion_core::external::External::capture_normalize)
+//! returning `CaptureNormalize::Primary` so the cursor normalises against the
+//! *track* rect (not the 18px thumb
 //! rect, which would saturate and grab the far thumb — the R738.1 bug).
 //! The substrate's nearest-thumb
 //! [`pick`](pinion_core::widgets::range_slider::RangeSlider) latches the
@@ -159,8 +160,8 @@ fn read_range(scene: &Scene) -> RangeState {
 ///
 /// The dragged *value* still maps across the whole track, not this thumb:
 /// `RangeSliderExternal` opts into
-/// [`capture_normalize_against_primary`](pinion_core::external::External::capture_normalize_against_primary),
-/// so the `InputRouter` normalizes the captured cursor against the
+/// [`capture_normalize`](pinion_core::external::External::capture_normalize)
+/// (`CaptureNormalize::Primary`), so the `InputRouter` normalizes the cursor against the
 /// primary (track) rect even though capture pinned this thumb's sub-tag.
 /// (Without that opt-in the cursor would normalize against the ~18px
 /// thumb rect and saturate, so every drag grabbed the far thumb — the
@@ -298,8 +299,8 @@ impl WidgetCore for RangeView {
     /// Two Tab stops — one per thumb (WAI-ARIA Multi-Thumb). The
     /// composite tags route pointer events to the single external while
     /// each is an independent keyboard focus target (clicking a thumb
-    /// focuses it; the drag normalizes against the track via the
-    /// `capture_normalize_against_primary` opt-in).
+    /// focuses it; the drag normalizes against the track via
+    /// `capture_normalize` returning `CaptureNormalize::Primary`).
     fn focusable_tags() -> Vec<&'static str> {
         vec![LOW_TAG, HIGH_TAG]
     }
