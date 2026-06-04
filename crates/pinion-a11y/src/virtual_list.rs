@@ -69,6 +69,51 @@ pub fn windowed_list_nodes(
     nodes
 }
 
+/// Build a **single-select** virtualized `list`: the same windowed
+/// container + `listitem` topology as [`windowed_list_nodes`], but every
+/// rendered item additionally carries `aria-selected = (index ==
+/// selected)`.
+///
+/// This is the decorated peer the display-only [`windowed_list_nodes`]
+/// doc anticipated: a virtualized list whose selection is held by **data
+/// index** (a `VirtualSelectExternal`-style coordinator) rather than a
+/// per-leaf bit. The `aria-selected` axis is the genuine divergence from
+/// the display-only shape — display-only items omit the attribute
+/// entirely (they are not selectable), so the two builders are peers, not
+/// one wrapping the other. Lifted on the **second** selectable consumer
+/// (`hello-virtual-select` pointer/RPC + `hello-virtual-nav` keyboard nav)
+/// per the R758 a11y-axis self-grep mandate: the setsize / posinset /
+/// child topology plus the per-item `aria-selected` lowering would be a
+/// divergence-is-a-bug if hand-rolled twice (the R743.1 / R745 rule).
+///
+/// The container is a single-select [`AriaRole::List`] — **no**
+/// `aria-multiselectable` (this slice is single-select, the listbox /
+/// data-grid default; a multi-select index model is a later additive
+/// axis). `selected` is the absolute data index of the selected row, or
+/// `None`. Because selection is held by index, a selected row that has
+/// scrolled out of the window simply has no `listitem` node this frame —
+/// the selection survives in the coordinator and re-paints
+/// `aria-selected=true` when the row scrolls back, exactly as the painted
+/// tree does.
+#[must_use]
+pub fn windowed_list_nodes_selected(
+    list_tag: &str,
+    list_name: &str,
+    set_size: u32,
+    window: &VisibleWindow,
+    selected: Option<usize>,
+) -> Vec<AccessNode> {
+    let mut nodes = windowed_list_nodes(list_tag, list_name, set_size, window);
+    // `nodes[0]` is the container; `nodes[1..]` are the windowed items in
+    // window order, so item `k` is data index `window.first + k`. Decorate
+    // each with `aria-selected` against the index model.
+    for (offset, item) in nodes[1..].iter_mut().enumerate() {
+        let index = window.first + offset;
+        item.selected = Some(selected == Some(index));
+    }
+    nodes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,5 +153,66 @@ mod tests {
         assert_eq!(nodes.len(), 1, "an empty window has no listitem nodes");
         assert_eq!(nodes[0].role, AriaRole::List);
         assert!(nodes[0].children.is_empty(), "no children claimed");
+    }
+
+    // ── R776 selectable decorated variant ───────────────────────────
+
+    #[test]
+    fn selected_marks_only_the_selected_window_index() {
+        // Window 100..103, row 101 selected → only that item carries
+        // aria-selected=true; the others carry an explicit false.
+        let nodes =
+            windowed_list_nodes_selected("vlist", "List", 10_000, &window(100, 3), Some(101));
+        assert_eq!(nodes[0].role, AriaRole::List);
+        assert_eq!(nodes[1].tag, "vlist#100");
+        assert_eq!(nodes[1].selected, Some(false));
+        assert_eq!(nodes[2].tag, "vlist#101");
+        assert_eq!(nodes[2].selected, Some(true), "the selected index is aria-selected");
+        assert_eq!(nodes[3].tag, "vlist#102");
+        assert_eq!(nodes[3].selected, Some(false));
+    }
+
+    #[test]
+    fn selected_is_a_superset_of_the_display_only_topology() {
+        // The decorated variant must build the IDENTICAL container +
+        // posinset + child topology as the display-only builder — only
+        // the per-item `aria-selected` axis is added.
+        let plain = windowed_list_nodes("vlist", "List", 10_000, &window(0, 3));
+        let decorated =
+            windowed_list_nodes_selected("vlist", "List", 10_000, &window(0, 3), None);
+        assert_eq!(plain.len(), decorated.len());
+        for (p, d) in plain.iter().zip(&decorated) {
+            assert_eq!(p.tag, d.tag);
+            assert_eq!(p.role, d.role);
+            assert_eq!(p.position_in_set, d.position_in_set);
+            assert_eq!(p.size_of_set, d.size_of_set);
+            assert_eq!(p.children, d.children);
+        }
+        // The container is single-select: no aria-multiselectable.
+        assert!(!decorated[0].multiselectable, "single-select list");
+        // Display-only items omit the selected axis entirely; the
+        // decorated ones set it (to false here, nothing selected).
+        assert_eq!(plain[1].selected, None, "display-only omits aria-selected");
+        assert_eq!(decorated[1].selected, Some(false), "selectable sets it");
+    }
+
+    #[test]
+    fn selected_outside_window_marks_no_visible_item() {
+        // Selection 9_999 scrolled out of the 0..3 window: every visible
+        // item is aria-selected=false (the selection survives off-window
+        // in the coordinator, with no node this frame).
+        let nodes =
+            windowed_list_nodes_selected("vlist", "List", 10_000, &window(0, 3), Some(9_999));
+        for item in &nodes[1..] {
+            assert_eq!(item.selected, Some(false));
+        }
+    }
+
+    #[test]
+    fn selected_empty_window_yields_list_only() {
+        let nodes =
+            windowed_list_nodes_selected("vlist", "List", 10_000, &VisibleWindow::EMPTY, Some(0));
+        assert_eq!(nodes.len(), 1, "no items when the window is empty");
+        assert_eq!(nodes[0].role, AriaRole::List);
     }
 }

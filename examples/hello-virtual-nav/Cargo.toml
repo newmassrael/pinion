@@ -1,0 +1,28 @@
+[package]
+name = "hello-virtual-nav"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R776 §5.27 keyboard navigation at scale: a 10,000-row selectable flex-viewport (AutoSizer) virtualized list whose Arrow/Home/End/PageUp/PageDown keys move the index-model selection and scroll the target row into view even when it was never materialized. Composes R746 VirtualSelect + R774 flex windowing + the new scroll_offset_to_reveal primitive."
+publish = false
+
+[[bin]]
+name = "hello-virtual-nav"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R776 §5.27 — `view_flex_virtual_list` AutoSizer assembly + the
+# `view_vertical_scrollbar` peer.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

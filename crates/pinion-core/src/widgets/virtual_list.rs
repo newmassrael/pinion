@@ -225,6 +225,67 @@ pub fn compute_visible_range(
     }
 }
 
+/// R776 §5.27 — the minimal scroll offset that brings item `index`'s slot
+/// fully into a `viewport_h`-tall window, given the current `offset_y` and
+/// a uniform `row_pitch`.
+///
+/// This is the **scroll-into-view** (align: auto) arithmetic every
+/// virtualized collection needs the moment selection becomes keyboard-
+/// navigable: the target row may not be materialized, so "scroll to the
+/// selected row" cannot be a DOM `scrollIntoView` on a node — it is an
+/// offset computed from the row's known slot. The canonical primitive
+/// behind `react-window`'s `scrollToItem(align:"auto")`, Qt
+/// `QAbstractItemView::scrollTo(EnsureVisible)`, and Flutter
+/// `Scrollable.ensureVisible`. It is the windowing peer of
+/// [`compute_visible_range`]: that maps an offset to the visible window;
+/// this maps a target index to the offset that reveals it.
+///
+/// Align-auto semantics (never move a target that is already visible —
+/// the least-jarring scroll):
+///
+/// - Row already wholly inside the window → returns `offset_y` unchanged.
+/// - Row top above the window top → align the row's top to the viewport
+///   top (returns `index · pitch`).
+/// - Row bottom below the window bottom → align the row's bottom to the
+///   viewport bottom (returns `index · pitch + pitch - viewport_h`).
+/// - Row taller than the whole viewport (degenerate uniform-pitch case) →
+///   align its top, so navigation always reveals the row's start rather
+///   than oscillating between its edges.
+///
+/// The result is the **desired** `offset_y`; the caller hands it to
+/// [`ScrollState::scroll_to`](crate::widgets::scroll::ScrollState::scroll_to),
+/// which clamps it to `[0, max_y]`. A zero-height viewport (the pre-layout
+/// first-paint state of a flex `AutoSizer` list) or a zero pitch returns
+/// `offset_y` unchanged — there is no window to reveal into yet.
+#[must_use]
+pub fn scroll_offset_to_reveal(index: usize, offset_y: i32, viewport_h: u32, row_pitch: u32) -> i32 {
+    if viewport_h == 0 || row_pitch == 0 {
+        return offset_y;
+    }
+    let pitch = u64::from(row_pitch);
+    let row_top = (index as u64).saturating_mul(pitch);
+    let row_bottom = row_top.saturating_add(pitch);
+    // `offset_y.max(0)` is non-negative, so `unsigned_abs` reads the
+    // magnitude without a sign-loss cast (mirrors `compute_visible_range`).
+    let cur = u64::from(offset_y.max(0).unsigned_abs());
+    let view_bottom = cur.saturating_add(u64::from(viewport_h));
+
+    let target = if row_top < cur {
+        // Above the window → align the row top to the viewport top.
+        row_top
+    } else if row_bottom > view_bottom {
+        // Below the window → align the row bottom to the viewport bottom.
+        // `.min(row_top)` collapses to align-top when the row is taller
+        // than the viewport (then `row_bottom - viewport_h > row_top`),
+        // so a degenerate over-tall row reveals its start, not its end.
+        row_bottom.saturating_sub(u64::from(viewport_h)).min(row_top)
+    } else {
+        // Already fully visible → align-auto leaves the offset alone.
+        return offset_y;
+    };
+    i32::try_from(target).unwrap_or(i32::MAX)
+}
+
 /// R745 §5.27 — a prefix-sum offset table over **explicit per-row
 /// heights**, enabling O(log n) windowing for a variable-height
 /// virtualized list.
@@ -503,6 +564,88 @@ mod tests {
         let w = compute_visible_range(offset, VP, n, PITCH, 0);
         assert_eq!(w.count, 5);
         assert_eq!(w.first, 25_000_000);
+    }
+
+    // ── R776 scroll-into-view (scroll_offset_to_reveal) ─────────────
+
+    #[test]
+    fn reveal_already_visible_row_does_not_scroll() {
+        // offset 0, viewport 5 rows: rows 0..=4 fully visible. Revealing
+        // any of them is a no-op (align: auto never moves a visible row).
+        for index in 0..5 {
+            assert_eq!(
+                scroll_offset_to_reveal(index, 0, VP, PITCH),
+                0,
+                "row {index} already visible — no scroll",
+            );
+        }
+    }
+
+    #[test]
+    fn reveal_row_below_window_aligns_to_bottom() {
+        // offset 0, viewport 200 (5 rows): row 5 (top 200, bottom 240) is
+        // just below. Align bottom → offset = 240 - 200 = 40.
+        assert_eq!(scroll_offset_to_reveal(5, 0, VP, PITCH), 40);
+        // Row 6 (bottom 280) → 280 - 200 = 80.
+        assert_eq!(scroll_offset_to_reveal(6, 0, VP, PITCH), 80);
+    }
+
+    #[test]
+    fn reveal_row_above_window_aligns_to_top() {
+        // Scrolled to offset 400 (rows 10..). Reveal row 3 (top 120),
+        // which is above → align top → offset = 120.
+        assert_eq!(scroll_offset_to_reveal(3, 400, VP, PITCH), 120);
+        // Reveal row 0 → offset 0.
+        assert_eq!(scroll_offset_to_reveal(0, 400, VP, PITCH), 0);
+    }
+
+    #[test]
+    fn reveal_deep_index_from_top_scrolls_far_down() {
+        // The headline: navigate to row 9 999 (End key) from the top.
+        // Row 9 999 bottom = 10_000 * 40 = 400_000; align bottom →
+        // 400_000 - 200 = 399_800. The row was never materialized.
+        assert_eq!(scroll_offset_to_reveal(9_999, 0, VP, PITCH), 399_800);
+    }
+
+    #[test]
+    fn reveal_partial_bottom_row_aligns_it_fully() {
+        // offset 20: rows straddle (row 0 partly off-top, row 5 partly
+        // off-bottom at top 200..220 inside 20..220). Revealing row 5
+        // (bottom 240 > view_bottom 220) aligns bottom → 240 - 200 = 40.
+        assert_eq!(scroll_offset_to_reveal(5, 20, VP, PITCH), 40);
+    }
+
+    #[test]
+    fn reveal_zero_viewport_is_a_noop() {
+        // Pre-layout flex AutoSizer state: no window to reveal into yet.
+        assert_eq!(scroll_offset_to_reveal(100, 500, 0, PITCH), 500);
+    }
+
+    #[test]
+    fn reveal_zero_pitch_is_a_noop() {
+        assert_eq!(scroll_offset_to_reveal(3, 0, VP, 0), 0);
+    }
+
+    #[test]
+    fn reveal_row_taller_than_viewport_aligns_top() {
+        // Degenerate: pitch 300 > viewport 200. Row 2 (top 600). From a
+        // deep offset (1000, above the row) → align top 600; from above
+        // (offset 0, row below) → would align bottom 900-200=700, but the
+        // .min(row_top=600) collapses to align-top 600 so the row's start
+        // is shown rather than its end.
+        assert_eq!(scroll_offset_to_reveal(2, 1000, 200, 300), 600);
+        assert_eq!(scroll_offset_to_reveal(2, 0, 200, 300), 600);
+    }
+
+    #[test]
+    fn reveal_negative_offset_treated_as_top() {
+        // A programmatic negative offset reads as 0 (mirrors the windowing
+        // math); revealing row 5 from there aligns its bottom the same as
+        // from offset 0.
+        assert_eq!(
+            scroll_offset_to_reveal(5, -100, VP, PITCH),
+            scroll_offset_to_reveal(5, 0, VP, PITCH),
+        );
     }
 
     // ── R745 variable-height (RowOffsets + binary-search windowing) ──

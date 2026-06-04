@@ -36,7 +36,7 @@
 //! axis — this slice is pointer + RPC + AT selection (R730 keyboard-defer
 //! precedent).
 
-use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{windowed_list_nodes_selected, AccessNode, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -238,31 +238,22 @@ impl WidgetA11y for VirtualSelectView {
     /// Single-select WAI-ARIA virtualized `list`: one [`AriaRole::List`]
     /// parent (`aria-setsize = N`, no `aria-multiselectable`) over the
     /// rendered window; each visible row is an [`AriaRole::ListItem`] with
-    /// `aria-posinset` and `aria-selected = (index == selected)`.
+    /// `aria-posinset` and `aria-selected = (index == selected)`. Built by
+    /// the shared `pinion_a11y::windowed_list_nodes_selected` (R776 lift —
+    /// the decorated peer of the display-only `windowed_list_nodes`),
+    /// shared with `hello-virtual-nav` so the selectable-windowed topology
+    /// is one source of truth (divergence-is-a-bug).
     fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let window =
             compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, N, ROW_PITCH, OVERSCAN);
-
-        let total = u32::try_from(N).unwrap_or(u32::MAX);
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count + 1);
-        let mut list = AccessNode::new(LIST_TAG, AriaRole::List)
-            .with_name("Selectable item list")
-            .with_size_of_set(total);
-        for index in window.indices() {
-            list = list.with_child(format!("{LIST_TAG}#{index}"));
-        }
-        nodes.push(list);
-        for index in window.indices() {
-            let posinset = u32::try_from(index + 1).unwrap_or(u32::MAX);
-            nodes.push(
-                AccessNode::new(format!("{LIST_TAG}#{index}"), AriaRole::ListItem)
-                    .with_position_in_set(posinset)
-                    .with_size_of_set(total)
-                    .with_selected(*selected == Some(index)),
-            );
-        }
-        nodes
+        windowed_list_nodes_selected(
+            LIST_TAG,
+            "Selectable item list",
+            u32::try_from(N).unwrap_or(u32::MAX),
+            &window,
+            *selected,
+        )
     }
 }
 
@@ -284,6 +275,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_a11y::AriaRole;
     use pinion_core::Owner;
 
     fn run_view(selected: Option<usize>) -> Scene {

@@ -29749,6 +29749,60 @@
         "windowed Grid a11y still bespoke (1 consumer); 2nd windowed-grid consumer triggers a helper lift."
       ]
     },
+    "R776": {
+      "decision_summary": "R776 §5.27 keyboard navigation at scale: selectable flex-viewport virtualized list with scroll-into-view by index (scroll_offset_to_reveal primitive + windowed_list_nodes_selected a11y lift), composing R746 selection + R774 windowing",
+      "changes_bullets": [
+        "New scroll_offset_to_reveal primitive (core virtual_list): minimal align-auto offset that reveals item index",
+        "Peer to compute_visible_range (offset->window vs index->offset); react-window scrollToItem / Qt scrollTo / Flutter ensureVisible",
+        "Lifted windowed_list_nodes_selected (pinion_a11y): decorated aria-selected peer of display-only windowed_list_nodes",
+        "Lift triggered by 2nd selectable windowed consumer per R758 a11y-axis self-grep; migrated hello-virtual-select onto it",
+        "New hello-virtual-nav example: selectable flex-viewport (R774) virtualized list, keyboard-navigable at 10,000 rows",
+        "apply_key clamp nav (Arrow/Home/End/PageUp/PageDown) moves R746 index-model selection + scrolls target into view",
+        "End selects row 9999 (never materialized) and scrolls there; pure composition of VirtualSelect + flex windowing + scroll",
+        "hello-virtual-sort excluded from the lift: sort permutation makes tag/posinset diverge from identity mapping (genuine divergence)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (core +9 reveal, a11y +4 selected variant, hello-virtual-nav +10 nav/view)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "RPC demo r776_virtual_nav 35 assert: keyboard End->9999 rendered (scroll-into-view), Home->top, both-end clamp, pointer/RPC unaffected",
+        "r746_virtual_select regression PASS after the a11y migration; targeted family sweep (7 examples + a11y) green"
+      ],
+      "impact_refs": [
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "scroll_offset_to_reveal 1 consumer now (windowing primitive peer, justified substrate); 2nd = data-grid keyboard nav",
+        "variable-pitch scroll-into-view (RowOffsets) deferred peer; uniform path only this round",
+        "windowed-Grid a11y still bespoke (R775 carry); data-grid sort / column-resize / h-scroll carries persist",
+        "keyboard wire-token enum-for-1 still 3rd-consumer wait (R773 carry)"
+      ],
+      "publishable_decision_summary": "R776 §5.27 keyboard navigation at scale: selectable flex-viewport virtualized list with scroll-into-view by index (scroll_offset_to_reveal primitive + windowed_list_nodes_selected a11y lift), composing R746 selection + R774 windowing",
+      "publishable_changes_bullets": [
+        "New scroll_offset_to_reveal primitive (core virtual_list): minimal align-auto offset that reveals item index",
+        "Peer to compute_visible_range (offset->window vs index->offset); react-window scrollToItem / Qt scrollTo / Flutter ensureVisible",
+        "Lifted windowed_list_nodes_selected (pinion_a11y): decorated aria-selected peer of display-only windowed_list_nodes",
+        "Lift triggered by 2nd selectable windowed consumer per R758 a11y-axis self-grep; migrated hello-virtual-select onto it",
+        "New hello-virtual-nav example: selectable flex-viewport (R774) virtualized list, keyboard-navigable at 10,000 rows",
+        "apply_key clamp nav (Arrow/Home/End/PageUp/PageDown) moves R746 index-model selection + scrolls target into view",
+        "End selects row 9999 (never materialized) and scrolls there; pure composition of VirtualSelect + flex windowing + scroll",
+        "hello-virtual-sort excluded from the lift: sort permutation makes tag/posinset diverge from identity mapping (genuine divergence)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (core +9 reveal, a11y +4 selected variant, hello-virtual-nav +10 nav/view)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "RPC demo r776_virtual_nav 35 assert: keyboard End->9999 rendered (scroll-into-view), Home->top, both-end clamp, pointer/RPC unaffected",
+        "r746_virtual_select regression PASS after the a11y migration; targeted family sweep (7 examples + a11y) green"
+      ],
+      "publishable_impact_refs": [
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "scroll_offset_to_reveal 1 consumer now (windowing primitive peer, justified substrate); 2nd = data-grid keyboard nav",
+        "variable-pitch scroll-into-view (RowOffsets) deferred peer; uniform path only this round",
+        "windowed-Grid a11y still bespoke (R775 carry); data-grid sort / column-resize / h-scroll carries persist",
+        "keyboard wire-token enum-for-1 still 3rd-consumer wait (R773 carry)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
