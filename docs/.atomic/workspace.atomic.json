@@ -29555,6 +29555,88 @@
         "no new carry; R773 carry unchanged (KeyboardActivate single-token vocab, DoubleClick) still deferred"
       ]
     },
+    "R774": {
+      "decision_summary": "R774 §5.27 flex-viewport (AutoSizer) virtualization: ScrollState publishes the layout-measured viewport (set_max mirror) so a flex-grow virtualized list windows against its real laid-out height, not a const; rendered row count tracks window resize. New hello-flex-virtual-list consumer + lifted pinion_a11y::windowed_list_nodes (R758 a11y-axis 3rd display-only consumer).",
+      "changes_bullets": [
+        "ScrollState: add measured_w/measured_h Signals + measured_viewport() reader.",
+        "ScrollState: add set_measured_viewport(w,h)->bool batched setter (set_max dirty-bit mirror).",
+        "layout update_scroll_state_bounds publishes flex s.viewport.{w,h} via set_measured_viewport.",
+        "set_measured_viewport dirty bit OR'd into the same first-paint scroll-dirty warmup as set_max.",
+        "view_flex_virtual_list: windows against scroll.measured_viewport() height, not a const.",
+        "view_flex_virtual_list: ScrollNode flex_grow=1.0 (no fixed clip) fills its flex parent.",
+        "Shared windowed_content sizer/content-root helper; assemble_windowed split into fixed vs flex.",
+        "New example hello-flex-virtual-list: header + flex list fill the window; 10_000-row dataset.",
+        "access_node windows off the same measured height; rendered count tracks the laid-out viewport.",
+        "Additive: fixed/variable view_virtual_list + all existing ScrollState consumers unchanged.",
+        "Fixed-size scroll nodes write measured_viewport once on first paint then no-op; no new re-runs.",
+        "3b self-grep (R758 a11y axis): lift pinion_a11y::windowed_list_nodes(tag,name,setsize,&window).",
+        "windowed_list_nodes = byte-identical windowed List+ListItem builder; 3 display-only consumers.",
+        "Refactor hello-virtual-list + hello-variable-list + hello-flex-virtual-list onto the helper.",
+        "virtual-select / virtual-sort keep bespoke access_node (per-item aria-selected + sort permutation)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: all green, 0 failed.",
+        "new hello-flex-virtual-list +7 unit tests; pinion-a11y windowed_list_nodes +3 (126->129).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic).",
+        "demo sweep 117/117 PASS (r744/r745/r747 rebuilt onto the lifted a11y helper, r774 new).",
+        "RPC demo r774_flex_virtual_list.py: PASS, 37 assert sites (B-loop runs x3).",
+        "demo asserts ascending scene/resize sweep => row count tracks measured Scroll clip height.",
+        "demo also: wheel + scroll slides at the grown viewport; pixel zebra + header-distinct.",
+        "unit: set_measured_viewport dirty-bit mirrors set_max; 384->768 grows rows; 0-height => empty."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.45",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "IR variant (Scene::VirtualList layout decouple, R32/R690.A) stays a deferred PEER, not obsoleted.",
+        "AutoSizer (measured-height feedback) and layout-lazy windowing are textbook peers (R744.1).",
+        "shrink-direction live resize unverified: this WM honours grow not shrink scene/resize.",
+        "ascending sweep + unit tests (384/768/0 heights) cover the relationship deterministically.",
+        "hello-virtual-list (R744 fixed const viewport) retained as the fixed-viewport peer; not migrated."
+      ],
+      "publishable_decision_summary": "R774 §5.27 flex-viewport (AutoSizer) virtualization: ScrollState publishes the layout-measured viewport (set_max mirror) so a flex-grow virtualized list windows against its real laid-out height, not a const; rendered row count tracks window resize. New hello-flex-virtual-list consumer + lifted pinion_a11y::windowed_list_nodes (R758 a11y-axis 3rd display-only consumer).",
+      "publishable_changes_bullets": [
+        "ScrollState: add measured_w/measured_h Signals + measured_viewport() reader.",
+        "ScrollState: add set_measured_viewport(w,h)->bool batched setter (set_max dirty-bit mirror).",
+        "layout update_scroll_state_bounds publishes flex s.viewport.{w,h} via set_measured_viewport.",
+        "set_measured_viewport dirty bit OR'd into the same first-paint scroll-dirty warmup as set_max.",
+        "view_flex_virtual_list: windows against scroll.measured_viewport() height, not a const.",
+        "view_flex_virtual_list: ScrollNode flex_grow=1.0 (no fixed clip) fills its flex parent.",
+        "Shared windowed_content sizer/content-root helper; assemble_windowed split into fixed vs flex.",
+        "New example hello-flex-virtual-list: header + flex list fill the window; 10_000-row dataset.",
+        "access_node windows off the same measured height; rendered count tracks the laid-out viewport.",
+        "Additive: fixed/variable view_virtual_list + all existing ScrollState consumers unchanged.",
+        "Fixed-size scroll nodes write measured_viewport once on first paint then no-op; no new re-runs.",
+        "3b self-grep (R758 a11y axis): lift pinion_a11y::windowed_list_nodes(tag,name,setsize,&window).",
+        "windowed_list_nodes = byte-identical windowed List+ListItem builder; 3 display-only consumers.",
+        "Refactor hello-virtual-list + hello-variable-list + hello-flex-virtual-list onto the helper.",
+        "virtual-select / virtual-sort keep bespoke access_node (per-item aria-selected + sort permutation)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: all green, 0 failed.",
+        "new hello-flex-virtual-list +7 unit tests; pinion-a11y windowed_list_nodes +3 (126->129).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic).",
+        "demo sweep 117/117 PASS (r744/r745/r747 rebuilt onto the lifted a11y helper, r774 new).",
+        "RPC demo r774_flex_virtual_list.py: PASS, 37 assert sites (B-loop runs x3).",
+        "demo asserts ascending scene/resize sweep => row count tracks measured Scroll clip height.",
+        "demo also: wheel + scroll slides at the grown viewport; pixel zebra + header-distinct.",
+        "unit: set_measured_viewport dirty-bit mirrors set_max; 384->768 grows rows; 0-height => empty."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.45",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "IR variant (Scene::VirtualList layout decouple, R32/R690.A) stays a deferred PEER, not obsoleted.",
+        "AutoSizer (measured-height feedback) and layout-lazy windowing are textbook peers (R744.1).",
+        "shrink-direction live resize unverified: this WM honours grow not shrink scene/resize.",
+        "ascending sweep + unit tests (384/768/0 heights) cover the relationship deterministically.",
+        "hello-virtual-list (R744 fixed const viewport) retained as the fixed-viewport peer; not migrated."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

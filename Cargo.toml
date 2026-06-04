@@ -25,6 +25,7 @@ members = [
     "examples/hello-filedrop",
     "examples/hello-tab-reorder",
     "examples/hello-virtual-list",
+    "examples/hello-flex-virtual-list",
     "examples/hello-variable-list",
     "examples/hello-virtual-select",
     "examples/hello-virtual-sort",

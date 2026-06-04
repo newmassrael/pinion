@@ -76,6 +76,32 @@ pub struct ScrollState {
     /// Upper bound for `offset_y`; semantics symmetric with
     /// [`Self::max_x`].
     max_y: Signal<i32>,
+    /// (R774 §5.27) Measured viewport width in the same unit as
+    /// [`ScrollNode::viewport`](crate::scene::ScrollNode::viewport),
+    /// written by the runtime layout pass from the *flex-computed*
+    /// clip-window rect. Zero until the first layout pass measures
+    /// the container ("not measured yet"), exactly like
+    /// [`Self::max_x`]'s zero-bound default.
+    ///
+    /// This is the read side of the `AutoSizer` feedback loop
+    /// (react-window's `AutoSizer`): a flex-sized scroll container
+    /// does not know its own pixel extent until taffy lays it out,
+    /// but the windowing math
+    /// ([`compute_visible_range`](crate::widgets::virtual_list::compute_visible_range))
+    /// runs in the *view fn*, before layout. The layout pass writes
+    /// the measured extent here via [`Self::set_measured_viewport`];
+    /// a flex-viewport consumer reads it back with
+    /// [`Self::measured_viewport`] so the *next* view re-run windows
+    /// against the true height. The first-paint chicken-and-egg is
+    /// resolved by the same scroll-dirty same-frame re-pass that
+    /// [`Self::set_max`] uses (R57.X §5.45).
+    measured_w: Signal<u32>,
+    /// (R774 §5.27) Measured viewport height; semantics symmetric
+    /// with [`Self::measured_w`]. This is the axis the windowing
+    /// math consumes — `viewport_h` feeds
+    /// [`compute_visible_range`](crate::widgets::virtual_list::compute_visible_range),
+    /// so a taller laid-out container materializes more rows.
+    measured_h: Signal<u32>,
     /// (R51.190 §5.45) Canonical input-router / introspection tag
     /// for this scroll container. Set by [`use_scroll_state`] from
     /// the `Owner::cache` key so the matching [`ScrollNode`] can
@@ -111,6 +137,8 @@ impl ScrollState {
             offset_y: Signal::new(0),
             max_x: Signal::new(0),
             max_y: Signal::new(0),
+            measured_w: Signal::new(0),
+            measured_h: Signal::new(0),
             tag: None,
         }
     }
@@ -235,6 +263,61 @@ impl ScrollState {
         });
         self.max_x.revision() != revisions_before.0
             || self.max_y.revision() != revisions_before.1
+    }
+
+    /// (R774 §5.27) Current `(measured_w, measured_h)` — the
+    /// flex-computed clip-window extent the layout pass last wrote
+    /// via [`Self::set_measured_viewport`]. Subscribes both axes
+    /// when called inside a view-fn, so a flex-viewport consumer
+    /// re-runs the view when the container resizes (window drag,
+    /// splitter drag, parent-flex redistribution).
+    ///
+    /// `(0, 0)` before the first layout pass. A flex-viewport
+    /// virtualized list windows against the height axis: the first
+    /// paint renders an empty window (height `0` → no rows), the
+    /// layout pass measures the flex extent and writes it here, and
+    /// the scroll-dirty same-frame re-pass re-runs the view with the
+    /// true height — the same first-paint warmup [`Self::set_max`]
+    /// relies on.
+    #[must_use]
+    pub fn measured_viewport(&self) -> (u32, u32) {
+        (self.measured_w.get(), self.measured_h.get())
+    }
+
+    /// (R774 §5.27) Publish the measured viewport extent. Called by
+    /// the runtime layout pass
+    /// ([`update_scroll_state_bounds`](crate::runtime::layout::update_scroll_state_bounds))
+    /// with the flex-computed clip-window rect — the `AutoSizer` write
+    /// side paired with the [`Self::measured_viewport`] read side.
+    ///
+    /// Returns `true` when either axis Signal actually mutated past
+    /// its equality-skip, mirroring [`Self::set_max`]'s dirty bit.
+    /// The shell substrate ORs this into the same first-paint warmup
+    /// accumulator so a flex-viewport list re-windows on the frame
+    /// the extent is first measured (or whenever a resize moves it),
+    /// not one frame late. Wrapped in [`batch`] so the two per-axis
+    /// writes collapse into one notification cascade — the atomic
+    /// multi-axis reactive contract [`Self::set_max`] established.
+    ///
+    /// Steady-state frames with an unchanged extent are a no-op
+    /// (Signal equality-skip), so a fixed-size scroll container —
+    /// whose laid-out rect never moves — writes once on first paint
+    /// and never schedules an extra re-pass thereafter.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "the returned bool is the measured-viewport dirty bit \
+                  consumed by the shell's first-paint warmup (OR'd with \
+                  the set_max bit); test / manual-seeding paths ignore \
+                  it, matching set_max."
+    )]
+    pub fn set_measured_viewport(&self, w: u32, h: u32) -> bool {
+        let revisions_before = (self.measured_w.revision(), self.measured_h.revision());
+        batch(|| {
+            self.measured_w.set(w);
+            self.measured_h.set(h);
+        });
+        self.measured_w.revision() != revisions_before.0
+            || self.measured_h.revision() != revisions_before.1
     }
 
     /// Set the offset to `(x, y)` clamped against `[0, max]`. Use

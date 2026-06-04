@@ -334,6 +334,21 @@ fn update_scroll_state_bounds(scene: &Scene) -> bool {
                     i32::try_from(max_x).unwrap_or(i32::MAX),
                     i32::try_from(max_y).unwrap_or(i32::MAX),
                 );
+                // R774 §5.27 — AutoSizer feedback. `apply` wrote the
+                // flex-computed clip-window rect into `s.viewport`
+                // above (R55.G.4 `assign_rect`), so this is the true
+                // measured extent for a flex-sized scroll container.
+                // Publishing it lets a flex-viewport virtualized list
+                // (`view_flex_virtual_list`) window against the laid-
+                // out height instead of a caller-supplied const. The
+                // dirty bit folds into the same first-paint warmup as
+                // `set_max`: the first paint windows an empty list
+                // (height 0 → no rows), this write flips the bit, and
+                // the shell re-runs `V::view` + layout on the same
+                // frame with the true height. A fixed-size scroll
+                // node's rect never moves, so this is a one-shot
+                // no-op for non-flex consumers (Signal equality-skip).
+                dirty |= state.set_measured_viewport(s.viewport.w, s.viewport.h);
             }
             // Recurse into content so nested Scrolls also update.
             dirty || update_scroll_state_bounds(s.content.as_ref())

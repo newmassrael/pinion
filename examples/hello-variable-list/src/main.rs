@@ -34,16 +34,16 @@
 //!
 //! ## a11y (WAI-ARIA virtualized list)
 //!
-//! Identical AT model to the R744 sibling: one [`AriaRole::List`] parent
+//! Identical AT model to the R744 sibling: one `AriaRole::List` parent
 //! with [`aria-setsize`](pinion_a11y::AccessNode::with_size_of_set) `= N`,
-//! one [`AriaRole::ListItem`] per *rendered* row with its absolute
+//! one `AriaRole::ListItem` per *rendered* row with its absolute
 //! [`aria-posinset`](pinion_a11y::AccessNode::with_position_in_set). Rows
 //! are display-only this slice, so [`StubExternal`] is the addressable list
 //! anchor and the scrollbar is the only interactive peer.
 
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{windowed_list_nodes, AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -273,36 +273,28 @@ impl WidgetCore for VariableListView {
 }
 
 impl WidgetA11y for VariableListView {
-    /// WAI-ARIA virtualized `list`: one [`AriaRole::List`] parent with
+    /// WAI-ARIA virtualized `list`: one `AriaRole::List` parent with
     /// `aria-setsize = N` claiming the **rendered** row tags as children,
-    /// plus one [`AriaRole::ListItem`] per visible row carrying its
+    /// plus one `AriaRole::ListItem` per visible row carrying its
     /// absolute `aria-posinset`. The window is resolved from the same
     /// cached [`RowOffsets`] the view fn uses, so the a11y tree and the
     /// painted tree never diverge on which rows exist.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
+        // The windowed `list` + `listitem` topology is the shared
+        // display-only shape lifted to `pinion_a11y::windowed_list_nodes`
+        // (R774; shared with hello-virtual-list + hello-flex-virtual-list).
+        // Only the windowing *source* differs here (variable prefix-sum
+        // pitch); the node shape is identical.
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let offsets = list_offsets();
         let window =
             compute_visible_range_variable(scroll_state.offset_y(), VIEWPORT_H, &offsets, OVERSCAN);
-
-        let total = u32::try_from(N).unwrap_or(u32::MAX);
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count + 1);
-        let mut list = AccessNode::new(LIST_TAG, AriaRole::List)
-            .with_name("Variable-height item list")
-            .with_size_of_set(total);
-        for index in window.indices() {
-            list = list.with_child(format!("{LIST_TAG}#{index}"));
-        }
-        nodes.push(list);
-        for index in window.indices() {
-            let posinset = u32::try_from(index + 1).unwrap_or(u32::MAX);
-            nodes.push(
-                AccessNode::new(format!("{LIST_TAG}#{index}"), AriaRole::ListItem)
-                    .with_position_in_set(posinset)
-                    .with_size_of_set(total),
-            );
-        }
-        nodes
+        windowed_list_nodes(
+            LIST_TAG,
+            "Variable-height item list",
+            u32::try_from(N).unwrap_or(u32::MAX),
+            &window,
+        )
     }
 }
 
@@ -324,6 +316,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_a11y::AriaRole;
 
     fn run_view() -> Scene {
         Owner::new().run(|| view((), &Frame::default()))

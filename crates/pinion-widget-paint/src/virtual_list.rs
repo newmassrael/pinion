@@ -165,6 +165,87 @@ pub fn view_variable_virtual_list(
     assemble_windowed(scroll, viewport, total_h, slots)
 }
 
+/// R774 §5.27 — assemble a **flex-viewport** (`AutoSizer`) virtualized
+/// vertical list as a [`ScrollNode`].
+///
+/// The fixed ([`view_virtual_list`]) and variable
+/// ([`view_variable_virtual_list`]) assemblies take a caller-supplied
+/// `viewport` rect: the clip-window height is a const the binding picks,
+/// so the rendered row count never adapts to the container's real size.
+/// This peer drops the height const entirely. The list reads the
+/// *measured* viewport from
+/// [`ScrollState::measured_viewport`](pinion_core::widgets::scroll::ScrollState::measured_viewport) —
+/// the flex-computed clip-window extent the runtime layout pass wrote on
+/// the previous frame — and windows against that. The enclosing
+/// [`ScrollNode`] is laid out with `flex_grow = 1.0` (no explicit size),
+/// so it fills whatever space its flex parent grants; resizing the
+/// window, dragging a splitter, or any parent-flex redistribution
+/// changes the measured height and the next view re-run materializes a
+/// different row count. This is react-window's `AutoSizer` pattern: the
+/// container measures itself, the windowing follows.
+///
+/// First-paint warmup: `measured_viewport()` is `(0, 0)` until the first
+/// layout pass runs, so the first `V::view` produces an empty window
+/// (height `0` → no rows). The layout pass then measures the flex extent,
+/// writes it via
+/// [`ScrollState::set_measured_viewport`](pinion_core::widgets::scroll::ScrollState::set_measured_viewport),
+/// and the scroll-dirty same-frame re-pass re-runs the view with the true
+/// height — identical to the [`ScrollState::set_max`](pinion_core::widgets::scroll::ScrollState::set_max)
+/// chicken-and-egg fix, so the user never sees the empty frame.
+///
+/// # Parameters
+///
+/// - `scroll` — the reactive [`ScrollState`] (shared with the scrollbar
+///   peer); both the offset and the measured viewport are read from it.
+/// - `item_count` — total dataset size (decoupled from rendered count).
+/// - `row_pitch` — uniform per-row vertical slot in logical pixels.
+/// - `overscan` — rows rendered beyond the strict window on each side.
+/// - `build_row` — row builder invoked once per visible index. The row is
+///   framed to the measured viewport width, so rows fill a resizing pane.
+pub fn view_flex_virtual_list(
+    scroll: &Rc<ScrollState>,
+    item_count: usize,
+    row_pitch: u32,
+    overscan: usize,
+    mut build_row: impl FnMut(usize) -> Scene,
+) -> Scene {
+    let (measured_w, measured_h) = scroll.measured_viewport();
+    let window: VisibleWindow =
+        compute_visible_range(scroll.offset_y(), measured_h, item_count, row_pitch, overscan);
+    let total_h = content_height(item_count, row_pitch);
+
+    let mut slots: Vec<Scene> = Vec::with_capacity(window.count);
+    for index in window.indices() {
+        let row = build_row(index);
+        let top = u32::try_from((index as u64).saturating_mul(u64::from(row_pitch)))
+            .unwrap_or(u32::MAX);
+        slots.push(positioned_slot(row, measured_w, top, row_pitch));
+    }
+
+    assemble_windowed_flex(scroll, measured_w, total_h, slots)
+}
+
+/// Wrap windowed `slots` in the sizer + content-root shape, then in a
+/// **flex-grow** `ScrollNode` (no explicit size) so taffy sizes the clip
+/// window from the parent flex instead of a caller-supplied const. The
+/// seed `viewport` is `0 × 0` — the layout pass overwrites it with the
+/// flex-computed rect via `assign_rect` — so the only thing that matters
+/// pre-layout is the `flex_grow` sidecar. The cross-axis stretches via
+/// the parent's default [`AlignItems::Stretch`], giving the list its
+/// full width.
+fn assemble_windowed_flex(
+    scroll: &Rc<ScrollState>,
+    width: u32,
+    total_h: u32,
+    slots: Vec<Scene>,
+) -> Scene {
+    let content = windowed_content(width, total_h, slots);
+    Scene::Scroll(
+        ScrollNode::from_state(Rc::clone(scroll), Rect::default(), content)
+            .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
+    )
+}
+
 /// Lift a built `row` out of flow into an absolutely-positioned slot at
 /// `(0, top)` framed to `width × height` — the R55.D.6 CSS-mirror
 /// positioning wrapper shared by both list assemblies. Absolute children
@@ -180,27 +261,41 @@ fn positioned_slot(row: Scene, width: u32, top: u32, height: u32) -> Scene {
     )
 }
 
-/// Wrap windowed `slots` in the canonical "full-height sizer inside an
-/// auto content-root inside a `ScrollNode`" shape shared by the fixed-
-/// ([`view_virtual_list`]) and variable-pitch
-/// ([`view_variable_virtual_list`]) assemblies.
+/// Build the "full-height sizer inside an auto content-root" content
+/// scene shared by every windowed-list assembly (fixed
+/// [`view_virtual_list`], variable [`view_variable_virtual_list`], and
+/// flex [`view_flex_virtual_list`]).
 ///
-/// `total_h` is the sizer's explicit height (the full content extent). The
-/// scroll-content layout pass forces the *content root* to `auto`, so it
-/// resolves its height from the fixed-height sizer child and writes that
-/// total into [`ScrollState::set_max`] — even though only the window's
-/// slots exist in the tree.
+/// `total_h` is the sizer's explicit height (the full content extent);
+/// `width` frames the sizer. The scroll-content layout pass forces the
+/// *content root* to `auto`, so it resolves its height from the
+/// fixed-height sizer child and writes that total into
+/// [`ScrollState::set_max`] — even though only the window's slots exist
+/// in the tree. This is the wire shape both bounds reads
+/// (`content.rect().h == total_h`) depend on, so it lives in one place;
+/// the caller decides only how the enclosing [`ScrollNode`] sizes itself
+/// (fixed clip window vs flex-grow).
+fn windowed_content(width: u32, total_h: u32, slots: Vec<Scene>) -> Scene {
+    let sizer = Scene::Container(
+        ContainerNode::new(slots).with_layout(LayoutStyle::new().with_size(Size::px(width, total_h))),
+    );
+    Scene::Container(ContainerNode::new(vec![sizer]))
+}
+
+/// Wrap windowed `slots` in the canonical "sizer + content-root inside a
+/// **fixed-clip** `ScrollNode`" shape shared by the fixed-
+/// ([`view_virtual_list`]) and variable-pitch
+/// ([`view_variable_virtual_list`]) assemblies. The scroll node's layout
+/// sidecar stays at [`ScrollNode::new`]'s default `with_size(viewport)`,
+/// so taffy treats it as a fixed-size leaf at the caller-supplied
+/// dimensions.
 fn assemble_windowed(
     scroll: &Rc<ScrollState>,
     viewport: Rect,
     total_h: u32,
     slots: Vec<Scene>,
 ) -> Scene {
-    let sizer = Scene::Container(
-        ContainerNode::new(slots)
-            .with_layout(LayoutStyle::new().with_size(Size::px(viewport.w, total_h))),
-    );
-    let content = Scene::Container(ContainerNode::new(vec![sizer]));
+    let content = windowed_content(viewport.w, total_h, slots);
     Scene::Scroll(ScrollNode::from_state(Rc::clone(scroll), viewport, content))
 }
 
