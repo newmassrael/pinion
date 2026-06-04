@@ -30419,6 +30419,46 @@
         "split_once('=') skeleton shared with grid_filter_from_str (2 consumers) but payload types diverge (u32 vs string) + trivial decision-0 wiring = inline per R778 net-zero (checked, declined lift)"
       ]
     },
+    "R785.1": {
+      "decision_summary": "R785.1 §5.27 audit-correction (user textbook/SSOT audit): ColumnWidths min_width invariant enforced from construction via clamp_widths SSOT; ScrollAxis wire-name owned by the enum (as_wire_name) per R773 wire-vocab-canon, not re-spelled in the RPC layer",
+      "changes_bullets": [
+        "ColumnWidths min_width invariant now holds from construction: new() clamps initial widths up to DEFAULT_MIN_COL_WIDTH, with_min_width() re-clamps already-stored widths to the raised floor (was: only set_width/set_widths clamped, so new(vec![10]).with_min_width(80) left a sub-floor width)",
+        "clamp_widths free-fn = single enforcement site for the floor invariant (new + with_min_width + set_widths route through it)",
+        "ScrollAxis::as_wire_name() owns the wire spelling (vertical/horizontal); RPC snapshot reads it instead of re-spelling the variants inline (R773 wire-vocab-canon: the type owns its wire form, not its consumers)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5467 pass (R785 5465, +2 invariant tests), 0 fail",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic)",
+        "r785_grid_resize + r784_grid_hscroll demos re-run PASS (clamp + axis-wire change behavior-preserving)"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "R786 live-drag column resize handle (pointer-wire = R743 XTEST) unchanged 1순위",
+        "External 5-method boilerplate (backends/repaint/thread/introspect x2) repeated ~10+ widgets repo-wide = pre-existing framework gap (future derive); not a per-round smell, follows established convention"
+      ],
+      "publishable_decision_summary": "R785.1 §5.27 audit-correction (user textbook/SSOT audit): ColumnWidths min_width invariant enforced from construction via clamp_widths SSOT; ScrollAxis wire-name owned by the enum (as_wire_name) per R773 wire-vocab-canon, not re-spelled in the RPC layer",
+      "publishable_changes_bullets": [
+        "ColumnWidths min_width invariant now holds from construction: new() clamps initial widths up to DEFAULT_MIN_COL_WIDTH, with_min_width() re-clamps already-stored widths to the raised floor (was: only set_width/set_widths clamped, so new(vec![10]).with_min_width(80) left a sub-floor width)",
+        "clamp_widths free-fn = single enforcement site for the floor invariant (new + with_min_width + set_widths route through it)",
+        "ScrollAxis::as_wire_name() owns the wire spelling (vertical/horizontal); RPC snapshot reads it instead of re-spelling the variants inline (R773 wire-vocab-canon: the type owns its wire form, not its consumers)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5467 pass (R785 5465, +2 invariant tests), 0 fail",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic)",
+        "r785_grid_resize + r784_grid_hscroll demos re-run PASS (clamp + axis-wire change behavior-preserving)"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R786 live-drag column resize handle (pointer-wire = R743 XTEST) unchanged 1순위",
+        "External 5-method boilerplate (backends/repaint/thread/introspect x2) repeated ~10+ widgets repo-wide = pre-existing framework gap (future derive); not a per-round smell, follows established convention"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

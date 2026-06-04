@@ -339,11 +339,9 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             viewport: node.viewport,
             offset_x: node.offset_x,
             offset_y: node.offset_y,
-            // R784 — wire form of the scroll axis (vertical default).
-            axis: match node.axis {
-                pinion_core::scene::ScrollAxis::Vertical => "vertical",
-                pinion_core::scene::ScrollAxis::Horizontal => "horizontal",
-            },
+            // R784 — wire form of the scroll axis (vertical default). The
+            // spelling is owned by ScrollAxis (R785.1), not re-spelled here.
+            axis: node.axis.as_wire_name(),
             content: Box::new(snapshot_root(node.content.as_ref())),
         }),
         Scene::ImmediateModeNode(node) => {

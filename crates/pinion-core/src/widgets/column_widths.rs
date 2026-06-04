@@ -39,6 +39,15 @@ use crate::reactive::{Owner, Signal};
 /// that hides its content or vanishes entirely.
 pub const DEFAULT_MIN_COL_WIDTH: u32 = 40;
 
+/// (R785.1) The single clamp the floor invariant flows through — every entry
+/// raised to at least `min`. Shared by construction
+/// ([`ColumnWidths::new`]), floor change ([`ColumnWidths::with_min_width`]),
+/// and whole-vector restore ([`ColumnWidths::set_widths`]) so the
+/// "width ≥ `min_width`" invariant has one enforcement site.
+fn clamp_widths(widths: Vec<u32>, min: u32) -> Vec<u32> {
+    widths.into_iter().map(|w| w.max(min)).collect()
+}
+
 /// R785 §5.27 — reactive per-column widths for one data grid.
 ///
 /// One instance corresponds to one logical grid; [`use_column_widths`] gives
@@ -57,10 +66,17 @@ pub struct ColumnWidths {
 }
 
 impl ColumnWidths {
-    /// Construct over the given initial per-column widths. The column count is
-    /// `widths.len()`. Uses [`DEFAULT_MIN_COL_WIDTH`] as the resize floor.
+    /// Construct over the given initial per-column widths, **clamped up to**
+    /// [`DEFAULT_MIN_COL_WIDTH`]. The column count is `widths.len()`.
+    ///
+    /// (R785.1 audit-correction) The "every width ≥ `min_width`" invariant
+    /// holds from construction, not just after a mutation — clamping the
+    /// initial widths the same way [`set_width`](Self::set_width) /
+    /// [`set_widths`](Self::set_widths) do (the Qt / AG-Grid contract: a
+    /// column can never be *narrower* than its minimum, however it was sized).
     #[must_use]
     pub fn new(widths: Vec<u32>) -> Self {
+        let widths = clamp_widths(widths, DEFAULT_MIN_COL_WIDTH);
         Self { tag: None, widths: Signal::new(widths), min_width: DEFAULT_MIN_COL_WIDTH }
     }
 
@@ -72,10 +88,15 @@ impl ColumnWidths {
         Self { tag: Some(key), ..Self::new(widths) }
     }
 
-    /// Override the minimum-width clamp (builder form).
+    /// Override the minimum-width clamp (builder form), **re-clamping** any
+    /// already-stored width up to the new floor so the "width ≥ `min_width`"
+    /// invariant holds after the floor moves too (R785.1 audit-correction).
     #[must_use]
     pub fn with_min_width(mut self, min_width: u32) -> Self {
         self.min_width = min_width;
+        // `set_with` reads the current vector by reference (no subscription)
+        // and equality-skips, so a no-op floor change does not churn.
+        self.widths.set_with(|w| w.iter().map(|&x| x.max(min_width)).collect());
         self
     }
 
@@ -150,8 +171,7 @@ impl ColumnWidths {
     /// [`min_width`](Self::min_width). Keeps the column count of the supplied
     /// vector — a caller restoring a malformed width set is its own concern.
     pub fn set_widths(&self, widths: Vec<u32>) {
-        let min = self.min_width;
-        self.widths.set(widths.into_iter().map(|w| w.max(min)).collect());
+        self.widths.set(clamp_widths(widths, self.min_width));
     }
 }
 
@@ -352,6 +372,25 @@ mod tests {
     fn with_min_width_overrides_floor() {
         let w = ColumnWidths::new(vec![100, 100]).with_min_width(80);
         assert_eq!(w.set_width(0, 10), 80, "custom floor applied");
+    }
+
+    #[test]
+    fn min_width_invariant_holds_from_construction() {
+        // R785.1 — the "width >= min_width" invariant holds at construction,
+        // not just after a mutation: a sub-floor initial width clamps up.
+        let w = ColumnWidths::new(vec![10, 200, 5]);
+        assert_eq!(w.width(0), DEFAULT_MIN_COL_WIDTH, "sub-min initial width clamped");
+        assert_eq!(w.width(1), 200, "above-min initial width untouched");
+        assert_eq!(w.width(2), DEFAULT_MIN_COL_WIDTH, "sub-min initial width clamped");
+    }
+
+    #[test]
+    fn with_min_width_reclamps_existing_widths() {
+        // R785.1 — raising the floor re-clamps already-stored widths, so the
+        // invariant holds after the floor moves (not only on the next write).
+        let w = ColumnWidths::new(vec![60, 200]).with_min_width(100);
+        assert_eq!(w.width(0), 100, "stored width below the new floor re-clamped");
+        assert_eq!(w.width(1), 200, "stored width above the new floor untouched");
     }
 
     #[test]

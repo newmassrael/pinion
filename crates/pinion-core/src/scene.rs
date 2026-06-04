@@ -2041,6 +2041,21 @@ pub enum ScrollAxis {
     Horizontal,
 }
 
+impl ScrollAxis {
+    /// (R785.1 audit-correction) The stable wire spelling of this axis
+    /// (`"vertical"` / `"horizontal"`). The wire vocabulary belongs to the
+    /// type, not its consumers (the R773 wire-vocab-canon rule) — the RPC
+    /// scene-as-data layer reads this rather than re-spelling the variants,
+    /// so a second consumer (a TUI snapshot, a log line) cannot drift.
+    #[must_use]
+    pub const fn as_wire_name(self) -> &'static str {
+        match self {
+            Self::Vertical => "vertical",
+            Self::Horizontal => "horizontal",
+        }
+    }
+}
+
 /// R55.A §5.45 — scroll container primitive carrying a clip viewport,
 /// a child scene rendered with an applied offset, and the
 /// `(offset_x, offset_y)` pair the input router and paint adapter
