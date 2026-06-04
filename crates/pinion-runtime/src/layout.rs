@@ -33,7 +33,9 @@
 //! adapter translate via `Scroll.viewport.{x,y}` and `offset_{x,y}`
 //! at read time, matching the §5.45 R55 substrate.
 
-use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, ImageNode, PathNode, Rect, TextNode};
+use pinion_core::scene::{
+    BoxNode, ContainerNode, ExternalNode, ImageNode, PathNode, Rect, ScrollAxis, TextNode,
+};
 use pinion_core::style::{
     AlignItems, Display, FlexDirection, JustifyContent, LayoutStyle, SizeValue, TextStyle,
 };
@@ -124,14 +126,23 @@ pub fn compute_layout_with_scroll_dirty(
     viewport_w: u32,
     viewport_h: u32,
 ) -> bool {
-    compute_layout_inner(scene, cache, viewport_w, viewport_h, false)
+    compute_layout_inner(scene, cache, viewport_w, viewport_h, None)
 }
 
 /// R55.G.2 §5.45 — extension point for laying out a `Scene::Scroll`
-/// content sub-tree. `main_axis_unbounded` swaps the height
-/// constraint from `Definite(viewport_h)` to `MaxContent` so flex
-/// children can grow past the clip window (the scroll case) instead
-/// of being shrunk to fit (the outer-window case).
+/// content sub-tree. `unbounded` selects which axis (if any) may
+/// overflow the clip window: that axis's constraint is swapped from
+/// `Definite(viewport extent)` to `MaxContent` so flex children grow
+/// past the window (the scroll case) instead of being shrunk to fit;
+/// the cross axis stays clamped to the viewport extent.
+///
+/// - `None` — the outer-window pass: both axes clamped to the
+///   viewport (block defaults still fill).
+/// - `Some(ScrollAxis::Vertical)` — height unbounded (the pre-R784
+///   behaviour, the only scroll mode before horizontal landed).
+/// - `Some(ScrollAxis::Horizontal)` — width unbounded (R784): the
+///   content keeps its viewport height and may grow wider, so a
+///   horizontally-scrolling container's content overflows sideways.
 ///
 /// # Panics
 ///
@@ -144,8 +155,10 @@ fn compute_layout_inner(
     cache: &mut LayoutCache,
     viewport_w: u32,
     viewport_h: u32,
-    main_axis_unbounded: bool,
+    unbounded: Option<ScrollAxis>,
 ) -> bool {
+    let width_unbounded = unbounded == Some(ScrollAxis::Horizontal);
+    let height_unbounded = unbounded == Some(ScrollAxis::Vertical);
     let mut tree: TaffyTree<NodeContext> = TaffyTree::new();
     let layout_tree = build(scene, &mut tree);
     // Force the root to fill the viewport. The user's declared size
@@ -160,8 +173,12 @@ fn compute_layout_inner(
     // being clamped. The outer-window pass keeps the explicit
     // `length(viewport_h)` cap so block defaults still fill.
     root_style.size = TaffySize {
-        width: length(viewport_w as f32),
-        height: if main_axis_unbounded {
+        width: if width_unbounded {
+            auto()
+        } else {
+            length(viewport_w as f32)
+        },
+        height: if height_unbounded {
             auto()
         } else {
             length(viewport_h as f32)
@@ -170,8 +187,12 @@ fn compute_layout_inner(
     tree.set_style(layout_tree.node, root_style)
         .expect("set root style failed");
     let available = TaffySize {
-        width: AvailableSpace::Definite(viewport_w as f32),
-        height: if main_axis_unbounded {
+        width: if width_unbounded {
+            AvailableSpace::MaxContent
+        } else {
+            AvailableSpace::Definite(viewport_w as f32)
+        },
+        height: if height_unbounded {
             AvailableSpace::MaxContent
         } else {
             AvailableSpace::Definite(viewport_h as f32)
@@ -278,11 +299,15 @@ fn lay_out_scroll_contents(scene: &mut Scene, cache: &mut LayoutCache) {
         Scene::Scroll(s) => {
             let vw = s.viewport.w;
             let vh = s.viewport.h;
+            // R784 — unbound the scroll's own axis (vertical content
+            // grows taller, horizontal content grows wider); the cross
+            // axis stays clamped to the viewport.
+            let axis = s.axis;
             // Discard the inner pass's scroll-dirty bit: the outer
             // pass's `update_scroll_state_bounds` walks the same
             // ScrollState (parent-Scroll) after this returns, so the
             // outer accumulator is the canonical source of truth.
-            let _ = compute_layout_inner(s.content.as_mut(), cache, vw, vh, true);
+            let _ = compute_layout_inner(s.content.as_mut(), cache, vw, vh, Some(axis));
         }
         _ => {}
     }
@@ -883,7 +908,7 @@ mod tests {
         //! instead of being shrunk to fit.
 
         use super::*;
-        use pinion_core::scene::{ContainerNode, Rect, ScrollNode};
+        use pinion_core::scene::{ContainerNode, Rect, ScrollAxis, ScrollNode};
         use pinion_core::style::{
             Color, FlexDirection, JustifyContent, LayoutStyle, Size,
         };
@@ -1001,6 +1026,72 @@ mod tests {
                 "first-paint pass must report dirty (max moved 0 -> 238)",
             );
             assert_eq!(state.max(), (0, 238), "max bound written by the same pass");
+        }
+
+        #[test]
+        fn r784_horizontal_scroll_unbounds_width_and_writes_max_x() {
+            // R784 §5.45 — a `ScrollAxis::Horizontal` container lets
+            // its content overflow the viewport WIDTH: the layout pass
+            // unbounds the width axis so a flex Row of fixed-width
+            // cells summing wider than the clip window keeps its
+            // intrinsic width (instead of being shrunk to fit), and
+            // `update_scroll_state_bounds` writes the overflow into
+            // `max_x`. The height stays clamped to the viewport, so
+            // `max_y` is 0 — the frozen-header data-grid relies on this
+            // (its outer horizontal scroll must never scroll
+            // vertically, or the header would slide off the top).
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            // 6 cells × 120 = 720 content width inside a 300-wide clip.
+            let cells: Vec<Scene> = (0..6).map(|_| fixed_row_w(120, 40)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(cells).with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+            );
+            let state = Rc::new(ScrollState::new());
+            let scroll = ScrollNode::new(Rect::new(0, 0, 300, 40), content)
+                .with_axis(ScrollAxis::Horizontal)
+                .with_state(Rc::clone(&state));
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            // 720 content − 300 viewport = 420 horizontal overflow;
+            // the 40-tall row fits the 40-tall viewport, so no vertical.
+            assert_eq!(
+                state.max(),
+                (420, 0),
+                "horizontal overflow flows into max_x; height clamped to the viewport",
+            );
+        }
+
+        #[test]
+        fn r784_vertical_scroll_default_still_clamps_width() {
+            // R784 regression guard — the default `ScrollAxis::Vertical`
+            // (no `with_axis`) reproduces the pre-R784 behaviour
+            // exactly: the content root is clamped to `viewport.w`, so a
+            // Row wider than the clip writes `max_x == 0` (no horizontal
+            // overflow). Protects every existing vertical scroll
+            // consumer from the new width-unbounded branch.
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            let cells: Vec<Scene> = (0..6).map(|_| fixed_row_w(120, 40)).collect();
+            let content = Scene::Container(
+                ContainerNode::new(cells).with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+            );
+            let state = Rc::new(ScrollState::new());
+            let scroll = ScrollNode::new(Rect::new(0, 0, 300, 40), content)
+                .with_state(Rc::clone(&state));
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            assert_eq!(
+                state.max().0,
+                0,
+                "default vertical scroll clamps width to the viewport (pre-R784 behaviour)",
+            );
         }
 
         #[test]

@@ -30323,6 +30323,56 @@
         "apply_set_filter is currently a pass-through mutation-path seam (where filter-undo would attach)"
       ]
     },
+    "R784": {
+      "decision_summary": "R784 §5.45 §5.27 horizontal scroll + frozen-header data-grid: ScrollAxis::Horizontal layout substrate (width-unbounded scroll content) + nested outer-horizontal/inner-vertical composition in view_virtual_table so the header tracks the body's horizontal offset while pinned vertically",
+      "changes_bullets": [
+        "ScrollAxis enum (Vertical default / Horizontal) added to ScrollNode; default keeps every existing scroll consumer byte-unchanged",
+        "layout pass: per-axis unbounding (Option<ScrollAxis>) so Horizontal scroll content overflows width and the pass writes max_x; vertical path unchanged",
+        "view_virtual_table wraps [frozen header, inner vertical body] in an outer Horizontal ScrollNode (GridScroll{body,horizontal}); header tracks horizontal offset, pinned vertically",
+        "snapshot exposes Scroll axis (\"vertical\"/\"horizontal\") for AI introspection",
+        "new hello-grid-hscroll example (8 wide columns) + 5 grid callers migrated to GridScroll"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5455 pass (R783 5446, +9: 2 layout substrate + 3 table + 1 snapshot axis + 3 example)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic)",
+        "demo tools/demos/r784_grid_hscroll.py PASS: 40 assertions (axes + overflow + frozen-header sync exact-shift + vertical-independence + pixel)",
+        "regression: r775/r777/r778/r782/r783/r774 demos re-run PASS (nested-scroll restructure behavior-preserving)"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R785: per-column width model + live-drag column resize (pointer-wire consumer, R743 XTEST); width-model reactive holder sibling = text_edit style_runs",
+        "ScrollAxis::Both deferred (no consumer; frozen-header grid composes single-axis nested)",
+        "horizontal wheel/shift-wheel routing deferred (RPC + nested scroll sufficient; wheel maps vertical today)"
+      ],
+      "publishable_decision_summary": "R784 §5.45 §5.27 horizontal scroll + frozen-header data-grid: ScrollAxis::Horizontal layout substrate (width-unbounded scroll content) + nested outer-horizontal/inner-vertical composition in view_virtual_table so the header tracks the body's horizontal offset while pinned vertically",
+      "publishable_changes_bullets": [
+        "ScrollAxis enum (Vertical default / Horizontal) added to ScrollNode; default keeps every existing scroll consumer byte-unchanged",
+        "layout pass: per-axis unbounding (Option<ScrollAxis>) so Horizontal scroll content overflows width and the pass writes max_x; vertical path unchanged",
+        "view_virtual_table wraps [frozen header, inner vertical body] in an outer Horizontal ScrollNode (GridScroll{body,horizontal}); header tracks horizontal offset, pinned vertically",
+        "snapshot exposes Scroll axis (\"vertical\"/\"horizontal\") for AI introspection",
+        "new hello-grid-hscroll example (8 wide columns) + 5 grid callers migrated to GridScroll"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5455 pass (R783 5446, +9: 2 layout substrate + 3 table + 1 snapshot axis + 3 example)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic)",
+        "demo tools/demos/r784_grid_hscroll.py PASS: 40 assertions (axes + overflow + frozen-header sync exact-shift + vertical-independence + pixel)",
+        "regression: r775/r777/r778/r782/r783/r774 demos re-run PASS (nested-scroll restructure behavior-preserving)"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R785: per-column width model + live-drag column resize (pointer-wire consumer, R743 XTEST); width-model reactive holder sibling = text_edit style_runs",
+        "ScrollAxis::Both deferred (no consumer; frozen-header grid composes single-axis nested)",
+        "horizontal wheel/shift-wheel routing deferred (RPC + nested scroll sufficient; wheel maps vertical today)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

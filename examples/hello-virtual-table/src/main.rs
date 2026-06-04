@@ -43,7 +43,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_widget_paint::table::{view_virtual_table, TableStyle, VirtualTableData};
+use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -73,6 +73,10 @@ const HEADERS: [&str; NCOLS] = ["Index", "Name", "Status"];
 const TABLE_TAG: &str = "vtbl";
 /// Cache key for the body scroll container's reactive `ScrollState`.
 const SCROLL_KEY: &str = "vtbl_scroll";
+/// R784 — the outer horizontal scroll's `ScrollState` cache key. The
+/// three columns here fit the window, so `max_x` stays 0 (no horizontal
+/// scroll); the wiring is present for parity with the wide-grid demo.
+const H_SCROLL_KEY: &str = "vtbl_hscroll";
 
 // Display-only grid: no widget state of its own (`type State = ()`).
 // Repaints are driven by the theme + scroll-offset + measured-viewport
@@ -105,12 +109,13 @@ fn row_cells(id: usize) -> Vec<String> {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(_state: (), _frame: &Frame) -> Scene {
     let scroll = use_scroll_state(SCROLL_KEY);
+    let h_scroll = use_scroll_state(H_SCROLL_KEY);
     let theme = use_theme(THEME_TAG).theme_animated();
     let style = table_style();
 
     let grid = view_virtual_table(
         TABLE_TAG,
-        &scroll,
+        GridScroll { body: &scroll, horizontal: &h_scroll },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,

@@ -2377,18 +2377,11 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
         SnapshotNode::Scroll(snap) => {
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
             obj.insert("viewport".to_string(), snapshot_rect_to_json(snap.viewport));
-            obj.insert(
-                "offset_x".to_string(),
-                Value::Number(snap.offset_x.into()),
-            );
-            obj.insert(
-                "offset_y".to_string(),
-                Value::Number(snap.offset_y.into()),
-            );
-            obj.insert(
-                "content".to_string(),
-                snapshot_node_to_json(*snap.content),
-            );
+            obj.insert("offset_x".to_string(), Value::Number(snap.offset_x.into()));
+            obj.insert("offset_y".to_string(), Value::Number(snap.offset_y.into()));
+            // R784 — expose the scroll axis (AI distinguishes h/v scroller).
+            obj.insert("axis".to_string(), Value::String(snap.axis.to_string()));
+            obj.insert("content".to_string(), snapshot_node_to_json(*snap.content));
         }
         // R681 §2 #4 — wire serialisation for `ImmediateModeNode`.
         // Exposes the §5.20 tag (so `find_by_tag` walks resolve),

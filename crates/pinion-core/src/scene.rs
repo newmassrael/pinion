@@ -423,6 +423,7 @@ impl Scene {
                 let mut h = std::hash::DefaultHasher::new();
                 b"pinion.scene.Scroll".hash(&mut h);
                 s.viewport.hash(&mut h);
+                s.axis.hash(&mut h);
                 s.offset_x.hash(&mut h);
                 s.offset_y.hash(&mut h);
                 s.layout.hash(&mut h);
@@ -2010,6 +2011,36 @@ impl ExternalNode {
     }
 }
 
+/// (R784 §5.45) The axis along which a [`ScrollNode`]'s content may
+/// overflow its clip viewport.
+///
+/// The layout pass clamps the content to the viewport extent on the
+/// *cross* axis and lets it grow on the scroll axis, so the choice
+/// here is exactly "which dimension is the scrollable one":
+///
+/// - [`Self::Vertical`] — content keeps `viewport.w` (flex children
+///   resolve to the clip width, e.g. list rows fill the column) and
+///   grows taller. This is the pre-R784 behaviour and the default,
+///   so every existing scroll consumer is unaffected.
+/// - [`Self::Horizontal`] — content keeps `viewport.h` and grows
+///   wider; the motivating consumer is the frozen-header data-grid
+///   (`pinion_widget_paint::table::view_virtual_table`), whose header
+///   row and body share one horizontal scroll so the header tracks
+///   the body's horizontal offset while staying vertically pinned.
+///
+/// A two-axis (`Both`) mode is a deferred follow-up — no consumer
+/// needs simultaneous overflow on both axes yet, and the
+/// frozen-header grid composes one single-axis scroll per axis
+/// (nested) rather than one two-axis scroll.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
+pub enum ScrollAxis {
+    /// Content overflows vertically; width clamped to the viewport.
+    #[default]
+    Vertical,
+    /// Content overflows horizontally; height clamped to the viewport.
+    Horizontal,
+}
+
 /// R55.A §5.45 — scroll container primitive carrying a clip viewport,
 /// a child scene rendered with an applied offset, and the
 /// `(offset_x, offset_y)` pair the input router and paint adapter
@@ -2046,6 +2077,17 @@ impl ExternalNode {
 /// invariant.
 #[derive(Debug)]
 pub struct ScrollNode {
+    /// (R784 §5.45) Which axis this container scrolls. The layout
+    /// pass (`pinion_runtime::layout`) unbounds the content along
+    /// this axis so it can overflow the clip window — the *other*
+    /// axis stays clamped to the viewport extent, so a
+    /// [`ScrollAxis::Vertical`] container's content keeps its
+    /// `viewport.w`-wide flex resolution (rows fill the width) while
+    /// growing taller, and a [`ScrollAxis::Horizontal`] container's
+    /// content keeps its `viewport.h` height while growing wider.
+    /// Defaults to [`ScrollAxis::Vertical`] (the only mode before
+    /// R784), so every existing consumer is byte-unchanged.
+    pub axis: ScrollAxis,
     /// Visible clip window in logical pixels (Vello) or cells (TUI).
     /// The runtime hit-tester and paint adapter treat this rect as
     /// the geometry of the entire primitive at the parent level —
@@ -2117,6 +2159,7 @@ impl ScrollNode {
         Self {
             viewport,
             content: Box::new(content),
+            axis: ScrollAxis::Vertical,
             offset_x: 0,
             offset_y: 0,
             tag: None,
@@ -2145,6 +2188,18 @@ impl ScrollNode {
     pub const fn with_offset(mut self, offset_x: i32, offset_y: i32) -> Self {
         self.offset_x = offset_x;
         self.offset_y = offset_y;
+        self
+    }
+
+    /// (R784 §5.45) Select the scroll axis (default
+    /// [`ScrollAxis::Vertical`]). A [`ScrollAxis::Horizontal`]
+    /// container lets its content overflow the viewport width while
+    /// the layout pass clamps the height — the shape the
+    /// frozen-header data-grid wraps around its `[header, body]`
+    /// column so both scroll horizontally as one unit.
+    #[must_use]
+    pub const fn with_axis(mut self, axis: ScrollAxis) -> Self {
+        self.axis = axis;
         self
     }
 

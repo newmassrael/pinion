@@ -196,6 +196,13 @@ pub struct ScrollSnapshot {
     pub viewport: Rect,
     pub offset_x: i32,
     pub offset_y: i32,
+    /// (R784 §5.45) Which axis this container scrolls — `"vertical"` or
+    /// `"horizontal"` (the wire form of
+    /// [`ScrollAxis`](pinion_core::scene::ScrollAxis)). An AI client that
+    /// sees `offset_x` move knows from this whether the container is the
+    /// horizontal scroller (e.g. a frozen-header data-grid's outer scroll)
+    /// rather than guessing from the offset alone.
+    pub axis: &'static str,
     pub content: Box<SnapshotNode>,
 }
 
@@ -332,6 +339,11 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             viewport: node.viewport,
             offset_x: node.offset_x,
             offset_y: node.offset_y,
+            // R784 — wire form of the scroll axis (vertical default).
+            axis: match node.axis {
+                pinion_core::scene::ScrollAxis::Vertical => "vertical",
+                pinion_core::scene::ScrollAxis::Horizontal => "horizontal",
+            },
             content: Box::new(snapshot_root(node.content.as_ref())),
         }),
         Scene::ImmediateModeNode(node) => {
@@ -508,7 +520,28 @@ mod tests {
                     assert_eq!(snap.viewport, Rect::new(0, 0, 50, 80));
                     assert_eq!(snap.offset_x, 0);
                     assert_eq!(snap.offset_y, 120);
+                    assert_eq!(snap.axis, "vertical", "default scroll axis is vertical");
                     matches_text(&snap.content, "row", Rect::new(0, 0, 50, 200));
+                }
+                other => panic!("expected Scroll, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn horizontal_scroll_reports_axis_horizontal() {
+            // R784 — a `ScrollAxis::Horizontal` container surfaces
+            // `axis = "horizontal"` so AI clients see which axis scrolls.
+            use pinion_core::scene::ScrollAxis;
+            let content = Scene::Text(TextNode::new("wide".to_string(), Rect::new(0, 0, 500, 40)));
+            let scroll = ScrollNode::new(Rect::new(0, 0, 200, 40), content)
+                .with_axis(ScrollAxis::Horizontal)
+                .with_tag("grid_h")
+                .with_offset(80, 0);
+            match snapshot(&Scene::Scroll(scroll), "").unwrap() {
+                SnapshotNode::Scroll(snap) => {
+                    assert_eq!(snap.axis, "horizontal", "horizontal scroll surfaces its axis");
+                    assert_eq!(snap.offset_x, 80);
+                    assert_eq!(snap.offset_y, 0);
                 }
                 other => panic!("expected Scroll, got {other:?}"),
             }

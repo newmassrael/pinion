@@ -60,7 +60,7 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_virtual_table, TableStyle, VirtualTableData};
+use pinion_widget_paint::table::{view_virtual_table, GridScroll, TableStyle, VirtualTableData};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -97,6 +97,9 @@ const GRID_TAG: &str = "vtbl";
 /// drives the filter facet.
 const SORT_TAG: &str = "vsort";
 const SCROLL_KEY: &str = "vtbl_scroll";
+/// R784 — outer horizontal scroll `ScrollState` cache key (columns fit
+/// the window here, so `max_x` stays 0 — wiring present for parity).
+const H_SCROLL_KEY: &str = "vtbl_hscroll";
 const STATUS_TAG: &str = "vtbl_status";
 
 const CATEGORIES: [&str; 5] = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"];
@@ -184,6 +187,7 @@ fn status_bar(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
     let scroll = use_scroll_state(SCROLL_KEY);
+    let h_scroll = use_scroll_state(H_SCROLL_KEY);
     let theme = use_theme(THEME_TAG).theme_animated();
     let style = table_style();
 
@@ -194,7 +198,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
 
     let table = view_virtual_table(
         GRID_TAG,
-        &scroll,
+        GridScroll { body: &scroll, horizontal: &h_scroll },
         VirtualTableData {
             headers: &HEADERS,
             item_count: N,

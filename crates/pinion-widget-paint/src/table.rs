@@ -31,7 +31,7 @@
 use std::rc::Rc;
 
 use pinion_core::composite_tag::GridSendKey;
-use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
+use pinion_core::scene::{ContainerNode, Rect, ScrollAxis, ScrollNode, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
@@ -439,6 +439,25 @@ pub struct VirtualTableData<'a> {
     pub order: Option<&'a [usize]>,
 }
 
+/// R784 §5.45 — the two single-axis [`ScrollState`]s a virtualized
+/// data-grid drives, bundled so [`view_virtual_table`] stays under the
+/// argument budget (the [`VirtualTableData`] precedent for grouping
+/// related inputs). The grid composes them as a nested pair: an outer
+/// [`ScrollAxis::Horizontal`] scroll over the body's inner
+/// [`ScrollAxis::Vertical`] scroll, so each holder owns exactly one axis
+/// and the header (which sits between the two) stays vertically pinned
+/// while tracking the horizontal offset.
+#[derive(Clone, Copy)]
+pub struct GridScroll<'a> {
+    /// Vertical body window: the rows scroll under the frozen header and
+    /// virtualize against this state's measured viewport height.
+    pub body: &'a Rc<ScrollState>,
+    /// Horizontal scroll shared by the header and the body: its
+    /// `offset_x` slides the whole column, its `max_x` is the column
+    /// total minus the viewport width (0 — no scroll — when columns fit).
+    pub horizontal: &'a Rc<ScrollState>,
+}
+
 /// R775 §5.27 — flex-viewport (`AutoSizer`) **virtualized data-grid**.
 ///
 /// The R707 [`view_table`] builds one strip per row eagerly — fine at a
@@ -455,19 +474,33 @@ pub struct VirtualTableData<'a> {
 /// reused from `crate::virtual_list` (one source of truth, so the
 /// scroll-bound wiring cannot diverge between the list and the grid).
 ///
-/// First slice (R775): display-only, columns sized to fit the viewport
-/// width (`headers.len() × style.col_width`, no horizontal scroll), no
-/// sort / selection — data-indexed sort + selection at scale are
-/// follow-ups (mirroring the R744 → R746 list arc).
+/// R784 §5.45 — the grid now scrolls **horizontally** too, with a
+/// frozen header. The whole `[header, body]` column is wrapped in an
+/// outer [`ScrollAxis::Horizontal`] [`ScrollNode`] driven by
+/// `h_scroll`: when the column total (`headers.len() × style.col_width`)
+/// exceeds the viewport width the grid scrolls sideways, and because
+/// the header band and the body share that one horizontal scroll the
+/// header tracks the body's horizontal offset exactly. The header
+/// stays *vertically* pinned because it sits above the inner vertical
+/// body scroll (the R784 nested single-axis composition: outer
+/// horizontal over `[frozen header, inner vertical body]`). The
+/// surface frame is lifted out of the horizontal scroll so the rounded
+/// block stays put while the content slides under it.
 ///
 /// # Parameters
 ///
 /// - `tag` — composite paint-root tag; same cell / header / row tag scheme
 ///   as [`view_table`] (`"<tag>_hrow"`, `"<tag>_ch<col>"`,
 ///   `"<tag>_row<id>"`, `"<tag>#<id>_<col>"`).
-/// - `scroll` — the reactive [`ScrollState`]; the body windows against its
+/// - `scroll` — the reactive [`ScrollState`] for the **vertical** body
+///   window; the body windows against its
 ///   [`measured_viewport`](pinion_core::widgets::scroll::ScrollState::measured_viewport)
 ///   height and the layout pass publishes the flex-measured extent back.
+/// - `h_scroll` — the reactive [`ScrollState`] for the **horizontal**
+///   scroll shared by the header and the body. Its `offset_x` slides the
+///   whole column; `max_x` is the column total minus the viewport width
+///   (0 when the columns fit, so a narrow grid is unaffected). Drive it
+///   with `scene/set_scroll_offset` on its tag, or wheel / arrow input.
 /// - `data` — the [`VirtualTableData`] (column headers + total row count +
 ///   overscan).
 /// - `theme` / `style` — palette + [`TableStyle`] dimensions.
@@ -484,7 +517,7 @@ pub struct VirtualTableData<'a> {
 #[must_use]
 pub fn view_virtual_table(
     tag: &str,
-    scroll: &Rc<ScrollState>,
+    scroll: GridScroll<'_>,
     data: VirtualTableData<'_>,
     theme: &Theme,
     style: &TableStyle,
@@ -499,11 +532,16 @@ pub fn view_virtual_table(
     // `view_virtual_list` + `ViewOrderState` pairing, now multi-column).
     let view_len = data.order.map_or(data.item_count, <[usize]>::len);
     // AutoSizer: window against the runtime-measured clip height. The
-    // header sits OUTSIDE the scroll (frozen), so the body's measured
-    // height is the window minus the header band.
-    let (_, measured_h) = scroll.measured_viewport();
-    let window =
-        compute_visible_range(scroll.offset_y(), measured_h, view_len, style.row_height, data.overscan);
+    // header sits OUTSIDE the vertical body scroll (frozen), so the
+    // body's measured height is the window minus the header band.
+    let (_, measured_h) = scroll.body.measured_viewport();
+    let window = compute_visible_range(
+        scroll.body.offset_y(),
+        measured_h,
+        view_len,
+        style.row_height,
+        data.overscan,
+    );
     let total_h = content_height(view_len, style.row_height);
 
     // The uniform-pitch slot geometry (`top = view_pos · row_height`, framed
@@ -528,20 +566,41 @@ pub fn view_virtual_table(
         let fg = row_fg(theme, RadioState::Idle);
         data_row(tag, source, &cell_refs, cols, fill, fg, style)
     });
-    let body = assemble_windowed_flex(scroll, total_w, total_h, slots);
+    let body = assemble_windowed_flex(scroll.body, total_w, total_h, slots);
     // R778 — clickable headers route to the sort anchor (`sort_tag`) when a
     // sort coordinator is wired, else stay on `tag` (R777 default).
     let header = header_row(tag, data.sort_tag.unwrap_or(tag), data.headers, data.sort, theme, style);
 
-    Scene::Container(
+    // R784 — the scrolled column: the frozen header above the inner
+    // vertical body scroll. This whole `total_w`-wide column is what the
+    // outer horizontal scroll slides; the header is *between* the two
+    // scrolls, so it moves horizontally with the body but never
+    // vertically. No surface fill / padding here — the frame below owns
+    // those so the rounded block stays put while the content scrolls.
+    let column = Scene::Container(
         ContainerNode::new(vec![header, body])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+    );
+    // R784 — the outer horizontal scroll. `from_state` derives its tag /
+    // offset from `h_scroll`; `with_axis(Horizontal)` makes the layout
+    // pass unbound the width so the `total_w` column overflows when it
+    // exceeds the viewport, and `flex_grow` claims the frame's interior.
+    let h_scrolled = Scene::Scroll(
+        ScrollNode::from_state(Rc::clone(scroll.horizontal), Rect::default(), column)
+            .with_axis(ScrollAxis::Horizontal)
+            .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
+    );
+
+    Scene::Container(
+        ContainerNode::new(vec![h_scrolled])
             .with_tag(tag.to_string())
             .with_style(
                 BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow))
                     .with_corner_radius(style.corner_radius),
             )
             // flex_grow so the grid fills its parent (the AutoSizer
-            // contract); the body ScrollNode then claims the height left
+            // contract); the outer horizontal ScrollNode then claims the
+            // framed interior and the body scroll claims the height left
             // after the fixed header band.
             .with_layout(
                 LayoutStyle::new()
@@ -642,6 +701,9 @@ mod tests {
                     collect_text(child, out);
                 }
             }
+            // R784 — the grid header / cells now live inside the outer
+            // horizontal ScrollNode, so descend through scroll content.
+            Scene::Scroll(s) => collect_text(s.content.as_ref(), out),
             _ => {}
         }
     }
@@ -750,17 +812,29 @@ mod tests {
     const VT_N: usize = 10_000;
 
     fn run_vtable(measured_h: u32, offset_y: i32) -> Scene {
+        run_vtable_h(measured_h, offset_y, 0)
+    }
+
+    /// R784 — render the virtual table with an explicit horizontal
+    /// offset so the frozen-header / h-scroll tests can drive the outer
+    /// horizontal scroll.
+    fn run_vtable_h(measured_h: u32, offset_y: i32, offset_x: i32) -> Scene {
         let state = Rc::new(ScrollState::new());
         state.set_measured_viewport(360, measured_h);
         let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
         state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
         state.scroll_to(0, offset_y);
+        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
+        // Three 120-wide columns = 360 content; let the outer scroll have
+        // room to move so a non-zero offset_x actually applies.
+        h_state.set_max(1000, 0);
+        h_state.scroll_to(offset_x, 0);
         let theme = light();
         let style = TableStyle::m3();
         Owner::new().run(|| {
             view_virtual_table(
                 "vtbl",
-                &state,
+                GridScroll { body: &state, horizontal: &h_state },
                 VirtualTableData {
                     headers: &VT_HEADERS,
                     item_count: VT_N,
@@ -798,10 +872,24 @@ mod tests {
         n
     }
 
+    /// Find the **body** (vertical) [`ScrollNode`]. R784 wraps the grid in
+    /// an outer horizontal scroll, so the first scroll encountered is the
+    /// horizontal one; the body is the nested `ScrollAxis::Vertical` node.
     fn find_vt_scroll(scene: &Scene) -> Option<&pinion_core::scene::ScrollNode> {
         match scene {
-            Scene::Scroll(s) => Some(s),
+            Scene::Scroll(s) if s.axis == ScrollAxis::Vertical => Some(s),
+            Scene::Scroll(s) => find_vt_scroll(s.content.as_ref()),
             Scene::Container(c) => c.children.iter().find_map(find_vt_scroll),
+            _ => None,
+        }
+    }
+
+    /// Find the **outer horizontal** [`ScrollNode`] (R784).
+    fn find_vt_hscroll(scene: &Scene) -> Option<&pinion_core::scene::ScrollNode> {
+        match scene {
+            Scene::Scroll(s) if s.axis == ScrollAxis::Horizontal => Some(s),
+            Scene::Scroll(s) => find_vt_hscroll(s.content.as_ref()),
+            Scene::Container(c) => c.children.iter().find_map(find_vt_hscroll),
             _ => None,
         }
     }
@@ -823,19 +911,63 @@ mod tests {
     }
 
     #[test]
-    fn r775_virtual_table_header_is_frozen_outside_the_scroll() {
-        // The header row exists OUTSIDE the Scroll content (a sibling of
-        // the flex-grow ScrollNode), so it never scrolls vertically.
+    fn r784_virtual_table_header_frozen_above_body_inside_h_scroll() {
+        // R784 — the grid is `frame > h-scroll > column[header, body]`.
+        // The header sits ABOVE the inner vertical body scroll but INSIDE
+        // the outer horizontal scroll, so it is pinned vertically yet
+        // tracks the body's horizontal offset.
         let scene = run_vtable(360, 0);
-        let Scene::Container(root) = &scene else { panic!("root is a Container") };
-        let header_at_top = matches!(
-            &root.children[0],
+        let Scene::Container(frame) = &scene else { panic!("root frame is a Container") };
+        let Scene::Scroll(h) = &frame.children[0] else {
+            panic!("frame's only child is the outer horizontal ScrollNode")
+        };
+        assert_eq!(h.axis, ScrollAxis::Horizontal, "outer scroll is horizontal");
+        let Scene::Container(column) = h.content.as_ref() else {
+            panic!("the horizontal scroll wraps the [header, body] column")
+        };
+        let header_first = matches!(
+            &column.children[0],
             Scene::Container(c) if c.tag.as_deref() == Some("vtbl_hrow")
         );
-        assert!(header_at_top, "frozen header band is the first (non-scroll) child");
+        assert!(header_first, "frozen header band is the column's first child");
+        let body_is_vertical_scroll = matches!(
+            &column.children[1],
+            Scene::Scroll(b) if b.axis == ScrollAxis::Vertical
+        );
         assert!(
-            matches!(&root.children[1], Scene::Scroll(_)),
-            "the body is a sibling ScrollNode below the header",
+            body_is_vertical_scroll,
+            "the body is a vertical ScrollNode below the header (pinned vertically)",
+        );
+    }
+
+    #[test]
+    fn r784_virtual_table_outer_scroll_is_horizontal_flex_grow_with_state() {
+        let scene = run_vtable(360, 0);
+        let h = find_vt_hscroll(&scene).expect("outer horizontal Scene::Scroll present");
+        assert_eq!(h.axis, ScrollAxis::Horizontal, "outer scroll axis is horizontal");
+        assert!(
+            (h.layout.flex_grow - 1.0).abs() < f32::EPSILON,
+            "outer horizontal ScrollNode flex-grows to fill the framed interior",
+        );
+        assert!(h.state.is_some(), "outer scroll carries its ScrollState Rc");
+        assert_eq!(h.tag.as_deref(), Some("vtbl_h"), "derived from the h_scroll tag");
+    }
+
+    #[test]
+    fn r784_header_and_body_share_one_horizontal_scroll() {
+        // Frozen-header sync: the header (`vtbl_hrow`) and the body rows
+        // (`vtbl_row*`) are BOTH inside the single outer horizontal scroll,
+        // so one `offset_x` slides them together — the header can never
+        // drift out of horizontal alignment with the columns below it.
+        let scene = run_vtable(360, 0);
+        let h = find_vt_hscroll(&scene).expect("outer horizontal scroll");
+        assert!(
+            h.content.contains_tag("vtbl_hrow"),
+            "header band lives inside the horizontal scroll",
+        );
+        assert!(
+            h.content.contains_tag("vtbl_row0"),
+            "body rows live inside the same horizontal scroll",
         );
     }
 
@@ -884,12 +1016,13 @@ mod tests {
         let pitch = TableStyle::m3().row_height;
         state.set_measured_viewport(360, pitch * 8);
         state.set_max(0, i32::try_from(order.len()).unwrap() * i32::try_from(pitch).unwrap());
+        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
         let theme = light();
         let style = TableStyle::m3();
         Owner::new().run(|| {
             view_virtual_table(
                 "vtbl",
-                &state,
+                GridScroll { body: &state, horizontal: &h_state },
                 VirtualTableData {
                     headers: &VT_HEADERS,
                     item_count: order.len(),
