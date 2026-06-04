@@ -44,10 +44,10 @@
 //! the human cursor, the keyboard, and an RPC headless client
 //! (§2 invariant #2):
 //!
-//! * `invoke("send", "t<m>:<PointerEvent>")` — a top-level **title**
+//! * `invoke("send", "t<m>:<PointerWireEvent>")` — a top-level **title**
 //!   pointer event (composite tag `<bar>#t<m>`). Only `PointerUp`
 //!   toggles menu `m` open/closed.
-//! * `invoke("send", "i<i>:<PointerEvent>")` — a dropdown **item**
+//! * `invoke("send", "i<i>:<PointerWireEvent>")` — a dropdown **item**
 //!   pointer event (composite tag `<bar>#i<i>`). `PointerEnter`
 //!   highlights item `i`; `PointerUp` activates it (emits `"command"`,
 //!   closes).
@@ -85,7 +85,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::menu_nav;
-use crate::widgets::wire::{parse_pointer_event, resolve_index, PointerEvent};
+use crate::widgets::wire::{parse_pointer_wire_event, resolve_index, PointerWireEvent};
 use crate::widgets::IntentEmitter;
 
 /// R691 §5.38 — logical menubar with N command menus. See module docs
@@ -316,23 +316,23 @@ impl MenuBarExternal {
 
     /// Drive a title pointer event (`m`, `event`). Only `PointerUp`
     /// toggles the menu.
-    fn send_title(&mut self, m: usize, event: PointerEvent) {
-        if event == PointerEvent::Up {
+    fn send_title(&mut self, m: usize, event: PointerWireEvent) {
+        if event == PointerWireEvent::Up {
             self.em.inner.toggle_title(m);
         }
     }
 
     /// Drive an item pointer event (`i`, `event`). `PointerEnter`
     /// highlights; `PointerUp` activates (and emits `"command"`).
-    fn send_item(&mut self, i: usize, event: PointerEvent) {
+    fn send_item(&mut self, i: usize, event: PointerWireEvent) {
         match event {
-            PointerEvent::Enter => self.em.inner.hover_item(i),
-            PointerEvent::Up => {
+            PointerWireEvent::Enter => self.em.inner.hover_item(i),
+            PointerWireEvent::Up => {
                 if let Some((m, item)) = self.em.inner.activate_item(i) {
                     self.emit_command(m, item);
                 }
             }
-            PointerEvent::Down | PointerEvent::Leave | PointerEvent::Cancel => {}
+            PointerWireEvent::Down | PointerWireEvent::Leave | PointerWireEvent::Cancel => {}
         }
     }
 
@@ -421,13 +421,13 @@ impl MenuBarExternal {
     /// the round-trip outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
         let (sub, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
-        let event = parse_pointer_event(event_name).ok_or(InvokeError::Rejected)?;
+        let event = parse_pointer_wire_event(event_name).ok_or(InvokeError::Rejected)?;
         // R715 §5.16 — the transparent dismiss barrier (`<bar>#barrier`,
         // painted behind an open dropdown over the area below the title
         // strip): a `PointerUp` outside the menu closes it. Other pointer
         // events over the barrier region are inert.
         if sub == "barrier" {
-            if event == PointerEvent::Up {
+            if event == PointerWireEvent::Up {
                 self.em.inner.close();
             }
             return Ok(open_value(self.open_menu()));

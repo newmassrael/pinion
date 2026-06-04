@@ -53,7 +53,7 @@
 use std::borrow::Cow;
 
 use crate::command::Command;
-use crate::external::External;
+use crate::external::{External, IntrospectValue};
 use crate::intent::Intent;
 use crate::{Frame, Scene};
 
@@ -339,6 +339,42 @@ pub trait WidgetCore: 'static {
         _modifiers: crate::input::Modifiers,
     ) -> bool {
         false
+    }
+
+    /// R772.1 §5.38 — the canonical [`Self::apply_key`] body for a binding
+    /// whose model is a single root [`Scene::External`] carrying its whole
+    /// keyboard model on the `"key"` invoke wire — the command-menu family
+    /// ([`MenuBar`](crate::widgets::menu) / [`Toolbar`](crate::widgets::toolbar)
+    /// / [`ContextMenu`](crate::widgets::context_menu), R691 / R692 / R772).
+    ///
+    /// Routes the W3C `key` name to the External only when this widget owns
+    /// focus (the roving-tabindex gate `focused == Some(Self::tag())`, so
+    /// sibling controls keep their own keys), and returns the External's
+    /// handled verdict so the shell swallow contract stays exact (an
+    /// unhandled key like Tab falls through). The whole keymap is the
+    /// External's `invoke("key", …)` — the same statechart the AT action
+    /// layer and the §5.12 RPC client drive (§2 invariant #2).
+    ///
+    /// This is **not** the `apply_key` default (most widgets do not forward
+    /// to an External `"key"` wire — buttons use `keybinding`, text fields
+    /// run geometry-aware nav), so it stays an explicit opt-in a binding
+    /// calls from its own `apply_key`. A binding with a richer keyboard
+    /// model overrides `apply_key` directly instead of calling this.
+    #[must_use]
+    fn forward_key_to_external(scene: &mut Scene, focused: Option<&str>, key: &str) -> bool {
+        if focused != Some(Self::tag()) {
+            return false;
+        }
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        matches!(
+            intro.invoke("key", IntrospectValue::Text(key.to_string())),
+            Ok(IntrospectValue::Bool(true))
+        )
     }
 
     /// R56.2.a §5.13 §5.38 — IME composition entry point. The shell

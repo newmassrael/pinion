@@ -254,25 +254,11 @@ impl WidgetCore for ToolbarView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        // The toolbar is one tab stop; keys route only when the bar
-        // itself owns focus (sibling controls keep their own keys).
-        if focused != Some(Self::tag()) {
-            return false;
-        }
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        // The whole WAI-ARIA §3.4 keyboard model lives in the External;
-        // the binding forwards the W3C key name and reports the
-        // External's handled verdict so the shell swallow contract is
-        // exact (unhandled keys like Tab fall through).
-        matches!(
-            intro.invoke("key", IntrospectValue::Text(key.to_string())),
-            Ok(IntrospectValue::Bool(true))
-        )
+        // The whole WAI-ARIA §3.4 keyboard model lives in the External; the
+        // toolbar is one tab stop, so forwarding the focused key to its
+        // `"key"` wire is the shared command-menu pattern (R772.1; unhandled
+        // keys like Tab fall through).
+        Self::forward_key_to_external(scene, focused, key)
     }
 
     fn fmt_state_log(state: &ToolbarState) -> String {

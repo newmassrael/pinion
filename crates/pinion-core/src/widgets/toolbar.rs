@@ -43,7 +43,7 @@
 //! human cursor, the keyboard, and an RPC headless client (§2
 //! invariant #2):
 //!
-//! * `invoke("send", "<i>:<PointerEvent>")` — a control pointer event
+//! * `invoke("send", "<i>:<PointerWireEvent>")` — a control pointer event
 //!   (composite tag `<bar>#<i>`). `PointerUp` focuses control `i` and
 //!   activates it (a command fires `"command"`; a toggle flips its bit
 //!   and fires `"toggle"`).
@@ -78,7 +78,7 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::wire::{parse_pointer_event, resolve_index, PointerEvent};
+use crate::widgets::wire::{parse_pointer_wire_event, resolve_index, PointerWireEvent};
 use crate::widgets::IntentEmitter;
 
 /// R692 §5.38 — the two control classes a [`Toolbar`] groups. A
@@ -287,17 +287,17 @@ impl ToolbarExternal {
     /// Drive a control pointer event (`i`, `event`). `PointerUp`
     /// focuses + activates control `i`; the other phases are no-ops
     /// (hover / pressed visuals are router-tracked, not stored here).
-    fn send_item(&mut self, i: usize, event: PointerEvent) {
+    fn send_item(&mut self, i: usize, event: PointerWireEvent) {
         match event {
-            PointerEvent::Up => {
+            PointerWireEvent::Up => {
                 if let Some(act) = self.em.inner.activate(i) {
                     self.emit_activation(act);
                 }
             }
-            PointerEvent::Enter
-            | PointerEvent::Down
-            | PointerEvent::Leave
-            | PointerEvent::Cancel => {}
+            PointerWireEvent::Enter
+            | PointerWireEvent::Down
+            | PointerWireEvent::Leave
+            | PointerWireEvent::Cancel => {}
         }
     }
 
@@ -351,7 +351,7 @@ impl ToolbarExternal {
     /// Returns the roving cursor as the round-trip outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
         let (idx_str, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
-        let event = parse_pointer_event(event_name).ok_or(InvokeError::Rejected)?;
+        let event = parse_pointer_wire_event(event_name).ok_or(InvokeError::Rejected)?;
         let idx: usize = idx_str.parse().map_err(|_| InvokeError::Rejected)?;
         self.send_item(idx, event);
         Ok(focus_value(self.focus()))

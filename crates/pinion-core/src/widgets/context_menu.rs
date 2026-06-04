@@ -38,7 +38,7 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::menu_nav;
-use crate::widgets::wire::{parse_pointer_event, resolve_index, PointerEvent};
+use crate::widgets::wire::{parse_pointer_wire_event, resolve_index, PointerWireEvent};
 use crate::widgets::IntentEmitter;
 
 /// R772 §5.38 — a logical right-click command popup. See module docs for
@@ -190,15 +190,15 @@ impl ContextMenuExternal {
 
     /// Drive an item pointer event. `PointerEnter` highlights;
     /// `PointerUp` activates (emitting `"command"`).
-    fn send_item(&mut self, i: usize, event: PointerEvent) {
+    fn send_item(&mut self, i: usize, event: PointerWireEvent) {
         match event {
-            PointerEvent::Enter => self.em.inner.hover_item(i),
-            PointerEvent::Up => {
+            PointerWireEvent::Enter => self.em.inner.hover_item(i),
+            PointerWireEvent::Up => {
                 if let Some(item) = self.em.inner.activate_item(i) {
                     self.emit_command(item);
                 }
             }
-            PointerEvent::Down | PointerEvent::Leave | PointerEvent::Cancel => {}
+            PointerWireEvent::Down | PointerWireEvent::Leave | PointerWireEvent::Cancel => {}
         }
     }
 
@@ -257,12 +257,12 @@ impl ContextMenuExternal {
     /// outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
         let (sub, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
-        let event = parse_pointer_event(event_name).ok_or(InvokeError::Rejected)?;
+        let event = parse_pointer_wire_event(event_name).ok_or(InvokeError::Rejected)?;
         // R715 §5.16 — the transparent dismiss barrier painted behind the
         // popup: a `PointerUp` outside the panel closes it. Other pointer
         // events over the barrier are inert.
         if sub == "barrier" {
-            if event == PointerEvent::Up {
+            if event == PointerWireEvent::Up {
                 self.em.inner.close();
             }
             return Ok(IntrospectValue::Bool(self.is_open()));
@@ -568,9 +568,9 @@ mod tests {
     fn pointer_activate_emits_command_intent() {
         let mut e = ext();
         e.dispatch_open_at("100,80").unwrap();
-        e.send_item(2, PointerEvent::Enter);
+        e.send_item(2, PointerWireEvent::Enter);
         assert_eq!(e.active_item(), Some(2));
-        e.send_item(2, PointerEvent::Up);
+        e.send_item(2, PointerWireEvent::Up);
         let intents = drain(&mut e);
         assert_eq!(intents.len(), 1, "exactly one command intent");
         assert_eq!(intents[0].tag_str(), "command");

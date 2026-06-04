@@ -9,7 +9,7 @@
 //! made the duplication a Rule-of-Three trigger; lifted here so the one
 //! decision lives once:
 //!
-//! - [`PointerEvent`] + [`parse_pointer_event`] — the `send`-wire pointer
+//! - [`PointerWireEvent`] + [`parse_pointer_wire_event`] — the `send`-wire pointer
 //!   event subset (`PointerEnter` / `Down` / `Up` / `Leave` / `Cancel`)
 //!   that the composite-tag router feeds command-class widgets
 //!   ([`menu`](super::menu), [`toolbar`](super::toolbar),
@@ -29,7 +29,7 @@ use crate::external::InterveneError;
 /// wire. The composite-tag router rewrites a paint hit-target into a
 /// `"<sub>:<EventName>"` payload, whose `<EventName>` half this decodes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PointerEvent {
+pub(crate) enum PointerWireEvent {
     Enter,
     Down,
     Up,
@@ -37,15 +37,15 @@ pub(crate) enum PointerEvent {
     Cancel,
 }
 
-/// Decode a W3C pointer-event name into a [`PointerEvent`]; `None` for an
+/// Decode a W3C pointer-event name into a [`PointerWireEvent`]; `None` for an
 /// unknown name (the caller rejects the `send` payload).
-pub(crate) fn parse_pointer_event(name: &str) -> Option<PointerEvent> {
+pub(crate) fn parse_pointer_wire_event(name: &str) -> Option<PointerWireEvent> {
     match name {
-        "PointerEnter" => Some(PointerEvent::Enter),
-        "PointerDown" => Some(PointerEvent::Down),
-        "PointerUp" => Some(PointerEvent::Up),
-        "PointerLeave" => Some(PointerEvent::Leave),
-        "PointerCancel" => Some(PointerEvent::Cancel),
+        "PointerEnter" => Some(PointerWireEvent::Enter),
+        "PointerDown" => Some(PointerWireEvent::Down),
+        "PointerUp" => Some(PointerWireEvent::Up),
+        "PointerLeave" => Some(PointerWireEvent::Leave),
+        "PointerCancel" => Some(PointerWireEvent::Cancel),
         _ => None,
     }
 }
@@ -69,13 +69,13 @@ mod tests {
 
     #[test]
     fn parse_pointer_event_round_trips_known_names() {
-        assert_eq!(parse_pointer_event("PointerEnter"), Some(PointerEvent::Enter));
-        assert_eq!(parse_pointer_event("PointerDown"), Some(PointerEvent::Down));
-        assert_eq!(parse_pointer_event("PointerUp"), Some(PointerEvent::Up));
-        assert_eq!(parse_pointer_event("PointerLeave"), Some(PointerEvent::Leave));
-        assert_eq!(parse_pointer_event("PointerCancel"), Some(PointerEvent::Cancel));
-        assert_eq!(parse_pointer_event("PointerWheel"), None);
-        assert_eq!(parse_pointer_event(""), None);
+        assert_eq!(parse_pointer_wire_event("PointerEnter"), Some(PointerWireEvent::Enter));
+        assert_eq!(parse_pointer_wire_event("PointerDown"), Some(PointerWireEvent::Down));
+        assert_eq!(parse_pointer_wire_event("PointerUp"), Some(PointerWireEvent::Up));
+        assert_eq!(parse_pointer_wire_event("PointerLeave"), Some(PointerWireEvent::Leave));
+        assert_eq!(parse_pointer_wire_event("PointerCancel"), Some(PointerWireEvent::Cancel));
+        assert_eq!(parse_pointer_wire_event("PointerWheel"), None);
+        assert_eq!(parse_pointer_wire_event(""), None);
     }
 
     #[test]

@@ -262,24 +262,11 @@ impl WidgetCore for ContextMenuView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        // The menu is one tab stop; keys route only when it owns focus.
-        if focused != Some(Self::tag()) {
-            return false;
-        }
-        let Scene::External(node) = scene else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
         // The whole WAI-ARIA §3.5 keyboard model lives in the External;
-        // the binding forwards the W3C key name and reports the handled
-        // verdict so the shell swallow contract is exact (a closed popup
-        // swallows nothing, so unhandled keys fall through).
-        matches!(
-            intro.invoke("key", IntrospectValue::Text(key.to_string())),
-            Ok(IntrospectValue::Bool(true))
-        )
+        // forwarding the focused key to its `"key"` wire is the shared
+        // command-menu pattern (R772.1; a closed popup swallows nothing, so
+        // unhandled keys fall through).
+        Self::forward_key_to_external(scene, focused, key)
     }
 
     fn fmt_state_log(state: &ContextState) -> String {
