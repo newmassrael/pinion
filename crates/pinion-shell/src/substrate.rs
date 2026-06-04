@@ -1368,7 +1368,15 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R672 §5.35 §5.41 — per-window variant of [`Self::mouse_released`].
     pub fn mouse_released_for_window(&mut self, window_id: &str, pid: PointerId) {
-        let tail = self.core.pointer_up_for_window(window_id, pid);
+        // R781 §5.35 §5.41 — carry the held modifiers to the activate edge
+        // so a Shift / Ctrl click reaches the composite send wire (a
+        // multi-select coordinator extends / toggles; every other widget
+        // ignores it). The same `scene/modifiers` cache drives keyboard
+        // multi-select, so RPC `scene/modifiers` + `scene/click` and a
+        // native modified click are one path.
+        let tail = self
+            .core
+            .pointer_up_for_window_with_modifiers(window_id, pid, self.modifiers);
         self.handle_tail(&tail);
         // R763 §5.36 §5.22 — the press → move → release gesture ends;
         // the selection it produced persists in the TextEditState, but

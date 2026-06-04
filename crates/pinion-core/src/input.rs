@@ -118,6 +118,55 @@ impl Modifiers {
     pub const fn is_empty(self) -> bool {
         !self.shift && !self.ctrl && !self.alt && !self.meta
     }
+
+    /// R781 §5.35 §5.41 — encode the held modifiers into the compact wire
+    /// token the R51.42 composite-send payload carries (`"<key>:<Event>:<token>"`).
+    ///
+    /// The token is the canonical-order subset of `scam` (shift, ctrl, alt,
+    /// meta), so `Modifiers { shift: true, ctrl: true, .. }` → `"sc"`. An
+    /// empty modifier state yields `""`, and the router omits the trailing
+    /// `":<token>"` segment entirely (the two-segment back-compat wire every
+    /// pre-R781 composite consumer already parses). Inverse of
+    /// [`from_wire_token`](Self::from_wire_token) — the R773 encode↔decode
+    /// SSOT discipline applied to the pointer modifier axis.
+    #[must_use]
+    pub fn as_wire_token(self) -> String {
+        let mut token = String::new();
+        if self.shift {
+            token.push('s');
+        }
+        if self.ctrl {
+            token.push('c');
+        }
+        if self.alt {
+            token.push('a');
+        }
+        if self.meta {
+            token.push('m');
+        }
+        token
+    }
+
+    /// R781 §5.35 §5.41 — decode a wire modifier token (any order of the
+    /// `scam` letters) back into [`Modifiers`]. Inverse of
+    /// [`as_wire_token`](Self::as_wire_token). Returns `None` on any letter
+    /// outside `scam` so a malformed token is rejected rather than silently
+    /// dropping bits (a stale wire from an older protocol revision surfaces
+    /// as "no modifiers handled" at the decode site, not a misparse).
+    #[must_use]
+    pub fn from_wire_token(token: &str) -> Option<Self> {
+        let mut m = Self::empty();
+        for ch in token.chars() {
+            match ch {
+                's' => m.shift = true,
+                'c' => m.ctrl = true,
+                'a' => m.alt = true,
+                'm' => m.meta = true,
+                _ => return None,
+            }
+        }
+        Some(m)
+    }
 }
 
 /// R56.2.a §5.13 §5.38 — abstract IME composition phase event,
@@ -339,6 +388,35 @@ mod tests {
         ] {
             assert!(!m.is_empty(), "any single bit must break is_empty");
         }
+    }
+
+    #[test]
+    fn r781_wire_token_round_trips_every_combination() {
+        // Encode ↔ decode are inverses for all 16 combinations (the
+        // divergence-is-a-bug guard for the pointer modifier wire).
+        for bits in 0u8..16 {
+            let m = Modifiers {
+                shift: bits & 1 != 0,
+                ctrl: bits & 2 != 0,
+                alt: bits & 4 != 0,
+                meta: bits & 8 != 0,
+            };
+            let token = m.as_wire_token();
+            assert_eq!(Modifiers::from_wire_token(&token), Some(m), "round-trip {m:?}");
+        }
+        // Canonical order + empty-state contract.
+        assert_eq!(Modifiers::empty().as_wire_token(), "");
+        assert_eq!(
+            Modifiers { shift: true, ctrl: true, alt: false, meta: false }.as_wire_token(),
+            "sc",
+        );
+        // Decode is order-tolerant; a non-scam letter rejects the whole token.
+        assert_eq!(
+            Modifiers::from_wire_token("cs"),
+            Some(Modifiers { shift: true, ctrl: true, alt: false, meta: false }),
+        );
+        assert_eq!(Modifiers::from_wire_token("sx"), None, "unknown letter rejects");
+        assert_eq!(Modifiers::from_wire_token(""), Some(Modifiers::empty()));
     }
 
     #[test]

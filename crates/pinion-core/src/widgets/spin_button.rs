@@ -331,7 +331,8 @@ impl ExternalIntrospect for SpinButtonExternal {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
                     let value = match crate::composite_tag::parse_send_payload::<String>(payload) {
-                        Some((sub, event_name)) => match ButtonEvent::from_name(event_name) {
+                        // R781 — modifiers ignored (no modifier-aware step).
+                        Some((sub, event_name, _)) => match ButtonEvent::from_name(event_name) {
                             Some(ev) => self.drive_stepper(&sub, ev),
                             // Unknown / internal event name: no SM drive,
                             // report the current value (no over-step).

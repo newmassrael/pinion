@@ -447,12 +447,11 @@ impl VirtualSelectExternal {
     /// structure, so it falls back to a plain integer parse: one
     /// coordinator, both collection shapes, one wire grammar.
     fn handle_send(&mut self, payload: &str) {
-        let Some((key, event_name)) = payload.split_once(':') else {
+        let Some((key, event_name, modifiers)) =
+            crate::composite_tag::split_send_payload(payload)
+        else {
             return;
         };
-        if event_name.is_empty() {
-            return;
-        }
         let row = match crate::composite_tag::GridSendKey::parse(key) {
             Some(grid_key) => grid_key.row(),
             None => key.parse::<usize>().ok(),
@@ -461,7 +460,20 @@ impl VirtualSelectExternal {
             return;
         };
         if crate::input::is_activation_event(event_name) {
-            self.select(index);
+            // R781 §5.35 §5.40 — modifier-aware click selection, the pointer
+            // peer of the `nav_select_key` keyboard ops: `Ctrl`-click toggles
+            // the row's membership, `Shift`-click extends the range from the
+            // anchor, a plain click moves + replaces. In a single-select
+            // model `toggle` / `extend_to` collapse to a plain `select`, so a
+            // `Shift` / `Ctrl`-click on a single-select list still just
+            // selects — exactly the pre-R781 behaviour.
+            if modifiers.ctrl {
+                self.toggle(index);
+            } else if modifiers.shift {
+                self.extend_to(index);
+            } else {
+                self.select(index);
+            }
         }
     }
 
@@ -1168,6 +1180,38 @@ mod tests {
         assert_eq!(s.selection(), vec![2, 9]);
         assert_eq!(s.selected(), Some(5), "the toggled row stays the active row");
         assert_eq!(s.anchor(), Some(5));
+    }
+
+    #[test]
+    fn multi_modifier_click_toggles_extends_and_replaces() {
+        // R781 — the composite pointer wire carries the held modifiers as a
+        // third `:` segment; multi-select interprets them.
+        let mut s = VirtualSelectExternal::new_multi(100);
+        // Plain click moves + replaces (anchor = 4).
+        s.handle_send("4:PointerUp");
+        assert_eq!(s.selection(), vec![4]);
+        // Ctrl-click toggles a second row in (Ctrl = "c").
+        s.handle_send("9:PointerUp:c");
+        assert_eq!(s.selection(), vec![4, 9], "Ctrl-click accumulates");
+        // Ctrl-click an existing member removes it.
+        s.handle_send("4:PointerUp:c");
+        assert_eq!(s.selection(), vec![9], "Ctrl-click toggles off");
+        // Shift-click extends the range from the anchor (now 4, the last
+        // toggled row) to the clicked row.
+        s.handle_send("6:PointerUp:s");
+        assert_eq!(s.selection(), vec![4, 5, 6], "Shift-click extends from anchor 4");
+    }
+
+    #[test]
+    fn single_modifier_click_still_just_selects() {
+        // R781 — a Shift / Ctrl-click on a *single*-select coordinator
+        // collapses to a plain move (no range, no accumulation): the
+        // pre-R781 behaviour is preserved for every existing consumer.
+        let mut s = VirtualSelectExternal::new(100);
+        s.handle_send("4:PointerUp:s");
+        assert_eq!(s.selection(), vec![4]);
+        s.handle_send("9:PointerUp:c");
+        assert_eq!(s.selection(), vec![9], "single-select replaces, never accumulates");
     }
 
     #[test]

@@ -1663,11 +1663,25 @@ impl<V: WidgetCore> CoreShell<V> {
         window_id: &str,
         pid: PointerId,
     ) -> DispatchTail<V::State> {
+        self.pointer_up_for_window_with_modifiers(window_id, pid, pinion_core::Modifiers::empty())
+    }
+
+    /// R781 §5.35 §5.41 — [`pointer_up_for_window`](Self::pointer_up_for_window)
+    /// carrying the held keyboard `modifiers` at the release (activate)
+    /// edge, so a `Shift` / `Ctrl` click reaches the composite send wire.
+    /// The shell passes its modifier cache here; the plain variant is the
+    /// zero-modifier path.
+    pub fn pointer_up_for_window_with_modifiers(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        modifiers: pinion_core::Modifiers,
+    ) -> DispatchTail<V::State> {
         let Self { scene, routers, .. } = self;
         let router = routers
             .entry(window_id.to_owned())
             .or_default();
-        router.pointer_up(pid, scene);
+        router.pointer_up_with_modifiers(pid, scene, modifiers);
         self.tail()
     }
 

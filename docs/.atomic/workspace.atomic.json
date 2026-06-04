@@ -30103,6 +30103,64 @@
         "optionally-undoable lift deferred (2-consumer); column resize/h-scroll+frozen header (R775)."
       ]
     },
+    "R781": {
+      "decision_summary": "R781 §5.35 §5.41 mouse Shift/Ctrl-click multi-select: the router pointer activate edge now carries the held Modifiers to the composite send wire as an optional third segment (\"<key>:PointerUp:<token>\", e.g. :sc), decoded by the migrated split_send_payload SSOT. parse_send_payload now returns (key, event, Modifiers) and all 11 composite consumers migrate (R773 all-or-none); empty modifiers emit the exact pre-R781 two-segment wire so every existing widget is unchanged. VirtualSelect consumes it: Ctrl-click toggles, Shift-click extends the range from the anchor, plain click moves+replaces (Single mode collapses to select). Modifiers gains as_wire_token/from_wire_token (mirrors PointerWireEvent). pointer_up/dispatch_send/pointer_up_for_window gain _with_modifiers variants (plain = empty wrapper). Completes R780 carry: keyboard+RPC+mouse one funnel.",
+      "changes_bullets": [
+        "Modifiers +as_wire_token/from_wire_token (scam token); R773 encode<->decode pair.",
+        "composite_tag +split_send_payload SSOT (key:event:mods); parse_send_payload returns the triple.",
+        "11 composite consumers -> (key,event,_mods): 7 widgets + todomvc x3 + input-chip (R773 all-or-none).",
+        "VirtualSelect.handle_send modifier-aware: Ctrl-click toggle, Shift-click extend, plain select.",
+        "Router pointer_up_with_modifiers + dispatch_send_mods append :token only when mods non-empty.",
+        "core_shell pointer_up_for_window_with_modifiers; vello shell passes self.modifiers at release.",
+        "hello-multi-select gains mouse Shift/Ctrl-click free (coordinator decides); demo r781 mouse-driven."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 5425->5430 pass, 0 fail (input +1, virtual_select +2, router +2).",
+        "clippy --workspace -D pedantic clean; empty-mods wire byte-identical to pre-R781 (consumers unchanged).",
+        "demo r781_multi_select_click.py PASS 32 assert (Ctrl-click toggle, Shift-click range, plain replace, +Ctrl+A).",
+        "R773 emit+decode both asserted: router pointer_up_with_modifiers emit + split_send_payload decode.",
+        "validate-workspace T1=0, new orphan +0, entries 698->699."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.41",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "2nd windowed-grid multi-select -> windowed_grid_nodes_multiselected lift; now list-only.",
+        "mouse-click pixel-proof via XTEST deferred (R743); functional via scene/modifiers+scene/click.",
+        "tui mouse passes empty modifiers (crossterm mapping deferred; keyboard multi-select works in tui).",
+        "optionally-undoable lift deferred (2-consumer); column resize/h-scroll+frozen header (R775)."
+      ],
+      "publishable_decision_summary": "R781 §5.35 §5.41 mouse Shift/Ctrl-click multi-select: the router pointer activate edge now carries the held Modifiers to the composite send wire as an optional third segment (\"<key>:PointerUp:<token>\", e.g. :sc), decoded by the migrated split_send_payload SSOT. parse_send_payload now returns (key, event, Modifiers) and all 11 composite consumers migrate (R773 all-or-none); empty modifiers emit the exact pre-R781 two-segment wire so every existing widget is unchanged. VirtualSelect consumes it: Ctrl-click toggles, Shift-click extends the range from the anchor, plain click moves+replaces (Single mode collapses to select). Modifiers gains as_wire_token/from_wire_token (mirrors PointerWireEvent). pointer_up/dispatch_send/pointer_up_for_window gain _with_modifiers variants (plain = empty wrapper). Completes R780 carry: keyboard+RPC+mouse one funnel.",
+      "publishable_changes_bullets": [
+        "Modifiers +as_wire_token/from_wire_token (scam token); R773 encode<->decode pair.",
+        "composite_tag +split_send_payload SSOT (key:event:mods); parse_send_payload returns the triple.",
+        "11 composite consumers -> (key,event,_mods): 7 widgets + todomvc x3 + input-chip (R773 all-or-none).",
+        "VirtualSelect.handle_send modifier-aware: Ctrl-click toggle, Shift-click extend, plain select.",
+        "Router pointer_up_with_modifiers + dispatch_send_mods append :token only when mods non-empty.",
+        "core_shell pointer_up_for_window_with_modifiers; vello shell passes self.modifiers at release.",
+        "hello-multi-select gains mouse Shift/Ctrl-click free (coordinator decides); demo r781 mouse-driven."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 5425->5430 pass, 0 fail (input +1, virtual_select +2, router +2).",
+        "clippy --workspace -D pedantic clean; empty-mods wire byte-identical to pre-R781 (consumers unchanged).",
+        "demo r781_multi_select_click.py PASS 32 assert (Ctrl-click toggle, Shift-click range, plain replace, +Ctrl+A).",
+        "R773 emit+decode both asserted: router pointer_up_with_modifiers emit + split_send_payload decode.",
+        "validate-workspace T1=0, new orphan +0, entries 698->699."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.41",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "2nd windowed-grid multi-select -> windowed_grid_nodes_multiselected lift; now list-only.",
+        "mouse-click pixel-proof via XTEST deferred (R743); functional via scene/modifiers+scene/click.",
+        "tui mouse passes empty modifiers (crossterm mapping deferred; keyboard multi-select works in tui).",
+        "optionally-undoable lift deferred (2-consumer); column resize/h-scroll+frozen header (R775)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

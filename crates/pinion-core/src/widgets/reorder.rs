@@ -271,7 +271,8 @@ impl ReorderModel {
                 let IntrospectValue::Text(payload) = args else {
                     return Err(InvokeError::TypeMismatch);
                 };
-                let (visual, event): (usize, &str) =
+                // R781 — modifiers ignored (reorder press has no modifier axis).
+                let (visual, event, _): (usize, &str, _) =
                     parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                 if event == PointerWireEvent::Down.as_wire_name() && visual < self.count {
                     self.pressed.set(Some(visual));

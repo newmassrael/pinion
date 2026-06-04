@@ -687,7 +687,8 @@ impl ExternalIntrospect for TreeRowClickExternal {
                     // (R675: 7th substrate consumer — 6-of-6 framework
                     // at R674 plus this substrate lift takes it to
                     // framework-level Rule-of-Three maturity).
-                    let (id, event_name): (String, &str) =
+                    // R781 — modifiers ignored (tree press has no modifier axis).
+                    let (id, event_name, _): (String, &str, _) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     match PointerWireEvent::from_wire_name(event_name) {
                         Some(PointerWireEvent::Down) => {

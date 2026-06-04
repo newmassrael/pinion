@@ -469,7 +469,7 @@ impl ViewSortFilterExternal {
     /// `KeyboardActivate`) the sort cycles. Every other arc event is a
     /// harmless no-op.
     fn handle_send(&self, payload: &str) {
-        let Some((_region, event_name)) =
+        let Some((_region, event_name, _modifiers)) =
             crate::composite_tag::parse_send_payload::<String>(payload)
         else {
             return;

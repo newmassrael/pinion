@@ -504,7 +504,7 @@ impl ExternalIntrospect for ChipDeleteExternal {
             // this event removed a chip.
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name): (u64, &str) =
+                    let (id, event_name, _): (u64, &str, _) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     let committed = self.drive(id, event_name);
                     if committed && self.is_present(id) {

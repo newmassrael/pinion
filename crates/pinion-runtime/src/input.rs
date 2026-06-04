@@ -670,6 +670,22 @@ impl InputRouter {
     /// [`refresh_hover`](Self::refresh_hover) re-runs to resettle the
     /// hover state against the release position.
     pub fn pointer_up(&mut self, id: PointerId, state_scene: &mut Scene) {
+        self.pointer_up_with_modifiers(id, state_scene, Modifiers::empty());
+    }
+
+    /// R781 §5.35 §5.41 — [`pointer_up`](Self::pointer_up) carrying the
+    /// held keyboard `modifiers` at the release (activate) edge. The shell
+    /// passes its `ShellCore::modifiers` cache here so a `Shift` / `Ctrl`
+    /// click reaches the composite send wire as the third payload segment
+    /// (`"<key>:PointerUp:<token>"`); a multi-select coordinator extends /
+    /// toggles, every other widget ignores it. `pointer_up` is the
+    /// zero-modifier wrapper (native single clicks, tests, the TUI shell).
+    pub fn pointer_up_with_modifiers(
+        &mut self,
+        id: PointerId,
+        state_scene: &mut Scene,
+        modifiers: Modifiers,
+    ) {
         // R742 §5.51 — a drag started on this pointer commits here. The
         // final drop location is the tag under the release cursor; the
         // source coordinator applies the move (or ignores `None`). The
@@ -695,7 +711,12 @@ impl InputRouter {
             if let Some(external) = find_external_by_tag(state_scene, primary) {
                 external.handle.drag_release(&session.payload, over);
             }
-            dispatch_send(state_scene, &session.source_tag, PointerWireEvent::Up.as_wire_name());
+            dispatch_send_mods(
+                state_scene,
+                &session.source_tag,
+                PointerWireEvent::Up.as_wire_name(),
+                modifiers,
+            );
             self.refresh_hover(id, state_scene);
             return;
         }
@@ -706,14 +727,14 @@ impl InputRouter {
             } else {
                 PointerWireEvent::Up
             };
-            dispatch_send(state_scene, &cap_tag, event.as_wire_name());
+            dispatch_send_mods(state_scene, &cap_tag, event.as_wire_name(), modifiers);
             self.captured_targets.remove(&id);
             self.refresh_hover(id, state_scene);
         } else if let Some(tag) = self.hover_targets.get(&id).cloned() {
             // Free (no-capture) release: the cursor is over the target
             // (a mid-press stray already drove the SCXML out of Pressed
             // via `cursor_moved`'s `PointerLeave`).
-            dispatch_send(state_scene, &tag, PointerWireEvent::Up.as_wire_name());
+            dispatch_send_mods(state_scene, &tag, PointerWireEvent::Up.as_wire_name(), modifiers);
         }
     }
 
@@ -1093,6 +1114,24 @@ fn widget_begin_drag(state_scene: &mut Scene, target_tag: &str) -> Option<DragPa
 /// (`"2:PointerEnter"`) that composite widgets like `RadioGroup`
 /// parse in their own `invoke("send", ...)` handler.
 fn dispatch_send(state_scene: &mut Scene, target_tag: &str, event_name: &str) {
+    dispatch_send_mods(state_scene, target_tag, event_name, Modifiers::empty());
+}
+
+/// R781 §5.35 §5.41 — [`dispatch_send`] carrying the held keyboard
+/// `modifiers`. On a composite target (`'#'` sub-index present) and a
+/// non-empty modifier state, the wire payload gains a third segment
+/// (`"<idx>:<EventName>:<token>"`, e.g. `"4:PointerUp:sc"`) via
+/// [`Modifiers::as_wire_token`](pinion_core::input::Modifiers::as_wire_token);
+/// an empty modifier state emits the exact two-segment back-compat wire so
+/// every pre-R781 composite consumer is unaffected. A non-composite target
+/// (no sub-index) has no `<key>` to anchor modifiers to, so the token is
+/// omitted there.
+fn dispatch_send_mods(
+    state_scene: &mut Scene,
+    target_tag: &str,
+    event_name: &str,
+    modifiers: Modifiers,
+) {
     let (primary, sub_index) = split_subindex(target_tag);
     let Some(external) = find_external_by_tag(state_scene, primary) else {
         return;
@@ -1101,6 +1140,9 @@ fn dispatch_send(state_scene: &mut Scene, target_tag: &str, event_name: &str) {
         return;
     };
     let payload = match sub_index {
+        Some(idx) if !modifiers.is_empty() => {
+            format!("{idx}:{event_name}:{}", modifiers.as_wire_token())
+        }
         Some(idx) => format!("{idx}:{event_name}"),
         None => event_name.to_string(),
     };
@@ -2472,6 +2514,46 @@ mod tests {
         // hover map so subsequent leave-on-stray still routes to
         // the right sub-region.
         assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_group#2"));
+    }
+
+    #[test]
+    fn r781_pointer_up_with_modifiers_appends_the_wire_token() {
+        // R781 — a Shift+Ctrl release at the activate edge gains the third
+        // `:sc` wire segment; the non-activation PointerDown (no modifier
+        // variant) keeps the two-segment back-compat wire. This is the
+        // emit side of the R773 encode↔decode pair (the decode side is
+        // `composite_tag::split_send_payload`).
+        let mut router = InputRouter::new();
+        let (mut state, captures) = state_with_primary_external("main_group");
+        let paint = paint_with_subindex_tag(200, 200, Rect::new(80, 80, 40, 40), "main_group", "2");
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        let mods = Modifiers { shift: true, ctrl: true, alt: false, meta: false };
+        router.pointer_up_with_modifiers(PointerId::MOUSE, &mut state, mods);
+        assert_eq!(
+            read(&captures),
+            vec![
+                "2:PointerEnter".to_string(),
+                "2:PointerDown".into(),
+                "2:PointerUp:sc".into(),
+            ],
+            "the activate edge carries the modifier token, hover/press do not",
+        );
+    }
+
+    #[test]
+    fn r781_pointer_up_no_modifiers_is_byte_identical_to_plain() {
+        // Empty modifiers → the exact pre-R781 two-segment wire (every
+        // existing composite consumer is unaffected).
+        let mut router = InputRouter::new();
+        let (mut state, captures) = state_with_primary_external("main_group");
+        let paint = paint_with_subindex_tag(200, 200, Rect::new(80, 80, 40, 40), "main_group", "2");
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up_with_modifiers(PointerId::MOUSE, &mut state, Modifiers::empty());
+        assert_eq!(read(&captures).last().map(String::as_str), Some("2:PointerUp"));
     }
 
     #[test]

@@ -526,7 +526,8 @@ impl ExternalIntrospect for RadioGroupExternal {
             // R51.43 is now repaid.
             "send" => match args {
                 IntrospectValue::Text(ref s) => {
-                    let (idx, event_name): (usize, &str) =
+                    // R781 — modifiers ignored (no modifier-aware activation).
+                    let (idx, event_name, _): (usize, &str, _) =
                         crate::composite_tag::parse_send_payload(s)
                             .ok_or(InvokeError::Rejected)?;
                     if idx >= self.count() {

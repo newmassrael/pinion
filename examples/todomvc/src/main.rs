@@ -1546,7 +1546,7 @@ impl ExternalIntrospect for TodoDeleteExternal {
             // so the dispatch loop does not re-route to a sibling.
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name): (u64, &str) =
+                    let (id, event_name, _): (u64, &str, _) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     if event_name == "PointerDown" {
                         let was_present = self
@@ -1699,7 +1699,7 @@ impl ExternalIntrospect for TodoToggleExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name): (u64, &str) =
+                    let (id, event_name, _): (u64, &str, _) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     if event_name == "PointerDown" {
                         let was_present = self
@@ -1925,7 +1925,7 @@ impl ExternalIntrospect for TodoEditExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    let (id, event_name): (u64, &str) =
+                    let (id, event_name, _): (u64, &str, _) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     if event_name == "DoubleClick" {
                         let was_present = self.begin_edit(id);
