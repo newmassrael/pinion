@@ -64,8 +64,8 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
-use pinion_core::widgets::virtual_select::VirtualSelectExternal;
+use pinion_core::widgets::virtual_list::compute_visible_range;
+use pinion_core::widgets::virtual_select::{nav_select_key, VirtualSelectExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
@@ -102,28 +102,6 @@ const STATUS_TAG: &str = "vlist_status";
 // the scrollbar peer's interaction phase each drive their own repaints
 // through the reactive `Signal` subscriptions the view opens — re-
 // projecting them would duplicate state those externals already own.
-
-/// R776 — pure keyboard navigation arithmetic: map a key to the next
-/// selected index given the current selection and a page size (rows per
-/// measured viewport-ful). Single-select, **clamp** (no wrap) — a finite
-/// data list has ends; the cyclic convention is `hello-listbox`'s. With no
-/// current selection, every navigation key lands on the first row (the
-/// W3C "first key focuses the first option" convention). Returns `None`
-/// for an unhandled key so `apply_key` falls through to the shell's
-/// unrecognised-keybinding swallow contract.
-fn next_index(current: Option<usize>, key: &str, page: usize) -> Option<usize> {
-    let last = N - 1;
-    let next = match key {
-        "ArrowDown" => current.map_or(0, |i| (i + 1).min(last)),
-        "ArrowUp" => current.map_or(0, |i| i.saturating_sub(1)),
-        "Home" => 0,
-        "End" => last,
-        "PageDown" => current.map_or(0, |i| i.saturating_add(page).min(last)),
-        "PageUp" => current.map_or(0, |i| i.saturating_sub(page)),
-        _ => return None,
-    };
-    Some(next)
-}
 
 /// One virtualized row. The selected row paints in the Accent tone (M3
 /// selected state layer); unselected rows zebra-stripe. Tagged
@@ -294,52 +272,22 @@ impl WidgetCore for VirtualNavView {
         vec![LIST_TAG]
     }
 
-    /// R776 §5.27 — keyboard navigation over the windowed list. Keys only
-    /// route when the list itself is focused (single tab stop, no
-    /// sibling-widget aliasing). Each handled key moves the index-model
-    /// selection (clamped) and **scrolls the new selection into view** via
-    /// [`scroll_offset_to_reveal`] — so navigating to a row that was never
-    /// materialized scrolls there. `PageUp`/`PageDown` step by one measured
-    /// viewport-ful of rows.
+    /// R776/R777 §5.27 — keyboard navigation over the windowed list,
+    /// delegated to the shared `nav_select_key` controller (the same one
+    /// `hello-grid-nav` uses): keys only route when the list is focused
+    /// (single tab stop); each handled key moves the index-model selection
+    /// (linear clamp, no wrap) and scrolls the new selection into view, so
+    /// navigating to a never-materialized row scrolls there.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        if focused != Some(LIST_TAG) {
-            return false;
-        }
         // The scroll state resolves from the owner cache (CoreShell wraps
         // apply_key in `root_owner().run`), independent of the `scene`
-        // borrow below. Page size = rows per measured viewport-ful (>= 1).
-        let scroll = use_scroll_state(SCROLL_KEY);
-        let (_, measured_h) = scroll.measured_viewport();
-        let page = usize::try_from(measured_h / ROW_PITCH).unwrap_or(1).max(1);
-
-        let Some(node) = scene.find_external_with_tag_mut(LIST_TAG) else {
-            return false;
-        };
-        let current = node
-            .handle
-            .introspect()
-            .and_then(|intro| match intro.query("selected") {
-                Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
-                _ => None,
-            });
-        let Some(target) = next_index(current, key, page) else {
-            return false;
-        };
-        // Move the selection through the AI-first `invoke("select", …)`
-        // path — the same wire a `scene/invoke` drives, so keyboard and RPC
-        // selection are one funnel.
-        if let (Some(intro), Ok(t)) = (node.handle.introspect_mut(), i64::try_from(target)) {
-            let _ = intro.invoke("select", IntrospectValue::Int(t));
-        }
-        // Scroll the (possibly never-materialized) target row into view.
-        let reveal = scroll_offset_to_reveal(target, scroll.offset_y(), measured_h, ROW_PITCH);
-        scroll.scroll_to(0, reveal);
-        true
+        // borrow inside the controller.
+        nav_select_key(scene, &use_scroll_state(SCROLL_KEY), LIST_TAG, focused, key, N, ROW_PITCH)
     }
 
     fn title() -> &'static str {
@@ -396,54 +344,14 @@ mod tests {
     use super::*;
     use pinion_a11y::AriaRole;
     use pinion_core::widgets::scroll::ScrollState;
+    use pinion_core::widgets::virtual_list::scroll_offset_to_reveal;
     use pinion_core::Owner;
     use std::rc::Rc;
 
-    // ── pure keyboard navigation arithmetic ─────────────────────────
-
-    #[test]
-    fn nav_clamps_at_both_ends_no_wrap() {
-        // ArrowUp from the top stays at 0 (no wrap to the last row).
-        assert_eq!(next_index(Some(0), "ArrowUp", 12), Some(0));
-        // ArrowDown from the last row stays at the last (no wrap to 0).
-        assert_eq!(next_index(Some(N - 1), "ArrowDown", 12), Some(N - 1));
-    }
-
-    #[test]
-    fn nav_arrows_step_one_row() {
-        assert_eq!(next_index(Some(5), "ArrowDown", 12), Some(6));
-        assert_eq!(next_index(Some(5), "ArrowUp", 12), Some(4));
-    }
-
-    #[test]
-    fn nav_home_end_jump_to_extremes() {
-        assert_eq!(next_index(Some(500), "Home", 12), Some(0));
-        assert_eq!(next_index(Some(500), "End", 12), Some(N - 1));
-    }
-
-    #[test]
-    fn nav_page_steps_by_page_and_clamps() {
-        assert_eq!(next_index(Some(100), "PageDown", 12), Some(112));
-        assert_eq!(next_index(Some(100), "PageUp", 12), Some(88));
-        // PageUp near the top clamps to 0; PageDown near the end clamps.
-        assert_eq!(next_index(Some(5), "PageUp", 12), Some(0));
-        assert_eq!(next_index(Some(N - 3), "PageDown", 12), Some(N - 1));
-    }
-
-    #[test]
-    fn nav_from_none_lands_on_first_row() {
-        for key in ["ArrowDown", "ArrowUp", "PageDown", "PageUp"] {
-            assert_eq!(next_index(None, key, 12), Some(0), "{key} from None -> first row");
-        }
-    }
-
-    #[test]
-    fn nav_unhandled_key_returns_none() {
-        assert_eq!(next_index(Some(3), "Tab", 12), None);
-        assert_eq!(next_index(Some(3), "a", 12), None);
-    }
-
-    // ── view + a11y ─────────────────────────────────────────────────
+    // The keyboard navigation policy + controller (`clamp_nav` /
+    // `nav_select_key`) are unit-tested in `pinion_core::widgets::virtual_select`;
+    // this binding's apply_key is a thin delegation. The end-to-end
+    // keyboard drive is covered by `tools/r776_virtual_nav.py`.
 
     fn run_view_with_measured(selected: Option<usize>, offset_y: i32, measured_h: u32) -> Scene {
         let owner = Owner::new();

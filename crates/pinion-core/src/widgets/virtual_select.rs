@@ -43,7 +43,10 @@ use crate::external::{
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
+use crate::widgets::scroll::ScrollState;
+use crate::widgets::virtual_list::scroll_offset_to_reveal;
 use crate::widgets::IntentEmitter;
+use crate::Scene;
 
 /// R746 §5.27 §5.38 — the plain index holder wrapped by
 /// [`VirtualSelectExternal`].
@@ -186,14 +189,37 @@ impl VirtualSelectExternal {
     }
 
     /// Drive the composite pointer channel: on the activation edge
-    /// (`PointerUp` or `KeyboardActivate`) select the addressed row.
+    /// (`PointerUp` or `KeyboardActivate`) select the addressed **row**.
     /// Every other pointer-arc event (`PointerEnter` / `PointerDown` /
     /// `PointerLeave`) the router replays is a harmless no-op — single
-    /// selection has no hover/press feedback at the list level.
+    /// selection has no hover/press feedback at the row level.
+    ///
+    /// The same coordinator serves both a virtualized **list** and a
+    /// virtualized **grid** (R777), so the composite key is one of two
+    /// shapes, both selecting the row:
+    ///
+    /// - **list item** `"<row>"` — the windowed `vlist#<row>` row.
+    /// - **grid cell** `"<row>_<col>"` — the windowed `vtbl#<row>_<col>`
+    ///   cell. Selecting any cell selects its row (the WAI-ARIA / Qt
+    ///   `QItemSelectionModel` `SelectRows` behaviour: the column is
+    ///   irrelevant to a single-row selection). A grid column-header click
+    ///   arrives as `"h<col>"`, which has no leading row index and is
+    ///   ignored here (sort is a separate axis, not this coordinator's).
+    ///
+    /// Taking the integer before the first `_` unifies both: a list key
+    /// has no `_`, so the whole key parses; a cell key drops the column.
+    /// A list never emits a `_`-bearing key, so this is a pure superset of
+    /// the original list-only parse.
     fn handle_send(&mut self, payload: &str) {
-        let Some((index, event_name)) =
-            crate::composite_tag::parse_send_payload::<usize>(payload)
-        else {
+        let Some((key, event_name)) = payload.split_once(':') else {
+            return;
+        };
+        if event_name.is_empty() {
+            return;
+        }
+        // Row index = the integer before an optional `_<col>` suffix.
+        let row_str = key.split_once('_').map_or(key, |(row, _col)| row);
+        let Ok(index) = row_str.parse::<usize>() else {
             return;
         };
         if event_name == "KeyboardActivate"
@@ -335,6 +361,104 @@ impl ExternalIntrospect for VirtualSelectExternal {
     }
 }
 
+/// R777 §5.27 — the standard **linear-clamp** keyboard navigation policy
+/// for a finite virtualized collection: map a key to the next selected
+/// index given the current selection and a `page` size (rows per measured
+/// viewport-ful).
+///
+/// Single-select, **clamp** (no wrap) — a finite data list / grid has ends,
+/// unlike the cyclic roving of a small `ListBox` / `RadioGroup` (those wrap
+/// because every option is a peer tab stop). With no current selection,
+/// every navigation key lands on the first row (the W3C "first key focuses
+/// the first option" convention). Returns `None` for an unhandled key (or
+/// an empty collection) so the caller falls through to the shell's
+/// unrecognised-key swallow contract.
+///
+/// This is the policy half of [`nav_select_key`]; it is `pub` so a binding
+/// that wants the same key→index mapping without the full controller (or a
+/// different mechanism) can reuse it. A *cyclic* peer is a later additive
+/// policy when a wrapping virtualized collection needs one.
+#[must_use]
+pub fn clamp_nav(current: Option<usize>, key: &str, item_count: usize, page: usize) -> Option<usize> {
+    let last = item_count.checked_sub(1)?;
+    let next = match key {
+        "ArrowDown" => current.map_or(0, |i| (i + 1).min(last)),
+        "ArrowUp" => current.map_or(0, |i| i.saturating_sub(1)),
+        "Home" => 0,
+        "End" => last,
+        "PageDown" => current.map_or(0, |i| i.saturating_add(page).min(last)),
+        "PageUp" => current.map_or(0, |i| i.saturating_sub(page)),
+        _ => return None,
+    };
+    Some(next)
+}
+
+/// R777 §5.27 — drive keyboard navigation for an index-model virtualized
+/// **collection** (a virtualized list *or* grid) backed by a
+/// [`VirtualSelectExternal`] at `tag` and a flex-viewport [`ScrollState`].
+///
+/// This is the shared `WidgetCore::apply_key` body behind `hello-virtual-nav`
+/// (list) and `hello-grid-nav` (grid): the wiring is byte-identical between
+/// the two (only the tag, scroll state, row pitch, and item count differ),
+/// and a divergence — selecting or revealing differently in the grid than
+/// the list — would be a bug, not a style choice. So it lifts here on the
+/// second consumer (the R758 self-grep mandate) rather than living twice.
+///
+/// On a handled key it:
+/// 1. resolves the page size from the measured viewport (`measured_h /
+///    row_pitch`, at least 1);
+/// 2. reads the coordinator's current `selected` index;
+/// 3. computes the next index via the linear-clamp policy ([`clamp_nav`]);
+/// 4. sets it through the coordinator's AI-first `invoke("select", …)` path
+///    (the same wire a `scene/invoke` drives — keyboard and RPC selection
+///    are one funnel);
+/// 5. scrolls the new selection into view with [`scroll_offset_to_reveal`]
+///    (so navigating to a never-materialized row scrolls there).
+///
+/// Returns `true` when the key was handled (the grid/list was focused and
+/// the key is a navigation key), `false` otherwise — the exact bool
+/// `apply_key` must return. Keys only route when `focused == Some(tag)`
+/// (single tab stop, no sibling aliasing).
+///
+/// `row_pitch` must be the uniform per-row pitch the body windows against
+/// (the list row pitch / the grid data-row height); `item_count` is the
+/// full dataset size.
+pub fn nav_select_key(
+    scene: &mut Scene,
+    scroll: &ScrollState,
+    tag: &str,
+    focused: Option<&str>,
+    key: &str,
+    item_count: usize,
+    row_pitch: u32,
+) -> bool {
+    if focused != Some(tag) {
+        return false;
+    }
+    let (_, measured_h) = scroll.measured_viewport();
+    let page = usize::try_from(measured_h / row_pitch.max(1)).unwrap_or(1).max(1);
+
+    let Some(node) = scene.find_external_with_tag_mut(tag) else {
+        return false;
+    };
+    let current = node
+        .handle
+        .introspect()
+        .and_then(|intro| match intro.query("selected") {
+            Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+            _ => None,
+        });
+    let Some(target) = clamp_nav(current, key, item_count, page) else {
+        return false;
+    };
+    if let (Some(intro), Ok(t)) = (node.handle.introspect_mut(), i64::try_from(target)) {
+        let _ = intro.invoke("select", IntrospectValue::Int(t));
+    }
+    let reveal = scroll_offset_to_reveal(target, scroll.offset_y(), measured_h, row_pitch);
+    scroll.scroll_to(0, reveal);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,6 +538,34 @@ mod tests {
         s.handle_send("4:");
         s.handle_send("9999:PointerUp");
         assert_eq!(s.selected(), Some(9), "no-op payloads leave selection intact");
+    }
+
+    #[test]
+    fn grid_cell_send_selects_the_row_column_irrelevant() {
+        // R777 — the same coordinator drives a virtualized grid: a cell
+        // key `<row>_<col>` selects the ROW (SelectRows). Clicking any
+        // column of row 4 selects row 4.
+        let mut s = VirtualSelectExternal::new(100);
+        s.handle_send("4_0:PointerEnter");
+        assert_eq!(s.selected(), None, "hover does not select");
+        s.handle_send("4_2:PointerUp");
+        assert_eq!(s.selected(), Some(4), "cell in column 2 selects row 4");
+        // A different column of a different row moves the selection.
+        s.handle_send("9_1:PointerUp");
+        assert_eq!(s.selected(), Some(9), "cell in column 1 selects row 9");
+        // KeyboardActivate on a cell selects its row too.
+        s.handle_send("3_0:KeyboardActivate");
+        assert_eq!(s.selected(), Some(3));
+    }
+
+    #[test]
+    fn grid_header_send_is_ignored() {
+        // A column-header click `h<col>` has no leading row index — it is
+        // the sort axis, not this coordinator's, and must be a no-op.
+        let mut s = VirtualSelectExternal::new(100);
+        s.select(5);
+        s.handle_send("h2:PointerUp");
+        assert_eq!(s.selected(), Some(5), "header click leaves the selection intact");
     }
 
     #[test]
@@ -503,5 +655,81 @@ mod tests {
             s.invoke("select", IntrospectValue::Text("x".into())),
             Err(InvokeError::TypeMismatch),
         );
+    }
+
+    // ── R777 keyboard navigation policy + controller ────────────────
+
+    #[test]
+    fn clamp_nav_steps_clamps_and_pages() {
+        // Arrows step one, clamped at both ends (no wrap).
+        assert_eq!(clamp_nav(Some(5), "ArrowDown", 100, 12), Some(6));
+        assert_eq!(clamp_nav(Some(5), "ArrowUp", 100, 12), Some(4));
+        assert_eq!(clamp_nav(Some(0), "ArrowUp", 100, 12), Some(0), "top clamps, no wrap");
+        assert_eq!(clamp_nav(Some(99), "ArrowDown", 100, 12), Some(99), "bottom clamps");
+        // Home / End.
+        assert_eq!(clamp_nav(Some(50), "Home", 100, 12), Some(0));
+        assert_eq!(clamp_nav(Some(50), "End", 100, 12), Some(99));
+        // Page steps by `page`, clamped.
+        assert_eq!(clamp_nav(Some(50), "PageDown", 100, 12), Some(62));
+        assert_eq!(clamp_nav(Some(50), "PageUp", 100, 12), Some(38));
+        assert_eq!(clamp_nav(Some(5), "PageUp", 100, 12), Some(0));
+        assert_eq!(clamp_nav(Some(95), "PageDown", 100, 12), Some(99));
+    }
+
+    #[test]
+    fn clamp_nav_from_none_lands_on_first_and_rejects_unknown() {
+        for key in ["ArrowDown", "ArrowUp", "PageDown", "PageUp"] {
+            assert_eq!(clamp_nav(None, key, 100, 12), Some(0), "{key} from None -> 0");
+        }
+        assert_eq!(clamp_nav(Some(3), "Tab", 100, 12), None, "unhandled key -> None");
+        assert_eq!(clamp_nav(Some(0), "ArrowDown", 0, 12), None, "empty collection -> None");
+    }
+
+    fn grid_scene(tag: &str) -> Scene {
+        Scene::External(
+            crate::scene::ExternalNode::new(Box::new(VirtualSelectExternal::new(10_000)))
+                .with_tag(tag.to_string()),
+        )
+    }
+
+    fn selected_of(scene: &Scene, tag: &str) -> Option<usize> {
+        scene
+            .find_external_with_tag(tag)
+            .and_then(|n| n.handle.introspect())
+            .and_then(|i| match i.query("selected") {
+                Some(IntrospectValue::Int(v)) => usize::try_from(v).ok(),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn nav_select_key_unfocused_or_unknown_key_is_a_noop() {
+        let mut scene = grid_scene("vlist");
+        let scroll = ScrollState::new();
+        scroll.set_max(0, 320_000);
+        scroll.set_measured_viewport(360, 384);
+        // Not focused → ignored.
+        assert!(!nav_select_key(&mut scene, &scroll, "vlist", Some("other"), "End", 10_000, 32));
+        assert_eq!(selected_of(&scene, "vlist"), None);
+        // Focused but a non-nav key → ignored.
+        assert!(!nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "Tab", 10_000, 32));
+        assert_eq!(selected_of(&scene, "vlist"), None);
+    }
+
+    #[test]
+    fn nav_select_key_selects_and_reveals_a_deep_row() {
+        let mut scene = grid_scene("vlist");
+        let scroll = ScrollState::new();
+        scroll.set_max(0, 320_000);
+        scroll.set_measured_viewport(360, 384);
+        // End selects the last row and scrolls the offset deep so the row
+        // is revealed (a row never materialized at offset 0).
+        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "End", 10_000, 32));
+        assert_eq!(selected_of(&scene, "vlist"), Some(9_999));
+        assert!(scroll.offset_y() > 300_000, "End scrolled deep, offset {}", scroll.offset_y());
+        // Home brings selection + scroll back to the top.
+        assert!(nav_select_key(&mut scene, &scroll, "vlist", Some("vlist"), "Home", 10_000, 32));
+        assert_eq!(selected_of(&scene, "vlist"), Some(0));
+        assert_eq!(scroll.offset_y(), 0, "Home revealed the top");
     }
 }

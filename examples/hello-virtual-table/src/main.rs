@@ -35,7 +35,7 @@
 //! horizontal scroll), no sort / selection / scrollbar peer — those are
 //! follow-ups, mirroring the R744 → R746 list arc.
 
-use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{windowed_grid_nodes, AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
@@ -114,6 +114,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         VirtualTableData { headers: &HEADERS, item_count: N, overscan: OVERSCAN },
         &theme,
         &style,
+        None, // display-only grid: no selection
         row_cells,
     );
 
@@ -172,55 +173,21 @@ impl WidgetA11y for VirtualTableView {
     /// `aria-posinset` + `aria-setsize = N` and one `gridcell` per column.
     /// The windowing source is the same `compute_visible_range` over the
     /// measured viewport the view fn uses, so the a11y tree and the painted
-    /// tree never disagree on which rows exist.
+    /// tree never disagree on which rows exist. Built by the shared
+    /// `pinion_a11y::windowed_grid_nodes` (R777 lift — the display-only
+    /// peer of `windowed_grid_nodes_selected`), shared with `hello-grid-nav`
+    /// so the virtualized-grid topology is one source of truth.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_H, OVERSCAN);
-        let total = u32::try_from(N).unwrap_or(u32::MAX);
-
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (NCOLS + 1) + NCOLS + 2);
-
-        let mut grid = AccessNode::new(TABLE_TAG, AriaRole::Grid)
-            .with_name("Virtual data grid")
-            .with_size_of_set(total);
-        grid = grid.with_child(format!("{TABLE_TAG}_hrow"));
-        for id in window.indices() {
-            grid = grid.with_child(format!("{TABLE_TAG}_row{id}"));
-        }
-        nodes.push(grid);
-
-        // Frozen header row + its columnheader cells.
-        let mut hrow = AccessNode::new(format!("{TABLE_TAG}_hrow"), AriaRole::Row);
-        for col in 0..NCOLS {
-            hrow = hrow.with_child(format!("{TABLE_TAG}_ch{col}"));
-        }
-        nodes.push(hrow);
-        for (col, label) in HEADERS.iter().enumerate() {
-            nodes.push(
-                AccessNode::new(format!("{TABLE_TAG}_ch{col}"), AriaRole::ColumnHeader)
-                    .with_name(*label),
-            );
-        }
-
-        // Windowed data rows + their gridcells.
-        for id in window.indices() {
-            let posinset = u32::try_from(id + 1).unwrap_or(u32::MAX);
-            let mut row = AccessNode::new(format!("{TABLE_TAG}_row{id}"), AriaRole::Row)
-                .with_position_in_set(posinset)
-                .with_size_of_set(total);
-            for col in 0..NCOLS {
-                row = row.with_child(format!("{TABLE_TAG}#{id}_{col}"));
-            }
-            nodes.push(row);
-            for col in 0..NCOLS {
-                nodes.push(AccessNode::new(
-                    format!("{TABLE_TAG}#{id}_{col}"),
-                    AriaRole::GridCell,
-                ));
-            }
-        }
-        nodes
+        windowed_grid_nodes(
+            TABLE_TAG,
+            "Virtual data grid",
+            &HEADERS,
+            u32::try_from(N).unwrap_or(u32::MAX),
+            &window,
+        )
     }
 }
 
@@ -242,6 +209,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_a11y::AriaRole;
     use pinion_core::Owner;
 
     fn run_access(measured_h: u32) -> Vec<AccessNode> {

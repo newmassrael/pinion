@@ -444,6 +444,12 @@ pub struct VirtualTableData<'a> {
 /// - `data` — the [`VirtualTableData`] (column headers + total row count +
 ///   overscan).
 /// - `theme` / `style` — palette + [`TableStyle`] dimensions.
+/// - `selected` — the single selected **data-row** index, or `None`. The
+///   selected row's strip is washed with the accent tint (the same
+///   `row_fill` selection path the eager [`view_table`] uses). A
+///   display-only grid passes `None`; an interactive grid forwards its
+///   index-model selection coordinator (R777, mirroring the
+///   `view_flex_virtual_list` + `VirtualSelectExternal` list pairing).
 /// - `build_cells` — invoked once per windowed data-row index; returns the
 ///   row's cell texts (a cell beyond the returned length renders blank).
 #[must_use]
@@ -453,6 +459,7 @@ pub fn view_virtual_table(
     data: VirtualTableData<'_>,
     theme: &Theme,
     style: &TableStyle,
+    selected: Option<usize>,
     mut build_cells: impl FnMut(usize) -> Vec<String>,
 ) -> Scene {
     let cols = data.headers.len();
@@ -473,9 +480,10 @@ pub fn view_virtual_table(
     let slots = uniform_slots(&window, total_w, style.row_height, |data_id| {
         let cells_text = build_cells(data_id);
         let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
-        // Display-only this slice: every row idle + unselected. Zebra
-        // parity is by data id (no sort permutation yet).
-        let fill = row_fill(theme, RadioState::Idle, false, data_id);
+        // Rows are idle (no per-row hover/press at the grid level); the
+        // selected row gets the accent tint. Zebra parity is by data id
+        // (no sort permutation yet).
+        let fill = row_fill(theme, RadioState::Idle, selected == Some(data_id), data_id);
         let fg = row_fg(theme, RadioState::Idle);
         data_row(tag, data_id, &cell_refs, cols, fill, fg, style)
     });
@@ -713,6 +721,7 @@ mod tests {
                 VirtualTableData { headers: &VT_HEADERS, item_count: VT_N, overscan: 2 },
                 &theme,
                 &style,
+                None,
                 |id| vec![format!("{id}"), format!("Row {id}"), format!("v{id}")],
             )
         })

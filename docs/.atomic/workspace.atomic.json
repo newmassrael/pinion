@@ -29803,6 +29803,60 @@
         "keyboard wire-token enum-for-1 still 3rd-consumer wait (R773 carry)"
       ]
     },
+    "R777": {
+      "decision_summary": "R777 §5.27 data-grid keyboard navigation at scale: selectable virtualized data-grid (keyboard nav + scroll-into-view + cell-click row select) lifting nav_select_key controller + windowed_grid_nodes a11y; scroll_offset_to_reveal gains its 2nd consumer",
+      "changes_bullets": [
+        "New example hello-grid-nav: 10k-row selectable virtualized data-grid, keyboard-navigable + scroll-into-view + cell-click row select",
+        "VirtualSelectExternal::handle_send generalized: selects row from list key {i} OR grid cell {row}_{col} (Qt SelectRows; header h{col} ignored)",
+        "One index-model coordinator now serves both the virtualized list and grid (no duplicate coordinator)",
+        "view_virtual_table gains additive selected:Option<usize> (selected-row accent tint); display callers pass None",
+        "Lifted nav_select_key + clamp_nav (pinion-core): the byte-identical apply_key keyboard-nav controller, shared by hello-virtual-nav + hello-grid-nav",
+        "Lifted windowed_grid_nodes + windowed_grid_nodes_selected (pinion-a11y): windowed Grid/Row/ColumnHeader/GridCell topology",
+        "Migrated hello-virtual-table (display) onto windowed_grid_nodes; clears the R775 \"2nd grid -> lift\" carry",
+        "scroll_offset_to_reveal gains its 2nd consumer (grid), proving the R776 primitive"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (core virtual_select +4 clamp_nav/nav_select_key, a11y virtual_grid +6, hello-grid-nav +4)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "RPC demo r777_grid_nav 34 assert: keyboard End->9999 rendered (scroll-into-view), header stays frozen, cell click selects row, both-end clamp, pointer/RPC",
+        "Regression PASS: r746 (handle_send generalized), r776 (apply_key->nav_select_key), r775 (view_virtual_table selected + a11y migrate)"
+      ],
+      "impact_refs": [
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "data-grid sort at scale (R730 sort over virtualized body; hello-virtual-sort is list-only) — next candidate",
+        "column resize / h-scroll + synced frozen header (R775 carry persists)",
+        "multi-select index model (Shift/Ctrl) deferred (single-select only); cyclic nav policy peer deferred (consumer 0)",
+        "grid scrollbar peer omitted (wheel + keyboard scroll); 2D cell-cursor nav (Left/Right column) deferred"
+      ],
+      "publishable_decision_summary": "R777 §5.27 data-grid keyboard navigation at scale: selectable virtualized data-grid (keyboard nav + scroll-into-view + cell-click row select) lifting nav_select_key controller + windowed_grid_nodes a11y; scroll_offset_to_reveal gains its 2nd consumer",
+      "publishable_changes_bullets": [
+        "New example hello-grid-nav: 10k-row selectable virtualized data-grid, keyboard-navigable + scroll-into-view + cell-click row select",
+        "VirtualSelectExternal::handle_send generalized: selects row from list key {i} OR grid cell {row}_{col} (Qt SelectRows; header h{col} ignored)",
+        "One index-model coordinator now serves both the virtualized list and grid (no duplicate coordinator)",
+        "view_virtual_table gains additive selected:Option<usize> (selected-row accent tint); display callers pass None",
+        "Lifted nav_select_key + clamp_nav (pinion-core): the byte-identical apply_key keyboard-nav controller, shared by hello-virtual-nav + hello-grid-nav",
+        "Lifted windowed_grid_nodes + windowed_grid_nodes_selected (pinion-a11y): windowed Grid/Row/ColumnHeader/GridCell topology",
+        "Migrated hello-virtual-table (display) onto windowed_grid_nodes; clears the R775 \"2nd grid -> lift\" carry",
+        "scroll_offset_to_reveal gains its 2nd consumer (grid), proving the R776 primitive"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (core virtual_select +4 clamp_nav/nav_select_key, a11y virtual_grid +6, hello-grid-nav +4)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "RPC demo r777_grid_nav 34 assert: keyboard End->9999 rendered (scroll-into-view), header stays frozen, cell click selects row, both-end clamp, pointer/RPC",
+        "Regression PASS: r746 (handle_send generalized), r776 (apply_key->nav_select_key), r775 (view_virtual_table selected + a11y migrate)"
+      ],
+      "publishable_impact_refs": [
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "data-grid sort at scale (R730 sort over virtualized body; hello-virtual-sort is list-only) — next candidate",
+        "column resize / h-scroll + synced frozen header (R775 carry persists)",
+        "multi-select index model (Shift/Ctrl) deferred (single-select only); cyclic nav policy peer deferred (consumer 0)",
+        "grid scrollbar peer omitted (wheel + keyboard scroll); 2D cell-cursor nav (Left/Right column) deferred"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -27,6 +27,7 @@ members = [
     "examples/hello-virtual-list",
     "examples/hello-flex-virtual-list",
     "examples/hello-virtual-table",
+    "examples/hello-grid-nav",
     "examples/hello-variable-list",
     "examples/hello-virtual-select",
     "examples/hello-virtual-nav",
