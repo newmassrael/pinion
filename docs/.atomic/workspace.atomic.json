@@ -6844,18 +6844,18 @@
       ]
     },
     "5.53": {
-      "title": "Native OS menu — canonical-model render+input backend (Phase B)",
+      "title": "Menu render strategy — own-renderer 1st-class all-platform; native OS menu optional (Phase B)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
       "decision_status": "active",
-      "intent": "Native OS menu (muda) admitted only as a render+input backend bound to the canonical scene MenuBar (R691); the in-scene model stays SSOT, preserving inv #7 scene-as-data + AI-first introspection",
+      "intent": "Menu model (R691) drawn by pinion's own renderer, 1st-class on ALL platforms (editor north star: Unreal/Unity/Blender draw own); native OS menu (muda) = optional desktop-app mode, deferred",
       "rationale_bullets": [
-        "pinion already ships an AI-introspectable scene MenuBar (R691); a native menu must not duplicate it",
-        "An opaque OS menu owning authoritative state would violate inv #7 (scene-as-data, queryable as text)",
-        "inv #6 already blesses one model + N render dispatch paths; native menu = a third (paint/native/TUI)",
-        "macOS global app menu + Windows HMENU are pro-GUI table stakes (Qt/Flutter/Compose all ship them)",
-        "muda (tauri-org) = canonical winit-compatible menu crate; precedent: arboard, rfd platform crates",
-        "Native activation emits the same command intent wire-form as a scene click; AI sees no difference"
+        "Game engines + editors (Unreal Slate, Unity IMGUI, Blender, Godot) draw own menus on every OS",
+        "pinion north star = game engine + self-hosted editor; own-renderer menu aligns, native does not",
+        "Own renderer = identical look + full control on every OS; one renderer = simplest SSOT",
+        "Native's one real win = macOS top-of-screen global menu bar (outside window; HIG expectation)",
+        "That win matters for Qt/Flutter-class desktop productivity apps, not a game-engine editor",
+        "Own-renderer path verifiable on the Linux dev box now; muda native is macOS/Windows-only to verify"
       ],
       "inputs_bullets": [
         "inv #6 GUI/TUI dual = one model, N render+input dispatch paths; native menu adds a 3rd path",
@@ -6865,16 +6865,13 @@
         "§7 platform model: native menu is a first-party platform service, not a 3rd-party plugin"
       ],
       "outputs_bullets": [
-        "1 Backend: native menu is the Gui-only path; fallback to scene MenuBar on TUI/Linux/headless",
-        "2 Repaint: OS owns native-menu rendering; framework never paints it (own render loop)",
-        "3 Thread: platform menus are main-thread only; built+mutated on the winit event-loop thread",
-        "4 Lifecycle: menu attached at window create, released at window close (1:1 with Window)",
-        "5 Input: muda MenuEvent drained in event loop, mapped to the canonical MenuBar command intent",
-        "6 DPI/scale: OS-owned for the native surface; no framework scaling path required",
-        "7 Async: native selection pushes the same command intent the scene-click path emits",
-        "8 Introspection: delegated to the canonical MenuBar External; no separate native-menu schema",
-        "Crate: new pinion-platform-menu (muda) behind a feature; core MenuBar stays backend-agnostic",
-        "Principle: OS chrome admitted only as a render+input backend of a canonical in-scene model"
+        "Canonical: pinion scene-graph MenuBar (R691) = 1st-class menu render path on ALL platforms",
+        "Native OS menu (muda) = OPTIONAL Phase-B desktop-app mode, not the default; deferred",
+        "One menu model (R691) = SSOT; own renderer = canonical projection (inv #6 dispatch path)",
+        "inv #7 scene-as-data trivially kept: own renderer leaves the menu fully in-scene + introspectable",
+        "Native menu, if added, stays a backend of the SAME model; macOS global bar = its only big value",
+        "muda binding deferred until a macOS/Windows env + a real desktop-app consumer needs it",
+        "command intent wire-form identical across render paths; dry_run (inv #3) runs on the model"
       ],
       "caveats_bullets": [
         "R771 is a spec/decision round (0 LOC); impl wired in R772+ (precedent: §7 R712, §5.15 R7)",
@@ -6882,24 +6879,22 @@
         "Native menu cannot be RPC-driven into the OS; AI drives the canonical model, native mirrors it",
         "muda exact version/API pinned at impl round; spec fixes only the contract + fallback semantics",
         "dry_run (inv #3) stays valid: it operates on the model, never on the OS menu surface",
-        "NOT a §3 escape-hatch widening: model stays closed-form; no WebEngine/codec embed"
+        "NOT a §3 escape-hatch widening: model stays closed-form; no WebEngine/codec embed",
+        "R771.1 reframes R771's native-first view; earlier native-first caveats above are superseded by this",
+        "R771.1: own-renderer canonical on ALL platforms (not Linux-only fallback); native = optional add-on"
       ],
       "alternatives_rejected": [
         {
-          "alternative": "Opaque native menu External owning its own structure/state",
-          "reason": "REJECTED: violates inv #7 scene-as-data"
+          "alternative": "Native-first (mac/win muda + linux draw-own)",
+          "reason": "R771's original framing; REVISED R771.1: misaligned with the game-engine/editor north star, and unverifiable on the Linux dev box"
         },
         {
-          "alternative": "Scene-graph MenuBar only (no native)",
-          "reason": "keeps R691 but misses macOS global menu + OS muscle memory"
+          "alternative": "Hand-rolled NSMenu/HMENU bindings",
+          "reason": "REJECTED: muda stays canonical for the optional native path (DRY)"
         },
         {
-          "alternative": "Hand-rolled per-platform NSMenu/HMENU/gtk bindings",
-          "reason": "REJECTED: muda is canonical crate (DRY, arboard precedent)"
-        },
-        {
-          "alternative": "WASM/script menu plugin",
-          "reason": "out of scope per §7 (deferred evidence-first; no plugin author today)"
+          "alternative": "Drop macOS global menu bar entirely",
+          "reason": "accepted trade-off for editor/game-engine apps; revisit when a desktop-productivity-app consumer appears"
         }
       ],
       "impact_scope": [
@@ -29318,6 +29313,56 @@
         "R772 impl: pinion-platform-menu (muda) + shell model->native map + MenuEvent->command intent",
         "R772: fallback TUI/Linux/headless -> scene MenuBar; 1:1 window lifecycle; live OS-click verify",
         "muda version/API pinned at R772; Linux X11 app-menu gap = platform carry (no universal protocol)"
+      ]
+    },
+    "R771.1": {
+      "decision_summary": "REVISE §5.53: pinion's own scene-graph menu renderer (R691) is the 1st-class menu path on ALL platforms (game-engine/editor north star); native OS menu (muda) demoted to optional Phase-B desktop-app mode, deferred",
+      "changes_bullets": [
+        "§5.53 reframed: own-renderer canonical on ALL platforms; native OS menu = optional, not default",
+        "Rationale corrected: Unreal/Unity/Blender/Godot draw own menus everywhere; aligns north star",
+        "muda native binding deferred to macOS/Windows env + real desktop-app consumer (was R772 next)",
+        "SSOT clarified: one menu model (R691), own renderer = canonical projection (inv #6)"
+      ],
+      "verification_bullets": [
+        "Docs-honesty correction (0 LOC); precedent R738.1/R743.1/R744.1 .1-audit commits",
+        "validate-workspace T1=0 / T3 reject=0 preserved; no code change this round",
+        "Audit trigger: user design audit 'why native, not draw-own everywhere?' exposed native-first miss"
+      ],
+      "impact_refs": [
+        "2",
+        "5.15",
+        "5.38",
+        "5.40",
+        "7"
+      ],
+      "carry_forward_bullets": [
+        "Native OS menu (muda, macOS top-bar) = optional Phase-B; build on mac/win env + desktop-app demand",
+        "Linux/X11 has no OS menu bar = own-renderer is the only correct path there anyway (not a fallback)",
+        "R772 = own-renderer menu system advance, verifiable on Linux; exact scope set at R772 entry"
+      ],
+      "publishable_decision_summary": "REVISE §5.53: pinion's own scene-graph menu renderer (R691) is the 1st-class menu path on ALL platforms (game-engine/editor north star); native OS menu (muda) demoted to optional Phase-B desktop-app mode, deferred",
+      "publishable_changes_bullets": [
+        "§5.53 reframed: own-renderer canonical on ALL platforms; native OS menu = optional, not default",
+        "Rationale corrected: Unreal/Unity/Blender/Godot draw own menus everywhere; aligns north star",
+        "muda native binding deferred to macOS/Windows env + real desktop-app consumer (was R772 next)",
+        "SSOT clarified: one menu model (R691), own renderer = canonical projection (inv #6)"
+      ],
+      "publishable_verification_bullets": [
+        "Docs-honesty correction (0 LOC); precedent R738.1/R743.1/R744.1 .1-audit commits",
+        "validate-workspace T1=0 / T3 reject=0 preserved; no code change this round",
+        "Audit trigger: user design audit 'why native, not draw-own everywhere?' exposed native-first miss"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.15",
+        "5.38",
+        "5.40",
+        "7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Native OS menu (muda, macOS top-bar) = optional Phase-B; build on mac/win env + desktop-app demand",
+        "Linux/X11 has no OS menu bar = own-renderer is the only correct path there anyway (not a fallback)",
+        "R772 = own-renderer menu system advance, verifiable on Linux; exact scope set at R772 entry"
       ]
     },
     "Round 1": {
