@@ -65,7 +65,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{nav_select_key, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{nav_select_key, RowMetrics, VirtualSelectExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
@@ -282,12 +282,20 @@ impl WidgetCore for VirtualNavView {
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
-        _modifiers: pinion_core::Modifiers,
+        modifiers: pinion_core::Modifiers,
     ) -> bool {
         // The scroll state resolves from the owner cache (CoreShell wraps
         // apply_key in `root_owner().run`), independent of the `scene`
         // borrow inside the controller.
-        nav_select_key(scene, &use_scroll_state(SCROLL_KEY), LIST_TAG, focused, key, N, ROW_PITCH)
+        nav_select_key(
+            scene,
+            &use_scroll_state(SCROLL_KEY),
+            LIST_TAG,
+            focused,
+            key,
+            modifiers,
+            RowMetrics { item_count: N, row_pitch: ROW_PITCH },
+        )
     }
 
     fn title() -> &'static str {

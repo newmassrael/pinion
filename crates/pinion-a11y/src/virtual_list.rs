@@ -88,13 +88,13 @@ pub fn windowed_list_nodes(
 ///
 /// The container is a single-select [`AriaRole::List`] — **no**
 /// `aria-multiselectable` (this slice is single-select, the listbox /
-/// data-grid default; a multi-select index model is a later additive
-/// axis). `selected` is the absolute data index of the selected row, or
-/// `None`. Because selection is held by index, a selected row that has
-/// scrolled out of the window simply has no `listitem` node this frame —
-/// the selection survives in the coordinator and re-paints
-/// `aria-selected=true` when the row scrolls back, exactly as the painted
-/// tree does.
+/// data-grid default; the multi-select index model is the decorated peer
+/// [`windowed_list_nodes_multiselected`], R780). `selected` is the
+/// absolute data index of the selected row, or `None`. Because selection
+/// is held by index, a selected row that has scrolled out of the window
+/// simply has no `listitem` node this frame — the selection survives in
+/// the coordinator and re-paints `aria-selected=true` when the row scrolls
+/// back, exactly as the painted tree does.
 #[must_use]
 pub fn windowed_list_nodes_selected(
     list_tag: &str,
@@ -110,6 +110,38 @@ pub fn windowed_list_nodes_selected(
     for (offset, item) in nodes[1..].iter_mut().enumerate() {
         let index = window.first + offset;
         item.selected = Some(selected == Some(index));
+    }
+    nodes
+}
+
+/// Build a **multi-select** virtualized `list` (R780 §5.40): the same
+/// windowed container + `listitem` topology as [`windowed_list_nodes`],
+/// with `aria-multiselectable` on the container and `aria-selected =
+/// selection.contains(index)` on every rendered item.
+///
+/// The decorated peer of [`windowed_list_nodes_selected`] for a
+/// [`VirtualSelectExternal`](pinion_core::widgets::virtual_select::VirtualSelectExternal)
+/// in `Multi` mode: selection is an arbitrary index **set**, so the
+/// container additionally sets `aria-multiselectable="true"` — the genuine
+/// divergence from the single-select peer (the eager `hello-table-multi` /
+/// `hello-listbox-multi` set the same `with_multiselectable` axis inline on
+/// their non-windowed nodes; this is the *windowed* builder's variant).
+/// Multiple windowed items can carry `aria-selected=true` at once; selected
+/// rows scrolled out of the window have no node this frame, exactly as the
+/// single-select peer (the set survives in the coordinator).
+#[must_use]
+pub fn windowed_list_nodes_multiselected(
+    list_tag: &str,
+    list_name: &str,
+    set_size: u32,
+    window: &VisibleWindow,
+    selection: &std::collections::BTreeSet<usize>,
+) -> Vec<AccessNode> {
+    let mut nodes = windowed_list_nodes(list_tag, list_name, set_size, window);
+    nodes[0].multiselectable = true;
+    for (offset, item) in nodes[1..].iter_mut().enumerate() {
+        let index = window.first + offset;
+        item.selected = Some(selection.contains(&index));
     }
     nodes
 }
@@ -214,5 +246,61 @@ mod tests {
             windowed_list_nodes_selected("vlist", "List", 10_000, &VisibleWindow::EMPTY, Some(0));
         assert_eq!(nodes.len(), 1, "no items when the window is empty");
         assert_eq!(nodes[0].role, AriaRole::List);
+    }
+
+    // ── R780 multi-select decorated variant ─────────────────────────
+
+    #[test]
+    fn multiselect_marks_every_member_and_the_container() {
+        // Window 100..104; rows 101 and 103 selected → both aria-selected,
+        // the container aria-multiselectable.
+        let selection: std::collections::BTreeSet<usize> = [101, 103].into_iter().collect();
+        let nodes =
+            windowed_list_nodes_multiselected("vlist", "List", 10_000, &window(100, 4), &selection);
+        assert!(nodes[0].multiselectable, "multi-select container is aria-multiselectable");
+        assert_eq!(nodes[1].tag, "vlist#100");
+        assert_eq!(nodes[1].selected, Some(false));
+        assert_eq!(nodes[2].tag, "vlist#101");
+        assert_eq!(nodes[2].selected, Some(true));
+        assert_eq!(nodes[3].tag, "vlist#102");
+        assert_eq!(nodes[3].selected, Some(false));
+        assert_eq!(nodes[4].tag, "vlist#103");
+        assert_eq!(nodes[4].selected, Some(true), "two members aria-selected at once");
+    }
+
+    #[test]
+    fn multiselect_is_a_superset_of_the_display_only_topology() {
+        // Identical container + posinset + child topology as display-only;
+        // only aria-multiselectable + per-item aria-selected are added.
+        let selection = std::collections::BTreeSet::new();
+        let plain = windowed_list_nodes("vlist", "List", 10_000, &window(0, 3));
+        let decorated =
+            windowed_list_nodes_multiselected("vlist", "List", 10_000, &window(0, 3), &selection);
+        assert_eq!(plain.len(), decorated.len());
+        for (p, d) in plain.iter().zip(&decorated) {
+            assert_eq!(p.tag, d.tag);
+            assert_eq!(p.role, d.role);
+            assert_eq!(p.position_in_set, d.position_in_set);
+            assert_eq!(p.size_of_set, d.size_of_set);
+            assert_eq!(p.children, d.children);
+        }
+        assert!(!plain[0].multiselectable, "display-only is not multiselectable");
+        assert!(decorated[0].multiselectable);
+        assert_eq!(plain[1].selected, None, "display-only omits aria-selected");
+        assert_eq!(decorated[1].selected, Some(false), "multi-select sets it");
+    }
+
+    #[test]
+    fn multiselect_empty_window_yields_list_only() {
+        let selection: std::collections::BTreeSet<usize> = [0, 1].into_iter().collect();
+        let nodes = windowed_list_nodes_multiselected(
+            "vlist",
+            "List",
+            10_000,
+            &VisibleWindow::EMPTY,
+            &selection,
+        );
+        assert_eq!(nodes.len(), 1, "no items when the window is empty");
+        assert!(nodes[0].multiselectable, "the container axis still applies");
     }
 }

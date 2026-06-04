@@ -30043,6 +30043,66 @@
         "R780+ candidates unchanged: multi-select index model / column resize+h-scroll / grid filter at scale"
       ]
     },
+    "R780": {
+      "decision_summary": "R780 §5.40 §5.27 multi-select index model: VirtualSelect extended to a unified Qt QItemSelectionModel (SelectionMode Single, the pre-R780 default, all consumers byte-unchanged | Multi: BTreeSet selection + anchor + cursor). Keyboard Shift-range / Ctrl+A / Ctrl+Space via nav_select_key Modifiers; selection JSON-array wire (query/intervene/invoke toggle,extend_to,select_all); windowed_list_nodes_multiselected a11y (aria-multiselectable). New hello-multi-select + r780 demo. Mouse Shift/Ctrl-click deferred to R781 (router pointer wire must carry Modifiers, R773-class).",
+      "changes_bullets": [
+        "VirtualSelect now unified Qt selection model: SelectionMode Single (default) | Multi.",
+        "Multi state = BTreeSet selection + anchor + cursor; Single keeps cardinality <=1.",
+        "Ops: select (replace), toggle (Ctrl-flip), extend_to (Shift-range), select_all (Ctrl+A).",
+        "Single mode collapses toggle/extend_to to move, select_all no-op; old consumers unchanged.",
+        "RPC +selection JSON-array (query+intervene) +anchor +mode +invoke toggle/extend_to/select_all.",
+        "Multi interaction emits selection intent (full set); Single emits selected Int; admin silent.",
+        "nav_select_key +Modifiers (Shift/Ctrl+A/Ctrl+Space) + RowMetrics bundle (7-arg budget).",
+        "a11y windowed_list_nodes_multiselected: aria-multiselectable + per-row aria-selected.",
+        "New example hello-multi-select (10k flex virtual list, Copy bitmap snapshot) + r780 demo."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 5410->5425 pass, 0 fail (virtual_select +10, a11y +3, example +2).",
+        "clippy --workspace -D pedantic clean (RowMetrics fixed too_many_arguments 8->7).",
+        "demo r780_multi_select.py PASS 48 assert (Shift-range/Ctrl+A/Ctrl+Space, invoke, reveal at scale).",
+        "Mouse Shift/Ctrl-click deferred R781 (router pointer wire carries no Modifiers).",
+        "validate-workspace T1=0, new orphan +0, entries 697->698."
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "R781 mouse Shift/Ctrl-click: router pointer_up->dispatch_send must carry Modifiers (R773-class).",
+        "8 composite consumers migrate via parse_send_payload SSOT (all-or-none).",
+        "2nd windowed-grid multi-select -> windowed_grid_nodes_multiselected lift (GridSelection::Multi).",
+        "optionally-undoable lift deferred (2-consumer); column resize/h-scroll+frozen header (R775)."
+      ],
+      "publishable_decision_summary": "R780 §5.40 §5.27 multi-select index model: VirtualSelect extended to a unified Qt QItemSelectionModel (SelectionMode Single, the pre-R780 default, all consumers byte-unchanged | Multi: BTreeSet selection + anchor + cursor). Keyboard Shift-range / Ctrl+A / Ctrl+Space via nav_select_key Modifiers; selection JSON-array wire (query/intervene/invoke toggle,extend_to,select_all); windowed_list_nodes_multiselected a11y (aria-multiselectable). New hello-multi-select + r780 demo. Mouse Shift/Ctrl-click deferred to R781 (router pointer wire must carry Modifiers, R773-class).",
+      "publishable_changes_bullets": [
+        "VirtualSelect now unified Qt selection model: SelectionMode Single (default) | Multi.",
+        "Multi state = BTreeSet selection + anchor + cursor; Single keeps cardinality <=1.",
+        "Ops: select (replace), toggle (Ctrl-flip), extend_to (Shift-range), select_all (Ctrl+A).",
+        "Single mode collapses toggle/extend_to to move, select_all no-op; old consumers unchanged.",
+        "RPC +selection JSON-array (query+intervene) +anchor +mode +invoke toggle/extend_to/select_all.",
+        "Multi interaction emits selection intent (full set); Single emits selected Int; admin silent.",
+        "nav_select_key +Modifiers (Shift/Ctrl+A/Ctrl+Space) + RowMetrics bundle (7-arg budget).",
+        "a11y windowed_list_nodes_multiselected: aria-multiselectable + per-row aria-selected.",
+        "New example hello-multi-select (10k flex virtual list, Copy bitmap snapshot) + r780 demo."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 5410->5425 pass, 0 fail (virtual_select +10, a11y +3, example +2).",
+        "clippy --workspace -D pedantic clean (RowMetrics fixed too_many_arguments 8->7).",
+        "demo r780_multi_select.py PASS 48 assert (Shift-range/Ctrl+A/Ctrl+Space, invoke, reveal at scale).",
+        "Mouse Shift/Ctrl-click deferred R781 (router pointer wire carries no Modifiers).",
+        "validate-workspace T1=0, new orphan +0, entries 697->698."
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R781 mouse Shift/Ctrl-click: router pointer_up->dispatch_send must carry Modifiers (R773-class).",
+        "8 composite consumers migrate via parse_send_payload SSOT (all-or-none).",
+        "2nd windowed-grid multi-select -> windowed_grid_nodes_multiselected lift (GridSelection::Multi).",
+        "optionally-undoable lift deferred (2-consumer); column resize/h-scroll+frozen header (R775)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

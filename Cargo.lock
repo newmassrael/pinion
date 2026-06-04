@@ -2128,6 +2128,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-multi-select"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-multi-window"
 version = "0.0.1"
 dependencies = [

@@ -77,5 +77,7 @@ pub use scene_label::enrich_names_from_scene;
 pub use toggle_group::{toggle_button_group_nodes, ToggleSegment};
 pub use tree::{tag_to_node_id, AccessTreeBuilder, ROOT_NODE_ID};
 pub use virtual_grid::{windowed_grid_nodes, windowed_grid_nodes_selected};
-pub use virtual_list::{windowed_list_nodes, windowed_list_nodes_selected};
+pub use virtual_list::{
+    windowed_list_nodes, windowed_list_nodes_multiselected, windowed_list_nodes_selected,
+};
 pub use widget_a11y::WidgetA11y;

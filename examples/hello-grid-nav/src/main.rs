@@ -59,7 +59,7 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{nav_select_key, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{nav_select_key, RowMetrics, VirtualSelectExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::table::{view_virtual_table, TableStyle, VirtualTableData};
@@ -241,9 +241,17 @@ impl WidgetCore for GridNavView {
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
-        _modifiers: pinion_core::Modifiers,
+        modifiers: pinion_core::Modifiers,
     ) -> bool {
-        nav_select_key(scene, &use_scroll_state(SCROLL_KEY), TABLE_TAG, focused, key, N, ROW_H)
+        nav_select_key(
+            scene,
+            &use_scroll_state(SCROLL_KEY),
+            TABLE_TAG,
+            focused,
+            key,
+            modifiers,
+            RowMetrics { item_count: N, row_pitch: ROW_H },
+        )
     }
 
     fn title() -> &'static str {
