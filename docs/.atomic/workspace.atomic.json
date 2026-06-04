@@ -6843,6 +6843,74 @@
         }
       ]
     },
+    "5.53": {
+      "title": "Native OS menu — canonical-model render+input backend (Phase B)",
+      "parent_doc": "docs/GENERATED.md",
+      "parent_section": "5",
+      "decision_status": "active",
+      "intent": "Native OS menu (muda) admitted only as a render+input backend bound to the canonical scene MenuBar (R691); the in-scene model stays SSOT, preserving inv #7 scene-as-data + AI-first introspection",
+      "rationale_bullets": [
+        "pinion already ships an AI-introspectable scene MenuBar (R691); a native menu must not duplicate it",
+        "An opaque OS menu owning authoritative state would violate inv #7 (scene-as-data, queryable as text)",
+        "inv #6 already blesses one model + N render dispatch paths; native menu = a third (paint/native/TUI)",
+        "macOS global app menu + Windows HMENU are pro-GUI table stakes (Qt/Flutter/Compose all ship them)",
+        "muda (tauri-org) = canonical winit-compatible menu crate; precedent: arboard, rfd platform crates",
+        "Native activation emits the same command intent wire-form as a scene click; AI sees no difference"
+      ],
+      "inputs_bullets": [
+        "inv #6 GUI/TUI dual = one model, N render+input dispatch paths; native menu adds a 3rd path",
+        "inv #7 scene-as-data: the native surface must not hold state invisible to introspection",
+        "§5.15 External 8-point integration contract = the platform-integration template",
+        "§5.38 Tier-1 MenuBar (R691) = canonical model, command intent, menuitem role",
+        "§7 platform model: native menu is a first-party platform service, not a 3rd-party plugin"
+      ],
+      "outputs_bullets": [
+        "1 Backend: native menu is the Gui-only path; fallback to scene MenuBar on TUI/Linux/headless",
+        "2 Repaint: OS owns native-menu rendering; framework never paints it (own render loop)",
+        "3 Thread: platform menus are main-thread only; built+mutated on the winit event-loop thread",
+        "4 Lifecycle: menu attached at window create, released at window close (1:1 with Window)",
+        "5 Input: muda MenuEvent drained in event loop, mapped to the canonical MenuBar command intent",
+        "6 DPI/scale: OS-owned for the native surface; no framework scaling path required",
+        "7 Async: native selection pushes the same command intent the scene-click path emits",
+        "8 Introspection: delegated to the canonical MenuBar External; no separate native-menu schema",
+        "Crate: new pinion-platform-menu (muda) behind a feature; core MenuBar stays backend-agnostic",
+        "Principle: OS chrome admitted only as a render+input backend of a canonical in-scene model"
+      ],
+      "caveats_bullets": [
+        "R771 is a spec/decision round (0 LOC); impl wired in R772+ (precedent: §7 R712, §5.15 R7)",
+        "Linux/X11 has no universal app-menu protocol; muda gtk path or graceful scene-graph fallback",
+        "Native menu cannot be RPC-driven into the OS; AI drives the canonical model, native mirrors it",
+        "muda exact version/API pinned at impl round; spec fixes only the contract + fallback semantics",
+        "dry_run (inv #3) stays valid: it operates on the model, never on the OS menu surface",
+        "NOT a §3 escape-hatch widening: model stays closed-form; no WebEngine/codec embed"
+      ],
+      "alternatives_rejected": [
+        {
+          "alternative": "Opaque native menu External owning its own structure/state",
+          "reason": "REJECTED: violates inv #7 scene-as-data"
+        },
+        {
+          "alternative": "Scene-graph MenuBar only (no native)",
+          "reason": "keeps R691 but misses macOS global menu + OS muscle memory"
+        },
+        {
+          "alternative": "Hand-rolled per-platform NSMenu/HMENU/gtk bindings",
+          "reason": "REJECTED: muda is canonical crate (DRY, arboard precedent)"
+        },
+        {
+          "alternative": "WASM/script menu plugin",
+          "reason": "out of scope per §7 (deferred evidence-first; no plugin author today)"
+        }
+      ],
+      "impact_scope": [
+        "2",
+        "5.15",
+        "5.38",
+        "5.40",
+        "7"
+      ],
+      "coverage_expectation": "informative"
+    },
     "5.6": {
       "title": "Reuse path (early cascade-emit vs Rust-native then port)",
       "parent_doc": "docs/GENERATED.md",
@@ -29202,6 +29270,56 @@
         "R770 carries persist: native file-DnD untestable / window-scoped / per-path a11y; R766 carries"
       ]
     },
+    "R771": {
+      "decision_summary": "Native OS menu (muda) admitted only as a render+input backend of the canonical scene MenuBar (R691); in-scene model stays SSOT, preserving inv #7 scene-as-data + AI-first; spec round, impl deferred to R772",
+      "changes_bullets": [
+        "Ratify native OS menu as render+input backend of canonical scene MenuBar (R691); inv #6 3rd path",
+        "Adopt muda (tauri-org) as canonical platform menu crate; pinion-platform-menu deferred to R772",
+        "Instantiate §5.15 8-point contract for native menu; introspection delegated to canonical model",
+        "Record reusable principle: OS chrome admitted only as backend of a canonical in-scene model"
+      ],
+      "verification_bullets": [
+        "Spec/decision round, 0 LOC; mnemosyne validate-workspace T1=0 / T3 reject=0 preserved",
+        "Reconciliation checked vs inv #6 (multi-backend) + inv #7 (scene-as-data) + §5.15 contract",
+        "Demo-exempt process round (precedent §7 R712, §5.15 R7); no code, no bindings this round"
+      ],
+      "impact_refs": [
+        "2",
+        "5.15",
+        "5.38",
+        "5.40",
+        "7"
+      ],
+      "carry_forward_bullets": [
+        "R772 impl: pinion-platform-menu (muda) + shell model->native map + MenuEvent->command intent",
+        "R772: fallback TUI/Linux/headless -> scene MenuBar; 1:1 window lifecycle; live OS-click verify",
+        "muda version/API pinned at R772; Linux X11 app-menu gap = platform carry (no universal protocol)"
+      ],
+      "publishable_decision_summary": "Native OS menu (muda) admitted only as a render+input backend of the canonical scene MenuBar (R691); in-scene model stays SSOT, preserving inv #7 scene-as-data + AI-first; spec round, impl deferred to R772",
+      "publishable_changes_bullets": [
+        "Ratify native OS menu as render+input backend of canonical scene MenuBar (R691); inv #6 3rd path",
+        "Adopt muda (tauri-org) as canonical platform menu crate; pinion-platform-menu deferred to R772",
+        "Instantiate §5.15 8-point contract for native menu; introspection delegated to canonical model",
+        "Record reusable principle: OS chrome admitted only as backend of a canonical in-scene model"
+      ],
+      "publishable_verification_bullets": [
+        "Spec/decision round, 0 LOC; mnemosyne validate-workspace T1=0 / T3 reject=0 preserved",
+        "Reconciliation checked vs inv #6 (multi-backend) + inv #7 (scene-as-data) + §5.15 contract",
+        "Demo-exempt process round (precedent §7 R712, §5.15 R7); no code, no bindings this round"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.15",
+        "5.38",
+        "5.40",
+        "7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R772 impl: pinion-platform-menu (muda) + shell model->native map + MenuEvent->command intent",
+        "R772: fallback TUI/Linux/headless -> scene MenuBar; 1:1 window lifecycle; live OS-click verify",
+        "muda version/API pinned at R772; Linux X11 app-menu gap = platform carry (no universal protocol)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -42337,5 +42455,5 @@
       "reason": "design clarification — Intent.payload consumed by V::update reducer, not threaded through SCXML invoke send (R51.159 carry resolved as design choice)"
     }
   },
-  "schema_version": 7
+  "schema_version": 8
 }
