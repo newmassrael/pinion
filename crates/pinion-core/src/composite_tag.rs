@@ -71,6 +71,82 @@ pub fn parse_send_payload<K: FromStr>(payload: &str) -> Option<(K, &str)> {
     Some((key, event_name))
 }
 
+/// R777.1 §5.16 §5.40 — the **grid composite send sub-key** grammar: the
+/// `'#'`-split sub-tag a data-grid header or cell routes to its
+/// [`External`](crate::external::External) through the R51.42 funnel. A
+/// column-header click is `"h<col>"`; a data cell is `"<row>_<col>"`
+/// (always an underscore, so the `h` prefix is unambiguous).
+///
+/// One codec so the paint **producer**
+/// (`pinion_widget_paint::table::header_cell` / `…::data_row`), the
+/// **a11y** gridcell node identity, and every **decoder** —
+/// [`TableExternal`](crate::widgets::table) (eager, needs row+col) and
+/// [`VirtualSelectExternal`](crate::widgets::virtual_select) (virtualized,
+/// row-only) — share the `'_'` / `'h'` grammar instead of re-deriving it
+/// inline. This is the R773 wire-form encode↔decode SSOT applied to the
+/// grid cell key (R777.1 audit-correction): a divergence between the
+/// producer's separator and a decoder's split would misroute every click,
+/// so the grammar lives in exactly one place.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GridSendKey {
+    /// A column-header click (`"h<col>"`) — the sort-cycle target.
+    Header {
+        /// Zero-based column index.
+        col: usize,
+    },
+    /// A data-cell click (`"<row>_<col>"`).
+    Cell {
+        /// Zero-based data-row index.
+        row: usize,
+        /// Zero-based column index.
+        col: usize,
+    },
+}
+
+impl GridSendKey {
+    /// Decode a `'#'`-split sub-key. Returns `None` when it is neither a
+    /// header (`h<col>`) nor a cell (`<row>_<col>`) key — e.g. a bare
+    /// list-item index, which has no grid structure (the
+    /// [`VirtualSelectExternal`](crate::widgets::virtual_select) list path
+    /// falls back to a plain integer parse).
+    #[must_use]
+    pub fn parse(key: &str) -> Option<Self> {
+        if let Some(col) = key.strip_prefix('h') {
+            return col.parse().ok().map(|col| Self::Header { col });
+        }
+        let (row, col) = key.split_once('_')?;
+        Some(Self::Cell {
+            row: row.parse().ok()?,
+            col: col.parse().ok()?,
+        })
+    }
+
+    /// The data row this key addresses, or `None` for a header key — the
+    /// row-only view a single-row selection coordinator
+    /// ([`VirtualSelectExternal`](crate::widgets::virtual_select)) needs
+    /// (WAI-ARIA / Qt `QItemSelectionModel` `SelectRows`: the column is
+    /// irrelevant to a row selection).
+    #[must_use]
+    pub fn row(self) -> Option<usize> {
+        match self {
+            Self::Cell { row, .. } => Some(row),
+            Self::Header { .. } => None,
+        }
+    }
+
+    /// Encode the sub-key — the **producer** side, paired with
+    /// [`parse`](Self::parse) so the paint tag and the decoder grammar
+    /// cannot drift. The full composite paint tag is
+    /// `format!("{tag}#{}", key.encode())`.
+    #[must_use]
+    pub fn encode(self) -> String {
+        match self {
+            Self::Header { col } => format!("h{col}"),
+            Self::Cell { row, col } => format!("{row}_{col}"),
+        }
+    }
+}
+
 /// R742.4 §5.16 §5.35 — split a (possibly composite) paint tag at the
 /// `#` separator into `(primary, Some(sub))`, the companion of
 /// [`parse_send_payload`] for the *tag* side of the R51.42 protocol.
@@ -100,7 +176,34 @@ pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_send_payload, split_subindex};
+    use super::{parse_send_payload, split_subindex, GridSendKey};
+
+    #[test]
+    fn grid_send_key_round_trips_cell_and_header() {
+        // Encode ↔ parse are inverses (the divergence-is-a-bug guard).
+        for key in [
+            GridSendKey::Cell { row: 0, col: 0 },
+            GridSendKey::Cell { row: 9_999, col: 2 },
+            GridSendKey::Header { col: 1 },
+        ] {
+            assert_eq!(GridSendKey::parse(&key.encode()), Some(key), "round-trip {key:?}");
+        }
+        assert_eq!(GridSendKey::Cell { row: 4, col: 2 }.encode(), "4_2");
+        assert_eq!(GridSendKey::Header { col: 1 }.encode(), "h1");
+    }
+
+    #[test]
+    fn grid_send_key_row_view_and_rejects_non_grid() {
+        assert_eq!(GridSendKey::parse("5_2").and_then(GridSendKey::row), Some(5));
+        // A header key has no row (SelectRows: ignored by a row coordinator).
+        assert_eq!(GridSendKey::parse("h2").and_then(GridSendKey::row), None);
+        // A bare list-item index is not a grid key — the list path handles it.
+        assert_eq!(GridSendKey::parse("5"), None);
+        // Malformed grid keys decode to None (defensive against wire drift).
+        assert_eq!(GridSendKey::parse("x_2"), None);
+        assert_eq!(GridSendKey::parse("5_y"), None);
+        assert_eq!(GridSendKey::parse("hx"), None);
+    }
 
     #[test]
     fn split_subindex_covers_all_shapes() {

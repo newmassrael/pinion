@@ -29857,6 +29857,48 @@
         "grid scrollbar peer omitted (wheel + keyboard scroll); 2D cell-cursor nav (Left/Right column) deferred"
       ]
     },
+    "R777.1": {
+      "decision_summary": "R777.1 audit-correction (user textbook/SSOT review): lift the grid cell-key wire grammar to a GridSendKey codec SSOT (1 producer + 2 decoders + a11y were hand-rolling {row}_{col}/h{col}); a11y aria-selected applied at construction, dropping the tag re-parse",
+      "changes_bullets": [
+        "New GridSendKey codec (composite_tag): Header{col}/Cell{row,col} with parse/encode/row — SSOT for the grid send grammar",
+        "Resolves an R773-class smell: the {row}_{col} / h{col} grammar was hand-rolled in 1 producer + 2 decoders with no SSOT",
+        "R777 added the 2nd decoder (VirtualSelect alongside TableExternal), firing Rule-of-Three; codec lifts it",
+        "Migrated all sites: paint producer (header_cell + data_row encode), a11y gridcell identity, TableExternal + VirtualSelect decode",
+        "a11y windowed_grid_nodes: aria-selected applied at construction (id in scope) via shared grid_nodes builder, dropping the tag re-parse"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (composite_tag +2 GridSendKey round-trip/row-view); clippy --workspace --all-targets pedantic clean",
+        "7-demo regression PASS: r707/r730(h{col} header)/r735 eager table + r775/r777 grid + r746/r776 list — codec behavior-preserving across producers+decoders",
+        "self-audit triggered by user \"textbook?\" review; R773 wire-vocab encode-decode SSOT applied to the grid cell key"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R777 carry unchanged (data-grid sort at scale = next candidate; column resize / h-scroll; multi-select index model)",
+        "GridSendKey is now the header h{col} decode SSOT that data-grid-sort-at-scale will reuse (sort over virtualized body)"
+      ],
+      "publishable_decision_summary": "R777.1 audit-correction (user textbook/SSOT review): lift the grid cell-key wire grammar to a GridSendKey codec SSOT (1 producer + 2 decoders + a11y were hand-rolling {row}_{col}/h{col}); a11y aria-selected applied at construction, dropping the tag re-parse",
+      "publishable_changes_bullets": [
+        "New GridSendKey codec (composite_tag): Header{col}/Cell{row,col} with parse/encode/row — SSOT for the grid send grammar",
+        "Resolves an R773-class smell: the {row}_{col} / h{col} grammar was hand-rolled in 1 producer + 2 decoders with no SSOT",
+        "R777 added the 2nd decoder (VirtualSelect alongside TableExternal), firing Rule-of-Three; codec lifts it",
+        "Migrated all sites: paint producer (header_cell + data_row encode), a11y gridcell identity, TableExternal + VirtualSelect decode",
+        "a11y windowed_grid_nodes: aria-selected applied at construction (id in scope) via shared grid_nodes builder, dropping the tag re-parse"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (composite_tag +2 GridSendKey round-trip/row-view); clippy --workspace --all-targets pedantic clean",
+        "7-demo regression PASS: r707/r730(h{col} header)/r735 eager table + r775/r777 grid + r746/r776 list — codec behavior-preserving across producers+decoders",
+        "self-audit triggered by user \"textbook?\" review; R773 wire-vocab encode-decode SSOT applied to the grid cell key"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R777 carry unchanged (data-grid sort at scale = next candidate; column resize / h-scroll; multi-select index model)",
+        "GridSendKey is now the header h{col} decode SSOT that data-grid-sort-at-scale will reuse (sort over virtualized body)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

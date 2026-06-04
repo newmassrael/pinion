@@ -206,10 +206,12 @@ impl VirtualSelectExternal {
     ///   arrives as `"h<col>"`, which has no leading row index and is
     ///   ignored here (sort is a separate axis, not this coordinator's).
     ///
-    /// Taking the integer before the first `_` unifies both: a list key
-    /// has no `_`, so the whole key parses; a cell key drops the column.
-    /// A list never emits a `_`-bearing key, so this is a pure superset of
-    /// the original list-only parse.
+    /// The grid grammar is decoded by the shared
+    /// [`GridSendKey`](crate::composite_tag::GridSendKey) SSOT (R777.1) — a
+    /// cell `"<row>_<col>"` yields its row, a header `"h<col>"` yields
+    /// `None` (ignored). A bare list-item key `"<row>"` has no grid
+    /// structure, so it falls back to a plain integer parse: one
+    /// coordinator, both collection shapes, one wire grammar.
     fn handle_send(&mut self, payload: &str) {
         let Some((key, event_name)) = payload.split_once(':') else {
             return;
@@ -217,9 +219,11 @@ impl VirtualSelectExternal {
         if event_name.is_empty() {
             return;
         }
-        // Row index = the integer before an optional `_<col>` suffix.
-        let row_str = key.split_once('_').map_or(key, |(row, _col)| row);
-        let Ok(index) = row_str.parse::<usize>() else {
+        let row = match crate::composite_tag::GridSendKey::parse(key) {
+            Some(grid_key) => grid_key.row(),
+            None => key.parse::<usize>().ok(),
+        };
+        let Some(index) = row else {
             return;
         };
         if event_name == "KeyboardActivate"

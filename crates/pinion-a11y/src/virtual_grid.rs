@@ -25,6 +25,7 @@
 
 use crate::node::AccessNode;
 use crate::role::AriaRole;
+use pinion_core::composite_tag::GridSendKey;
 use pinion_core::widgets::virtual_list::VisibleWindow;
 
 /// Build the virtualized `grid` container + frozen header row + one data
@@ -54,6 +55,39 @@ pub fn windowed_grid_nodes(
     headers: &[&str],
     set_size: u32,
     window: &VisibleWindow,
+) -> Vec<AccessNode> {
+    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Display)
+}
+
+/// Whether the grid exposes an `aria-selected` axis on its data rows, and
+/// (if so) which data-row index is selected. Distinguishes the two public
+/// builders without an `Option<Option<usize>>`.
+#[derive(Clone, Copy)]
+enum GridSelection {
+    /// Display-only — data rows carry no `aria-selected`.
+    Display,
+    /// Single-select — `aria-selected = (id == _)` on each data row.
+    Single(Option<usize>),
+}
+
+/// The cell paint tag for data row `id`, column `col` — the
+/// `GridSendKey` SSOT so the a11y `gridcell` identity matches the painted
+/// cell (and the decoder) exactly.
+fn cell_tag(grid_tag: &str, id: usize, col: usize) -> String {
+    format!("{grid_tag}#{}", GridSendKey::Cell { row: id, col }.encode())
+}
+
+/// Shared builder for both grid topologies. `selection` distinguishes the
+/// two: `None` → display-only (no `aria-selected` axis); `Some(sel)` →
+/// single-select (each *data* row gets `aria-selected = (id == sel)`,
+/// applied here at construction where `id` is in scope — no tag re-parse).
+fn grid_nodes(
+    grid_tag: &str,
+    grid_name: &str,
+    headers: &[&str],
+    set_size: u32,
+    window: &VisibleWindow,
+    selection: GridSelection,
 ) -> Vec<AccessNode> {
     let ncols = headers.len();
     // grid + header row + ncols columnheaders + per windowed row (1 row +
@@ -90,14 +124,16 @@ pub fn windowed_grid_nodes(
             .with_position_in_set(posinset)
             .with_size_of_set(set_size);
         for col in 0..ncols {
-            row = row.with_child(format!("{grid_tag}#{id}_{col}"));
+            row = row.with_child(cell_tag(grid_tag, id, col));
+        }
+        // Single-select: aria-selected on the ROW (SelectRows). Display-only
+        // omits the axis entirely.
+        if let GridSelection::Single(selected) = selection {
+            row = row.with_selected(selected == Some(id));
         }
         nodes.push(row);
         for col in 0..ncols {
-            nodes.push(AccessNode::new(
-                format!("{grid_tag}#{id}_{col}"),
-                AriaRole::GridCell,
-            ));
+            nodes.push(AccessNode::new(cell_tag(grid_tag, id, col), AriaRole::GridCell));
         }
     }
     nodes
@@ -130,22 +166,7 @@ pub fn windowed_grid_nodes_selected(
     window: &VisibleWindow,
     selected: Option<usize>,
 ) -> Vec<AccessNode> {
-    let mut nodes = windowed_grid_nodes(grid_tag, grid_name, headers, set_size, window);
-    // Decorate each *data* row (tag `{grid_tag}_row{id}`) with
-    // `aria-selected`. The header row is `{grid_tag}_hrow` (no `_row`
-    // prefix), and gridcells are `{grid_tag}#…`, so the `_row` prefix
-    // selects exactly the data rows.
-    let row_prefix = format!("{grid_tag}_row");
-    for node in &mut nodes {
-        if node.role != AriaRole::Row {
-            continue;
-        }
-        if let Some(id) = node.tag.strip_prefix(&row_prefix).and_then(|s| s.parse::<usize>().ok())
-        {
-            node.selected = Some(selected == Some(id));
-        }
-    }
-    nodes
+    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Single(selected))
 }
 
 #[cfg(test)]

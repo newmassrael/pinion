@@ -30,6 +30,7 @@
 
 use std::rc::Rc;
 
+use pinion_core::composite_tag::GridSendKey;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -221,7 +222,8 @@ fn header_cell(
     }
     let inner = Scene::Container(
         ContainerNode::new(inner_children)
-            .with_tag(format!("{tag}#h{col}"))
+            // R777.1 — the clickable header sub-key via the GridSendKey SSOT.
+            .with_tag(format!("{tag}#{}", GridSendKey::Header { col }.encode()))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -289,7 +291,8 @@ fn data_row(
         .map(|col| {
             let text = cells_text.get(col).copied().unwrap_or("");
             cell(
-                &format!("{tag}#{data_id}_{col}"),
+                // R777.1 — the cell sub-key via the GridSendKey SSOT.
+                &format!("{tag}#{}", GridSendKey::Cell { row: data_id, col }.encode()),
                 text,
                 fg,
                 style.label_size_px,

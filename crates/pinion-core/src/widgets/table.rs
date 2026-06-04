@@ -841,50 +841,46 @@ impl ExternalIntrospect for TableExternal {
                 IntrospectValue::Text(ref s) => {
                     let (key, event_name) =
                         s.split_once(':').ok_or(InvokeError::Rejected)?;
-                    // R730 §5.40 — a column-header click arrives as
-                    // `"h<col>:<EventName>"` (the paint tag `"<tag>#h<col>"`
-                    // through the R51.42 `'#'`-split funnel). Cell keys are
-                    // `"<row>_<col>"` (always an underscore), so the `h`
-                    // prefix is unambiguous. The sort cycles on `PointerUp`
-                    // (the activate edge), matching cell activation; other
-                    // pointer phases are inert. Returns the new `sort_dir`.
-                    if let Some(col_str) = key.strip_prefix('h') {
-                        let col: usize =
-                            col_str.parse().map_err(|_| InvokeError::Rejected)?;
-                        if col >= self.col_count() {
-                            return Err(InvokeError::Rejected);
+                    // R730 §5.40 / R777.1 — the `'#'`-split sub-key is
+                    // decoded by the shared `GridSendKey` SSOT (the same
+                    // grammar the paint producer encodes and
+                    // `VirtualSelectExternal` decodes): a header click
+                    // `"h<col>"` cycles the sort on `PointerUp` (the
+                    // activate edge; other phases inert), a cell click
+                    // `"<row>_<col>"` drives that cell's radio.
+                    match crate::composite_tag::GridSendKey::parse(key)
+                        .ok_or(InvokeError::Rejected)?
+                    {
+                        crate::composite_tag::GridSendKey::Header { col } => {
+                            if col >= self.col_count() {
+                                return Err(InvokeError::Rejected);
+                            }
+                            if event_name == PointerWireEvent::Up.as_wire_name() {
+                                self.cycle_sort(col);
+                            }
+                            Ok(self.query("sort_dir").unwrap_or(IntrospectValue::Null))
                         }
-                        if event_name == PointerWireEvent::Up.as_wire_name() {
-                            self.cycle_sort(col);
+                        crate::composite_tag::GridSendKey::Cell { row, col } => {
+                            if row >= self.row_count() || col >= self.col_count() {
+                                return Err(InvokeError::Rejected);
+                            }
+                            let ev = RadioEvent::from_name(event_name)
+                                .ok_or(InvokeError::Rejected)?;
+                            self.send_cell(row, col, ev);
+                            // R735 §5.38 — single returns the (possibly new)
+                            // `selected_row`; multi returns Null (no single
+                            // row). AI clients follow up with `selected.<i>`
+                            // / `selected_rows()` for the new full set.
+                            Ok(if self.is_multiselect() {
+                                IntrospectValue::Null
+                            } else {
+                                match self.selected_row() {
+                                    Some(r) => IntrospectValue::Int(int_of(r)),
+                                    None => IntrospectValue::Null,
+                                }
+                            })
                         }
-                        return Ok(self
-                            .query("sort_dir")
-                            .unwrap_or(IntrospectValue::Null));
                     }
-                    let (row_str, col_str) =
-                        key.split_once('_').ok_or(InvokeError::Rejected)?;
-                    let row: usize =
-                        row_str.parse().map_err(|_| InvokeError::Rejected)?;
-                    let col: usize =
-                        col_str.parse().map_err(|_| InvokeError::Rejected)?;
-                    if row >= self.row_count() || col >= self.col_count() {
-                        return Err(InvokeError::Rejected);
-                    }
-                    let ev = RadioEvent::from_name(event_name)
-                        .ok_or(InvokeError::Rejected)?;
-                    self.send_cell(row, col, ev);
-                    // R735 §5.38 — single returns the (possibly new)
-                    // `selected_row`; multi returns Null (no single row).
-                    // AI clients follow up with `selected.<i>` /
-                    // `selected_rows()` for the new full set.
-                    Ok(if self.is_multiselect() {
-                        IntrospectValue::Null
-                    } else {
-                        match self.selected_row() {
-                            Some(r) => IntrospectValue::Int(int_of(r)),
-                            None => IntrospectValue::Null,
-                        }
-                    })
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
