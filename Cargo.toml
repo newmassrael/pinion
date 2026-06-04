@@ -78,6 +78,7 @@ members = [
     "examples/hello-tree-view",
     "examples/hello-tabs",
     "examples/hello-menu",
+    "examples/hello-contextmenu",
     "examples/hello-toolbar",
     "examples/hello-dialog",
     "examples/hello-drawer",

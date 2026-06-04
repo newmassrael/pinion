@@ -1534,6 +1534,34 @@ impl<V: WidgetCore> CoreShell<V> {
         }
     }
 
+    /// R772 §5.53 §5.38 — route a secondary-button (right-click) press
+    /// through [`WidgetCore::apply_secondary_click`] at the window-space
+    /// point `(x, y)`. Symmetric with [`Self::apply_middle_click`]: wraps
+    /// the trait call in `root_owner.run` so
+    /// [`Owner::current`](pinion_core::reactive::Owner::current) resolves
+    /// to this binding's root scope from inside the override (which reads
+    /// the same reactive hooks the view fn shares).
+    ///
+    /// Unlike middle-click this carries the press position — a context
+    /// menu anchors at the cursor regardless of keyboard focus, so the
+    /// shell sources `(x, y)` from the addressed window's `InputRouter`
+    /// cursor cache (the same channel `position_caret_for_point` reads).
+    ///
+    /// Returns `Some(DispatchTail)` on handled (`true` from
+    /// `apply_secondary_click`), `None` on unhandled — the shell wrapper
+    /// checks the `Option` to decide whether to bump backend bookkeeping
+    /// (revision + redraw), matching the `apply_middle_click` shape.
+    pub fn apply_secondary_click(&mut self, x: f32, y: f32) -> Option<DispatchTail<V::State>> {
+        let owner = self.root_owner.clone();
+        let scene = &mut self.scene;
+        let handled = owner.run(|| V::apply_secondary_click(scene, x, y));
+        if handled {
+            Some(self.tail())
+        } else {
+            None
+        }
+    }
+
     /// R51.122 §5.41 — pointer cursor-move dispatch (cell→pixel or
     /// `winit` → pixel conversion happens at the backend boundary).
     /// Forwards through the [`InputRouter`] then drains the dispatch

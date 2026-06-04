@@ -78,31 +78,8 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::widgets::wire::{parse_pointer_event, resolve_index, PointerEvent};
 use crate::widgets::IntentEmitter;
-
-/// Pointer events a toolbar control accepts over the `send` wire.
-/// Mirrors [`crate::widgets::menu`]'s pointer subset so the
-/// composite-tag router (`<bar>#<i>`) feeds the same
-/// `Enter → Down → Up → Leave` cycle a real cursor emits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PointerEvent {
-    Enter,
-    Down,
-    Up,
-    Leave,
-    Cancel,
-}
-
-fn parse_pointer_event(name: &str) -> Option<PointerEvent> {
-    match name {
-        "PointerEnter" => Some(PointerEvent::Enter),
-        "PointerDown" => Some(PointerEvent::Down),
-        "PointerUp" => Some(PointerEvent::Up),
-        "PointerLeave" => Some(PointerEvent::Leave),
-        "PointerCancel" => Some(PointerEvent::Cancel),
-        _ => None,
-    }
-}
 
 /// R692 §5.38 — the two control classes a [`Toolbar`] groups. A
 /// `Command` is a one-shot button; a `Toggle` carries a persistent
@@ -526,20 +503,6 @@ fn kind_name(kind: ToolItem) -> &'static str {
         ToolItem::Command => "command",
         ToolItem::Toggle => "toggle",
     }
-}
-
-/// Validate a signed intervene index against `[0, count)`. Negative,
-/// overflowing, and `>= count` all map to [`InterveneError::OutOfRange`]
-/// (mirrors `MenuBarExternal::resolve_index`).
-fn resolve_index(i: i64, count: usize) -> Result<usize, InterveneError> {
-    if i < 0 {
-        return Err(InterveneError::OutOfRange);
-    }
-    let idx = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
-    if idx >= count {
-        return Err(InterveneError::OutOfRange);
-    }
-    Ok(idx)
 }
 
 #[cfg(test)]

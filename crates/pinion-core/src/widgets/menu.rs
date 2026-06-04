@@ -84,31 +84,9 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
+use crate::widgets::menu_nav;
+use crate::widgets::wire::{parse_pointer_event, resolve_index, PointerEvent};
 use crate::widgets::IntentEmitter;
-
-/// Pointer events a menubar title / item accepts over the `send` wire.
-/// Mirrors the [`crate::widgets::radio::RadioEvent`] pointer subset so
-/// the composite-tag router (`<bar>#t<m>` / `<bar>#i<i>`) feeds the
-/// same `PointerEnter → Down → Up → Leave` cycle a real cursor emits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PointerEvent {
-    Enter,
-    Down,
-    Up,
-    Leave,
-    Cancel,
-}
-
-fn parse_pointer_event(name: &str) -> Option<PointerEvent> {
-    match name {
-        "PointerEnter" => Some(PointerEvent::Enter),
-        "PointerDown" => Some(PointerEvent::Down),
-        "PointerUp" => Some(PointerEvent::Up),
-        "PointerLeave" => Some(PointerEvent::Leave),
-        "PointerCancel" => Some(PointerEvent::Cancel),
-        _ => None,
-    }
-}
 
 /// R691 §5.38 — logical menubar with N command menus. See module docs
 /// for the command-vs-selection rationale and the state model.
@@ -224,7 +202,7 @@ impl MenuBar {
         if n == 0 {
             return;
         }
-        self.bar_focus = step(self.bar_focus, forward, n);
+        self.bar_focus = menu_nav::step(self.bar_focus, forward, n);
     }
 
     /// Keyboard (closed): open the focused menu, highlighting its first
@@ -252,7 +230,7 @@ impl MenuBar {
         if n == 0 {
             return;
         }
-        let next = step(m, forward, n);
+        let next = menu_nav::step(m, forward, n);
         self.open = Some(next);
         self.bar_focus = next;
         self.active = if self.items_per_menu[next] == 0 {
@@ -267,41 +245,16 @@ impl MenuBar {
     /// last.
     fn move_active(&mut self, forward: bool) {
         let Some(m) = self.open else { return };
-        let cnt = self.items_per_menu[m];
-        if cnt == 0 {
-            return;
-        }
-        self.active = Some(match self.active {
-            Some(a) => step(a, forward, cnt),
-            None => {
-                if forward {
-                    0
-                } else {
-                    cnt - 1
-                }
-            }
-        });
+        self.active = menu_nav::nav_move(self.active, self.items_per_menu[m], forward);
     }
 
     /// Keyboard (open): jump the active item to the first / last entry
     /// (Home / End).
     fn active_edge(&mut self, last: bool) {
         let Some(m) = self.open else { return };
-        let cnt = self.items_per_menu[m];
-        if cnt == 0 {
-            return;
+        if let Some(a) = menu_nav::nav_edge(self.items_per_menu[m], last) {
+            self.active = Some(a);
         }
-        self.active = Some(if last { cnt - 1 } else { 0 });
-    }
-}
-
-/// One-step wrap-around over `0..n` (`n > 0`). `forward` advances,
-/// `!forward` retreats; both wrap at the ends.
-fn step(current: usize, forward: bool, n: usize) -> usize {
-    if forward {
-        (current + 1) % n
-    } else {
-        (current + n - 1) % n
     }
 }
 
@@ -652,20 +605,6 @@ impl ExternalIntrospect for MenuBarExternal {
             _ => Err(InvokeError::UnknownPath),
         }
     }
-}
-
-/// Validate a signed intervene index against `[0, count)`. Negative,
-/// overflowing, and `>= count` all map to [`InterveneError::OutOfRange`]
-/// (mirrors `RadioGroupExternal::resolve_index_intervene`).
-fn resolve_index(i: i64, count: usize) -> Result<usize, InterveneError> {
-    if i < 0 {
-        return Err(InterveneError::OutOfRange);
-    }
-    let idx = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
-    if idx >= count {
-        return Err(InterveneError::OutOfRange);
-    }
-    Ok(idx)
 }
 
 #[cfg(test)]

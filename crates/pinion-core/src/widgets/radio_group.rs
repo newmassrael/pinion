@@ -341,14 +341,7 @@ impl RadioGroupExternal {
     /// `TypeMismatch` misuse — variant mismatch is reserved for
     /// `Value` shape errors).
     fn resolve_index_intervene(&self, i: i64) -> Result<usize, InterveneError> {
-        if i < 0 {
-            return Err(InterveneError::OutOfRange);
-        }
-        let idx = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
-        if idx >= self.count() {
-            return Err(InterveneError::OutOfRange);
-        }
-        Ok(idx)
+        crate::widgets::wire::resolve_index(i, self.count())
     }
 
     /// R51.87 §5.40 — AT-side active descendant index, or `None`.

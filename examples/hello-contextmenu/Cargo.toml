@@ -1,0 +1,31 @@
+[package]
+name = "hello-contextmenu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R772 §5.53 §5.38 — first pinion_widget_paint::view_context_menu consumer. Own-renderer right-click command popup (Cut/Copy/Paste/Delete) over a command-class ContextMenuExternal; opens at the cursor on secondary-button press, dismisses on click-outside / Escape / activation; WAI-ARIA menu/menuitem roles + the §3.5 menu keyboard model."
+publish = false
+
+[[bin]]
+name = "hello-contextmenu"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — `pinion_core::test_fixtures::assert_widget_view_carries_tag`
+# regression helper for the composite-paint-root-tag convention.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

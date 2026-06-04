@@ -300,6 +300,125 @@ pub fn view_menu_dropdown(
     )
 }
 
+/// Window-space placement for a floating [`view_context_menu`] popup: the
+/// cursor `anchor` to open at and the `window` size to clamp the panel
+/// within. Bundled so the paint fn stays under the argument-count limit
+/// (the two are always supplied together — the geometry the menubar
+/// dropdown derives implicitly from its title is explicit for a context
+/// menu).
+#[derive(Clone, Copy, Debug)]
+pub struct ContextMenuPlacement {
+    /// Window-space cursor anchor `(x, y)` to open the popup at.
+    pub anchor: (f32, f32),
+    /// Window size `(w, h)`; the panel is clamped to stay inside it.
+    pub window: (u32, u32),
+}
+
+/// R772 §5.53 §5.38 — floating command popup for a [`ContextMenu`], the
+/// own-renderer right-click menu (R771.1: pinion draws its own menu on
+/// every platform). Reuses the exact dropdown row + elevated-surface
+/// paint as [`view_menu_dropdown`]; the *only* difference is the anchor
+/// — a context menu floats at an arbitrary cursor anchor (window-space
+/// logical pixels) instead of flush under a menubar title, clamped so
+/// the panel stays inside the window (both carried by `placement`).
+///
+/// # Arguments
+///
+/// - `tag` — the [`ContextMenuExternal`] scope tag; item rows are tagged
+///   [`composite_item_tag`] `{tag}#i{i}` so left-clicks route to it (the
+///   same composite-tag router the menubar uses), and the R715 dismiss
+///   barrier is tagged `{tag}#barrier`.
+/// - `panel_tag` — the popup container's own tag (a11y `Menu` node +
+///   snapshot anchor).
+/// - `items` — command labels; index `i` becomes `{tag}#i{i}`.
+/// - `active` — the highlighted item, painted with the M3 state-layer.
+/// - `placement` — the cursor anchor + window bounds (see
+///   [`ContextMenuPlacement`]).
+/// - `theme` / `style` — palette + [`MenuStyle`] carrier.
+///
+/// # Returns
+///
+/// An absolutely-positioned [`Scene::Container`] tagged `panel_tag`.
+/// Place this **last** in the root child list (after a [`dismiss_barrier`]
+/// over the whole window) so it paints over everything below it.
+///
+/// [`ContextMenu`]: pinion_core::widgets::context_menu::ContextMenu
+/// [`ContextMenuExternal`]: pinion_core::widgets::context_menu::ContextMenuExternal
+/// [`dismiss_barrier`]: crate::barrier::dismiss_barrier
+#[must_use]
+pub fn view_context_menu(
+    tag: &str,
+    panel_tag: &'static str,
+    items: &[&str],
+    active: Option<usize>,
+    placement: ContextMenuPlacement,
+    theme: &Theme,
+    style: &MenuStyle,
+) -> Scene {
+    let surface = theme.resolve(ColorRole::SurfaceContainerHigh);
+    let mut rows: Vec<Scene> = Vec::with_capacity(items.len());
+    for (i, label) in items.iter().enumerate() {
+        rows.push(build_item(
+            tag,
+            i,
+            label,
+            active == Some(i),
+            surface,
+            theme,
+            style,
+        ));
+    }
+    let width = style.dropdown_width;
+    let height = style.dropdown_height(u32::try_from(items.len()).unwrap_or(u32::MAX));
+    // Clamp so the panel's far edge never leaves the window (a right-click
+    // near the right/bottom edge slides the popup back on-screen).
+    let x = anchor_px(placement.anchor.0, placement.window.0.saturating_sub(width));
+    let y = anchor_px(placement.anchor.1, placement.window.1.saturating_sub(height));
+    Scene::Container(
+        ContainerNode::new(rows)
+            .with_tag(panel_tag)
+            .with_style(
+                BoxStyle::filled(surface)
+                    .with_corner_radius(style.dropdown_radius)
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1))
+                    .with_shadows(crate::elevation::elevation(style.elevation)),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch)
+                    .with_justify(JustifyContent::Start)
+                    .with_absolute_position(x, y)
+                    .with_size(Size::px(width, height))
+                    .with_padding(Rect::new(0, style.dropdown_v_padding, 0, style.dropdown_v_padding)),
+            ),
+    )
+}
+
+/// Narrow a window-space logical-pixel coordinate to `[0, max]` as `u32`,
+/// saturating non-finite / out-of-range inputs (the textbook f32 -> px
+/// seam, mirroring `text_field::saturating_f32_to_u32`).
+fn anchor_px(v: f32, max: u32) -> u32 {
+    if !v.is_finite() || v <= 0.0 {
+        return 0;
+    }
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "max -> f32 rounds to a single saturating ceiling for the compare"
+    )]
+    let ceiling = max as f32;
+    if v >= ceiling {
+        return max;
+    }
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "v is finite and within (0, max) here, so the floor fits u32"
+    )]
+    let px = v as u32;
+    px
+}
+
 /// Compose one dropdown command row: a left-aligned label, background
 /// state-layered when it is the active descendant.
 fn build_item(
@@ -541,5 +660,69 @@ mod tests {
         );
         assert_eq!(c.layout.size.width, SizeValue::Px(s.dropdown_width));
         assert_eq!(c.layout.size.height, SizeValue::Px(s.dropdown_height(3)));
+    }
+
+    fn placement(anchor: (f32, f32), window: (u32, u32)) -> ContextMenuPlacement {
+        ContextMenuPlacement { anchor, window }
+    }
+
+    #[test]
+    fn r772_context_menu_tags_items_and_panel() {
+        let s = MenuStyle::m3_default();
+        let scene = view_context_menu(
+            "ctx", "ctx_panel", &ITEMS, None, placement((100.0, 80.0), (800, 600)), &theme(), &s,
+        );
+        let tags = collect_tags(&scene);
+        assert!(tags.contains(&"ctx_panel".to_string()), "panel tag present");
+        assert!(tags.contains(&"ctx#i0".to_string()), "items route to the ctx scope");
+        assert!(tags.contains(&"ctx#i2".to_string()));
+        assert_eq!(all_text(&scene), vec!["New", "Open", "Save"]);
+    }
+
+    #[test]
+    fn r772_context_menu_anchors_at_cursor_in_bounds() {
+        let s = MenuStyle::m3_default();
+        let scene = view_context_menu(
+            "ctx", "ctx_panel", &ITEMS, None, placement((100.0, 80.0), (800, 600)), &theme(), &s,
+        );
+        let Scene::Container(c) = &scene else {
+            panic!("expected panel Container");
+        };
+        assert_eq!(c.layout.absolute_position, Some((100, 80)));
+        assert_eq!(c.layout.size.width, SizeValue::Px(s.dropdown_width));
+        assert_eq!(c.layout.size.height, SizeValue::Px(s.dropdown_height(3)));
+    }
+
+    #[test]
+    fn r772_context_menu_clamps_to_window_edges() {
+        let s = MenuStyle::m3_default();
+        let win = (800, 600);
+        let scene = view_context_menu(
+            "ctx", "ctx_panel", &ITEMS, None, placement((790.0, 595.0), win), &theme(), &s,
+        );
+        let Scene::Container(c) = &scene else {
+            panic!("expected panel Container");
+        };
+        let max_x = win.0 - s.dropdown_width;
+        let max_y = win.1 - s.dropdown_height(3);
+        assert_eq!(
+            c.layout.absolute_position,
+            Some((max_x, max_y)),
+            "panel slid back on-screen near the edges"
+        );
+    }
+
+    #[test]
+    fn r772_context_menu_active_item_state_layered() {
+        let t = theme();
+        let s = MenuStyle::m3_default();
+        let scene = view_context_menu(
+            "ctx", "ctx_panel", &ITEMS, Some(2), placement((0.0, 0.0), (800, 600)), &t, &s,
+        );
+        let expected = t
+            .resolve(ColorRole::SurfaceContainerHigh)
+            .lerp(t.resolve(ColorRole::OnSurface), ACTIVE_ITEM_STATE_LAYER);
+        assert_eq!(tag_fill(&scene, "ctx#i2"), Some(expected));
+        assert_eq!(tag_fill(&scene, "ctx#i0"), Some(Color::TRANSPARENT));
     }
 }

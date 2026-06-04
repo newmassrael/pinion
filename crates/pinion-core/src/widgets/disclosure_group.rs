@@ -271,14 +271,7 @@ impl DisclosureGroupExternal {
     /// [`InterveneError::OutOfRange`] (variant mismatch is reserved
     /// for `Value` shape errors, per R51.91).
     fn resolve_index_intervene(&self, i: i64) -> Result<usize, InterveneError> {
-        if i < 0 {
-            return Err(InterveneError::OutOfRange);
-        }
-        let idx = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
-        if idx >= self.count() {
-            return Err(InterveneError::OutOfRange);
-        }
-        Ok(idx)
+        crate::widgets::wire::resolve_index(i, self.count())
     }
 }
 

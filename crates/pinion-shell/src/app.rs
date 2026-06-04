@@ -986,6 +986,46 @@ impl<V: WidgetView> AppShell<V> {
         }
     }
 
+    /// Dispatch a winit mouse-button transition to the substrate's
+    /// per-window input arcs. Split out of [`Self::window_event`] to keep
+    /// that dispatcher under the workspace `clippy::too_many_lines` (100)
+    /// ceiling (the app.rs extract convention).
+    ///
+    /// - **Left Pressed / Released** — pointer down / up
+    ///   ([`CoreShell::mouse_pressed_for_window`] /
+    ///   [`CoreShell::mouse_released_for_window`]).
+    /// - **Middle Pressed** — R56.2.e `apply_middle_click`, the canonical
+    ///   X11 / Wayland "paste PRIMARY at the focused text widget" path
+    ///   (via `ShellCore::middle_click`, which reads the focused tag from
+    ///   the focus manager).
+    /// - **Right Pressed** — R772 §5.53 `apply_secondary_click`, the
+    ///   own-renderer context-menu open path (R771.1: pinion draws its own
+    ///   menu on every platform). `secondary_click_for_window` reads the
+    ///   cached cursor position for `spec_id` and dispatches through
+    ///   [`CoreShell::apply_secondary_click`](pinion_runtime::CoreShell::apply_secondary_click).
+    ///
+    /// winit normalises each platform's button events (X11 `ButtonEvent` /
+    /// Wayland `wl_pointer` button / macOS `NSEvent` / Windows
+    /// `WM_*BUTTONDOWN`) under one enum, so these four arms cover every
+    /// backend. Other button / state combinations are ignored.
+    fn handle_mouse_button(&mut self, spec_id: &str, button: MouseButton, state: ElementState) {
+        match (button, state) {
+            (MouseButton::Left, ElementState::Pressed) => {
+                self.core.mouse_pressed_for_window(spec_id, PointerId::MOUSE);
+            }
+            (MouseButton::Left, ElementState::Released) => {
+                self.core.mouse_released_for_window(spec_id, PointerId::MOUSE);
+            }
+            (MouseButton::Middle, ElementState::Pressed) => {
+                self.core.middle_click();
+            }
+            (MouseButton::Right, ElementState::Pressed) => {
+                self.core.secondary_click_for_window(spec_id, PointerId::MOUSE);
+            }
+            _ => {}
+        }
+    }
+
     /// R51.62 §5.40 — dispatch one AT-side event reported by
     /// `accesskit_winit`.
     ///
@@ -1532,39 +1572,16 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 let sid = spec_id.to_owned();
                 self.handle_file_dnd(&sid, &ev);
             }
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Left,
-                ..
-            } => {
-                self.core.mouse_pressed_for_window(spec_id, PointerId::MOUSE);
-            }
-            WindowEvent::MouseInput {
-                state: ElementState::Released,
-                button: MouseButton::Left,
-                ..
-            } => {
-                self.core.mouse_released_for_window(spec_id, PointerId::MOUSE);
-            }
-            // R56.2.e §5.13 §5.22 — middle-mouse-button press routes
-            // to `WidgetView::apply_middle_click` (the canonical
-            // X11 / Wayland "paste PRIMARY at the focused text
-            // widget" UX path). winit fires this arm for every
-            // platform's middle-button press (winit normalises X11
-            // ButtonEvent / Wayland `wl_pointer` button / macOS
-            // `NSEvent` otherMouseDown / Windows `WM_MBUTTONDOWN`
-            // under one enum); the substrate's `ShellCore::middle_click`
-            // reads the focused tag from the focus manager and
-            // dispatches through `CoreShell::apply_middle_click`,
-            // which wraps the trait call in `root_owner.run`
-            // (R51.152) so application impls can reach the same
-            // reactive hooks the keyboard path uses.
-            WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Middle,
-                ..
-            } => {
-                self.core.middle_click();
+            // R56.2.e / R772 §5.13 §5.22 §5.53 — Left / Middle / Right
+            // mouse-button presses + the Left release. Extracted to
+            // `handle_mouse_button` to keep this dispatcher under the
+            // workspace `clippy::too_many_lines` (100) ceiling (the
+            // app.rs split convention). `spec_id` borrows `self.windows`,
+            // so the `&mut self` helper needs an owned id (the file-event
+            // arc above does the same `to_owned()`).
+            WindowEvent::MouseInput { state, button, .. } => {
+                let sid = spec_id.to_owned();
+                self.handle_mouse_button(&sid, button, state);
             }
             // (R51.186 §5.45 R55.C.2) winit `MouseWheel` events do
             // not carry a position field — winit follows the same

@@ -986,6 +986,36 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
+    /// R772 §5.53 §5.38 — route a secondary-button (right-click) press
+    /// through [`WidgetView::apply_secondary_click`], anchoring a context
+    /// menu at the cursor. Reads the addressed window's cached cursor
+    /// position (`CoreShell::cursor_position_for_window`, the channel
+    /// `position_caret_for_point` uses) and forwards it to
+    /// [`CoreShell::apply_secondary_click`]; on handled
+    /// (`Some(DispatchTail)`) it runs the same post-input bookkeeping as
+    /// [`Self::middle_click`] — bump the §5.34 revision, drain intents via
+    /// [`Self::handle_tail`] (re-reads cached state, redraws on change).
+    ///
+    /// pinion-shell's `AppShell::window_event`
+    /// `WindowEvent::MouseInput { button: Right, state: Pressed, .. }` arm
+    /// calls this with the event's window so the popup opens on the right
+    /// surface (winit normalises X11 / Wayland / macOS / Windows
+    /// secondary-button presses under one enum). A press before any
+    /// `cursor_moved` (no cached position) is swallowed quietly.
+    pub fn secondary_click_for_window(&mut self, window_id: &str, pid: PointerId) {
+        let Some((x, y)) = self.core.cursor_position_for_window(window_id, pid) else {
+            return;
+        };
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "window-local logical-pixel cursor coords fit f32 in every realistic viewport"
+        )]
+        if let Some(tail) = self.core.apply_secondary_click(x as f32, y as f32) {
+            self.revision.bump();
+            self.handle_tail(&tail);
+        }
+    }
+
     /// R51.78 §5.39 — Tab / Shift+Tab dispatch decoupled from winit.
     ///
     /// `AppShell::handle_key_press` (winit-side) maps

@@ -440,6 +440,29 @@ pub trait WidgetCore: 'static {
         false
     }
 
+    /// R772 §5.53 §5.38 — route a secondary-button (right-click) press
+    /// into the widget tree at the window-space point `(x, y)`.
+    ///
+    /// Unlike [`Self::apply_middle_click`] this hook *does* carry the
+    /// press position. A right-click opens a context menu **wherever the
+    /// cursor landed**, independent of which widget owns keyboard focus,
+    /// so the roving-tabindex "handle only when my tag is focused"
+    /// contract does not apply here. Position-bearing pointer hooks are
+    /// the established pattern: [`Self::position_caret_for_point`] takes
+    /// the same window-space `(x, y)` to hit-test a text caret. The
+    /// binding override walks the scene for its
+    /// [`ContextMenuExternal`](crate::widgets::context_menu::ContextMenuExternal)
+    /// and `invoke("open_at", "<x>,<y>")` to anchor the popup.
+    ///
+    /// Returns `true` if the secondary-click was handled (the shell
+    /// bumps the §5.34 revision, re-reads state, drains intents, and
+    /// repaints on visible change). Returns `false` to defer — the
+    /// default for every widget that has no context menu.
+    #[must_use]
+    fn apply_secondary_click(_scene: &mut Scene, _x: f32, _y: f32) -> bool {
+        false
+    }
+
     /// Focusable tag enumeration in Tab order. Returned tags must
     /// match either [`Self::tag`] (the top-level widget) or a sub-tag
     /// the view fn paints inside the widget (composite widgets like
