@@ -154,7 +154,15 @@ pub fn row_fill(theme: &Theme, state: RadioState, selected: bool, row_index: usi
 /// presentational header tag (`"<root>_ch<col>"`). The keyboard-focus
 /// ring is the shell's job (R694 `paint_focus_ring` over the
 /// active-descendant cell), so no focus state is threaded here.
-fn cell(tag: &str, text: &str, fg: Color, size_px: u32, style: &TableStyle, height: u32) -> Scene {
+fn cell(
+    tag: &str,
+    text: &str,
+    fg: Color,
+    size_px: u32,
+    style: &TableStyle,
+    width: u32,
+    height: u32,
+) -> Scene {
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(
             TextNode::styled(
@@ -170,10 +178,33 @@ fn cell(tag: &str, text: &str, fg: Color, size_px: u32, style: &TableStyle, heig
                 .flex(FlexDirection::Row)
                 .with_justify(JustifyContent::Start)
                 .with_align_items(AlignItems::Center)
-                .with_size(Size::px(style.col_width, height))
+                .with_size(Size::px(width, height))
                 .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
         ),
     )
+}
+
+/// R785 §5.27 — resolve the per-column widths to a full-length vector (one
+/// entry per column). `col_widths` supplies the
+/// [`ColumnWidths`](pinion_core::widgets::column_widths::ColumnWidths) model;
+/// a column beyond its length (or `None` entirely — every grid before R785,
+/// and the eager [`view_table`]) falls back to the uniform
+/// [`TableStyle::col_width`]. Resolving once here lets the header / row
+/// builders take a single `&[u32]` slice rather than threading the `Option`
+/// plus a separate column count.
+fn resolve_widths(cols: usize, col_widths: Option<&[u32]>, style: &TableStyle) -> Vec<u32> {
+    (0..cols)
+        .map(|c| col_widths.and_then(|w| w.get(c)).copied().unwrap_or(style.col_width))
+        .collect()
+}
+
+/// R785 §5.27 — a column's identity + width for the header-cell builder,
+/// bundled so [`header_cell`] stays under the argument budget (the R775
+/// [`VirtualTableData`] precedent for grouping related inputs).
+#[derive(Clone, Copy)]
+struct ColCell {
+    col: usize,
+    width: u32,
 }
 
 /// R730 §5.50 — sort-direction indicator glyphs shown on the active sort
@@ -193,12 +224,13 @@ const DESC_GLYPH: &str = "\u{25BC}";
 fn header_cell(
     tag: &str,
     click_tag: &str,
-    col: usize,
+    cell: ColCell,
     label: &str,
     sort: Option<(usize, bool)>,
     fg: Color,
     style: &TableStyle,
 ) -> Scene {
+    let ColCell { col, width } = cell;
     let label_node = Scene::Text(
         TextNode::styled(
             label.to_string(),
@@ -234,7 +266,7 @@ fn header_cell(
                     .with_justify(JustifyContent::Start)
                     .with_align_items(AlignItems::Center)
                     .with_gap(4)
-                    .with_size(Size::px(style.col_width, style.header_height))
+                    .with_size(Size::px(width, style.header_height))
                     .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
             ),
     );
@@ -253,6 +285,7 @@ fn header_row(
     click_tag: &str,
     headers: &[&str],
     sort: Option<(usize, bool)>,
+    widths: &[u32],
     theme: &Theme,
     style: &TableStyle,
 ) -> Scene {
@@ -260,7 +293,10 @@ fn header_row(
     let cells: Vec<Scene> = headers
         .iter()
         .enumerate()
-        .map(|(col, label)| header_cell(tag, click_tag, col, label, sort, fg, style))
+        .map(|(col, label)| {
+            let width = widths.get(col).copied().unwrap_or(style.col_width);
+            header_cell(tag, click_tag, ColCell { col, width }, label, sort, fg, style)
+        })
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
@@ -282,11 +318,12 @@ fn data_row(
     tag: &str,
     data_id: usize,
     cells_text: &[&str],
-    cols: usize,
     fill: Color,
     fg: Color,
+    widths: &[u32],
     style: &TableStyle,
 ) -> Scene {
+    let cols = widths.len();
     // R730 §5.40 — cells / strip are tagged by **data-row id** (not the
     // visual position), so a click on a sorted row routes to the right
     // data row's `"<data_id>_<col>"` send wire and the table's
@@ -302,6 +339,7 @@ fn data_row(
                 fg,
                 style.label_size_px,
                 style,
+                widths.get(col).copied().unwrap_or(style.col_width),
                 style.row_height,
             )
         })
@@ -373,7 +411,10 @@ pub fn view_table(
     let cols = data.headers.len();
     // The eager table is one combined coordinator (header + cells route to
     // the same `TableExternal`), so the clickable header anchor is `tag`.
-    let header = header_row(tag, tag, data.headers, sort, theme, style);
+    // Eager tables are uniform-width (no per-column model), so every column
+    // resolves to `style.col_width`.
+    let widths = resolve_widths(cols, None, style);
+    let header = header_row(tag, tag, data.headers, sort, &widths, theme, style);
     let mut children: Vec<Scene> = Vec::with_capacity(data.rows.len() + 1);
     children.push(header);
     for (visual, cells_text) in data.rows.iter().enumerate() {
@@ -385,7 +426,7 @@ pub fn view_table(
         // across re-sorts; selection / state are **data-indexed**.
         let fill = row_fill(theme, state, selected, visual);
         let fg = row_fg(theme, state);
-        children.push(data_row(tag, data_id, cells_text, cols, fill, fg, style));
+        children.push(data_row(tag, data_id, cells_text, fill, fg, &widths, style));
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -437,6 +478,15 @@ pub struct VirtualTableData<'a> {
     /// to source row `order[view_pos]`, so a re-sort reorders the rows while
     /// the data-indexed cell tags / selection stay correct.
     pub order: Option<&'a [usize]>,
+    /// R785 §5.27 — per-column widths (logical px), the
+    /// [`ColumnWidths`](pinion_core::widgets::column_widths::ColumnWidths)
+    /// snapshot. `None` tiles every column at the uniform
+    /// [`TableStyle::col_width`] (every grid before R785); `Some(widths)` sizes
+    /// each column individually and the grid's content width becomes their sum
+    /// (so widening a column past the viewport engages the R784 horizontal
+    /// scroll). A column index beyond `widths.len()` falls back to the uniform
+    /// width.
+    pub col_widths: Option<&'a [u32]>,
 }
 
 /// R784 §5.45 — the two single-axis [`ScrollState`]s a virtualized
@@ -525,7 +575,11 @@ pub fn view_virtual_table(
     mut build_cells: impl FnMut(usize) -> Vec<String>,
 ) -> Scene {
     let cols = data.headers.len();
-    let total_w = u32::try_from(cols).unwrap_or(0).saturating_mul(style.col_width);
+    // R785 — resolve the per-column widths once (uniform `style.col_width`
+    // fallback when no width model is wired). Content width is their sum, so
+    // widening a column grows the horizontal scroll extent (R784).
+    let widths = resolve_widths(cols, data.col_widths, style);
+    let total_w: u32 = widths.iter().copied().sum();
     // R778 — window over the *view* length: the sort permutation's
     // `order.len()` when sorted, else the raw `item_count` (identity). Each
     // visual position resolves to its source row through `order` (the 1-D
@@ -564,12 +618,20 @@ pub fn view_virtual_table(
         // row.
         let fill = row_fill(theme, RadioState::Idle, is_selected(source), view_pos);
         let fg = row_fg(theme, RadioState::Idle);
-        data_row(tag, source, &cell_refs, cols, fill, fg, style)
+        data_row(tag, source, &cell_refs, fill, fg, &widths, style)
     });
     let body = assemble_windowed_flex(scroll.body, total_w, total_h, slots);
     // R778 — clickable headers route to the sort anchor (`sort_tag`) when a
     // sort coordinator is wired, else stay on `tag` (R777 default).
-    let header = header_row(tag, data.sort_tag.unwrap_or(tag), data.headers, data.sort, theme, style);
+    let header = header_row(
+        tag,
+        data.sort_tag.unwrap_or(tag),
+        data.headers,
+        data.sort,
+        &widths,
+        theme,
+        style,
+    );
 
     // R784 — the scrolled column: the frozen header above the inner
     // vertical body scroll. This whole `total_w`-wide column is what the
@@ -842,6 +904,7 @@ mod tests {
                     sort: None,
                     sort_tag: None,
                     order: None,
+                    col_widths: None,
                 },
                 &theme,
                 &style,
@@ -953,6 +1016,71 @@ mod tests {
         assert_eq!(h.tag.as_deref(), Some("vtbl_h"), "derived from the h_scroll tag");
     }
 
+    /// Walk to the container tagged `tag` and return its layout-sidecar pixel
+    /// width (`None` if absent or not a `Px` size). R785 cells carry their
+    /// per-column width here.
+    fn cell_layout_width(scene: &Scene, tag: &str) -> Option<u32> {
+        use pinion_core::style::SizeValue;
+        fn walk(s: &Scene, tag: &str) -> Option<u32> {
+            match s {
+                Scene::Container(c) => {
+                    if c.tag.as_deref() == Some(tag) {
+                        if let SizeValue::Px(w) = c.layout.size.width {
+                            return Some(w);
+                        }
+                    }
+                    c.children.iter().find_map(|ch| walk(ch, tag))
+                }
+                Scene::Scroll(s) => walk(s.content.as_ref(), tag),
+                _ => None,
+            }
+        }
+        walk(scene, tag)
+    }
+
+    #[test]
+    fn r785_per_column_widths_size_each_cell() {
+        // R785 — `col_widths: Some(..)` sizes each column's cell individually
+        // (vs the uniform `style.col_width` fallback). The per-column width is
+        // threaded into each data cell's layout sidecar.
+        let state = Rc::new(ScrollState::new());
+        state.set_measured_viewport(360, 360);
+        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
+        let widths = [200u32, 50, 300];
+        let scene = Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                GridScroll { body: &state, horizontal: &h_state },
+                VirtualTableData {
+                    headers: &VT_HEADERS,
+                    item_count: 5,
+                    overscan: 1,
+                    sort: None,
+                    sort_tag: None,
+                    order: None,
+                    col_widths: Some(&widths),
+                },
+                &light(),
+                &TableStyle::m3(),
+                |_| false,
+                |id| vec![format!("{id}"), "x".to_string(), "y".to_string()],
+            )
+        });
+        assert_eq!(cell_layout_width(&scene, "vtbl#0_0"), Some(200), "col 0 cell width");
+        assert_eq!(cell_layout_width(&scene, "vtbl#0_1"), Some(50), "col 1 cell width");
+        assert_eq!(cell_layout_width(&scene, "vtbl#0_2"), Some(300), "col 2 cell width");
+    }
+
+    #[test]
+    fn r785_no_col_widths_falls_back_to_uniform() {
+        // R785 — `col_widths: None` keeps the uniform `style.col_width` (the
+        // pre-R785 behaviour every existing grid relies on).
+        let scene = run_vtable(360, 0);
+        let uniform = TableStyle::m3().col_width;
+        assert_eq!(cell_layout_width(&scene, "vtbl#0_0"), Some(uniform), "uniform fallback");
+        assert_eq!(cell_layout_width(&scene, "vtbl#0_1"), Some(uniform), "uniform fallback");
+    }
+
     #[test]
     fn r784_header_and_body_share_one_horizontal_scroll() {
         // Frozen-header sync: the header (`vtbl_hrow`) and the body rows
@@ -1030,6 +1158,7 @@ mod tests {
                     sort,
                     sort_tag: Some("vsort"),
                     order: Some(order),
+                    col_widths: None,
                 },
                 &theme,
                 &style,

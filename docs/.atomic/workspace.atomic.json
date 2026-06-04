@@ -30373,6 +30373,52 @@
         "horizontal wheel/shift-wheel routing deferred (RPC + nested scroll sufficient; wheel maps vertical today)"
       ]
     },
+    "R785": {
+      "decision_summary": "R785 §5.27 per-column width model + AI-first column resize: ColumnWidths reactive holder + ColumnWidthExternal (invoke set_col_width) + per-column width threading in view_virtual_table; widening a column grows the R784 horizontal scroll extent (resize and h-scroll compose). Live-drag handle is the R786 pointer-wire follow-up.",
+      "changes_bullets": [
+        "ColumnWidths reactive holder (Signal<Vec<u32>> + min_width clamp + tag) + use_column_widths hook + ColumnWidthExternal (query widths/total/cols/width.N/min_width, intervene widths, invoke set_col_width returns clamped) — mirrors GridSortState/GridSortExternal (peer model, no undo: optionally-undoable deferred R779.1)",
+        "paint: VirtualTableData.col_widths Option<&[u32]>; resolve_widths once to full-length slice, threaded through header_row/data_row/cell; ColCell bundle keeps header_cell under arg budget; total_w = sum (widening grows R784 h-scroll)",
+        "RPC set_col_width via invoke channel (AI-first, setter-returns-read-outcome clamped width); axis orthogonal to sort/selection (separate external)",
+        "hello-grid-hscroll now column-resizable (ColumnWidths seeded uniform 130 + ColumnWidthExternal extra), 5 grid callers migrated (col_widths: None)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5465 pass (R784 5455, +10: 8 column_widths core + 2 table paint)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic)",
+        "demo tools/demos/r785_grid_resize.py PASS: 31 assertions (width model query + AI-first resize exact-reposition + resize-grows-hscroll compose + clamp/no-op/restore)",
+        "regression: r784/r775/r777/r778/r782/r783 demos re-run PASS (ColCell arg-refactor + col_widths threading behavior-preserving)"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R786: live-drag column resize handle (pointer-wire consumer = R743 XTEST); ColumnWidths.set_width is the mutation point a drag dx maps to (fire-and-forget, return ignored)",
+        "column-resize undo deferred (R779.1 optionally-undoable-mutation axis); ColumnWidthExternal has no undo stack",
+        "split_once('=') skeleton shared with grid_filter_from_str (2 consumers) but payload types diverge (u32 vs string) + trivial decision-0 wiring = inline per R778 net-zero (checked, declined lift)"
+      ],
+      "publishable_decision_summary": "R785 §5.27 per-column width model + AI-first column resize: ColumnWidths reactive holder + ColumnWidthExternal (invoke set_col_width) + per-column width threading in view_virtual_table; widening a column grows the R784 horizontal scroll extent (resize and h-scroll compose). Live-drag handle is the R786 pointer-wire follow-up.",
+      "publishable_changes_bullets": [
+        "ColumnWidths reactive holder (Signal<Vec<u32>> + min_width clamp + tag) + use_column_widths hook + ColumnWidthExternal (query widths/total/cols/width.N/min_width, intervene widths, invoke set_col_width returns clamped) — mirrors GridSortState/GridSortExternal (peer model, no undo: optionally-undoable deferred R779.1)",
+        "paint: VirtualTableData.col_widths Option<&[u32]>; resolve_widths once to full-length slice, threaded through header_row/data_row/cell; ColCell bundle keeps header_cell under arg budget; total_w = sum (widening grows R784 h-scroll)",
+        "RPC set_col_width via invoke channel (AI-first, setter-returns-read-outcome clamped width); axis orthogonal to sort/selection (separate external)",
+        "hello-grid-hscroll now column-resizable (ColumnWidths seeded uniform 130 + ColumnWidthExternal extra), 5 grid callers migrated (col_widths: None)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5465 pass (R784 5455, +10: 8 column_widths core + 2 table paint)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic)",
+        "demo tools/demos/r785_grid_resize.py PASS: 31 assertions (width model query + AI-first resize exact-reposition + resize-grows-hscroll compose + clamp/no-op/restore)",
+        "regression: r784/r775/r777/r778/r782/r783 demos re-run PASS (ColCell arg-refactor + col_widths threading behavior-preserving)"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R786: live-drag column resize handle (pointer-wire consumer = R743 XTEST); ColumnWidths.set_width is the mutation point a drag dx maps to (fire-and-forget, return ignored)",
+        "column-resize undo deferred (R779.1 optionally-undoable-mutation axis); ColumnWidthExternal has no undo stack",
+        "split_once('=') skeleton shared with grid_filter_from_str (2 consumers) but payload types diverge (u32 vs string) + trivial decision-0 wiring = inline per R778 net-zero (checked, declined lift)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

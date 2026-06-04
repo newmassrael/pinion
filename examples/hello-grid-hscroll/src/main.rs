@@ -38,6 +38,8 @@ use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
 use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::column_widths::{use_column_widths, ColumnWidthExternal};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
@@ -75,6 +77,11 @@ const SCROLL_KEY: &str = "ghs_scroll";
 /// `ScrollState`. `scene/set_scroll_offset` on this tag slides the grid
 /// sideways; the header and body move together.
 const H_SCROLL_KEY: &str = "ghs_hscroll";
+/// R785 — cache key for the shared [`ColumnWidths`] model, and the tag of
+/// the [`ColumnWidthExternal`] that drives it. `invoke set_col_width` on this
+/// tag resizes a column; widening past the window grows the R784 horizontal
+/// scroll extent.
+const COLS_KEY: &str = "ghs_cols";
 
 // Display-only grid: no widget state of its own (`type State = ()`).
 // Repaints are driven by the theme + scroll-offset + measured-viewport
@@ -116,6 +123,11 @@ fn row_cells(id: usize) -> Vec<String> {
 fn view(_state: (), _frame: &Frame) -> Scene {
     let scroll = use_scroll_state(SCROLL_KEY);
     let h_scroll = use_scroll_state(H_SCROLL_KEY);
+    // R785 — the shared per-column widths, seeded uniform so the boot layout
+    // matches the R784 slice; `set_col_width` (via the external) widens a
+    // column and this view re-runs with the new widths.
+    let widths = use_column_widths(COLS_KEY, || vec![COL_W; NCOLS]);
+    let col_widths = widths.widths();
     let theme = use_theme(THEME_TAG).theme_animated();
     let style = table_style();
 
@@ -129,6 +141,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             sort: None,
             sort_tag: None,
             order: None,
+            col_widths: Some(&col_widths),
         },
         &theme,
         &style,
@@ -155,6 +168,16 @@ impl WidgetCore for GridHscrollView {
     /// via their `ScrollState`s, no extra External needed.
     fn create_external() -> Box<dyn External> {
         Box::new(StubExternal::new())
+    }
+
+    /// R785 — the column-width model surface: a [`ColumnWidthExternal`] over
+    /// the **same** shared [`ColumnWidths`] the view reads via
+    /// [`use_column_widths`]. `invoke set_col_width "<col>=<width>"` on
+    /// [`COLS_KEY`] widens a column; the width `Signal` write repaints the
+    /// grid and the new total content width grows the horizontal scroll.
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        let widths = use_column_widths(COLS_KEY, || vec![COL_W; NCOLS]);
+        vec![ExtraExternal::new(COLS_KEY, Box::new(ColumnWidthExternal::new(widths)))]
     }
 
     fn tag() -> &'static str {
