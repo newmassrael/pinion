@@ -211,7 +211,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         },
         &theme,
         &style,
-        selected,
+        |id| selected == Some(id),
         row_cells,
     );
 

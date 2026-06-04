@@ -121,7 +121,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         },
         &theme,
         &style,
-        None, // display-only grid: no selection
+        |_| false, // display-only grid: no selection
         row_cells,
     );
 

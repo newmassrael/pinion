@@ -29,6 +29,7 @@ members = [
     "examples/hello-virtual-table",
     "examples/hello-grid-nav",
     "examples/hello-grid-sort",
+    "examples/hello-grid-multi-select",
     "examples/hello-variable-list",
     "examples/hello-virtual-select",
     "examples/hello-virtual-nav",

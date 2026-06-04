@@ -50,7 +50,7 @@
 //! focusable tab stop.
 
 use pinion_a11y::{windowed_list_nodes_multiselected, AccessNode, WidgetA11y};
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
@@ -60,7 +60,9 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::{nav_select_key, RowMetrics, VirtualSelectExternal};
+use pinion_core::widgets::virtual_select::{
+    nav_select_key, read_selection, RowMetrics, VirtualSelectExternal,
+};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
@@ -274,19 +276,10 @@ impl WidgetCore for MultiSelectView {
     /// repaints; scroll offset + scrollbar phase repaint via their own
     /// reactive `Signal` subscriptions the view opens.
     fn read_state(scene: &Scene) -> MultiSelection {
-        let indices: Vec<usize> = scene
+        let indices = scene
             .find_external_with_tag(LIST_TAG)
             .and_then(|node| node.handle.introspect())
-            .and_then(|intro| match intro.query("selection") {
-                Some(IntrospectValue::Json(serde_json::Value::Array(items))) => Some(
-                    items
-                        .iter()
-                        .filter_map(serde_json::Value::as_u64)
-                        .filter_map(|v| usize::try_from(v).ok())
-                        .collect(),
-                ),
-                _ => None,
-            })
+            .map(read_selection)
             .unwrap_or_default();
         MultiSelection::from_indices(&indices)
     }

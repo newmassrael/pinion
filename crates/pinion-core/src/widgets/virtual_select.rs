@@ -699,6 +699,29 @@ impl ExternalIntrospect for VirtualSelectExternal {
     }
 }
 
+/// R782 §5.40 — **deserialize peer** of the coordinator's `"selection"`
+/// query (the `selection_value` encode): decode the multi-select index set
+/// from an introspection surface that delegates it to a
+/// [`VirtualSelectExternal`] in `Multi` mode. The inverse of that encode,
+/// kept in the same module so a slot rename can't silently break a binding's
+/// hand-decode (the R743.1 `read_reorder` decode-of-encode rule; the
+/// `"selection"` array is now read by both `hello-multi-select` and
+/// `hello-grid-multi-select`). Returns the indices in the coordinator's order
+/// (ascending — a `BTreeSet`); the empty array decodes to an empty `Vec`, and
+/// an absent / mistyped slot likewise yields `Vec::new()`. Bindings map this
+/// into their own `Copy` paint projection (e.g. a per-row bitmap).
+#[must_use]
+pub fn read_selection(intro: &dyn ExternalIntrospect) -> Vec<usize> {
+    match intro.query("selection") {
+        Some(IntrospectValue::Json(serde_json::Value::Array(items))) => items
+            .iter()
+            .filter_map(serde_json::Value::as_u64)
+            .filter_map(|v| usize::try_from(v).ok())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// R777 §5.27 — the standard **linear-clamp** keyboard navigation policy
 /// for a finite virtualized collection: map a key to the next selected
 /// index given the current selection and a `page` size (rows per measured
@@ -1200,6 +1223,28 @@ mod tests {
         // toggled row) to the clicked row.
         s.handle_send("6:PointerUp:s");
         assert_eq!(s.selection(), vec![4, 5, 6], "Shift-click extends from anchor 4");
+    }
+
+    #[test]
+    fn read_selection_round_trips_the_encode() {
+        // R782 §5.40 — `read_selection` is the exact inverse of the
+        // coordinator's `"selection"` query encode (the R743.1 decode-of-encode
+        // contract): selecting a set and decoding through the introspect
+        // surface yields the same ascending index list, and an empty
+        // selection decodes to an empty `Vec`.
+        let mut s = VirtualSelectExternal::new_multi(10_000);
+        s.toggle(9);
+        s.toggle(2);
+        s.toggle(5_000);
+        let intro: &dyn ExternalIntrospect = &s;
+        assert_eq!(
+            read_selection(intro),
+            vec![2, 9, 5_000],
+            "decode is the inverse of the selection_value encode (ascending set)",
+        );
+        let empty = VirtualSelectExternal::new_multi(10);
+        let empty_intro: &dyn ExternalIntrospect = &empty;
+        assert_eq!(read_selection(empty_intro), Vec::<usize>::new(), "empty selection decodes to []");
     }
 
     #[test]

@@ -471,12 +471,14 @@ pub struct VirtualTableData<'a> {
 /// - `data` — the [`VirtualTableData`] (column headers + total row count +
 ///   overscan).
 /// - `theme` / `style` — palette + [`TableStyle`] dimensions.
-/// - `selected` — the single selected **data-row** index, or `None`. The
-///   selected row's strip is washed with the accent tint (the same
-///   `row_fill` selection path the eager [`view_table`] uses). A
-///   display-only grid passes `None`; an interactive grid forwards its
-///   index-model selection coordinator (R777, mirroring the
-///   `view_flex_virtual_list` + `VirtualSelectExternal` list pairing).
+/// - `is_selected` — a predicate over the **data-row** index: a `true` row's
+///   strip is washed with the accent tint (the same `row_fill` selection
+///   path the eager [`view_table`] uses). This is the data-indexed
+///   generalization of a single selected index — single-select passes
+///   `|id| selected == Some(id)`, R782 multi-select passes set membership,
+///   and a display-only grid passes `|_| false`. One virtualized-grid paint
+///   path serves all three (no parallel `_multi` body to diverge from the
+///   windowed-sizer geometry). It is invoked only for the windowed rows.
 /// - `build_cells` — invoked once per windowed data-row index; returns the
 ///   row's cell texts (a cell beyond the returned length renders blank).
 #[must_use]
@@ -486,7 +488,7 @@ pub fn view_virtual_table(
     data: VirtualTableData<'_>,
     theme: &Theme,
     style: &TableStyle,
-    selected: Option<usize>,
+    is_selected: impl Fn(usize) -> bool,
     mut build_cells: impl FnMut(usize) -> Vec<String>,
 ) -> Scene {
     let cols = data.headers.len();
@@ -514,14 +516,15 @@ pub fn view_virtual_table(
         let source = data.order.map_or(view_pos, |o| o.get(view_pos).copied().unwrap_or(view_pos));
         let cells_text = build_cells(source);
         let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
-        // Rows are idle (no per-row hover/press at the grid level); the
+        // Rows are idle (no per-row hover/press at the grid level); a
         // selected row gets the accent tint — selection is **data-indexed**
-        // (`selected == Some(source)`), so it survives a re-sort. Zebra
-        // parity is **visual** (`view_pos`), so the stripe pattern stays
-        // stable across re-sorts (the eager `view_table` convention); cells
-        // / strip tag by **source** id so a click on a sorted row routes to
-        // the right data row.
-        let fill = row_fill(theme, RadioState::Idle, selected == Some(source), view_pos);
+        // (`is_selected(source)`), so it survives a re-sort, and several
+        // rows may be selected at once in multi-select. Zebra parity is
+        // **visual** (`view_pos`), so the stripe pattern stays stable across
+        // re-sorts (the eager `view_table` convention); cells / strip tag by
+        // **source** id so a click on a sorted row routes to the right data
+        // row.
+        let fill = row_fill(theme, RadioState::Idle, is_selected(source), view_pos);
         let fg = row_fg(theme, RadioState::Idle);
         data_row(tag, source, &cell_refs, cols, fill, fg, style)
     });
@@ -768,7 +771,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                None,
+                |_| false,
                 |id| vec![format!("{id}"), format!("Row {id}"), format!("v{id}")],
             )
         })
@@ -897,7 +900,7 @@ mod tests {
                 },
                 &theme,
                 &style,
-                None,
+                |_| false,
                 |id| vec![format!("{id}"), format!("Row {id}"), format!("v{id}")],
             )
         })

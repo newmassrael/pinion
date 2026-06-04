@@ -1,23 +1,21 @@
 [package]
-name = "hello-multi-select"
+name = "hello-grid-multi-select"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R780 §5.40 multi-select index model: a 10,000-row flex-viewport (AutoSizer) virtualized list whose Shift+Arrow extends a contiguous range, Ctrl+A selects all, and Ctrl+Space toggles the active row. Extends R746 VirtualSelect into a Qt QItemSelectionModel ExtendedSelection coordinator (selection set + anchor), with aria-multiselectable + per-row aria-selected."
+description = "R782 §5.40 multi-select data-grid at scale: a 10,000-row virtualized data-grid (frozen header + flex-viewport body) whose selection is an arbitrary row set. Shift/Ctrl-click and Shift+nav / Ctrl+A / Ctrl+Space grow and shrink the set; several visible rows wash accent at once. Composes the R780 VirtualSelect Multi mode + R781 modifier-click wire + R775 view_virtual_table, with no coordinator changes."
 publish = false
 
 [[bin]]
-name = "hello-multi-select"
+name = "hello-grid-multi-select"
 path = "src/main.rs"
 
 [dependencies]
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
-# R780 §5.40 — `view_flex_virtual_list` AutoSizer assembly + the
-# `view_vertical_scrollbar` peer.
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 vello = { workspace = true }
 

@@ -30161,6 +30161,68 @@
         "optionally-undoable lift deferred (2-consumer); column resize/h-scroll+frozen header (R775)."
       ]
     },
+    "R782": {
+      "decision_summary": "R782 §5.40 §5.27 multi-select data-grid at scale: VirtualSelect Multi mode + R781 modifier-click wire drive a 10k-row virtualized grid with no coordinator changes; lift windowed_grid_nodes_multiselected (a11y) + read_selection decode-of-encode (R743.1) + generalize view_virtual_table selection to a row predicate",
+      "changes_bullets": [
+        "a11y: lift windowed_grid_nodes_multiselected (GridSelection::Multi), grid peer of R780 list builder",
+        "a11y: grid aria-multiselectable + per-row aria-selected=contains(id); R781 carry (a) cleared",
+        "paint: view_virtual_table selection Option<usize> -> is_selected predicate (single+multi, one path)",
+        "paint: single callers pass |id| selected==Some(id) (expr already inline); display passes |_| false",
+        "core: lift read_selection(&dyn ExternalIntrospect)->Vec<usize> by selection_value encode (R743.1)",
+        "core: migrate both consumers off hand-decode (multi list+grid); drop their serde_json dep",
+        "example: hello-grid-multi-select 10k multi-select data-grid; coordinator unchanged (Multi+R781 wire)",
+        "demo: r782_grid_multi_select.py 48 assertions: Ctrl/Shift-click, Ctrl+A, scroll-into-view at scale"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 5436 passed / 0 failed (R781 5430 +6: a11y grid+read_selection+example)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (pedantic)",
+        "new demo r782 (48 assertions) PASS; r780/r781 re-run PASS after read_selection migration",
+        "grid family r777/r778/r779 PASS (view_virtual_table predicate behavior-preserving)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "MultiSelection [bool;N] bitmap = 2nd identical copy (list+grid); inline per-example, declared-defer",
+        "that bitmap has no shared decision/home; hello-table-multi richer 2-D shape, not a 3rd copy",
+        "column resize / h-scroll + frozen-header sync (R775 carry); live drag handle = R743 XTEST",
+        "grid filter at scale (predicate-over-rows) composed with GridSortState",
+        "mouse-click pixel-proof via XTEST deferred (R743); function verified via scene/modifiers+click",
+        "tui mouse = empty modifiers (crossterm mapping deferred); keyboard multi-select works in tui",
+        "windowed_grid_nodes_sorted + optionally-undoable lift still deferred (1/2-consumer)"
+      ],
+      "publishable_decision_summary": "R782 §5.40 §5.27 multi-select data-grid at scale: VirtualSelect Multi mode + R781 modifier-click wire drive a 10k-row virtualized grid with no coordinator changes; lift windowed_grid_nodes_multiselected (a11y) + read_selection decode-of-encode (R743.1) + generalize view_virtual_table selection to a row predicate",
+      "publishable_changes_bullets": [
+        "a11y: lift windowed_grid_nodes_multiselected (GridSelection::Multi), grid peer of R780 list builder",
+        "a11y: grid aria-multiselectable + per-row aria-selected=contains(id); R781 carry (a) cleared",
+        "paint: view_virtual_table selection Option<usize> -> is_selected predicate (single+multi, one path)",
+        "paint: single callers pass |id| selected==Some(id) (expr already inline); display passes |_| false",
+        "core: lift read_selection(&dyn ExternalIntrospect)->Vec<usize> by selection_value encode (R743.1)",
+        "core: migrate both consumers off hand-decode (multi list+grid); drop their serde_json dep",
+        "example: hello-grid-multi-select 10k multi-select data-grid; coordinator unchanged (Multi+R781 wire)",
+        "demo: r782_grid_multi_select.py 48 assertions: Ctrl/Shift-click, Ctrl+A, scroll-into-view at scale"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 5436 passed / 0 failed (R781 5430 +6: a11y grid+read_selection+example)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (pedantic)",
+        "new demo r782 (48 assertions) PASS; r780/r781 re-run PASS after read_selection migration",
+        "grid family r777/r778/r779 PASS (view_virtual_table predicate behavior-preserving)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "MultiSelection [bool;N] bitmap = 2nd identical copy (list+grid); inline per-example, declared-defer",
+        "that bitmap has no shared decision/home; hello-table-multi richer 2-D shape, not a 3rd copy",
+        "column resize / h-scroll + frozen-header sync (R775 carry); live drag handle = R743 XTEST",
+        "grid filter at scale (predicate-over-rows) composed with GridSortState",
+        "mouse-click pixel-proof via XTEST deferred (R743); function verified via scene/modifiers+click",
+        "tui mouse = empty modifiers (crossterm mapping deferred); keyboard multi-select works in tui",
+        "windowed_grid_nodes_sorted + optionally-undoable lift still deferred (1/2-consumer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

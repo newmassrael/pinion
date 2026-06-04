@@ -60,14 +60,17 @@ pub fn windowed_grid_nodes(
 }
 
 /// Whether the grid exposes an `aria-selected` axis on its data rows, and
-/// (if so) which data-row index is selected. Distinguishes the two public
-/// builders without an `Option<Option<usize>>`.
+/// (if so) how membership is decided. Distinguishes the three public
+/// builders without nested `Option`s.
 #[derive(Clone, Copy)]
-enum GridSelection {
+enum GridSelection<'a> {
     /// Display-only — data rows carry no `aria-selected`.
     Display,
     /// Single-select — `aria-selected = (id == _)` on each data row.
     Single(Option<usize>),
+    /// Multi-select — `aria-selected = set.contains(id)` on each data row,
+    /// and the grid container is `aria-multiselectable`.
+    Multi(&'a std::collections::BTreeSet<usize>),
 }
 
 /// The cell paint tag for data row `id`, column `col` — the
@@ -98,6 +101,11 @@ fn grid_nodes(
     let mut grid = AccessNode::new(grid_tag, AriaRole::Grid)
         .with_name(grid_name)
         .with_size_of_set(set_size);
+    // Multi-select: selection is an arbitrary row **set**, so the grid
+    // container is `aria-multiselectable` (Display / Single are not).
+    if matches!(selection, GridSelection::Multi(_)) {
+        grid.multiselectable = true;
+    }
     grid = grid.with_child(format!("{grid_tag}_hrow"));
     for id in window.indices() {
         grid = grid.with_child(format!("{grid_tag}_row{id}"));
@@ -126,10 +134,13 @@ fn grid_nodes(
         for col in 0..ncols {
             row = row.with_child(cell_tag(grid_tag, id, col));
         }
-        // Single-select: aria-selected on the ROW (SelectRows). Display-only
-        // omits the axis entirely.
-        if let GridSelection::Single(selected) = selection {
-            row = row.with_selected(selected == Some(id));
+        // aria-selected on the ROW (WAI-ARIA `SelectRows`): single-select
+        // tests `id == selected`, multi-select tests set membership.
+        // Display-only omits the axis entirely.
+        match selection {
+            GridSelection::Display => {}
+            GridSelection::Single(selected) => row = row.with_selected(selected == Some(id)),
+            GridSelection::Multi(set) => row = row.with_selected(set.contains(&id)),
         }
         nodes.push(row);
         for col in 0..ncols {
@@ -155,8 +166,8 @@ fn grid_nodes(
 /// scrolls back.
 ///
 /// `selected` is the absolute data-row index of the selected row, or
-/// `None`. Single-select — no `aria-multiselectable` (a multi-select index
-/// model is a later additive axis).
+/// `None`. Single-select — no `aria-multiselectable` (the multi-select index
+/// model is the additive [`windowed_grid_nodes_multiselected`] peer).
 #[must_use]
 pub fn windowed_grid_nodes_selected(
     grid_tag: &str,
@@ -167,6 +178,41 @@ pub fn windowed_grid_nodes_selected(
     selected: Option<usize>,
 ) -> Vec<AccessNode> {
     grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Single(selected))
+}
+
+/// Build a **multi-select** virtualized `grid` (R782 §5.40): the same
+/// container + frozen header + windowed-row topology as
+/// [`windowed_grid_nodes`], but the grid container additionally carries
+/// `aria-multiselectable="true"` and every rendered data `row` carries
+/// `aria-selected = selection.contains(id)` — so several visible rows can be
+/// `aria-selected` at once (WAI-ARIA `SelectRows`: the selection axis lives
+/// on the `row`, not individual cells).
+///
+/// This is the grid analogue of
+/// [`windowed_list_nodes_multiselected`](crate::windowed_list_nodes_multiselected),
+/// and the decorated peer the single-select [`windowed_grid_nodes_selected`]
+/// serves alongside — a virtualized grid whose selection is held as an
+/// arbitrary index **set** by a
+/// [`VirtualSelectExternal`](pinion_core::widgets::virtual_select::VirtualSelectExternal)
+/// in `Multi` mode. It is the **second** windowed-grid multi-select consumer
+/// (after the eager `hello-table-multi`), the R758-cadence trigger that
+/// lifts the windowed builder out of the example (R780/R781 carry (a)). A
+/// selected row scrolled out of the window simply has no node this frame;
+/// the set survives in the coordinator and re-paints when the row scrolls
+/// back.
+///
+/// `selection` is the set of selected absolute data-row indices (built over
+/// the window by the caller, exactly as the list peer does).
+#[must_use]
+pub fn windowed_grid_nodes_multiselected(
+    grid_tag: &str,
+    grid_name: &str,
+    headers: &[&str],
+    set_size: u32,
+    window: &VisibleWindow,
+    selection: &std::collections::BTreeSet<usize>,
+) -> Vec<AccessNode> {
+    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Multi(selection))
 }
 
 #[cfg(test)]
@@ -261,5 +307,75 @@ mod tests {
         for n in nodes.iter().filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow") {
             assert_eq!(n.selected, Some(false));
         }
+    }
+
+    // ── R782 multi-select decorated variant ─────────────────────────
+
+    #[test]
+    fn multiselect_marks_every_member_and_the_container() {
+        // Window 100..104; rows 101 and 103 selected → both rows
+        // aria-selected, the grid container aria-multiselectable.
+        let selection: std::collections::BTreeSet<usize> = [101, 103].into_iter().collect();
+        let nodes = windowed_grid_nodes_multiselected(
+            "vtbl",
+            "G",
+            &HEADERS,
+            10_000,
+            &window(100, 4),
+            &selection,
+        );
+        assert!(nodes[0].multiselectable, "multi-select grid is aria-multiselectable");
+        let row101 = nodes.iter().find(|n| n.tag == "vtbl_row101").unwrap();
+        let row103 = nodes.iter().find(|n| n.tag == "vtbl_row103").unwrap();
+        let row102 = nodes.iter().find(|n| n.tag == "vtbl_row102").unwrap();
+        assert_eq!(row101.selected, Some(true), "member row is aria-selected");
+        assert_eq!(row103.selected, Some(true), "a second member is aria-selected at once");
+        assert_eq!(row102.selected, Some(false), "a non-member between them is not");
+        // The header row never gets a selected axis.
+        let hrow = nodes.iter().find(|n| n.tag == "vtbl_hrow").unwrap();
+        assert_eq!(hrow.selected, None, "header row carries no aria-selected");
+    }
+
+    #[test]
+    fn multiselect_is_a_superset_of_the_display_topology() {
+        // The multi builder must build the IDENTICAL container + header +
+        // row + cell topology as the display-only builder — only the
+        // container `aria-multiselectable` + per-row `aria-selected` are
+        // added.
+        let empty = std::collections::BTreeSet::new();
+        let plain = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(0, 2));
+        let decorated =
+            windowed_grid_nodes_multiselected("vtbl", "G", &HEADERS, 10_000, &window(0, 2), &empty);
+        assert_eq!(plain.len(), decorated.len());
+        for (p, d) in plain.iter().zip(&decorated) {
+            assert_eq!(p.tag, d.tag);
+            assert_eq!(p.role, d.role);
+            assert_eq!(p.position_in_set, d.position_in_set);
+            assert_eq!(p.children, d.children);
+        }
+        // Display-only is not multiselectable; the multi container is.
+        assert!(!plain[0].multiselectable);
+        assert!(decorated[0].multiselectable);
+        let d_row = decorated.iter().find(|n| n.tag == "vtbl_row0").unwrap();
+        assert_eq!(d_row.selected, Some(false), "decorated row sets aria-selected");
+    }
+
+    #[test]
+    fn multiselect_empty_window_yields_grid_and_header_only() {
+        let selection: std::collections::BTreeSet<usize> = [0, 5].into_iter().collect();
+        let nodes = windowed_grid_nodes_multiselected(
+            "vtbl",
+            "G",
+            &HEADERS,
+            10_000,
+            &VisibleWindow::EMPTY,
+            &selection,
+        );
+        assert!(nodes[0].multiselectable, "the container axis still applies");
+        let data_rows = nodes
+            .iter()
+            .filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow")
+            .count();
+        assert_eq!(data_rows, 0, "an empty window has no data-row nodes");
     }
 }
