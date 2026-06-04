@@ -30281,6 +30281,48 @@
         "sorted/filtered-grid keyboard roving by visual position deferred (R779 carry)"
       ]
     },
+    "R783.1": {
+      "decision_summary": "R783.1 audit-correction: lift read_selected decode-of-encode SSOT — the scalar sibling of R782 read_selection was hand-rolled byte-identically in 6 single-select consumers; lift next to selected_value encode + migrate all (no 3rd copy), per R743.1",
+      "changes_bullets": [
+        "lift read_selected(&dyn ExternalIntrospect)->Option<usize> next to read_selection (selected_value encode)",
+        "migrate 6 hand-decoders (virtual-select/-nav, grid-nav/-sort/-filter, virtual-sort) off inline match",
+        "drop now-unused IntrospectValue import from all 6 examples; add read_selected to their virtual_select use"
+      ],
+      "verification_bullets": [
+        "audit-correction: scalar `selected` decode was the byte-identical sibling of R782 read_selection (R743.1)",
+        "cargo test --workspace 5447 / 0 fail (+1 read_selected test); clippy --workspace pedantic clean",
+        "7 affected demos (r746/r776/r777/r747/r778/r779/r783) re-run PASS — decode byte-identical, preserving"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "grid filter not undoable (sort is, via GridSortEdit); 1-D SortFilterEdit captures both — defer until a",
+        "grid example wires undo+filter together (0 such consumer; hello-grid-filter has no undo stack)",
+        "apply_set_filter is currently a pass-through mutation-path seam (where filter-undo would attach)"
+      ],
+      "publishable_decision_summary": "R783.1 audit-correction: lift read_selected decode-of-encode SSOT — the scalar sibling of R782 read_selection was hand-rolled byte-identically in 6 single-select consumers; lift next to selected_value encode + migrate all (no 3rd copy), per R743.1",
+      "publishable_changes_bullets": [
+        "lift read_selected(&dyn ExternalIntrospect)->Option<usize> next to read_selection (selected_value encode)",
+        "migrate 6 hand-decoders (virtual-select/-nav, grid-nav/-sort/-filter, virtual-sort) off inline match",
+        "drop now-unused IntrospectValue import from all 6 examples; add read_selected to their virtual_select use"
+      ],
+      "publishable_verification_bullets": [
+        "audit-correction: scalar `selected` decode was the byte-identical sibling of R782 read_selection (R743.1)",
+        "cargo test --workspace 5447 / 0 fail (+1 read_selected test); clippy --workspace pedantic clean",
+        "7 affected demos (r746/r776/r777/r747/r778/r779/r783) re-run PASS — decode byte-identical, preserving"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "grid filter not undoable (sort is, via GridSortEdit); 1-D SortFilterEdit captures both — defer until a",
+        "grid example wires undo+filter together (0 such consumer; hello-grid-filter has no undo stack)",
+        "apply_set_filter is currently a pass-through mutation-path seam (where filter-undo would attach)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

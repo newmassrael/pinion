@@ -45,7 +45,7 @@
 //! `hello-grid-sort`).
 
 use pinion_a11y::{windowed_grid_nodes_sorted, AccessNode, WidgetA11y};
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, SizeValue, TextStyle,
@@ -57,7 +57,7 @@ use pinion_core::widgets::grid_sort::{
 };
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::VirtualSelectExternal;
+use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::table::{view_virtual_table, TableStyle, VirtualTableData};
@@ -251,10 +251,7 @@ impl WidgetCore for GridFilterView {
         scene
             .find_external_with_tag(GRID_TAG)
             .and_then(|node| node.handle.introspect())
-            .and_then(|intro| match intro.query("selected") {
-                Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
-                _ => None,
-            })
+            .and_then(read_selected)
     }
 
     fn view(state: Option<usize>, frame: &Frame) -> Scene {

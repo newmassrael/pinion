@@ -722,6 +722,23 @@ pub fn read_selection(intro: &dyn ExternalIntrospect) -> Vec<usize> {
     }
 }
 
+/// R783.1 §5.40 — **deserialize peer** of the coordinator's `"selected"`
+/// query (the `selected_value` encode): decode the single active row index
+/// from an introspection surface that delegates it to a
+/// [`VirtualSelectExternal`]. The scalar sibling of [`read_selection`] (same
+/// R743.1 decode-of-encode rule): the `"selected"` `Int` slot is read by every
+/// single-select index-model binding (`hello-virtual-select` / `-nav`,
+/// `hello-grid-nav` / `-sort` / `-filter`, `hello-virtual-sort`), so the
+/// decode lives next to its encode and a slot rename can't silently break six
+/// hand-decoders. An absent / `Null` / mistyped slot yields `None`.
+#[must_use]
+pub fn read_selected(intro: &dyn ExternalIntrospect) -> Option<usize> {
+    match intro.query("selected") {
+        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        _ => None,
+    }
+}
+
 /// R777 §5.27 — the standard **linear-clamp** keyboard navigation policy
 /// for a finite virtualized collection: map a key to the next selected
 /// index given the current selection and a `page` size (rows per measured
@@ -1245,6 +1262,22 @@ mod tests {
         let empty = VirtualSelectExternal::new_multi(10);
         let empty_intro: &dyn ExternalIntrospect = &empty;
         assert_eq!(read_selection(empty_intro), Vec::<usize>::new(), "empty selection decodes to []");
+    }
+
+    #[test]
+    fn read_selected_round_trips_the_scalar_encode() {
+        // R783.1 — `read_selected` is the exact inverse of the coordinator's
+        // `"selected"` query encode (the scalar sibling of `read_selection`):
+        // a selected index decodes back to itself, and an empty selection
+        // decodes to `None`.
+        let mut s = VirtualSelectExternal::new(10_000);
+        assert_eq!(read_selected(&s as &dyn ExternalIntrospect), None, "empty → None");
+        s.select(4_200);
+        assert_eq!(
+            read_selected(&s as &dyn ExternalIntrospect),
+            Some(4_200),
+            "decode is the inverse of the selected_value encode",
+        );
     }
 
     #[test]

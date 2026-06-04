@@ -43,7 +43,7 @@
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -57,7 +57,7 @@ use pinion_core::widgets::view_order::{
     sort_dir_str, use_view_order, ViewOrderState, ViewSortFilterExternal,
 };
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::widgets::virtual_select::VirtualSelectExternal;
+use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::virtual_list::view_virtual_list;
@@ -309,10 +309,7 @@ impl WidgetCore for VirtualSortView {
         scene
             .find_external_with_tag(LIST_TAG)
             .and_then(|node| node.handle.introspect())
-            .and_then(|intro| match intro.query("selected") {
-                Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
-                _ => None,
-            })
+            .and_then(read_selected)
     }
 
     fn view(state: Option<usize>, frame: &Frame) -> Scene {
