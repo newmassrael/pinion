@@ -30621,6 +30621,62 @@
         "R788 first = modal file-open DIALOG chrome (scrim+OK/Cancel+R693 trap) over R787 pane"
       ]
     },
+    "R788": {
+      "decision_summary": "R788 modal file-open dialog: embed the R787 own-rendered browser in the R693 dialog body slot + lift ModalState (3rd-consumer open/scope lifecycle)",
+      "changes_bullets": [
+        "ModalState/use_modal lift (pinion-core widgets::modal): the open-flag + modal_scope_request focus-trap lifecycle, flipped together as one SSOT; 3rd consumer (dialog/drawer/file-open) of a correctness-critical flag-and-scope coupling (desync = trap drifts from paint)",
+        "DialogContent gains an optional body slot (pinion-widget-paint): an author Scene between the message and the action row; the module's documented \"scrollable content\" panel axis, landed by its first consumer",
+        "hello-dialog + hello-drawer migrated to use_modal; the per-binding outcome (dialog result / drawer active destination) stays local = policy, not the modal mechanism",
+        "new example hello-file-open-dialog: trigger + the R787 DirectoryExternal browser pane embedded in the dialog body + OK/Cancel; the scene-graph-native, RPC-drivable peer of an OS file-open dialog (own-renderer, not native delegation)",
+        "OK gated on a selection: with none picked it paints the Disabled posture + carries aria-disabled and the reducer no-ops; once a file is selected it paints Accent and confirms; each open resets the browser to the root",
+        "browser pane (build_row/seed/selected_index) mirrors hello-file-browser = 2nd-consumer example-local presentation (the button_scene deferred-lift precedent; a 3rd consumer lifts a pinion_widget_paint::file_browser row helper)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5520 passed / 0 failed (R787 5499 -> +21: 4 ModalState + 2 DialogContent body-slot + 15 new example); core modal:: 4, widget-paint dialog:: 9",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (exit 0, 0 warnings)",
+        "r788 demo: 45 assertions E2E over RPC (open -> browse by invoke + click -> OK gate -> select -> confirm -> Cancel -> Escape), scene-as-data on a boot-closed overlay (the R693 precedent), 0 pixels",
+        "migrated-binding sweep: r693 (hello-dialog) + r702 (hello-drawer) PASS post-migration (ModalState runtime-correct)",
+        "validate-workspace: T1 reject=0 / new orphan +0, atomic entries 708 -> 709"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.16",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "modal: dialog state as a 1st-class query External (open + chosen path) deferred — dialog/drawer/file-open all observe via panel-presence + painted text (R693 precedent); a possible AI-first enhancement applying to all three",
+        "OK fully-disabled dropping out of the Tab order needs a dynamic modal-member list (deferred); the trap is [Cancel, OK] throughout, the app-disable is visual + reducer-guard",
+        "file-browser row paint (build_row) is a 2nd consumer = example-local; lift a pinion_widget_paint::file_browser row helper at the 3rd (button_scene cadence)",
+        "prior R787 carries (defer): keyboard nav over entries / save dialog + filename field + glob filter / mkdir + delete (Directory write side) / clickable breadcrumb segments / size + mtime metadata"
+      ],
+      "publishable_decision_summary": "R788 modal file-open dialog: embed the R787 own-rendered browser in the R693 dialog body slot + lift ModalState (3rd-consumer open/scope lifecycle)",
+      "publishable_changes_bullets": [
+        "ModalState/use_modal lift (pinion-core widgets::modal): the open-flag + modal_scope_request focus-trap lifecycle, flipped together as one SSOT; 3rd consumer (dialog/drawer/file-open) of a correctness-critical flag-and-scope coupling (desync = trap drifts from paint)",
+        "DialogContent gains an optional body slot (pinion-widget-paint): an author Scene between the message and the action row; the module's documented \"scrollable content\" panel axis, landed by its first consumer",
+        "hello-dialog + hello-drawer migrated to use_modal; the per-binding outcome (dialog result / drawer active destination) stays local = policy, not the modal mechanism",
+        "new example hello-file-open-dialog: trigger + the R787 DirectoryExternal browser pane embedded in the dialog body + OK/Cancel; the scene-graph-native, RPC-drivable peer of an OS file-open dialog (own-renderer, not native delegation)",
+        "OK gated on a selection: with none picked it paints the Disabled posture + carries aria-disabled and the reducer no-ops; once a file is selected it paints Accent and confirms; each open resets the browser to the root",
+        "browser pane (build_row/seed/selected_index) mirrors hello-file-browser = 2nd-consumer example-local presentation (the button_scene deferred-lift precedent; a 3rd consumer lifts a pinion_widget_paint::file_browser row helper)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5520 passed / 0 failed (R787 5499 -> +21: 4 ModalState + 2 DialogContent body-slot + 15 new example); core modal:: 4, widget-paint dialog:: 9",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (exit 0, 0 warnings)",
+        "r788 demo: 45 assertions E2E over RPC (open -> browse by invoke + click -> OK gate -> select -> confirm -> Cancel -> Escape), scene-as-data on a boot-closed overlay (the R693 precedent), 0 pixels",
+        "migrated-binding sweep: r693 (hello-dialog) + r702 (hello-drawer) PASS post-migration (ModalState runtime-correct)",
+        "validate-workspace: T1 reject=0 / new orphan +0, atomic entries 708 -> 709"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.16",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "modal: dialog state as a 1st-class query External (open + chosen path) deferred — dialog/drawer/file-open all observe via panel-presence + painted text (R693 precedent); a possible AI-first enhancement applying to all three",
+        "OK fully-disabled dropping out of the Tab order needs a dynamic modal-member list (deferred); the trap is [Cancel, OK] throughout, the app-disable is visual + reducer-guard",
+        "file-browser row paint (build_row) is a 2nd consumer = example-local; lift a pinion_widget_paint::file_browser row helper at the 3rd (button_scene cadence)",
+        "prior R787 carries (defer): keyboard nav over entries / save dialog + filename field + glob filter / mkdir + delete (Directory write side) / clickable breadcrumb segments / size + mtime metadata"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

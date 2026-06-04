@@ -91,6 +91,7 @@ members = [
     "examples/hello-contextmenu",
     "examples/hello-toolbar",
     "examples/hello-dialog",
+    "examples/hello-file-open-dialog",
     "examples/hello-drawer",
     "examples/hello-combobox",
     "examples/hello-combobox-editable",

@@ -77,6 +77,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
+use pinion_core::widgets::modal::{use_modal, ModalState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
@@ -115,8 +116,8 @@ const NAV_TAGS: [&str; NAV_N] = ["drawer_item_0", "drawer_item_1", "drawer_item_
 /// line's "Current: <name>" copy.
 const DESTINATIONS: [&str; NAV_N] = ["Home", "Search", "Settings"];
 
-/// `Owner::cache` key for the `Signal<bool>` "is the drawer open".
-const OPEN_KEY: &str = "hello_drawer.open";
+/// `Owner::cache` key for the shared [`ModalState`] open-lifecycle.
+const MODAL_KEY: &str = "hello_drawer.modal";
 /// `Owner::cache` key for the `Signal<usize>` active destination index.
 const ACTIVE_KEY: &str = "hello_drawer.active";
 
@@ -138,11 +139,13 @@ fn nav_members() -> Vec<String> {
     NAV_TAGS.iter().map(|t| (*t).to_string()).collect()
 }
 
-/// `Owner::cache`-keyed hook: the shared `Rc<Signal<bool>>` open flag.
-fn use_drawer_open() -> Rc<Signal<bool>> {
-    Owner::current()
-        .expect("use_drawer_open requires an active Owner scope")
-        .cache(OPEN_KEY, || Signal::new(false))
+/// The shared [`ModalState`] (R788 lifted open-lifecycle SSOT). One `Rc`
+/// across the view fn (auto-subscribe via [`ModalState::is_open`]), the
+/// reducer (open / close), and `access_node`. The drawer's *active
+/// destination* stays in [`use_drawer_active`] — per-binding policy, not
+/// the modal mechanism.
+fn modal() -> Rc<ModalState> {
+    use_modal(MODAL_KEY)
 }
 
 /// `Owner::cache`-keyed hook: the active destination index (default 0).
@@ -157,16 +160,14 @@ fn use_drawer_active() -> Rc<Signal<usize>> {
 /// the modal request drains in the same `handle_tail` so the trap is up
 /// before the next paint.
 fn open_drawer() {
-    use_drawer_open().set(true);
-    pinion_core::modal_scope_request::open(nav_members());
+    modal().open(nav_members());
 }
 
 /// Close the drawer and lift the modal trap (restoring focus to the
 /// trigger), without changing the active destination — the Escape /
 /// scrim-tap path.
 fn close_drawer() {
-    use_drawer_open().set(false);
-    pinion_core::modal_scope_request::close();
+    modal().close();
 }
 
 /// Select destination `index`: record it as active and close the drawer
@@ -174,13 +175,14 @@ fn close_drawer() {
 /// and dismisses). The two signal writes are [`batch`]ed so the view
 /// re-renders once; the modal trap is lifted afterwards.
 fn select(index: usize) {
-    let open = use_drawer_open();
+    let m = modal();
     let active = use_drawer_active();
+    // One batch: the active-destination write + the modal close (flag
+    // flip) re-render once; `ModalState::close` also pops the focus trap.
     batch(|| {
         active.set(index);
-        open.set(false);
+        m.close();
     });
-    pinion_core::modal_scope_request::close();
 }
 
 /// Cached posture for the paint fn: the trigger's [`ButtonState`], each
@@ -227,7 +229,7 @@ fn button_scene(
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: &DrawerViewState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let open = use_drawer_open().get();
+    let open = modal().is_open();
     let active = use_drawer_active().get().min(NAV_N - 1);
 
     let trigger = button_scene(
@@ -377,7 +379,7 @@ impl WidgetCore for DrawerView {
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
         if key == "Escape" {
-            if use_drawer_open().get() {
+            if modal().is_open() {
                 close_drawer();
                 return true;
             }
@@ -434,7 +436,7 @@ impl WidgetA11y for DrawerView {
     /// by `enrich_names_from_scene` (the button labels), so there is no
     /// parallel hardcoded copy to drift (the hello-dialog precedent).
     fn access_node(state: &DrawerViewState, focused: Option<&str>) -> Vec<AccessNode> {
-        let open = use_drawer_open().get();
+        let open = modal().is_open();
         if !open {
             return vec![AccessNode::new(TRIGGER_TAG, AriaRole::Button)
                 .with_state(button_a11y_state(state.trigger, focused == Some(TRIGGER_TAG)))];
@@ -514,9 +516,9 @@ mod tests {
     fn r702_trigger_click_opens_and_requests_modal() {
         Owner::new().run(|| {
             let _ = pinion_core::modal_scope_request::drain();
-            use_drawer_open().set(false);
+            modal().close();
             let _ = DrawerView::update(idle(), &intent("drawer_trigger.click"));
-            assert!(use_drawer_open().get(), "open signal flipped true");
+            assert!(modal().is_open(), "open signal flipped true");
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
                 Some(pinion_core::modal_scope_request::ModalRequest::Open {
@@ -531,10 +533,10 @@ mod tests {
     fn r702_scrim_click_light_dismisses_without_navigating() {
         Owner::new().run(|| {
             let _ = pinion_core::modal_scope_request::drain();
-            use_drawer_open().set(true);
+            modal().open(nav_members());
             use_drawer_active().set(2);
             let _ = DrawerView::update(idle(), &intent("drawer_scrim.click"));
-            assert!(!use_drawer_open().get(), "scrim tap closes the drawer");
+            assert!(!modal().is_open(), "scrim tap closes the drawer");
             assert_eq!(use_drawer_active().get(), 2, "scrim tap does not change active");
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
@@ -547,11 +549,11 @@ mod tests {
     fn r702_item_click_selects_and_closes() {
         Owner::new().run(|| {
             let _ = pinion_core::modal_scope_request::drain();
-            use_drawer_open().set(true);
+            modal().open(nav_members());
             use_drawer_active().set(0);
             let _ = DrawerView::update(idle(), &intent("drawer_item_2.click"));
             assert_eq!(use_drawer_active().get(), 2, "selecting item 2 sets active");
-            assert!(!use_drawer_open().get(), "selection closes the modal drawer");
+            assert!(!modal().is_open(), "selection closes the modal drawer");
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
                 Some(pinion_core::modal_scope_request::ModalRequest::Close)
@@ -565,7 +567,7 @@ mod tests {
     fn r702_escape_closes_open_drawer() {
         Owner::new().run(|| {
             let _ = pinion_core::modal_scope_request::drain();
-            use_drawer_open().set(true);
+            modal().open(nav_members());
             use_drawer_active().set(1);
             let mut scene = boot_scene();
             let handled = DrawerView::apply_key(
@@ -575,7 +577,7 @@ mod tests {
                 pinion_core::Modifiers::empty(),
             );
             assert!(handled);
-            assert!(!use_drawer_open().get());
+            assert!(!modal().is_open());
             assert_eq!(use_drawer_active().get(), 1, "Escape does not navigate");
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
@@ -587,7 +589,7 @@ mod tests {
     #[test]
     fn r702_escape_ignored_when_closed() {
         Owner::new().run(|| {
-            use_drawer_open().set(false);
+            modal().close();
             let mut scene = boot_scene();
             assert!(!DrawerView::apply_key(
                 &mut scene,
@@ -608,7 +610,7 @@ mod tests {
     #[test]
     fn r702_closed_emits_only_trigger_button() {
         Owner::new().run(|| {
-            use_drawer_open().set(false);
+            modal().close();
             let nodes = DrawerView::access_node(&idle(), None);
             assert_eq!(nodes.len(), 1);
             assert_eq!(nodes[0].role, AriaRole::Button);
@@ -619,7 +621,7 @@ mod tests {
     #[test]
     fn r702_open_emits_modal_dialog_with_nav_items() {
         Owner::new().run(|| {
-            use_drawer_open().set(true);
+            modal().open(nav_members());
             let nodes = DrawerView::access_node(&idle(), Some(NAV_TAGS[0]));
             assert_eq!(nodes.len(), NAV_N + 1);
             assert_eq!(nodes[0].role, AriaRole::Dialog);
@@ -638,7 +640,7 @@ mod tests {
     #[test]
     fn r702_names_enriched_from_paint_not_hardcoded() {
         Owner::new().run(|| {
-            use_drawer_open().set(true);
+            modal().open(nav_members());
             let scene = view(&idle(), &Frame::new());
             let mut nodes = DrawerView::access_node(&idle(), Some(NAV_TAGS[0]));
             assert!(
@@ -661,7 +663,7 @@ mod tests {
     #[test]
     fn r702_closed_view_omits_scrim_and_panel() {
         Owner::new().run(|| {
-            use_drawer_open().set(false);
+            modal().close();
             let scene = view(&idle(), &Frame::new());
             assert!(!scene.contains_tag(SCRIM_TAG), "closed: no scrim painted");
             assert!(!scene.contains_tag(PANEL_TAG), "closed: no panel painted");
@@ -672,7 +674,7 @@ mod tests {
     #[test]
     fn r702_open_view_paints_scrim_panel_and_items() {
         Owner::new().run(|| {
-            use_drawer_open().set(true);
+            modal().open(nav_members());
             let scene = view(&idle(), &Frame::new());
             assert!(scene.contains_tag(SCRIM_TAG), "open: scrim painted");
             assert!(scene.contains_tag(PANEL_TAG), "open: panel painted");
@@ -694,7 +696,7 @@ mod tests {
     #[test]
     fn r702_status_text_reflects_active_destination() {
         Owner::new().run(|| {
-            use_drawer_open().set(false);
+            modal().close();
             use_drawer_active().set(2);
             let scene = view(&idle(), &Frame::new());
             assert_eq!(

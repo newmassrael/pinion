@@ -75,6 +75,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
+use pinion_core::widgets::modal::{use_modal, ModalState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
@@ -102,8 +103,8 @@ const SCRIM_TAG: &str = "dialog_scrim";
 /// Dialog panel tag (queryable via `scene/snapshot`).
 const PANEL_TAG: &str = "dialog_panel";
 
-/// `Owner::cache` key for the `Signal<bool>` "is the dialog open".
-const OPEN_KEY: &str = "hello_dialog.open";
+/// `Owner::cache` key for the shared [`ModalState`] open-lifecycle.
+const MODAL_KEY: &str = "hello_dialog.modal";
 /// `Owner::cache` key for the `Signal<Option<bool>>` last outcome.
 const RESULT_KEY: &str = "hello_dialog.result";
 
@@ -124,13 +125,14 @@ fn dialog_members() -> Vec<String> {
     vec![CANCEL_TAG.to_string(), OK_TAG.to_string()]
 }
 
-/// `Owner::cache`-keyed hook: the shared `Rc<Signal<bool>>` open flag.
-/// One `Rc` across the view fn (auto-subscribe via `.get()`), the
-/// reducer (writes), and `access_node` (reads to switch the a11y tree).
-fn use_dialog_open() -> Rc<Signal<bool>> {
-    Owner::current()
-        .expect("use_dialog_open requires an active Owner scope")
-        .cache(OPEN_KEY, || Signal::new(false))
+/// The shared [`ModalState`] (R788 lifted open-lifecycle SSOT). One `Rc`
+/// across the view fn (auto-subscribe via [`ModalState::is_open`]), the
+/// reducer (open / close), and `access_node` (reads to switch the a11y
+/// tree). The dialog's *outcome* (accepted / cancelled) stays in
+/// [`use_dialog_result`] — that is per-binding policy, not the modal
+/// mechanism.
+fn modal() -> Rc<ModalState> {
+    use_modal(MODAL_KEY)
 }
 
 /// `Owner::cache`-keyed hook: the last dialog outcome — `None` (no
@@ -148,8 +150,7 @@ fn use_dialog_result() -> Rc<Signal<Option<bool>>> {
 /// the modal request drains in the same `handle_tail` so the trap is up
 /// before the next paint).
 fn open_dialog() {
-    use_dialog_open().set(true);
-    pinion_core::modal_scope_request::open(dialog_members());
+    modal().open(dialog_members());
 }
 
 /// Close the dialog, recording `accepted` (`true` = confirmed,
@@ -157,13 +158,15 @@ fn open_dialog() {
 /// lift the modal trap (restoring focus to the trigger). The two signal
 /// writes are [`batch`]ed so the view re-renders once.
 fn close_dialog(accepted: bool) {
-    let open = use_dialog_open();
+    let m = modal();
     let res = use_dialog_result();
+    // One batch: the outcome write + the modal close (flag flip) re-render
+    // the view once. `ModalState::close` also pops the focus trap (a Cell
+    // mailbox write, unaffected by the reactive batch).
     batch(|| {
-        open.set(false);
         res.set(Some(accepted));
+        m.close();
     });
-    pinion_core::modal_scope_request::close();
 }
 
 /// Cached posture of the three buttons (trigger, ok, cancel) read back
@@ -208,7 +211,7 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
     let (trigger_state, ok_state, cancel_state, focus) = state;
     let [trigger_focused, ok_focused, cancel_focused] = focus;
     let theme = use_theme(THEME_TAG).theme_animated();
-    let open = use_dialog_open().get();
+    let open = modal().is_open();
     let result = use_dialog_result().get();
 
     let trigger = button_scene(
@@ -271,6 +274,7 @@ fn view(state: DialogViewState, _frame: &Frame) -> Scene {
             DialogContent {
                 title: "Delete file?",
                 message: "This permanently removes the file. This cannot be undone.",
+                body: None,
             },
             vec![cancel, ok],
             (WIN_W, WIN_H),
@@ -363,7 +367,7 @@ impl WidgetCore for DialogView {
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
         if key == "Escape" {
-            if use_dialog_open().get() {
+            if modal().is_open() {
                 close_dialog(false);
                 return true;
             }
@@ -416,7 +420,7 @@ impl WidgetA11y for DialogView {
     /// hardcoded copy that could drift (the hello-button / hello-menu
     /// precedent).
     fn access_node(state: &DialogViewState, focused: Option<&str>) -> Vec<AccessNode> {
-        let open = use_dialog_open().get();
+        let open = modal().is_open();
         if !open {
             return vec![AccessNode::new(TRIGGER_TAG, AriaRole::Button).with_state(
                 button_a11y_state(state.0, focused == Some(TRIGGER_TAG)),
@@ -473,7 +477,7 @@ mod tests {
     #[test]
     fn r693_closed_emits_only_trigger_button() {
         Owner::new().run(|| {
-            use_dialog_open().set(false);
+            modal().close();
             let nodes = DialogView::access_node(&idle(), None);
             assert_eq!(nodes.len(), 1);
             assert_eq!(nodes[0].role, AriaRole::Button);
@@ -484,7 +488,7 @@ mod tests {
     #[test]
     fn r693_open_emits_modal_dialog_with_actions() {
         Owner::new().run(|| {
-            use_dialog_open().set(true);
+            modal().open(dialog_members());
             let nodes = DialogView::access_node(&idle(), Some(CANCEL_TAG));
             assert_eq!(nodes.len(), 3);
             assert_eq!(nodes[0].role, AriaRole::Dialog);
@@ -503,7 +507,7 @@ mod tests {
         // derives them from the paint TextNodes (the button labels +
         // panel title), so there is no parallel hardcoded copy to drift.
         Owner::new().run(|| {
-            use_dialog_open().set(true);
+            modal().open(dialog_members());
             let scene = view(idle(), &Frame::new());
             let mut nodes = DialogView::access_node(&idle(), Some(CANCEL_TAG));
             assert!(
@@ -543,7 +547,7 @@ mod tests {
     #[test]
     fn r694_focused_action_button_paints_ring_others_do_not() {
         Owner::new().run(|| {
-            use_dialog_open().set(true);
+            modal().open(dialog_members());
             // Cancel focused (the auto-focus default); ok + trigger not.
             let state = (
                 ButtonState::Idle,
@@ -568,9 +572,9 @@ mod tests {
     fn r693_open_click_sets_open_and_requests_modal() {
         Owner::new().run(|| {
             let _ = pinion_core::modal_scope_request::drain();
-            use_dialog_open().set(false);
+            modal().close();
             let _ = DialogView::update(idle(), &intent("open_dialog.click"));
-            assert!(use_dialog_open().get(), "open signal flipped true");
+            assert!(modal().is_open(), "open signal flipped true");
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
                 Some(pinion_core::modal_scope_request::ModalRequest::Open {
@@ -585,9 +589,9 @@ mod tests {
     fn r693_ok_click_accepts_and_closes_modal() {
         Owner::new().run(|| {
             let _ = pinion_core::modal_scope_request::drain();
-            use_dialog_open().set(true);
+            modal().open(dialog_members());
             let _ = DialogView::update(idle(), &intent("dialog_ok.click"));
-            assert!(!use_dialog_open().get());
+            assert!(!modal().is_open());
             assert_eq!(use_dialog_result().get(), Some(true));
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
@@ -600,9 +604,9 @@ mod tests {
     fn r693_cancel_click_cancels_and_closes_modal() {
         Owner::new().run(|| {
             let _ = pinion_core::modal_scope_request::drain();
-            use_dialog_open().set(true);
+            modal().open(dialog_members());
             let _ = DialogView::update(idle(), &intent("dialog_cancel.click"));
-            assert!(!use_dialog_open().get());
+            assert!(!modal().is_open());
             assert_eq!(use_dialog_result().get(), Some(false));
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
@@ -617,7 +621,7 @@ mod tests {
     fn r693_escape_cancels_open_dialog() {
         Owner::new().run(|| {
             let _ = pinion_core::modal_scope_request::drain();
-            use_dialog_open().set(true);
+            modal().open(dialog_members());
             let mut scene = boot_scene();
             let handled = DialogView::apply_key(
                 &mut scene,
@@ -626,7 +630,7 @@ mod tests {
                 pinion_core::Modifiers::empty(),
             );
             assert!(handled);
-            assert!(!use_dialog_open().get());
+            assert!(!modal().is_open());
             assert_eq!(use_dialog_result().get(), Some(false));
             assert_eq!(
                 pinion_core::modal_scope_request::drain(),
@@ -638,7 +642,7 @@ mod tests {
     #[test]
     fn r693_escape_ignored_when_closed() {
         Owner::new().run(|| {
-            use_dialog_open().set(false);
+            modal().close();
             let mut scene = boot_scene();
             assert!(!DialogView::apply_key(
                 &mut scene,

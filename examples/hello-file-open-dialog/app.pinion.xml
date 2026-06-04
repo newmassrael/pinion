@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R788 §5.15 §5.16 §5.39 — modal file-open dialog: pinion-forge renderer
+  manifest for hello-file-open-dialog. Same single-source-of-truth template
+  as the other hello-* renderers; only the struct name diverges. backend=vello.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloFileOpenDialogRenderer"
+        backend="vello"/>

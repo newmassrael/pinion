@@ -49,7 +49,10 @@
 //! - **Elevation shadow** — M3 dialogs sit at elevation level 3; pinion
 //!   has no shadow primitive yet, so the panel reads as elevated through
 //!   the [`ColorRole::SurfaceContainerHigh`] tier alone.
-//! - **Scrollable content / icon / divider** — additive panel slots.
+//! - **Content body** (R788) — landed: [`DialogContent::body`] carries an
+//!   author-composed [`Scene`] between the message and the action row (a
+//!   form, a list, the own-rendered file browser). Icon / divider remain
+//!   additive panel slots.
 
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -120,16 +123,29 @@ impl Default for DialogStyle {
     }
 }
 
-/// R693 §5.50 — the dialog panel's textual content. Groups the title +
-/// message so [`view_dialog`] stays within the 7-argument convention the
-/// other `view_*` substrate fns hold; an empty `&str` omits that node.
-/// Extensible: future panel slots (icon, supporting text) join here.
-#[derive(Clone, Copy, Debug)]
+/// R693 §5.50 — the dialog panel's content. Groups the title + message
+/// (+ the R788 [`body`](Self::body) slot) so [`view_dialog`] stays within
+/// the 7-argument convention the other `view_*` substrate fns hold; an
+/// empty `&str` / `None` omits that node. Extensible: future panel slots
+/// (icon, supporting text) join here.
+///
+/// Not `Copy`/`Clone`: the optional [`body`](Self::body) owns a [`Scene`]
+/// (which is deliberately non-`Clone` — it can own `External` handles), so
+/// a `DialogContent` is moved into [`view_dialog`] once.
+#[derive(Debug)]
 pub struct DialogContent<'a> {
     /// Dialog heading (`headline`). Empty omits the title node.
     pub title: &'a str,
     /// Body text. Empty omits the message node.
     pub message: &'a str,
+    /// R788 — optional content body between the message and the action
+    /// row: an author-composed [`Scene`] (a form, a list, a file browser
+    /// pane). `None` omits the slot, so a plain confirm dialog passes
+    /// `body: None` exactly as before. This is the "scrollable content"
+    /// panel slot the module docs flagged as a future axis, landed by its
+    /// first consumer (R788's modal file-open dialog embeds the
+    /// own-rendered file browser here).
+    pub body: Option<Scene>,
 }
 
 /// R693 §5.16 §5.50 — compose a modal dialog overlay: a full-window
@@ -142,8 +158,8 @@ pub struct DialogContent<'a> {
 ///   background clicks to it (swallowed — no light-dismiss by default).
 /// - `panel_tag` — the panel container tag (queryable via
 ///   `scene/snapshot`, §2 invariant #7).
-/// - `content` — the title + message ([`DialogContent`]); an empty field
-///   omits that node.
+/// - `content` — the title + message + optional [`body`](DialogContent::body)
+///   ([`DialogContent`]); an empty field / `None` body omits that node.
 /// - `actions` — pre-rendered action-button scenes (real focusable
 ///   [`External`](pinion_core::external::External) widgets), laid out
 ///   left-to-right in a trailing row.
@@ -185,6 +201,11 @@ pub fn view_dialog(
                 .with_size_px(style.message_font_px)
                 .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         )));
+    }
+    // R788 — the optional author-composed body, between the message and the
+    // trailing action row (omitted when `None`).
+    if let Some(body) = content.body {
+        panel_children.push(body);
     }
     panel_children.push(Scene::Container(
         ContainerNode::new(actions).with_layout(
@@ -256,6 +277,7 @@ mod tests {
             DialogContent {
                 title: "Discard changes?",
                 message: "Your edits will be lost.",
+                body: None,
             },
             vec![action("dialog_cancel"), action("dialog_ok")],
             (520, 320),
@@ -389,6 +411,7 @@ mod tests {
             DialogContent {
                 title: "",
                 message: "Body only.",
+                body: None,
             },
             vec![action("ok")],
             (400, 300),
@@ -397,5 +420,57 @@ mod tests {
         );
         let text = all_text(&scene);
         assert_eq!(text, vec!["Body only.".to_string()], "no empty title text node");
+    }
+
+    #[test]
+    fn r788_body_slot_sits_between_message_and_actions() {
+        // The author-composed body (here a tagged container) is laid out
+        // after the message and before the trailing action row.
+        let body = Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                "browser pane",
+                Rect::default(),
+                TextStyle::new(),
+            ))])
+            .with_tag("dialog_body"),
+        );
+        let scene = view_dialog(
+            "dialog_scrim",
+            "dialog_panel",
+            DialogContent { title: "Open file", message: "Pick one.", body: Some(body) },
+            vec![action("dialog_cancel"), action("dialog_ok")],
+            (640, 480),
+            &theme(),
+            &DialogStyle::m3_default(),
+        );
+        // The body node is present inside the panel.
+        let panel = find_container(&scene, "dialog_panel").expect("panel node");
+        let positions: Vec<&str> = panel
+            .children
+            .iter()
+            .map(|c| match c {
+                Scene::Text(t) if t.content == "Open file" => "title",
+                Scene::Text(t) if t.content == "Pick one." => "message",
+                Scene::Container(c) if c.tag.as_deref() == Some("dialog_body") => "body",
+                Scene::Container(_) => "actions",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(
+            positions,
+            vec!["title", "message", "body", "actions"],
+            "body slot sits between the message and the action row",
+        );
+        // The body's own content survives into the tree.
+        assert!(all_text(&scene).contains(&"browser pane".to_string()), "body content rendered");
+    }
+
+    #[test]
+    fn r788_no_body_keeps_message_then_actions() {
+        // `body: None` is the unchanged plain-confirm shape.
+        let scene = dialog();
+        let panel = find_container(&scene, "dialog_panel").expect("panel node");
+        // title, message, action-row only — three children, no body.
+        assert_eq!(panel.children.len(), 3, "no body slot when None");
     }
 }
