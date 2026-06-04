@@ -1,0 +1,590 @@
+//! R778 §5.27 §5.40 — **multi-column sort view-order proxy for a Model/View
+//! data grid at scale**.
+//!
+//! The grid analog of [`view_order`](crate::widgets::view_order): R775 / R777
+//! land a virtualized data grid (window an N-row × C-column dataset) with
+//! selection held by data index. This module adds the sort axis a data grid
+//! needs — a clicked column header sorts the whole grid — **without
+//! materializing the rendered rows**. The view windows over *view positions*
+//! `0..view_len`; each position resolves to a source row through the
+//! [`order`](GridSortState::order) permutation; the row builder paints the
+//! source row; the R777 [`VirtualSelectExternal`](crate::widgets::virtual_select)
+//! still holds a **source** index, so re-sorting moves a selected row's
+//! visual position while keeping it selected — selection ⊥ ordering, both
+//! data-indexed (the same decisive Model/View separation the 1-D list draws,
+//! mirroring Qt's `QSortFilterProxyModel` ⊥ `QItemSelectionModel`).
+//!
+//! ## Why a peer of [`ViewOrderState`](crate::widgets::view_order::ViewOrderState), not a reuse
+//!
+//! The 1-D list proxy sorts a **single key** column with a generic [`Ord`]
+//! comparison ([`compute_order`](crate::widgets::view_order::compute_order)).
+//! A data grid sorts **any** of its columns, and a column of numbers sorted
+//! lexicographically (`"12" < "9"`) is visibly wrong — so the grid proxy is
+//! multi-column and **numeric-aware**, sorting through the
+//! [`cell_cmp`](crate::widgets::table::cell_cmp) /
+//! [`grid_order_by`](crate::widgets::table::grid_order_by) SSOT the eager
+//! [`Table`](crate::widgets::table::Table) already uses. The two proxies share
+//! that comparator + the [`cycle_col_sort`](crate::widgets::table::cycle_col_sort)
+//! transition, not their whole shape: the sort *representation* differs
+//! (`Option<(col, bool)>` vs `Option<bool>`), so a forced merge would be a
+//! wrong abstraction.
+//!
+//! ## One reactive source of truth ([`GridSortState`] + [`use_grid_sort`])
+//!
+//! The active `(col, dir)` and the derived `order` permutation are held
+//! **once** in a reactive [`GridSortState`] — the `ScrollState` /
+//! [`use_scroll_state`](crate::widgets::scroll::use_scroll_state) pattern this
+//! crate shares an interactive axis with. The [`GridSortExternal`] is a thin
+//! adapter that *mutates* the shared state on `invoke` / a clicked header; the
+//! view and the a11y tree *read* the same state through `use_grid_sort(key)`
+//! (the same `Rc`), so the `order` is computed **once** (memoized on the sort
+//! key) and the rows the view paints are the rows the proxy's
+//! `query("source_at.<n>")` reports — by construction.
+//!
+//! ## Scope (honest boundaries)
+//!
+//! - **Sort only.** Filtering at scale is the 1-D proxy's `filter` axis; the
+//!   grid gains it additively when a consumer needs it (a follow-up, like the
+//!   list's R747 sort → later filter arc).
+//! - **No undo.** The list proxy records a reversible `SortFilterEdit`
+//!   (R748); the grid's reversible sort is the immediate follow-up, kept out
+//!   of this slice so the sort core lands clean first (mirroring R730 table
+//!   sort → R748 undoable list sort).
+//! - **Materialized cells.** The proxy holds the source cell grid (it must,
+//!   to sort by any column) — the dataset, not rendered rows; identical to
+//!   [`ViewOrderState`](crate::widgets::view_order::ViewOrderState)
+//!   materializing its key column.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use crate::external::{
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+};
+use crate::reactive::{Owner, Signal};
+use crate::widgets::table::{cell_cmp, cycle_col_sort, grid_order_by};
+use crate::widgets::view_order::{sort_dir_from_str, sort_dir_str};
+
+/// R778 §5.40 — render `(col, dir)` as a single wire string: `"none"` when
+/// unsorted, else `"<col>:<dir>"` (e.g. `"1:ascending"`). The compound form
+/// lets an admin / AI client read or restore the **whole** grid sort state in
+/// one round-trip (the column matters for a grid, unlike the 1-D list's bare
+/// direction string). The direction half reuses
+/// [`sort_dir_str`](crate::widgets::view_order::sort_dir_str).
+#[must_use]
+pub fn grid_sort_str(sort: Option<(usize, bool)>) -> String {
+    match sort {
+        None => "none".to_string(),
+        Some((col, dir)) => format!("{col}:{}", sort_dir_str(Some(dir))),
+    }
+}
+
+/// R778 §5.40 — parse a `(col, dir)` from its [`grid_sort_str`] form. Any
+/// string without a `"<col>:<dir>"` shape whose direction parses as
+/// ascending / descending yields `None` (unsorted) — the safe default for a
+/// malformed wire payload (mirrors
+/// [`sort_dir_from_str`](crate::widgets::view_order::sort_dir_from_str)).
+#[must_use]
+pub fn grid_sort_from_str(s: &str) -> Option<(usize, bool)> {
+    let (col, dir) = s.split_once(':')?;
+    let col = col.parse::<usize>().ok()?;
+    let dir = sort_dir_from_str(dir)?;
+    Some((col, dir))
+}
+
+/// The memoized `order` for one sort key — recomputed only when the sort
+/// changes (not per frame).
+struct OrderCache {
+    sort: Option<(usize, bool)>,
+    order: Rc<Vec<usize>>,
+    valid: bool,
+}
+
+impl Default for OrderCache {
+    fn default() -> Self {
+        Self { sort: None, order: Rc::new(Vec::new()), valid: false }
+    }
+}
+
+/// R778 §5.27 §5.40 — the reactive **single source of truth** for a data
+/// grid's column sort view order.
+///
+/// Holds the source cell grid (materialized once), the active `(col, dir)` as
+/// a reactive [`Signal`], and the derived `order` permutation (memoized). The
+/// `ScrollState` of the grid-sort axis: created once via [`use_grid_sort`], it
+/// is shared by the [`GridSortExternal`] (which mutates it) and the view /
+/// a11y tree (which read it) through the same `Rc`. Reading
+/// [`sort`](Self::sort) / [`order`](Self::order) inside a view-fn
+/// auto-subscribes, so a sort change repaints exactly like a scroll-offset
+/// change.
+pub struct GridSortState {
+    tag: Option<&'static str>,
+    /// Row-major source cells — `cells[row][col]`. The dataset the sort
+    /// reorders (the proxy holds data, never rendered rows).
+    cells: Vec<Vec<String>>,
+    col_count: usize,
+    sort: Signal<Option<(usize, bool)>>,
+    order: RefCell<OrderCache>,
+}
+
+impl GridSortState {
+    /// Construct over a `col_count`-wide grid whose source row `r` has cells
+    /// `cells[r]`. Starts unsorted. A row shorter than `col_count` (ragged
+    /// data) reads `""` for the missing cells — the same blank-cell tolerance
+    /// the paint layer applies.
+    #[must_use]
+    pub fn new(col_count: usize, cells: Vec<Vec<String>>) -> Self {
+        Self {
+            tag: None,
+            cells,
+            col_count,
+            sort: Signal::new(None),
+            order: RefCell::new(OrderCache::default()),
+        }
+    }
+
+    /// As [`new`](Self::new) but records the `use_grid_sort` cache key, for
+    /// symmetry with [`ScrollState::with_tag`](crate::widgets::scroll::ScrollState::with_tag).
+    #[must_use]
+    pub fn with_tag(key: &'static str, col_count: usize, cells: Vec<Vec<String>>) -> Self {
+        Self { tag: Some(key), ..Self::new(col_count, cells) }
+    }
+
+    /// The `use_grid_sort` cache key, or `None` when constructed directly.
+    #[must_use]
+    pub fn tag(&self) -> Option<&'static str> {
+        self.tag
+    }
+
+    /// Source row count.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.cells.len()
+    }
+
+    /// Column count (the sortable column bound).
+    #[must_use]
+    pub fn col_count(&self) -> usize {
+        self.col_count
+    }
+
+    /// The cell text at `(row, col)`, or `""` out of range.
+    #[must_use]
+    pub fn cell(&self, row: usize, col: usize) -> &str {
+        self.cells.get(row).and_then(|r| r.get(col)).map_or("", String::as_str)
+    }
+
+    /// Active sort key `(col, ascending)`, or `None` when unsorted.
+    /// Subscribes when read inside a view-fn.
+    #[must_use]
+    pub fn sort(&self) -> Option<(usize, bool)> {
+        self.sort.get()
+    }
+
+    /// The visual → source permutation for the current sort, recomputed only
+    /// when the sort changes (memoized). Subscribes to the `sort` `Signal`, so
+    /// a view that calls this repaints on a sort change. Cheap `Rc` clone on a
+    /// cache hit. Sorted through the [`grid_order_by`] / [`cell_cmp`] SSOT (the
+    /// same numeric-aware comparison the eager
+    /// [`Table::order`](crate::widgets::table::Table::order) uses).
+    #[must_use]
+    pub fn order(&self) -> Rc<Vec<usize>> {
+        let sort = self.sort.get();
+        let mut cache = self.order.borrow_mut();
+        if !cache.valid || cache.sort != sort {
+            cache.order = Rc::new(grid_order_by(self.cells.len(), sort, |col, a, b| {
+                cell_cmp(self.cell(a, col), self.cell(b, col))
+            }));
+            cache.sort = sort;
+            cache.valid = true;
+        }
+        Rc::clone(&cache.order)
+    }
+
+    /// Number of rows in the current view (no filter, so always
+    /// [`count`](Self::count) — present for symmetry with the 1-D proxy and
+    /// the additive filter follow-up).
+    #[must_use]
+    pub fn view_len(&self) -> usize {
+        self.count()
+    }
+
+    /// Source data index painted at visual position `view_pos`, or `None` when
+    /// out of range.
+    #[must_use]
+    pub fn source_at(&self, view_pos: usize) -> Option<usize> {
+        self.order().get(view_pos).copied()
+    }
+
+    /// Set the sort directly (admin / restore). A `Signal` write repaints
+    /// every view that read [`sort`](Self::sort) / [`order`](Self::order). An
+    /// out-of-range column clamps to `None` (unsorted) so a malformed restore
+    /// never points the glyph at a phantom column.
+    pub fn set_sort(&self, sort: Option<(usize, bool)>) {
+        let sort = sort.filter(|&(c, _)| c < self.col_count);
+        self.sort.set(sort);
+    }
+
+    /// Cycle the sort on `col` the way a clicked column header does
+    /// (unsorted → asc → desc → unsorted; a different column jumps to it
+    /// ascending) via the [`cycle_col_sort`] SSOT. Out-of-range `col` is a
+    /// silent no-op.
+    pub fn cycle_sort(&self, col: usize) {
+        self.sort.set(cycle_col_sort(self.sort.get(), col, self.col_count));
+    }
+}
+
+/// R778 §5.27 §5.40 — resolve the shared [`GridSortState`] for `key`,
+/// building it once via `data` (the column count + source cells). Mirrors
+/// [`use_scroll_state`](crate::widgets::scroll::use_scroll_state) /
+/// [`use_view_order`](crate::widgets::view_order::use_view_order): the
+/// `External` and the view both call this with the same `key` and receive the
+/// same `Rc`, so the order is one source of truth.
+///
+/// # Panics
+///
+/// Panics if no current [`Owner`] is set (call from within a `view` / a
+/// `create_extra_externals` hook — both run inside a `root_owner.run`).
+#[must_use]
+pub fn use_grid_sort(
+    key: &'static str,
+    data: impl FnOnce() -> (usize, Vec<Vec<String>>),
+) -> Rc<GridSortState> {
+    Owner::current()
+        .expect("use_grid_sort requires an active Owner scope")
+        .cache(key, || {
+            let (col_count, cells) = data();
+            GridSortState::with_tag(key, col_count, cells)
+        })
+}
+
+/// R778 §5.27 §5.40 — the **RPC / pointer adapter** over a shared
+/// [`GridSortState`] (the grid peer of
+/// [`ViewSortFilterExternal`](crate::widgets::view_order::ViewSortFilterExternal)).
+///
+/// All state lives in the shared [`GridSortState`] — the external holds only
+/// the `Rc`, so the view paints the same `order` this external reports. A
+/// clicked column header routes its pointer arc here as `"h<col>:<EventName>"`
+/// (the [`GridSendKey::Header`](crate::composite_tag::GridSendKey) wire the
+/// R777 selection coordinator deliberately ignores), and the activation edge
+/// cycles that column's sort.
+#[derive(Clone)]
+pub struct GridSortExternal {
+    state: Rc<GridSortState>,
+}
+
+impl core::fmt::Debug for GridSortExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GridSortExternal")
+            .field("sort", &grid_sort_str(self.state.sort()))
+            .field("count", &self.state.count())
+            .finish_non_exhaustive()
+    }
+}
+
+impl GridSortExternal {
+    /// Wrap the shared [`GridSortState`] (from [`use_grid_sort`]).
+    #[must_use]
+    pub fn new(state: Rc<GridSortState>) -> Self {
+        Self { state }
+    }
+
+    /// The shared state handle (the view reaches the same `Rc` via
+    /// [`use_grid_sort`]).
+    #[must_use]
+    pub fn state(&self) -> &Rc<GridSortState> {
+        &self.state
+    }
+
+    /// Drive the composite pointer channel: a clicked column header routes the
+    /// pointer arc here. Only a [`GridSendKey::Header`](crate::composite_tag::GridSendKey)
+    /// key on the activation edge (`PointerUp` / `KeyboardActivate`) cycles
+    /// that column's sort; a cell key or any non-activation arc is a harmless
+    /// no-op (sort ⊥ selection — cells are the selection coordinator's axis).
+    fn handle_send(&self, payload: &str) {
+        let Some((key, event_name)) = payload.split_once(':') else {
+            return;
+        };
+        if event_name.is_empty() {
+            return;
+        }
+        if let Some(crate::composite_tag::GridSendKey::Header { col }) =
+            crate::composite_tag::GridSendKey::parse(key)
+        {
+            if crate::input::is_activation_event(event_name) {
+                self.state.cycle_sort(col);
+            }
+        }
+    }
+
+    /// The active sort column as an `IntrospectValue` (`Int`, or `-1` when
+    /// unsorted) — the uniform "no column" sentinel the table external uses
+    /// for `selected_row`.
+    fn sort_col_value(&self) -> IntrospectValue {
+        let col = self.state.sort().and_then(|(c, _)| i64::try_from(c).ok());
+        IntrospectValue::Int(col.unwrap_or(-1))
+    }
+}
+
+impl External for GridSortExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    // A config holder emits no §5.20 intent (see
+    // `ViewSortFilterExternal`): the sort `Signal` write already repaints
+    // every subscribed view, so the widget is never independently dirty.
+}
+
+impl ExternalIntrospect for GridSortExternal {
+    fn schema(&self) -> IntrospectSchema {
+        // `sort`      — compound "<col>:<dir>" / "none" (query + intervene).
+        // `sort_col`  — active column id, or -1 (query only).
+        // `sort_dir`  — none/ascending/descending (query only).
+        // `count`     — source row count (query only).
+        // `cols`      — column count (query only).
+        // `source_at` — `source_at.<pos>` visual→source map (query only).
+        // `cycle_sort`/`send` — invoke channels.
+        IntrospectSchema::new(&[
+            ("sort", "string"),
+            ("sort_col", "int"),
+            ("sort_dir", "string"),
+            ("count", "int"),
+            ("cols", "int"),
+            ("source_at", "int"),
+            ("cycle_sort", "int"),
+            ("send", "string"),
+        ])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        // `source_at.<pos>` resolves the visual→source map; an out-of-range
+        // position reports Null (present-but-empty), never absence.
+        if let Some(rest) = path.strip_prefix("source_at.") {
+            let value = rest
+                .parse::<usize>()
+                .ok()
+                .and_then(|p| self.state.source_at(p))
+                .and_then(|src| i64::try_from(src).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int);
+            return Some(value);
+        }
+        match path {
+            "sort" => Some(IntrospectValue::Text(grid_sort_str(self.state.sort()))),
+            "sort_col" => Some(self.sort_col_value()),
+            "sort_dir" => Some(IntrospectValue::Text(
+                sort_dir_str(self.state.sort().map(|(_, dir)| dir)).into(),
+            )),
+            "count" => Some(IntrospectValue::Int(
+                i64::try_from(self.state.count()).unwrap_or(i64::MAX),
+            )),
+            "cols" => Some(IntrospectValue::Int(
+                i64::try_from(self.state.col_count()).unwrap_or(i64::MAX),
+            )),
+            _ => None,
+        }
+    }
+
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        match path {
+            // Admin / restore: set the whole sort from its compound string.
+            "sort" => match value {
+                IntrospectValue::Text(ref s) => {
+                    self.state.set_sort(grid_sort_from_str(s));
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            "sort_col" | "sort_dir" | "count" | "cols" | "source_at" => {
+                Err(InterveneError::ReadOnly)
+            }
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // AI-first sort cycle on a column — returns the resulting compound
+            // sort string in one round-trip.
+            "cycle_sort" => match args {
+                IntrospectValue::Int(i) => {
+                    let col = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+                    self.state.cycle_sort(col);
+                    Ok(IntrospectValue::Text(grid_sort_str(self.state.sort())))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R51.42 §5.35 composite pointer channel: a clicked column header
+            // routes the pointer arc here as `<key>:<EventName>`.
+            "send" => match args {
+                IntrospectValue::Text(ref payload) => {
+                    self.handle_send(payload);
+                    Ok(IntrospectValue::Text(grid_sort_str(self.state.sort())))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::PointerWireEvent;
+    use crate::reactive::Owner;
+
+    // A 4-row × 2-column grid: column 0 is text, column 1 is numeric (so the
+    // numeric-vs-lexicographic distinction is observable: "9" < "12").
+    fn cells() -> Vec<Vec<String>> {
+        vec![
+            vec!["Menu".to_string(), "12".to_string()],
+            vec!["Tabs".to_string(), "9".to_string()],
+            vec!["Table".to_string(), "707".to_string()],
+            vec!["Grid".to_string(), "775".to_string()],
+        ]
+    }
+
+    fn state() -> GridSortState {
+        GridSortState::new(2, cells())
+    }
+
+    #[test]
+    fn grid_sort_str_round_trips() {
+        for s in [None, Some((0, true)), Some((1, false)), Some((2, true))] {
+            assert_eq!(grid_sort_from_str(&grid_sort_str(s)), s);
+        }
+        assert_eq!(grid_sort_str(None), "none");
+        assert_eq!(grid_sort_str(Some((1, true))), "1:ascending");
+        assert_eq!(grid_sort_from_str("garbage"), None);
+        assert_eq!(grid_sort_from_str("x:ascending"), None);
+    }
+
+    #[test]
+    fn unsorted_order_is_identity() {
+        let s = state();
+        assert_eq!(*s.order(), vec![0, 1, 2, 3]);
+        assert_eq!(s.sort(), None);
+    }
+
+    #[test]
+    fn cycle_sort_text_column_lexicographic() {
+        let s = state();
+        s.cycle_sort(0); // ascending by name: Grid, Menu, Table, Tabs
+        assert_eq!(s.sort(), Some((0, true)));
+        // data ids: Grid=3, Menu=0, Table=2, Tabs=1
+        assert_eq!(*s.order(), vec![3, 0, 2, 1]);
+        s.cycle_sort(0); // descending
+        assert_eq!(s.sort(), Some((0, false)));
+        assert_eq!(*s.order(), vec![1, 2, 0, 3]);
+        s.cycle_sort(0); // back to source order
+        assert_eq!(s.sort(), None);
+        assert_eq!(*s.order(), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn cycle_sort_numeric_column_is_numeric_aware() {
+        let s = state();
+        s.cycle_sort(1); // ascending by number: 9 (id1), 12 (id0), 707 (id2), 775 (id3)
+        // A lexicographic sort would put "12" before "9"; numeric must not.
+        assert_eq!(*s.order(), vec![1, 0, 2, 3]);
+    }
+
+    #[test]
+    fn clicking_a_different_column_jumps_to_it_ascending() {
+        let s = state();
+        s.cycle_sort(0);
+        assert_eq!(s.sort(), Some((0, true)));
+        s.cycle_sort(1); // different column -> ascending on it
+        assert_eq!(s.sort(), Some((1, true)));
+    }
+
+    #[test]
+    fn out_of_range_column_is_a_noop() {
+        let s = state();
+        s.cycle_sort(9); // col_count = 2
+        assert_eq!(s.sort(), None);
+    }
+
+    #[test]
+    fn set_sort_clamps_out_of_range_column() {
+        let s = state();
+        s.set_sort(Some((9, true)));
+        assert_eq!(s.sort(), None, "phantom column clamps to unsorted");
+        s.set_sort(Some((1, false)));
+        assert_eq!(s.sort(), Some((1, false)));
+    }
+
+    #[test]
+    fn source_at_tracks_the_permutation() {
+        let s = state();
+        s.cycle_sort(0); // order = [3, 0, 2, 1]
+        assert_eq!(s.source_at(0), Some(3));
+        assert_eq!(s.source_at(3), Some(1));
+        assert_eq!(s.source_at(4), None);
+    }
+
+    #[test]
+    fn external_send_header_cycles_sort() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let st = Rc::new(state());
+            let mut ext = GridSortExternal::new(Rc::clone(&st));
+            // h1:PointerUp -> sort column 1 ascending.
+            let payload = format!("h1:{}", PointerWireEvent::Up.as_wire_name());
+            ext.invoke("send", IntrospectValue::Text(payload)).unwrap();
+            assert_eq!(st.sort(), Some((1, true)));
+            // A cell key is ignored (selection coordinator's axis).
+            ext.invoke(
+                "send",
+                IntrospectValue::Text(format!("0_0:{}", PointerWireEvent::Up.as_wire_name())),
+            )
+            .unwrap();
+            assert_eq!(st.sort(), Some((1, true)), "cell send does not touch sort");
+        });
+    }
+
+    #[test]
+    fn external_invoke_cycle_sort_returns_compound_string() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let st = Rc::new(state());
+            let mut ext = GridSortExternal::new(Rc::clone(&st));
+            let out = ext.invoke("cycle_sort", IntrospectValue::Int(0)).unwrap();
+            assert_eq!(out, IntrospectValue::Text("0:ascending".into()));
+            assert_eq!(ext.query("sort_col"), Some(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("sort"), Some(IntrospectValue::Text("0:ascending".into())));
+        });
+    }
+
+    #[test]
+    fn external_intervene_restores_whole_sort() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let st = Rc::new(state());
+            let mut ext = GridSortExternal::new(Rc::clone(&st));
+            ext.intervene("sort", IntrospectValue::Text("1:descending".into())).unwrap();
+            assert_eq!(st.sort(), Some((1, false)));
+            ext.intervene("sort", IntrospectValue::Text("none".into())).unwrap();
+            assert_eq!(st.sort(), None);
+            assert_eq!(ext.intervene("count", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
+        });
+    }
+}

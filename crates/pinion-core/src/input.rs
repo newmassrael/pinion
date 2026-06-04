@@ -253,6 +253,32 @@ impl PointerWireEvent {
     }
 }
 
+/// The keyboard-side activation token: the `send`-payload event name a focused
+/// command widget receives on keyboard activation (Enter / Space), the
+/// keyboard peer of the pointer-release activation edge ([`PointerWireEvent::Up`]).
+/// One home for the literal on the **decode** side (the `*Event::KeyboardActivate`
+/// SCE enums on the *emit* side own their own `stringify!` form — a separate,
+/// statechart-bound vocabulary, per [`PointerWireEvent`]'s scope note).
+pub const KEYBOARD_ACTIVATE_EVENT: &str = "KeyboardActivate";
+
+/// R778 §5.35 — does this `send`-payload event name denote a command widget's
+/// **activation edge**? True for the pointer release ([`PointerWireEvent::Up`])
+/// and the keyboard activation token ([`KEYBOARD_ACTIVATE_EVENT`]).
+///
+/// The shared decode predicate for the command-widget `handle_send` decoders
+/// that have no per-item SCE statechart — [`VirtualSelectExternal`](crate::widgets::virtual_select),
+/// [`ViewSortFilterExternal`](crate::widgets::view_order), and
+/// [`GridSortExternal`](crate::widgets::grid_sort) — lifted on the third
+/// consumer (R778) so the set of events that count as "activate" cannot drift
+/// between them (a divergence would be a routing bug, not a style choice). The
+/// per-widget statecharts decode their own activation through
+/// [`widget_event_name!`](crate::widget_event_name) + `detect`, a different
+/// vocabulary this predicate does not fold.
+#[must_use]
+pub fn is_activation_event(event_name: &str) -> bool {
+    event_name == KEYBOARD_ACTIVATE_EVENT || event_name == PointerWireEvent::Up.as_wire_name()
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.f.0 §5.13 — `Modifiers` regression battery. Covers the
@@ -260,7 +286,18 @@ mod tests {
     //! identity, and the `is_empty` predicate used by `apply_key`
     //! plain-keystroke branches.
 
-    use super::Modifiers;
+    use super::{is_activation_event, Modifiers, PointerWireEvent, KEYBOARD_ACTIVATE_EVENT};
+
+    #[test]
+    fn r778_activation_edge_is_pointer_up_or_keyboard_activate() {
+        // The lifted command-widget activation predicate (R778): the two
+        // events that count as "activate", and nothing else.
+        assert!(is_activation_event(PointerWireEvent::Up.as_wire_name()));
+        assert!(is_activation_event(KEYBOARD_ACTIVATE_EVENT));
+        for name in ["PointerDown", "PointerEnter", "PointerLeave", "PointerCancel", ""] {
+            assert!(!is_activation_event(name), "{name} is not an activation edge");
+        }
+    }
 
     #[test]
     fn r56_1_f_0_empty_has_no_bits_set() {

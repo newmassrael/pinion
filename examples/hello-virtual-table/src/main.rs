@@ -111,7 +111,14 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let grid = view_virtual_table(
         TABLE_TAG,
         &scroll,
-        VirtualTableData { headers: &HEADERS, item_count: N, overscan: OVERSCAN },
+        VirtualTableData {
+            headers: &HEADERS,
+            item_count: N,
+            overscan: OVERSCAN,
+            sort: None,
+            sort_tag: None,
+            order: None,
+        },
         &theme,
         &style,
         None, // display-only grid: no selection

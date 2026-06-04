@@ -192,6 +192,7 @@ const DESC_GLYPH: &str = "\u{25BC}";
 /// glyph (▲ ascending / ▼ descending) after the label.
 fn header_cell(
     tag: &str,
+    click_tag: &str,
     col: usize,
     label: &str,
     sort: Option<(usize, bool)>,
@@ -223,7 +224,10 @@ fn header_cell(
     let inner = Scene::Container(
         ContainerNode::new(inner_children)
             // R777.1 — the clickable header sub-key via the GridSendKey SSOT.
-            .with_tag(format!("{tag}#{}", GridSendKey::Header { col }.encode()))
+            // R778 — the click routes to `click_tag` (the sort anchor),
+            // which may differ from the presentational `tag` (the a11y /
+            // paint-root anchor) when sort is a separate coordinator.
+            .with_tag(format!("{click_tag}#{}", GridSendKey::Header { col }.encode()))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -246,6 +250,7 @@ fn header_cell(
 /// surface. `sort` drives the active column's sort glyph.
 fn header_row(
     tag: &str,
+    click_tag: &str,
     headers: &[&str],
     sort: Option<(usize, bool)>,
     theme: &Theme,
@@ -255,7 +260,7 @@ fn header_row(
     let cells: Vec<Scene> = headers
         .iter()
         .enumerate()
-        .map(|(col, label)| header_cell(tag, col, label, sort, fg, style))
+        .map(|(col, label)| header_cell(tag, click_tag, col, label, sort, fg, style))
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
@@ -366,7 +371,9 @@ pub fn view_table(
     style: &TableStyle,
 ) -> Scene {
     let cols = data.headers.len();
-    let header = header_row(tag, data.headers, sort, theme, style);
+    // The eager table is one combined coordinator (header + cells route to
+    // the same `TableExternal`), so the clickable header anchor is `tag`.
+    let header = header_row(tag, tag, data.headers, sort, theme, style);
     let mut children: Vec<Scene> = Vec::with_capacity(data.rows.len() + 1);
     children.push(header);
     for (visual, cells_text) in data.rows.iter().enumerate() {
@@ -413,6 +420,23 @@ pub struct VirtualTableData<'a> {
     pub item_count: usize,
     /// Rows built beyond the strict visible window on each side.
     pub overscan: usize,
+    /// R778 §5.40 — the active sort key `(col, ascending)` for the header
+    /// glyph, or `None` (no glyph). A display-only grid passes `None`.
+    pub sort: Option<(usize, bool)>,
+    /// R778 §5.40 — the anchor the clickable column headers route their
+    /// pointer arc to (`"<sort_tag>#h<col>"`). `None` keeps the headers on
+    /// the paint-root `tag` (the R777 default, where the selection
+    /// coordinator harmlessly ignores `h<col>`); a sortable grid passes the
+    /// [`GridSortExternal`](pinion_core::widgets::grid_sort::GridSortExternal)
+    /// anchor so header clicks drive the sort proxy (sort ⊥ selection).
+    pub sort_tag: Option<&'a str>,
+    /// R778 §5.40 — the visual→source row permutation
+    /// ([`GridSortState::order`](pinion_core::widgets::grid_sort::GridSortState::order)).
+    /// `None` is the identity (display order); `Some(order)` windows over
+    /// `order.len()` view positions and resolves visual position `view_pos`
+    /// to source row `order[view_pos]`, so a re-sort reorders the rows while
+    /// the data-indexed cell tags / selection stay correct.
+    pub order: Option<&'a [usize]>,
 }
 
 /// R775 §5.27 — flex-viewport (`AutoSizer`) **virtualized data-grid**.
@@ -467,31 +491,44 @@ pub fn view_virtual_table(
 ) -> Scene {
     let cols = data.headers.len();
     let total_w = u32::try_from(cols).unwrap_or(0).saturating_mul(style.col_width);
+    // R778 — window over the *view* length: the sort permutation's
+    // `order.len()` when sorted, else the raw `item_count` (identity). Each
+    // visual position resolves to its source row through `order` (the 1-D
+    // `view_virtual_list` + `ViewOrderState` pairing, now multi-column).
+    let view_len = data.order.map_or(data.item_count, <[usize]>::len);
     // AutoSizer: window against the runtime-measured clip height. The
     // header sits OUTSIDE the scroll (frozen), so the body's measured
     // height is the window minus the header band.
     let (_, measured_h) = scroll.measured_viewport();
     let window =
-        compute_visible_range(scroll.offset_y(), measured_h, data.item_count, style.row_height, data.overscan);
-    let total_h = content_height(data.item_count, style.row_height);
+        compute_visible_range(scroll.offset_y(), measured_h, view_len, style.row_height, data.overscan);
+    let total_h = content_height(view_len, style.row_height);
 
-    // The uniform-pitch slot geometry (`top = id · row_height`, framed
+    // The uniform-pitch slot geometry (`top = view_pos · row_height`, framed
     // `total_w × row_height`) is the same windowed-sizer shape the list
     // bodies use — built via the shared `uniform_slots` (R775.1) so the
     // grid and the lists cannot disagree on slot placement. Only the row
     // *content* diverges (a multi-cell `data_row`).
-    let slots = uniform_slots(&window, total_w, style.row_height, |data_id| {
-        let cells_text = build_cells(data_id);
+    let slots = uniform_slots(&window, total_w, style.row_height, |view_pos| {
+        // R778 — visual position → source data row (identity when unsorted).
+        let source = data.order.map_or(view_pos, |o| o.get(view_pos).copied().unwrap_or(view_pos));
+        let cells_text = build_cells(source);
         let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
         // Rows are idle (no per-row hover/press at the grid level); the
-        // selected row gets the accent tint. Zebra parity is by data id
-        // (no sort permutation yet).
-        let fill = row_fill(theme, RadioState::Idle, selected == Some(data_id), data_id);
+        // selected row gets the accent tint — selection is **data-indexed**
+        // (`selected == Some(source)`), so it survives a re-sort. Zebra
+        // parity is **visual** (`view_pos`), so the stripe pattern stays
+        // stable across re-sorts (the eager `view_table` convention); cells
+        // / strip tag by **source** id so a click on a sorted row routes to
+        // the right data row.
+        let fill = row_fill(theme, RadioState::Idle, selected == Some(source), view_pos);
         let fg = row_fg(theme, RadioState::Idle);
-        data_row(tag, data_id, &cell_refs, cols, fill, fg, style)
+        data_row(tag, source, &cell_refs, cols, fill, fg, style)
     });
     let body = assemble_windowed_flex(scroll, total_w, total_h, slots);
-    let header = header_row(tag, data.headers, None, theme, style);
+    // R778 — clickable headers route to the sort anchor (`sort_tag`) when a
+    // sort coordinator is wired, else stay on `tag` (R777 default).
+    let header = header_row(tag, data.sort_tag.unwrap_or(tag), data.headers, data.sort, theme, style);
 
     Scene::Container(
         ContainerNode::new(vec![header, body])
@@ -721,7 +758,14 @@ mod tests {
             view_virtual_table(
                 "vtbl",
                 &state,
-                VirtualTableData { headers: &VT_HEADERS, item_count: VT_N, overscan: 2 },
+                VirtualTableData {
+                    headers: &VT_HEADERS,
+                    item_count: VT_N,
+                    overscan: 2,
+                    sort: None,
+                    sort_tag: None,
+                    order: None,
+                },
                 &theme,
                 &style,
                 None,
@@ -824,5 +868,88 @@ mod tests {
         };
         assert!(has_row0(&top), "top window includes row 0");
         assert!(!has_row0(&deep), "deep window scrolled row 0 out");
+    }
+
+    // ── R778 data-grid sort at scale ────────────────────────────────────
+
+    /// Render a small sorted virtual table: 4 rows, a `(col, asc)` sort
+    /// glyph, a `sort_tag` header anchor, and an explicit `order`
+    /// permutation. The measured height covers all 4 rows so the whole view
+    /// renders (the permutation is what we assert on, not the windowing).
+    fn run_vtable_sorted(sort: Option<(usize, bool)>, order: &[usize]) -> Scene {
+        let state = Rc::new(ScrollState::new());
+        let pitch = TableStyle::m3().row_height;
+        state.set_measured_viewport(360, pitch * 8);
+        state.set_max(0, i32::try_from(order.len()).unwrap() * i32::try_from(pitch).unwrap());
+        let theme = light();
+        let style = TableStyle::m3();
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                &state,
+                VirtualTableData {
+                    headers: &VT_HEADERS,
+                    item_count: order.len(),
+                    overscan: 2,
+                    sort,
+                    sort_tag: Some("vsort"),
+                    order: Some(order),
+                },
+                &theme,
+                &style,
+                None,
+                |id| vec![format!("{id}"), format!("Row {id}"), format!("v{id}")],
+            )
+        })
+    }
+
+    #[test]
+    fn r778_sorted_grid_strips_tag_by_source_in_visual_order() {
+        // order = visual→source [2, 0, 3, 1]: the strip at visual position 0
+        // is data row 2, etc. Cells / strips tag by **source** id.
+        let order = [2usize, 0, 3, 1];
+        let scene = run_vtable_sorted(Some((0, true)), &order);
+        // Every source id present as a strip; visual order is the slot `top`.
+        for &source in &order {
+            assert!(
+                scene.contains_tag(&format!("vtbl_row{source}")),
+                "source row {source} strip present",
+            );
+            for col in 0..3 {
+                assert!(
+                    scene.contains_tag(&format!("vtbl#{source}_{col}")),
+                    "cell {source}_{col} tagged by source id",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn r778_sorted_grid_header_routes_to_sort_tag_and_shows_glyph() {
+        let scene = run_vtable_sorted(Some((1, false)), &[0, 1, 2, 3]);
+        // Clickable headers route to the sort anchor, not the paint root.
+        for col in 0..3 {
+            assert!(
+                scene.contains_tag(&format!("vsort#h{col}")),
+                "header {col} clickable tag routes to the sort anchor",
+            );
+            assert!(
+                !scene.contains_tag(&format!("vtbl#h{col}")),
+                "header {col} does NOT route to the grid (select) anchor",
+            );
+        }
+        // Descending glyph on the active column only.
+        let mut text = Vec::new();
+        collect_text(&scene, &mut text);
+        assert_eq!(text.iter().filter(|s| *s == DESC_GLYPH).count(), 1, "one descending glyph");
+        assert!(!text.iter().any(|s| s == ASC_GLYPH), "no ascending glyph for a descending sort");
+    }
+
+    #[test]
+    fn r778_display_grid_keeps_headers_on_the_grid_anchor() {
+        // sort_tag = None (the R777 default) keeps headers on the paint root,
+        // where the selection coordinator harmlessly ignores `h<col>`.
+        let scene = run_vtable(360, 0);
+        assert!(scene.contains_tag("vtbl#h0"), "display grid header stays on the grid anchor");
     }
 }

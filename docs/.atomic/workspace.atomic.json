@@ -29899,6 +29899,60 @@
         "GridSendKey is now the header h{col} decode SSOT that data-grid-sort-at-scale will reuse (sort over virtualized body)"
       ]
     },
+    "R778": {
+      "decision_summary": "R778 data-grid sort at scale: clickable column headers cycle a numeric-aware multi-column sort over the R775/R777 virtualized grid; selection (source index) stays orthogonal to ordering and survives a re-sort. New GridSortState/GridSortExternal coordinator (peer of ViewOrderState/ViewSortFilterExternal, not a merge); cell_cmp/cycle_col_sort/grid_order_by lifted as the eager-Table to scale-grid sort SSOT; is_activation_event lifted to core::input as the 3rd command-widget activation-edge decoder.",
+      "changes_bullets": [
+        "new widgets::grid_sort GridSortState+GridSortExternal: multi-column numeric-aware sort proxy at scale",
+        "view_virtual_table +sort glyph +sort_tag header routing +order permutation (window over view-len)",
+        "lift cycle_col_sort+grid_order_by+pub cell_cmp (table.rs): eager-Table<->scale-grid sort SSOT (2nd consumer)",
+        "lift core::input::is_activation_event: 3rd command-widget activation-edge decoder (PointerUp|KeyboardActivate)",
+        "new example hello-grid-sort (vtbl select + vsort sort) inline permuted-grid a11y + aria-sort",
+        "RPC demo r778_grid_sort 49 assert"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (5405 passed; grid_sort +11, input +1 activation, paint +3 sorted, example +4)",
+        "clippy --workspace --all-targets pedantic clean",
+        "r778_grid_sort 49 assert: numeric order vs lex divergence, selection survives re-sort, header click, admin restore",
+        "regression r730/r747/r775/r776/r777 PASS; behaviour-preserving lifts (Table sort delegate, 3 decoders identical)"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "2nd permuted-grid a11y consumer -> lift windowed_grid_nodes_sorted (inline now per R776 carve-out)",
+        "grid sort undo (SortFilterEdit peer) deferred = immediate follow-up; grid filter at scale deferred (sort-only)",
+        "OrderCache memo 2-consumer (view_order+grid_sort) perf-cache, defer (not divergence-is-a-bug)",
+        "sorted-grid keyboard roving by visual position deferred (nav_select_key roves by source index)"
+      ],
+      "publishable_decision_summary": "R778 data-grid sort at scale: clickable column headers cycle a numeric-aware multi-column sort over the R775/R777 virtualized grid; selection (source index) stays orthogonal to ordering and survives a re-sort. New GridSortState/GridSortExternal coordinator (peer of ViewOrderState/ViewSortFilterExternal, not a merge); cell_cmp/cycle_col_sort/grid_order_by lifted as the eager-Table to scale-grid sort SSOT; is_activation_event lifted to core::input as the 3rd command-widget activation-edge decoder.",
+      "publishable_changes_bullets": [
+        "new widgets::grid_sort GridSortState+GridSortExternal: multi-column numeric-aware sort proxy at scale",
+        "view_virtual_table +sort glyph +sort_tag header routing +order permutation (window over view-len)",
+        "lift cycle_col_sort+grid_order_by+pub cell_cmp (table.rs): eager-Table<->scale-grid sort SSOT (2nd consumer)",
+        "lift core::input::is_activation_event: 3rd command-widget activation-edge decoder (PointerUp|KeyboardActivate)",
+        "new example hello-grid-sort (vtbl select + vsort sort) inline permuted-grid a11y + aria-sort",
+        "RPC demo r778_grid_sort 49 assert"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (5405 passed; grid_sort +11, input +1 activation, paint +3 sorted, example +4)",
+        "clippy --workspace --all-targets pedantic clean",
+        "r778_grid_sort 49 assert: numeric order vs lex divergence, selection survives re-sort, header click, admin restore",
+        "regression r730/r747/r775/r776/r777 PASS; behaviour-preserving lifts (Table sort delegate, 3 decoders identical)"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "2nd permuted-grid a11y consumer -> lift windowed_grid_nodes_sorted (inline now per R776 carve-out)",
+        "grid sort undo (SortFilterEdit peer) deferred = immediate follow-up; grid filter at scale deferred (sort-only)",
+        "OrderCache memo 2-consumer (view_order+grid_sort) perf-cache, defer (not divergence-is-a-bug)",
+        "sorted-grid keyboard roving by visual position deferred (nav_select_key roves by source index)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

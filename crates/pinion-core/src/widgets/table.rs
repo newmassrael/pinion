@@ -335,14 +335,9 @@ impl Table {
     /// a *different* column jumps straight to that column ascending.
     /// Out-of-range `col` is a silent no-op.
     pub fn cycle_sort(&mut self, col: usize) {
-        if col >= self.headers.len() {
-            return;
-        }
-        self.sort = match self.sort {
-            Some((c, true)) if c == col => Some((col, false)),
-            Some((c, false)) if c == col => None,
-            _ => Some((col, true)),
-        };
+        // R778 — the cycle transition is the shared `cycle_col_sort` SSOT
+        // (the virtualized grid is its second consumer).
+        self.sort = cycle_col_sort(self.sort, col, self.headers.len());
     }
 
     /// R730 §5.40 — the visual→data row permutation for the current sort.
@@ -353,15 +348,12 @@ impl Table {
     /// their data order), so re-sorting is deterministic.
     #[must_use]
     pub fn order(&self) -> Vec<usize> {
-        let mut idx: Vec<usize> = (0..self.rows.len()).collect();
-        let Some((col, ascending)) = self.sort else {
-            return idx;
-        };
-        idx.sort_by(|&a, &b| {
-            let ord = cell_cmp(self.cell(a, col), self.cell(b, col));
-            if ascending { ord } else { ord.reverse() }
-        });
-        idx
+        // R778 — delegate to the shared `grid_order_by` SSOT; this struct
+        // supplies the cell source, the free fn owns the direction +
+        // stable-tie-break policy (shared with the virtualized grid).
+        grid_order_by(self.rows.len(), self.sort, |col, a, b| {
+            cell_cmp(self.cell(a, col), self.cell(b, col))
+        })
     }
 }
 
@@ -369,11 +361,80 @@ impl Table {
 /// `f64` compare numerically (so `"9" < "12"`); otherwise lexicographic
 /// (so `"Active" < "Done"`). A data grid that sorted a numeric column
 /// lexicographically (`"12" < "9"`) would be visibly wrong.
-fn cell_cmp(a: &str, b: &str) -> core::cmp::Ordering {
+///
+/// (R778 `pub` — the numeric comparator is the SSOT for both the eager
+/// [`Table::order`] and the virtualized data-grid sort coordinator
+/// [`GridSortState`](crate::widgets::grid_sort::GridSortState); they must
+/// agree on numeric awareness, so the comparison lives in one place.)
+#[must_use]
+pub fn cell_cmp(a: &str, b: &str) -> core::cmp::Ordering {
     match (a.trim().parse::<f64>(), b.trim().parse::<f64>()) {
         (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or(core::cmp::Ordering::Equal),
         _ => a.cmp(b),
     }
+}
+
+/// R778 §5.40 — the clicked-column-header sort transition, lifted from
+/// [`Table::cycle_sort`] when the virtualized data grid became its second
+/// consumer (the cycle is a controller wiring whose divergence between the
+/// eager and the scale grid would be a bug, not a style choice).
+///
+/// Clicking the **active** column cycles its direction
+/// unsorted → ascending → descending → unsorted; clicking a **different**
+/// column jumps straight to that column ascending. An out-of-range `col`
+/// (`col >= col_count`) is a silent no-op (returns `prev` unchanged).
+#[must_use]
+pub fn cycle_col_sort(
+    prev: Option<(usize, bool)>,
+    col: usize,
+    col_count: usize,
+) -> Option<(usize, bool)> {
+    if col >= col_count {
+        return prev;
+    }
+    match prev {
+        Some((c, true)) if c == col => Some((col, false)),
+        Some((c, false)) if c == col => None,
+        _ => Some((col, true)),
+    }
+}
+
+/// R778 §5.40 — the visual→data row permutation for a multi-column grid
+/// sort, lifted from [`Table::order`] for its second consumer (the
+/// virtualized [`GridSortState`](crate::widgets::grid_sort::GridSortState)).
+///
+/// `order[visual]` is the data-row index painted at visual position
+/// `visual`. Identity (`0..row_count`) when `sort` is `None`. `cell_cmp_at`
+/// compares two data rows on a column — `(col, row_a, row_b)` — so the
+/// caller supplies the data source (eager `Table` cells or the
+/// coordinator's materialized cell grid) while this fn owns the
+/// direction + stable-tie-break policy: the sort is **stable**, so equal
+/// keys keep their data order in both directions (deterministic
+/// re-sorting), and `ascending = false` reverses the per-pair comparison.
+///
+/// The peer of [`view_order::compute_order`](crate::widgets::view_order::compute_order)
+/// for the grid: that one is single-key + generic [`Ord`] (the 1-D list);
+/// this one is multi-column + numeric-aware ([`cell_cmp`]). They are
+/// deliberately separate vocabularies, not one merged sorter.
+#[must_use]
+pub fn grid_order_by(
+    row_count: usize,
+    sort: Option<(usize, bool)>,
+    cell_cmp_at: impl Fn(usize, usize, usize) -> core::cmp::Ordering,
+) -> Vec<usize> {
+    let mut idx: Vec<usize> = (0..row_count).collect();
+    let Some((col, ascending)) = sort else {
+        return idx;
+    };
+    idx.sort_by(|&a, &b| {
+        let ord = cell_cmp_at(col, a, b);
+        if ascending {
+            ord
+        } else {
+            ord.reverse()
+        }
+    });
+    idx
 }
 
 /// R735 §5.38 — `Table` snapshot capturing the mode flag + the full

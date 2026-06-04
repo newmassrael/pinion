@@ -41,7 +41,6 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use crate::input::PointerWireEvent;
 use crate::intent::Intent;
 use crate::widgets::scroll::ScrollState;
 use crate::widgets::virtual_list::scroll_offset_to_reveal;
@@ -226,9 +225,7 @@ impl VirtualSelectExternal {
         let Some(index) = row else {
             return;
         };
-        if event_name == "KeyboardActivate"
-            || event_name == PointerWireEvent::Up.as_wire_name()
-        {
+        if crate::input::is_activation_event(event_name) {
             self.select(index);
         }
     }
