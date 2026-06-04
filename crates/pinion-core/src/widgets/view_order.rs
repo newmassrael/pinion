@@ -75,6 +75,7 @@ use crate::external::{
 };
 use crate::reactive::{batch, Owner, Signal};
 use crate::undo::{UndoCommand, UndoStack};
+use crate::widgets::order_memo::{source_at_value, OrderMemo};
 
 /// R747 §5.40 — cycle a sort key the way a clicked sort header does:
 /// unsorted → ascending → descending → unsorted.
@@ -149,21 +150,6 @@ pub fn compute_order<K: Ord>(
     order
 }
 
-/// The memoized `order` for one `(sort, filter)` pair — recomputed only when
-/// the config changes.
-struct OrderCache {
-    sort: Option<bool>,
-    filter: Option<usize>,
-    order: Rc<Vec<usize>>,
-    valid: bool,
-}
-
-impl Default for OrderCache {
-    fn default() -> Self {
-        Self { sort: None, filter: None, order: Rc::new(Vec::new()), valid: false }
-    }
-}
-
 /// R747 §5.27 §5.40 — the reactive **single source of truth** for a list's
 /// sort/filter view order.
 ///
@@ -182,7 +168,9 @@ pub struct ViewOrderState {
     categories: Vec<usize>,
     sort: Signal<Option<bool>>,
     filter: Signal<Option<usize>>,
-    order: RefCell<OrderCache>,
+    /// Memoized visual→source permutation, recomputed only when the
+    /// `(sort, filter)` key changes — the shared [`OrderMemo`] (R780 lift).
+    order: RefCell<OrderMemo<ViewConfig>>,
 }
 
 impl ViewOrderState {
@@ -206,7 +194,7 @@ impl ViewOrderState {
             categories,
             sort: Signal::new(None),
             filter: Signal::new(None),
-            order: RefCell::new(OrderCache::default()),
+            order: RefCell::new(OrderMemo::new()),
         }
     }
 
@@ -250,19 +238,14 @@ impl ViewOrderState {
     pub fn order(&self) -> Rc<Vec<usize>> {
         let sort = self.sort.get();
         let filter = self.filter.get();
-        let mut cache = self.order.borrow_mut();
-        if !cache.valid || cache.sort != sort || cache.filter != filter {
-            cache.order = Rc::new(compute_order(
+        self.order.borrow_mut().get((sort, filter), || {
+            compute_order(
                 self.keys.len(),
                 sort,
                 |i| self.keys[i].as_str(),
                 |i| filter.is_none_or(|f| self.categories[i] == f),
-            ));
-            cache.sort = sort;
-            cache.filter = filter;
-            cache.valid = true;
-        }
-        Rc::clone(&cache.order)
+            )
+        })
     }
 
     /// Number of rows in the current view (rows passing the filter).
@@ -553,13 +536,7 @@ impl ExternalIntrospect for ViewSortFilterExternal {
         // `source_at.<pos>` resolves the visual→source map; an out-of-range
         // position reports Null (present-but-empty), never absence.
         if let Some(rest) = path.strip_prefix("source_at.") {
-            let value = rest
-                .parse::<usize>()
-                .ok()
-                .and_then(|p| self.state.source_at(p))
-                .and_then(|src| i64::try_from(src).ok())
-                .map_or(IntrospectValue::Null, IntrospectValue::Int);
-            return Some(value);
+            return Some(source_at_value(rest, |p| self.state.source_at(p)));
         }
         match path {
             "sort_dir" => Some(IntrospectValue::Text(sort_dir_str(self.state.sort()).into())),

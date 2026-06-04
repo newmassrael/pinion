@@ -14,6 +14,7 @@ pub mod listbox;
 pub mod listbox_item;
 pub mod menu;
 pub(crate) mod menu_nav;
+pub(crate) mod order_memo;
 pub mod pagination;
 pub mod progress_bar;
 pub mod radio;

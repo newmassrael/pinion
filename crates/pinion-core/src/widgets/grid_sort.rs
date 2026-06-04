@@ -65,6 +65,7 @@ use crate::external::{
 };
 use crate::reactive::{Owner, Signal};
 use crate::undo::{UndoCommand, UndoStack};
+use crate::widgets::order_memo::{source_at_value, OrderMemo};
 use crate::widgets::table::{cell_cmp, cycle_col_sort, grid_order_by};
 use crate::widgets::view_order::{sort_dir_from_str, sort_dir_str};
 
@@ -95,20 +96,6 @@ pub fn grid_sort_from_str(s: &str) -> Option<(usize, bool)> {
     Some((col, dir))
 }
 
-/// The memoized `order` for one sort key — recomputed only when the sort
-/// changes (not per frame).
-struct OrderCache {
-    sort: Option<(usize, bool)>,
-    order: Rc<Vec<usize>>,
-    valid: bool,
-}
-
-impl Default for OrderCache {
-    fn default() -> Self {
-        Self { sort: None, order: Rc::new(Vec::new()), valid: false }
-    }
-}
-
 /// R778 §5.27 §5.40 — the reactive **single source of truth** for a data
 /// grid's column sort view order.
 ///
@@ -127,7 +114,9 @@ pub struct GridSortState {
     cells: Vec<Vec<String>>,
     col_count: usize,
     sort: Signal<Option<(usize, bool)>>,
-    order: RefCell<OrderCache>,
+    /// Memoized visual→source permutation, recomputed only when the sort key
+    /// changes — the shared [`OrderMemo`] (R780 lift).
+    order: RefCell<OrderMemo<Option<(usize, bool)>>>,
 }
 
 impl GridSortState {
@@ -142,7 +131,7 @@ impl GridSortState {
             cells,
             col_count,
             sort: Signal::new(None),
-            order: RefCell::new(OrderCache::default()),
+            order: RefCell::new(OrderMemo::new()),
         }
     }
 
@@ -193,15 +182,11 @@ impl GridSortState {
     #[must_use]
     pub fn order(&self) -> Rc<Vec<usize>> {
         let sort = self.sort.get();
-        let mut cache = self.order.borrow_mut();
-        if !cache.valid || cache.sort != sort {
-            cache.order = Rc::new(grid_order_by(self.cells.len(), sort, |col, a, b| {
+        self.order.borrow_mut().get(sort, || {
+            grid_order_by(self.cells.len(), sort, |col, a, b| {
                 cell_cmp(self.cell(a, col), self.cell(b, col))
-            }));
-            cache.sort = sort;
-            cache.valid = true;
-        }
-        Rc::clone(&cache.order)
+            })
+        })
     }
 
     /// Number of rows in the current view (no filter, so always
@@ -464,13 +449,7 @@ impl ExternalIntrospect for GridSortExternal {
         // `source_at.<pos>` resolves the visual→source map; an out-of-range
         // position reports Null (present-but-empty), never absence.
         if let Some(rest) = path.strip_prefix("source_at.") {
-            let value = rest
-                .parse::<usize>()
-                .ok()
-                .and_then(|p| self.state.source_at(p))
-                .and_then(|src| i64::try_from(src).ok())
-                .map_or(IntrospectValue::Null, IntrospectValue::Int);
-            return Some(value);
+            return Some(source_at_value(rest, |p| self.state.source_at(p)));
         }
         match path {
             "sort" => Some(IntrospectValue::Text(grid_sort_str(self.state.sort()))),

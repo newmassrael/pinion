@@ -29999,6 +29999,50 @@
         "R780 candidates (R778 carry): multi-select index model / column resize+h-scroll / grid filter at scale"
       ]
     },
+    "R779.1": {
+      "decision_summary": "R779.1 audit-correction (user textbook/SSOT review of the R778-R779 sort-proxy work): lift OrderMemo<K> + source_at_value into a neutral widgets::order_memo module. The order-permutation memo (the cache-invalidation dance) and the source_at introspect decode were a byte-identical-in-shape 2-copy between the 1-D list sort/filter proxy (view_order, R747) and the data-grid column-sort proxy (grid_sort, R778). I had declared-deferred the OrderCache as a perf-cache, but under the cost-no-object textbook standard it is a net-positive SSOT lift: the invalidation logic is the error-prone part and now lives in one tested place (Option<K> subsumes the valid flag). Both proxies delegate; behaviour-preserving. The proxies stay deliberate peers (config + comparator + wire genuinely diverge, pinion has no Model trait), and the with_undo/apply stack-or-direct branch stays bespoke (net-negative to genericize per the R779 rule) — both declared, not silently kept.",
+      "changes_bullets": [
+        "new widgets::order_memo: OrderMemo<K> (config-keyed single-entry permutation memo; Option<K> subsumes valid)",
+        "+ source_at_value (the source_at.<pos> introspect decode, byte-identical 2-copy lifted)",
+        "view_order ViewOrderState + grid_sort GridSortState: order()/source_at delegate; both OrderCache removed",
+        "declared-keep: proxy skeletons stay peers (config/comparator/wire diverge, no Model trait)",
+        "declared-keep: with_undo/apply stack-or-direct branch bespoke (net-negative to genericize, R779 rule)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (5410 passed; order_memo +2: hit/recompute, source_at Null-pad)",
+        "clippy --workspace --all-targets pedantic clean",
+        "behavior-preserving (no demo change); regression r747(list proxy)/r778(grid sort)/r779(grid undo) PASS",
+        "view_order 14 + grid_sort 14 unchanged green (delegation, no behaviour drift)"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "with_undo/apply (stack-or-direct) 2-consumer bespoke = declared-defer (R779 net-negative; Edit type+setter diverge)",
+        "R780+ candidates unchanged: multi-select index model / column resize+h-scroll / grid filter at scale"
+      ],
+      "publishable_decision_summary": "R779.1 audit-correction (user textbook/SSOT review of the R778-R779 sort-proxy work): lift OrderMemo<K> + source_at_value into a neutral widgets::order_memo module. The order-permutation memo (the cache-invalidation dance) and the source_at introspect decode were a byte-identical-in-shape 2-copy between the 1-D list sort/filter proxy (view_order, R747) and the data-grid column-sort proxy (grid_sort, R778). I had declared-deferred the OrderCache as a perf-cache, but under the cost-no-object textbook standard it is a net-positive SSOT lift: the invalidation logic is the error-prone part and now lives in one tested place (Option<K> subsumes the valid flag). Both proxies delegate; behaviour-preserving. The proxies stay deliberate peers (config + comparator + wire genuinely diverge, pinion has no Model trait), and the with_undo/apply stack-or-direct branch stays bespoke (net-negative to genericize per the R779 rule) — both declared, not silently kept.",
+      "publishable_changes_bullets": [
+        "new widgets::order_memo: OrderMemo<K> (config-keyed single-entry permutation memo; Option<K> subsumes valid)",
+        "+ source_at_value (the source_at.<pos> introspect decode, byte-identical 2-copy lifted)",
+        "view_order ViewOrderState + grid_sort GridSortState: order()/source_at delegate; both OrderCache removed",
+        "declared-keep: proxy skeletons stay peers (config/comparator/wire diverge, no Model trait)",
+        "declared-keep: with_undo/apply stack-or-direct branch bespoke (net-negative to genericize, R779 rule)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (5410 passed; order_memo +2: hit/recompute, source_at Null-pad)",
+        "clippy --workspace --all-targets pedantic clean",
+        "behavior-preserving (no demo change); regression r747(list proxy)/r778(grid sort)/r779(grid undo) PASS",
+        "view_order 14 + grid_sort 14 unchanged green (delegation, no behaviour drift)"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "with_undo/apply (stack-or-direct) 2-consumer bespoke = declared-defer (R779 net-negative; Edit type+setter diverge)",
+        "R780+ candidates unchanged: multi-select index model / column resize+h-scroll / grid filter at scale"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
