@@ -29365,6 +29365,64 @@
         "R772 = own-renderer menu system advance, verifiable on Linux; exact scope set at R772 entry"
       ]
     },
+    "R772": {
+      "decision_summary": "R772 §5.53 §5.38 — ContextMenu impl: own-renderer right-click command popup, 2nd consumer of the R691 command-menu contract; native secondary-click -> open_at; click-outside/Escape/activate dismiss",
+      "changes_bullets": [
+        "ContextMenu model + ContextMenuExternal: open_at anchor, \"command\" intent, send/key/open_at invoke",
+        "menu_nav lifted at 2nd consumer: step/nav_move/nav_edge shared by MenuBar + ContextMenu",
+        "view_context_menu paint: reuses dropdown row + R715 dismiss barrier; cursor anchor + window clamp",
+        "WidgetCore::apply_secondary_click hook + CoreShell + ShellCore + app.rs Right-press wiring",
+        "hello-contextmenu example (Cut/Copy/Paste/Delete) + r772 RPC demo (50 assert) + live XTEST",
+        "wire.rs lift: PointerEvent/parse_pointer_event (3-copy) + resolve_index (6-copy) to one SSOT"
+      ],
+      "verification_bullets": [
+        "pinion-core 1855 + widget-paint 419 + hello-contextmenu 18 unit tests green",
+        "r772_contextmenu RPC demo 50 assert PASS on :0 and Xvfb; affected-widget sweep 7/7 PASS",
+        "live XTEST: native right-click opens popup at cursor (anchor follows cursor); click-outside dismiss",
+        "workspace clippy pedantic clean; resolve_index/PointerEvent lift leaves pinion-core tests unchanged"
+      ],
+      "impact_refs": [
+        "5.53",
+        "5.15",
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "Native muda menu = optional Phase-B desktop mode, deferred (macOS/Windows env + real consumer)",
+        "macOS top-bar global menu = native's only hard win; own-renderer stays canonical on all platforms",
+        "apply_key-forward = 7-copy binding glue gated by WidgetCore override; default-forward = own round",
+        "submenu / accelerator / checkable menuitem = additive future axes",
+        "focus-grab-on-open (modal focus_request) deferred; keys need Tab/focus like hello-menu"
+      ],
+      "publishable_decision_summary": "R772 §5.53 §5.38 — ContextMenu impl: own-renderer right-click command popup, 2nd consumer of the R691 command-menu contract; native secondary-click -> open_at; click-outside/Escape/activate dismiss",
+      "publishable_changes_bullets": [
+        "ContextMenu model + ContextMenuExternal: open_at anchor, \"command\" intent, send/key/open_at invoke",
+        "menu_nav lifted at 2nd consumer: step/nav_move/nav_edge shared by MenuBar + ContextMenu",
+        "view_context_menu paint: reuses dropdown row + R715 dismiss barrier; cursor anchor + window clamp",
+        "WidgetCore::apply_secondary_click hook + CoreShell + ShellCore + app.rs Right-press wiring",
+        "hello-contextmenu example (Cut/Copy/Paste/Delete) + r772 RPC demo (50 assert) + live XTEST",
+        "wire.rs lift: PointerEvent/parse_pointer_event (3-copy) + resolve_index (6-copy) to one SSOT"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 1855 + widget-paint 419 + hello-contextmenu 18 unit tests green",
+        "r772_contextmenu RPC demo 50 assert PASS on :0 and Xvfb; affected-widget sweep 7/7 PASS",
+        "live XTEST: native right-click opens popup at cursor (anchor follows cursor); click-outside dismiss",
+        "workspace clippy pedantic clean; resolve_index/PointerEvent lift leaves pinion-core tests unchanged"
+      ],
+      "publishable_impact_refs": [
+        "5.53",
+        "5.15",
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Native muda menu = optional Phase-B desktop mode, deferred (macOS/Windows env + real consumer)",
+        "macOS top-bar global menu = native's only hard win; own-renderer stays canonical on all platforms",
+        "apply_key-forward = 7-copy binding glue gated by WidgetCore override; default-forward = own round",
+        "submenu / accelerator / checkable menuitem = additive future axes",
+        "focus-grab-on-open (modal focus_request) deferred; keys need Tab/focus like hello-menu"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
