@@ -11,6 +11,7 @@ pub mod frame;
 pub mod input;
 pub mod intent;
 pub mod modal_scope_request;
+pub mod directory;
 pub mod reactive;
 pub mod renderer;
 pub mod revision;
@@ -58,6 +59,7 @@ pub use reactive::{
 };
 pub use revision::SceneRevision;
 pub use scene::{HitPath, Scene};
+pub use directory::{DirEntry, Directory, InMemoryDirectory};
 pub use storage::{InMemoryStorage, Storage};
 pub use style::{
     Align, AlignItems, Border, BoxStyle, Color, ColorStop, Display, Extend, Fit, FlexDirection,

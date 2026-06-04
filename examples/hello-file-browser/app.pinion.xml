@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R787 §5.15 own-rendered file browser: pinion-forge renderer manifest for
+  hello-file-browser. Same single-source-of-truth template as the other
+  hello-* renderers; only the struct name diverges. backend=vello.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloFileBrowserRenderer"
+        backend="vello"/>

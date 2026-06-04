@@ -43,7 +43,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use pinion_core::Storage;
+use pinion_core::{DirEntry, Directory, Storage};
 
 /// R665 §3 §5.15 — filesystem-backed [`Storage`] impl. Owns a root
 /// directory under which each key maps to a single file. Operations
@@ -319,6 +319,47 @@ pub fn path_inside_root(storage: &FileStorage, path: &Path) -> bool {
     path.starts_with(root.as_path())
 }
 
+/// R787 §3 §5.15 — real-filesystem [`Directory`] impl: the read side of
+/// the filesystem an own-rendered file browser walks, the second-consumer
+/// platform bridge alongside [`FileStorage`]. Stateless (re-reads per
+/// call, no held handle), so a single instance backs any number of
+/// browsers. Maps the pure `pinion_core` [`Directory`] trait onto
+/// `std::fs::read_dir`, keeping that `std::fs` dependency out of the pure
+/// core (the same split [`FileStorage`] keeps for `Storage`).
+///
+/// IO failures (missing path, not-a-directory, permission denied) surface
+/// as `None` per the trait's total contract — the browser renders an
+/// empty / unreachable folder rather than an error type.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FsDirectory;
+
+impl FsDirectory {
+    /// A fresh stateless `FsDirectory`.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Directory for FsDirectory {
+    fn read_dir(&self, path: &str) -> Option<Vec<DirEntry>> {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(path).ok()? {
+            let Ok(entry) = entry else { continue };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // `file_type()` avoids a follow-symlink `metadata()` stat; a
+            // symlink whose type cannot be read defaults to a (selectable)
+            // file rather than a navigable dir — the conservative choice.
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            entries.push(DirEntry { name, is_dir });
+        }
+        // Canonical order is the pure-core SSOT so the seeded in-memory
+        // fixture and this real listing cannot disagree.
+        pinion_core::directory::sort_entries(&mut entries);
+        Some(entries)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! R665 §3 §5.15 — `FileStorage` regression battery covering
@@ -558,5 +599,31 @@ mod tests {
         // Clean up.
         storage.remove("k");
         let _ = std::fs::remove_dir(default_app_dir(&app).expect("recover path"));
+    }
+
+    #[test]
+    fn r787_fs_directory_lists_real_entries_sorted() {
+        use super::FsDirectory;
+        use pinion_core::Directory;
+
+        let tmp = TmpDir::new("fsdir");
+        // Seed a real on-disk tree: a subdir + two files (out of alpha order).
+        fs::create_dir(tmp.path().join("zsub")).expect("mkdir");
+        fs::write(tmp.path().join("b.txt"), b"b").expect("write");
+        fs::write(tmp.path().join("a.txt"), b"a").expect("write");
+
+        let fsd = FsDirectory::new();
+        let listing = fsd
+            .read_dir(tmp.path().to_str().expect("utf8 tmp path"))
+            .expect("real dir lists");
+        let names: Vec<&str> = listing.iter().map(|e| e.name.as_str()).collect();
+        // Dirs first (zsub), then files alpha (a.txt, b.txt) — canonical order.
+        assert_eq!(names, ["zsub", "a.txt", "b.txt"]);
+        assert!(listing[0].is_dir, "zsub is a directory");
+        assert!(!listing[1].is_dir, "a.txt is a file");
+
+        // A missing path lists None (the total-surface contract).
+        assert_eq!(fsd.read_dir(&format!("{}/nope", tmp.path().display())), None);
+        // TmpDir's Drop removes the seeded tree.
     }
 }

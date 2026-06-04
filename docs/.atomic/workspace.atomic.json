@@ -30519,6 +30519,66 @@
         "prior defers: ScrollAxis::Both, horizontal wheel routing, multi-facet filter, editable combobox"
       ]
     },
+    "R787": {
+      "decision_summary": "R787 §5.15 §5.16 own-rendered file browser: a Directory read trait (the §3 External escape hatch, peer of R665 Storage) + InMemoryDirectory/FsDirectory two-tier + a DirectoryState reactive holder + DirectoryExternal, composed into a scene-graph-native directory browser whose listing/navigation/selection are RPC-introspectable data — the verifiable alternative to an OS-native dialog (which is invisible to scene/query on Linux+winit)",
+      "changes_bullets": [
+        "Directory read trait + DirEntry + InMemoryDirectory in pinion-core (IO-free, peer of R665 Storage)",
+        "FsDirectory (std::fs::read_dir) in pinion-platform-storage = real-fs second-consumer impl",
+        "DirectoryState reactive holder (cwd/entries/selected Signals) + use_directory_state hook",
+        "DirectoryExternal: query cwd/count/entries/name.i/is_dir.i/selected; invoke navigate/up/select",
+        "row-click send: composite fb_dir#<i> rows navigate-or-select via is_activation_event (R778 SSOT)",
+        "hello-file-browser: virtualized entry list + ../ affordance, seeded InMemoryDirectory",
+        "a11y via windowed_list_nodes_selected (windowed-list SSOT, aria-selected on the picked file)",
+        "sort_entries SSOT (dirs-first then alpha) shared by both Directory impls"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (R786 5477 -> R787 5499); clippy --workspace pedantic clean",
+        "r787 demo: RPC navigate/select + scene/click row E2E (36 assertions) + PINION_SCREENSHOT pixel",
+        "PINION_SCREENSHOT witness: directory row ink != file row ink (dir-vs-file affordance renders)",
+        "FsDirectory unit-tested against a real tmp dir (created + cleaned up on Drop)",
+        "additive round (new modules + example only; no shared code touched); validate T1=0 / new orphan +0"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "modal file-open DIALOG chrome (scrim + OK/Cancel + R693 trap) deferred = R788 (this round = pane)",
+        "keyboard nav (arrows/Enter over the entry list) deferred: pointer+RPC (R746/R786 precedent)",
+        "save dialog + filename field + glob filter deferred; mkdir/delete (write side of Directory) deferred",
+        "clickable breadcrumb segments deferred (../ parent only); size/mtime entry metadata deferred",
+        "prior: editable rich-text (substrate done, no consumer), ScrollAxis::Both, multi-facet filter"
+      ],
+      "publishable_decision_summary": "R787 §5.15 §5.16 own-rendered file browser: a Directory read trait (the §3 External escape hatch, peer of R665 Storage) + InMemoryDirectory/FsDirectory two-tier + a DirectoryState reactive holder + DirectoryExternal, composed into a scene-graph-native directory browser whose listing/navigation/selection are RPC-introspectable data — the verifiable alternative to an OS-native dialog (which is invisible to scene/query on Linux+winit)",
+      "publishable_changes_bullets": [
+        "Directory read trait + DirEntry + InMemoryDirectory in pinion-core (IO-free, peer of R665 Storage)",
+        "FsDirectory (std::fs::read_dir) in pinion-platform-storage = real-fs second-consumer impl",
+        "DirectoryState reactive holder (cwd/entries/selected Signals) + use_directory_state hook",
+        "DirectoryExternal: query cwd/count/entries/name.i/is_dir.i/selected; invoke navigate/up/select",
+        "row-click send: composite fb_dir#<i> rows navigate-or-select via is_activation_event (R778 SSOT)",
+        "hello-file-browser: virtualized entry list + ../ affordance, seeded InMemoryDirectory",
+        "a11y via windowed_list_nodes_selected (windowed-list SSOT, aria-selected on the picked file)",
+        "sort_entries SSOT (dirs-first then alpha) shared by both Directory impls"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (R786 5477 -> R787 5499); clippy --workspace pedantic clean",
+        "r787 demo: RPC navigate/select + scene/click row E2E (36 assertions) + PINION_SCREENSHOT pixel",
+        "PINION_SCREENSHOT witness: directory row ink != file row ink (dir-vs-file affordance renders)",
+        "FsDirectory unit-tested against a real tmp dir (created + cleaned up on Drop)",
+        "additive round (new modules + example only; no shared code touched); validate T1=0 / new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "modal file-open DIALOG chrome (scrim + OK/Cancel + R693 trap) deferred = R788 (this round = pane)",
+        "keyboard nav (arrows/Enter over the entry list) deferred: pointer+RPC (R746/R786 precedent)",
+        "save dialog + filename field + glob filter deferred; mkdir/delete (write side of Directory) deferred",
+        "clickable breadcrumb segments deferred (../ parent only); size/mtime entry metadata deferred",
+        "prior: editable rich-text (substrate done, no consumer), ScrollAxis::Both, multi-facet filter"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
