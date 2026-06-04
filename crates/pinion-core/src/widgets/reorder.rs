@@ -273,7 +273,7 @@ impl ReorderModel {
                 };
                 let (visual, event): (usize, &str) =
                     parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
-                if PointerWireEvent::from_wire_name(event) == Some(PointerWireEvent::Down) && visual < self.count {
+                if event == PointerWireEvent::Down.as_wire_name() && visual < self.count {
                     self.pressed.set(Some(visual));
                 }
                 Ok(IntrospectValue::Null)

@@ -493,7 +493,7 @@ impl ViewSortFilterExternal {
             return;
         };
         if event_name == "KeyboardActivate"
-            || PointerWireEvent::from_wire_name(event_name) == Some(PointerWireEvent::Up)
+            || event_name == PointerWireEvent::Up.as_wire_name()
         {
             self.apply_cycle_sort();
         }

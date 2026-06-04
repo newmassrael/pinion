@@ -29519,6 +29519,42 @@
         "per-widget *Event::from_name stays stringify-canonical; cross-vocab pin test guards future drift"
       ]
     },
+    "R773.1": {
+      "decision_summary": "R773.1 audit-correction (user hack/smell/SSOT review): single-event decoders use event == X.as_wire_name() (direct one-string compare) instead of from_wire_name(x) == Some(X) (which decodes the full vocab to check one event); multi-variant decoders keep match from_wire_name",
+      "changes_bullets": [
+        "datepicker/table/reorder/view_order/virtual_select single-event triggers use event == X.as_wire_name()",
+        "multi-variant decoders (menu/toolbar/context_menu/tooltip/dock/splitter/tree_view) keep match from_wire_name",
+        "right-tool-per-use: match when branching on multiple events, direct equality when checking one event"
+      ],
+      "verification_bullets": [
+        "behavior-identical: x == Up.as_wire_name() iff from_wire_name(x) == Some(Up); user-audit-triggered polish",
+        "clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean; pinion-core 1858 tests pass",
+        "affected-widget demos 12/12 PASS (datepicker/table/sort/virtual-select/reorder/dnd/tabs/view_order)"
+      ],
+      "impact_refs": [
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "no new carry; R773 carry unchanged (KeyboardActivate single-token vocab, DoubleClick) still deferred"
+      ],
+      "publishable_decision_summary": "R773.1 audit-correction (user hack/smell/SSOT review): single-event decoders use event == X.as_wire_name() (direct one-string compare) instead of from_wire_name(x) == Some(X) (which decodes the full vocab to check one event); multi-variant decoders keep match from_wire_name",
+      "publishable_changes_bullets": [
+        "datepicker/table/reorder/view_order/virtual_select single-event triggers use event == X.as_wire_name()",
+        "multi-variant decoders (menu/toolbar/context_menu/tooltip/dock/splitter/tree_view) keep match from_wire_name",
+        "right-tool-per-use: match when branching on multiple events, direct equality when checking one event"
+      ],
+      "publishable_verification_bullets": [
+        "behavior-identical: x == Up.as_wire_name() iff from_wire_name(x) == Some(Up); user-audit-triggered polish",
+        "clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean; pinion-core 1858 tests pass",
+        "affected-widget demos 12/12 PASS (datepicker/table/sort/virtual-select/reorder/dnd/tabs/view_order)"
+      ],
+      "publishable_impact_refs": [
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "no new carry; R773 carry unchanged (KeyboardActivate single-token vocab, DoubleClick) still deferred"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

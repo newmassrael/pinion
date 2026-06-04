@@ -854,7 +854,7 @@ impl ExternalIntrospect for TableExternal {
                         if col >= self.col_count() {
                             return Err(InvokeError::Rejected);
                         }
-                        if PointerWireEvent::from_wire_name(event_name) == Some(PointerWireEvent::Up) {
+                        if event_name == PointerWireEvent::Up.as_wire_name() {
                             self.cycle_sort(col);
                         }
                         return Ok(self

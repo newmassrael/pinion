@@ -633,13 +633,13 @@ impl ExternalIntrospect for DatePickerExternal {
                     // full pointer cycle a click produces is not rejected.
                     match key {
                         "prev" => {
-                            if PointerWireEvent::from_wire_name(event_name) == Some(PointerWireEvent::Up) {
+                            if event_name == PointerWireEvent::Up.as_wire_name() {
                                 self.step_month(-1);
                             }
                             return Ok(IntrospectValue::Null);
                         }
                         "next" => {
-                            if PointerWireEvent::from_wire_name(event_name) == Some(PointerWireEvent::Up) {
+                            if event_name == PointerWireEvent::Up.as_wire_name() {
                                 self.step_month(1);
                             }
                             return Ok(IntrospectValue::Null);
