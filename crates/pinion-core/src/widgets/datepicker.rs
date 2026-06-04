@@ -46,6 +46,7 @@ use crate::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
     ThreadOwnership,
 };
+use crate::input::PointerWireEvent;
 use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
 use crate::widgets::selection;
@@ -632,13 +633,13 @@ impl ExternalIntrospect for DatePickerExternal {
                     // full pointer cycle a click produces is not rejected.
                     match key {
                         "prev" => {
-                            if event_name == "PointerUp" {
+                            if PointerWireEvent::from_wire_name(event_name) == Some(PointerWireEvent::Up) {
                                 self.step_month(-1);
                             }
                             return Ok(IntrospectValue::Null);
                         }
                         "next" => {
-                            if event_name == "PointerUp" {
+                            if PointerWireEvent::from_wire_name(event_name) == Some(PointerWireEvent::Up) {
                                 self.step_month(1);
                             }
                             return Ok(IntrospectValue::Null);

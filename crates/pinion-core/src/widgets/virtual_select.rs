@@ -41,6 +41,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use crate::input::PointerWireEvent;
 use crate::intent::Intent;
 use crate::widgets::IntentEmitter;
 
@@ -195,7 +196,9 @@ impl VirtualSelectExternal {
         else {
             return;
         };
-        if matches!(event_name, "PointerUp" | "KeyboardActivate") {
+        if event_name == "KeyboardActivate"
+            || PointerWireEvent::from_wire_name(event_name) == Some(PointerWireEvent::Up)
+        {
             self.select(index);
         }
     }

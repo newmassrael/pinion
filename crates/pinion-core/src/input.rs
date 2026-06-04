@@ -173,6 +173,86 @@ pub enum CompositionEvent {
     Cancel,
 }
 
+/// R773 §5.35 §5.13 — the W3C pointer-event name subset that the
+/// composite-tag input router emits over the `send` wire to
+/// command-class [`External`](crate::external::External) widgets.
+///
+/// This is the **wire vocabulary** for the `invoke("send", "<name>")`
+/// channel: the [`InputRouter`](pinion_runtime::InputRouter) rewrites a
+/// paint hit-target into a bare event name (or a `"<sub>:<name>"`
+/// composite, see [`composite_tag`](crate::composite_tag)) and forwards
+/// it; the receiving widget decodes the `<name>` half. Lifting the five
+/// names into one enum makes the **encode** site (the router, via
+/// [`as_wire_name`](Self::as_wire_name)) and every **decode** site (via
+/// [`from_wire_name`](Self::from_wire_name)) reference a single
+/// vocabulary instead of independent string literals — a divergence
+/// between producer and consumer would be a silent wire bug (the router
+/// emits a name no decoder recognises and the event vanishes), not a
+/// style choice, so the pair lives once here (`decode == inverse(encode)`,
+/// the R743.1 / R745 / R770.1 SSOT class).
+///
+/// Lives in `pinion-core::input` alongside [`Modifiers`] and
+/// [`CompositionEvent`] — the shared input-event primitives both the
+/// `pinion-runtime` router (producer) and the `pinion-core` /
+/// `pinion-widget-paint` widget catalog (consumers) name without
+/// inverting the crate graph.
+///
+/// Scope boundary: the per-widget SCE-emitted event enums
+/// (`ButtonEvent`, `CheckboxEvent`, …) carry the *same* five pointer
+/// names but derive them from `stringify!(VariantIdent)` via
+/// [`widget_event_name!`](crate::widget_event_name) — a self-consistent,
+/// SCXML-canonical vocabulary owned by each statechart, a *different*
+/// decision (wire name → SCXML transition) that this enum does not fold.
+/// The two vocabularies are pinned together by a cross-vocab test in
+/// `widgets::button` so a rename on either side is caught at test time.
+/// The keyboard-side `"KeyboardActivate"` token is a separate wire
+/// vocabulary (not a pointer event) and is left to its callers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerWireEvent {
+    /// `"PointerEnter"` — cursor entered the target (hover begins).
+    Enter,
+    /// `"PointerDown"` — primary button pressed over the target.
+    Down,
+    /// `"PointerUp"` — primary button released (the activate edge).
+    Up,
+    /// `"PointerLeave"` — cursor left the target (hover ends, or a
+    /// mid-press stray under capture).
+    Leave,
+    /// `"PointerCancel"` — the pointer interaction was aborted.
+    Cancel,
+}
+
+impl PointerWireEvent {
+    /// Encode `self` into its canonical W3C wire name — the single
+    /// source the router emits. Inverse of [`from_wire_name`](Self::from_wire_name).
+    #[must_use]
+    pub fn as_wire_name(self) -> &'static str {
+        match self {
+            PointerWireEvent::Enter => "PointerEnter",
+            PointerWireEvent::Down => "PointerDown",
+            PointerWireEvent::Up => "PointerUp",
+            PointerWireEvent::Leave => "PointerLeave",
+            PointerWireEvent::Cancel => "PointerCancel",
+        }
+    }
+
+    /// Decode a W3C pointer-event name into a [`PointerWireEvent`];
+    /// `None` for any other name (the caller rejects the `send` payload
+    /// or treats it as out-of-vocabulary). Inverse of
+    /// [`as_wire_name`](Self::as_wire_name).
+    #[must_use]
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "PointerEnter" => Some(PointerWireEvent::Enter),
+            "PointerDown" => Some(PointerWireEvent::Down),
+            "PointerUp" => Some(PointerWireEvent::Up),
+            "PointerLeave" => Some(PointerWireEvent::Leave),
+            "PointerCancel" => Some(PointerWireEvent::Cancel),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.f.0 §5.13 — `Modifiers` regression battery. Covers the
@@ -248,6 +328,7 @@ mod r56_2_a_composition_event_tests {
     //! pinion-shell `WindowEvent::Ime` arm) stay stable.
 
     use super::CompositionEvent;
+    use super::PointerWireEvent;
 
     #[test]
     fn r56_2_a_four_variants_construct_and_compare() {
@@ -326,5 +407,44 @@ mod r56_2_a_composition_event_tests {
             };
             assert!(!label.is_empty());
         }
+    }
+
+    const ALL_POINTER_WIRE_EVENTS: [PointerWireEvent; 5] = [
+        PointerWireEvent::Enter,
+        PointerWireEvent::Down,
+        PointerWireEvent::Up,
+        PointerWireEvent::Leave,
+        PointerWireEvent::Cancel,
+    ];
+
+    #[test]
+    fn r773_pointer_wire_event_encode_decode_round_trips() {
+        // decode(encode(e)) == e for every variant — the SSOT pairing
+        // guard: a name added to one direction but not the other fails
+        // here at compile/test time.
+        for e in ALL_POINTER_WIRE_EVENTS {
+            assert_eq!(PointerWireEvent::from_wire_name(e.as_wire_name()), Some(e));
+        }
+    }
+
+    #[test]
+    fn r773_pointer_wire_event_names_are_canonical() {
+        assert_eq!(PointerWireEvent::Enter.as_wire_name(), "PointerEnter");
+        assert_eq!(PointerWireEvent::Down.as_wire_name(), "PointerDown");
+        assert_eq!(PointerWireEvent::Up.as_wire_name(), "PointerUp");
+        assert_eq!(PointerWireEvent::Leave.as_wire_name(), "PointerLeave");
+        assert_eq!(PointerWireEvent::Cancel.as_wire_name(), "PointerCancel");
+    }
+
+    #[test]
+    fn r773_pointer_wire_event_rejects_unknown_names() {
+        // Names outside the pointer vocabulary (a different wire
+        // vocabulary, or a typo) decode to None so callers can fall
+        // through to their own handling or reject the payload.
+        assert_eq!(PointerWireEvent::from_wire_name("PointerWheel"), None);
+        assert_eq!(PointerWireEvent::from_wire_name("PointerMove"), None);
+        assert_eq!(PointerWireEvent::from_wire_name("KeyboardActivate"), None);
+        assert_eq!(PointerWireEvent::from_wire_name("DoubleClick"), None);
+        assert_eq!(PointerWireEvent::from_wire_name(""), None);
     }
 }

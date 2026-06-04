@@ -69,6 +69,7 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
@@ -2580,22 +2581,22 @@ impl ExternalIntrospect for DockPanelExternal {
             Some((sub, ev)) => (Some(sub), ev),
             None => (None, raw),
         };
-        match event_name {
-            "PointerUp" | "PointerCancel" => {
+        match PointerWireEvent::from_wire_name(event_name) {
+            Some(PointerWireEvent::Up | PointerWireEvent::Cancel) => {
                 self.drag_start.set(None);
                 self.fired_for_drag.set(false);
                 self.is_drag_armed.set(true);
                 Ok(IntrospectValue::Null)
             }
-            "PointerDown" | "PointerEnter" => {
+            Some(PointerWireEvent::Down | PointerWireEvent::Enter) => {
                 match sub_index {
                     Some("header") | None => self.is_drag_armed.set(true),
                     _ => self.is_drag_armed.set(false),
                 }
                 Ok(IntrospectValue::Null)
             }
-            "PointerLeave" => Ok(IntrospectValue::Null),
-            _ => Err(InvokeError::UnknownPath),
+            Some(PointerWireEvent::Leave) => Ok(IntrospectValue::Null),
+            None => Err(InvokeError::UnknownPath),
         }
     }
 }

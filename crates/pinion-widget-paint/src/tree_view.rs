@@ -51,6 +51,7 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
@@ -688,12 +689,12 @@ impl ExternalIntrospect for TreeRowClickExternal {
                     // framework-level Rule-of-Three maturity).
                     let (id, event_name): (String, &str) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
-                    match event_name {
-                        "PointerDown" => {
+                    match PointerWireEvent::from_wire_name(event_name) {
+                        Some(PointerWireEvent::Down) => {
                             self.pressed_id = Some(id);
                             Ok(IntrospectValue::Bool(true))
                         }
-                        "PointerUp" => {
+                        Some(PointerWireEvent::Up) => {
                             let armed = self
                                 .pressed_id
                                 .as_ref()
@@ -706,7 +707,7 @@ impl ExternalIntrospect for TreeRowClickExternal {
                                 Ok(IntrospectValue::Bool(false))
                             }
                         }
-                        "PointerEnter" => {
+                        Some(PointerWireEvent::Enter) => {
                             // R678 hover axis: set hovered_id and emit
                             // a `hover` intent carrying `Text(id)`.
                             // Idempotent re-Enter on the same id is
@@ -719,7 +720,7 @@ impl ExternalIntrospect for TreeRowClickExternal {
                                 Ok(IntrospectValue::Bool(true))
                             }
                         }
-                        "PointerCancel" | "PointerLeave" => {
+                        Some(PointerWireEvent::Cancel | PointerWireEvent::Leave) => {
                             // R678 hover axis: clearing the hover slot
                             // matches the W3C "left/cancel = no longer
                             // hovering" semantics. Emit a `hover`
@@ -750,7 +751,7 @@ impl ExternalIntrospect for TreeRowClickExternal {
                             // with R675 test expectations.
                             Ok(IntrospectValue::Bool(false))
                         }
-                        _ => Ok(IntrospectValue::Bool(false)),
+                        None => Ok(IntrospectValue::Bool(false)),
                     }
                 }
                 _ => Err(InvokeError::TypeMismatch),

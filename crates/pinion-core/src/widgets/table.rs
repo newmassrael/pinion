@@ -50,6 +50,7 @@ use crate::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
     ThreadOwnership,
 };
+use crate::input::PointerWireEvent;
 use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
 use crate::widgets::selection;
@@ -853,7 +854,7 @@ impl ExternalIntrospect for TableExternal {
                         if col >= self.col_count() {
                             return Err(InvokeError::Rejected);
                         }
-                        if event_name == "PointerUp" {
+                        if PointerWireEvent::from_wire_name(event_name) == Some(PointerWireEvent::Up) {
                             self.cycle_sort(col);
                         }
                         return Ok(self

@@ -38,7 +38,8 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::menu_nav;
-use crate::widgets::wire::{parse_pointer_wire_event, resolve_index, PointerWireEvent};
+use crate::input::PointerWireEvent;
+use crate::widgets::wire::resolve_index;
 use crate::widgets::IntentEmitter;
 
 /// R772 §5.38 — a logical right-click command popup. See module docs for
@@ -257,7 +258,7 @@ impl ContextMenuExternal {
     /// outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
         let (sub, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
-        let event = parse_pointer_wire_event(event_name).ok_or(InvokeError::Rejected)?;
+        let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
         // R715 §5.16 — the transparent dismiss barrier painted behind the
         // popup: a `PointerUp` outside the panel closes it. Other pointer
         // events over the barrier are inert.

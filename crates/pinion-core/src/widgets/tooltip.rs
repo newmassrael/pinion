@@ -65,6 +65,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use crate::input::PointerWireEvent;
 use crate::intent::Intent;
 
 /// R695 §5.38 — a hover / focus tooltip visibility statechart.
@@ -158,14 +159,14 @@ impl TooltipExternal {
     /// pointer is over.
     fn send(&mut self, name: &str) -> Result<(), InvokeError> {
         let name = name.split_once(':').map_or(name, |(_sub, event)| event);
-        match name {
-            "PointerEnter" => self.pointer_enter(),
-            "PointerLeave" => self.pointer_leave(),
+        match PointerWireEvent::from_wire_name(name) {
+            Some(PointerWireEvent::Enter) => self.pointer_enter(),
+            Some(PointerWireEvent::Leave) => self.pointer_leave(),
             // Press / release / cancel are inert on a descriptive
             // tooltip but must not error — the router forwards them when
             // the cursor presses on the shared-tag overlay body.
-            "PointerDown" | "PointerUp" | "PointerCancel" => {}
-            _ => return Err(InvokeError::Rejected),
+            Some(PointerWireEvent::Down | PointerWireEvent::Up | PointerWireEvent::Cancel) => {}
+            None => return Err(InvokeError::Rejected),
         }
         Ok(())
     }

@@ -85,7 +85,8 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::menu_nav;
-use crate::widgets::wire::{parse_pointer_wire_event, resolve_index, PointerWireEvent};
+use crate::input::PointerWireEvent;
+use crate::widgets::wire::resolve_index;
 use crate::widgets::IntentEmitter;
 
 /// R691 §5.38 — logical menubar with N command menus. See module docs
@@ -421,7 +422,7 @@ impl MenuBarExternal {
     /// the round-trip outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
         let (sub, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
-        let event = parse_pointer_wire_event(event_name).ok_or(InvokeError::Rejected)?;
+        let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
         // R715 §5.16 — the transparent dismiss barrier (`<bar>#barrier`,
         // painted behind an open dropdown over the area below the title
         // strip): a `PointerUp` outside the menu closes it. Other pointer

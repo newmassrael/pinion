@@ -78,7 +78,8 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use crate::intent::Intent;
-use crate::widgets::wire::{parse_pointer_wire_event, resolve_index, PointerWireEvent};
+use crate::input::PointerWireEvent;
+use crate::widgets::wire::resolve_index;
 use crate::widgets::IntentEmitter;
 
 /// R692 §5.38 — the two control classes a [`Toolbar`] groups. A
@@ -351,7 +352,7 @@ impl ToolbarExternal {
     /// Returns the roving cursor as the round-trip outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
         let (idx_str, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
-        let event = parse_pointer_wire_event(event_name).ok_or(InvokeError::Rejected)?;
+        let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
         let idx: usize = idx_str.parse().map_err(|_| InvokeError::Rejected)?;
         self.send_item(idx, event);
         Ok(focus_value(self.focus()))

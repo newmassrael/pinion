@@ -73,6 +73,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use crate::input::PointerWireEvent;
 use crate::reactive::{batch, Owner, Signal};
 use crate::undo::{UndoCommand, UndoStack};
 
@@ -491,7 +492,9 @@ impl ViewSortFilterExternal {
         else {
             return;
         };
-        if matches!(event_name, "PointerUp" | "KeyboardActivate") {
+        if event_name == "KeyboardActivate"
+            || PointerWireEvent::from_wire_name(event_name) == Some(PointerWireEvent::Up)
+        {
             self.apply_cycle_sort();
         }
     }

@@ -79,6 +79,7 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use pinion_core::input::PointerWireEvent;
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Scene};
 use pinion_core::style::{
@@ -868,8 +869,8 @@ impl ExternalIntrospect for SplitterExternal {
             return Err(InvokeError::UnknownPath);
         }
         let event_name = args.as_str().ok_or(InvokeError::TypeMismatch)?;
-        match event_name {
-            "PointerUp" | "PointerCancel" => {
+        match PointerWireEvent::from_wire_name(event_name) {
+            Some(PointerWireEvent::Up | PointerWireEvent::Cancel) => {
                 clear_drag_state(self);
                 Ok(IntrospectValue::Null)
             }
@@ -877,8 +878,10 @@ impl ExternalIntrospect for SplitterExternal {
             // sends them but the splitter does not need to react —
             // calibration happens in the first pointer_move under
             // capture lock. Returning Ok keeps the dispatch silent.
-            "PointerDown" | "PointerEnter" | "PointerLeave" => Ok(IntrospectValue::Null),
-            _ => Err(InvokeError::UnknownPath),
+            Some(PointerWireEvent::Down | PointerWireEvent::Enter | PointerWireEvent::Leave) => {
+                Ok(IntrospectValue::Null)
+            }
+            None => Err(InvokeError::UnknownPath),
         }
     }
 }

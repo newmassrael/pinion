@@ -500,6 +500,23 @@ mod tests {
     }
 
     #[test]
+    fn r773_pointer_wire_vocab_pins_to_scxml_canonical_names() {
+        // The hand-maintained `PointerWireEvent` vocabulary (the router
+        // emit / command-widget decode SSOT) and the SCE-emitted
+        // `ButtonEvent` vocabulary (`stringify!(Variant)` via
+        // `widget_event_name!`) carry the same five pointer names but
+        // own them in different layers. This pins the two so a rename on
+        // either side fails at test time instead of silently desyncing
+        // the router from the statechart (`as_name` is the SCXML canon).
+        use crate::input::PointerWireEvent;
+        assert_eq!(PointerWireEvent::Enter.as_wire_name(), ButtonEvent::PointerEnter.as_name());
+        assert_eq!(PointerWireEvent::Down.as_wire_name(), ButtonEvent::PointerDown.as_name());
+        assert_eq!(PointerWireEvent::Up.as_wire_name(), ButtonEvent::PointerUp.as_name());
+        assert_eq!(PointerWireEvent::Leave.as_wire_name(), ButtonEvent::PointerLeave.as_name());
+        assert_eq!(PointerWireEvent::Cancel.as_wire_name(), ButtonEvent::PointerCancel.as_name());
+    }
+
+    #[test]
     fn disable_absorbs_pointer_events() {
         let mut button = Button::new();
         button.send(ButtonEvent::Disable);

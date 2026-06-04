@@ -82,6 +82,7 @@ use std::time::Instant;
 use pinion_core::composite_tag::split_subindex;
 use pinion_core::event::WheelDelta;
 use pinion_core::external::{DragPayload, DropPoint, IntrospectValue};
+use pinion_core::input::PointerWireEvent;
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 
 /// R664 §5.49 — W3C UI Events `dblclick` time threshold (milliseconds).
@@ -531,7 +532,7 @@ impl InputRouter {
             return;
         }
         if let Some(tag) = self.hover_targets.remove(&id) {
-            dispatch_send(state_scene, &tag, "PointerLeave");
+            dispatch_send(state_scene, &tag, PointerWireEvent::Leave.as_wire_name());
         }
     }
 
@@ -574,7 +575,7 @@ impl InputRouter {
     /// at the framework tier per [[r47-class-incident-prevention]].
     pub fn pointer_down(&mut self, id: PointerId, state_scene: &mut Scene) {
         if let Some(tag) = self.hover_targets.get(&id).cloned() {
-            dispatch_send(state_scene, &tag, "PointerDown");
+            dispatch_send(state_scene, &tag, PointerWireEvent::Down.as_wire_name());
             // R51.40 §5.35 — read the cached wants_capture bit
             // populated by the matching `refresh_hover` instead of
             // re-walking the state-scene tree. The cache is
@@ -694,25 +695,25 @@ impl InputRouter {
             if let Some(external) = find_external_by_tag(state_scene, primary) {
                 external.handle.drag_release(&session.payload, over);
             }
-            dispatch_send(state_scene, &session.source_tag, "PointerUp");
+            dispatch_send(state_scene, &session.source_tag, PointerWireEvent::Up.as_wire_name());
             self.refresh_hover(id, state_scene);
             return;
         }
         if let Some(cap_tag) = self.captured_targets.get(&id).cloned() {
             let release_over = self.cursor_over_tag(id, &cap_tag);
             let event = if !release_over && widget_cancels_on_release_off(state_scene, &cap_tag) {
-                "PointerLeave"
+                PointerWireEvent::Leave
             } else {
-                "PointerUp"
+                PointerWireEvent::Up
             };
-            dispatch_send(state_scene, &cap_tag, event);
+            dispatch_send(state_scene, &cap_tag, event.as_wire_name());
             self.captured_targets.remove(&id);
             self.refresh_hover(id, state_scene);
         } else if let Some(tag) = self.hover_targets.get(&id).cloned() {
             // Free (no-capture) release: the cursor is over the target
             // (a mid-press stray already drove the SCXML out of Pressed
             // via `cursor_moved`'s `PointerLeave`).
-            dispatch_send(state_scene, &tag, "PointerUp");
+            dispatch_send(state_scene, &tag, PointerWireEvent::Up.as_wire_name());
         }
     }
 
@@ -906,7 +907,7 @@ impl InputRouter {
             .cloned()
             .or_else(|| self.captured_targets.get(&id).cloned());
         if let Some(tag) = target {
-            dispatch_send(state_scene, &tag, "PointerCancel");
+            dispatch_send(state_scene, &tag, PointerWireEvent::Cancel.as_wire_name());
         }
         if self.captured_targets.remove(&id).is_some() {
             self.refresh_hover(id, state_scene);
@@ -1028,13 +1029,13 @@ impl InputRouter {
         if let Some(prev_tag) = prev {
             self.hover_targets.remove(&id);
             self.hover_wants_capture.remove(&id);
-            dispatch_send(state_scene, &prev_tag, "PointerLeave");
+            dispatch_send(state_scene, &prev_tag, PointerWireEvent::Leave.as_wire_name());
         }
         if let Some(target) = now {
             self.hover_targets.insert(id, target.clone());
             let wants = widget_wants_capture(state_scene, &target);
             self.hover_wants_capture.insert(id, wants);
-            dispatch_send(state_scene, &target, "PointerEnter");
+            dispatch_send(state_scene, &target, PointerWireEvent::Enter.as_wire_name());
         }
     }
 }

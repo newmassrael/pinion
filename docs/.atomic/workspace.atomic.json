@@ -29463,6 +29463,62 @@
         "tooltip/dock/tree_view decode pointer-event names inline w/ bespoke groupings (different decision, not folded)"
       ]
     },
+    "R773": {
+      "decision_summary": "R773 §5.35 §5.13 pointer wire-vocabulary SSOT: PointerWireEvent::{as_wire_name,from_wire_name} pairs the router emit with every hand-rolled decoder so encode==inverse(decode) lives once; per-widget SCXML *Event::from_name (stringify) stays canonical, pinned by a cross-vocab test",
+      "changes_bullets": [
+        "Lift PointerWireEvent + as_wire_name/from_wire_name into pinion-core::input as a pub SSOT",
+        "Router emit (input.rs, 8 sites) now uses PointerWireEvent::X.as_wire_name() not bare literals",
+        "menu/toolbar/context_menu decode via from_wire_name (was wire::parse_pointer_wire_event)",
+        "tooltip/dock/splitter/tree_view bespoke matchers retyped to match from_wire_name; grouping kept",
+        "datepicker/table/view_order/virtual_select/reorder checks use from_wire_name == Some(variant)",
+        "widgets::wire keeps only resolve_index; pointer vocab moved to shared runtime<->widget input layer",
+        "per-widget SCXML *Event::from_name (stringify) NOT folded: SCXML-canonical, a different decision"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green: 2434 pass / 0 fail (router tests assert the emitted wire names)",
+        "new unit tests: encode<->decode round-trip + canonical names + reject-unknown names",
+        "cross-vocab pin (button.rs): PointerWireEvent names == ButtonEvent SCXML as_name; a drift guard",
+        "clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "full headless demo sweep 116/116 PASS: every migrated decoder + typed router emit, end-to-end",
+        "behavior-preserving string-identity refactor; emit + decode unit-asserted on both sides"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.13"
+      ],
+      "carry_forward_bullets": [
+        "keyboard token KeyboardActivate stays bare (view_order/virtual_select, 2-copy); separate vocab",
+        "DoubleClick (R663) bare literal at one router-emit site; separate vocab, not a pointer event",
+        "per-widget *Event::from_name stays stringify-canonical; cross-vocab pin test guards future drift"
+      ],
+      "publishable_decision_summary": "R773 §5.35 §5.13 pointer wire-vocabulary SSOT: PointerWireEvent::{as_wire_name,from_wire_name} pairs the router emit with every hand-rolled decoder so encode==inverse(decode) lives once; per-widget SCXML *Event::from_name (stringify) stays canonical, pinned by a cross-vocab test",
+      "publishable_changes_bullets": [
+        "Lift PointerWireEvent + as_wire_name/from_wire_name into pinion-core::input as a pub SSOT",
+        "Router emit (input.rs, 8 sites) now uses PointerWireEvent::X.as_wire_name() not bare literals",
+        "menu/toolbar/context_menu decode via from_wire_name (was wire::parse_pointer_wire_event)",
+        "tooltip/dock/splitter/tree_view bespoke matchers retyped to match from_wire_name; grouping kept",
+        "datepicker/table/view_order/virtual_select/reorder checks use from_wire_name == Some(variant)",
+        "widgets::wire keeps only resolve_index; pointer vocab moved to shared runtime<->widget input layer",
+        "per-widget SCXML *Event::from_name (stringify) NOT folded: SCXML-canonical, a different decision"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green: 2434 pass / 0 fail (router tests assert the emitted wire names)",
+        "new unit tests: encode<->decode round-trip + canonical names + reject-unknown names",
+        "cross-vocab pin (button.rs): PointerWireEvent names == ButtonEvent SCXML as_name; a drift guard",
+        "clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "full headless demo sweep 116/116 PASS: every migrated decoder + typed router emit, end-to-end",
+        "behavior-preserving string-identity refactor; emit + decode unit-asserted on both sides"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.13"
+      ],
+      "publishable_carry_forward_bullets": [
+        "keyboard token KeyboardActivate stays bare (view_order/virtual_select, 2-copy); separate vocab",
+        "DoubleClick (R663) bare literal at one router-emit site; separate vocab, not a pointer event",
+        "per-widget *Event::from_name stays stringify-canonical; cross-vocab pin test guards future drift"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
