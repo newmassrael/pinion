@@ -26,13 +26,18 @@
 //! (the R780 → R781 model-then-interaction split): this round lands the model
 //! + the AI-first RPC path; a clicked-and-dragged column border is a follow-up.
 
+use std::borrow::Cow;
+use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use crate::input::PointerWireEvent;
 use crate::reactive::{Owner, Signal};
+use crate::widget_core::ExtraExternal;
+use crate::widgets::scroll::ScrollState;
 
 /// Default minimum column width (logical pixels). A [`set_width`](ColumnWidths::set_width)
 /// below this clamps up, so a column can never be dragged / set to a sliver
@@ -335,6 +340,312 @@ impl ExternalIntrospect for ColumnWidthExternal {
     }
 }
 
+// ============================================================================
+// R786 §5.27 — live-drag column resize (the pointer-wire consumer)
+// ============================================================================
+
+/// R786 §5.27 — press-time calibration snapshot for one live column-resize
+/// drag, mirroring the splitter's `SplitterDragStart`. Captured on the first
+/// [`pointer_move`](ColumnResizeExternal) under the capture lock and held until
+/// `PointerUp` clears it.
+///
+/// * `width_at_press` — the dragged column's width when the press landed (the
+///   anchor the pixel delta is added to, so the result never depends on an
+///   intermediate clamped width).
+/// * `press_x_rel` — the cursor's fraction across the **viewport** at press.
+///   The drag delta `(x_rel − press_x_rel) · viewport_w` is the cursor's pixel
+///   travel; a grab that did not land exactly on the border carries no jump
+///   (the first move is calibration-only).
+#[derive(Clone, Copy, Debug)]
+struct ResizeDragStart {
+    width_at_press: u32,
+    press_x_rel: f64,
+}
+
+/// Clamp a logical-pixel width (computed in `f64`) into the `u32` width domain.
+/// [`ColumnWidths::set_width`] then raises the result to `min_width`, so the
+/// only job here is to keep the cast in range (a drag dragged far left yields a
+/// negative width → `0` → floored to the minimum).
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "px is clamped to [0, u32::MAX] before the cast; set_width then \
+              raises sub-min results to min_width, so neither truncation nor a \
+              negative input can reach the column model"
+)]
+fn px_to_width(px: f64) -> u32 {
+    px.clamp(0.0, f64::from(u32::MAX)) as u32
+}
+
+/// R786 §5.27 — the **live-drag pointer-wire consumer** of the R785
+/// [`ColumnWidths`] model: one `External` per resizable column border (the
+/// R780 → R781 model-then-interaction split's interaction half — R785 landed the
+/// model + the AI-first `set_col_width` RPC path, this is the clicked-and-
+/// dragged border).
+///
+/// It is the column analogue of
+/// [`SplitterExternal`](../../../pinion_widget_paint/splitter/struct.SplitterExternal.html):
+/// `wants_pointer_capture` opts into the R51.34 capture lock so a drag survives
+/// the cursor straying past the column edge, and
+/// [`capture_normalize_tag`](External::capture_normalize_tag) names the grid
+/// **viewport** (the horizontal scroll node) as the normalization rect — not the
+/// grabbed cell. The cell is what the drag resizes, so its width moves every
+/// frame; the viewport does not resize when a column does, so it is the stable
+/// pixel reference (exactly as the splitter normalizes against its stable pane
+/// container, not the moving handle). The cursor-fraction delta across that
+/// fixed-width viewport is the pixel travel: `new = width_at_press + (x_rel −
+/// press_x_rel) · viewport_w`, where `viewport_w` is read from the same shared
+/// [`ScrollState`] the grid scrolls with. This holds for both the batched
+/// `scene/drag` arc (paint frozen mid-RPC) and a live native drag (paint
+/// re-runs each frame), because the basis never moves.
+///
+/// The grabber strip the [`view_virtual_table`](../../../pinion_widget_paint/table/fn.view_virtual_table.html)
+/// header paints is tagged `"<tag>_ch<col>#resize"`, so the router's `'#'`-split
+/// routes its capture to the external registered at the primary `"<tag>_ch<col>"`
+/// — exactly the per-column tag this `External` is registered under (see
+/// [`column_resize_externals`]). `PointerUp` / `PointerCancel` arrive through
+/// the `invoke("send", …)` channel and clear the calibration so the next drag
+/// recalibrates.
+pub struct ColumnResizeExternal {
+    state: Rc<ColumnWidths>,
+    col: usize,
+    /// The grid's horizontal [`ScrollState`]; its measured viewport width is the
+    /// stable pixel reference the cursor-fraction delta scales by.
+    h_scroll: Rc<ScrollState>,
+    /// The viewport tag the captured cursor is normalized against (the
+    /// horizontal scroll node's tag) — see [`External::capture_normalize_tag`].
+    viewport_tag: Cow<'static, str>,
+    drag_start: Cell<Option<ResizeDragStart>>,
+    is_dragging: Cell<bool>,
+}
+
+impl core::fmt::Debug for ColumnResizeExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ColumnResizeExternal")
+            .field("col", &self.col)
+            .field("viewport_tag", &self.viewport_tag)
+            .field("is_dragging", &self.is_dragging.get())
+            .finish_non_exhaustive()
+    }
+}
+
+impl ColumnResizeExternal {
+    /// Wrap the shared [`ColumnWidths`] for the column at `col`, the grid's
+    /// horizontal [`ScrollState`] (the stable pixel reference), and the
+    /// `viewport_tag` the cursor normalizes against (the horizontal scroll
+    /// node's tag). The same `ColumnWidths` `Rc` the view reads via
+    /// [`use_column_widths`] and the [`ColumnWidthExternal`] mutates, so a drag
+    /// and an RPC `set_col_width` are one source of truth.
+    #[must_use]
+    pub fn new(
+        state: Rc<ColumnWidths>,
+        col: usize,
+        h_scroll: Rc<ScrollState>,
+        viewport_tag: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self {
+            state,
+            col,
+            h_scroll,
+            viewport_tag: viewport_tag.into(),
+            drag_start: Cell::new(None),
+            is_dragging: Cell::new(false),
+        }
+    }
+
+    /// The column index this handle resizes.
+    #[must_use]
+    pub fn col(&self) -> usize {
+        self.col
+    }
+
+    /// `true` between the press-time calibration frame and the `PointerUp`
+    /// teardown (diagnostic / a future drag-highlight surface).
+    #[must_use]
+    pub fn is_dragging(&self) -> bool {
+        self.is_dragging.get()
+    }
+
+    /// Reset the calibration snapshot. Reached from the framework-dispatched
+    /// `PointerUp` / `PointerCancel` (the R51.41 `dispatch_send` channel) and
+    /// from tests, so the teardown is exercised without the full capture lock.
+    fn clear_drag(&self) {
+        self.drag_start.set(None);
+        self.is_dragging.set(false);
+    }
+}
+
+impl External for ColumnResizeExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    /// Opt into the capture lock so the drag survives the cursor straying past
+    /// the column edge (the canonical drag-to-resize UX — the same stance the
+    /// splitter and slider take).
+    fn wants_pointer_capture(&self) -> bool {
+        true
+    }
+
+    /// Normalize the captured cursor against the grid **viewport** (the
+    /// horizontal scroll node), not the grabbed cell or strip. The cell is what
+    /// the drag resizes — its width moves every frame — so it cannot be the
+    /// pixel basis; the viewport width is stable across the drag. (R786 §5.35 —
+    /// generalizes the range-slider's `capture_normalize_against_primary`.)
+    fn capture_normalize_tag(&self) -> Option<&str> {
+        Some(self.viewport_tag.as_ref())
+    }
+
+    /// Translate the captured cursor into a column width.
+    ///
+    /// `x_rel` is the cursor's fraction across the (stable) viewport, so
+    /// `(x_rel − press_x_rel) · viewport_w` is the cursor's pixel travel since
+    /// the press. The first move snapshots `width_at_press` + `press_x_rel` and
+    /// does not mutate (the user has not dragged yet); each later move applies
+    /// `width_at_press + travel_px` — a 1:1 pixel drag anchored on the press
+    /// width, so a clamp at the floor un-clamps cleanly when the cursor returns.
+    /// `set_width` floors the result at `min_width`, so the column can never
+    /// collapse to a sliver. `viewport_w` is the same width the grid's
+    /// horizontal scroll measures (`measured_viewport`), so the drag and the
+    /// scroll agree on the pixel scale.
+    ///
+    /// `y_rel` is ignored (column width is the horizontal axis only).
+    fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
+        match self.drag_start.get() {
+            None => {
+                self.drag_start.set(Some(ResizeDragStart {
+                    width_at_press: self.state.width(self.col),
+                    press_x_rel: f64::from(x_rel),
+                }));
+                self.is_dragging.set(true);
+            }
+            Some(start) => {
+                let (viewport_w, _) = self.h_scroll.measured_viewport();
+                let travel_px = (f64::from(x_rel) - start.press_x_rel) * f64::from(viewport_w);
+                let next = f64::from(start.width_at_press) + travel_px;
+                self.state.set_width(self.col, px_to_width(next.round()));
+            }
+        }
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for ColumnResizeExternal {
+    fn schema(&self) -> IntrospectSchema {
+        // `col`     — the column this handle resizes (query only).
+        // `dragging`— live drag-in-progress flag (query only).
+        // `send`    — framework synthetic pointer-event channel (PointerUp /
+        //             PointerCancel teardown).
+        IntrospectSchema::new(&[("col", "int"), ("dragging", "bool"), ("send", "string")])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "col" => Some(IntrospectValue::Int(i64::try_from(self.col).unwrap_or(i64::MAX))),
+            "dragging" => Some(IntrospectValue::Bool(self.is_dragging.get())),
+            _ => None,
+        }
+    }
+
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+        match path {
+            // Both are framework-owned: `col` is construction-fixed and
+            // `dragging` is set by the pointer arc. A client widens a column
+            // through the `ColumnWidthExternal` `set_col_width` path, not here.
+            "col" | "dragging" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    /// R51.41 §5.35 — framework synthetic pointer-event channel. The router
+    /// calls `invoke("send", Text("<sub>:PointerUp"))` /
+    /// `"<sub>:PointerCancel"` when the user releases or the OS cancels the
+    /// capture span (the strip is a composite `"<tag>_ch<col>#resize"` target,
+    /// so the payload carries the `"resize"` sub-index as the first segment).
+    /// The handle clears its calibration so the next press recalibrates.
+    /// `PointerDown` / `PointerEnter` / `PointerLeave` arrive too but need no
+    /// reaction (calibration happens in the first `pointer_move`).
+    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        if path != "send" {
+            return Err(InvokeError::UnknownPath);
+        }
+        let raw = args.as_str().ok_or(InvokeError::TypeMismatch)?;
+        // Composite payload: "<sub>:<Event>[:<mods>]" — the event is the 2nd
+        // segment (a bare "<Event>" is tolerated for the non-composite path).
+        let event = raw.split(':').nth(1).unwrap_or(raw);
+        match PointerWireEvent::from_wire_name(event) {
+            Some(PointerWireEvent::Up | PointerWireEvent::Cancel) => {
+                self.clear_drag();
+                Ok(IntrospectValue::Null)
+            }
+            Some(PointerWireEvent::Down | PointerWireEvent::Enter | PointerWireEvent::Leave) => {
+                Ok(IntrospectValue::Null)
+            }
+            None => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
+/// R786 §5.27 — build one [`ColumnResizeExternal`] per column, each registered
+/// under the header-cell tag the [`view_virtual_table`](../../../pinion_widget_paint/table/fn.view_virtual_table.html)
+/// paints (`"<table_tag>_ch<col>"`). The grabber strip the header paints
+/// (`"<table_tag>_ch<col>#resize"`) routes its capture to the matching primary
+/// half, so a drag on column `c`'s border drives this slice's column `c`.
+///
+/// `h_scroll` is the grid's horizontal [`ScrollState`] and `viewport_tag` is
+/// that scroll node's tag — the stable rect every handle normalizes its drag
+/// against (the dragged cell resizes, so it cannot be the pixel basis).
+///
+/// The binding returns this from `create_extra_externals` alongside the
+/// [`ColumnWidthExternal`] — all over the **same** shared [`ColumnWidths`] (so a
+/// live drag and an RPC `set_col_width` agree). The `"<table_tag>_ch<col>"` tag
+/// is the established header-cell convention table.rs paints and the a11y
+/// `columnheader` walker reconstructs (R707); this is a third consumer of that
+/// convention, keyed by the same `format!` so it cannot drift.
+///
+/// # Panics
+///
+/// Panics if no current [`Owner`] is set when `widths.col_count()` is read
+/// outside any reactive scope — call from within `create_extra_externals`
+/// (which runs inside a `root_owner.run`).
+#[must_use]
+pub fn column_resize_externals(
+    table_tag: &str,
+    widths: &Rc<ColumnWidths>,
+    h_scroll: &Rc<ScrollState>,
+    viewport_tag: impl Into<Cow<'static, str>>,
+) -> Vec<ExtraExternal> {
+    let viewport_tag = viewport_tag.into();
+    (0..widths.col_count())
+        .map(|col| {
+            ExtraExternal::new(
+                format!("{table_tag}_ch{col}"),
+                Box::new(ColumnResizeExternal::new(
+                    Rc::clone(widths),
+                    col,
+                    Rc::clone(h_scroll),
+                    viewport_tag.clone(),
+                )),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,5 +750,134 @@ mod tests {
         assert_eq!(state.col_count(), 4, "restore replaces the whole vector");
         assert_eq!(state.total(), 240);
         assert_eq!(ext.intervene("total", IntrospectValue::Int(9)), Err(InterveneError::ReadOnly));
+    }
+
+    // ---- R786 live-drag column resize ----
+
+    /// A 500px-wide viewport (the stable normalization basis): a cursor moving
+    /// `f` fraction of the viewport is an `f * 500` px column-width delta.
+    const VP_W: u32 = 500;
+
+    fn resize_ext(state: &Rc<ColumnWidths>, col: usize) -> ColumnResizeExternal {
+        let h = Rc::new(ScrollState::with_tag("vp"));
+        h.set_measured_viewport(VP_W, 400);
+        ColumnResizeExternal::new(Rc::clone(state), col, h, "vp")
+    }
+
+    #[test]
+    fn resize_calibration_frame_does_not_mutate() {
+        // The press-time `pointer_move` snapshots the grab but leaves the width
+        // untouched (the user has not dragged yet) — the splitter calibration
+        // contract.
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 1);
+        assert!(!ext.is_dragging());
+        ext.pointer_move(0.5, 0.5); // grab somewhere mid-viewport
+        assert!(ext.is_dragging(), "first move arms the drag");
+        assert_eq!(state.width(1), 90, "calibration frame is non-mutating");
+    }
+
+    #[test]
+    fn resize_drag_tracks_cursor_in_pixels() {
+        // The width delta is the cursor's fraction-of-viewport travel times the
+        // viewport width (the splitter formula, stable basis). Column 1 = 90px.
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 1);
+        ext.pointer_move(0.5, 0.0); // calibrate: press_x_rel = 0.5
+        // +0.2 viewport-fraction = +100px (0.2 * 500).
+        ext.pointer_move(0.7, 0.0);
+        assert_eq!(state.width(1), 190, "drag widened by +0.2*VP = +100px");
+        // The delta is always measured from the PRESS fraction (fixed basis),
+        // so an intermediate move re-derives from 90, never compounding.
+        ext.pointer_move(0.6, 0.0); // +0.1*500 = +50
+        assert_eq!(state.width(1), 140, "delta re-derived from the press anchor");
+        // Drag far left, past the floor: clamps to min_width.
+        ext.pointer_move(0.0, 0.0); // -0.5*500 = -250 -> 90-250 < 0 -> floored
+        assert_eq!(state.width(1), DEFAULT_MIN_COL_WIDTH, "sub-min clamps to the floor");
+        // Returning right un-clamps cleanly (anchored on the press width, 90).
+        ext.pointer_move(0.7, 0.0);
+        assert_eq!(state.width(1), 190, "un-clamps from the press anchor, not the floor");
+    }
+
+    #[test]
+    fn resize_grab_offset_carries_no_jump() {
+        // Grabbing anywhere (not exactly the border) does not jump: the first
+        // move is calibration-only, so the width holds until the cursor travels.
+        let state = Rc::new(ColumnWidths::new(vec![100]));
+        let mut ext = resize_ext(&state, 0);
+        ext.pointer_move(0.42, 0.0); // grabbed at an arbitrary fraction
+        assert_eq!(state.width(0), 100, "no jump on the calibration frame");
+        ext.pointer_move(0.46, 0.0); // +0.04*500 = +20px
+        assert_eq!(state.width(0), 120);
+    }
+
+    #[test]
+    fn resize_pointer_up_clears_calibration() {
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 0);
+        ext.pointer_move(0.5, 0.0);
+        assert!(ext.is_dragging());
+        // The strip is a composite "<tag>_ch0#resize" target, so the wire
+        // payload carries the "resize" sub-index segment.
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into())).unwrap();
+        assert!(!ext.is_dragging(), "PointerUp tears down the drag");
+        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)));
+        // A fresh press recalibrates from the new width.
+        let _ = state.set_width(0, 160);
+        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(0.54, 0.0); // +0.04*500 = +20 -> 180
+        assert_eq!(state.width(0), 180, "recalibrated against the post-drag width");
+    }
+
+    #[test]
+    fn resize_ignores_non_teardown_pointer_events() {
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 0);
+        ext.pointer_move(0.5, 0.0);
+        // Enter / Down do not tear down the in-flight calibration.
+        ext.invoke("send", IntrospectValue::Text("resize:PointerEnter".into())).unwrap();
+        ext.invoke("send", IntrospectValue::Text("resize:PointerDown".into())).unwrap();
+        assert!(ext.is_dragging(), "non-teardown events leave the drag armed");
+        // PointerCancel does tear down (OS-cancelled capture).
+        ext.invoke("send", IntrospectValue::Text("resize:PointerCancel".into())).unwrap();
+        assert!(!ext.is_dragging());
+    }
+
+    #[test]
+    fn resize_normalizes_against_the_viewport_tag() {
+        let state = Rc::new(widths());
+        let ext = resize_ext(&state, 0);
+        assert_eq!(ext.capture_normalize_tag(), Some("vp"), "drags normalize against the viewport");
+        assert!(ext.wants_pointer_capture(), "opts into the capture lock");
+    }
+
+    #[test]
+    fn resize_query_and_intervene_surface() {
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 2);
+        assert_eq!(ext.col(), 2);
+        assert_eq!(ext.query("col"), Some(IntrospectValue::Int(2)));
+        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("nope"), None);
+        assert_eq!(ext.intervene("col", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
+        assert_eq!(
+            ext.intervene("dragging", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly)
+        );
+        assert_eq!(
+            ext.invoke("send", IntrospectValue::Text("bogus".into())),
+            Err(InvokeError::UnknownPath)
+        );
+    }
+
+    #[test]
+    fn column_resize_externals_one_per_column_at_header_tags() {
+        let state = Rc::new(widths()); // 3 columns
+        let h = Rc::new(ScrollState::with_tag("grid_h"));
+        let exts = column_resize_externals("grid", &state, &h, "grid_h");
+        assert_eq!(exts.len(), 3, "one resize external per column");
+        assert_eq!(exts[0].tag, "grid_ch0");
+        assert_eq!(exts[1].tag, "grid_ch1");
+        assert_eq!(exts[2].tag, "grid_ch2");
     }
 }

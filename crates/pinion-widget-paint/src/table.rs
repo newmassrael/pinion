@@ -72,7 +72,22 @@ pub struct TableStyle {
     /// Outer block corner radius in logical pixels (default 12 = M3
     /// large shape token).
     pub corner_radius: u32,
+    /// R786 §5.27 — width of the column-resize grabber zone at each header
+    /// cell's right edge, in logical pixels (default 8). The grabber occupies
+    /// this much of the cell's trailing edge (the sort-click label area takes
+    /// the rest); a press inside it starts a live resize drag. Only drawn when
+    /// the grid is `resizable` (a width model + per-column
+    /// [`ColumnResizeExternal`](pinion_core::widgets::column_widths::ColumnResizeExternal)s
+    /// are wired); a non-resizable grid renders the full-width header exactly as
+    /// before.
+    pub resize_handle_w: u32,
 }
+
+/// R786 §5.27 — visible divider line width inside the resize grabber, in
+/// logical pixels (an M3 hairline). The grabber is a [`TableStyle::resize_handle_w`]
+/// transparent hit zone with this thin [`ColorRole::Outline`] line hugging its
+/// right edge — the painted column boundary the user grabs.
+const RESIZE_DIVIDER_W: u32 = 1;
 
 impl TableStyle {
     /// R707 §5.50 — Material-3 data-table defaults.
@@ -87,6 +102,7 @@ impl TableStyle {
             cell_pad_x: 12,
             block_pad: 8,
             corner_radius: 12,
+            resize_handle_w: 8,
         }
     }
 }
@@ -201,10 +217,42 @@ fn resolve_widths(cols: usize, col_widths: Option<&[u32]>, style: &TableStyle) -
 /// R785 §5.27 — a column's identity + width for the header-cell builder,
 /// bundled so [`header_cell`] stays under the argument budget (the R775
 /// [`VirtualTableData`] precedent for grouping related inputs).
+///
+/// R786 §5.27 — `resizable` rides along (uniform across the header, but the
+/// per-cell builder is where it is consumed): when set, [`header_cell`] reserves
+/// [`TableStyle::resize_handle_w`] of the cell's trailing edge for a resize
+/// grabber and tags it `"<tag>_ch<col>#resize"`.
 #[derive(Clone, Copy)]
 struct ColCell {
     col: usize,
     width: u32,
+    resizable: bool,
+}
+
+/// R786 §5.27 — the resize grabber painted at a header cell's trailing edge: a
+/// [`TableStyle::resize_handle_w`]-wide hit zone tagged `"<tag>_ch<col>#resize"`
+/// with a [`RESIZE_DIVIDER_W`] [`ColorRole::Outline`] hairline hugging its right
+/// edge (the visible column boundary the user grabs). The `'#'`-split routes a
+/// press here to the [`ColumnResizeExternal`](pinion_core::widgets::column_widths::ColumnResizeExternal)
+/// registered at the primary `"<tag>_ch<col>"`.
+fn resize_handle(tag: &str, col: usize, outline: Color, style: &TableStyle) -> Scene {
+    let divider = Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_style(BoxStyle::filled(outline))
+            .with_layout(LayoutStyle::new().with_size(Size::px(RESIZE_DIVIDER_W, style.header_height))),
+    );
+    Scene::Container(
+        ContainerNode::new(vec![divider])
+            .with_tag(format!("{tag}_ch{col}#resize"))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    // The hairline hugs the right edge = the column boundary; the
+                    // rest of the zone is a transparent grab margin to its left.
+                    .with_justify(JustifyContent::End)
+                    .with_size(Size::px(style.resize_handle_w, style.header_height)),
+            ),
+    )
 }
 
 /// R730 §5.50 — sort-direction indicator glyphs shown on the active sort
@@ -227,10 +275,15 @@ fn header_cell(
     cell: ColCell,
     label: &str,
     sort: Option<(usize, bool)>,
-    fg: Color,
+    theme: &Theme,
     style: &TableStyle,
 ) -> Scene {
-    let ColCell { col, width } = cell;
+    let ColCell { col, width, resizable } = cell;
+    let fg = theme.resolve(ColorRole::OnSurface);
+    // R786 — reserve the trailing grabber width from the clickable / label area
+    // so the cell's total width stays `width` (the data cells' width). A
+    // non-resizable header is byte-identical to the R785 layout (full `width`).
+    let content_w = if resizable { width.saturating_sub(style.resize_handle_w) } else { width };
     let label_node = Scene::Text(
         TextNode::styled(
             label.to_string(),
@@ -266,36 +319,59 @@ fn header_cell(
                     .with_justify(JustifyContent::Start)
                     .with_align_items(AlignItems::Center)
                     .with_gap(4)
-                    .with_size(Size::px(width, style.header_height))
+                    .with_size(Size::px(content_w, style.header_height))
                     .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
             ),
     );
+    // R786 — the clickable/label content + (when resizable) the trailing
+    // resize grabber, tiling the cell's full `width` (content_w + handle_w).
+    let mut cell_children = vec![inner];
+    if resizable {
+        cell_children.push(resize_handle(tag, col, theme.resolve(ColorRole::Outline), style));
+    }
     Scene::Container(
-        ContainerNode::new(vec![inner])
+        ContainerNode::new(cell_children)
             .with_tag(format!("{tag}_ch{col}"))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     )
 }
 
+/// R786 §5.27 — the header's per-column layout: the resolved widths plus
+/// whether each column carries a resize grabber. Bundled so [`header_row`] stays
+/// under the argument budget (the [`ColCell`] / [`VirtualTableData`] precedent).
+#[derive(Clone, Copy)]
+struct ColumnLayout<'a> {
+    widths: &'a [u32],
+    resizable: bool,
+}
+
 /// The header band: one clickable `columnheader` cell per column ([
 /// `header_cell`]) on a raised [`ColorRole::SurfaceContainerHigh`]
-/// surface. `sort` drives the active column's sort glyph.
+/// surface. `sort` drives the active column's sort glyph; `layout` supplies the
+/// per-column widths + whether the columns are resizable (R786).
 fn header_row(
     tag: &str,
     click_tag: &str,
     headers: &[&str],
     sort: Option<(usize, bool)>,
-    widths: &[u32],
+    layout: ColumnLayout<'_>,
     theme: &Theme,
     style: &TableStyle,
 ) -> Scene {
-    let fg = theme.resolve(ColorRole::OnSurface);
     let cells: Vec<Scene> = headers
         .iter()
         .enumerate()
         .map(|(col, label)| {
-            let width = widths.get(col).copied().unwrap_or(style.col_width);
-            header_cell(tag, click_tag, ColCell { col, width }, label, sort, fg, style)
+            let width = layout.widths.get(col).copied().unwrap_or(style.col_width);
+            header_cell(
+                tag,
+                click_tag,
+                ColCell { col, width, resizable: layout.resizable },
+                label,
+                sort,
+                theme,
+                style,
+            )
         })
         .collect();
     Scene::Container(
@@ -414,7 +490,17 @@ pub fn view_table(
     // Eager tables are uniform-width (no per-column model), so every column
     // resolves to `style.col_width`.
     let widths = resolve_widths(cols, None, style);
-    let header = header_row(tag, tag, data.headers, sort, &widths, theme, style);
+    // The eager table is uniform-width and not user-resizable (no width model);
+    // the header keeps its full-width R707 layout.
+    let header = header_row(
+        tag,
+        tag,
+        data.headers,
+        sort,
+        ColumnLayout { widths: &widths, resizable: false },
+        theme,
+        style,
+    );
     let mut children: Vec<Scene> = Vec::with_capacity(data.rows.len() + 1);
     children.push(header);
     for (visual, cells_text) in data.rows.iter().enumerate() {
@@ -487,6 +573,16 @@ pub struct VirtualTableData<'a> {
     /// scroll). A column index beyond `widths.len()` falls back to the uniform
     /// width.
     pub col_widths: Option<&'a [u32]>,
+    /// R786 §5.27 — when `true`, each header cell reserves
+    /// [`TableStyle::resize_handle_w`] of its trailing edge for a live-drag
+    /// resize grabber tagged `"<tag>_ch<col>#resize"`. The binding must register
+    /// one [`ColumnResizeExternal`](pinion_core::widgets::column_widths::ColumnResizeExternal)
+    /// per column (via
+    /// [`column_resize_externals`](pinion_core::widgets::column_widths::column_resize_externals))
+    /// so the grabber's capture drives the shared [`ColumnWidths`] model;
+    /// dragging a border widens the column, growing the R784 horizontal scroll.
+    /// `false` keeps the full-width R785 header (no grabber, no width reserved).
+    pub resizable: bool,
 }
 
 /// R784 §5.45 — the two single-axis [`ScrollState`]s a virtualized
@@ -628,7 +724,7 @@ pub fn view_virtual_table(
         data.sort_tag.unwrap_or(tag),
         data.headers,
         data.sort,
-        &widths,
+        ColumnLayout { widths: &widths, resizable: data.resizable },
         theme,
         style,
     );
@@ -905,6 +1001,7 @@ mod tests {
                     sort_tag: None,
                     order: None,
                     col_widths: None,
+                    resizable: false,
                 },
                 &theme,
                 &style,
@@ -1059,6 +1156,7 @@ mod tests {
                     sort_tag: None,
                     order: None,
                     col_widths: Some(&widths),
+                    resizable: false,
                 },
                 &light(),
                 &TableStyle::m3(),
@@ -1079,6 +1177,65 @@ mod tests {
         let uniform = TableStyle::m3().col_width;
         assert_eq!(cell_layout_width(&scene, "vtbl#0_0"), Some(uniform), "uniform fallback");
         assert_eq!(cell_layout_width(&scene, "vtbl#0_1"), Some(uniform), "uniform fallback");
+    }
+
+    fn run_vtable_resizable(widths: &[u32], resizable: bool) -> Scene {
+        let state = Rc::new(ScrollState::new());
+        state.set_measured_viewport(360, 360);
+        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                GridScroll { body: &state, horizontal: &h_state },
+                VirtualTableData {
+                    headers: &VT_HEADERS,
+                    item_count: 5,
+                    overscan: 1,
+                    sort: None,
+                    sort_tag: None,
+                    order: None,
+                    col_widths: Some(widths),
+                    resizable,
+                },
+                &light(),
+                &TableStyle::m3(),
+                |_| false,
+                |id| vec![format!("{id}"), "x".to_string(), "y".to_string()],
+            )
+        })
+    }
+
+    #[test]
+    fn r786_resizable_header_paints_grabber_and_reserves_width() {
+        // R786 — a resizable header reserves `resize_handle_w` of each cell's
+        // trailing edge for a grabber tagged "<tag>_ch<col>#resize"; the
+        // clickable content area shrinks by that much, but the DATA cells keep
+        // the full per-column width (the grabber lives only in the header).
+        let handle_w = TableStyle::m3().resize_handle_w;
+        let scene = run_vtable_resizable(&[200, 50, 300], true);
+        // One grabber per column, each `resize_handle_w` wide.
+        for col in 0..3 {
+            assert_eq!(
+                cell_layout_width(&scene, &format!("vtbl_ch{col}#resize")),
+                Some(handle_w),
+                "col {col} grabber present and sized",
+            );
+        }
+        // Header click/content area is the column width minus the grabber.
+        assert_eq!(cell_layout_width(&scene, "vtbl#h0"), Some(200 - handle_w), "col 0 content");
+        assert_eq!(cell_layout_width(&scene, "vtbl#h1"), Some(50 - handle_w), "col 1 content");
+        // Data cells keep the full per-column width (no grabber).
+        assert_eq!(cell_layout_width(&scene, "vtbl#0_0"), Some(200), "data cell full width");
+        assert_eq!(cell_layout_width(&scene, "vtbl#0_2"), Some(300), "data cell full width");
+    }
+
+    #[test]
+    fn r786_non_resizable_header_has_no_grabber() {
+        // R786 — `resizable: false` is byte-identical to the R785 header: no
+        // grabber tag, and the content area is the full column width.
+        let scene = run_vtable_resizable(&[200, 50, 300], false);
+        assert!(!scene.contains_tag("vtbl_ch0#resize"), "no grabber when not resizable");
+        assert_eq!(cell_layout_width(&scene, "vtbl#h0"), Some(200), "full-width content area");
     }
 
     #[test]
@@ -1159,6 +1316,7 @@ mod tests {
                     sort_tag: Some("vsort"),
                     order: Some(order),
                     col_widths: None,
+                    resizable: false,
                 },
                 &theme,
                 &style,

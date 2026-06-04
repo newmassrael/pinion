@@ -176,6 +176,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             sort_tag: None,
             order: None,
             col_widths: None,
+            resizable: false,
         },
         &theme,
         &style,

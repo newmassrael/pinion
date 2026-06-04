@@ -207,6 +207,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             sort_tag: Some(SORT_TAG),
             order: Some(order.as_slice()),
             col_widths: None,
+            resizable: false,
         },
         &theme,
         &style,

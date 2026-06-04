@@ -974,7 +974,15 @@ impl InputRouter {
         // range slider) returns `true` and normalizes against the primary
         // (track) rect, so grabbing a thumb sub-tag still maps the cursor
         // across the full track instead of saturating on the thumb rect.
-        let norm_tag = if external.handle.capture_normalize_against_primary() {
+        //
+        // R786 §5.35 — `capture_normalize_tag` overrides both: a widget
+        // whose drag value is measured against a rect that is neither the
+        // grabbed tag nor its primary (the column-resize handle, whose
+        // pixel delta needs the *stable* viewport rect — the grabbed cell
+        // resizes under the drag) names that rect explicitly.
+        let norm_tag = if let Some(tag) = external.handle.capture_normalize_tag() {
+            tag
+        } else if external.handle.capture_normalize_against_primary() {
             primary
         } else {
             target_tag

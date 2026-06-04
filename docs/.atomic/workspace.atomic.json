@@ -30459,6 +30459,66 @@
         "External 5-method boilerplate (backends/repaint/thread/introspect x2) repeated ~10+ widgets repo-wide = pre-existing framework gap (future derive); not a per-round smell, follows established convention"
       ]
     },
+    "R786": {
+      "decision_summary": "R786 §5.27 §5.35 live-drag column resize: ColumnResizeExternal is the pointer-wire consumer of the R785 ColumnWidths model; capture_normalize_tag substrate normalizes the captured cursor against the stable grid viewport (not the resizing cell) so the pixel drag has a fixed reference, exactly as the splitter normalizes against its stable pane",
+      "changes_bullets": [
+        "ColumnResizeExternal: per-column capture-lock drag handle over the shared R785 ColumnWidths",
+        "new=width_at_press+(x_rel-press)*viewport_w: stable-viewport basis (splitter pattern, in px)",
+        "capture_normalize_tag() substrate: normalize the captured cursor vs a named rect (R738 bool grown)",
+        "forward_pointer_move: capture_normalize_tag wins over against_primary; default None = unchanged",
+        "header_cell paints an 8px grabber (tag <tag>_ch<col>#resize) at the trailing edge when resizable",
+        "VirtualTableData.resizable + TableStyle.resize_handle_w(8); ColumnLayout bundle: header_row 7-arg",
+        "column_resize_externals(): one handle per column at the <tag>_ch<col> header-cell tag",
+        "hello-grid-hscroll resizable: drag a border to widen; composes with the R784 h-scroll extent"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (R785 5465 -> R786 5477); clippy --workspace pedantic clean",
+        "r786 demo: scene/drag E2E (36 assertions) + native XTEST drag 130->250px (winit path) + ffmpeg",
+        "re-ran r784/r785 (grid) + r738 (range-slider capture) + r707 (table paint): behavior-preserving",
+        "validate-workspace: T1 reject=0 / new orphan +0"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.35",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "keyboard column resize (focused header + Ctrl/Alt+Arrow) deferred: mouse-only (R780->R781 split)",
+        "column-resize undo deferred (R785/R779.1 optionally-undoable; ColumnResizeExternal mutates direct)",
+        "active-border drag-highlight deferred: needs a shared active-col signal (live resize=feedback)",
+        "splitter+resize share a drag-calibration shape (snapshot+flag+clear); 2 divergent consumers=peer",
+        "prior defers: ScrollAxis::Both, horizontal wheel routing, multi-facet filter, editable combobox"
+      ],
+      "publishable_decision_summary": "R786 §5.27 §5.35 live-drag column resize: ColumnResizeExternal is the pointer-wire consumer of the R785 ColumnWidths model; capture_normalize_tag substrate normalizes the captured cursor against the stable grid viewport (not the resizing cell) so the pixel drag has a fixed reference, exactly as the splitter normalizes against its stable pane",
+      "publishable_changes_bullets": [
+        "ColumnResizeExternal: per-column capture-lock drag handle over the shared R785 ColumnWidths",
+        "new=width_at_press+(x_rel-press)*viewport_w: stable-viewport basis (splitter pattern, in px)",
+        "capture_normalize_tag() substrate: normalize the captured cursor vs a named rect (R738 bool grown)",
+        "forward_pointer_move: capture_normalize_tag wins over against_primary; default None = unchanged",
+        "header_cell paints an 8px grabber (tag <tag>_ch<col>#resize) at the trailing edge when resizable",
+        "VirtualTableData.resizable + TableStyle.resize_handle_w(8); ColumnLayout bundle: header_row 7-arg",
+        "column_resize_externals(): one handle per column at the <tag>_ch<col> header-cell tag",
+        "hello-grid-hscroll resizable: drag a border to widen; composes with the R784 h-scroll extent"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (R785 5465 -> R786 5477); clippy --workspace pedantic clean",
+        "r786 demo: scene/drag E2E (36 assertions) + native XTEST drag 130->250px (winit path) + ffmpeg",
+        "re-ran r784/r785 (grid) + r738 (range-slider capture) + r707 (table paint): behavior-preserving",
+        "validate-workspace: T1 reject=0 / new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.35",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "keyboard column resize (focused header + Ctrl/Alt+Arrow) deferred: mouse-only (R780->R781 split)",
+        "column-resize undo deferred (R785/R779.1 optionally-undoable; ColumnResizeExternal mutates direct)",
+        "active-border drag-highlight deferred: needs a shared active-col signal (live resize=feedback)",
+        "splitter+resize share a drag-calibration shape (snapshot+flag+clear); 2 divergent consumers=peer",
+        "prior defers: ScrollAxis::Both, horizontal wheel routing, multi-facet filter, editable combobox"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

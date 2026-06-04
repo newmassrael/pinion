@@ -33,13 +33,17 @@
 //! horizontal scroll is a viewport concern, orthogonal to the row/column
 //! structure the a11y tree conveys.
 
+use std::rc::Rc;
+
 use pinion_a11y::{windowed_grid_nodes, AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::column_widths::{use_column_widths, ColumnWidthExternal};
+use pinion_core::widgets::column_widths::{
+    column_resize_externals, use_column_widths, ColumnWidthExternal,
+};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Scene, WidgetCore};
@@ -142,6 +146,11 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             sort_tag: None,
             order: None,
             col_widths: Some(&col_widths),
+            // R786 — drag a column border to resize it live (the grabber is the
+            // header cell's trailing edge); widening past the window grows the
+            // R784 horizontal scroll. Driven by the per-column
+            // `ColumnResizeExternal`s registered in `create_extra_externals`.
+            resizable: true,
         },
         &theme,
         &style,
@@ -170,14 +179,28 @@ impl WidgetCore for GridHscrollView {
         Box::new(StubExternal::new())
     }
 
-    /// R785 — the column-width model surface: a [`ColumnWidthExternal`] over
-    /// the **same** shared [`ColumnWidths`] the view reads via
-    /// [`use_column_widths`]. `invoke set_col_width "<col>=<width>"` on
-    /// [`COLS_KEY`] widens a column; the width `Signal` write repaints the
-    /// grid and the new total content width grows the horizontal scroll.
+    /// R785 / R786 — the column-width axis surfaces, all over the **same**
+    /// shared [`ColumnWidths`] the view reads via [`use_column_widths`]:
+    ///
+    /// * The [`ColumnWidthExternal`] at [`COLS_KEY`] — the AI-first RPC path
+    ///   (`invoke set_col_width "<col>=<width>"` widens a column).
+    /// * One [`ColumnResizeExternal`](pinion_core::widgets::column_widths::ColumnResizeExternal)
+    ///   per column (via
+    ///   [`column_resize_externals`]) registered at the header-cell tags
+    ///   (`ghs_ch<col>`) — the **live-drag** path: grabbing a header border and
+    ///   dragging it widens that column. Both mutate the one width `Signal`, so
+    ///   a drag and an RPC `set_col_width` agree; the new total content width
+    ///   grows the R784 horizontal scroll.
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let widths = use_column_widths(COLS_KEY, || vec![COL_W; NCOLS]);
-        vec![ExtraExternal::new(COLS_KEY, Box::new(ColumnWidthExternal::new(widths)))]
+        // The resize handles normalize their pixel drag against the horizontal
+        // scroll viewport (a stable width — the dragged cell resizes, the
+        // viewport does not), so they share the grid's h-scroll state + tag.
+        let h_scroll = use_scroll_state(H_SCROLL_KEY);
+        let mut externals =
+            vec![ExtraExternal::new(COLS_KEY, Box::new(ColumnWidthExternal::new(Rc::clone(&widths))))];
+        externals.extend(column_resize_externals(TABLE_TAG, &widths, &h_scroll, H_SCROLL_KEY));
+        externals
     }
 
     fn tag() -> &'static str {

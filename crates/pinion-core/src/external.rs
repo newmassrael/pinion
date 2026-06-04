@@ -494,6 +494,32 @@ pub trait External: core::fmt::Debug {
         false
     }
 
+    /// R786 §5.35 — capture-cursor normalization against an **explicitly named**
+    /// rect, generalizing [`capture_normalize_against_primary`](Self::capture_normalize_against_primary)
+    /// (which selects the captured tag's primary half). When this returns
+    /// `Some(tag)` the framework's [`InputRouter`](crate#) normalizes the dragged
+    /// cursor against *that* tag's post-layout rect instead of the captured
+    /// (sub-)tag or its primary.
+    ///
+    /// The motivating consumer is the column-resize handle
+    /// ([`ColumnResizeExternal`](crate::widgets::column_widths::ColumnResizeExternal)):
+    /// its drag value is a **pixel** delta, so it needs a normalization rect
+    /// whose pixel width is **stable across the drag**. The grabbed cell resizes
+    /// under the drag (its width is what is being changed), so normalizing
+    /// against it would move the basis every frame; the grid **viewport** does
+    /// not resize when a column does, so the handle names it here and converts
+    /// the cursor-fraction delta to pixels with the viewport width it reads from
+    /// the shared scroll state — exactly how the splitter normalizes against its
+    /// stable pane container, not the moving handle.
+    ///
+    /// Precedence: a `Some` here wins over
+    /// [`capture_normalize_against_primary`](Self::capture_normalize_against_primary);
+    /// `None` (the default) falls back to that bool's per-sub-region / primary
+    /// choice, so every existing capture widget is unaffected.
+    fn capture_normalize_tag(&self) -> Option<&str> {
+        None
+    }
+
     /// R51.34 §5.15 + §5.35 — pointer-move forward during drag. The
     /// framework's [`InputRouter`](crate#) calls this whenever the
     /// cursor moves while this widget holds capture (i.e. after a
