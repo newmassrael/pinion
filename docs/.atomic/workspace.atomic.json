@@ -31149,6 +31149,48 @@
         "drag-drop a11y (aria-grabbed/dropeffect) deferred (no consumer; move outcome is RPC-introspectable)"
       ]
     },
+    "R794.1": {
+      "decision_summary": "audit (cost-no-object SSOT): R794's per-binding suppress_activation was a workaround for R742's always-trailing-PointerUp; that deviates from the Qt startDragDistance / DOM no-click-after-drag textbook (a drag and a click are mutually exclusive). Lift click-vs-drag to the InputRouter (DRAG_CLICK_THRESHOLD_PX): a moved drag commits via drag_release and does NOT synthesize the trailing PointerUp; only press-release-in-place clicks. Removes the binding workaround; the SSOT now serves every future drag surface",
+      "changes_bullets": [
+        "InputRouter: DragSession gains {press, moved}; update_drag latches moved past DRAG_CLICK_THRESHOLD_PX (4px)",
+        "pointer_up: the trailing synthetic PointerUp fires only for a press-release in place (!moved); a moved drag is not a click",
+        "file_browser: removed the per-binding suppress_activation field/method/send-gate (router owns click-vs-drag now)",
+        "r742 router test corrected: a moved drag no longer synthesizes a click (Qt startDragDistance / DOM no-click-after-drag)"
+      ],
+      "verification_bullets": [
+        "root-cause fix: R794 suppress_activation was a binding workaround for R742 always-trailing-PointerUp; now a framework SSOT",
+        "clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "r742_dnd + r743_tab_reorder regress PASS (reorder PointerUp was inert, unaffected by the change)",
+        "r794 demo 32 assert + native XTEST PASS with NO binding flag (router suppresses the post-drag click)"
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "drag-arming still eager (begin_drag on press); full Qt model (start drag only past threshold) deferred -- preview may flicker on a click-jiggle, cosmetic only, no correctness impact",
+        "pressed drag-arm Cell still 2-consumer (ReorderModel/DirectoryState); 1-field, lift net-neg, 3rd revisits"
+      ],
+      "publishable_decision_summary": "audit (cost-no-object SSOT): R794's per-binding suppress_activation was a workaround for R742's always-trailing-PointerUp; that deviates from the Qt startDragDistance / DOM no-click-after-drag textbook (a drag and a click are mutually exclusive). Lift click-vs-drag to the InputRouter (DRAG_CLICK_THRESHOLD_PX): a moved drag commits via drag_release and does NOT synthesize the trailing PointerUp; only press-release-in-place clicks. Removes the binding workaround; the SSOT now serves every future drag surface",
+      "publishable_changes_bullets": [
+        "InputRouter: DragSession gains {press, moved}; update_drag latches moved past DRAG_CLICK_THRESHOLD_PX (4px)",
+        "pointer_up: the trailing synthetic PointerUp fires only for a press-release in place (!moved); a moved drag is not a click",
+        "file_browser: removed the per-binding suppress_activation field/method/send-gate (router owns click-vs-drag now)",
+        "r742 router test corrected: a moved drag no longer synthesizes a click (Qt startDragDistance / DOM no-click-after-drag)"
+      ],
+      "publishable_verification_bullets": [
+        "root-cause fix: R794 suppress_activation was a binding workaround for R742 always-trailing-PointerUp; now a framework SSOT",
+        "clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "r742_dnd + r743_tab_reorder regress PASS (reorder PointerUp was inert, unaffected by the change)",
+        "r794 demo 32 assert + native XTEST PASS with NO binding flag (router suppresses the post-drag click)"
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "drag-arming still eager (begin_drag on press); full Qt model (start drag only past threshold) deferred -- preview may flicker on a click-jiggle, cosmetic only, no correctness impact",
+        "pressed drag-arm Cell still 2-consumer (ReorderModel/DirectoryState); 1-field, lift net-neg, 3rd revisits"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -124,14 +124,6 @@ pub struct DirectoryState {
     /// view *does* paint the "drop here" highlight on it, so a `drag_to`
     /// update repaints the targeted row. Cleared on drop.
     drop_target: Signal<Option<FileDropTarget>>,
-    /// R794 §5.51 — suppress the **trailing synthetic `PointerUp`** the router
-    /// dispatches after [`drag_drop`](Self::drag_drop) (so a press-release in
-    /// place is still a click). Set when a drag committed a move, consumed by
-    /// the next row `PointerUp`: a drag-that-moved must not *also* activate
-    /// (navigate / select) the row now sitting at the source position — the
-    /// click-vs-drag disambiguation every file manager makes. A `Cell`
-    /// (transient pointer bookkeeping, never painted).
-    suppress_activation: Cell<bool>,
 }
 
 impl core::fmt::Debug for DirectoryState {
@@ -162,7 +154,6 @@ impl DirectoryState {
             cursor: Signal::new(None),
             pressed: Cell::new(None),
             drop_target: Signal::new(None),
-            suppress_activation: Cell::new(false),
         }
     }
 
@@ -484,19 +475,9 @@ impl DirectoryState {
     /// R794 — arm a drag from the visual row `index` (the binding's row
     /// `PointerDown` send). An out-of-range index clears the arm (a press
     /// on no real row starts no drag). Not an interaction — pure pointer
-    /// bookkeeping, the reorder-model `pressed` precedent. Starting a fresh
-    /// gesture also clears any stale activation suppression.
+    /// bookkeeping, the reorder-model `pressed` precedent.
     pub fn press(&self, index: usize) {
-        self.suppress_activation.set(false);
         self.pressed.set((index < self.entries.get().len()).then_some(index));
-    }
-
-    /// R794 — consume the trailing-`PointerUp` activation suppression: returns
-    /// whether the just-released drag committed a move (and clears the flag).
-    /// The binding's row-`PointerUp` handler skips activation when this is
-    /// `true` so a drag-that-moved does not also navigate / select.
-    pub fn take_suppress_activation(&self) -> bool {
-        self.suppress_activation.replace(false)
     }
 
     /// R794 §5.51 — arm a [`DragPayload`] from the [`pressed`](Self::pressed)
@@ -547,12 +528,6 @@ impl DirectoryState {
     )]
     pub fn drag_drop(&self, over: Option<&DropPoint>) -> bool {
         let moved = self.commit_drop(over);
-        // A real move suppresses the trailing synthetic `PointerUp` so the
-        // drag does not also activate the row now at the source position; an
-        // inert drop (no move) leaves it through as a plain click.
-        if moved {
-            self.suppress_activation.set(true);
-        }
         self.pressed.set(None);
         // Clearing the (reactive) drop highlight repaints the target row back
         // to its resting ink whether or not the move took effect.
@@ -931,15 +906,11 @@ impl ExternalIntrospect for DirectoryExternal {
                 if !is_activation_event(event) {
                     return Ok(IntrospectValue::Null);
                 }
-                // R794 — the router dispatches a synthetic `PointerUp` after a
-                // drag's `drag_release`; if that drag committed a move, swallow
-                // this activation so the drag-move does not also navigate /
-                // select the row now at the source position (click vs drag).
-                if event == PointerWireEvent::Up.as_wire_name()
-                    && self.state.take_suppress_activation()
-                {
-                    return Ok(IntrospectValue::Null);
-                }
+                // R794 — click vs drag is the router's job: after a *moved*
+                // drag it does not dispatch this trailing `PointerUp` at all
+                // (DRAG_CLICK_THRESHOLD_PX), so a row activation here is always
+                // a genuine click. A press-release in place still arrives and
+                // navigates / selects.
                 if sub == "up" {
                     self.state.up();
                 } else if let Ok(idx) = sub.parse::<usize>() {
@@ -1511,35 +1482,6 @@ mod tests {
             ext.intervene("drop_target", IntrospectValue::Text("up".into())),
             Err(InterveneError::ReadOnly),
         );
-    }
-
-    #[test]
-    fn r794_drag_move_suppresses_trailing_pointerup_but_click_still_activates() {
-        // Two folders so a moved source row stays in range after the move.
-        let d = InMemoryDirectory::new();
-        d.insert("/p", vec![DirEntry::dir("adir"), DirEntry::dir("bdir")]);
-        d.insert("/p/adir", vec![]);
-        d.insert("/p/bdir", vec![]);
-        let st = Rc::new(DirectoryState::new(Rc::new(d), "/p")); // [adir@0, bdir@1]
-        let mut ext = DirectoryExternal::new(Rc::clone(&st));
-
-        // Drag adir (row 0) onto bdir (row 1): a real move.
-        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into())).unwrap();
-        let payload = ext.begin_drag().expect("armed");
-        ext.drag_release(&payload, Some(drop_at("fb#1")));
-        assert!(!st.entries().iter().any(|e| e.name == "adir"), "adir moved into bdir");
-        assert_eq!(st.cwd(), "/p", "the move did not change cwd");
-        // The router's trailing PointerUp to the (now-reused) source row 0 must
-        // NOT navigate — without suppression it would open bdir (now at row 0).
-        ext.invoke("send", IntrospectValue::Text("0:PointerUp".into())).unwrap();
-        assert_eq!(st.cwd(), "/p", "drag-move's trailing PointerUp is suppressed");
-
-        // A press-release in place (no move) is still a click: it activates.
-        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into())).unwrap();
-        let payload = ext.begin_drag().expect("armed");
-        ext.drag_release(&payload, Some(drop_at("fb#0"))); // onto self → no move
-        ext.invoke("send", IntrospectValue::Text("0:PointerUp".into())).unwrap();
-        assert_eq!(st.cwd(), "/p/bdir", "a no-move drag (a click) still navigates");
     }
 
     #[test]

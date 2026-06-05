@@ -103,6 +103,19 @@ const DOUBLE_CLICK_TIME_MS: u128 = 300;
 ///   `Material 3` + Cocoa convention.
 const DOUBLE_CLICK_DIST_PX: f64 = 5.0;
 
+/// R794 §5.51 — drag-vs-click distance (logical pixels). A pressed drag
+/// source whose cursor moves more than this from the press point before
+/// release is a **drag**, not a click: the router commits the drop via
+/// [`External::drag_release`](pinion_core::external::External::drag_release)
+/// and does *not* synthesize the trailing `PointerUp` (a drag and a click
+/// are mutually exclusive — Qt `startDragDistance`, the DOM "no `click`
+/// after a drag" rule). A press-release under this threshold is a click:
+/// the drop resolves to the source (a no-op) and the `PointerUp` fires so
+/// press-to-activate stays reachable. Owning this once at the router makes
+/// click-vs-drag a framework SSOT, so no click-activatable drag surface
+/// (file tree, asset browser, kanban) re-derives it per binding.
+const DRAG_CLICK_THRESHOLD_PX: f64 = 4.0;
+
 /// R51.38 §5.35 — pointer identity used by every [`InputRouter`]
 /// input method to route per-pointer cursor / hover / capture state.
 /// Mouse events on every desktop platform pinion supports come from a
@@ -327,6 +340,16 @@ struct DragSession {
     /// cross-widget target can match on it without the router re-deriving
     /// it.
     payload: DragPayload,
+    /// R794 §5.51 — the absolute cursor at the press that armed this
+    /// session, the anchor the [`DRAG_CLICK_THRESHOLD_PX`] drag-vs-click
+    /// test measures against.
+    press: (f64, f64),
+    /// R794 §5.51 — whether the cursor has moved past
+    /// [`DRAG_CLICK_THRESHOLD_PX`] from [`press`](Self::press) at any point
+    /// in the session. Once set it stays set (a drag that wanders back to
+    /// the press point is still a drag, not a click — the Qt `startDragDistance`
+    /// latch). Gates whether `pointer_up` synthesizes the trailing click.
+    moved: bool,
 }
 
 impl InputRouter {
@@ -608,11 +631,14 @@ impl InputRouter {
             // `drag_release` until `pointer_up`. Default `begin_drag` is
             // `None`, so non-DnD widgets never open a session.
             if let Some(payload) = widget_begin_drag(state_scene, &tag) {
+                let press = self.cursors.get(&id).copied().unwrap_or((0.0, 0.0));
                 self.drag_sessions.insert(
                     id,
                     DragSession {
                         source_tag: tag.clone(),
                         payload,
+                        press,
+                        moved: false,
                     },
                 );
             }
@@ -711,12 +737,22 @@ impl InputRouter {
             if let Some(external) = find_external_by_tag(state_scene, primary) {
                 external.handle.drag_release(&session.payload, over);
             }
-            dispatch_send_mods(
-                state_scene,
-                &session.source_tag,
-                PointerWireEvent::Up.as_wire_name(),
-                modifiers,
-            );
+            // R794 §5.51 — a drag and a click are mutually exclusive. Only a
+            // press-release *in place* (the cursor never left the press point
+            // by DRAG_CLICK_THRESHOLD_PX) synthesizes the trailing `PointerUp`
+            // click; a real moved drag committed via `drag_release` above and
+            // must NOT also activate the source (the row a file move relocated,
+            // the tab a reorder shifted). This is the framework SSOT for
+            // click-vs-drag — Qt `startDragDistance`, the DOM no-`click`-after-
+            // drag rule — so no drag source re-derives it per binding.
+            if !session.moved {
+                dispatch_send_mods(
+                    state_scene,
+                    &session.source_tag,
+                    PointerWireEvent::Up.as_wire_name(),
+                    modifiers,
+                );
+            }
             self.refresh_hover(id, state_scene);
             return;
         }
@@ -1000,9 +1036,18 @@ impl InputRouter {
     /// vanished between the `contains_key` gate and here (it cannot, but
     /// the `get` keeps the borrow honest) or the source external is gone.
     fn update_drag(&mut self, id: PointerId, x: f64, y: f64, state_scene: &mut Scene) {
-        let Some(session) = self.drag_sessions.get(&id) else {
+        let Some(session) = self.drag_sessions.get_mut(&id) else {
             return;
         };
+        // R794 — latch the drag-vs-click distinction: once the cursor leaves
+        // the press point by more than DRAG_CLICK_THRESHOLD_PX this gesture is
+        // a drag, so `pointer_up` will not synthesize the trailing click.
+        if !session.moved
+            && ((x - session.press.0).powi(2) + (y - session.press.1).powi(2)).sqrt()
+                > DRAG_CLICK_THRESHOLD_PX
+        {
+            session.moved = true;
+        }
         let source = session.source_tag.clone();
         let payload = session.payload.clone();
         let over = self.resolve_drop_point(x, y);
@@ -3472,7 +3517,12 @@ mod tests {
         assert!(log.contains(&"begin:0".to_string()), "{log:?}");
         assert!(log.iter().any(|s| s == "to:0:dnd#1"), "drag_to over row 1: {log:?}");
         assert!(log.iter().any(|s| s == "drop:0:dnd#1"), "drop on row 1: {log:?}");
-        assert!(log.contains(&"0:PointerUp".to_string()), "click still reaches: {log:?}");
+        // R794 — a real (moved) drag is NOT also a click: the drop committed
+        // via drag_release, so the router does not synthesize the trailing
+        // PointerUp (Qt startDragDistance / DOM no-click-after-drag). This is
+        // what lets a file move / tab reorder not also activate the source.
+        assert!(!log.contains(&"0:PointerUp".to_string()),
+            "a moved drag must not synthesize a click: {log:?}");
         // Hover was pinned *during* the drag — no `PointerLeave` reaches
         // the source between arming and the drop commit (the capture-
         // equivalent guarantee). A leave *after* the drop is correct: the
@@ -3523,5 +3573,34 @@ mod tests {
         // reaches the statechart so press-to-select stays reachable.
         assert!(log.iter().any(|s| s == "drop:0:dnd#0"), "drop on self: {log:?}");
         assert!(log.contains(&"0:PointerUp".to_string()), "{log:?}");
+    }
+
+    #[test]
+    fn r794_subthreshold_jiggle_is_a_click_suprathreshold_is_a_drag() {
+        // A press with a tiny (< DRAG_CLICK_THRESHOLD_PX) wobble before release
+        // is still a click: the trailing PointerUp fires.
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 102.0, 21.0, &mut state); // ~2.2px < 4px
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let clicked = read(&log);
+        assert!(clicked.contains(&"0:PointerUp".to_string()),
+            "a sub-threshold jiggle is a click: {clicked:?}");
+
+        // A press that wanders past the threshold and *returns* to the press
+        // point is still a drag (the latch): no trailing PointerUp.
+        let (mut state2, log2) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state2);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state2);
+        router.pointer_down(PointerId::MOUSE, &mut state2);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state2); // past threshold
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state2); // back to press
+        router.pointer_up(PointerId::MOUSE, &mut state2);
+        let dragged = read(&log2);
+        assert!(!dragged.contains(&"0:PointerUp".to_string()),
+            "a drag that returns to the press point is still a drag, not a click: {dragged:?}");
     }
 }
