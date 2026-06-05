@@ -23,13 +23,33 @@ use std::rc::Rc;
 
 use pinion_core::directory::DirEntry;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
+use pinion_core::style::{AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, Theme};
-use pinion_core::widgets::file_browser::DirectoryState;
+use pinion_core::widgets::file_browser::{DirectoryState, FileDropTarget};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::Scene;
 
 use crate::virtual_list::view_virtual_list;
+
+/// R794 — the transient highlight of a file row. Mutually exclusive in
+/// paint: a live drop target washes *over* a selection during a drag, so
+/// the caller resolves the one that wins (drop target first).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum RowHighlight {
+    /// Resting ink (directory raised / file zebra-striped).
+    #[default]
+    None,
+    /// The picked leaf — a solid [`ColorRole::Accent`] wash.
+    Selected,
+    /// The live drag drop target — an [`ColorRole::Accent`] outline (the
+    /// "drop here" affordance), distinct from the solid selection fill.
+    DropTarget,
+}
+
+/// R794 — the drop-target outline width in px (the [`RowHighlight::DropTarget`]
+/// affordance). Thick enough to read as a deliberate "drop here" frame and to
+/// survive a pixel sample along the row edge.
+const DROP_TARGET_BORDER_PX: u32 = 3;
 
 /// R789 — paint one file-browser entry row.
 ///
@@ -37,8 +57,12 @@ use crate::virtual_list::view_virtual_list;
 ///   with a trailing `/` (the navigable affordance);
 /// - a **file** zebra-stripes ([`ColorRole::SurfaceContainerLow`] /
 ///   [`ColorRole::SurfaceContainer`] by row parity) — a selectable leaf;
-/// - the **selected** file washes [`ColorRole::Accent`] (its text flips to
-///   [`ColorRole::OnAccent`]).
+/// - a [`RowHighlight::Selected`] file washes [`ColorRole::Accent`] (its text
+///   flips to [`ColorRole::OnAccent`]);
+/// - a [`RowHighlight::DropTarget`] row (R794) keeps its resting fill but gains
+///   an [`ColorRole::Accent`] outline + Accent label — the OS / M3 "drop here"
+///   affordance (an *outline*, not a second fill, because this single-accent
+///   palette has no secondary-container tone, the R753 carry).
 ///
 /// The container is tagged `"{list_tag}#{index}"` so a pointer click /
 /// `scene/click` routes to the binding's `DirectoryExternal` (navigate a
@@ -49,12 +73,12 @@ pub fn file_row(
     list_tag: &str,
     index: usize,
     entry: &DirEntry,
-    selected: bool,
+    highlight: RowHighlight,
     theme: &Theme,
     width: u32,
     pitch: u32,
 ) -> Scene {
-    let (fill, fg) = if selected {
+    let (fill, fg) = if highlight == RowHighlight::Selected {
         (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
     } else if entry.is_dir {
         (theme.resolve(ColorRole::SurfaceContainerHigh), theme.resolve(ColorRole::OnSurface))
@@ -66,6 +90,13 @@ pub fn file_row(
         };
         (theme.resolve(stripe), theme.resolve(ColorRole::OnSurface))
     };
+    // R794 — the drop target outlines its resting fill (Accent border + label).
+    let (fg, box_style) = if highlight == RowHighlight::DropTarget {
+        let accent = theme.resolve(ColorRole::Accent);
+        (accent, BoxStyle::filled(fill).with_border(Border::new(accent, DROP_TARGET_BORDER_PX)))
+    } else {
+        (fg, BoxStyle::filled(fill))
+    };
     let label = if entry.is_dir { format!("{}/", entry.name) } else { entry.name.clone() };
     let text = Scene::Text(TextNode::styled(
         label,
@@ -75,7 +106,7 @@ pub fn file_row(
     Scene::Container(
         ContainerNode::new(vec![text])
             .with_tag(format!("{list_tag}#{index}"))
-            .with_style(BoxStyle::filled(fill))
+            .with_style(box_style)
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -149,17 +180,28 @@ pub fn file_browser_pane(
     let cwd = dir.cwd();
     let entries = dir.entries();
     let sel_idx = dir.selected_index();
+    // R794 — the live drag drop target (subscribes: a `drag_to` repaints).
+    let drop = dir.drop_target();
     let FileBrowserMetrics { list_width, list_height, row_pitch, overscan } = metrics;
 
-    // Breadcrumb: the clickable `../` parent affordance + the cwd path.
+    // Breadcrumb: the clickable `../` parent affordance + the cwd path. R794 —
+    // the `../` affordance is itself a drop target (drag an entry onto it to
+    // move it up to the parent), outlined Accent while it is the live target.
+    let up_drop = drop == Some(FileDropTarget::Up);
+    let up_accent = theme.resolve(ColorRole::Accent);
+    let up_fg = if up_drop { up_accent } else { theme.resolve(ColorRole::OnSurface) };
+    let up_style = {
+        let s = BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh));
+        if up_drop { s.with_border(Border::new(up_accent, DROP_TARGET_BORDER_PX)) } else { s }
+    };
     let up = Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             "../".to_string(),
             Rect::default(),
-            TextStyle::new().with_size_px(15).with_fg(theme.resolve(ColorRole::OnSurface)),
+            TextStyle::new().with_size_px(15).with_fg(up_fg),
         ))])
         .with_tag(format!("{dir_tag}#up"))
-        .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+        .with_style(up_style)
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
@@ -193,7 +235,16 @@ pub fn file_browser_pane(
                     return (e.build)(list_width, row_pitch);
                 }
             }
-            file_row(dir_tag, index, &entries[index], sel_idx == Some(index), theme, list_width, row_pitch)
+            // R794 — a live drop target outlines its row; otherwise the picked
+            // selection washes it. Drop target wins (transient over resting).
+            let highlight = if drop == Some(FileDropTarget::Row(index)) {
+                RowHighlight::DropTarget
+            } else if sel_idx == Some(index) {
+                RowHighlight::Selected
+            } else {
+                RowHighlight::None
+            };
+            file_row(dir_tag, index, &entries[index], highlight, theme, list_width, row_pitch)
         },
     );
 
@@ -226,12 +277,19 @@ mod tests {
         }
     }
 
+    fn border_of(scene: &Scene) -> Option<pinion_core::style::Border> {
+        match scene {
+            Scene::Container(c) => c.style.border,
+            _ => panic!("file_row is a Container"),
+        }
+    }
+
     #[test]
     fn r789_dir_file_selected_paint_distinct_inks() {
         let theme = Theme::light();
-        let dir = file_row("fb", 0, &DirEntry::dir("src"), false, &theme, 300, 32);
-        let file = file_row("fb", 1, &DirEntry::file("a.rs"), false, &theme, 300, 32);
-        let sel = file_row("fb", 2, &DirEntry::file("b.rs"), true, &theme, 300, 32);
+        let dir = file_row("fb", 0, &DirEntry::dir("src"), RowHighlight::None, &theme, 300, 32);
+        let file = file_row("fb", 1, &DirEntry::file("a.rs"), RowHighlight::None, &theme, 300, 32);
+        let sel = file_row("fb", 2, &DirEntry::file("b.rs"), RowHighlight::Selected, &theme, 300, 32);
         let accent = theme.resolve(ColorRole::Accent);
         assert_ne!(fill_of(&dir), fill_of(&file), "dir row != file row");
         assert_eq!(fill_of(&sel), accent, "selected file row washes Accent");
@@ -239,9 +297,24 @@ mod tests {
     }
 
     #[test]
+    fn r794_drop_target_outlines_distinct_from_selection() {
+        let theme = Theme::light();
+        let accent = theme.resolve(ColorRole::Accent);
+        // A drop target keeps its resting (directory) fill but gains an Accent
+        // outline — distinct from the solid-Accent selection fill.
+        let drop = file_row("fb", 0, &DirEntry::dir("src"), RowHighlight::DropTarget, &theme, 300, 32);
+        let dir = file_row("fb", 0, &DirEntry::dir("src"), RowHighlight::None, &theme, 300, 32);
+        let sel = file_row("fb", 2, &DirEntry::file("b.rs"), RowHighlight::Selected, &theme, 300, 32);
+        assert_eq!(fill_of(&drop), fill_of(&dir), "drop target keeps the resting dir fill");
+        assert_eq!(border_of(&drop).map(|b| b.color), Some(accent), "drop target gains an Accent outline");
+        assert_eq!(border_of(&sel), None, "the selection is a fill, not an outline");
+        assert_ne!(fill_of(&drop), fill_of(&sel), "outline (drop) != fill (selection)");
+    }
+
+    #[test]
     fn r789_row_tag_is_list_tag_indexed() {
         let theme = Theme::light();
-        let row = file_row("picker", 3, &DirEntry::file("x"), false, &theme, 200, 30);
+        let row = file_row("picker", 3, &DirEntry::file("x"), RowHighlight::None, &theme, 200, 30);
         let Scene::Container(c) = &row else { panic!("container") };
         assert_eq!(c.tag.as_deref(), Some("picker#3"), "row tagged {{list_tag}}#{{index}}");
     }
@@ -249,7 +322,7 @@ mod tests {
     #[test]
     fn r789_directory_label_carries_trailing_slash() {
         let theme = Theme::light();
-        let row = file_row("fb", 0, &DirEntry::dir("assets"), false, &theme, 200, 30);
+        let row = file_row("fb", 0, &DirEntry::dir("assets"), RowHighlight::None, &theme, 200, 30);
         let Scene::Container(c) = &row else { panic!("container") };
         let Scene::Text(t) = &c.children[0] else { panic!("text child") };
         assert_eq!(t.content, "assets/", "directory label gets the navigable trailing slash");
@@ -310,6 +383,55 @@ mod tests {
             assert!(pane.contains_tag("fb#0"), "row 0 stays a plain file_row");
             assert!(pane.contains_tag("edit_field"), "row 1 became the edit field");
             assert!(!pane.contains_tag("fb#1"), "row 1's file_row is replaced");
+        });
+    }
+
+    /// Whether the first container tagged `tag` carries an Accent drop
+    /// outline. Walks `Container.children` + `Scroll.content` (the windowed
+    /// rows live inside a `Scene::Scroll`), mirroring `Scene::contains_tag`.
+    fn outlined(scene: &Scene, tag: &str, accent: pinion_core::style::Color) -> bool {
+        match scene {
+            Scene::Container(c) if c.tag.as_deref() == Some(tag) => {
+                c.style.border.is_some_and(|b| b.color == accent)
+            }
+            Scene::Container(c) => c.children.iter().any(|ch| outlined(ch, tag, accent)),
+            Scene::Scroll(n) => outlined(&n.content, tag, accent),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn r794_pane_outlines_the_drop_target_row() {
+        use pinion_core::directory::InMemoryDirectory;
+        use pinion_core::external::DropPoint;
+        use pinion_core::reactive::Owner;
+        use pinion_core::widgets::scroll::use_scroll_state;
+
+        Owner::new().run(|| {
+            let d = InMemoryDirectory::new();
+            // entries (sorted): dst/ (dir), moveme.txt (file).
+            d.insert("/p", vec![DirEntry::dir("dst"), DirEntry::file("moveme.txt")]);
+            d.insert("/p/dst", vec![]);
+            let dir = DirectoryState::new(Rc::new(d), "/p");
+            let scroll = use_scroll_state("pane_drop_scroll");
+            let metrics =
+                FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2 };
+            let theme = Theme::light();
+            let accent = theme.resolve(ColorRole::Accent);
+
+            // Arm a drag from the file (row 1), hover the folder (row 0).
+            dir.press(1);
+            dir.drag_over(Some(&DropPoint { tag: "fb#0".into(), x_rel: 0.5, y_rel: 0.5 }));
+            assert_eq!(dir.drop_target(), Some(FileDropTarget::Row(0)), "state armed the row target");
+            let pane = file_browser_pane("fb", &dir, &scroll, &theme, metrics, None);
+            assert!(outlined(&pane, "fb#0", accent), "the hovered folder row paints the Accent drop outline");
+            assert!(!outlined(&pane, "fb#1", accent), "the dragged file row is not outlined");
+
+            // Hover the `../` breadcrumb instead: it becomes the drop target.
+            dir.drag_over(Some(&DropPoint { tag: "fb#up".into(), x_rel: 0.5, y_rel: 0.5 }));
+            let pane = file_browser_pane("fb", &dir, &scroll, &theme, metrics, None);
+            assert!(outlined(&pane, "fb#up", accent), "the `../` breadcrumb outlines when it is the drop target");
+            assert!(!outlined(&pane, "fb#0", accent), "the folder row is no longer the target");
         });
     }
 }

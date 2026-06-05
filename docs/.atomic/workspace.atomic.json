@@ -31091,6 +31091,64 @@
         "modal-state query External (R788 carry-a) + selection-follows-focus (R792 carry-b) still deferred"
       ]
     },
+    "R794": {
+      "decision_summary": "drag-to-move in the own-rendered file manager: the R742 pointer DnD substrate gains a file-browser consumer kind (drag a row onto a folder / the ../ breadcrumb -> move via Directory::rename), with an introspectable in-flight drag and a drop-target outline; zero binding changes",
+      "changes_bullets": [
+        "DirectoryState: pressed/drop_target/suppress_activation + begin_file_drag/drag_over/drag_drop/move_into",
+        "DirectoryExternal: begin_drag/drag_to/drag_release delegate; PointerDown arms; dragging/drop_target query",
+        "file_row: RowHighlight enum (None/Selected/DropTarget); drop target = Accent outline (M3 drop affordance)",
+        "move = Directory::rename(from,to); guards self/descendant/same-dir; selection follows the entry out",
+        "drag-that-moved suppresses the trailing synthetic PointerUp so a drag-move does not also activate",
+        "zero binding changes: the file manager is a drag consumer for free (4th R742 DnD consumer kind)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (R793.1 5600 -> R794 5612, +12: core 10 + paint 2)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "r794 demo 32 assert RPC (file into folder / up / folder subtree / inert drops) + native XTEST",
+        "native XTEST: real winit drag moved README.md into assets/; drop outline accent px 0->72 on-screen",
+        "file-UI demos r787-r793 regress PASS (file_row RowHighlight behavior-preserving for non-drag)",
+        "validate T1=0 / new orphan +0, entries 717->718"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "pressed drag-arm Cell = 2 consumers (ReorderModel/DirectoryState); 1-field, lift net-neg, 3rd revisits",
+        "drop-target outline paint = 1st consumer (inline-first); lift pinion_widget_paint drop affordance at 2nd",
+        "suppress_activation click-vs-drag = 1st consumer; a 2nd click-activatable drag widget lifts it",
+        "drag-drop a11y (aria-grabbed/dropeffect) deferred (no consumer; move outcome is RPC-introspectable)"
+      ],
+      "publishable_decision_summary": "drag-to-move in the own-rendered file manager: the R742 pointer DnD substrate gains a file-browser consumer kind (drag a row onto a folder / the ../ breadcrumb -> move via Directory::rename), with an introspectable in-flight drag and a drop-target outline; zero binding changes",
+      "publishable_changes_bullets": [
+        "DirectoryState: pressed/drop_target/suppress_activation + begin_file_drag/drag_over/drag_drop/move_into",
+        "DirectoryExternal: begin_drag/drag_to/drag_release delegate; PointerDown arms; dragging/drop_target query",
+        "file_row: RowHighlight enum (None/Selected/DropTarget); drop target = Accent outline (M3 drop affordance)",
+        "move = Directory::rename(from,to); guards self/descendant/same-dir; selection follows the entry out",
+        "drag-that-moved suppresses the trailing synthetic PointerUp so a drag-move does not also activate",
+        "zero binding changes: the file manager is a drag consumer for free (4th R742 DnD consumer kind)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (R793.1 5600 -> R794 5612, +12: core 10 + paint 2)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "r794 demo 32 assert RPC (file into folder / up / folder subtree / inert drops) + native XTEST",
+        "native XTEST: real winit drag moved README.md into assets/; drop outline accent px 0->72 on-screen",
+        "file-UI demos r787-r793 regress PASS (file_row RowHighlight behavior-preserving for non-drag)",
+        "validate T1=0 / new orphan +0, entries 717->718"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.15",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pressed drag-arm Cell = 2 consumers (ReorderModel/DirectoryState); 1-field, lift net-neg, 3rd revisits",
+        "drop-target outline paint = 1st consumer (inline-first); lift pinion_widget_paint drop affordance at 2nd",
+        "suppress_activation click-vs-drag = 1st consumer; a 2nd click-activatable drag widget lifts it",
+        "drag-drop a11y (aria-grabbed/dropeffect) deferred (no consumer; move outcome is RPC-introspectable)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

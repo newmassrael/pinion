@@ -27,14 +27,17 @@
 //!   `name.<i>` / `is_dir.<i>`; invoke `navigate` / `up` / `select` /
 //!   `open`.
 
+use std::borrow::Cow;
+use std::cell::Cell;
 use std::rc::Rc;
 
+use crate::composite_tag::split_subindex;
 use crate::directory::{DirEntry, Directory};
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use crate::input::is_activation_event;
+use crate::input::{is_activation_event, PointerWireEvent};
 use crate::reactive::{Owner, Signal};
 use crate::widgets::scroll::ScrollState;
 
@@ -66,6 +69,29 @@ pub fn parent_path(path: &str) -> String {
     }
 }
 
+/// R794 §5.51 — the [`DragPayload::kind`] a file-browser row drag carries
+/// (the discriminator a future cross-widget drop target matches on before
+/// reading the dragged leaf name). One SSOT the binding / demo reference.
+pub const FILE_DRAG_KIND: &str = "file-row";
+
+/// R794 §5.51 — the live drop target a file-row drag resolves under the
+/// cursor: a **directory row** to move the dragged entry *into*, or the
+/// `../` **breadcrumb** to move it *up* to the parent. A file row / the
+/// dragged source itself / the background resolve to no target (`None`),
+/// so a drop there is an inert release. The view reads this (via
+/// [`DirectoryState::drop_target`]) to paint the "drop here" affordance,
+/// and an AI agent reads it back through the `External`'s `drop_target`
+/// query (§2 #7 — the in-flight drag is scene-as-data).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum FileDropTarget {
+    /// Move the dragged entry into the directory at this **visual row
+    /// index** of the current listing.
+    Row(usize),
+    /// Move the dragged entry up to the parent directory (the `../`
+    /// breadcrumb affordance).
+    Up,
+}
+
 /// R787 §5.15 §5.16 — reactive directory-navigation model for one file
 /// browser. Holds the shared [`Directory`] and the three reactive
 /// `Signal`s the view subscribes to (`cwd` / `entries` / `selected`); a
@@ -87,6 +113,25 @@ pub struct DirectoryState {
     /// highlight over folders *and* files, `Enter` opens a folder or picks a
     /// file — orthogonal to which leaf is currently selected.
     cursor: Signal<Option<usize>>,
+    /// R794 §5.51 — the **drag-arm**: the visual row a `PointerDown`
+    /// pressed, which [`begin_file_drag`](Self::begin_file_drag) reads to
+    /// start a drag session. A `Cell` (not a reactive `Signal`) because
+    /// arming is transient pointer bookkeeping the view never paints — the
+    /// reorder model's `pressed` precedent. Cleared on drop.
+    pressed: Cell<Option<usize>>,
+    /// R794 §5.51 — the live [`FileDropTarget`] under the cursor during a
+    /// drag, or `None`. A reactive `Signal` (unlike `pressed`) because the
+    /// view *does* paint the "drop here" highlight on it, so a `drag_to`
+    /// update repaints the targeted row. Cleared on drop.
+    drop_target: Signal<Option<FileDropTarget>>,
+    /// R794 §5.51 — suppress the **trailing synthetic `PointerUp`** the router
+    /// dispatches after [`drag_drop`](Self::drag_drop) (so a press-release in
+    /// place is still a click). Set when a drag committed a move, consumed by
+    /// the next row `PointerUp`: a drag-that-moved must not *also* activate
+    /// (navigate / select) the row now sitting at the source position — the
+    /// click-vs-drag disambiguation every file manager makes. A `Cell`
+    /// (transient pointer bookkeeping, never painted).
+    suppress_activation: Cell<bool>,
 }
 
 impl core::fmt::Debug for DirectoryState {
@@ -96,6 +141,7 @@ impl core::fmt::Debug for DirectoryState {
             .field("entry_count", &self.entries.get().len())
             .field("selected", &self.selected.get())
             .field("cursor", &self.cursor.get())
+            .field("drop_target", &self.drop_target.get())
             .finish_non_exhaustive()
     }
 }
@@ -114,6 +160,9 @@ impl DirectoryState {
             entries: Signal::new(entries),
             selected: Signal::new(None),
             cursor: Signal::new(None),
+            pressed: Cell::new(None),
+            drop_target: Signal::new(None),
+            suppress_activation: Cell::new(false),
         }
     }
 
@@ -421,6 +470,174 @@ impl DirectoryState {
             self.select(&entry.name);
         }
     }
+
+    // ----- R794 drag-to-move -------------------------------------------
+
+    /// R794 — the drag-armed visual row (the most recent `PointerDown`), or
+    /// `None`. The drag source [`begin_file_drag`](Self::begin_file_drag)
+    /// reads; exposed for the `External`'s `dragging` introspection slot.
+    #[must_use]
+    pub fn pressed(&self) -> Option<usize> {
+        self.pressed.get()
+    }
+
+    /// R794 — arm a drag from the visual row `index` (the binding's row
+    /// `PointerDown` send). An out-of-range index clears the arm (a press
+    /// on no real row starts no drag). Not an interaction — pure pointer
+    /// bookkeeping, the reorder-model `pressed` precedent. Starting a fresh
+    /// gesture also clears any stale activation suppression.
+    pub fn press(&self, index: usize) {
+        self.suppress_activation.set(false);
+        self.pressed.set((index < self.entries.get().len()).then_some(index));
+    }
+
+    /// R794 — consume the trailing-`PointerUp` activation suppression: returns
+    /// whether the just-released drag committed a move (and clears the flag).
+    /// The binding's row-`PointerUp` handler skips activation when this is
+    /// `true` so a drag-that-moved does not also navigate / select.
+    pub fn take_suppress_activation(&self) -> bool {
+        self.suppress_activation.replace(false)
+    }
+
+    /// R794 §5.51 — arm a [`DragPayload`] from the [`pressed`](Self::pressed)
+    /// row: the [`External::begin_drag`](crate::external::External::begin_drag)
+    /// hook the router calls on `PointerDown`. The payload carries the dragged
+    /// entry's **leaf name** under [`FILE_DRAG_KIND`] (so the in-flight drag is
+    /// introspectable as scene-as-data and a future cross-widget target can
+    /// match on `kind`); the destination is resolved at drop. `None` when no
+    /// row is armed — the press was on the background / the `../` breadcrumb
+    /// (which is not a draggable source), so no session starts.
+    #[must_use]
+    pub fn begin_file_drag(&self) -> Option<DragPayload> {
+        let idx = self.pressed.get()?;
+        let name = self.entries.get().get(idx)?.name.clone();
+        Some(DragPayload { kind: Cow::Borrowed(FILE_DRAG_KIND), value: IntrospectValue::Text(name) })
+    }
+
+    /// R794 — the live [`FileDropTarget`] under the cursor during a drag, or
+    /// `None`. The view reads this to paint the "drop here" highlight (it
+    /// subscribes), and the `External` surfaces it on the `drop_target`
+    /// query.
+    #[must_use]
+    pub fn drop_target(&self) -> Option<FileDropTarget> {
+        self.drop_target.get()
+    }
+
+    /// R794 §5.51 — live drag update
+    /// ([`External::drag_to`](crate::external::External::drag_to)): resolve and
+    /// store the [`FileDropTarget`] under the cursor so the view repaints the
+    /// highlight. `over` is the router's hit-test of the tag under the absolute
+    /// cursor.
+    pub fn drag_over(&self, over: Option<&DropPoint>) {
+        self.drop_target.set(self.resolve_drop(over));
+    }
+
+    /// R794 §5.51 — drop commit
+    /// ([`External::drag_release`](crate::external::External::drag_release)):
+    /// move the dragged entry into the resolved [`FileDropTarget`] (a folder,
+    /// or up to the parent), then clear the transient drag state. Returns
+    /// whether a move took effect (`false` for a drop over no valid target,
+    /// onto the source itself, or a rejected rename). The AI re-reads
+    /// `entries` to observe the new listing.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "the moved bool is the AI-first drop outcome; the router's \
+                  fire-and-forget drag_release ignores it (the navigate / \
+                  set_width setter-returns-outcome precedent)"
+    )]
+    pub fn drag_drop(&self, over: Option<&DropPoint>) -> bool {
+        let moved = self.commit_drop(over);
+        // A real move suppresses the trailing synthetic `PointerUp` so the
+        // drag does not also activate the row now at the source position; an
+        // inert drop (no move) leaves it through as a plain click.
+        if moved {
+            self.suppress_activation.set(true);
+        }
+        self.pressed.set(None);
+        // Clearing the (reactive) drop highlight repaints the target row back
+        // to its resting ink whether or not the move took effect.
+        self.drop_target.set(None);
+        moved
+    }
+
+    /// Resolve the tag under the cursor into a valid [`FileDropTarget`]: a
+    /// **directory** row (move into it) or the `../` breadcrumb (move up). A
+    /// file row, the dragged source row itself, or the background resolve to
+    /// `None` (no valid target). The drop-classification SSOT both
+    /// [`drag_over`](Self::drag_over) (preview) and [`commit_drop`](Self::commit_drop)
+    /// (apply) read, so the highlighted target and the committed move never
+    /// disagree.
+    fn resolve_drop(&self, over: Option<&DropPoint>) -> Option<FileDropTarget> {
+        let (_, sub) = split_subindex(&over?.tag);
+        let sub = sub?;
+        if sub == "up" {
+            return Some(FileDropTarget::Up);
+        }
+        let idx: usize = sub.parse().ok()?;
+        // Never the dragged source row (dropping onto yourself is inert) and
+        // only a directory is a move-into target (a file has no inside).
+        if self.pressed.get() == Some(idx) {
+            return None;
+        }
+        self.entries.get().get(idx).filter(|e| e.is_dir).map(|_| FileDropTarget::Row(idx))
+    }
+
+    /// Apply the move the released drag resolves: the [`pressed`](Self::pressed)
+    /// source into the [`resolve_drop`](Self::resolve_drop) destination. `false`
+    /// when there is no armed source, no valid target, or the move is rejected.
+    fn commit_drop(&self, over: Option<&DropPoint>) -> bool {
+        let Some(target) = self.resolve_drop(over) else {
+            return false;
+        };
+        let Some(src_idx) = self.pressed.get() else {
+            return false;
+        };
+        let entries = self.entries.get();
+        let Some(source) = entries.get(src_idx) else {
+            return false;
+        };
+        let source_name = source.name.clone();
+        let dest_dir = match target {
+            FileDropTarget::Row(i) => match entries.get(i) {
+                Some(dir_entry) => join_path(&self.cwd.get(), &dir_entry.name),
+                None => return false,
+            },
+            FileDropTarget::Up => parent_path(&self.cwd.get()),
+        };
+        self.move_into(&source_name, &dest_dir)
+    }
+
+    /// Move the entry `source_name` of the current directory into `dest_dir`
+    /// (keeping its leaf name), refreshing the listing on success. The widget
+    /// layer owns the path arithmetic (the `Directory` trait stays a pure
+    /// `rename(from, to)`); this enforces the two file-manager invariants the
+    /// backing's blind subtree re-key would otherwise violate: a move into the
+    /// current directory is a no-op (the entry is already there), and a
+    /// directory is never moved into itself or its own subtree. The selection
+    /// follows the entry out of the listing (it cleared when it was the moved
+    /// item). Returns whether the move took effect.
+    fn move_into(&self, source_name: &str, dest_dir: &str) -> bool {
+        let cwd = self.cwd.get();
+        if dest_dir == cwd {
+            return false;
+        }
+        let from = join_path(&cwd, source_name);
+        // Refuse moving a directory into itself or any descendant of it.
+        if dest_dir == from || dest_dir.starts_with(&format!("{from}/")) {
+            return false;
+        }
+        let to = join_path(dest_dir, source_name);
+        let ok = self.dir.rename(&from, &to);
+        if ok {
+            crate::reactive::batch(|| {
+                if self.selected.get().as_deref() == Some(from.as_str()) {
+                    self.selected.set(None);
+                }
+                self.refresh();
+            });
+        }
+        ok
+    }
 }
 
 /// R787 — resolve the shared [`DirectoryState`] for `key`, building it
@@ -558,6 +775,24 @@ impl External for DirectoryExternal {
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         Some(self)
     }
+
+    // R794 §5.51 — drag-to-move. The router calls these on the source
+    // coordinator (this `External`, resolved from the pressed row's primary
+    // tag): `begin_drag` arms from the `PointerDown`-pressed row, `drag_to`
+    // tracks the folder under the cursor, `drag_release` commits the move.
+    // Every drop candidate (every row + the `../` breadcrumb) belongs to this
+    // one coordinator, so the source is the resolver — the R742 contract.
+    fn begin_drag(&self) -> Option<DragPayload> {
+        self.state.begin_file_drag()
+    }
+
+    fn drag_to(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
+        self.state.drag_over(over.as_ref());
+    }
+
+    fn drag_release(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
+        self.state.drag_drop(over.as_ref());
+    }
 }
 
 impl ExternalIntrospect for DirectoryExternal {
@@ -594,6 +829,13 @@ impl ExternalIntrospect for DirectoryExternal {
             ("delete", "bool"),
             // R791 — rename the selection to the string arg.
             ("rename", "bool"),
+            // R794 — the in-flight drag-to-move state (§2 #7 — the live
+            // drag is scene-as-data). `dragging` (bool) is whether a row is
+            // armed; `drop_target` (query) is the resolved target under the
+            // cursor: Text "up" (the parent breadcrumb), Text "row:<i>" (a
+            // folder row), or Null (no valid target).
+            ("dragging", "bool"),
+            ("drop_target", "string"),
         ])
     }
 
@@ -624,6 +866,13 @@ impl ExternalIntrospect for DirectoryExternal {
                     .and_then(|i| i64::try_from(i).ok())
                     .map_or(IntrospectValue::Null, IntrospectValue::Int),
             ),
+            // R794 — the in-flight drag-to-move state.
+            "dragging" => Some(IntrospectValue::Bool(self.state.pressed().is_some())),
+            "drop_target" => Some(match self.state.drop_target() {
+                Some(FileDropTarget::Row(i)) => IntrospectValue::Text(format!("row:{i}")),
+                Some(FileDropTarget::Up) => IntrospectValue::Text("up".into()),
+                None => IntrospectValue::Null,
+            }),
             _ => None,
         }
     }
@@ -652,7 +901,9 @@ impl ExternalIntrospect for DirectoryExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            "count" | "entries" | "selected" | "name" | "is_dir" => Err(InterveneError::ReadOnly),
+            "count" | "entries" | "selected" | "name" | "is_dir" | "dragging" | "drop_target" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -668,7 +919,25 @@ impl ExternalIntrospect for DirectoryExternal {
             "send" => {
                 let raw = args.as_str().ok_or(InvokeError::TypeMismatch)?;
                 let (sub, event) = raw.split_once(':').unwrap_or((raw, ""));
+                // R794 — a `PointerDown` on a row arms a drag from it (the
+                // source the router's `begin_drag` reads). Only numeric row
+                // subs arm; the "up" breadcrumb is not a draggable source.
+                if event == PointerWireEvent::Down.as_wire_name() {
+                    if let Ok(idx) = sub.parse::<usize>() {
+                        self.state.press(idx);
+                    }
+                    return Ok(IntrospectValue::Null);
+                }
                 if !is_activation_event(event) {
+                    return Ok(IntrospectValue::Null);
+                }
+                // R794 — the router dispatches a synthetic `PointerUp` after a
+                // drag's `drag_release`; if that drag committed a move, swallow
+                // this activation so the drag-move does not also navigate /
+                // select the row now at the source position (click vs drag).
+                if event == PointerWireEvent::Up.as_wire_name()
+                    && self.state.take_suppress_activation()
+                {
                     return Ok(IntrospectValue::Null);
                 }
                 if sub == "up" {
@@ -1095,5 +1364,192 @@ mod tests {
         assert_eq!(st.cwd(), "/proj/src", "intervene cwd jumps absolutely");
         assert_eq!(ext.intervene("count", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
         assert_eq!(ext.intervene("nope", IntrospectValue::Null), Err(InterveneError::UnknownPath));
+    }
+
+    // ── R794 drag-to-move ───────────────────────────────────────────
+
+    fn drop_at(tag: &str) -> DropPoint {
+        DropPoint { tag: tag.to_string(), x_rel: 0.5, y_rel: 0.5 }
+    }
+
+    #[test]
+    fn r794_press_arms_drag_and_builds_payload() {
+        let s = state(); // [src(dir), Cargo.toml, README.md]
+        assert_eq!(s.begin_file_drag(), None, "nothing armed → no drag starts");
+        s.press(2); // README.md
+        assert_eq!(s.pressed(), Some(2));
+        let payload = s.begin_file_drag().expect("an armed row drags");
+        assert_eq!(payload.kind, FILE_DRAG_KIND, "payload carries the file-row kind");
+        assert_eq!(payload.value, IntrospectValue::Text("README.md".into()), "and the leaf name");
+        // An out-of-range press clears the arm (a press on no real row).
+        s.press(99);
+        assert_eq!(s.pressed(), None, "out-of-range press disarms");
+        assert_eq!(s.begin_file_drag(), None);
+    }
+
+    #[test]
+    fn r794_drag_over_resolves_only_folders_up_and_not_self() {
+        let s = state(); // [src(dir)@0, Cargo.toml@1, README.md@2]
+        s.press(2); // dragging README.md
+        // A directory row is a move-into target.
+        s.drag_over(Some(&drop_at("fb#0")));
+        assert_eq!(s.drop_target(), Some(FileDropTarget::Row(0)), "folder row = drop into it");
+        // A file row is not a move-into target.
+        s.drag_over(Some(&drop_at("fb#1")));
+        assert_eq!(s.drop_target(), None, "a file has no inside");
+        // The dragged source row itself is inert.
+        s.press(0);
+        s.drag_over(Some(&drop_at("fb#0")));
+        assert_eq!(s.drop_target(), None, "dropping onto yourself is no target");
+        // The `../` breadcrumb resolves to Up.
+        s.drag_over(Some(&drop_at("fb#up")));
+        assert_eq!(s.drop_target(), Some(FileDropTarget::Up), "breadcrumb = move up");
+        // The background (no tag) clears the target.
+        s.drag_over(None);
+        assert_eq!(s.drop_target(), None, "over no region = no target");
+    }
+
+    #[test]
+    fn r794_drag_drop_moves_file_into_folder() {
+        let s = state(); // [src(dir)@0, Cargo.toml@1, README.md@2]
+        s.select("README.md"); // selection follows the move out of the listing
+        s.press(2); // drag README.md
+        s.drag_over(Some(&drop_at("fb#0"))); // over src/
+        assert!(s.drag_drop(Some(&drop_at("fb#0"))), "the move took effect");
+        assert!(!s.entries().iter().any(|e| e.name == "README.md"), "file left the cwd");
+        assert_eq!(s.selected(), None, "the moved selection cleared");
+        assert_eq!(s.pressed(), None, "drag arm cleared on drop");
+        assert_eq!(s.drop_target(), None, "drop highlight cleared on drop");
+        // It landed inside src/.
+        s.navigate("src");
+        assert!(s.entries().iter().any(|e| e.name == "README.md"), "file is now inside src/");
+    }
+
+    #[test]
+    fn r794_drag_drop_into_breadcrumb_moves_to_parent() {
+        let s = state();
+        s.navigate("src"); // /proj/src: [lib.rs@0, main.rs@1]
+        s.press(0); // drag lib.rs
+        assert!(s.drag_drop(Some(&drop_at("fb#up"))), "drop on `../` moves to the parent");
+        assert!(!s.entries().iter().any(|e| e.name == "lib.rs"), "lib.rs left /proj/src");
+        s.up();
+        assert!(s.entries().iter().any(|e| e.name == "lib.rs"), "lib.rs landed in /proj");
+    }
+
+    #[test]
+    fn r794_drag_drop_onto_file_or_self_is_inert() {
+        let s = state();
+        s.press(2); // README.md
+        // Drop onto a file row (Cargo.toml@1) → no valid target.
+        assert!(!s.drag_drop(Some(&drop_at("fb#1"))), "dropping onto a file is inert");
+        assert!(s.entries().iter().any(|e| e.name == "README.md"), "nothing moved");
+        // Drop onto the source row itself → inert.
+        s.press(2);
+        assert!(!s.drag_drop(Some(&drop_at("fb#2"))), "dropping onto yourself is inert");
+        // Drop with no armed source → inert.
+        assert!(!s.drag_drop(Some(&drop_at("fb#0"))));
+    }
+
+    #[test]
+    fn r794_move_dir_into_dir_carries_subtree() {
+        let d = InMemoryDirectory::new();
+        d.insert("/p", vec![DirEntry::dir("from"), DirEntry::dir("dest")]);
+        d.insert("/p/from", vec![DirEntry::file("a.rs")]);
+        d.insert("/p/dest", vec![]);
+        let s = DirectoryState::new(Rc::new(d), "/p"); // [dest@0, from@1]
+        s.press(1); // drag the `from` directory
+        assert!(s.drag_drop(Some(&drop_at("fb#0"))), "folder moved into dest/");
+        assert!(!s.entries().iter().any(|e| e.name == "from"), "from/ left /p");
+        s.navigate("dest");
+        assert!(s.entries().iter().any(|e| e.name == "from"), "from/ now under dest/");
+        s.navigate("from");
+        assert!(s.entries().iter().any(|e| e.name == "a.rs"), "the subtree came along");
+    }
+
+    #[test]
+    fn r794_move_into_self_descendant_or_same_dir_rejected() {
+        let d = InMemoryDirectory::new();
+        d.insert("/a", vec![DirEntry::dir("dir1")]);
+        d.insert("/a/dir1", vec![DirEntry::dir("sub")]);
+        d.insert("/a/dir1/sub", vec![]);
+        let s = DirectoryState::new(Rc::new(d), "/a");
+        // Into the current directory (already there) → rejected.
+        assert!(!s.move_into("dir1", "/a"), "moving into the current dir is a no-op");
+        // Into itself → rejected.
+        assert!(!s.move_into("dir1", "/a/dir1"), "moving a dir into itself is refused");
+        // Into its own descendant → rejected (would corrupt the subtree re-key).
+        assert!(!s.move_into("dir1", "/a/dir1/sub"), "moving a dir into its subtree is refused");
+        // The listing is untouched by every rejected move.
+        assert!(s.entries().iter().any(|e| e.name == "dir1"), "dir1 still in /a");
+    }
+
+    #[test]
+    fn r794_external_drag_hooks_and_introspection() {
+        let st = Rc::new(state()); // [src(dir)@0, Cargo.toml@1, README.md@2]
+        let mut ext = DirectoryExternal::new(Rc::clone(&st));
+        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("drop_target"), Some(IntrospectValue::Null));
+        // A row PointerDown arms the drag (the router's begin_drag source).
+        ext.invoke("send", IntrospectValue::Text("2:PointerDown".into())).unwrap();
+        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(true)), "armed after PointerDown");
+        let payload = ext.begin_drag().expect("begin_drag arms from the pressed row");
+        // drag_to over a folder row surfaces the introspectable target.
+        ext.drag_to(&payload, Some(drop_at("fb#0")));
+        assert_eq!(
+            ext.query("drop_target"),
+            Some(IntrospectValue::Text("row:0".into())),
+            "the in-flight target is scene-as-data",
+        );
+        // release commits the move and clears the transient state.
+        ext.drag_release(&payload, Some(drop_at("fb#0")));
+        assert!(!st.entries().iter().any(|e| e.name == "README.md"), "README.md moved out of /proj");
+        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)), "disarmed after drop");
+        assert_eq!(ext.query("drop_target"), Some(IntrospectValue::Null), "highlight cleared after drop");
+        // The drag introspection slots are read-only.
+        assert_eq!(ext.intervene("dragging", IntrospectValue::Bool(true)), Err(InterveneError::ReadOnly));
+        assert_eq!(
+            ext.intervene("drop_target", IntrospectValue::Text("up".into())),
+            Err(InterveneError::ReadOnly),
+        );
+    }
+
+    #[test]
+    fn r794_drag_move_suppresses_trailing_pointerup_but_click_still_activates() {
+        // Two folders so a moved source row stays in range after the move.
+        let d = InMemoryDirectory::new();
+        d.insert("/p", vec![DirEntry::dir("adir"), DirEntry::dir("bdir")]);
+        d.insert("/p/adir", vec![]);
+        d.insert("/p/bdir", vec![]);
+        let st = Rc::new(DirectoryState::new(Rc::new(d), "/p")); // [adir@0, bdir@1]
+        let mut ext = DirectoryExternal::new(Rc::clone(&st));
+
+        // Drag adir (row 0) onto bdir (row 1): a real move.
+        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into())).unwrap();
+        let payload = ext.begin_drag().expect("armed");
+        ext.drag_release(&payload, Some(drop_at("fb#1")));
+        assert!(!st.entries().iter().any(|e| e.name == "adir"), "adir moved into bdir");
+        assert_eq!(st.cwd(), "/p", "the move did not change cwd");
+        // The router's trailing PointerUp to the (now-reused) source row 0 must
+        // NOT navigate — without suppression it would open bdir (now at row 0).
+        ext.invoke("send", IntrospectValue::Text("0:PointerUp".into())).unwrap();
+        assert_eq!(st.cwd(), "/p", "drag-move's trailing PointerUp is suppressed");
+
+        // A press-release in place (no move) is still a click: it activates.
+        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into())).unwrap();
+        let payload = ext.begin_drag().expect("armed");
+        ext.drag_release(&payload, Some(drop_at("fb#0"))); // onto self → no move
+        ext.invoke("send", IntrospectValue::Text("0:PointerUp".into())).unwrap();
+        assert_eq!(st.cwd(), "/p/bdir", "a no-move drag (a click) still navigates");
+    }
+
+    #[test]
+    fn r794_external_drop_target_reports_up() {
+        let st = Rc::new(state());
+        st.navigate("src");
+        let mut ext = DirectoryExternal::new(Rc::clone(&st));
+        ext.invoke("send", IntrospectValue::Text("0:PointerDown".into())).unwrap();
+        let payload = ext.begin_drag().expect("armed");
+        ext.drag_to(&payload, Some(drop_at("fb#up")));
+        assert_eq!(ext.query("drop_target"), Some(IntrospectValue::Text("up".into())), "Up reports as text");
     }
 }
