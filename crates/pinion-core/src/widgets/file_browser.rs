@@ -306,8 +306,11 @@ impl DirectoryState {
     fn sync_selection_to_cursor(&self) {
         let entries = self.entries.get();
         match self.cursor().and_then(|i| entries.get(i)) {
+            // A file row picks through the [`select`](Self::select) SSOT (it
+            // owns the cwd-joined path build, shared with `activate_index`); a
+            // directory row (or empty listing) clears — dirs are nav targets.
             Some(entry) if !entry.is_dir => {
-                self.selected.set(Some(join_path(&self.cwd.get(), &entry.name)));
+                self.select(&entry.name);
             }
             _ => self.selected.set(None),
         }

@@ -31711,6 +31711,42 @@
         "full demo sweep deferred to push-time (sweep-at-push-not-every-round); affected demos verified"
       ]
     },
+    "R802.1": {
+      "decision_summary": "R802.1 §5.15 — audit correction (user cost-no-object SSOT review): sync_selection_to_cursor hand-built join_path(cwd, name), duplicating the select() SSOT that activate_index correctly delegates to; now delegates to self.select(). Surfaces a real deferred SSOT debt for R803: the {tag}#{sub} composite-tag encode has no SSOT (hand-format ~10 sites) while the decode (split_subindex) does — R778's trivial-inline deferral is too lenient under a cost-no-object bar.",
+      "changes_bullets": [
+        "sync_selection_to_cursor delegates the file pick to the select() SSOT (was a hand-built join_path)"
+      ],
+      "verification_bullets": [
+        "pinion-core file_browser r802 substrate tests pass; clippy -p pinion-core --all-targets clean"
+      ],
+      "impact_refs": [
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "R803 candidate (real SSOT debt; retracts the R778 \"trivial-inline\" dismissal under cost-no-object):",
+        "the {tag}#{sub} composite ENCODE has no SSOT — hand-format ~10 sites (file_row / tabs / virtual_list",
+        "a11y / datepicker / dock / tree_view / toolbar / radio focus-ring) + 2 composite_item_tag copies,",
+        "while the DECODE (composite_tag::split_subindex) is an SSOT — encode/decode asymmetry (R743.1)",
+        "fix: composite_tag::sub_tag(primary, sub) paired with split_subindex, all producers delegate"
+      ],
+      "publishable_decision_summary": "R802.1 §5.15 — audit correction (user cost-no-object SSOT review): sync_selection_to_cursor hand-built join_path(cwd, name), duplicating the select() SSOT that activate_index correctly delegates to; now delegates to self.select(). Surfaces a real deferred SSOT debt for R803: the {tag}#{sub} composite-tag encode has no SSOT (hand-format ~10 sites) while the decode (split_subindex) does — R778's trivial-inline deferral is too lenient under a cost-no-object bar.",
+      "publishable_changes_bullets": [
+        "sync_selection_to_cursor delegates the file pick to the select() SSOT (was a hand-built join_path)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core file_browser r802 substrate tests pass; clippy -p pinion-core --all-targets clean"
+      ],
+      "publishable_impact_refs": [
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R803 candidate (real SSOT debt; retracts the R778 \"trivial-inline\" dismissal under cost-no-object):",
+        "the {tag}#{sub} composite ENCODE has no SSOT — hand-format ~10 sites (file_row / tabs / virtual_list",
+        "a11y / datepicker / dock / tree_view / toolbar / radio focus-ring) + 2 composite_item_tag copies,",
+        "while the DECODE (composite_tag::split_subindex) is an SSOT — encode/decode asymmetry (R743.1)",
+        "fix: composite_tag::sub_tag(primary, sub) paired with split_subindex, all producers delegate"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
