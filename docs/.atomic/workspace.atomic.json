@@ -31191,6 +31191,58 @@
         "pressed drag-arm Cell still 2-consumer (ReorderModel/DirectoryState); 1-field, lift net-neg, 3rd revisits"
       ]
     },
+    "R795": {
+      "decision_summary": "Modal open-state becomes a first-class, query-only RPC introspection slot: ModalState (R788) gains a ModalIntrospect extra-external exposing /<tag>_state/external/open across the four modal surfaces (dialog/drawer/file-open/file-save), uniform with ContextMenu.open and answerable while closed. Read-only by construction (intervene -> ReadOnly) so the focus-trap lockstep cannot be bypassed; no second SSOT (the node only reads the lifted flag). Closes the R794-audited AI-first asymmetry.",
+      "changes_bullets": [
+        "ModalIntrospect: query-only RPC face of the lifted ModalState (R788); `open` slot reports the flag",
+        "read-only by construction: intervene `open` -> ReadOnly; the focus-trap lockstep cannot be bypassed",
+        "registered as extra-external `<tag>_state` in dialog/drawer/file-open/file-save; in the state-scene",
+        "queryable while closed (state-scene always present) -- the panel only paints when open",
+        "closes the R794-audited AI-first asymmetry: ContextMenu exposed `open`, the four modals did not",
+        "no second SSOT: the flag lives once in ModalState; the node only reads it (Skip backend, no paint)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5616 pass / 0 fail (+4 ModalIntrospect tests: flag/path/read-only/schema)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic deny)",
+        "r795 demo: 4 modal bindings x (closed->False / intervene refused / open->True / Escape->False) PASS",
+        "validate-workspace: T1 orphan total=0, entries 719->720"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.12",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "(a) intervene `open` is a hard ReadOnly; a future \"close over RPC\" need = add invoke(\"close\") action routing through ModalState::close, never a writable slot",
+        "(b) only `open` is exposed; modal members/result stay per-binding policy -- additive if a consumer needs them introspected",
+        "(c) drawer scrim light-dismiss + per-binding outcome unchanged (policy, not the mechanism)"
+      ],
+      "publishable_decision_summary": "Modal open-state becomes a first-class, query-only RPC introspection slot: ModalState (R788) gains a ModalIntrospect extra-external exposing /<tag>_state/external/open across the four modal surfaces (dialog/drawer/file-open/file-save), uniform with ContextMenu.open and answerable while closed. Read-only by construction (intervene -> ReadOnly) so the focus-trap lockstep cannot be bypassed; no second SSOT (the node only reads the lifted flag). Closes the R794-audited AI-first asymmetry.",
+      "publishable_changes_bullets": [
+        "ModalIntrospect: query-only RPC face of the lifted ModalState (R788); `open` slot reports the flag",
+        "read-only by construction: intervene `open` -> ReadOnly; the focus-trap lockstep cannot be bypassed",
+        "registered as extra-external `<tag>_state` in dialog/drawer/file-open/file-save; in the state-scene",
+        "queryable while closed (state-scene always present) -- the panel only paints when open",
+        "closes the R794-audited AI-first asymmetry: ContextMenu exposed `open`, the four modals did not",
+        "no second SSOT: the flag lives once in ModalState; the node only reads it (Skip backend, no paint)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5616 pass / 0 fail (+4 ModalIntrospect tests: flag/path/read-only/schema)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic deny)",
+        "r795 demo: 4 modal bindings x (closed->False / intervene refused / open->True / Escape->False) PASS",
+        "validate-workspace: T1 orphan total=0, entries 719->720"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.12",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "(a) intervene `open` is a hard ReadOnly; a future \"close over RPC\" need = add invoke(\"close\") action routing through ModalState::close, never a writable slot",
+        "(b) only `open` is exposed; modal members/result stay per-binding policy -- additive if a consumer needs them introspected",
+        "(c) drawer scrim light-dismiss + per-binding outcome unchanged (policy, not the mechanism)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

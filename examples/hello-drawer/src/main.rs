@@ -77,7 +77,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::widgets::modal::{use_modal, ModalState};
+use pinion_core::widgets::modal::{use_modal, ModalIntrospect, ModalState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
@@ -118,6 +118,9 @@ const DESTINATIONS: [&str; NAV_N] = ["Home", "Search", "Settings"];
 
 /// `Owner::cache` key for the shared [`ModalState`] open-lifecycle.
 const MODAL_KEY: &str = "hello_drawer.modal";
+/// R795 — query-only modal-introspection tag. `scene/query`
+/// `/drawer_state/external/open` reports the drawer's open flag.
+const MODAL_STATE_TAG: &str = "drawer_state";
 /// `Owner::cache` key for the `Signal<usize>` active destination index.
 const ACTIVE_KEY: &str = "hello_drawer.active";
 
@@ -323,6 +326,10 @@ impl WidgetCore for DrawerView {
         for tag in NAV_TAGS {
             extras.push(ExtraExternal::new(tag, Box::new(ButtonExternal::new())));
         }
+        extras.push(ExtraExternal::new(
+            MODAL_STATE_TAG,
+            Box::new(ModalIntrospect::new(modal())),
+        ));
         extras
     }
 

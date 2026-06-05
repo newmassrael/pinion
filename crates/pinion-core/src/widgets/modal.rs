@@ -38,6 +38,11 @@
 
 use std::rc::Rc;
 
+use crate::event::Event;
+use crate::external::{
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
+};
 use crate::reactive::{Owner, Signal};
 
 /// R788 — the open-lifecycle of one modal surface (dialog / drawer / file
@@ -90,6 +95,97 @@ impl ModalState {
 impl Default for ModalState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// R795 §5.16 §5.12 — the **query-only** RPC introspection face of a
+/// [`ModalState`]. Registered as an extra-external (always present in the
+/// scene, open *or* closed), it surfaces the open flag at the introspect
+/// path `open`, so an AI agent driving over the §5.12 RPC plane can ask
+/// "is this modal up?" directly — the same first-class `open` query that
+/// [`ContextMenu`](super::context_menu::ContextMenu) already exposes.
+/// Before R795 the four modal surfaces (dialog / drawer / file-open /
+/// file-save) carried no introspect external, so their open state was only
+/// inferable from scene-tree panel presence; this closes that asymmetry
+/// without a second source of truth — the flag still lives once in
+/// [`ModalState`], and this node merely reads it.
+///
+/// ## Query-only by construction
+///
+/// The `open` flag must move in lockstep with the
+/// [`crate::modal_scope_request`] focus trap — that lockstep is the entire
+/// reason [`ModalState`] exists. A raw `intervene` write would raise the
+/// flag *without* installing the trap (the background goes Tab-reachable
+/// behind a visible scrim — the exact desync [`ModalState`] prevents), so
+/// the `open` slot is read-only: writes are refused with
+/// [`InterveneError::ReadOnly`]. Opening and closing go through
+/// [`ModalState::open`] / [`ModalState::close`] (a reducer / `External`
+/// `invoke` body), never by rewinding this node.
+#[derive(Debug)]
+pub struct ModalIntrospect {
+    state: Rc<ModalState>,
+}
+
+impl ModalIntrospect {
+    /// Wrap a shared [`ModalState`] as its query-only introspection node.
+    /// The `Rc` is cloned, so the view-fn and reducer keep driving the same
+    /// open flag this node reports.
+    #[must_use]
+    pub fn new(state: Rc<ModalState>) -> Self {
+        Self { state }
+    }
+}
+
+impl External for ModalIntrospect {
+    /// RPC-only: the node carries no pixels, so the visual backends skip it
+    /// (an empty placeholder) while §5.12 `query` still routes through it.
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn handles_event(&self, _event: &Event) -> bool {
+        false
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for ModalIntrospect {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[("open", "bool")])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        if path == "open" {
+            Some(IntrospectValue::Bool(self.state.is_open()))
+        } else {
+            None
+        }
+    }
+
+    /// The `open` slot is read-only — see the type docs. Opening or closing
+    /// must preserve the focus-trap lockstep, so it routes through
+    /// [`ModalState::open`] / [`ModalState::close`], not a rewind here.
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+        if path == "open" {
+            Err(InterveneError::ReadOnly)
+        } else {
+            Err(InterveneError::UnknownPath)
+        }
     }
 }
 
@@ -164,6 +260,72 @@ mod tests {
             let b = use_modal("shared");
             a.open(vec!["x".to_string()]);
             assert!(b.is_open(), "the second handle observes the first's open");
+        });
+    }
+
+    #[test]
+    fn r795_introspect_open_tracks_the_shared_flag() {
+        Owner::new().run(|| {
+            let _ = modal_scope_request::drain();
+            let m = use_modal("m");
+            let node = ModalIntrospect::new(m.clone());
+
+            assert_eq!(
+                node.query("open"),
+                Some(IntrospectValue::Bool(false)),
+                "a fresh modal introspects as closed",
+            );
+
+            m.open(vec!["ok".to_string()]);
+            assert_eq!(
+                node.query("open"),
+                Some(IntrospectValue::Bool(true)),
+                "open() flips the introspected flag (shared SSOT, no second copy)",
+            );
+
+            m.close();
+            assert_eq!(
+                node.query("open"),
+                Some(IntrospectValue::Bool(false)),
+                "close() lowers the introspected flag",
+            );
+        });
+    }
+
+    #[test]
+    fn r795_introspect_unknown_path_is_none() {
+        Owner::new().run(|| {
+            let node = ModalIntrospect::new(use_modal("m"));
+            assert_eq!(node.query("members"), None, "only `open` is a query slot");
+        });
+    }
+
+    #[test]
+    fn r795_introspect_open_is_read_only() {
+        Owner::new().run(|| {
+            let mut node = ModalIntrospect::new(use_modal("m"));
+            assert_eq!(
+                node.intervene("open", IntrospectValue::Bool(true)),
+                Err(InterveneError::ReadOnly),
+                "writing `open` is refused: it would bypass the focus-trap lockstep",
+            );
+            assert_eq!(
+                node.intervene("nope", IntrospectValue::Bool(true)),
+                Err(InterveneError::UnknownPath),
+                "an unknown slot is UnknownPath, distinct from the read-only `open`",
+            );
+        });
+    }
+
+    #[test]
+    fn r795_introspect_schema_declares_open_bool() {
+        Owner::new().run(|| {
+            let node = ModalIntrospect::new(use_modal("m"));
+            assert_eq!(
+                node.schema().fields,
+                &[("open", "bool")],
+                "the schema advertises the single read-only `open` bool slot",
+            );
         });
     }
 }

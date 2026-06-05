@@ -90,7 +90,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::file_browser::{use_directory_state, DirectoryExternal, DirectoryState};
-use pinion_core::widgets::modal::{use_modal, ModalState};
+use pinion_core::widgets::modal::{use_modal, ModalIntrospect, ModalState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{DirEntry, Frame, Scene, WidgetCore};
@@ -126,6 +126,9 @@ const PANEL_TAG: &str = "fileopen_panel";
 
 /// `Owner::cache` key for the shared [`ModalState`] open-lifecycle.
 const MODAL_KEY: &str = "hello_file_open.modal";
+/// R795 — query-only modal-introspection tag. `scene/query`
+/// `/fileopen_state/external/open` reports the picker's open flag.
+const MODAL_STATE_TAG: &str = "fileopen_state";
 /// `Owner::cache` key for the `Signal<Option<String>>` chosen file path.
 const CHOSEN_KEY: &str = "hello_file_open.chosen";
 /// Vertical body scroll for the virtualized entry list.
@@ -385,6 +388,7 @@ impl WidgetCore for FileOpenView {
             ExtraExternal::new(DIR_TAG, Box::new(DirectoryExternal::new(directory()))),
             ExtraExternal::new(OK_TAG, Box::new(ButtonExternal::new())),
             ExtraExternal::new(CANCEL_TAG, Box::new(ButtonExternal::new())),
+            ExtraExternal::new(MODAL_STATE_TAG, Box::new(ModalIntrospect::new(modal()))),
         ]
     }
 

@@ -88,7 +88,7 @@ use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::file_browser::{use_directory_state, DirectoryExternal, DirectoryState};
-use pinion_core::widgets::modal::{use_modal, ModalState};
+use pinion_core::widgets::modal::{use_modal, ModalIntrospect, ModalState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
@@ -131,6 +131,9 @@ const PANEL_TAG: &str = "savefile_panel";
 
 /// `Owner::cache` key for the shared [`ModalState`] open-lifecycle.
 const MODAL_KEY: &str = "hello_file_save.modal";
+/// R795 — query-only modal-introspection tag. `scene/query`
+/// `/savefile_state/external/open` reports the save dialog's open flag.
+const MODAL_STATE_TAG: &str = "savefile_state";
 /// `Owner::cache` key for the `Signal<Option<String>>` saved file path.
 const SAVED_KEY: &str = "hello_file_save.saved";
 /// `Owner::cache` key for the filename-selection sync [`Effect`].
@@ -507,6 +510,7 @@ impl WidgetCore for FileSaveView {
             ),
             ExtraExternal::new(SAVE_TAG, Box::new(ButtonExternal::new())),
             ExtraExternal::new(CANCEL_TAG, Box::new(ButtonExternal::new())),
+            ExtraExternal::new(MODAL_STATE_TAG, Box::new(ModalIntrospect::new(modal()))),
         ]
     }
 
