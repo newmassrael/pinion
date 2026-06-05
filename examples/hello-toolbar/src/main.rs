@@ -70,7 +70,9 @@
 //! `invoke("send", "<i>:PointerUp")` activates a control,
 //! `invoke("key", "<W3CKeyName>")` drives the keyboard model.
 
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    toolbar_button_nodes, AccessAction, AccessFocus, AccessNode, ToolbarControl, WidgetA11y,
+};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -267,42 +269,37 @@ impl WidgetCore for ToolbarView {
 }
 
 impl WidgetA11y for ToolbarView {
-    /// R692 §5.40 — WAI-ARIA 1.2 §3.4 toolbar / button tree. Emits the
-    /// [`AriaRole::Toolbar`] root + one [`AriaRole::Button`] per
-    /// control. Toggle controls carry `aria-pressed` via
-    /// [`AccessState::checked`] (which lowers to the AccessKit `Toggled`
-    /// attribute); command controls leave `checked = None`. The roving
+    /// R692 §5.40 / R800 — WAI-ARIA 1.2 §3.4 toolbar / button tree, built
+    /// via the lifted [`toolbar_button_nodes`] SSOT: a `toolbar` root + one
+    /// `button` per control. Toggle controls carry `aria-pressed` (which
+    /// lowers to the AccessKit `Toggled` attribute); command controls leave
+    /// it `None`. The roving
     /// cursor control carries the AT focus flag when the toolbar owns
     /// shell focus.
     fn access_node(state: &ToolbarState, focused: Option<&str>) -> Vec<AccessNode> {
         let group_focused = focused == Some(<Self as WidgetCore>::tag());
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(1 + CONTROL_COUNT);
-
-        let mut toolbar = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Toolbar)
-            .with_name("Formatting toolbar");
-        for i in 0..CONTROL_COUNT {
-            toolbar = toolbar.with_child(composite_item_tag(TOOLBAR_TAG, i));
-        }
-        nodes.push(toolbar);
-
-        let setsize = u32::try_from(CONTROL_COUNT).unwrap_or(u32::MAX);
-        for (i, kind) in KINDS.iter().enumerate() {
-            let checked = match kind {
-                ToolItem::Toggle => Some(state.pressed[i]),
-                ToolItem::Command => None,
-            };
-            nodes.push(
-                AccessNode::new(composite_item_tag(TOOLBAR_TAG, i), AriaRole::Button)
-                    .with_state(AccessState {
-                        focused: group_focused && state.focus == i,
-                        checked,
-                        ..AccessState::default()
-                    })
-                    .with_position_in_set(u32::try_from(i + 1).unwrap_or(u32::MAX))
-                    .with_size_of_set(setsize),
-            );
-        }
-        nodes
+        // R800 §5.40 — the lifted toolbar a11y SSOT (`AriaRole::Toolbar`
+        // root + one `aria-pressed` button per control). Names enrich from
+        // the painted glyphs, so each control leaves `name: None`. The
+        // roving cursor rings only while the strip owns the shell focus.
+        let tags: Vec<String> =
+            (0..CONTROL_COUNT).map(|i| composite_item_tag(TOOLBAR_TAG, i)).collect();
+        let controls: Vec<ToolbarControl<'_>> = (0..CONTROL_COUNT)
+            .map(|i| ToolbarControl {
+                tag: &tags[i],
+                name: None,
+                checked: match KINDS[i] {
+                    ToolItem::Toggle => Some(state.pressed[i]),
+                    ToolItem::Command => None,
+                },
+            })
+            .collect();
+        toolbar_button_nodes(
+            <Self as WidgetCore>::tag(),
+            "Formatting toolbar",
+            &controls,
+            group_focused.then_some(state.focus),
+        )
     }
 
     /// R51.71 §5.40 — composite focus model. While the toolbar owns
@@ -375,6 +372,7 @@ fn main() {
 #[cfg(test)]
 mod a11y_tests {
     use super::*;
+    use pinion_a11y::AriaRole;
 
     fn state(focus: usize, pressed: [bool; CONTROL_COUNT]) -> ToolbarState {
         ToolbarState {

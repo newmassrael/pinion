@@ -55,6 +55,7 @@ pub mod radiogroup;
 pub mod role;
 pub mod scene_label;
 pub mod toggle_group;
+pub mod toolbar;
 pub mod tree;
 pub mod virtual_grid;
 pub mod virtual_list;
@@ -75,6 +76,7 @@ pub use radiogroup::{radiogroup_radio_nodes, RadioCell};
 pub use role::{AriaCurrent, AriaRole, AutoComplete, SortDirection};
 pub use scene_label::enrich_names_from_scene;
 pub use toggle_group::{toggle_button_group_nodes, ToggleSegment};
+pub use toolbar::{toolbar_button_nodes, ToolbarControl};
 pub use tree::{tag_to_node_id, AccessTreeBuilder, ROOT_NODE_ID};
 pub use virtual_grid::{
     windowed_grid_nodes, windowed_grid_nodes_multiselected, windowed_grid_nodes_selected,

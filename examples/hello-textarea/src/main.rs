@@ -121,7 +121,7 @@
 //! reverts as one word), `Ctrl+Shift+Z` / `Ctrl+Y` redoes; deleting a
 //! coloured word and undoing brings its colour back with it.
 
-use pinion_a11y::{AccessNode, WidgetA11y};
+use pinion_a11y::{toolbar_button_nodes, AccessNode, ToolbarControl, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
@@ -196,6 +196,12 @@ const FMT_SWATCH_BASE: usize = 2;
 const FMT_SWATCHES: [Option<Rgb>; 4] = [Some(INK_RED), Some(INK_GREEN), Some(INK_BLUE), None];
 /// Total control count: bold + italic + the four swatches.
 const FMT_CONTROLS: usize = FMT_SWATCH_BASE + FMT_SWATCHES.len();
+/// R800 §5.40 — explicit accessible names per control (the colour swatches
+/// have no glyph to enrich a name from). The `[_; FMT_CONTROLS]` size ties
+/// this to the control count: adding a control is a compile error until it
+/// is named.
+const FMT_CONTROL_NAMES: [&str; FMT_CONTROLS] =
+    ["Bold", "Italic", "Red", "Green", "Blue", "Clear formatting"];
 /// The §5.20 intent the toolbar External emits on activation, prefixed by
 /// its scene tag (`fmt_toolbar` + `command`), matched in [`TextAreaView::update`].
 const FMT_CMD_INTENT: &str = intent_tag!("fmt_toolbar", "command");
@@ -667,12 +673,43 @@ impl WidgetA11y for TextAreaView {
     /// per [[abstraction-needs-second-consumer]].)
     fn access_node(state: &(TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, _caret) = state;
-        let text = use_text_edit_state(TA_TAG).text();
+        let edit = use_text_edit_state(TA_TAG);
+        let text = edit.text();
         let tag = <Self as WidgetCore>::tag();
         // R790 §5.40 — the lifted textbox node SSOT. The deferred
         // `aria-multiline` refinement above becomes an additive param to
         // this helper once a 2nd textarea consumer surfaces.
-        vec![tf_paint::text_field_a11y_node(tag, text, *interaction, focused == Some(tag))]
+        let mut nodes =
+            vec![tf_paint::text_field_a11y_node(tag, text, *interaction, focused == Some(tag))];
+
+        // R800 §5.40 — the formatting toolbar's a11y, via the lifted SSOT
+        // ([`pinion_a11y::toolbar_button_nodes`], shared with hello-toolbar).
+        // B / I are *reflective* `aria-pressed` toggles read from the
+        // selection's style (not an owned bit, matching the painted fill);
+        // the colour swatches are command buttons named explicitly (no glyph
+        // to enrich from). The strip is non-focusable, so it rings nothing
+        // (`focused_control = None`).
+        let (bold_active, italic_active) = edit
+            .selection_range()
+            .and_then(|(start, _)| edit.style_at(start))
+            .map_or((false, false), |st| {
+                (st.font_weight == FontWeight::BOLD, st.font_style == FontStyle::Italic)
+            });
+        let tags: Vec<String> =
+            (0..FMT_CONTROLS).map(|i| composite_item_tag(FMT_TAG, i)).collect();
+        let controls: Vec<ToolbarControl<'_>> = (0..FMT_CONTROLS)
+            .map(|i| ToolbarControl {
+                tag: &tags[i],
+                name: Some(FMT_CONTROL_NAMES[i]),
+                checked: match i {
+                    FMT_BOLD => Some(bold_active),
+                    FMT_ITALIC => Some(italic_active),
+                    _ => None, // colour swatch / clear = one-shot command
+                },
+            })
+            .collect();
+        nodes.extend(toolbar_button_nodes(FMT_TAG, "Formatting toolbar", &controls, None));
+        nodes
     }
 }
 
@@ -801,7 +838,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{view, TextAreaView, FMT_CMD_INTENT, TA_TAG};
+    use super::{view, TextAreaView, FMT_CMD_INTENT, FMT_CONTROLS, FMT_TAG, TA_TAG};
+    use pinion_a11y::{AriaRole, WidgetA11y};
     use pinion_core::external::IntrospectValue;
     use pinion_core::intent::Intent;
     use pinion_core::reactive::Owner;
@@ -1111,6 +1149,53 @@ mod tests {
             let other = Intent::new_static("something.else", IntrospectValue::Text("0".to_owned()));
             let cmds = TextAreaView::update((TextFieldState::Focused, 5), &other);
             assert!(cmds.is_empty(), "an unrelated intent is ignored");
+        });
+    }
+
+    /// R800 — the `intent_tag!` macro needs string literals, so
+    /// `FMT_CMD_INTENT` duplicates the `"fmt_toolbar"` literal. Pin it to
+    /// `FMT_TAG` so renaming one without the other fails at test time
+    /// ([[wire-vocab-canon-pin-not-fold]]).
+    #[test]
+    fn r800_intent_tag_pins_to_the_bar_tag() {
+        assert!(FMT_CMD_INTENT.starts_with(FMT_TAG), "the intent is scoped to the bar tag");
+        assert_eq!(FMT_CMD_INTENT, format!("{FMT_TAG}.command"), "intent = <bar>.command");
+    }
+
+    /// R800 §5.40 — `access_node` exposes the formatting toolbar (lifted
+    /// SSOT): a `toolbar` node + one `button` per control, with B / I
+    /// carrying *reflective* `aria-pressed` (read from the selection) and
+    /// the colour swatches carrying an explicit name + no `aria-pressed`.
+    #[test]
+    fn r800_access_node_exposes_reflective_toolbar() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            let _ =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            // No selection → B / I report aria-pressed = false.
+            edit.set_caret(0);
+            let nodes = TextAreaView::access_node(&(TextFieldState::Focused, 0), Some(TA_TAG));
+            assert_eq!(nodes.len(), 2 + FMT_CONTROLS, "textbox + toolbar + N control buttons");
+            let toolbar =
+                nodes.iter().find(|n| n.role == AriaRole::Toolbar).expect("a toolbar node");
+            assert_eq!(toolbar.children.len(), FMT_CONTROLS, "toolbar references every control");
+            // nodes = [textbox, toolbar, bold, italic, red, green, blue, clear]
+            assert_eq!(nodes[2].role, AriaRole::Button);
+            assert_eq!(nodes[2].name.as_deref(), Some("Bold"));
+            assert_eq!(nodes[2].state.checked, Some(false), "no selection -> Bold not pressed");
+            assert_eq!(nodes[4].name.as_deref(), Some("Red"), "a glyph-less swatch is named");
+            assert_eq!(nodes[4].state.checked, None, "a colour swatch carries no aria-pressed");
+
+            // Bold the selection → the reflective B node flips to pressed.
+            edit.set_selection(0, 5);
+            let intent = Intent::new_static(FMT_CMD_INTENT, IntrospectValue::Text("0".to_owned()));
+            let _ = TextAreaView::update((TextFieldState::Focused, 0), &intent);
+            let after = TextAreaView::access_node(&(TextFieldState::Focused, 5), Some(TA_TAG));
+            assert_eq!(
+                after[2].state.checked,
+                Some(true),
+                "selection now bold -> Bold aria-pressed = true (reflective)",
+            );
         });
     }
 }

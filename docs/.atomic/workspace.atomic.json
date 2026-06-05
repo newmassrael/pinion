@@ -31563,6 +31563,58 @@
         "R769.2 shell unfocused-press-dispatch now superfluous for toolbar but left (revert = separate audit)"
       ]
     },
+    "R800": {
+      "decision_summary": "R800 §5.40 lift toolbar a11y node-builder (2nd consumer) + complete textarea toolbar a11y + SSOT pin",
+      "changes_bullets": [
+        "pinion-a11y: new toolbar module — toolbar_button_nodes + ToolbarControl (Toolbar root + button/ctrl)",
+        "each button: aria-pressed (Some=toggle/None=command) + roving set position + optional explicit name",
+        "hello-toolbar migrated to it (1st consumer; names still enrich from painted glyphs)",
+        "hello-textarea access_node adds toolbar a11y (2nd consumer; closes R799 AT-invisible gap)",
+        "B/I = reflective aria-pressed from selection style_at; swatches named explicitly (no glyph)",
+        "SSOT pin test: FMT_CMD_INTENT == {FMT_TAG}.command (intent_tag! literal-dup guard)"
+      ],
+      "verification_bullets": [
+        "new pinion-a11y toolbar module 5 tests; hello-toolbar 18 (incl enrich); hello-textarea 14 (+2)",
+        "cargo test --workspace -j2 0 fail (true CARGO_EXIT); clippy pedantic clean",
+        "a11y test-verified (no RPC access-tree path, like all a11y lifts) — no new demo (R773 class)",
+        "textarea + toolbar demos (r692/r799) still PASS"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "bounds-guard seam (R799): field guards own rect b/c shell dispatches press hook blindly",
+        "deeper fix = shell passes hit-target to the hook (framework observation, left as carry)",
+        "toolbar keyboard (Ctrl+B / Tab-to-toolbar) deferred: non-focusable strip, consumer-driven",
+        "composite-tag {tag}#{i}: widget-paint build + router split = 2 sites, no core SSOT (lift candidate)"
+      ],
+      "publishable_decision_summary": "R800 §5.40 lift toolbar a11y node-builder (2nd consumer) + complete textarea toolbar a11y + SSOT pin",
+      "publishable_changes_bullets": [
+        "pinion-a11y: new toolbar module — toolbar_button_nodes + ToolbarControl (Toolbar root + button/ctrl)",
+        "each button: aria-pressed (Some=toggle/None=command) + roving set position + optional explicit name",
+        "hello-toolbar migrated to it (1st consumer; names still enrich from painted glyphs)",
+        "hello-textarea access_node adds toolbar a11y (2nd consumer; closes R799 AT-invisible gap)",
+        "B/I = reflective aria-pressed from selection style_at; swatches named explicitly (no glyph)",
+        "SSOT pin test: FMT_CMD_INTENT == {FMT_TAG}.command (intent_tag! literal-dup guard)"
+      ],
+      "publishable_verification_bullets": [
+        "new pinion-a11y toolbar module 5 tests; hello-toolbar 18 (incl enrich); hello-textarea 14 (+2)",
+        "cargo test --workspace -j2 0 fail (true CARGO_EXIT); clippy pedantic clean",
+        "a11y test-verified (no RPC access-tree path, like all a11y lifts) — no new demo (R773 class)",
+        "textarea + toolbar demos (r692/r799) still PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "bounds-guard seam (R799): field guards own rect b/c shell dispatches press hook blindly",
+        "deeper fix = shell passes hit-target to the hook (framework observation, left as carry)",
+        "toolbar keyboard (Ctrl+B / Tab-to-toolbar) deferred: non-focusable strip, consumer-driven",
+        "composite-tag {tag}#{i}: widget-paint build + router split = 2 sites, no core SSOT (lift candidate)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
