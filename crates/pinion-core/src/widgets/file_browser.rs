@@ -276,6 +276,34 @@ impl DirectoryState {
         ok
     }
 
+    /// R791 — rename the currently [`selected`](Self::selected) entry to
+    /// `new_name` within the current directory, moving the selection to the
+    /// new path and refreshing the listing. A no-op (`false`) when nothing
+    /// is selected, `new_name` is blank, or the rename failed (name taken /
+    /// read-only). The file-manager "Rename" affordance.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "setter-returns-outcome; the reducer ignores the bool (see `create_dir`)"
+    )]
+    pub fn rename_selected(&self, new_name: &str) -> bool {
+        let new_name = new_name.trim();
+        if new_name.is_empty() {
+            return false;
+        }
+        let Some(from) = self.selected.get() else {
+            return false;
+        };
+        let to = join_path(&self.cwd.get(), new_name);
+        let ok = self.dir.rename(&from, &to);
+        if ok {
+            crate::reactive::batch(|| {
+                self.selected.set(Some(to));
+                self.refresh();
+            });
+        }
+        ok
+    }
+
     /// Activate the entry at **visual index** `idx` (a row click /
     /// keyboard activation): navigate into it if it is a directory, else
     /// select it. The browser's canonical single-affordance row gesture
@@ -400,6 +428,8 @@ impl ExternalIntrospect for DirectoryExternal {
             ("mkdir", "bool"),
             ("touch", "bool"),
             ("delete", "bool"),
+            // R791 — rename the selection to the string arg.
+            ("rename", "bool"),
         ])
     }
 
@@ -491,6 +521,12 @@ impl ExternalIntrospect for DirectoryExternal {
                 Ok(IntrospectValue::Bool(self.state.create_file(name)))
             }
             "delete" => Ok(IntrospectValue::Bool(self.state.delete_selected())),
+            // R791 — rename the selection to the string arg (the selection
+            // follows to the new path on success).
+            "rename" => {
+                let name = args.as_str().ok_or(InvokeError::TypeMismatch)?;
+                Ok(IntrospectValue::Bool(self.state.rename_selected(name)))
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -691,6 +727,43 @@ mod tests {
             ext.invoke("mkdir", IntrospectValue::Text("src".into())).unwrap(),
             IntrospectValue::Bool(false),
         );
+    }
+
+    #[test]
+    fn r791_state_rename_selected_follows_selection() {
+        let s = state(); // /proj: [src(dir), Cargo.toml, README.md]
+        // No selection → no-op.
+        assert!(!s.rename_selected("x"), "rename with no selection is a false no-op");
+        s.select("README.md");
+        assert!(s.rename_selected("NOTES.md"), "selected file renamed");
+        assert!(s.entries().iter().any(|e| e.name == "NOTES.md"), "new name listed");
+        assert!(!s.entries().iter().any(|e| e.name == "README.md"), "old name gone");
+        assert_eq!(s.selected(), Some("/proj/NOTES.md".to_string()), "selection follows the rename");
+        // Blank name + taken name are rejected (selection unchanged).
+        assert!(!s.rename_selected("   "), "blank name rejected");
+        assert!(!s.rename_selected("Cargo.toml"), "taken name rejected");
+        assert_eq!(s.selected(), Some("/proj/NOTES.md".to_string()), "rejected rename left selection");
+    }
+
+    #[test]
+    fn r791_external_rename_invoke() {
+        let st = Rc::new(state());
+        let mut ext = DirectoryExternal::new(Rc::clone(&st));
+        ext.invoke("select", IntrospectValue::Text("Cargo.toml".into())).unwrap();
+        assert_eq!(
+            ext.invoke("rename", IntrospectValue::Text("Cargo.lock".into())).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert!(st.entries().iter().any(|e| e.name == "Cargo.lock"), "renamed via invoke");
+        assert_eq!(st.selected(), Some("/proj/Cargo.lock".to_string()), "selection followed");
+        // rename with no selection cleared → false; a non-string arg errors.
+        ext.invoke("open", IntrospectValue::Text("/proj".into())).unwrap(); // clears selection
+        assert_eq!(
+            ext.invoke("rename", IntrospectValue::Text("x".into())).unwrap(),
+            IntrospectValue::Bool(false),
+            "rename with no selection reports false",
+        );
+        assert_eq!(ext.invoke("rename", IntrospectValue::Null), Err(InvokeError::TypeMismatch));
     }
 
     #[test]

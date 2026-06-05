@@ -242,6 +242,7 @@ fn browser_pane(
         scroll,
         theme,
         FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN },
+        None,
     )
 }
 

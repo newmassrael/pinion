@@ -384,6 +384,18 @@ impl Directory for FsDirectory {
             Err(_) => false,
         }
     }
+
+    /// R791 — rename `from` to `to` via `std::fs::rename` (a single atomic
+    /// call carries a directory's whole subtree). Guarded to **not
+    /// overwrite**: a pre-existing `to` makes this a `false` no-op,
+    /// matching the in-memory backing's duplicate rejection (POSIX
+    /// `rename(2)` would silently clobber an existing file otherwise).
+    fn rename(&self, from: &str, to: &str) -> bool {
+        if fs::symlink_metadata(to).is_ok() {
+            return false; // destination exists — never overwrite
+        }
+        fs::rename(from, to).is_ok()
+    }
 }
 
 #[cfg(test)]
@@ -680,6 +692,33 @@ mod tests {
         assert!(fsd.remove(&format!("{root}/src")), "remove dir (recursive) succeeds");
         assert_eq!(fsd.read_dir(&root).expect("lists").len(), 0, "both removed");
         assert!(!fsd.remove(&format!("{root}/ghost")), "removing a missing path = false");
+        // TmpDir's Drop removes the root.
+    }
+
+    #[test]
+    fn r791_fs_directory_rename_round_trip() {
+        use super::FsDirectory;
+        use pinion_core::Directory;
+
+        let tmp = TmpDir::new("fsdir-rename");
+        let root = tmp.path().to_str().expect("utf8 tmp path").to_string();
+        let fsd = FsDirectory::new();
+        fs::write(format!("{root}/old.txt"), b"content").expect("seed file");
+        fs::create_dir(format!("{root}/keep")).expect("seed dir");
+
+        // Rename the file: old gone, new present, content preserved.
+        assert!(fsd.rename(&format!("{root}/old.txt"), &format!("{root}/new.txt")), "rename ok");
+        let names: Vec<String> =
+            fsd.read_dir(&root).expect("lists").iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["keep", "new.txt"], "renamed entry present, old gone");
+        assert_eq!(fs::read(format!("{root}/new.txt")).expect("read"), b"content", "content kept");
+
+        // Never overwrite: renaming onto an existing name is a false no-op.
+        fs::write(format!("{root}/taken.txt"), b"x").expect("seed");
+        assert!(!fsd.rename(&format!("{root}/new.txt"), &format!("{root}/taken.txt")), "no overwrite");
+        assert!(fsd.read_dir(&root).expect("lists").iter().any(|e| e.name == "new.txt"), "source kept");
+        // A missing source is a false no-op.
+        assert!(!fsd.rename(&format!("{root}/ghost"), &format!("{root}/z.txt")), "missing source");
         // TmpDir's Drop removes the root.
     }
 }

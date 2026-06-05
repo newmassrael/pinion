@@ -121,6 +121,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         &scroll,
         &theme,
         FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN },
+        None,
     );
 
     let footer = Scene::Text(TextNode::styled(

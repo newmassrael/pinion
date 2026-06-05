@@ -2000,7 +2000,9 @@ dependencies = [
  "pinion-a11y",
  "pinion-core",
  "pinion-forge",
+ "pinion-platform-clipboard",
  "pinion-shell",
+ "pinion-text",
  "pinion-widget-paint",
  "vello",
 ]

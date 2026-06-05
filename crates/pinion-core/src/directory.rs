@@ -135,6 +135,18 @@ pub trait Directory {
         let _ = path;
         false
     }
+
+    /// R791 — rename / move the entry at absolute `from` to absolute `to`
+    /// (both parents must already exist). Returns `true` on success,
+    /// `false` when `from` does not exist, `to`'s name is already taken,
+    /// `to`'s parent does not exist, or the backing is read-only (the
+    /// default). A successful directory rename carries its whole subtree.
+    /// The file-manager "Rename" affordance; the same-parent case (only
+    /// the leaf name changes) is the common one.
+    fn rename(&self, from: &str, to: &str) -> bool {
+        let _ = (from, to);
+        false
+    }
 }
 
 /// Split an absolute `'/'`-path into `(parent, leaf)` for the in-memory
@@ -251,6 +263,54 @@ impl Directory for InMemoryDirectory {
         }
         removed
     }
+
+    fn rename(&self, from: &str, to: &str) -> bool {
+        let (from_parent, from_leaf) = split_parent_leaf(from);
+        let (to_parent, to_leaf) = split_parent_leaf(to);
+        if from_leaf.is_empty() || to_leaf.is_empty() {
+            return false;
+        }
+        let mut tree = self.tree.borrow_mut();
+        // Source must exist in its parent listing; capture its `is_dir`.
+        let Some(entry) =
+            tree.get(&from_parent).and_then(|l| l.iter().find(|e| e.name == from_leaf).cloned())
+        else {
+            return false;
+        };
+        // Destination parent must exist and the destination name must be
+        // free (a rename never creates a parent or overwrites). Renaming
+        // to the same path lands here as "name taken" → a `false` no-op.
+        if !tree.contains_key(&to_parent)
+            || tree.get(&to_parent).is_some_and(|l| l.iter().any(|e| e.name == to_leaf))
+        {
+            return false;
+        }
+        // Move the entry between listings (same listing in the common
+        // same-parent case — sequential borrows, never aliased).
+        if let Some(l) = tree.get_mut(&from_parent) {
+            l.retain(|e| e.name != from_leaf);
+        }
+        let is_dir = entry.is_dir;
+        tree.get_mut(&to_parent)
+            .expect("destination parent existence checked above")
+            .push(DirEntry { name: to_leaf, is_dir });
+        // A directory carries its own listing key plus every descendant
+        // key; re-key the whole subtree by swapping the `from` prefix.
+        if is_dir {
+            let subtree_prefix = format!("{from}/");
+            let keys: Vec<String> = tree
+                .keys()
+                .filter(|k| k.as_str() == from || k.starts_with(&subtree_prefix))
+                .cloned()
+                .collect();
+            for k in keys {
+                let new_key = format!("{to}{}", &k[from.len()..]);
+                let listing = tree.remove(&k).expect("key was just enumerated");
+                tree.insert(new_key, listing);
+            }
+        }
+        true
+    }
 }
 
 #[cfg(test)]
@@ -359,6 +419,54 @@ mod tests {
         assert!(!d.remove("/proj/ghost"), "removing a missing entry is a false no-op");
     }
 
+    // ----- R791 rename surface -----
+
+    #[test]
+    fn r791_rename_file_in_place_changes_leaf() {
+        let d = InMemoryDirectory::new();
+        d.insert("/proj", vec![DirEntry::dir("src"), DirEntry::file("old.txt")]);
+        assert!(d.rename("/proj/old.txt", "/proj/new.txt"), "same-parent file rename succeeds");
+        let names: Vec<String> =
+            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["src", "new.txt"], "the leaf name changed in place");
+    }
+
+    #[test]
+    fn r791_rename_directory_carries_its_subtree() {
+        let d = InMemoryDirectory::new();
+        d.insert("/proj", vec![DirEntry::dir("old")]);
+        d.insert("/proj/old", vec![DirEntry::file("a.rs"), DirEntry::dir("deep")]);
+        d.insert("/proj/old/deep", vec![DirEntry::file("b.rs")]);
+        assert!(d.rename("/proj/old", "/proj/new"), "directory rename succeeds");
+        // The parent listing shows the new name; the whole subtree re-keys.
+        let names: Vec<String> =
+            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["new"], "parent lists the renamed directory");
+        assert_eq!(d.read_dir("/proj/old"), None, "old subtree key gone");
+        let inner: Vec<String> =
+            d.read_dir("/proj/new").unwrap().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(inner, ["deep", "a.rs"], "the renamed dir keeps its listing");
+        assert_eq!(
+            d.read_dir("/proj/new/deep").unwrap().iter().map(|e| e.name.clone()).collect::<Vec<_>>(),
+            ["b.rs"],
+            "the deep descendant re-keyed under the new path",
+        );
+    }
+
+    #[test]
+    fn r791_rename_rejects_taken_name_missing_source_and_self() {
+        let d = InMemoryDirectory::new();
+        d.insert("/proj", vec![DirEntry::file("a.txt"), DirEntry::file("b.txt")]);
+        assert!(!d.rename("/proj/a.txt", "/proj/b.txt"), "destination name already taken");
+        assert!(!d.rename("/proj/ghost.txt", "/proj/c.txt"), "missing source rejected");
+        assert!(!d.rename("/proj/a.txt", "/proj/a.txt"), "rename to the same name is a no-op");
+        assert!(!d.rename("/proj/a.txt", "/nope/a.txt"), "missing destination parent rejected");
+        // The listing is untouched by every rejected rename.
+        let names: Vec<String> =
+            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["a.txt", "b.txt"], "rejected renames leave the listing intact");
+    }
+
     #[test]
     fn r789_read_only_default_is_noop() {
         // A bare trait impl with only `read_dir` inherits the default
@@ -373,5 +481,6 @@ mod tests {
         assert!(!d.create_dir("/x"), "read-only create_dir = false");
         assert!(!d.create_file("/x"), "read-only create_file = false");
         assert!(!d.remove("/x"), "read-only remove = false");
+        assert!(!d.rename("/x", "/y"), "read-only rename = false");
     }
 }

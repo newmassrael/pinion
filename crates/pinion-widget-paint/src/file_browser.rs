@@ -102,6 +102,23 @@ pub struct FileBrowserMetrics {
     pub overscan: usize,
 }
 
+/// R791 — an in-place editing-row override for [`file_browser_pane`]: the
+/// visual row `index` whose [`file_row`] is replaced by `build(width,
+/// pitch)`, the file manager's inline-rename `TextField`. `None` (the
+/// common case) renders every row as a plain [`file_row`].
+///
+/// `build` is a closure rather than a pre-built [`Scene`] because the pane
+/// only renders the editing row when it falls inside the scroll window,
+/// and a [`Scene`] is not `Clone` (it may carry an `ExternalNode`); the
+/// closure is invoked at most once, when the window reaches `index`.
+#[derive(Clone, Copy)]
+pub struct EditingRow<'a> {
+    /// The visual row index currently in edit mode.
+    pub index: usize,
+    /// Builds the edit-field scene for that row, given `(width, pitch)`.
+    pub build: &'a dyn Fn(u32, u32) -> Scene,
+}
+
 /// R789.1 — the **file-browser pane**: a breadcrumb bar (the clickable
 /// `../` parent affordance + the current path) above the virtualized entry
 /// list (one [`file_row`] per visible entry). The recognizable own-rendered
@@ -127,6 +144,7 @@ pub fn file_browser_pane(
     scroll: &Rc<ScrollState>,
     theme: &Theme,
     metrics: FileBrowserMetrics,
+    editing: Option<EditingRow<'_>>,
 ) -> Scene {
     let cwd = dir.cwd();
     let entries = dir.entries();
@@ -167,7 +185,16 @@ pub fn file_browser_pane(
         entries.len(),
         row_pitch,
         overscan,
-        |index| file_row(dir_tag, index, &entries[index], sel_idx == Some(index), theme, list_width, row_pitch),
+        |index| {
+            // R791 — the editing row renders the caller's inline field in
+            // place of its `file_row` (the file manager's rename in place).
+            if let Some(e) = &editing {
+                if e.index == index {
+                    return (e.build)(list_width, row_pitch);
+                }
+            }
+            file_row(dir_tag, index, &entries[index], sel_idx == Some(index), theme, list_width, row_pitch)
+        },
     );
 
     Scene::Container(
@@ -233,10 +260,44 @@ mod tests {
                 &scroll,
                 &Theme::light(),
                 FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2 },
+                None,
             );
             assert!(pane.contains_tag("fb#up"), "pane carries the parent affordance");
             assert!(pane.contains_tag("fb#0"), "row 0 windowed into the pane");
             assert!(pane.contains_tag("fb#1"), "row 1 windowed into the pane");
+        });
+    }
+
+    #[test]
+    fn r791_editing_row_replaces_file_row_at_index() {
+        use pinion_core::directory::InMemoryDirectory;
+        use pinion_core::reactive::Owner;
+        use pinion_core::widgets::scroll::use_scroll_state;
+
+        Owner::new().run(|| {
+            let d = InMemoryDirectory::new();
+            d.insert("/p", vec![DirEntry::file("a.txt"), DirEntry::file("b.txt")]);
+            let dir = DirectoryState::new(Rc::new(d), "/p");
+            let scroll = use_scroll_state("pane_edit_scroll");
+            // Edit row 1: its file_row is replaced by a tagged stand-in.
+            let build = |w: u32, h: u32| {
+                Scene::Container(
+                    ContainerNode::new(vec![])
+                        .with_tag("edit_field")
+                        .with_layout(LayoutStyle::new().with_size(Size::px(w, h))),
+                )
+            };
+            let pane = file_browser_pane(
+                "fb",
+                &dir,
+                &scroll,
+                &Theme::light(),
+                FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2 },
+                Some(EditingRow { index: 1, build: &build }),
+            );
+            assert!(pane.contains_tag("fb#0"), "row 0 stays a plain file_row");
+            assert!(pane.contains_tag("edit_field"), "row 1 became the edit field");
+            assert!(!pane.contains_tag("fb#1"), "row 1's file_row is replaced");
         });
     }
 }

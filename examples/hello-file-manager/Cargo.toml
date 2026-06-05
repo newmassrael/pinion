@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R789 §3 §5.15 — own-rendered file manager: the R787 browser + the new Directory write surface (create_dir / create_file / remove). New Folder / New File / Delete actions mutate the listing in-place, all AI-drivable through DirectoryExternal invoke (mkdir / touch / delete)."
+description = "R789 §3 §5.15 / R791 §5.15 §5.38 — own-rendered file manager: the R787 browser + the Directory write surface (create_dir / create_file / remove / rename). New Folder / New File / Rename / Delete actions mutate the listing in-place; Rename (or F2) edits the name inline via a TextField. All AI-drivable through DirectoryExternal invoke (mkdir / touch / delete / rename)."
 publish = false
 
 [[bin]]
@@ -16,7 +16,9 @@ path = "src/main.rs"
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
 vello = { workspace = true }
 
 [dev-dependencies]

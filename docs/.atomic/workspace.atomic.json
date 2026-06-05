@@ -30843,6 +30843,62 @@
         "prior file carries: keyboard nav over file list / clickable breadcrumb / size and mtime / glob filter"
       ]
     },
+    "R791": {
+      "decision_summary": "R791 file-manager inline rename: Directory rename write surface (4th default-no-op trait method, R789 pattern) + file_browser_pane EditingRow hook; the selected row's file_row swaps to a TextField (todomvc EDIT shape), Enter commits via rename_selected, Escape cancels, F2 starts",
+      "changes_bullets": [
+        "Directory::rename (4th default-no-op trait method) + InMemoryDirectory (subtree re-key) + FsDirectory (no-overwrite guard)",
+        "DirectoryState::rename_selected (selection follows to the new path) + DirectoryExternal \"rename\" invoke (AI-first bool)",
+        "file_browser_pane EditingRow hook: an optional builder replaces the editing index's file_row in place (additive, panes pass None)",
+        "hello-file-manager inline rename: Rename button (gated) / F2 to a TextField-in-row pre-filled + focused; Enter commits, Escape cancels",
+        "the inline editor reuses R790 use_app_clipboard + text_field_a11y_node + the todomvc EDIT_TF_TAG focus-routed apply_key shape"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (5564 to 5578, +14: rename surface + pane hook + file-manager edit lifecycle)",
+        "clippy --workspace --all-targets pedantic clean; validate-workspace T1=0 new orphan +0",
+        "r791 demo 32 assert E2E over RPC: Rename-click + F2 enter edit, type via scene/key, Enter commit, Escape cancel, rename invoke, dir-subtree rename",
+        "r789 + r787/r788/r790 file-UI demos regress PASS (the pane None hook is behavior-preserving)",
+        "new tests: Directory rename (file/dir-subtree/reject), DirectoryState/External rename, FsDirectory round-trip, pane editing-row, edit lifecycle"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.38",
+        "3"
+      ],
+      "carry_forward_bullets": [
+        "commit-on-blur (clicking away mid-rename) deferred — needs focus-out detection; the flow is Rename then type then Enter",
+        "rename targets the current selection (editing-row index = selected_index); pinning to a captured path is deferred (consumer 0)",
+        "attach-triad (state+blink+clipboard) stays inline = documented boilerplate budget + clipboard is dep-graph-blocked (platform crate)",
+        "ime_caret_rect wrapper stays binding-side (rect_for_tag is pinion-shell, not widget-paint; R790 carry-c)",
+        "prior file: keyboard nav over file list / clickable breadcrumb / size and mtime / glob filter"
+      ],
+      "publishable_decision_summary": "R791 file-manager inline rename: Directory rename write surface (4th default-no-op trait method, R789 pattern) + file_browser_pane EditingRow hook; the selected row's file_row swaps to a TextField (todomvc EDIT shape), Enter commits via rename_selected, Escape cancels, F2 starts",
+      "publishable_changes_bullets": [
+        "Directory::rename (4th default-no-op trait method) + InMemoryDirectory (subtree re-key) + FsDirectory (no-overwrite guard)",
+        "DirectoryState::rename_selected (selection follows to the new path) + DirectoryExternal \"rename\" invoke (AI-first bool)",
+        "file_browser_pane EditingRow hook: an optional builder replaces the editing index's file_row in place (additive, panes pass None)",
+        "hello-file-manager inline rename: Rename button (gated) / F2 to a TextField-in-row pre-filled + focused; Enter commits, Escape cancels",
+        "the inline editor reuses R790 use_app_clipboard + text_field_a11y_node + the todomvc EDIT_TF_TAG focus-routed apply_key shape"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (5564 to 5578, +14: rename surface + pane hook + file-manager edit lifecycle)",
+        "clippy --workspace --all-targets pedantic clean; validate-workspace T1=0 new orphan +0",
+        "r791 demo 32 assert E2E over RPC: Rename-click + F2 enter edit, type via scene/key, Enter commit, Escape cancel, rename invoke, dir-subtree rename",
+        "r789 + r787/r788/r790 file-UI demos regress PASS (the pane None hook is behavior-preserving)",
+        "new tests: Directory rename (file/dir-subtree/reject), DirectoryState/External rename, FsDirectory round-trip, pane editing-row, edit lifecycle"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.38",
+        "3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "commit-on-blur (clicking away mid-rename) deferred — needs focus-out detection; the flow is Rename then type then Enter",
+        "rename targets the current selection (editing-row index = selected_index); pinning to a captured path is deferred (consumer 0)",
+        "attach-triad (state+blink+clipboard) stays inline = documented boilerplate budget + clipboard is dep-graph-blocked (platform crate)",
+        "ime_caret_rect wrapper stays binding-side (rect_for_tag is pinion-shell, not widget-paint; R790 carry-c)",
+        "prior file: keyboard nav over file list / clickable breadcrumb / size and mtime / glob filter"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
