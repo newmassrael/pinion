@@ -94,7 +94,7 @@ use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
-    LayoutStyle, Size, TextStyle,
+    LayoutStyle, Size, TextAlign, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::caret_blink::use_caret_blink;
@@ -216,7 +216,14 @@ fn toolbar(theme: &pinion_core::theme::Theme) -> Scene {
                 .with_tag(tag)
                 .with_style(style)
                 .with_layout(
+                    // `.flex(...)` is required: `justify_content` /
+                    // `align_items` are flex properties, ignored unless the
+                    // container is a flex box. Without it the cell fell back
+                    // to block layout (child top-left), so the "B" / "I"
+                    // glyph hugged the top — only `text_align` had been
+                    // centring it horizontally.
                     LayoutStyle::new()
+                        .flex(FlexDirection::Row)
                         .with_size(Size::px(SWATCH_SIZE, SWATCH_SIZE))
                         .with_justify(JustifyContent::Center)
                         .with_align_items(AlignItems::Center),
@@ -225,8 +232,15 @@ fn toolbar(theme: &pinion_core::theme::Theme) -> Scene {
     };
     // R769 — bold / italic toggle buttons, labelled with a "B" / "I"
     // glyph rendered in the very style they toggle (no icon font).
+    // The glyph's Text box spans the full cell width, so `JustifyContent`
+    // cannot centre it — the glyph must centre *itself* via `text_align`
+    // (otherwise `text_align: Start` left-hugs the "B" / "I" in the cell).
     let label = |text: &'static str, style: TextStyle| {
-        vec![Scene::Text(TextNode::styled(text, Rect::default(), style))]
+        vec![Scene::Text(TextNode::styled(
+            text,
+            Rect::default(),
+            style.with_align(TextAlign::Center),
+        ))]
     };
     let on = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::SurfaceContainerHighest);
@@ -635,15 +649,19 @@ impl WidgetView for TextAreaView {
         y: f32,
         extend: bool,
     ) -> Option<usize> {
-        if focused != Some(TA_TAG) {
+        // R769.2 §5.36 §5.22 — the formatting toolbar runs **before** the
+        // focus gate. It acts on the live selection, which lives in
+        // `TextEditState` independent of field focus; gating it on focus
+        // meant a toolbar click that arrived after the field lost focus
+        // (e.g. an earlier click landing in a toolbar gap blurred it) was
+        // silently dropped, so consecutive B / I / swatch presses stopped
+        // applying. A press on a control is swallowed (caret + selection
+        // intact) — the click peer of the AI-first `apply-style` invoke
+        // funnel, both reaching `TextEditState::apply_style_run`.
+        if try_toolbar_press(scene, x, y, state.0) {
             return None;
         }
-        // R768 §5.36 §5.22 — toolbar swatch router runs before caret
-        // positioning: a press on a colour swatch applies it to the live
-        // selection (and is swallowed, leaving caret + selection intact)
-        // — the click peer of the AI-first `apply-style` invoke funnel,
-        // both reaching `TextEditState::apply_style_run`.
-        if try_toolbar_press(scene, x, y, state.0) {
+        if focused != Some(TA_TAG) {
             return None;
         }
         let byte = hit_test_area_byte(*state, scene, x, y)?;

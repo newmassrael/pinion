@@ -1113,6 +1113,12 @@ impl ExternalIntrospect for TextFieldExternal {
             ("text", "string"),
             ("caret", "number"),
             ("selection", "object"),
+            // R769.1 §5.36 §5.22 — applied rich-text formatting as a JSON
+            // array of `{start, end, style}` runs (the same shape the
+            // field's Text node carries in `scene/snapshot`), so an AI
+            // client reads bold / italic / colour over the buffer directly
+            // without walking the paint tree.
+            ("style_runs", "json"),
             ("preedit", "string"),
             ("send", "string"),
             ("key", "string"),
@@ -1171,6 +1177,18 @@ impl ExternalIntrospect for TextFieldExternal {
                     "end":   end,
                 })),
                 None => IntrospectValue::Null,
+            }),
+            // R769.1 §5.36 §5.22 — applied formatting runs as a JSON array
+            // `[{"start", "end", "style": {...}}]` (the `StyleRun` serde
+            // shape, identical to the field Text node's `runs` in
+            // `scene/snapshot`). `[]` when the buffer is unstyled. Lets an
+            // AI verify bold / italic / colour over the selection directly
+            // — the read peer of the `apply-style` / `clear-style` actions.
+            "style_runs" => self.text_state().map(|s| {
+                IntrospectValue::Json(
+                    serde_json::to_value(s.style_runs())
+                        .unwrap_or_else(|_| serde_json::Value::Array(Vec::new())),
+                )
             }),
             // R56.1.g.2 §5.38 §5.22 — preedit (IME composition) read
             // path. `Text(s)` when composing (mirror of W3C
@@ -2118,7 +2136,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_eleven_slots() {
+    fn external_schema_declares_twelve_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
@@ -2130,6 +2148,8 @@ mod tests {
         // R56.2.e grew the surface: + paste-primary (PRIMARY paste).
         // R768 grew the surface: + apply-style + clear-style (rich-text
         // setCharFormat / clearFormat over a byte range).
+        // R769.1 grew the surface: + style_runs (applied formatting read
+        // peer of apply-style / clear-style, a JSON run array).
         // The schema shape is stable across bare and wired-up
         // TextFields — text/caret/selection/preedit queries return
         // None / intervene returns ReadOnly when no TextEditState is
@@ -2145,6 +2165,7 @@ mod tests {
                 ("text", "string"),
                 ("caret", "number"),
                 ("selection", "object"),
+                ("style_runs", "json"),
                 ("preedit", "string"),
                 ("send", "string"),
                 ("key", "string"),
@@ -5167,6 +5188,44 @@ mod r56_1_g_2_tests {
     fn r56_1_g_2_query_preedit_returns_none_on_bare_external() {
         let tfx = TextFieldExternal::new();
         assert_eq!(tfx.query("preedit"), None);
+    }
+
+    // R769.1 §5.36 §5.22 — `style_runs` read slot: applied rich-text
+    // formatting (the read peer of `apply-style` / `clear-style`), so an
+    // AI verifies bold / italic / colour without walking `scene/snapshot`.
+
+    #[test]
+    fn r769_1_query_style_runs_reports_applied_formatting() {
+        use crate::style::{FontWeight, TextStyle};
+        let (tfx, state) = focused_external_with_state();
+        // Unstyled buffer -> empty JSON array.
+        assert_eq!(
+            tfx.query("style_runs").unwrap(),
+            IntrospectValue::Json(serde_json::Value::Array(Vec::new())),
+            "an unstyled field reports no runs",
+        );
+        // Apply one bold run; it surfaces as a {start, end, style} object.
+        state.set_text("hello".to_string());
+        state.apply_style_run(0, 3, TextStyle::new().with_weight(FontWeight::BOLD));
+        let IntrospectValue::Json(serde_json::Value::Array(runs)) =
+            tfx.query("style_runs").unwrap()
+        else {
+            panic!("style_runs is a JSON array");
+        };
+        assert_eq!(runs.len(), 1, "one applied run");
+        assert_eq!(runs[0]["start"], serde_json::json!(0));
+        assert_eq!(runs[0]["end"], serde_json::json!(3));
+        assert_eq!(
+            runs[0]["style"]["font_weight"],
+            serde_json::json!(700),
+            "the run carries the applied bold weight",
+        );
+    }
+
+    #[test]
+    fn r769_1_query_style_runs_none_on_bare_external() {
+        let tfx = TextFieldExternal::new();
+        assert_eq!(tfx.query("style_runs"), None);
     }
 
     // ─────────────────────────────────────────────────────────────

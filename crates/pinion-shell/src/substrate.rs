@@ -1272,9 +1272,15 @@ impl<V: WidgetView> ShellCore<V> {
     )]
     fn position_caret_after_press(&mut self, window_id: &str, pid: PointerId) {
         self.text_select_drag = None;
-        let Some(focused) = self.focus.focused().map(str::to_owned) else {
-            return;
-        };
+        // R769.2 §5.36 — dispatch the press to the view even when no widget
+        // is focused. A binding may handle non-caret presses that must work
+        // regardless of field focus — e.g. a formatting toolbar acting on
+        // the live selection (selection lives in the reactive state, not the
+        // focus). Caret-only bindings stay correct: they short-circuit to
+        // `None` whenever `focused != Some(<my tag>)`, so an unfocused
+        // dispatch is a no-op for them (the previous early-return is folded
+        // into that per-view guard).
+        let focused = self.focus.focused().map(str::to_owned);
         let Some((cx, cy)) = self.core.cursor_position_for_window(window_id, pid) else {
             return;
         };
@@ -1289,7 +1295,7 @@ impl<V: WidgetView> ShellCore<V> {
                 V::position_caret_for_point(
                     &state,
                     paint,
-                    Some(focused.as_str()),
+                    focused.as_deref(),
                     cx as f32,
                     cy as f32,
                     extend,

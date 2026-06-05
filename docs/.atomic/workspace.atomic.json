@@ -29161,6 +29161,58 @@
         "R766 carries persist: hit-test glue 2-copy / aria-multiline a11y / TUI multi-line / wheel-scroll"
       ]
     },
+    "R769.2": {
+      "decision_summary": "Textarea formatting toolbar correctness + AI-first style introspection. The B/I cells lacked a flex container so justify/align were ignored (block top-left); add .flex(Row)+text_align Center to centre the glyphs both axes. The toolbar was gated on field focus at two levels: the example ran try_toolbar_press after a focus guard, and the shell's position_caret_after_press early-returned when nothing was focused, so a toolbar click after the field blurred was dropped -- moved the toolbar router ahead of the guard and made the shell dispatch the press regardless of focus (caret bindings stay no-op when unfocused). Added a style_runs read query (R769.1) exposing applied formatting as JSON, the read peer of apply-style/clear-style, so formatting is RPC-verifiable without a snapshot walk.",
+      "changes_bullets": [
+        "toolbar cell lacked `.flex(Row)`: justify/align ignored (block layout) so B/I hugged top-left",
+        "add `.flex(Row)` + `text_align: Center` so B/I centre both axes (RPC top/bottom gap 2/2)",
+        "run try_toolbar_press before the focus guard: formatting a selection works regardless of focus",
+        "shell position_caret_after_press dispatches even with no focus (caret bindings no-op unfocused)",
+        "TextFieldExternal `style_runs` query: applied runs as JSON, read peer of apply-style/clear-style",
+        "root cause + fix found AI-first (scene rect + focus/get + style_runs), zero pixels"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5618 pass / 0 fail (+2 style_runs tests; schema count 11->12)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean",
+        "RPC: B/I text_align=Center + vgap 2/2; unfocused B toggles 400<->700; /external/style_runs ok",
+        "text demos regress PASS: textarea multiline/softwrap/goal/rich-edit; textfield type/select/clip/compose"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.22",
+        "5.13"
+      ],
+      "carry_forward_bullets": [
+        "(a) toolbar stays tagged Container decorations, not real Button/ToggleButton widgets -- deferred",
+        "(b) clicking the toolbar still blurs the field; it works regardless now, refocus is a follow-up",
+        "(c) glyph optical centring in the line box is metric-dependent; box centred 2/2, fine-tune deferred"
+      ],
+      "publishable_decision_summary": "Textarea formatting toolbar correctness + AI-first style introspection. The B/I cells lacked a flex container so justify/align were ignored (block top-left); add .flex(Row)+text_align Center to centre the glyphs both axes. The toolbar was gated on field focus at two levels: the example ran try_toolbar_press after a focus guard, and the shell's position_caret_after_press early-returned when nothing was focused, so a toolbar click after the field blurred was dropped -- moved the toolbar router ahead of the guard and made the shell dispatch the press regardless of focus (caret bindings stay no-op when unfocused). Added a style_runs read query (R769.1) exposing applied formatting as JSON, the read peer of apply-style/clear-style, so formatting is RPC-verifiable without a snapshot walk.",
+      "publishable_changes_bullets": [
+        "toolbar cell lacked `.flex(Row)`: justify/align ignored (block layout) so B/I hugged top-left",
+        "add `.flex(Row)` + `text_align: Center` so B/I centre both axes (RPC top/bottom gap 2/2)",
+        "run try_toolbar_press before the focus guard: formatting a selection works regardless of focus",
+        "shell position_caret_after_press dispatches even with no focus (caret bindings no-op unfocused)",
+        "TextFieldExternal `style_runs` query: applied runs as JSON, read peer of apply-style/clear-style",
+        "root cause + fix found AI-first (scene rect + focus/get + style_runs), zero pixels"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5618 pass / 0 fail (+2 style_runs tests; schema count 11->12)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean",
+        "RPC: B/I text_align=Center + vgap 2/2; unfocused B toggles 400<->700; /external/style_runs ok",
+        "text demos regress PASS: textarea multiline/softwrap/goal/rich-edit; textfield type/select/clip/compose"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.22",
+        "5.13"
+      ],
+      "publishable_carry_forward_bullets": [
+        "(a) toolbar stays tagged Container decorations, not real Button/ToggleButton widgets -- deferred",
+        "(b) clicking the toolbar still blurs the field; it works regardless now, refocus is a follow-up",
+        "(c) glyph optical centring in the line box is metric-dependent; box centred 2/2, fine-tune deferred"
+      ]
+    },
     "R770": {
       "decision_summary": "R770 OS file drag-drop: WidgetView file hooks + winit wiring + scene/*_file RPC peers + hello-filedrop",
       "changes_bullets": [
