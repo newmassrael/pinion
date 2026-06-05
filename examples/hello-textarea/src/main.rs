@@ -748,6 +748,7 @@ impl WidgetView for TextAreaView {
         state: &(TextFieldState, u32),
         scene: &Scene,
         focused: Option<&str>,
+        hit_tag: Option<&str>,
         x: f32,
         y: f32,
         extend: bool,
@@ -755,24 +756,16 @@ impl WidgetView for TextAreaView {
         if focused != Some(TA_TAG) {
             return None;
         }
-        // R799 — the shell fires this hook for *every* press (so a binding
+        // R801 — the shell fires this hook for *every* press (so a binding
         // can handle non-caret presses), so a press that landed on the
         // routed formatting toolbar (a sibling External below the field)
-        // reaches here too. Guard on the field's *own* rect: an out-of-
-        // bounds press is ignored rather than clamped to a caret, which
-        // would clear the selection a toolbar command needs. This is the
-        // field checking its own bounds — not the pre-R799 per-control
-        // toolbar hit-scan the `InputRouter` now owns.
-        let field_rect = pinion_shell::rect_for_tag(scene, TA_TAG)?;
-        #[allow(
-            clippy::cast_precision_loss,
-            reason = "field rect coords are small screen pixels; f32 is exact below 2^23"
-        )]
-        let inside = x >= field_rect.x as f32
-            && x < (field_rect.x + field_rect.w) as f32
-            && y >= field_rect.y as f32
-            && y < (field_rect.y + field_rect.h) as f32;
-        if !inside {
+        // reaches here too while the field keeps focus. Reject any press
+        // the router routed elsewhere by tag identity: only a press whose
+        // resolved hit-target is the field itself becomes a caret move —
+        // otherwise a toolbar press would clear the selection its command
+        // needs. The router already hit-tested the press; the field no
+        // longer re-scans its own rect (the pre-R801 workaround).
+        if hit_tag != Some(TA_TAG) {
             return None;
         }
         let byte = hit_test_area_byte(*state, scene, x, y)?;
@@ -848,6 +841,8 @@ mod tests {
     use pinion_core::widgets::text_edit::use_text_edit_state;
     use pinion_core::widgets::text_field::TextFieldState;
     use pinion_core::{Frame, Scene, WidgetCore};
+    use pinion_shell::WidgetView;
+    use pinion_widget_paint::toolbar::composite_item_tag;
 
     fn with_owner<R>(f: impl FnOnce() -> R) -> R {
         Owner::new().run(f)
@@ -1024,6 +1019,59 @@ mod tests {
                 edit.selection_range(),
                 Some((0, 7)),
                 "Ctrl+Shift+Home selects from the document end back to the start",
+            );
+        });
+    }
+
+    /// R801 §5.36 §5.35 — the caret press hook moves the caret only for a
+    /// press the `InputRouter` routed to the field itself. A press the
+    /// router routed to a *sibling* (a foreign `hit_tag` — the formatting
+    /// toolbar keeps the field focused, so `focused` alone cannot tell it
+    /// apart), or one arriving while the field is unfocused, is rejected
+    /// before any caret write — so the live selection a toolbar command
+    /// needs survives the click. This pins the framework seam the round
+    /// replaced (the old per-binding rect re-scan).
+    #[test]
+    fn r801_press_routed_to_sibling_keeps_caret_and_selection() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            edit.set_text("first second".to_owned());
+            edit.set_selection(0, 5); // the range a toolbar command would act on
+            let scene =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let toolbar_tag = composite_item_tag(FMT_TAG, 0);
+            // Press routed to the toolbar sibling while the field keeps focus.
+            assert_eq!(
+                TextAreaView::position_caret_for_point(
+                    &(TextFieldState::Focused, 0),
+                    &scene,
+                    Some(TA_TAG),
+                    Some(toolbar_tag.as_str()),
+                    10.0,
+                    10.0,
+                    false,
+                ),
+                None,
+                "a press the router routed to the toolbar is not a caret move",
+            );
+            assert_eq!(
+                (edit.selection_anchor(), edit.caret()),
+                (Some(0), 5),
+                "the selection survives a toolbar-routed press",
+            );
+            // A press arriving while the field is unfocused is likewise rejected.
+            assert_eq!(
+                TextAreaView::position_caret_for_point(
+                    &(TextFieldState::Focused, 0),
+                    &scene,
+                    None,
+                    Some(TA_TAG),
+                    10.0,
+                    10.0,
+                    false,
+                ),
+                None,
+                "an unfocused press is not a caret move",
             );
         });
     }

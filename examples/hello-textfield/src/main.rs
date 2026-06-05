@@ -547,11 +547,20 @@ impl WidgetView for TextFieldView {
         state: &(TextFieldState, u32),
         scene: &Scene,
         focused: Option<&str>,
+        hit_tag: Option<&str>,
         x: f32,
         y: f32,
         extend: bool,
     ) -> Option<usize> {
         if focused != Some(TF_TAG) {
+            return None;
+        }
+        // R801 §5.36 §5.35 — the shell hands the binding the router's
+        // resolved hit-target. Move the caret only for a press the router
+        // routed to this field; a press routed to a sibling widget while
+        // the field keeps focus is not a caret move (the shell already
+        // hit-tested it — no per-binding rect re-scan).
+        if hit_tag != Some(TF_TAG) {
             return None;
         }
         let byte = hit_test_field_byte(*state, scene, x, y)?;

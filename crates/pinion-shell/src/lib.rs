@@ -576,11 +576,25 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// root-owner scope so `use_text_edit_state` /
     /// `use_text_field_layout_cache` resolve.
     ///
+    /// R801 §5.36 §5.35 — `hit_tag` is the `InputRouter`-resolved tag
+    /// under the press (the deepest tagged ancestor at the press point —
+    /// the same target the router dispatched the `PointerDown` to). The
+    /// shell fires this hook for *every* press so a binding can react to
+    /// presses while its field merely keeps focus; a binding therefore
+    /// also short-circuits when `hit_tag != Some(<my tag>)`, so a press
+    /// the router routed to a *sibling* widget — e.g. a non-focusable
+    /// formatting toolbar painted below the field — does not move the
+    /// caret (which would clear a selection that toolbar command needs).
+    /// This replaces the pre-R801 per-binding rect re-scan: the field no
+    /// longer re-derives "is this press inside me" from its own box; the
+    /// router already hit-tested it, and the shell reports the answer.
+    ///
     /// Default returns `None` — only text-input widgets override.
     fn position_caret_for_point(
         _state: &<Self as WidgetCore>::State,
         _scene: &Scene,
         _focused: Option<&str>,
+        _hit_tag: Option<&str>,
         _x: f32,
         _y: f32,
         _extend: bool,

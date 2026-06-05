@@ -31615,6 +31615,54 @@
         "composite-tag {tag}#{i}: widget-paint build + router split = 2 sites, no core SSOT (lift candidate)"
       ]
     },
+    "R801": {
+      "decision_summary": "R801 §5.36 §5.35 — clear the R799 bounds-guard seam: the shell hands V::position_caret_for_point the InputRouter-resolved hit-target (hover_target_for_window), so a text-field binding rejects a press routed to a sibling widget by tag identity instead of re-scanning its own rect. Removes the R47-class workaround where the field re-implemented the router hit-test.",
+      "changes_bullets": [
+        "WidgetView::position_caret_for_point gains hit_tag: Option<&str> (router-resolved tagged ancestor)",
+        "shell position_caret_after_press passes core.hover_target_for_window(window, pid) into the hook",
+        "hello-textarea drops its own field-rect re-scan; guards hit_tag != Some(TA_TAG) -> None",
+        "hello-textfield adds the same hit_tag guard (closes its latent press-elsewhere-moves-caret gap)",
+        "r801 unit test pins toolbar-routed + unfocused press -> None with the live selection surviving"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (exit 0); hello-textarea 15 + hello-textfield 12 unit tests pass",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (pedantic deny)",
+        "demos PASS: r799 (selection survives toolbar click) + r764 textarea + r762/r763 textfield press",
+        "self-grep: 1 rect re-scan site (hello-textarea) + 2 hook overrides total, both migrated"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "full demo sweep deferred to push-time (sweep-at-push-not-every-round); affected demos verified",
+        "composite-tag {tag}#{i} core SSOT lift candidate (2 sites, no shared core fn) remains open",
+        "toolbar keyboard (Ctrl+B / Tab) consumer-driven defer (R800 carry, unchanged)"
+      ],
+      "publishable_decision_summary": "R801 §5.36 §5.35 — clear the R799 bounds-guard seam: the shell hands V::position_caret_for_point the InputRouter-resolved hit-target (hover_target_for_window), so a text-field binding rejects a press routed to a sibling widget by tag identity instead of re-scanning its own rect. Removes the R47-class workaround where the field re-implemented the router hit-test.",
+      "publishable_changes_bullets": [
+        "WidgetView::position_caret_for_point gains hit_tag: Option<&str> (router-resolved tagged ancestor)",
+        "shell position_caret_after_press passes core.hover_target_for_window(window, pid) into the hook",
+        "hello-textarea drops its own field-rect re-scan; guards hit_tag != Some(TA_TAG) -> None",
+        "hello-textfield adds the same hit_tag guard (closes its latent press-elsewhere-moves-caret gap)",
+        "r801 unit test pins toolbar-routed + unfocused press -> None with the live selection surviving"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (exit 0); hello-textarea 15 + hello-textfield 12 unit tests pass",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (pedantic deny)",
+        "demos PASS: r799 (selection survives toolbar click) + r764 textarea + r762/r763 textfield press",
+        "self-grep: 1 rect re-scan site (hello-textarea) + 2 hook overrides total, both migrated"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "full demo sweep deferred to push-time (sweep-at-push-not-every-round); affected demos verified",
+        "composite-tag {tag}#{i} core SSOT lift candidate (2 sites, no shared core fn) remains open",
+        "toolbar keyboard (Ctrl+B / Tab) consumer-driven defer (R800 carry, unchanged)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

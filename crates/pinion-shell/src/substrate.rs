@@ -1280,7 +1280,21 @@ impl<V: WidgetView> ShellCore<V> {
         // `None` whenever `focused != Some(<my tag>)`, so an unfocused
         // dispatch is a no-op for them (the previous early-return is folded
         // into that per-view guard).
+        //
+        // R801 §5.36 §5.35 — also hand the binding the router's resolved
+        // hit-target so it can reject a press the router routed to a
+        // *sibling* widget (a non-focusable toolbar keeps the field
+        // focused, so `focused` alone cannot tell "press on the field" from
+        // "press on the toolbar"). The router already hit-tested this press
+        // during `pointer_down`; `hover_target_for_window` reads that exact
+        // answer (`cursor_moved` always lands before the press on both the
+        // native and `scene/click` paths, so it is the press-point target).
+        // The binding no longer re-scans its own rect.
         let focused = self.focus.focused().map(str::to_owned);
+        let hit_tag = self
+            .core
+            .hover_target_for_window(window_id, pid)
+            .map(str::to_owned);
         let Some((cx, cy)) = self.core.cursor_position_for_window(window_id, pid) else {
             return;
         };
@@ -1296,6 +1310,7 @@ impl<V: WidgetView> ShellCore<V> {
                     &state,
                     paint,
                     focused.as_deref(),
+                    hit_tag.as_deref(),
                     cx as f32,
                     cy as f32,
                     extend,
