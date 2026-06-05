@@ -36,6 +36,8 @@ use crate::external::{
 };
 use crate::input::is_activation_event;
 use crate::reactive::{Owner, Signal};
+use crate::widgets::scroll::ScrollState;
+use crate::widgets::virtual_list::scroll_offset_to_reveal;
 
 /// Join `name` onto the directory path `base` over `'/'` separators. A
 /// `base` of `"/"` yields `"/name"`; otherwise `"<base>/name"`. The leaf
@@ -75,6 +77,17 @@ pub struct DirectoryState {
     cwd: Signal<String>,
     entries: Signal<Vec<DirEntry>>,
     selected: Signal<Option<String>>,
+    /// R792 §5.15 §5.40 — the roving **keyboard cursor** (WAI-ARIA
+    /// `aria-activedescendant`): the visual entry-row the arrow keys
+    /// address, distinct from [`selected`](Self::selected) (the picked
+    /// leaf's path). `None` means "unmoved" — the effective cursor then
+    /// defaults to the first row (the W3C "focus lands on the first option"
+    /// convention), surfaced through [`cursor`](Self::cursor). A directory
+    /// change resets it to `None` (the new listing's first row becomes the
+    /// cursor). This is the Files/Explorer focus model: arrows move a
+    /// highlight over folders *and* files, `Enter` opens a folder or picks a
+    /// file — orthogonal to which leaf is currently selected.
+    cursor: Signal<Option<usize>>,
 }
 
 impl core::fmt::Debug for DirectoryState {
@@ -83,6 +96,7 @@ impl core::fmt::Debug for DirectoryState {
             .field("cwd", &self.cwd.get())
             .field("entry_count", &self.entries.get().len())
             .field("selected", &self.selected.get())
+            .field("cursor", &self.cursor.get())
             .finish_non_exhaustive()
     }
 }
@@ -100,6 +114,7 @@ impl DirectoryState {
             cwd: Signal::new(initial),
             entries: Signal::new(entries),
             selected: Signal::new(None),
+            cursor: Signal::new(None),
         }
     }
 
@@ -153,6 +168,69 @@ impl DirectoryState {
         self.selected().map(|p| p.rsplit('/').next().unwrap_or(&p).to_owned())
     }
 
+    /// R792 §5.15 §5.40 — the **effective keyboard cursor**: the visual row
+    /// the arrow keys / focus ring address. `None` only when the listing is
+    /// empty; otherwise the explicit cursor, or the **first row** when the
+    /// cursor is unmoved (the W3C "first key focuses the first option"
+    /// convention). This is the SSOT every consumer reads — the focus-ring
+    /// active descendant, the `Enter`-activation target, and the
+    /// `aria-activedescendant` a11y node — so the painted ring and the
+    /// activated row never disagree. Subscribes (reads `cursor` + `entries`).
+    #[must_use]
+    pub fn cursor(&self) -> Option<usize> {
+        if self.entries.get().is_empty() {
+            None
+        } else {
+            Some(self.cursor.get().unwrap_or(0))
+        }
+    }
+
+    /// R792 — move the keyboard cursor per `key` (`ArrowUp` / `ArrowDown` /
+    /// `Home` / `End` / `PageUp` / `PageDown`) over the current listing,
+    /// `page` rows per viewport-ful. Linear-clamp (no wrap — a directory
+    /// listing has ends), the shared [`clamp_nav`](crate::widgets::virtual_select::clamp_nav)
+    /// policy the virtualized list / grid navigation reuses. Returns whether
+    /// the key was a handled navigation key (so the binding's `apply_key`
+    /// returns the right bool). A no-op `false` for an empty listing or an
+    /// unhandled key.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "the handled-bool drives the controller's apply_key result, but a \
+                  caller that just wants to move the cursor legitimately ignores it \
+                  (the navigate / select fire-and-forget mutator precedent)"
+    )]
+    pub fn move_cursor(&self, key: &str, page: usize) -> bool {
+        let Some(target) =
+            crate::widgets::virtual_select::clamp_nav(self.cursor(), key, self.entries.get().len(), page)
+        else {
+            return false;
+        };
+        self.cursor.set(Some(target));
+        true
+    }
+
+    /// R792 — set the keyboard cursor directly (the admin / restore channel,
+    /// the `aria-activedescendant` intervene path). An out-of-range index is
+    /// clamped to the last row; `None` resets to "unmoved" (the effective
+    /// cursor falls back to the first row). Not an interaction.
+    pub fn set_cursor(&self, index: Option<usize>) {
+        let clamped = index.map(|i| {
+            let count = self.entries.get().len();
+            i.min(count.saturating_sub(1))
+        });
+        self.cursor.set(clamped);
+    }
+
+    /// R792 — activate the entry under the keyboard cursor (the `Enter`
+    /// gesture): navigate into it if it is a directory, else select it (the
+    /// shared [`activate_index`](Self::activate_index) row gesture). A no-op
+    /// on an empty listing.
+    pub fn activate_cursor(&self) {
+        if let Some(idx) = self.cursor() {
+            self.activate_index(idx);
+        }
+    }
+
     /// Re-read the current directory's listing into the `entries` Signal
     /// (after a `cwd` change). An unreadable directory lists empty.
     fn refresh(&self) {
@@ -178,6 +256,9 @@ impl DirectoryState {
         if is_child_dir {
             self.cwd.set(join_path(&self.cwd.get(), name));
             self.selected.set(None);
+            // R792 — a new directory context resets the keyboard cursor; the
+            // effective cursor then defaults to the new listing's first row.
+            self.cursor.set(None);
             self.refresh();
         }
         self.cwd.get()
@@ -195,6 +276,7 @@ impl DirectoryState {
         if parent != self.cwd.get() {
             self.cwd.set(parent);
             self.selected.set(None);
+            self.cursor.set(None); // R792 — reset the keyboard cursor on a dir change.
             self.refresh();
         }
         self.cwd.get()
@@ -210,6 +292,7 @@ impl DirectoryState {
     pub fn open_dir(&self, path: impl Into<String>) -> String {
         self.cwd.set(path.into());
         self.selected.set(None);
+        self.cursor.set(None); // R792 — reset the keyboard cursor on a dir change.
         self.refresh();
         self.cwd.get()
     }
@@ -354,6 +437,64 @@ pub fn use_directory_state(
         .cache(key, || DirectoryState::new(dir(), initial()))
 }
 
+/// R792 §5.15 §5.40 — drive **keyboard navigation over a file list** backed
+/// by a [`DirectoryState`] at `tag` and a flex-viewport [`ScrollState`].
+///
+/// The `WidgetCore::apply_key` body every own-rendered file UI shares to make
+/// its entry list keyboard-operable: `ArrowUp` / `ArrowDown`, `Home` / `End`,
+/// `PageUp` / `PageDown` move the roving cursor (the shell rings the active
+/// row via `aria-activedescendant`), scrolling a never-materialized row into
+/// view; `Enter` activates the cursor (navigate into a folder / pick a file).
+/// Keys only route when `focused == Some(tag)` (single tab stop, no sibling
+/// aliasing).
+///
+/// This is the `DirectoryState` peer of
+/// [`nav_select_key`](crate::widgets::virtual_select::nav_select_key): both
+/// reuse the shared [`clamp_nav`](crate::widgets::virtual_select::clamp_nav)
+/// key→index policy and [`scroll_offset_to_reveal`], but the state owner and
+/// activation semantics differ — a `VirtualSelectExternal` *selects* the
+/// navigated index (selection-follows-focus), whereas a file list's `Enter`
+/// *navigates or picks* and the cursor is orthogonal to the picked leaf. So
+/// it is a peer, not a fold (the R778 algorithm-peer rule): the byte-shared
+/// part is the policy fn, not the whole controller.
+///
+/// Returns `true` when the key was handled (the list was focused and the key
+/// is a navigation / activation key), `false` otherwise — the exact bool
+/// `apply_key` must return.
+#[must_use]
+pub fn dir_nav_key(
+    dir: &DirectoryState,
+    scroll: &ScrollState,
+    focused: Option<&str>,
+    tag: &str,
+    key: &str,
+    row_pitch: u32,
+) -> bool {
+    if focused != Some(tag) {
+        return false;
+    }
+    // `Enter` activates the cursor row (navigate a folder / pick a file).
+    if key == "Enter" {
+        if dir.cursor().is_none() {
+            return false;
+        }
+        dir.activate_cursor();
+        return true;
+    }
+    let (_, viewport_h) = scroll.measured_viewport();
+    let page = usize::try_from(viewport_h / row_pitch.max(1)).unwrap_or(1).max(1);
+    if !dir.move_cursor(key, page) {
+        return false;
+    }
+    // Scroll the navigated row into view (a cursor on a never-materialized
+    // row scrolls there — the same reveal `nav_select_key` performs).
+    if let Some(target) = dir.cursor() {
+        let reveal = scroll_offset_to_reveal(target, scroll.offset_y(), viewport_h, row_pitch);
+        scroll.scroll_to(0, reveal);
+    }
+    true
+}
+
 /// Wire form of one listing: newline-joined entry names, directories
 /// suffixed `'/'` (the `ls -p` convention) so the AI-readable `entries`
 /// query distinguishes navigable children from selectable leaves in one
@@ -429,6 +570,10 @@ impl ExternalIntrospect for DirectoryExternal {
             ("count", "int"),
             ("entries", "string"),
             ("selected", "string"),
+            // R792 — the roving keyboard cursor's row (query; intervene =
+            // admin set, the aria-activedescendant write peer). The effective
+            // active row: the first row when unmoved, Null only when empty.
+            ("cursor", "int"),
             ("name", "string"),
             ("is_dir", "bool"),
             ("navigate", "string"),
@@ -465,6 +610,13 @@ impl ExternalIntrospect for DirectoryExternal {
                 Some(p) => IntrospectValue::Text(p),
                 None => IntrospectValue::Null,
             }),
+            // R792 — the effective keyboard-cursor row (Null only when empty).
+            "cursor" => Some(
+                self.state
+                    .cursor()
+                    .and_then(|i| i64::try_from(i).ok())
+                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
+            ),
             _ => None,
         }
     }
@@ -475,6 +627,20 @@ impl ExternalIntrospect for DirectoryExternal {
             "cwd" => match value {
                 IntrospectValue::Text(p) => {
                     self.state.open_dir(p);
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            // R792 — admin set the keyboard cursor (restore / AT
+            // active-descendant write). `Int` sets the row (out-of-range
+            // clamps to the last); `Null` resets to the first row.
+            "cursor" => match value {
+                IntrospectValue::Int(i) => {
+                    self.state.set_cursor(usize::try_from(i).ok());
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.state.set_cursor(None);
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -787,6 +953,131 @@ mod tests {
             "rename with no selection reports false",
         );
         assert_eq!(ext.invoke("rename", IntrospectValue::Null), Err(InvokeError::TypeMismatch));
+    }
+
+    // ── R792 keyboard cursor ────────────────────────────────────────
+
+    #[test]
+    fn r792_cursor_defaults_to_first_row_and_empty_is_none() {
+        let s = state(); // /proj: [src, Cargo.toml, README.md]
+        // Unmoved → the effective cursor is the first row.
+        assert_eq!(s.cursor(), Some(0), "unmoved cursor defaults to the first row");
+        // An empty listing has no cursor.
+        let d = InMemoryDirectory::new();
+        d.insert("/empty", vec![]);
+        let empty = DirectoryState::new(Rc::new(d), "/empty");
+        assert_eq!(empty.cursor(), None, "empty listing has no cursor");
+    }
+
+    #[test]
+    fn r792_move_cursor_clamps_and_handles_keys() {
+        let s = state(); // 3 entries
+        assert!(s.move_cursor("ArrowDown", 5), "ArrowDown handled");
+        assert_eq!(s.cursor(), Some(1), "ArrowDown from row 0 → row 1");
+        assert!(s.move_cursor("ArrowDown", 5));
+        assert_eq!(s.cursor(), Some(2));
+        assert!(s.move_cursor("ArrowDown", 5));
+        assert_eq!(s.cursor(), Some(2), "ArrowDown at the last row clamps (no wrap)");
+        assert!(s.move_cursor("Home", 5));
+        assert_eq!(s.cursor(), Some(0), "Home jumps to the first row");
+        assert!(s.move_cursor("End", 5));
+        assert_eq!(s.cursor(), Some(2), "End jumps to the last row");
+        assert!(!s.move_cursor("Tab", 5), "an unhandled key is a false no-op");
+        assert_eq!(s.cursor(), Some(2), "an unhandled key leaves the cursor put");
+    }
+
+    #[test]
+    fn r792_cursor_resets_on_directory_change() {
+        let s = state();
+        s.move_cursor("End", 5);
+        assert_eq!(s.cursor(), Some(2), "cursor moved to the last row");
+        s.navigate("src"); // /proj/src: [lib.rs, main.rs]
+        assert_eq!(s.cursor(), Some(0), "navigation resets the cursor to the new dir's first row");
+        s.move_cursor("ArrowDown", 5);
+        assert_eq!(s.cursor(), Some(1));
+        s.up();
+        assert_eq!(s.cursor(), Some(0), "up resets the cursor too");
+    }
+
+    #[test]
+    fn r792_activate_cursor_navigates_dirs_selects_files() {
+        let s = state(); // [src(dir), Cargo.toml, README.md]
+        // Cursor on row 0 (src) → Enter navigates.
+        s.activate_cursor();
+        assert_eq!(s.cwd(), "/proj/src", "activate on a dir navigates into it");
+        s.up();
+        // Cursor on row 2 (README.md) → Enter selects.
+        s.move_cursor("End", 5);
+        s.activate_cursor();
+        assert_eq!(s.selected(), Some("/proj/README.md".to_string()), "activate on a file selects it");
+    }
+
+    #[test]
+    fn r792_set_cursor_admin_clamps_and_clears() {
+        let s = state(); // 3 entries
+        s.set_cursor(Some(1));
+        assert_eq!(s.cursor(), Some(1));
+        s.set_cursor(Some(99));
+        assert_eq!(s.cursor(), Some(2), "out-of-range clamps to the last row");
+        s.set_cursor(None);
+        assert_eq!(s.cursor(), Some(0), "None resets to the effective first row");
+    }
+
+    #[test]
+    fn r792_dir_nav_key_gated_on_focus_and_drives_cursor() {
+        use crate::widgets::scroll::ScrollState;
+        let s = state();
+        let scroll = ScrollState::new();
+        scroll.set_measured_viewport(300, 160);
+        // Unfocused → ignored.
+        assert!(!dir_nav_key(&s, &scroll, Some("other"), "fb", "ArrowDown", 34));
+        assert_eq!(s.cursor(), Some(0), "unfocused key did not move the cursor");
+        // Focused → ArrowDown advances.
+        assert!(dir_nav_key(&s, &scroll, Some("fb"), "fb", "ArrowDown", 34));
+        assert_eq!(s.cursor(), Some(1));
+        // Enter activates the cursor row (row 1 = Cargo.toml → select).
+        assert!(dir_nav_key(&s, &scroll, Some("fb"), "fb", "Enter", 34));
+        assert_eq!(s.selected(), Some("/proj/Cargo.toml".to_string()), "Enter picked the cursor file");
+        // A non-nav key is a false no-op.
+        assert!(!dir_nav_key(&s, &scroll, Some("fb"), "fb", "Tab", 34));
+    }
+
+    #[test]
+    fn r792_dir_nav_key_scrolls_a_deep_cursor_into_view() {
+        use crate::widgets::scroll::ScrollState;
+        // A listing taller than the viewport so End scrolls.
+        let d = InMemoryDirectory::new();
+        let files: Vec<DirEntry> = (0..40).map(|i| DirEntry::file(format!("f{i}.txt"))).collect();
+        d.insert("/big", files);
+        let s = DirectoryState::new(Rc::new(d), "/big");
+        let scroll = ScrollState::new();
+        scroll.set_max(0, 40 * 34);
+        scroll.set_measured_viewport(300, 160);
+        assert!(dir_nav_key(&s, &scroll, Some("fb"), "fb", "End", 34));
+        assert_eq!(s.cursor(), Some(39), "End moves to the last row");
+        assert!(scroll.offset_y() > 0, "the deep cursor scrolled into view, offset {}", scroll.offset_y());
+        assert!(dir_nav_key(&s, &scroll, Some("fb"), "fb", "Home", 34));
+        assert_eq!(s.cursor(), Some(0));
+        assert_eq!(scroll.offset_y(), 0, "Home scrolled back to the top");
+    }
+
+    #[test]
+    fn r792_external_cursor_query_and_intervene() {
+        let st = Rc::new(state());
+        let mut ext = DirectoryExternal::new(Rc::clone(&st));
+        // Effective cursor defaults to the first row.
+        assert_eq!(ext.query("cursor"), Some(IntrospectValue::Int(0)));
+        st.move_cursor("End", 5);
+        assert_eq!(ext.query("cursor"), Some(IntrospectValue::Int(2)), "query tracks the moved cursor");
+        // Admin set via intervene.
+        ext.intervene("cursor", IntrospectValue::Int(1)).unwrap();
+        assert_eq!(st.cursor(), Some(1));
+        ext.intervene("cursor", IntrospectValue::Null).unwrap();
+        assert_eq!(st.cursor(), Some(0), "Null resets to the first row");
+        assert_eq!(
+            ext.intervene("cursor", IntrospectValue::Bool(true)),
+            Err(InterveneError::TypeMismatch),
+        );
     }
 
     #[test]

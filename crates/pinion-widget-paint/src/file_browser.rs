@@ -197,8 +197,20 @@ pub fn file_browser_pane(
         },
     );
 
+    // R792 — tag the list region with `dir_tag` so the file list is a
+    // focusable single tab stop (the `focus/set` target). Routing of the
+    // `{dir_tag}#{index}` row clicks is registry-based and unaffected; this
+    // Container is the focus / `aria-activedescendant` anchor, the
+    // `hello-virtual-nav` list-container precedent. The windowed rows are the
+    // composite children whose active member the shell rings.
+    let list_region = Scene::Container(
+        ContainerNode::new(vec![list])
+            .with_tag(dir_tag.to_string())
+            .with_layout(LayoutStyle::new().with_size(Size::px(list_width, list_height))),
+    );
+
     Scene::Container(
-        ContainerNode::new(vec![breadcrumb, list])
+        ContainerNode::new(vec![breadcrumb, list_region])
             .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(8)),
     )
 }

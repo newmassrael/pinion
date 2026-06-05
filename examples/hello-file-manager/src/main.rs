@@ -51,9 +51,11 @@
 //! `File::create` / `remove_dir_all` / `rename`) is unit-tested in
 //! `pinion-platform-storage`.
 
-use pinion_a11y::{windowed_list_nodes_selected, AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    windowed_list_nodes_selected, AccessAction, AccessFocus, AccessNode, AriaRole, WidgetA11y,
+};
 use pinion_core::directory::{Directory, InMemoryDirectory};
-use pinion_core::external::External;
+use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::{batch, Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
@@ -62,7 +64,9 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::caret_blink::use_caret_blink;
-use pinion_core::widgets::file_browser::{use_directory_state, DirectoryExternal, DirectoryState};
+use pinion_core::widgets::file_browser::{
+    dir_nav_key, use_directory_state, DirectoryExternal, DirectoryState,
+};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
@@ -125,7 +129,12 @@ fn seed_directory() -> Rc<dyn Directory> {
         "/proj",
         vec![DirEntry::dir("src"), DirEntry::dir("assets"), DirEntry::file("Cargo.toml"), DirEntry::file("README.md")],
     );
-    d.insert("/proj/src", vec![DirEntry::file("main.rs"), DirEntry::file("lib.rs")]);
+    // `src` carries more rows than the 9-row list viewport so keyboard
+    // navigation (End / PageDown) scrolls a never-materialized row into view
+    // (R792): main.rs, lib.rs, then mod00..mod19.
+    let mut src = vec![DirEntry::file("main.rs"), DirEntry::file("lib.rs")];
+    src.extend((0..20).map(|i| DirEntry::file(format!("mod{i:02}.rs"))));
+    d.insert("/proj/src", src);
     d.insert("/proj/assets", vec![DirEntry::file("logo.png")]);
     Rc::new(d)
 }
@@ -381,7 +390,9 @@ impl WidgetCore for FileManagerView {
     }
 
     fn focusable_tags() -> Vec<&'static str> {
-        vec![NEWDIR_TAG, NEWFILE_TAG, RENAME_TAG, DELETE_TAG, RENAME_TF_TAG]
+        // R792 — the file list (`DIR_TAG`) is a single tab stop with an
+        // internal roving cursor (the listbox / Files keyboard model).
+        vec![NEWDIR_TAG, NEWFILE_TAG, RENAME_TAG, DELETE_TAG, DIR_TAG, RENAME_TF_TAG]
     }
 
     /// R791 §5.38 — `F2` (with a selection, not already editing) starts an
@@ -411,6 +422,13 @@ impl WidgetCore for FileManagerView {
                 }
                 _ => return tf_paint::forward_key_to_field(scene, RENAME_TF_TAG, key, modifiers),
             }
+        }
+        // R792 — while the file list owns focus, arrows move the roving
+        // cursor (the shell rings the active row) and Enter activates it
+        // (navigate a folder / pick a file). The `dir_nav_key` controller
+        // reuses the shared `clamp_nav` policy + scroll-into-view.
+        if focused == Some(DIR_TAG) {
+            return dir_nav_key(&directory(), &use_scroll_state(SCROLL_KEY), focused, DIR_TAG, key, ROW_PITCH);
         }
         apply_aria_activate(scene, focused, key, NEWDIR_TAG)
             || apply_aria_activate(scene, focused, key, NEWFILE_TAG)
@@ -496,6 +514,18 @@ impl WidgetA11y for FileManagerView {
             &window,
             dir.selected_index(),
         ));
+        // R792 — when the list owns focus, the roving cursor row is the
+        // `aria-activedescendant`; mark its windowed item focused (the
+        // datepicker active-cell precedent). `cursor` is the effective row,
+        // so it is in-window after a navigation (which scrolls it in).
+        if focused == Some(DIR_TAG) {
+            if let Some(cursor) = dir.cursor() {
+                let tag = format!("{DIR_TAG}#{cursor}");
+                if let Some(node) = nodes.iter_mut().find(|n| n.tag == tag) {
+                    node.state.focused = true;
+                }
+            }
+        }
         if renaming {
             nodes.push(tf_paint::text_field_a11y_node(
                 RENAME_TF_TAG,
@@ -505,6 +535,51 @@ impl WidgetA11y for FileManagerView {
             ));
         }
         nodes
+    }
+
+    /// R792 §5.40 — composite focus model (the datepicker / listbox roving
+    /// precedent). When the file list owns shell focus, focus stays on the
+    /// list container (`DIR_TAG`) and the roving cursor row is reported as
+    /// the `aria-activedescendant` — so the shell's focus ring frames the
+    /// active row, not the whole list. Every other focused tag (a toolbar
+    /// button, the rename field) passes through atomically.
+    fn access_focus_target(state: &FmViewState, focused: Option<&str>) -> Option<AccessFocus> {
+        let _ = state;
+        if focused == Some(DIR_TAG) {
+            if let Some(cursor) = directory().cursor() {
+                return Some(AccessFocus::composite(DIR_TAG, format!("{DIR_TAG}#{cursor}")));
+            }
+        }
+        focused.map(AccessFocus::atomic)
+    }
+
+    /// R792 §5.40 — composite child action dispatch. An AT `Click` /
+    /// `Default` on a file row (`"{DIR_TAG}#<i>"`) or the parent affordance
+    /// (`"{DIR_TAG}#up"`) routes through the same `DirectoryExternal` "send"
+    /// wire a pointer click drives (`"<sub>:KeyboardActivate"`), so AT
+    /// activation navigates a folder / picks a file exactly as the mouse and
+    /// keyboard do. Other actions decline so the shell keeps its fallback.
+    fn access_child_invoke(
+        scene: &mut Scene,
+        parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
+        if parent_tag != DIR_TAG {
+            return false;
+        }
+        if !matches!(action, AccessAction::Click | AccessAction::Default) {
+            return false;
+        }
+        let Some(node) = scene.find_external_with_tag_mut(DIR_TAG) else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        intro
+            .invoke("send", IntrospectValue::Text(format!("{sub_tag}:KeyboardActivate")))
+            .is_ok()
     }
 }
 
@@ -770,6 +845,117 @@ mod tests {
             let nodes = FileManagerView::access_node(&idle(), Some(RENAME_TF_TAG));
             let tb = nodes.iter().find(|n| n.tag == RENAME_TF_TAG).expect("textbox node");
             assert_eq!(tb.role, AriaRole::TextInput, "the rename field is announced as a textbox");
+        });
+    }
+
+    // ----- R792 keyboard navigation over the file list -----
+
+    #[test]
+    fn r792_apply_key_arrows_move_the_roving_cursor() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let dir = directory();
+            assert_eq!(dir.cursor(), Some(0), "boot cursor defaults to the first row");
+            // A key while a toolbar button owns focus does not move the list.
+            assert!(!FileManagerView::apply_key(
+                &mut scene,
+                Some(NEWDIR_TAG),
+                "ArrowDown",
+                pinion_core::Modifiers::empty(),
+            ));
+            assert_eq!(dir.cursor(), Some(0), "unfocused list ignores the arrow");
+            // Focused on the list → ArrowDown advances the cursor.
+            assert!(FileManagerView::apply_key(
+                &mut scene,
+                Some(DIR_TAG),
+                "ArrowDown",
+                pinion_core::Modifiers::empty(),
+            ));
+            assert_eq!(dir.cursor(), Some(1));
+            assert!(FileManagerView::apply_key(
+                &mut scene,
+                Some(DIR_TAG),
+                "End",
+                pinion_core::Modifiers::empty(),
+            ));
+            assert_eq!(dir.cursor(), Some(3), "End jumps to the last /proj row");
+        });
+    }
+
+    #[test]
+    fn r792_enter_activates_the_cursor_row() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // /proj sorts dirs-first, case-insensitive: row 0 = assets (dir).
+            let dir = directory();
+            assert!(FileManagerView::apply_key(
+                &mut scene,
+                Some(DIR_TAG),
+                "Enter",
+                pinion_core::Modifiers::empty(),
+            ));
+            assert_eq!(dir.cwd(), "/proj/assets", "Enter on a folder row navigates into it");
+            // In /proj/assets the cursor defaults to row 0 (logo.png, a file);
+            // Enter picks it.
+            assert!(FileManagerView::apply_key(
+                &mut scene,
+                Some(DIR_TAG),
+                "Enter",
+                pinion_core::Modifiers::empty(),
+            ));
+            assert_eq!(
+                dir.selected(),
+                Some("/proj/assets/logo.png".to_string()),
+                "Enter on a file picks it",
+            );
+        });
+    }
+
+    #[test]
+    fn r792_access_focus_target_reports_the_cursor_as_active_descendant() {
+        Owner::new().run(|| {
+            directory().set_cursor(Some(1));
+            let target = FileManagerView::access_focus_target(&idle(), Some(DIR_TAG))
+                .expect("the focused list reports a focus target");
+            assert_eq!(target.focus_tag, DIR_TAG, "focus stays on the list container");
+            assert_eq!(
+                target.active_descendant.as_deref(),
+                Some("fb_dir#1"),
+                "the cursor row is the aria-activedescendant",
+            );
+            // A toolbar button passes through atomically (no descendant).
+            let btn = FileManagerView::access_focus_target(&idle(), Some(NEWDIR_TAG))
+                .expect("button focus target");
+            assert_eq!(btn.active_descendant, None);
+        });
+    }
+
+    #[test]
+    fn r792_a11y_marks_the_cursor_row_focused() {
+        Owner::new().run(|| {
+            directory().set_cursor(Some(2));
+            let nodes = FileManagerView::access_node(&idle(), Some(DIR_TAG));
+            let cursor_row = nodes.iter().find(|n| n.tag == "fb_dir#2").expect("cursor row node");
+            assert!(cursor_row.state.focused, "the cursor row is aria-active (focused)");
+            let other = nodes.iter().find(|n| n.tag == "fb_dir#0").expect("row 0 node");
+            assert!(!other.state.focused, "a non-cursor row is not focused");
+            // Unfocused list → no row is marked active.
+            let unfocused = FileManagerView::access_node(&idle(), None);
+            let row2 = unfocused.iter().find(|n| n.tag == "fb_dir#2").expect("row node");
+            assert!(!row2.state.focused, "no active row when the list is not focused");
+        });
+    }
+
+    #[test]
+    fn r792_access_child_invoke_activates_an_at_clicked_row() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let dir = directory();
+            // AT Click on row 0 (assets dir, dirs-first sort) navigates into it.
+            assert!(FileManagerView::access_child_invoke(&mut scene, DIR_TAG, "0", AccessAction::Click));
+            assert_eq!(dir.cwd(), "/proj/assets");
+            // A non-list parent declines (shell keeps its fallback chain).
+            assert!(!FileManagerView::access_child_invoke(&mut scene, NEWDIR_TAG, "x", AccessAction::Click));
         });
     }
 
