@@ -44,6 +44,7 @@ use crate::external::{
     IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
 };
 use crate::reactive::{Owner, Signal};
+use crate::widget_core::ExtraExternal;
 
 /// R788 — the open-lifecycle of one modal surface (dialog / drawer / file
 /// picker). Holds the reactive `open` flag; [`open`](Self::open) /
@@ -207,6 +208,24 @@ pub fn use_modal(key: &'static str) -> Rc<ModalState> {
         .cache(key, ModalState::new)
 }
 
+/// R797 §5.16 §5.12 — register a [`ModalState`]'s query-only introspection
+/// face as an [`ExtraExternal`] under `tag`.
+///
+/// Every modal binding (dialog / drawer / file-open / file-save) wires the
+/// *same* `ExtraExternal::new(tag, Box::new(ModalIntrospect::new(state)))`
+/// triple in its [`create_extra_externals`](crate::WidgetCore::create_extra_externals)
+/// — the boxing + [`ModalIntrospect`] wrapping is mechanical glue the
+/// binding must not get wrong (a bare `ButtonExternal` here would silently
+/// drop the `open` query). When R797 found that 4-copy past the
+/// [[three-site-internal-duplication-substrate-lift]] threshold, the glue
+/// moved here once; the binding passes only its `tag` and the shared
+/// [`ModalState`] `Rc` (resolved from the same [`use_modal`] key its view
+/// and reducer use, so the node reports the live open flag).
+#[must_use]
+pub fn modal_introspection_extra(tag: &'static str, state: Rc<ModalState>) -> ExtraExternal {
+    ExtraExternal::new(tag, Box::new(ModalIntrospect::new(state)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +307,31 @@ mod tests {
                 node.query("open"),
                 Some(IntrospectValue::Bool(false)),
                 "close() lowers the introspected flag",
+            );
+        });
+    }
+
+    #[test]
+    fn r797_introspection_extra_carries_tag_and_shared_flag() {
+        Owner::new().run(|| {
+            let _ = modal_scope_request::drain();
+            let m = use_modal("m");
+            let extra = modal_introspection_extra("dialog_state", m.clone());
+            assert_eq!(extra.tag, "dialog_state", "the helper registers under the given tag");
+            let introspect = extra
+                .handle
+                .introspect()
+                .expect("the modal node exposes a query-only introspection face");
+            assert_eq!(
+                introspect.query("open"),
+                Some(IntrospectValue::Bool(false)),
+                "the registered node reports the shared closed flag",
+            );
+            m.open(vec!["ok".to_string()]);
+            assert_eq!(
+                introspect.query("open"),
+                Some(IntrospectValue::Bool(true)),
+                "opening the shared ModalState flips the registered node (one SSOT)",
             );
         });
     }

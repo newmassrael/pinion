@@ -90,7 +90,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::file_browser::{use_directory_state, DirectoryExternal, DirectoryState};
-use pinion_core::widgets::modal::{use_modal, ModalIntrospect, ModalState};
+use pinion_core::widgets::modal::{modal_introspection_extra, use_modal, ModalState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{DirEntry, Frame, Scene, WidgetCore};
@@ -388,7 +388,7 @@ impl WidgetCore for FileOpenView {
             ExtraExternal::new(DIR_TAG, Box::new(DirectoryExternal::new(directory()))),
             ExtraExternal::new(OK_TAG, Box::new(ButtonExternal::new())),
             ExtraExternal::new(CANCEL_TAG, Box::new(ButtonExternal::new())),
-            ExtraExternal::new(MODAL_STATE_TAG, Box::new(ModalIntrospect::new(modal()))),
+            modal_introspection_extra(MODAL_STATE_TAG, modal()),
         ]
     }
 

@@ -88,7 +88,7 @@ use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::file_browser::{use_directory_state, DirectoryExternal, DirectoryState};
-use pinion_core::widgets::modal::{use_modal, ModalIntrospect, ModalState};
+use pinion_core::widgets::modal::{modal_introspection_extra, use_modal, ModalState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
@@ -510,7 +510,7 @@ impl WidgetCore for FileSaveView {
             ),
             ExtraExternal::new(SAVE_TAG, Box::new(ButtonExternal::new())),
             ExtraExternal::new(CANCEL_TAG, Box::new(ButtonExternal::new())),
-            ExtraExternal::new(MODAL_STATE_TAG, Box::new(ModalIntrospect::new(modal()))),
+            modal_introspection_extra(MODAL_STATE_TAG, modal()),
         ]
     }
 

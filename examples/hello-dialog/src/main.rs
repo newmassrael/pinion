@@ -75,7 +75,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::widgets::modal::{use_modal, ModalIntrospect, ModalState};
+use pinion_core::widgets::modal::{modal_introspection_extra, use_modal, ModalState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
@@ -316,7 +316,7 @@ impl WidgetCore for DialogView {
         vec![
             ExtraExternal::new(OK_TAG, Box::new(ButtonExternal::new())),
             ExtraExternal::new(CANCEL_TAG, Box::new(ButtonExternal::new())),
-            ExtraExternal::new(MODAL_STATE_TAG, Box::new(ModalIntrospect::new(modal()))),
+            modal_introspection_extra(MODAL_STATE_TAG, modal()),
         ]
     }
 

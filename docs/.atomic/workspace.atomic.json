@@ -31405,6 +31405,60 @@
         "(c) IME preedit undo granularity deferred (unchanged from R796)"
       ]
     },
+    "R797": {
+      "decision_summary": "R797 §5.16 §5.12 lift modal-introspection extra-external wiring into a reusable SSOT helper",
+      "changes_bullets": [
+        "pinion-core/widgets/modal.rs: add modal_introspection_extra(tag, state) -> ExtraExternal (+ import)",
+        "helper wraps ExtraExternal::new(tag, Box::new(ModalIntrospect::new(state))) -- the 4-copy glue",
+        "migrate hello-dialog / hello-drawer / hello-file-open-dialog / hello-file-save-dialog to it",
+        "drop now-unused ModalIntrospect import from the four examples; import modal_introspection_extra",
+        "repays R795 debt: ModalIntrospect was hand-wired at 4 sites (3-site-duplication threshold crossed)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 5633 passed / 0 failed (true CARGO_EXIT=0, not tail-masked)",
+        "new unit test r797_introspection_extra_carries_tag_and_shared_flag: tag + shared open flag",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: pedantic clean",
+        "4 affected RPC demos PASS: r693 dialog / r702 drawer / r788 file-open / r790 file-save",
+        "behavior-preserving SSOT lift -> no new RPC demo (R773 audit-clearance class)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "textarea toolbar (hit_tag/try_toolbar_press) = deferred DESIGN round, NOT a mechanical lift",
+        "reflective formatting toolbar (pressed from selection, no focus-steal, colour swatches) diverges",
+        "from stateful ToolbarExternal; force-migrate = wrong-abstraction; await rich-text-editor substrate",
+        "TextEditCommand pub->pub(crate) available (0 external users) -- separate text-edit audit, not here",
+        "undo-on-State vs clipboard-on-External attach asymmetry (R796 carry) -- unreviewed"
+      ],
+      "publishable_decision_summary": "R797 §5.16 §5.12 lift modal-introspection extra-external wiring into a reusable SSOT helper",
+      "publishable_changes_bullets": [
+        "pinion-core/widgets/modal.rs: add modal_introspection_extra(tag, state) -> ExtraExternal (+ import)",
+        "helper wraps ExtraExternal::new(tag, Box::new(ModalIntrospect::new(state))) -- the 4-copy glue",
+        "migrate hello-dialog / hello-drawer / hello-file-open-dialog / hello-file-save-dialog to it",
+        "drop now-unused ModalIntrospect import from the four examples; import modal_introspection_extra",
+        "repays R795 debt: ModalIntrospect was hand-wired at 4 sites (3-site-duplication threshold crossed)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 5633 passed / 0 failed (true CARGO_EXIT=0, not tail-masked)",
+        "new unit test r797_introspection_extra_carries_tag_and_shared_flag: tag + shared open flag",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: pedantic clean",
+        "4 affected RPC demos PASS: r693 dialog / r702 drawer / r788 file-open / r790 file-save",
+        "behavior-preserving SSOT lift -> no new RPC demo (R773 audit-clearance class)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "textarea toolbar (hit_tag/try_toolbar_press) = deferred DESIGN round, NOT a mechanical lift",
+        "reflective formatting toolbar (pressed from selection, no focus-steal, colour swatches) diverges",
+        "from stateful ToolbarExternal; force-migrate = wrong-abstraction; await rich-text-editor substrate",
+        "TextEditCommand pub->pub(crate) available (0 external users) -- separate text-edit audit, not here",
+        "undo-on-State vs clipboard-on-External attach asymmetry (R796 carry) -- unreviewed"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

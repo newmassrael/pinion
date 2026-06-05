@@ -77,7 +77,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::widgets::modal::{use_modal, ModalIntrospect, ModalState};
+use pinion_core::widgets::modal::{modal_introspection_extra, use_modal, ModalState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
@@ -326,10 +326,7 @@ impl WidgetCore for DrawerView {
         for tag in NAV_TAGS {
             extras.push(ExtraExternal::new(tag, Box::new(ButtonExternal::new())));
         }
-        extras.push(ExtraExternal::new(
-            MODAL_STATE_TAG,
-            Box::new(ModalIntrospect::new(modal())),
-        ));
+        extras.push(modal_introspection_extra(MODAL_STATE_TAG, modal()));
         extras
     }
 
