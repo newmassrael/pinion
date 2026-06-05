@@ -31509,6 +31509,60 @@
         "R796 carry cleared: TextEditCommand visibility tightened + attach-asymmetry reviewed (justified)"
       ]
     },
+    "R799": {
+      "decision_summary": "R799 §5.36 §5.38 reflective formatting toolbar = framework-routed non-focusable Toolbar widget",
+      "changes_bullets": [
+        "hello-textarea: formatting toolbar = ToolbarExternal extra-external (6 ToolItem::Command)",
+        "controls paint composite tags fmt_toolbar#<i>; InputRouter routes the click (no manual hit-scan)",
+        "update reducer maps fmt_toolbar.command -> apply_format(index) on the live selection",
+        "deleted hit_tag + try_toolbar_press + apply_toggle + the position_caret toolbar branch",
+        "non-focusable strip (not in focusable_tags) -> click formats without stealing focus (Qt NoFocus)",
+        "reflective B/I fill from selection style_at; position_caret bounds-guards its own field rect",
+        "r768/r769 demos retargeted to composite tags; new r799 demo"
+      ],
+      "verification_bullets": [
+        "new demo r799_textarea_format_toolbar.py: 32 assert (route/no-focus-steal/selection/reflective) PASS",
+        "r768 + r769 retargeted PASS; native click smoke: bold applied, focus + selection kept",
+        "2 new reducer binding tests; cargo test --workspace -j2 0 fail (true CARGO_EXIT)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: pedantic clean"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.38",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "B/I = ToolItem::Command (no aria-pressed); toggle-a11y + Ctrl+B + Tab-to-toolbar = follow-up axes",
+        "view_toolbar (label-only) unused: colour swatches diverge in paint; shared = routing+intent (R773)",
+        "R769.2 shell unfocused-press-dispatch now superfluous for toolbar but left (revert = separate audit)"
+      ],
+      "publishable_decision_summary": "R799 §5.36 §5.38 reflective formatting toolbar = framework-routed non-focusable Toolbar widget",
+      "publishable_changes_bullets": [
+        "hello-textarea: formatting toolbar = ToolbarExternal extra-external (6 ToolItem::Command)",
+        "controls paint composite tags fmt_toolbar#<i>; InputRouter routes the click (no manual hit-scan)",
+        "update reducer maps fmt_toolbar.command -> apply_format(index) on the live selection",
+        "deleted hit_tag + try_toolbar_press + apply_toggle + the position_caret toolbar branch",
+        "non-focusable strip (not in focusable_tags) -> click formats without stealing focus (Qt NoFocus)",
+        "reflective B/I fill from selection style_at; position_caret bounds-guards its own field rect",
+        "r768/r769 demos retargeted to composite tags; new r799 demo"
+      ],
+      "publishable_verification_bullets": [
+        "new demo r799_textarea_format_toolbar.py: 32 assert (route/no-focus-steal/selection/reflective) PASS",
+        "r768 + r769 retargeted PASS; native click smoke: bold applied, focus + selection kept",
+        "2 new reducer binding tests; cargo test --workspace -j2 0 fail (true CARGO_EXIT)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: pedantic clean"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.38",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "B/I = ToolItem::Command (no aria-pressed); toggle-a11y + Ctrl+B + Tab-to-toolbar = follow-up axes",
+        "view_toolbar (label-only) unused: colour swatches diverge in paint; shared = routing+intent (R773)",
+        "R769.2 shell unfocused-press-dispatch now superfluous for toolbar but left (revert = separate audit)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

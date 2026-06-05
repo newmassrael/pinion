@@ -68,8 +68,11 @@ SETTLE = 0.06
 RED = (0xD0, 0x28, 0x28)
 GREEN = (0x1F, 0x8A, 0x34)
 BLUE = (0x26, 0x4C, 0xD8)
-SWATCHES = [("swatch_red", RED), ("swatch_green", GREEN), ("swatch_blue", BLUE)]
-SW_CLEAR = "swatch_clear"
+# R799 — the toolbar is now a framework-routed `ToolbarExternal`; controls
+# carry the composite tags `fmt_toolbar#<i>` (0 bold, 1 italic, 2..5 the
+# red / green / blue / clear swatches), routed by the InputRouter.
+SWATCHES = [("fmt_toolbar#2", RED), ("fmt_toolbar#3", GREEN), ("fmt_toolbar#4", BLUE)]
+SW_CLEAR = "fmt_toolbar#5"
 
 SEED_TEXT = "first line\nsecond line\nthird line"
 
@@ -220,7 +223,7 @@ def body() -> None:
         time.sleep(0.05)
         assert_eq(ta.query("/external/state"), "Focused", "field focused")
         select(ta, 11, 17)  # the green "second"
-        rx, ry, rw, rh = sw_rects["swatch_red"]
+        rx, ry, rw, rh = sw_rects[SWATCHES[0][0]]  # the RED swatch (fmt_toolbar#2)
         ta.click(at=(rx + rw / 2, ry + rh / 2))  # click the RED swatch
         time.sleep(SETTLE)
         assert_eq(

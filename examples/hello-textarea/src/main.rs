@@ -86,6 +86,25 @@
 //! word restores both its text **and** its style run, exercising run
 //! reversal against real multi-line rich text.
 //!
+//! R799 makes the formatting toolbar a **framework-routed, non-focusable
+//! [`Toolbar`](pinion_core::widgets::toolbar::Toolbar) widget** instead of
+//! hand-rolled decoration. The R768/R769 toolbar was a row of tagged
+//! `BoxNode`s that the caret press hook scanned by hand (`hit_tag` /
+//! `try_toolbar_press`) — an application re-implementing the
+//! `InputRouter`. Now the strip is a [`ToolbarExternal`] sibling: its six
+//! controls paint with the composite tags `fmt_toolbar#<i>`, so the router
+//! dispatches a click to the External, which emits a `"command"` intent
+//! [`TextAreaView::update`] maps to the same `merge_style_run` /
+//! `apply_style_run` / `clear_style_runs` op on the live selection. Two
+//! framework axes compose to give the editor's canonical behaviour with no
+//! new substrate: *routing* (the `InputRouter`, by composite tag) applies
+//! the format, while *focus* (the `focusable_tags()` enumeration) leaves
+//! the strip out, so the W3C / Qt-`NoFocus` rule the shell encodes means a
+//! control click never steals the field's focus — the selection survives.
+//! The B / I "pressed" state is reflective: the cell paints a tonal fill
+//! read from the selection's `style_at`, so the toolbar mirrors the
+//! document rather than owning a toggle bit.
+//!
 //! ## Try it
 //!
 //! ```text
@@ -103,7 +122,8 @@
 //! coloured word and undoing brings its colour back with it.
 
 use pinion_a11y::{AccessNode, WidgetA11y};
-use pinion_core::external::External;
+use pinion_core::external::{External, IntrospectValue};
+use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
@@ -111,14 +131,17 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::undo::use_undo_stack;
+use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
-use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
+use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
+use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_text::CaretRect;
 use pinion_widget_paint::text_field as tf_paint;
+use pinion_widget_paint::toolbar::composite_item_tag;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTextAreaRenderer, HelloTextAreaRendererError);
@@ -140,50 +163,44 @@ const ROW_GAP: u32 = 16;
 
 /// R768 — an (R, G, B) ink triple shared by the seed runs + toolbar.
 type Rgb = (u8, u8, u8);
-/// R768 — a toolbar swatch: its tag + ink (`None` = the clear swatch).
-type Swatch = (&'static str, Option<Rgb>);
 
 // R767 §5.36 — the three seed colours (leading word of each line) shared
-// by `create_external`'s run seed and the R768 toolbar swatches so the
+// by `create_external`'s run seed and the toolbar swatches so the
 // "apply to selection" affordance recolours text into the same palette.
 const INK_RED: Rgb = (0xD0, 0x28, 0x28);
 const INK_GREEN: Rgb = (0x1F, 0x8A, 0x34);
 const INK_BLUE: Rgb = (0x26, 0x4C, 0xD8);
 
-// R768 §5.36 §5.22 — colour-apply toolbar. Each swatch is a tagged,
-// non-focusable `BoxNode` (a decoration — clicking it never steals focus
-// from the field, so the selection survives); the press hook routes a
-// hit to `TextEditState::apply_style_run` over the live selection. The
-// last swatch (`None`) clears formatting back to the base style.
-const SW_RED: &str = "swatch_red";
-const SW_GREEN: &str = "swatch_green";
-const SW_BLUE: &str = "swatch_blue";
-const SW_CLEAR: &str = "swatch_clear";
+// R799 §5.36 §5.22 §5.38 — the formatting toolbar is a *framework-routed*
+// control strip (a non-focusable [`ToolbarExternal`] extra-external), not
+// the hand-rolled decoration the pre-R799 binding scanned by hand. Each
+// control is painted with the composite tag `fmt_toolbar#<i>`, so the
+// InputRouter hit-tests it and dispatches the click to the toolbar
+// External — which emits a `"command"` intent the reducer maps to a format
+// op on the live selection. The old manual `hit_tag` / `try_toolbar_press`
+// rect-scan (an application re-implementing the router) is gone. Because
+// the strip is *not* a `focusable_tags()` member, clicking a control
+// applies formatting without stealing the field's focus — the W3C / Qt
+// `NoFocus` rule the shell already encodes (only focusable tags focus on
+// press) supplies the no-focus-steal the decoration used to need by
+// construction, so the selection survives the click.
+//
+// Control indices (parallel to the `ToolItem::Command` strip + the paint):
+//   0 bold · 1 italic · 2 red · 3 green · 4 blue · 5 clear
+const FMT_TAG: &str = "fmt_toolbar";
+const FMT_BOLD: usize = 0;
+const FMT_ITALIC: usize = 1;
+/// Index of the first colour swatch; swatches occupy `[FMT_SWATCH_BASE..]`.
+const FMT_SWATCH_BASE: usize = 2;
+/// The swatch inks in control order (`None` = the clear swatch).
+const FMT_SWATCHES: [Option<Rgb>; 4] = [Some(INK_RED), Some(INK_GREEN), Some(INK_BLUE), None];
+/// Total control count: bold + italic + the four swatches.
+const FMT_CONTROLS: usize = FMT_SWATCH_BASE + FMT_SWATCHES.len();
+/// The §5.20 intent the toolbar External emits on activation, prefixed by
+/// its scene tag (`fmt_toolbar` + `command`), matched in [`TextAreaView::update`].
+const FMT_CMD_INTENT: &str = intent_tag!("fmt_toolbar", "command");
 const SWATCH_SIZE: u32 = 28;
 const SWATCH_GAP: u32 = 10;
-const SWATCHES: [Swatch; 4] = [
-    (SW_RED, Some(INK_RED)),
-    (SW_GREEN, Some(INK_GREEN)),
-    (SW_BLUE, Some(INK_BLUE)),
-    (SW_CLEAR, None),
-];
-
-// R769 §5.36 §5.22 — field-level merge (mergeCharFormat) toggle buttons:
-// bold / italic over the selection, *preserving* its colour. Unlike the
-// colour swatches (wholesale setCharFormat) these route through
-// `TextEditState::merge_style_run`, which keeps untouched fields.
-const TB_BOLD: &str = "toggle_bold";
-const TB_ITALIC: &str = "toggle_italic";
-
-/// R769 — which text field a toggle button flips.
-#[derive(Clone, Copy)]
-enum ToggleField {
-    Bold,
-    Italic,
-}
-
-const TOGGLES: [(&str, ToggleField); 2] =
-    [(TB_BOLD, ToggleField::Bold), (TB_ITALIC, ToggleField::Italic)];
 
 /// R764 §5.22 — single source of truth for the textarea's
 /// [`TextFieldStyle`]. The view fn, the pointer hooks, and the
@@ -214,20 +231,35 @@ fn base_text_style(theme: &pinion_core::theme::Theme, interaction: TextFieldStat
     tf_paint::field_text_style(theme, interaction, &ta_style())
 }
 
-/// R768 §5.36 §5.22 / R769 — the formatting toolbar: bold + italic toggle
-/// buttons (field-level `mergeCharFormat`) then a row of colour swatches
-/// (wholesale `setCharFormat`) + a clear swatch. Each control is a tagged
-/// decoration; the press hook ([`TextAreaView::position_caret_for_point`])
-/// resolves a click to its tag and applies it to the live selection.
-fn toolbar(theme: &pinion_core::theme::Theme) -> Scene {
-    let cell = |tag: &'static str, fill: Color, border: bool, child: Vec<Scene>| {
+/// R799 §5.36 §5.22 §5.38 — paint the formatting toolbar. Bold + italic
+/// toggle buttons (field-level `mergeCharFormat`) then a row of colour
+/// swatches (wholesale `setCharFormat`) + a clear swatch. Each control
+/// carries the composite tag `fmt_toolbar#<i>` so the `InputRouter` routes a
+/// click to the [`ToolbarExternal`] registered in
+/// [`TextAreaView::create_extra_externals`]; the press is dispatched there,
+/// not scanned by the binding. `bold_active` / `italic_active` are the
+/// *reflective* toggle state read from the selection (`style_at`) — the
+/// toolbar owns no format state, it mirrors the document — so the B / I
+/// cell paints a tonal fill when the selection start already carries that
+/// style (Qt's "the bold action is checked when the cursor is in bold
+/// text"). `view_toolbar` (the label-only strip) is deliberately not
+/// reused: the colour swatches diverge in paint, so the shared substrate
+/// is the External routing + intent model, not the label paint (R773).
+fn toolbar(theme: &pinion_core::theme::Theme, bold_active: bool, italic_active: bool) -> Scene {
+    let surface = theme.resolve(ColorRole::SurfaceContainerHighest);
+    let accent = theme.resolve(ColorRole::Accent);
+    // Reflective toggle fill: a tonal blend toward the accent while the
+    // selection already carries the style (the `aria-pressed` affordance).
+    let toggle_fill = |active: bool| if active { surface.lerp(accent, 0.16) } else { surface };
+
+    let cell = |index: usize, fill: Color, border: bool, child: Vec<Scene>| {
         let mut style = BoxStyle::filled(fill).with_corner_radius(6);
         if border {
             style = style.with_border(Border::new(theme.resolve(ColorRole::OnSurfaceMuted), 1));
         }
         Scene::Container(
             ContainerNode::new(child)
-                .with_tag(tag)
+                .with_tag(composite_item_tag(FMT_TAG, index))
                 .with_style(style)
                 .with_layout(
                     // `.flex(...)` is required: `justify_content` /
@@ -244,11 +276,10 @@ fn toolbar(theme: &pinion_core::theme::Theme) -> Scene {
                 ),
         )
     };
-    // R769 — bold / italic toggle buttons, labelled with a "B" / "I"
-    // glyph rendered in the very style they toggle (no icon font).
-    // The glyph's Text box spans the full cell width, so `JustifyContent`
-    // cannot centre it — the glyph must centre *itself* via `text_align`
-    // (otherwise `text_align: Start` left-hugs the "B" / "I" in the cell).
+    // Bold / italic toggle buttons, labelled with a "B" / "I" glyph
+    // rendered in the very style they toggle (no icon font). The glyph's
+    // Text box spans the full cell width, so `JustifyContent` cannot centre
+    // it — the glyph must centre *itself* via `text_align`.
     let label = |text: &'static str, style: TextStyle| {
         vec![Scene::Text(TextNode::styled(
             text,
@@ -257,109 +288,79 @@ fn toolbar(theme: &pinion_core::theme::Theme) -> Scene {
         ))]
     };
     let on = theme.resolve(ColorRole::OnSurface);
-    let surface = theme.resolve(ColorRole::SurfaceContainerHighest);
     let bold_btn = cell(
-        TB_BOLD,
-        surface,
+        FMT_BOLD,
+        toggle_fill(bold_active),
         true,
         label("B", TextStyle::new().with_fg(on).with_weight(FontWeight::BOLD)),
     );
     let italic_btn = cell(
-        TB_ITALIC,
-        surface,
+        FMT_ITALIC,
+        toggle_fill(italic_active),
         true,
         label("I", TextStyle::new().with_fg(on).with_style(FontStyle::Italic)),
     );
     let mut children = vec![bold_btn, italic_btn];
-    children.extend(SWATCHES.iter().map(|&(tag, ink)| match ink {
-        // Clear swatch: a neutral bordered surface (the bordered empty
-        // box reads as "no fill / remove").
-        None => cell(tag, surface, true, Vec::new()),
-        Some(rgb) => cell(tag, Color::rgb(rgb.0, rgb.1, rgb.2), false, Vec::new()),
+    children.extend(FMT_SWATCHES.iter().enumerate().map(|(j, ink)| {
+        let index = FMT_SWATCH_BASE + j;
+        match ink {
+            // Clear swatch: a neutral bordered surface (the bordered empty
+            // box reads as "no fill / remove").
+            None => cell(index, surface, true, Vec::new()),
+            Some(rgb) => cell(index, Color::rgb(rgb.0, rgb.1, rgb.2), false, Vec::new()),
+        }
     }));
     Scene::Container(
-        ContainerNode::new(children).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_gap(SWATCH_GAP),
-        ),
+        ContainerNode::new(children)
+            // The strip's primary tag = the toolbar External's scene tag
+            // (the router's Toolbar scope; per-control tags are `#<i>`).
+            .with_tag(FMT_TAG)
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_gap(SWATCH_GAP),
+            ),
     )
 }
 
-/// R768/R769 — does `(x, y)` land on the toolbar control tagged `tag`?
-/// One rect-contains test shared by the swatch + toggle press routing.
-fn hit_tag(scene: &Scene, tag: &'static str, x: f32, y: f32) -> bool {
-    let Some(rect) = pinion_shell::rect_for_tag(scene, tag) else {
-        return false;
-    };
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "toolbar rect coords are small screen pixels; f32 is exact below 2^23"
-    )]
-    {
-        x >= rect.x as f32
-            && x < (rect.x + rect.w) as f32
-            && y >= rect.y as f32
-            && y < (rect.y + rect.h) as f32
-    }
-}
-
-/// R769 §5.36 §5.22 — flip `field` over the live selection via
-/// [`TextEditState::merge_style_run`]. *Policy* lives here (the toggle
-/// direction is read from the selection start via
-/// [`TextEditState::style_at`]); the substrate owns the *mechanics*. The
-/// other style fields are preserved, so bolding a coloured word keeps its
-/// colour. No-op when nothing is selected.
-fn apply_toggle(field: ToggleField, interaction: TextFieldState) {
+/// R799 §5.36 §5.22 — apply formatting control `index` to the live
+/// selection. The reducer ([`TextAreaView::update`]) calls this when the
+/// toolbar External emits its `"command"` intent (so the *router*, not the
+/// binding, decides which control was hit). *Policy* lives here (a
+/// toggle's direction is read from the selection start via
+/// [`TextEditState::style_at`]); the substrate owns the *mechanics*. No-op
+/// when nothing is selected — formatting needs a range.
+fn apply_format(index: usize, interaction: TextFieldState) {
     let edit = use_text_edit_state(TA_TAG);
     let Some((start, end)) = edit.selection_range() else {
         return;
     };
-    let theme = use_theme(THEME_TAG).theme_animated();
-    let base = base_text_style(&theme, interaction);
-    let at_start = edit.style_at(start);
-    match field {
-        ToggleField::Bold => {
-            let now_bold = at_start.is_some_and(|st| st.font_weight == FontWeight::BOLD);
-            let target = if now_bold { FontWeight::NORMAL } else { FontWeight::BOLD };
-            edit.merge_style_run(start, end, &base, move |st| st.font_weight = target);
-        }
-        ToggleField::Italic => {
-            let now_italic = at_start.is_some_and(|st| st.font_style == FontStyle::Italic);
-            let target = if now_italic { FontStyle::Normal } else { FontStyle::Italic };
-            edit.merge_style_run(start, end, &base, move |st| st.font_style = target);
-        }
-    }
-}
-
-/// R768 §5.36 §5.22 / R769 — toolbar press router. Returns `true` when
-/// `(x, y)` landed on a toolbar control (the press is swallowed — no
-/// caret move): a toggle button flips bold/italic over the selection
-/// (merge), a colour swatch sets its ink (overlay), the clear swatch
-/// strips formatting. A press with no active selection is still
-/// swallowed (the toolbar owns that pixel) but is a no-op — formatting
-/// needs a range. Returns `false` when nothing was hit, so the caller
-/// falls through to caret positioning.
-fn try_toolbar_press(scene: &Scene, x: f32, y: f32, interaction: TextFieldState) -> bool {
-    for (tag, field) in TOGGLES {
-        if hit_tag(scene, tag, x, y) {
-            apply_toggle(field, interaction);
-            return true;
-        }
-    }
-    for (tag, ink) in SWATCHES {
-        if hit_tag(scene, tag, x, y) {
-            if let Some((start, end)) = use_text_edit_state(TA_TAG).selection_range() {
-                let edit = use_text_edit_state(TA_TAG);
-                match ink {
-                    Some(rgb) => edit.apply_style_run(start, end, swatch_text_style(rgb)),
-                    None => edit.clear_style_runs(start, end),
-                }
+    match index {
+        FMT_BOLD | FMT_ITALIC => {
+            // Field-level merge (`mergeCharFormat`): flip only the weight /
+            // style, preserving the run's colour. Unstyled bytes resolve
+            // against the field base before the transform.
+            let theme = use_theme(THEME_TAG).theme_animated();
+            let base = base_text_style(&theme, interaction);
+            let at_start = edit.style_at(start);
+            if index == FMT_BOLD {
+                let now = at_start.is_some_and(|st| st.font_weight == FontWeight::BOLD);
+                let target = if now { FontWeight::NORMAL } else { FontWeight::BOLD };
+                edit.merge_style_run(start, end, &base, move |st| st.font_weight = target);
+            } else {
+                let now = at_start.is_some_and(|st| st.font_style == FontStyle::Italic);
+                let target = if now { FontStyle::Normal } else { FontStyle::Italic };
+                edit.merge_style_run(start, end, &base, move |st| st.font_style = target);
             }
-            return true;
         }
+        // Colour swatches: wholesale `setCharFormat`; the clear swatch
+        // (`None`) strips formatting back to the base style.
+        _ => match FMT_SWATCHES.get(index - FMT_SWATCH_BASE) {
+            Some(Some(rgb)) => edit.apply_style_run(start, end, swatch_text_style(*rgb)),
+            Some(None) => edit.clear_style_runs(start, end),
+            None => {} // index out of range — ignore.
+        },
     }
-    false
 }
 
 // R790 §5.22 — the `Owner::cache`-keyed clipboard hook (`AppClipboard`
@@ -403,6 +404,15 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         Some((start, end)) => format!(" | sel={start}..{end}"),
         None => String::new(),
     };
+    // R799 — reflective toggle state for the B / I cells: read the
+    // selection start's style so the toolbar *mirrors* the document (it
+    // owns no format state). No selection → both inactive.
+    let (bold_active, italic_active) = text_state
+        .selection_range()
+        .and_then(|(start, _)| text_state.style_at(start))
+        .map_or((false, false), |st| {
+            (st.font_weight == FontWeight::BOLD, st.font_style == FontStyle::Italic)
+        });
     let status_str = format!(
         "{} | caret={} | lines={}{}",
         interaction.as_name(),
@@ -419,7 +429,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     ));
 
     Scene::Container(
-        ContainerNode::new(vec![title, field, toolbar(&theme), status])
+        ContainerNode::new(vec![title, field, toolbar(&theme, bold_active, italic_active), status])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
@@ -476,12 +486,44 @@ impl WidgetCore for TextAreaView {
         )
     }
 
+    /// R799 §5.16 §5.38 — register the formatting toolbar as a
+    /// *non-focusable* routed [`ToolbarExternal`] sibling. Six one-shot
+    /// commands (bold / italic / red / green / blue / clear); the view
+    /// paints the controls with the matching `fmt_toolbar#<i>` composite
+    /// tags so the `InputRouter` dispatches a click here, and [`Self::update`]
+    /// maps the emitted `"command"` intent to a format op. The strip is
+    /// absent from [`WidgetView::focusable_tags`] (the textarea declares
+    /// none), so clicking a control never steals the field's focus.
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        vec![ExtraExternal::new(
+            FMT_TAG,
+            Box::new(ToolbarExternal::new(vec![ToolItem::Command; FMT_CONTROLS])),
+        )]
+    }
+
     fn tag() -> &'static str {
         TA_TAG
     }
 
     fn read_state(scene: &Scene) -> (TextFieldState, u32) {
         tf_paint::read_text_field_state(scene, TA_TAG)
+    }
+
+    /// R799 §5.36 §5.20 — apply a formatting-toolbar command to the live
+    /// selection. The routed [`ToolbarExternal`] emits `"command"` with the
+    /// control index as its payload (the runtime prefixes it to
+    /// `fmt_toolbar.command`); [`apply_format`] maps it to a merge / overlay
+    /// / clear. Fire-and-forget: the format mutates `TextEditState`
+    /// directly, so no [`Command`] flows back to the externals.
+    fn update(state: (TextFieldState, u32), intent: &Intent) -> Vec<Command> {
+        if intent.tag.as_ref() == FMT_CMD_INTENT {
+            if let IntrospectValue::Text(idx) = &intent.payload {
+                if let Ok(index) = idx.parse::<usize>() {
+                    apply_format(index, state.0);
+                }
+            }
+        }
+        Vec::new()
     }
 
     fn view(state: (TextFieldState, u32), frame: &Frame) -> Scene {
@@ -493,7 +535,7 @@ impl WidgetCore for TextAreaView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-textarea (R769 §5.36 §5.22)"
+        "pinion hello-textarea (R799 §5.36 §5.22)"
     }
 
     /// R764 §5.22 / R766 — multi-line key handling. Five keys diverge
@@ -673,19 +715,27 @@ impl WidgetView for TextAreaView {
         y: f32,
         extend: bool,
     ) -> Option<usize> {
-        // R769.2 §5.36 §5.22 — the formatting toolbar runs **before** the
-        // focus gate. It acts on the live selection, which lives in
-        // `TextEditState` independent of field focus; gating it on focus
-        // meant a toolbar click that arrived after the field lost focus
-        // (e.g. an earlier click landing in a toolbar gap blurred it) was
-        // silently dropped, so consecutive B / I / swatch presses stopped
-        // applying. A press on a control is swallowed (caret + selection
-        // intact) — the click peer of the AI-first `apply-style` invoke
-        // funnel, both reaching `TextEditState::apply_style_run`.
-        if try_toolbar_press(scene, x, y, state.0) {
+        if focused != Some(TA_TAG) {
             return None;
         }
-        if focused != Some(TA_TAG) {
+        // R799 — the shell fires this hook for *every* press (so a binding
+        // can handle non-caret presses), so a press that landed on the
+        // routed formatting toolbar (a sibling External below the field)
+        // reaches here too. Guard on the field's *own* rect: an out-of-
+        // bounds press is ignored rather than clamped to a caret, which
+        // would clear the selection a toolbar command needs. This is the
+        // field checking its own bounds — not the pre-R799 per-control
+        // toolbar hit-scan the `InputRouter` now owns.
+        let field_rect = pinion_shell::rect_for_tag(scene, TA_TAG)?;
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "field rect coords are small screen pixels; f32 is exact below 2^23"
+        )]
+        let inside = x >= field_rect.x as f32
+            && x < (field_rect.x + field_rect.w) as f32
+            && y >= field_rect.y as f32
+            && y < (field_rect.y + field_rect.h) as f32;
+        if !inside {
             return None;
         }
         let byte = hit_test_area_byte(*state, scene, x, y)?;
@@ -751,9 +801,12 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{view, TextAreaView, TA_TAG};
+    use super::{view, TextAreaView, FMT_CMD_INTENT, TA_TAG};
+    use pinion_core::external::IntrospectValue;
+    use pinion_core::intent::Intent;
     use pinion_core::reactive::Owner;
     use pinion_core::scene::ExternalNode;
+    use pinion_core::style::{FontStyle, FontWeight};
     use pinion_core::widgets::text_edit::use_text_edit_state;
     use pinion_core::widgets::text_field::TextFieldState;
     use pinion_core::{Frame, Scene, WidgetCore};
@@ -1012,6 +1065,52 @@ mod tests {
                 edit.style_at(0).is_some(),
                 "undo restored its style run (R796.1 removed_runs reversal)",
             );
+        });
+    }
+
+    /// R799 §5.36 §5.20 — the reducer maps a routed toolbar `command`
+    /// intent (control index in the payload) to a format op on the live
+    /// selection. Bolding unstyled bytes materialises a bold run; the
+    /// reducer returns no [`Command`] (fire-and-forget).
+    #[test]
+    fn r799_toolbar_command_bolds_the_selection() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            let _ =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            edit.set_selection(5, 10); // " line" after the seed's red "first"
+            assert!(edit.style_at(7).is_none(), "byte 7 starts unstyled");
+            let intent = Intent::new_static(FMT_CMD_INTENT, IntrospectValue::Text("0".to_owned()));
+            let cmds = TextAreaView::update((TextFieldState::Focused, 5), &intent);
+            assert!(cmds.is_empty(), "format is fire-and-forget — no Command back to externals");
+            let st = edit.style_at(7).expect("bolding materialised a run over the gap");
+            assert_eq!(st.font_weight, FontWeight::BOLD, "the command bolded the selection");
+            assert_eq!(st.font_style, FontStyle::Normal, "italic untouched (merge is field-level)");
+        });
+    }
+
+    /// R799 — a toolbar `command` with no active selection is a no-op
+    /// (formatting needs a range), and an unrelated intent is ignored.
+    #[test]
+    fn r799_toolbar_command_without_selection_is_noop() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            let _ =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            edit.set_caret(5); // collapsed — no selection range
+            assert!(edit.selection_range().is_none(), "no active selection");
+            let runs_before = edit.style_runs().len();
+            let intent = Intent::new_static(FMT_CMD_INTENT, IntrospectValue::Text("0".to_owned()));
+            let _ = TextAreaView::update((TextFieldState::Focused, 5), &intent);
+            assert_eq!(
+                edit.style_runs().len(),
+                runs_before,
+                "a no-selection format command changes nothing",
+            );
+            // An intent the toolbar did not emit is ignored.
+            let other = Intent::new_static("something.else", IntrospectValue::Text("0".to_owned()));
+            let cmds = TextAreaView::update((TextFieldState::Focused, 5), &other);
+            assert!(cmds.is_empty(), "an unrelated intent is ignored");
         });
     }
 }

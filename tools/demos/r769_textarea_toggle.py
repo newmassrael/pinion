@@ -61,10 +61,12 @@ SETTLE = 0.06
 RED = (0xD0, 0x28, 0x28)
 GREEN = (0x1F, 0x8A, 0x34)
 BLUE = (0x26, 0x4C, 0xD8)
-SWATCHES = [("swatch_red", RED), ("swatch_green", GREEN), ("swatch_blue", BLUE)]
-SW_CLEAR = "swatch_clear"
-TB_BOLD = "toggle_bold"
-TB_ITALIC = "toggle_italic"
+# R799 — the toolbar is a framework-routed `ToolbarExternal`; controls
+# carry composite tags `fmt_toolbar#<i>` (0 bold, 1 italic, 2..5 swatches).
+SWATCHES = [("fmt_toolbar#2", RED), ("fmt_toolbar#3", GREEN), ("fmt_toolbar#4", BLUE)]
+SW_CLEAR = "fmt_toolbar#5"
+TB_BOLD = "fmt_toolbar#0"
+TB_ITALIC = "fmt_toolbar#1"
 
 SEED_TEXT = "first line\nsecond line\nthird line"
 
@@ -152,7 +154,7 @@ def body() -> None:
             sw_rects[tag] = rects[tag]
         sw_rects[SW_CLEAR] = rects[SW_CLEAR]
         # Bold + italic sit left of the colour swatches (ascending x row).
-        order = [TB_BOLD, TB_ITALIC, "swatch_red", "swatch_green", "swatch_blue", SW_CLEAR]
+        order = [TB_BOLD, TB_ITALIC, SWATCHES[0][0], SWATCHES[1][0], SWATCHES[2][0], SW_CLEAR]
         xs = [sw_rects[t][0] for t in order]
         assert xs == sorted(xs) and len(set(xs)) == 6, f"six toolbar controls in a row ({xs})"
         field_rect = rects[TA_TAG]
