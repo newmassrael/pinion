@@ -30899,6 +30899,50 @@
         "prior file: keyboard nav over file list / clickable breadcrumb / size and mtime / glob filter"
       ]
     },
+    "R791.1": {
+      "decision_summary": "R791.1 audit (user textbook/SSOT? audit): lift DirectoryState::selected_name SSOT — basename was a 2-copy in save-dialog + file-manager (the R789.1 selected_index precedent missed); re-verify the ime-wrapper + attach-triad deferrals are correct with precise dep-graph / builder-usage reasons (a R744.1 carry-reason audit on my own carries)",
+      "changes_bullets": [
+        "DirectoryState::selected_name (leaf of the selection) SSOT; save-dialog + file-manager drop their per-binding basename copies",
+        "ime_caret_rect wrapper stays binding-side — re-verified: widget-paint does not dep runtime, shell dev-deps widget-paint only (irreducible)",
+        "attach-triad stays inline — builder usage of 3 SSOT hooks (state/blink/clipboard), no clean lower-crate home, documented composition API"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (5578 to 5579, +1 selected_name); clippy --workspace --all-targets pedantic clean",
+        "r790 save-dialog + r791 rename demos PASS (selected_name is behavior-identical to the removed basename); validate T1=0 new orphan +0",
+        "user \"textbook/SSOT?\" audit: basename 2-copy was a real R789.1-class miss (lift); ime + attach-triad deferrals re-verified correct with precise reasons"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "commit-on-blur for inline edits deferred (R791 carry-a); rename targets the current selection, captured-path pinning deferred",
+        "aria-multiline (textarea) = text_field_a11y_node additive param, deferred to a 2nd textarea consumer",
+        "ime_caret_rect wrapper + attach-triad = precedented-defer (dep-graph + builder-usage), NOT liftable SSOTs (audited R791.1)",
+        "prior file: keyboard nav over file list / clickable breadcrumb / size and mtime / glob filter"
+      ],
+      "publishable_decision_summary": "R791.1 audit (user textbook/SSOT? audit): lift DirectoryState::selected_name SSOT — basename was a 2-copy in save-dialog + file-manager (the R789.1 selected_index precedent missed); re-verify the ime-wrapper + attach-triad deferrals are correct with precise dep-graph / builder-usage reasons (a R744.1 carry-reason audit on my own carries)",
+      "publishable_changes_bullets": [
+        "DirectoryState::selected_name (leaf of the selection) SSOT; save-dialog + file-manager drop their per-binding basename copies",
+        "ime_caret_rect wrapper stays binding-side — re-verified: widget-paint does not dep runtime, shell dev-deps widget-paint only (irreducible)",
+        "attach-triad stays inline — builder usage of 3 SSOT hooks (state/blink/clipboard), no clean lower-crate home, documented composition API"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (5578 to 5579, +1 selected_name); clippy --workspace --all-targets pedantic clean",
+        "r790 save-dialog + r791 rename demos PASS (selected_name is behavior-identical to the removed basename); validate T1=0 new orphan +0",
+        "user \"textbook/SSOT?\" audit: basename 2-copy was a real R789.1-class miss (lift); ime + attach-triad deferrals re-verified correct with precise reasons"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "commit-on-blur for inline edits deferred (R791 carry-a); rename targets the current selection, captured-path pinning deferred",
+        "aria-multiline (textarea) = text_field_a11y_node additive param, deferred to a 2nd textarea consumer",
+        "ime_caret_rect wrapper + attach-triad = precedented-defer (dep-graph + builder-usage), NOT liftable SSOTs (audited R791.1)",
+        "prior file: keyboard nav over file list / clickable breadcrumb / size and mtime / glob filter"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

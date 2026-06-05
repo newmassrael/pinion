@@ -141,6 +141,18 @@ impl DirectoryState {
         self.entries().iter().position(|e| join_path(&cwd, &e.name) == selected)
     }
 
+    /// R791.1 — the **leaf name** of the current selection (`"/proj/a.txt"`
+    /// → `"a.txt"`), or `None`. The selection is stored as a full path; the
+    /// path→name derivation is the `DirectoryState`'s own responsibility (the
+    /// sibling of [`selected_index`](Self::selected_index)'s path→row map), so
+    /// a save dialog's "click-to-overwrite" prefill and the file manager's
+    /// inline-rename prefill read one SSOT rather than each re-deriving the
+    /// basename. Subscribes (reads `selected`).
+    #[must_use]
+    pub fn selected_name(&self) -> Option<String> {
+        self.selected().map(|p| p.rsplit('/').next().unwrap_or(&p).to_owned())
+    }
+
     /// Re-read the current directory's listing into the `entries` Signal
     /// (after a `cwd` change). An unreadable directory lists empty.
     fn refresh(&self) {
@@ -686,6 +698,17 @@ mod tests {
         assert_eq!(s.selected_index(), Some(2), "README.md is row 2");
         s.navigate("src");
         assert_eq!(s.selected_index(), None, "navigation cleared the selection");
+    }
+
+    #[test]
+    fn r791_1_selected_name_is_the_leaf_of_the_selection() {
+        let s = state(); // /proj: [src(dir), Cargo.toml, README.md]
+        assert_eq!(s.selected_name(), None, "no selection = None");
+        s.select("README.md");
+        assert_eq!(s.selected_name(), Some("README.md".to_string()), "leaf of /proj/README.md");
+        s.navigate("src");
+        s.select("main.rs");
+        assert_eq!(s.selected_name(), Some("main.rs".to_string()), "leaf in a nested cwd");
     }
 
     #[test]

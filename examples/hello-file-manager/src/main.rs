@@ -149,11 +149,6 @@ fn use_renaming() -> Rc<Signal<bool>> {
         .cache(RENAMING_KEY, || Signal::new(false))
 }
 
-/// The last path component of a `'/'`-path (`"/proj/a.txt"` → `"a.txt"`).
-fn basename(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
-}
-
 /// A name not already present in `entries`, built from `base` + `ext`.
 fn unique_name(entries: &[DirEntry], base: &str, ext: &str) -> String {
     let taken = |n: &str| entries.iter().any(|e| e.name == n);
@@ -175,10 +170,10 @@ fn unique_name(entries: &[DirEntry], base: &str, ext: &str) -> String {
 /// field. A no-op without a selection (the Rename gate). The text + caret +
 /// flag writes [`batch`] so the row re-renders once.
 fn enter_rename() {
-    let Some(selected) = directory().selected() else {
+    // R791.1 — the selected entry's leaf name is `DirectoryState`'s SSOT.
+    let Some(name) = directory().selected_name() else {
         return;
     };
-    let name = basename(&selected).to_owned();
     let edit = rename_state();
     batch(|| {
         edit.set_text(name.clone());

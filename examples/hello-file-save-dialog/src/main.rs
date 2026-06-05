@@ -207,13 +207,6 @@ fn filename_state() -> Rc<pinion_core::widgets::text_edit::TextEditState> {
     use_text_edit_state(FILENAME_TAG)
 }
 
-/// The last path component of a `'/'`-path (`"/proj/Cargo.toml"` →
-/// `"Cargo.toml"`). Directories are never selected, so this only ever
-/// runs on a selected file's path.
-fn basename(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
-}
-
 /// Seed the synthetic sample-project tree the picker walks. Deterministic
 /// [`InMemoryDirectory`] backing (the `Storage`/`InMemoryStorage`
 /// precedent) so the demo + pixel guard see a fixed tree; the real-fs
@@ -257,8 +250,9 @@ fn use_filename_sync() -> Rc<FilenameSyncMarker> {
     let owner_for_effect = owner.clone();
     owner.cache(SYNC_KEY, move || {
         let effect = Effect::new(&owner_for_effect, move || {
-            if let Some(path) = dir.selected() {
-                let name = basename(&path).to_owned();
+            // R791.1 — the leaf-name derivation is `DirectoryState`'s own
+            // SSOT (`selected_name`), not a per-binding `basename`.
+            if let Some(name) = dir.selected_name() {
                 batch(|| {
                     edit.set_text(name.clone());
                     edit.set_caret(name.len());

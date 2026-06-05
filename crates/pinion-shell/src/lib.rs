@@ -191,6 +191,17 @@ pub use pinion_core::WidgetRenderer;
 // the re-export just shortens the consumer-side surface.
 pub use pinion_runtime::rect_for_tag;
 
+// R791.1 §5.13 §5.38 — the per-binding `WidgetView::ime_caret_rect` body
+// (focus-guard + `rect_for_tag` walk + `tf_paint::ime_caret_rect_for`) is
+// NOT lifted here, by deliberate dep-graph design: `pinion-widget-paint`
+// (which owns `ime_caret_rect_for`) does not dep `pinion-runtime` (which
+// owns `rect_for_tag`) so it stays backend-agnostic + TUI-reusable, and
+// `pinion-shell` deps `pinion-widget-paint` only as a *dev*-dependency so
+// the generic shell never couples to a specific widget's paint. The
+// binding is the sole crate that sees both `rect_for_tag` and the
+// TextField caret composition, so the ~5-line wrapper is irreducibly
+// binding-side (a precedented-defer, not a liftable SSOT). Audited R791.1.
+
 /// R51.109.1 §5.41 — Vello specialization of [`WidgetRenderer`].
 ///
 /// Locks `Frame = vello::Scene` and `Context = VelloContext` so every
