@@ -31747,6 +31747,44 @@
         "fix: composite_tag::sub_tag(primary, sub) paired with split_subindex, all producers delegate"
       ]
     },
+    "R803": {
+      "decision_summary": "R803 §5.35 — composite-tag ENCODE SSOT lift INVESTIGATED then REJECTED. R802.1's cost-no-object review flagged the {tag}#{sub} encode as lacking an SSOT (~10 sites). A full-repo grep instead found ~100 sites across ~35 files — the signature of an idiom, not a missed abstraction. The # is a frozen protocol separator (R51.42); split_subindex is a fn only because PARSING is non-trivial, while ENCODING is a trivial format! join. A sub_tag wrapper over 100 sites is the R735.1 net-zero-wrapper / R779.1 over-merge trap (hides the wire shape, 35-file churn, zero safety gain since tests assert the tags and the separator is frozen). R778's trivial-inline call was correct; the review over-corrected under the cost-no-object framing. R802.1's select() fix was a separate, genuine domain-logic dup and stands.",
+      "changes_bullets": [
+        "no code change (investigation / decision-audit round; SEED + this entry record the rejection)",
+        "full-repo grep: {tag}#{sub} composite encode = ~100 sites across ~35 files (idiom, not abstraction)"
+      ],
+      "verification_bullets": [
+        "split_subindex is a fn because PARSE is non-trivial; encode is a trivial format! join (asymmetry justified)",
+        "R51.42 # separator is a frozen protocol constant; sub_tag wrapper = R735.1 net-zero / R779.1 over-merge",
+        "tests already assert every composite tag, so a wrapper adds zero safety while hiding the wire shape"
+      ],
+      "impact_refs": [
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "R802.1's select() SSOT fix was a separate genuine domain-logic dup (cwd-path build), unaffected by this",
+        "the two composite_item_tag (menu #i / toolbar #) share a name across modules = cosmetic, not a real dup",
+        "R804+ = genuine high-leverage Phase B (OS-native menu/print own-renderer / Model-View at scale / §7 API)"
+      ],
+      "publishable_decision_summary": "R803 §5.35 — composite-tag ENCODE SSOT lift INVESTIGATED then REJECTED. R802.1's cost-no-object review flagged the {tag}#{sub} encode as lacking an SSOT (~10 sites). A full-repo grep instead found ~100 sites across ~35 files — the signature of an idiom, not a missed abstraction. The # is a frozen protocol separator (R51.42); split_subindex is a fn only because PARSING is non-trivial, while ENCODING is a trivial format! join. A sub_tag wrapper over 100 sites is the R735.1 net-zero-wrapper / R779.1 over-merge trap (hides the wire shape, 35-file churn, zero safety gain since tests assert the tags and the separator is frozen). R778's trivial-inline call was correct; the review over-corrected under the cost-no-object framing. R802.1's select() fix was a separate, genuine domain-logic dup and stands.",
+      "publishable_changes_bullets": [
+        "no code change (investigation / decision-audit round; SEED + this entry record the rejection)",
+        "full-repo grep: {tag}#{sub} composite encode = ~100 sites across ~35 files (idiom, not abstraction)"
+      ],
+      "publishable_verification_bullets": [
+        "split_subindex is a fn because PARSE is non-trivial; encode is a trivial format! join (asymmetry justified)",
+        "R51.42 # separator is a frozen protocol constant; sub_tag wrapper = R735.1 net-zero / R779.1 over-merge",
+        "tests already assert every composite tag, so a wrapper adds zero safety while hiding the wire shape"
+      ],
+      "publishable_impact_refs": [
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R802.1's select() SSOT fix was a separate genuine domain-logic dup (cwd-path build), unaffected by this",
+        "the two composite_item_tag (menu #i / toolbar #) share a name across modules = cosmetic, not a real dup",
+        "R804+ = genuine high-leverage Phase B (OS-native menu/print own-renderer / Model-View at scale / §7 API)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
