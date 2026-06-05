@@ -194,28 +194,35 @@ fn enter_rename() {
 
 /// R791 — commit the inline rename: write the (trimmed, non-blank) field
 /// text onto the selected entry via the [`Directory`] rename surface, then
-/// tear down edit mode. A blank name cancels (no rename).
-fn commit_rename() {
+/// tear down edit mode. A blank name cancels (no rename). `restore_focus`
+/// returns focus to the Rename button (the `Enter` path); the R793
+/// commit-on-blur path passes `false` so it does not steal focus back from
+/// wherever the click that caused the blur moved it.
+fn commit_rename(restore_focus: bool) {
     let name = rename_state().text();
     if !name.trim().is_empty() {
         directory().rename_selected(name.trim());
     }
-    end_rename();
+    end_rename(restore_focus);
 }
 
 /// R791 — cancel the inline rename without writing.
 fn cancel_rename() {
-    end_rename();
+    end_rename(true);
 }
 
-/// R791 — shared teardown: clear the edit flag, wipe the field, and return
-/// focus to the Rename button so the next keystroke lands on the toolbar.
-fn end_rename() {
+/// R791 — shared teardown: clear the edit flag and wipe the field. When
+/// `restore_focus` is set (the `Enter` / `Escape` keyboard paths) focus
+/// returns to the Rename button so the next keystroke lands on the toolbar;
+/// the R793 blur path leaves focus where the user moved it.
+fn end_rename(restore_focus: bool) {
     batch(|| {
         use_renaming().set(false);
         rename_state().set_text(String::new());
     });
-    pinion_core::focus_request::request(RENAME_TAG);
+    if restore_focus {
+        pinion_core::focus_request::request(RENAME_TAG);
+    }
 }
 
 /// Render one toolbar button via the [`pinion_widget_paint::button`]
@@ -345,7 +352,9 @@ impl WidgetCore for FileManagerView {
                     TextFieldExternal::new()
                         .attach_state(rename_state())
                         .attach_blink(use_caret_blink(RENAME_TF_TAG))
-                        .attach_clipboard(use_app_clipboard(RENAME_TF_TAG)),
+                        .attach_clipboard(use_app_clipboard(RENAME_TF_TAG))
+                        // R793 — commit the rename when focus leaves the field.
+                        .with_blur_intent(),
                 ),
             ),
         ]
@@ -413,7 +422,7 @@ impl WidgetCore for FileManagerView {
         if focused == Some(RENAME_TF_TAG) {
             match key {
                 "Enter" => {
-                    commit_rename();
+                    commit_rename(true);
                     return true;
                 }
                 "Escape" => {
@@ -468,6 +477,16 @@ impl WidgetCore for FileManagerView {
                 dir.create_file(&name);
             }
             "fm_rename.click" => enter_rename(),
+            // R793 — commit-on-blur: the rename field lost focus (a click
+            // elsewhere) while editing → save the rename without restoring
+            // focus (the click already moved it). The `renaming` gate makes
+            // the post-commit / post-cancel blur (focus restored to the
+            // Rename button) a no-op, so only a genuine click-away commits.
+            "fm_rename_tf.blur" => {
+                if use_renaming().get() {
+                    commit_rename(false);
+                }
+            }
             "fm_delete.click" => {
                 dir.delete_selected();
             }
@@ -777,9 +796,44 @@ mod tests {
             dir.select("README.md");
             enter_rename();
             rename_state().set_text("   ".to_owned());
-            commit_rename();
+            commit_rename(true);
             assert!(!use_renaming().get(), "blank commit exits edit mode");
             assert!(dir.entries().iter().any(|e| e.name == "README.md"), "blank name does not rename");
+        });
+    }
+
+    #[test]
+    fn r793_blur_commits_rename_without_restoring_focus() {
+        Owner::new().run(|| {
+            let _ = pinion_core::focus_request::drain();
+            let dir = directory();
+            dir.select("README.md");
+            enter_rename();
+            rename_state().set_text("NOTES.md".to_owned());
+            let _ = pinion_core::focus_request::drain(); // consume enter_rename's request
+            // The rename field lost focus → the "blur" intent commits the edit.
+            let _ = FileManagerView::update(idle(), &intent("fm_rename_tf.blur"));
+            assert!(!use_renaming().get(), "blur exits edit mode");
+            assert!(dir.entries().iter().any(|e| e.name == "NOTES.md"), "rename committed on blur");
+            assert!(!dir.entries().iter().any(|e| e.name == "README.md"), "old name gone");
+            assert_eq!(
+                pinion_core::focus_request::drain(),
+                None,
+                "commit-on-blur does not steal focus back (the click already moved it)",
+            );
+        });
+    }
+
+    #[test]
+    fn r793_blur_without_an_edit_in_progress_is_inert() {
+        Owner::new().run(|| {
+            // The post-commit / post-cancel blur (renaming already false) is a
+            // no-op — only a genuine click-away while editing commits.
+            let dir = directory();
+            let before = dir.entries().len();
+            let _ = FileManagerView::update(idle(), &intent("fm_rename_tf.blur"));
+            assert!(!use_renaming().get());
+            assert_eq!(dir.entries().len(), before, "blur with no edit in progress does nothing");
         });
     }
 

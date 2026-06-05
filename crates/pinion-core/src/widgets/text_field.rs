@@ -687,6 +687,14 @@ impl WidgetTransition for TextField {
 /// (statechart focus/blur drive + caret-blink `set_enabled` sync).
 pub struct TextFieldExternal {
     em: IntentEmitter<TextField>,
+    /// R793 §5.38 §5.39 — opt-in: emit a `"blur"` §5.20 intent on every
+    /// focus loss (the W3C DOM `focusout` mirror). Off by default — a plain
+    /// field stays silent on blur (only the IME `"text_committed"` path
+    /// fires). An inline editor (todomvc row edit / file-manager rename)
+    /// opts in via [`Self::with_blur_intent`] so its binding's reducer can
+    /// **commit-on-blur** (click-away saves the edit, the Files/Explorer /
+    /// `TodoMVC` convention).
+    emit_blur_intent: bool,
 }
 
 impl TextFieldExternal {
@@ -694,7 +702,18 @@ impl TextFieldExternal {
     /// [`TextField`] in [`TextFieldState::Idle`].
     #[must_use]
     pub fn new() -> Self {
-        Self { em: IntentEmitter::default() }
+        Self { em: IntentEmitter::default(), emit_blur_intent: false }
+    }
+
+    /// R793 §5.38 §5.39 — opt into emitting a `"blur"` §5.20 intent on every
+    /// focus loss (the DOM `focusout` mirror). A binding wires this on an
+    /// **inline editor** field so its reducer commits the edit when focus
+    /// leaves (click-away). Plain fields leave it off and stay silent on
+    /// blur. Builder-style; chain after [`Self::new`].
+    #[must_use]
+    pub fn with_blur_intent(mut self) -> Self {
+        self.emit_blur_intent = true;
+        self
     }
 
     /// R56.1.b §5.38 — attach a [`TextEditState`] handle to the
@@ -1027,6 +1046,14 @@ impl External for TextFieldExternal {
             None => {}
         }
         self.send(TextFieldEvent::Blur);
+        // R793 §5.38 §5.39 — the DOM `focusout` mirror: an opted-in inline
+        // editor emits a `"blur"` intent on every focus loss so its binding
+        // reducer can commit the edit (click-away saves). Fires unconditionally
+        // on focus loss (the reducer gates on its own edit-mode flag); a plain
+        // field never opts in, so this is silent for every non-editor field.
+        if self.emit_blur_intent {
+            self.em.push(Intent::new_static("blur", IntrospectValue::Null));
+        }
     }
 }
 
@@ -4372,6 +4399,37 @@ mod r56_1_h_tests {
             harvested.is_empty(),
             "Focused→Idle without Editing must not raise text_committed",
         );
+    }
+
+    #[test]
+    fn r793_blur_intent_opt_in_emits_on_focus_loss() {
+        // R793 — an opted-in editor field emits a "blur" intent on every
+        // focus loss (the DOM focusout mirror), even from plain Focused
+        // (no IME composition) where text_committed stays silent.
+        let mut tfx = TextFieldExternal::new().with_blur_intent();
+        tfx.on_focus_change(true);
+        let mut prior = Vec::new();
+        tfx.drain_intents(&mut |i| prior.push(i));
+        assert!(prior.is_empty(), "focus-in emits no blur");
+        tfx.on_focus_change(false);
+        let mut harvested = Vec::new();
+        tfx.drain_intents(&mut |i| harvested.push(i));
+        assert_eq!(harvested.len(), 1, "one blur intent on focus loss");
+        assert_eq!(harvested[0].tag_str(), "blur");
+    }
+
+    #[test]
+    fn r793_blur_intent_is_off_by_default() {
+        // Without opting in, a plain field stays silent on blur (zero blast
+        // radius on every existing TextField consumer).
+        let mut tfx = TextFieldExternal::new();
+        tfx.on_focus_change(true);
+        let mut prior = Vec::new();
+        tfx.drain_intents(&mut |i| prior.push(i));
+        tfx.on_focus_change(false);
+        let mut harvested = Vec::new();
+        tfx.drain_intents(&mut |i| harvested.push(i));
+        assert!(harvested.is_empty(), "default field emits no blur intent");
     }
 
     // ─────────────────────────────────────────────────────────────

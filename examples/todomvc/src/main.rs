@@ -208,6 +208,12 @@ const FILTER_KEY: &str = "todomvc.filter";
 const TODO_FILTER_SELECTED_INTENT_TAG: &str =
     pinion_core::intent_tag!("todo_filter", "selected");
 
+/// (R793 §5.38 §5.39) The `"blur"` intent the inline row editor
+/// ([`EDIT_TF_TAG`], opted in via `TextFieldExternal::with_blur_intent`)
+/// emits on focus loss. The reducer commits the edit on this (click-away
+/// saves, the `TodoMVC` convention) — the DOM `focusout` mirror.
+const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("todo_edit", "blur");
+
 /// (R664 §5.16 §5.38) Per-row in-place edit affordance — shared
 /// `TextField` tag for the *single* row in edit mode. Only one row is
 /// editable at a time ([`TasteJS`] `TodoMVC` canonical), so a single
@@ -483,7 +489,7 @@ fn apply_key_filter(scene: &mut Scene, key: &str) -> bool {
 fn apply_key_edit(scene: &mut Scene, key: &str) -> bool {
     match key {
         "Enter" => {
-            commit_edit(scene);
+            commit_edit(true);
             true
         }
         "Escape" => {
@@ -511,7 +517,7 @@ fn apply_key_edit(scene: &mut Scene, key: &str) -> bool {
 /// Idempotent under the equality-skip `Signal::set` path: a commit
 /// that does not change the text yields a no-op `set_with` (the
 /// `Vec<TodoItem>` clone with the same text compares equal).
-fn commit_edit(_scene: &mut Scene) {
+fn commit_edit(restore_focus: bool) {
     let Some(target_id) = use_editing_id().get() else {
         return;
     };
@@ -545,7 +551,7 @@ fn commit_edit(_scene: &mut Scene) {
                 .collect()
         });
     }
-    end_edit_mode();
+    end_edit_mode(restore_focus);
 }
 
 /// (R664 §5.16) Cancel the in-flight edit. Drops the editor's
@@ -553,18 +559,21 @@ fn commit_edit(_scene: &mut Scene) {
 /// to the main input field so the user's next keystroke lands in
 /// the "add todo" channel.
 fn cancel_edit() {
-    end_edit_mode();
+    end_edit_mode(true);
 }
 
-/// (R664 §5.16) Shared finish-edit teardown — clears [`editing_id`],
-/// wipes the editor's [`TextEditState`] so the next edit starts
-/// blank, and queues a focus return to [`TF_TAG`] via
-/// [`pinion_core::focus_request`]. Used by both the `Enter` commit
-/// and `Escape` cancel paths.
-fn end_edit_mode() {
+/// (R664 §5.16 / R793) Shared finish-edit teardown — clears [`editing_id`]
+/// and wipes the editor's [`TextEditState`] so the next edit starts blank.
+/// When `restore_focus` is set (the `Enter` commit / `Escape` cancel
+/// keyboard paths) it queues a focus return to [`TF_TAG`]; the R793
+/// commit-on-blur path passes `false` so it leaves focus where the click
+/// that caused the blur moved it.
+fn end_edit_mode(restore_focus: bool) {
     use_editing_id().set(None);
     use_text_edit_state(EDIT_TF_TAG).set_text(String::new());
-    pinion_core::focus_request::request(TF_TAG);
+    if restore_focus {
+        pinion_core::focus_request::request(TF_TAG);
+    }
 }
 
 /// Read the [`RadioGroupExternal`] `focused_index` slot. `None`
@@ -2246,7 +2255,9 @@ impl WidgetCore for TodoMvcView {
                     TextFieldExternal::new()
                         .attach_state(edit_text_state)
                         .attach_blink(edit_blink)
-                        .attach_clipboard(edit_clipboard),
+                        .attach_clipboard(edit_clipboard)
+                        // R793 — commit the row edit when focus leaves it.
+                        .with_blur_intent(),
                 ),
             ),
         ]
@@ -2311,6 +2322,14 @@ impl WidgetCore for TodoMvcView {
                     }
                 }
             }
+        }
+        // R793 §5.38 §5.39 — commit-on-blur: the row editor lost focus (a
+        // click elsewhere) while editing → commit the edit without restoring
+        // focus (the click already moved it). The `editing_id` gate makes the
+        // post-commit / post-cancel blur (focus restored to the main field) a
+        // no-op, so only a genuine click-away commits.
+        if intent.tag_str() == EDIT_TF_BLUR_INTENT_TAG && use_editing_id().get().is_some() {
+            commit_edit(false);
         }
         Vec::new()
     }
@@ -4770,8 +4789,7 @@ mod tests {
             super::use_editing_id().set(Some(id));
             pinion_core::widgets::text_edit::use_text_edit_state(EDIT_TF_TAG)
                 .set_text("new".to_owned());
-            let mut scene = super::Scene::Container(super::ContainerNode::new(vec![]));
-            super::commit_edit(&mut scene);
+            super::commit_edit(true);
             let items = use_todos().get();
             let updated = items.iter().find(|i| i.id == id).unwrap();
             assert_eq!(updated.text, "new", "row text updated");
@@ -4798,12 +4816,70 @@ mod tests {
             super::use_editing_id().set(Some(id));
             pinion_core::widgets::text_edit::use_text_edit_state(EDIT_TF_TAG)
                 .set_text("   ".to_owned());
-            let mut scene = super::Scene::Container(super::ContainerNode::new(vec![]));
-            super::commit_edit(&mut scene);
+            super::commit_edit(true);
             assert!(
                 !use_todos().get().iter().any(|i| i.id == id),
                 "blank commit removes the row",
             );
+        });
+    }
+
+    /// (R793) The inline editor's `"blur"` intent commits the edit
+    /// (click-away saves, the `TodoMVC` convention) without restoring focus —
+    /// the click that caused the blur already moved it.
+    #[test]
+    fn r793_blur_intent_commits_row_edit_without_focus_restore() {
+        with_owner(|| {
+            let _ = pinion_core::focus_request::drain();
+            let id = super::allocate_todo_id();
+            use_todos().set_with(|prev| {
+                let mut next = prev.clone();
+                next.push(TodoItem { id, text: "old".to_owned(), completed: false });
+                next
+            });
+            super::use_editing_id().set(Some(id));
+            pinion_core::widgets::text_edit::use_text_edit_state(EDIT_TF_TAG)
+                .set_text("edited".to_owned());
+            let _ = pinion_core::focus_request::drain();
+            let intent = pinion_core::Intent::new_owned(
+                super::EDIT_TF_BLUR_INTENT_TAG.to_owned(),
+                IntrospectValue::Null,
+            );
+            let _ = TodoMvcView::update(
+                (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+                &intent,
+            );
+            let items = use_todos().get();
+            assert_eq!(
+                items.iter().find(|i| i.id == id).unwrap().text,
+                "edited",
+                "the blur intent committed the in-flight edit",
+            );
+            assert_eq!(super::use_editing_id().get(), None, "edit mode cleared on blur");
+            assert_eq!(
+                pinion_core::focus_request::drain(),
+                None,
+                "commit-on-blur does not steal focus back to the main field",
+            );
+        });
+    }
+
+    /// (R793) The post-commit / post-cancel blur (no edit in progress) is a
+    /// no-op — only a genuine click-away while editing commits.
+    #[test]
+    fn r793_blur_intent_without_an_edit_is_inert() {
+        with_owner(|| {
+            super::use_editing_id().set(None);
+            let count = use_todos().get().len();
+            let intent = pinion_core::Intent::new_owned(
+                super::EDIT_TF_BLUR_INTENT_TAG.to_owned(),
+                IntrospectValue::Null,
+            );
+            let _ = TodoMvcView::update(
+                (TextFieldState::Idle, 0, FilterRadioStates::default(), TextFieldState::Idle, 0),
+                &intent,
+            );
+            assert_eq!(use_todos().get().len(), count, "blur with no edit in progress is inert");
         });
     }
 
@@ -4845,7 +4921,7 @@ mod tests {
             // Drain any prior request from sibling tests in the
             // same thread.
             let _ = pinion_core::focus_request::drain();
-            super::end_edit_mode();
+            super::end_edit_mode(true);
             assert_eq!(
                 pinion_core::focus_request::drain(),
                 Some(TF_TAG.to_owned()),
