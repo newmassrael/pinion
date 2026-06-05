@@ -31,9 +31,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
 use pinion_core::storage::{InMemoryStorage, Storage};
-use pinion_platform_clipboard::ArboardClipboard;
+use pinion_platform_clipboard::use_app_clipboard;
 use pinion_platform_storage::{open_app_storage, FileStorage};
 // R659 §5.16 §5.35 — lifted composite-tag parser shared by every
 // `<key>:<EventName>` send-payload consumer
@@ -877,43 +876,11 @@ const ROW_GAP: u32 = 16;
 // `pinion_widget_paint::text_field::use_text_field_layout_cache`
 // (private impl detail of `view_field` + `ime_caret_rect_for`).
 
-/// R56.1.e §5.22 / R56.2.b §5.22 — `Owner::cache`-keyed clipboard
-/// hook. Prefers [`ArboardClipboard`] (Wayland / X11 / macOS / Windows
-/// canonical platform backend); falls back to [`InMemoryClipboard`]
-/// on init failure (headless CI, sandboxed). [`AppClipboard`] is the
-/// `Sized` wrapper the `Owner::cache<V>` slot stores.
-fn use_clipboard(key: &'static str) -> Rc<dyn Clipboard> {
-    let cb: Rc<AppClipboard> = Owner::current()
-        .expect("use_clipboard requires an active Owner scope")
-        .cache(key, || {
-            AppClipboard(match ArboardClipboard::try_new() {
-                Ok(arboard) => Box::new(arboard) as Box<dyn Clipboard>,
-                Err(e) => {
-                    eprintln!(
-                        "hello-textfield: ArboardClipboard init failed \
-                         ({e}); falling back to InMemoryClipboard \
-                         (cross-process clipboard disabled)",
-                    );
-                    Box::new(InMemoryClipboard::new()) as Box<dyn Clipboard>
-                }
-            })
-        });
-    cb
-}
-
-/// Sized newtype around `Box<dyn Clipboard>` — `Owner::cache<V>` slot
-/// requires a single concrete `V`, so the runtime impl choice
-/// (arboard vs in-memory) hides inside the box.
-struct AppClipboard(Box<dyn Clipboard>);
-
-impl Clipboard for AppClipboard {
-    fn copy(&self, text: String) {
-        self.0.copy(text);
-    }
-    fn paste(&self) -> Option<String> {
-        self.0.paste()
-    }
-}
+// R790 §5.22 — the `Owner::cache`-keyed clipboard hook (`AppClipboard`
+// wrapper + Arboard-with-InMemory-fallback) lifted to
+// `pinion_platform_clipboard::use_app_clipboard`, shared by every
+// text-field binding (the lifted wrapper also forwards the
+// selection-aware `copy_to` / `paste_from`, fixing the PRIMARY swallow).
 
 /// (R665 §3 §5.15) Sized newtype around `Box<dyn Storage>` — the
 /// `Owner::cache<V>` slot requires a single concrete `V`, so the
@@ -2209,7 +2176,7 @@ impl WidgetCore for TodoMvcView {
         // resolve to the same `Owner::cache` slots the view fn sees.
         let text_state = use_text_edit_state(TF_TAG);
         let blink = use_caret_blink(TF_TAG);
-        let clipboard = use_clipboard(TF_TAG);
+        let clipboard = use_app_clipboard(TF_TAG);
         Box::new(
             TextFieldExternal::new()
                 .attach_state(text_state)
@@ -2258,7 +2225,7 @@ impl WidgetCore for TodoMvcView {
         );
         let edit_text_state = use_text_edit_state(EDIT_TF_TAG);
         let edit_blink = use_caret_blink(EDIT_TF_TAG);
-        let edit_clipboard = use_clipboard(EDIT_TF_TAG);
+        let edit_clipboard = use_app_clipboard(EDIT_TF_TAG);
         vec![
             ExtraExternal::new(
                 DELETE_TAG,
@@ -2484,19 +2451,17 @@ impl WidgetA11y for TodoMvcView {
     fn access_node(state: &(TextFieldState, u32, FilterRadioStates, TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, _caret, filter_radios, _edit_interaction, _edit_caret) = state;
         let text = use_text_edit_state(TF_TAG).text();
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(interaction, TextFieldState::Disabled),
-            hovered: false,
-            pressed: false,
-            checked: None,
-        };
+        let tf_tag = <Self as WidgetCore>::tag();
 
-        let mut nodes = vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::TextInput)
-                .with_value(AccessValue::Text(text))
-                .with_state(access_state),
-        ];
+        // R790 §5.40 — the "add todo" textbox node via the lifted SSOT
+        // (`tf_paint::text_field_a11y_node`); the radiogroup nodes below
+        // stay binding-local (their per-radio state is bespoke).
+        let mut nodes = vec![tf_paint::text_field_a11y_node(
+            tf_tag,
+            text,
+            *interaction,
+            focused == Some(tf_tag),
+        )];
 
         // R659 §5.40 — filter group root + 3 RadioButton children
         // (W3C WAI-ARIA "radiogroup" canonical mapping for a

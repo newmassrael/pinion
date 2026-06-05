@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R790 §5.15 §5.16 §5.38 §5.39 — modal file-save dialog: pinion-forge
+  renderer manifest for hello-file-save-dialog. Same single-source-of-truth
+  template as the other hello-* renderers; only the struct name diverges.
+  backend=vello.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloFileSaveDialogRenderer"
+        backend="vello"/>

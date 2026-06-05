@@ -53,13 +53,9 @@
 //! to blur → caret disappears, the SCXML transitions
 //! `Focused → Idle`. Press `d` to disable, `e` to re-enable.
 
-use std::rc::Rc;
-
-use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
-use pinion_platform_clipboard::ArboardClipboard;
 use pinion_core::external::{External, IntrospectValue};
-use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_platform_clipboard::use_app_clipboard;
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
@@ -68,7 +64,7 @@ use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
+use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_text::CaretRect;
 // R657 §5.16 §5.38 — lifted TextField paint substrate (view body +
@@ -123,66 +119,12 @@ const ROW_GAP: u32 = 16;
 // `pinion_widget_paint::text_field` (private impl details of
 // [`tf_paint::view_field`] + [`tf_paint::ime_caret_rect_for`]).
 //
-/// R56.1.e §5.22 / R56.2.b §5.22 — `Owner::cache`-keyed clipboard
-/// hook. Mirrors the [`use_text_edit_state`] / [`use_caret_blink`]
-/// hooks; the cache key dedups so the External's `attach_clipboard`
-/// and any later (carry) view-fn read resolve to the same
-/// `Rc<dyn Clipboard>` instance.
-///
-/// R56.2.b §5.22 — prefers the platform-backed
-/// [`ArboardClipboard`] (Wayland `wl_data_device` + X11 CLIPBOARD +
-/// macOS `NSPasteboard` + Windows `OpenClipboard` via the canonical
-/// Rust ecosystem `arboard` crate) and falls back to the in-memory
-/// impl on init failure (headless CI, sandboxed display-less
-/// container, broken Wayland socket). The fallback keeps the
-/// keyboard-shortcut UX functional (Ctrl/Cmd+C → Ctrl/Cmd+V
-/// round-trip within the running hello-textfield process) at the
-/// cost of cross-process clipboard sharing.
-///
-/// The dispatch is wrapped in [`AppClipboard`] so the
-/// `Owner::cache<V>` slot stores a single `Sized` type regardless of
-/// which inner impl wins; downstream consumers receive the
-/// `Rc<dyn Clipboard>` trait-object shape through the
-/// [`AppClipboard`] `Clipboard` impl's forwarding pair.
-fn use_clipboard(key: &'static str) -> Rc<dyn Clipboard> {
-    let cb: Rc<AppClipboard> = Owner::current()
-        .expect("use_clipboard requires an active Owner scope")
-        .cache(key, || {
-            AppClipboard(match ArboardClipboard::try_new() {
-                Ok(arboard) => Box::new(arboard) as Box<dyn Clipboard>,
-                Err(e) => {
-                    eprintln!(
-                        "hello-textfield: ArboardClipboard init failed \
-                         ({e}); falling back to InMemoryClipboard \
-                         (cross-process clipboard disabled)",
-                    );
-                    Box::new(InMemoryClipboard::new()) as Box<dyn Clipboard>
-                }
-            })
-        });
-    cb
-}
-
-/// R56.2.b §5.22 — `Sized` wrapper around `Box<dyn Clipboard>` so
-/// the [`use_clipboard`] hook can park either an
-/// [`ArboardClipboard`] (platform-backed, the common case) or an
-/// [`InMemoryClipboard`] (fallback when the platform clipboard
-/// daemon is unreachable) inside the same `Owner::cache<V>` slot.
-/// The framework `Owner::cache<V>` API requires `V: 'static` and
-/// chooses a concrete `V` per slot; the typed-erased
-/// `Box<dyn Clipboard>` interior here is the single concrete `V`
-/// the hello-textfield binding stores while the dispatch chooses
-/// at runtime which impl backs it.
-struct AppClipboard(Box<dyn Clipboard>);
-
-impl Clipboard for AppClipboard {
-    fn copy(&self, text: String) {
-        self.0.copy(text);
-    }
-    fn paste(&self) -> Option<String> {
-        self.0.paste()
-    }
-}
+// R790 §5.22 — the `Owner::cache`-keyed clipboard hook (`AppClipboard`
+// wrapper + Arboard-with-InMemory-fallback) lifted to
+// `pinion_platform_clipboard::use_app_clipboard`, shared by every
+// text-field binding. The lifted wrapper forwards the selection-aware
+// `copy_to` / `paste_from` to the inner impl (the pre-R790 per-binding
+// copies dropped PRIMARY to the trait no-op default).
 
 // R657 §5.16 §5.38 — `saturating_f32_to_u32` lifted to
 // `pinion_widget_paint::text_field` (private helper used by
@@ -321,7 +263,7 @@ impl WidgetCore for TextFieldView {
         // (mirror of the `use_caret_blink` hook shape; the
         // application surface gets a tag-keyed singleton without
         // touching `thread_local!`).
-        let clipboard = use_clipboard(TF_TAG);
+        let clipboard = use_app_clipboard(TF_TAG);
         Box::new(
             TextFieldExternal::new()
                 .attach_state(text_state)
@@ -510,18 +452,10 @@ impl WidgetA11y for TextFieldView {
     fn access_node(state: &(TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, _caret) = state;
         let text = use_text_edit_state(TF_TAG).text();
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(interaction, TextFieldState::Disabled),
-            hovered: false,
-            pressed: false,
-            checked: None,
-        };
-        vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::TextInput)
-                .with_value(AccessValue::Text(text))
-                .with_state(access_state),
-        ]
+        let tag = <Self as WidgetCore>::tag();
+        // R790 §5.40 — the textbox node mapping is the lifted SSOT shared
+        // by every text-field binding (`tf_paint::text_field_a11y_node`).
+        vec![tf_paint::text_field_a11y_node(tag, text, *interaction, focused == Some(tag))]
     }
 }
 

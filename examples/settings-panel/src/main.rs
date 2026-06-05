@@ -38,7 +38,6 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_a11y::WidgetA11y;
-use pinion_core::clipboard::Clipboard;
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::intent::Intent;
@@ -63,7 +62,7 @@ use pinion_core::{
     intent_tag, scale_normalized_to_px, Color, Command, Frame, Scene, WidgetCore,
     WidgetStateName,
 };
-use pinion_core::InMemoryClipboard;
+use pinion_platform_clipboard::use_app_clipboard;
 use pinion_platform_storage::open_app_storage;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::checkbox::{view_checkbox, CheckboxStyle};
@@ -372,17 +371,12 @@ fn use_storage() -> Rc<AppStorage> {
     owner.cache("settings_panel.storage", || AppStorage(build_storage()))
 }
 
-/// Sized newtype around `Box<dyn Clipboard>` for the same reason.
-struct AppClipboard(Box<dyn Clipboard>);
-
-impl Clipboard for AppClipboard {
-    fn copy(&self, text: String) {
-        self.0.copy(text);
-    }
-    fn paste(&self) -> Option<String> {
-        self.0.paste()
-    }
-}
+// R790 §5.22 — the `Owner::cache`-keyed clipboard hook (`AppClipboard`
+// wrapper) lifted to `pinion_platform_clipboard::use_app_clipboard`,
+// shared by every text-field binding. This unifies the profile-name
+// field on the platform-backed clipboard (Arboard with an InMemory
+// fallback on headless CI), gaining the selection-aware `copy_to` /
+// `paste_from` forwarding the local InMemory-only copy lacked.
 
 /// Reactive store for `nav_index` (current detail section). `Cell`
 /// not `Signal` because the view reads through `read_state` walking
@@ -465,12 +459,6 @@ fn use_text_edit_state(tag: &'static str) -> Rc<TextEditState> {
 fn use_caret_blink(tag: &'static str) -> Rc<CaretBlink> {
     let owner = Owner::current().expect("use_caret_blink requires an active Owner scope");
     owner.cache(tag, CaretBlink::new)
-}
-
-#[must_use]
-fn use_clipboard(tag: &'static str) -> Rc<AppClipboard> {
-    let owner = Owner::current().expect("use_clipboard requires an active Owner scope");
-    owner.cache(tag, || AppClipboard(Box::new(InMemoryClipboard::new()) as Box<dyn Clipboard>))
 }
 
 /// Run the persistence boot pass exactly once per `Owner`. Mirrors
@@ -1288,7 +1276,7 @@ impl WidgetCore for SettingsPanelView {
     fn create_external() -> Box<dyn External> {
         let text_state = use_text_edit_state(PROFILE_TF_TAG);
         let blink = use_caret_blink(PROFILE_TF_TAG);
-        let clipboard = use_clipboard(PROFILE_TF_TAG);
+        let clipboard = use_app_clipboard(PROFILE_TF_TAG);
         Box::new(
             TextFieldExternal::new()
                 .attach_state(text_state)

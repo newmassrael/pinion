@@ -30777,6 +30777,72 @@
         "unchanged from R789: save dialog + filename TextField (R789 carry-a) / in-place rename / recursive create_dir_all (consumer 0) / modal dialog state 1st-class query External (R788 carry-a) / keyboard nav over file list / clickable breadcrumb / size+mtime / glob filter"
       ]
     },
+    "R790": {
+      "decision_summary": "R790 modal file-save dialog: filename TextField as a modal member + Save to Directory.create_file (R789 write surface); clipboard hook (use_app_clipboard) and textbox a11y node (text_field_a11y_node) lifted to SSOTs, the lift fixing a PRIMARY-forwarding regression",
+      "changes_bullets": [
+        "hello-file-save-dialog: own-rendered modal Save-As = R787 browser pane + R56.1 filename TextField + R789 create_file",
+        "TextField first used as an extra-external modal member: apply_key/composition/ime/middle-click route by focus",
+        "Save gated on a non-blank name; Enter in the field saves; clicking a file populates the name (selection-sync Effect)",
+        "§5.22 lift: use_app_clipboard (Arboard with InMemory fallback) to pinion-platform-clipboard; 4 bindings migrated",
+        "§5.22 fix: lifted AppClipboard forwards selection-aware copy_to/paste_from (pre-R790 wrappers swallowed PRIMARY)",
+        "§5.40 lift: text_field_a11y_node to tf_paint (TextInput role + Text value + state map); 4 GUI bindings migrated"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (5541 to 5564, +23: 20 save-dialog + 2 clipboard + 1 tf_paint a11y)",
+        "clippy --workspace --all-targets pedantic clean; validate-workspace T1=0 new orphan +0",
+        "r790 demo 55 assert E2E over RPC: type filename, browse, Save, Enter-save, click-populate, scrim-block, Escape",
+        "migrated-binding demos PASS (textfield/clipboard/type, textarea, todomvc, settings) = both lifts behavior-preserving",
+        "new tests: AppClipboard forwards PRIMARY via InMemory round-trip; use_app_clipboard dedups per key; a11y node maps textbox"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.16",
+        "5.22",
+        "5.38",
+        "5.39",
+        "5.40",
+        "3"
+      ],
+      "carry_forward_bullets": [
+        "aria-multiline (textarea) = additive param to text_field_a11y_node, deferred until a 2nd textarea consumer",
+        "in-place rename (same filename-field-in-a-row substrate) deferred; the save dialog is its substrate proof",
+        "ime_caret_rect per-binding wrapper stays binding-side (rect_for_tag is pinion-shell, not widget-paint: dep-graph)",
+        "hello-textfield-tui keeps its own textbox node + clipboard (TUI bindings do not dep widget-paint/platform-clipboard)",
+        "prior file carries: keyboard nav over file list / clickable breadcrumb / size and mtime / glob filter"
+      ],
+      "publishable_decision_summary": "R790 modal file-save dialog: filename TextField as a modal member + Save to Directory.create_file (R789 write surface); clipboard hook (use_app_clipboard) and textbox a11y node (text_field_a11y_node) lifted to SSOTs, the lift fixing a PRIMARY-forwarding regression",
+      "publishable_changes_bullets": [
+        "hello-file-save-dialog: own-rendered modal Save-As = R787 browser pane + R56.1 filename TextField + R789 create_file",
+        "TextField first used as an extra-external modal member: apply_key/composition/ime/middle-click route by focus",
+        "Save gated on a non-blank name; Enter in the field saves; clicking a file populates the name (selection-sync Effect)",
+        "§5.22 lift: use_app_clipboard (Arboard with InMemory fallback) to pinion-platform-clipboard; 4 bindings migrated",
+        "§5.22 fix: lifted AppClipboard forwards selection-aware copy_to/paste_from (pre-R790 wrappers swallowed PRIMARY)",
+        "§5.40 lift: text_field_a11y_node to tf_paint (TextInput role + Text value + state map); 4 GUI bindings migrated"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (5541 to 5564, +23: 20 save-dialog + 2 clipboard + 1 tf_paint a11y)",
+        "clippy --workspace --all-targets pedantic clean; validate-workspace T1=0 new orphan +0",
+        "r790 demo 55 assert E2E over RPC: type filename, browse, Save, Enter-save, click-populate, scrim-block, Escape",
+        "migrated-binding demos PASS (textfield/clipboard/type, textarea, todomvc, settings) = both lifts behavior-preserving",
+        "new tests: AppClipboard forwards PRIMARY via InMemory round-trip; use_app_clipboard dedups per key; a11y node maps textbox"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.16",
+        "5.22",
+        "5.38",
+        "5.39",
+        "5.40",
+        "3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "aria-multiline (textarea) = additive param to text_field_a11y_node, deferred until a 2nd textarea consumer",
+        "in-place rename (same filename-field-in-a-row substrate) deferred; the save dialog is its substrate proof",
+        "ime_caret_rect per-binding wrapper stays binding-side (rect_for_tag is pinion-shell, not widget-paint: dep-graph)",
+        "hello-textfield-tui keeps its own textbox node + clipboard (TUI bindings do not dep widget-paint/platform-clipboard)",
+        "prior file carries: keyboard nav over file list / clickable breadcrumb / size and mtime / glob filter"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

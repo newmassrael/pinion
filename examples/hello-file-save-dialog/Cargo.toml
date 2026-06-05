@@ -1,0 +1,31 @@
+[package]
+name = "hello-file-save-dialog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R790 §5.15 §5.16 §5.38 §5.39 — modal file-save dialog: the own-rendered file browser (R787) + a filename TextField (R56.1) embedded in the R693 modal-dialog chrome via DialogContent body, with Save wired to the R789 Directory write surface (create_file), Save disabled until a name is typed, and clicking an existing file populating the name (the Save As convention). The scene-graph-native, AI-introspectable peer of an OS file-save dialog."
+publish = false
+
+[[bin]]
+name = "hello-file-save-dialog"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

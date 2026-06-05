@@ -79,8 +79,10 @@
 //! ```
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
-use pinion_core::{Clipboard, ClipboardSelection};
+use pinion_core::reactive::Owner;
+use pinion_core::{Clipboard, ClipboardSelection, InMemoryClipboard};
 
 /// R56.2.b §5.22 — platform-backed [`Clipboard`] impl wrapping
 /// `arboard::Clipboard`. Construct via [`Self::try_new`] (returns an
@@ -269,6 +271,87 @@ impl Clipboard for ArboardClipboard {
     }
 }
 
+/// R790 §5.22 — `Owner::cache`-keyed clipboard hook shared by every
+/// `TextField`-bearing binding (`hello-textfield`, `todomvc`,
+/// `hello-textarea`, `settings-panel`, the modal file-save dialog, …).
+///
+/// Prefers the platform-backed [`ArboardClipboard`] (Wayland
+/// `wl_data_device` + X11 CLIPBOARD/PRIMARY + macOS `NSPasteboard` +
+/// Windows `OpenClipboard`) and falls back to [`InMemoryClipboard`] on
+/// init failure (headless CI, sandboxed display-less container, broken
+/// Wayland socket). The fallback keeps the keyboard-shortcut UX
+/// functional (Ctrl/Cmd+C → Ctrl/Cmd+V round-trip within the running
+/// process) at the cost of cross-process clipboard sharing.
+///
+/// The handle is parked in the [`Owner::cache`] slot keyed by `key`, so
+/// the External's `attach_clipboard` and any later view-fn read resolve
+/// to the same `Rc<dyn Clipboard>` instance — the tag-keyed singleton
+/// shape mirroring `use_text_edit_state` / `use_caret_blink`.
+///
+/// ## Why this lives here (R790 lift)
+///
+/// Before R790 each text-field binding carried a byte-identical copy of
+/// this hook plus an `AppClipboard` `Sized` wrapper. Those copies
+/// forwarded only `copy` / `paste`, so the selection-aware `copy_to` /
+/// `paste_from` (X11 / Wayland PRIMARY publish + middle-click paste) hit
+/// the [`Clipboard`] trait **no-op default** on the wrapper instead of
+/// reaching the inner [`ArboardClipboard`]'s Linux PRIMARY override —
+/// PRIMARY was silently swallowed for every consumer. The lifted
+/// [`AppClipboard`] below forwards all four methods, so the lift both
+/// removes the 3-copy duplication and fixes the PRIMARY regression in
+/// one place.
+///
+/// # Panics
+/// Panics when called outside an active [`Owner`] scope (the hook needs
+/// a reactive cache to dedup; every pinion view-fn / `create_external`
+/// runs inside `root_owner.run`).
+#[must_use]
+pub fn use_app_clipboard(key: &'static str) -> Rc<dyn Clipboard> {
+    let cb: Rc<AppClipboard> = Owner::current()
+        .expect("use_app_clipboard requires an active Owner scope")
+        .cache(key, || {
+            AppClipboard(match ArboardClipboard::try_new() {
+                Ok(arboard) => Box::new(arboard) as Box<dyn Clipboard>,
+                Err(e) => {
+                    eprintln!(
+                        "pinion: ArboardClipboard init failed ({e}); falling back \
+                         to InMemoryClipboard (cross-process clipboard disabled)",
+                    );
+                    Box::new(InMemoryClipboard::new()) as Box<dyn Clipboard>
+                }
+            })
+        });
+    cb
+}
+
+/// R790 §5.22 — `Sized` newtype around `Box<dyn Clipboard>` so the
+/// [`Owner::cache`]`<V>` slot can park either an [`ArboardClipboard`]
+/// (the common case) or an [`InMemoryClipboard`] (headless fallback)
+/// inside one concrete `V`. The runtime impl choice hides inside the
+/// box; downstream consumers receive the `Rc<dyn Clipboard>` shape.
+///
+/// All four [`Clipboard`] methods forward to the inner impl — crucially
+/// the selection-aware `copy_to` / `paste_from`, so a wrapped
+/// `ArboardClipboard`'s Linux PRIMARY override survives the wrapper
+/// (the pre-R790 per-binding copies forwarded only `copy` / `paste`,
+/// dropping PRIMARY to the trait no-op default).
+struct AppClipboard(Box<dyn Clipboard>);
+
+impl Clipboard for AppClipboard {
+    fn copy(&self, text: String) {
+        self.0.copy(text);
+    }
+    fn paste(&self) -> Option<String> {
+        self.0.paste()
+    }
+    fn copy_to(&self, selection: ClipboardSelection, text: String) {
+        self.0.copy_to(selection, text);
+    }
+    fn paste_from(&self, selection: ClipboardSelection) -> Option<String> {
+        self.0.paste_from(selection)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.2.b §5.22 — `ArboardClipboard` smoke tests.
@@ -410,5 +493,68 @@ mod tests {
                 "legacy vs selection paste shape mismatch: legacy={a:?} selection={b:?}",
             ),
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R790 §5.22 — lifted `use_app_clipboard` hook + `AppClipboard`
+    // wrapper (shared by the text-field bindings + the file-save dialog).
+    // Nested module so its unconditional `Clipboard` / `ClipboardSelection`
+    // imports do not clash with the cfg-gated PRIMARY-test imports above.
+    // ─────────────────────────────────────────────────────────────
+    mod r790_lift {
+    use std::rc::Rc;
+
+    use super::super::{use_app_clipboard, AppClipboard};
+    use pinion_core::reactive::Owner;
+    use pinion_core::{Clipboard, ClipboardSelection, InMemoryClipboard};
+
+    /// R790 §5.22 — the wrapper must forward the *selection-aware*
+    /// `copy_to` / `paste_from` to the inner impl. The pre-R790
+    /// per-binding copies forwarded only `copy` / `paste`, so a wrapped
+    /// `ArboardClipboard`'s Linux PRIMARY override fell through to the
+    /// trait no-op default. Wrap an [`InMemoryClipboard`] (which keeps an
+    /// independent PRIMARY buffer) and verify PRIMARY survives the
+    /// wrapper, independent of the CLIPBOARD selection.
+    #[test]
+    fn r790_app_clipboard_forwards_selection_aware_methods() {
+        let cb = AppClipboard(Box::new(InMemoryClipboard::new()));
+        cb.copy_to(ClipboardSelection::Primary, "primary-token".to_owned());
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("primary-token".to_owned()),
+            "PRIMARY write/read must reach the inner impl (not the no-op default)",
+        );
+        // CLIPBOARD selection stays independent of PRIMARY.
+        cb.copy("clip-token".to_owned());
+        assert_eq!(cb.paste(), Some("clip-token".to_owned()));
+        assert_eq!(
+            cb.paste_from(ClipboardSelection::Primary),
+            Some("primary-token".to_owned()),
+            "a CLIPBOARD write must not clobber the PRIMARY buffer",
+        );
+    }
+
+    /// R790 §5.22 — the hook dedups per `Owner::cache` key: two calls
+    /// with the same key resolve to one shared `Rc<dyn Clipboard>` so the
+    /// External's `attach_clipboard` and a later view-fn read see the
+    /// same instance. (Backend-agnostic: holds whether the real arboard
+    /// handle or the `InMemory` fallback won.)
+    #[test]
+    fn r790_use_app_clipboard_dedups_per_key() {
+        Owner::new().run(|| {
+            let a = use_app_clipboard("test_field");
+            let b = use_app_clipboard("test_field");
+            assert!(Rc::ptr_eq(&a, &b), "same key resolves to one shared handle");
+            let c = use_app_clipboard("other_field");
+            assert!(!Rc::ptr_eq(&a, &c), "a distinct key is a distinct handle");
+            // NB: deliberately no `copy`/`paste` here. When a real
+            // arboard handle wins, a `copy` would write the *shared
+            // system* clipboard and race the `r56_2_e_*` round-trip tests
+            // running concurrently in this same binary. The dedup
+            // contract (`Rc::ptr_eq`) is the pin; the copy/paste surface
+            // is covered by `r790_app_clipboard_forwards_selection_aware_methods`
+            // over a hermetic `InMemoryClipboard`.
+        });
+    }
     }
 }

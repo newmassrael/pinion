@@ -51,6 +51,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole};
 use pinion_core::external::IntrospectValue;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode, StyleRun};
@@ -1209,6 +1210,39 @@ pub fn read_text_field_state(scene: &Scene, tag: &str) -> (TextFieldState, u32) 
     (interaction, caret)
 }
 
+/// R790 §5.40 — the WAI-ARIA `textbox` [`AccessNode`] for a single-line
+/// `TextField`, shared by every text-field binding (hello-textfield,
+/// hello-textarea, todomvc's in-place editor, the file-save dialog, …).
+/// The mapping is invariant — [`AriaRole::TextInput`] role, the live
+/// `text` as [`AccessValue::Text`], and an [`AccessState`] that flags
+/// `focused` and `disabled` (the latter only in
+/// [`TextFieldState::Disabled`]) — so the bindings duplicated it
+/// verbatim before this lift; the [`button_a11y_state`] helper is the
+/// precedent (its bindings vary the role/position, hence it returns only
+/// the `AccessState`; a text field's role + value are fixed, so this
+/// returns the whole node).
+///
+/// The `name` is left unset (`None`): bindings enrich it from the paint
+/// scene via [`enrich_names_from_scene`](pinion_a11y::enrich_names_from_scene)
+/// so the visible label and the announced name share one source of truth.
+#[must_use]
+pub fn text_field_a11y_node(
+    tag: &'static str,
+    text: String,
+    interaction: TextFieldState,
+    focused: bool,
+) -> AccessNode {
+    AccessNode::new(tag, AriaRole::TextInput)
+        .with_value(AccessValue::Text(text))
+        .with_state(AccessState {
+            focused,
+            disabled: matches!(interaction, TextFieldState::Disabled),
+            hovered: false,
+            pressed: false,
+            checked: None,
+        })
+}
+
 #[cfg(test)]
 mod tests {
     //! R657 §5.16 §5.38 — first-consumer regression battery for the
@@ -1221,6 +1255,27 @@ mod tests {
 
     fn with_owner<R>(f: impl FnOnce() -> R) -> R {
         Owner::new().run(f)
+    }
+
+    #[test]
+    fn r790_text_field_a11y_node_maps_textbox_shape() {
+        // The lifted textbox node: TextInput role, the text as the
+        // value, `focused` honoured, and `disabled` only in the
+        // `Disabled` interaction state (the shape every text-field
+        // binding hand-built before R790).
+        let node = text_field_a11y_node("tf", "hello".to_owned(), TextFieldState::Focused, true);
+        assert_eq!(node.tag, "tf");
+        assert_eq!(node.role, AriaRole::TextInput);
+        assert_eq!(node.value, Some(AccessValue::Text("hello".to_owned())));
+        assert!(node.state.focused);
+        assert!(!node.state.disabled, "Focused is not disabled");
+        assert_eq!(node.state.checked, None);
+        assert!(!node.state.hovered && !node.state.pressed);
+        // Disabled interaction → aria-disabled; unfocused honoured.
+        let disabled =
+            text_field_a11y_node("tf", String::new(), TextFieldState::Disabled, false);
+        assert!(disabled.state.disabled, "Disabled interaction sets aria-disabled");
+        assert!(!disabled.state.focused);
     }
 
     #[test]

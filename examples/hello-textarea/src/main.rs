@@ -89,12 +89,8 @@
 //! (keeping its colour), or a colour swatch to recolour it; the bordered
 //! swatch clears formatting.
 
-use std::rc::Rc;
-
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
-use pinion_core::clipboard::{Clipboard, InMemoryClipboard};
+use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::External;
-use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
@@ -105,7 +101,7 @@ use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
-use pinion_platform_clipboard::ArboardClipboard;
+use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_text::CaretRect;
 use pinion_widget_paint::text_field as tf_paint;
@@ -338,40 +334,11 @@ fn try_toolbar_press(scene: &Scene, x: f32, y: f32, interaction: TextFieldState)
     false
 }
 
-/// R56.2.b §5.22 — `Sized` wrapper around `Box<dyn Clipboard>` so the
-/// [`use_clipboard`] hook parks either an [`ArboardClipboard`] or an
-/// [`InMemoryClipboard`] in one `Owner::cache` slot (mirror of the
-/// hello-textfield pattern).
-struct AppClipboard(Box<dyn Clipboard>);
-
-impl Clipboard for AppClipboard {
-    fn copy(&self, text: String) {
-        self.0.copy(text);
-    }
-    fn paste(&self) -> Option<String> {
-        self.0.paste()
-    }
-}
-
-/// `Owner::cache`-keyed clipboard hook — platform `arboard` with an
-/// in-memory fallback when the platform daemon is unreachable.
-fn use_clipboard(key: &'static str) -> Rc<dyn Clipboard> {
-    let cb: Rc<AppClipboard> = Owner::current()
-        .expect("use_clipboard requires an active Owner scope")
-        .cache(key, || {
-            AppClipboard(match ArboardClipboard::try_new() {
-                Ok(arboard) => Box::new(arboard) as Box<dyn Clipboard>,
-                Err(e) => {
-                    eprintln!(
-                        "hello-textarea: ArboardClipboard init failed ({e}); \
-                         falling back to InMemoryClipboard",
-                    );
-                    Box::new(InMemoryClipboard::new()) as Box<dyn Clipboard>
-                }
-            })
-        });
-    cb
-}
+// R790 §5.22 — the `Owner::cache`-keyed clipboard hook (`AppClipboard`
+// wrapper + Arboard-with-InMemory-fallback) lifted to
+// `pinion_platform_clipboard::use_app_clipboard`, shared by every
+// text-field binding (the lifted wrapper also forwards the
+// selection-aware `copy_to` / `paste_from`).
 
 /// View: title + the multi-line field + a status line mirroring the
 /// live `(state, caret, selection)` so the AI side verifies the same
@@ -462,7 +429,7 @@ impl WidgetCore for TextAreaView {
             ]);
         }
         let blink = use_caret_blink(TA_TAG);
-        let clipboard = use_clipboard(TA_TAG);
+        let clipboard = use_app_clipboard(TA_TAG);
         Box::new(
             TextFieldExternal::new()
                 .attach_state(text_state)
@@ -621,18 +588,11 @@ impl WidgetA11y for TextAreaView {
     fn access_node(state: &(TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {
         let (interaction, _caret) = state;
         let text = use_text_edit_state(TA_TAG).text();
-        let access_state = AccessState {
-            focused: focused == Some(<Self as WidgetCore>::tag()),
-            disabled: matches!(interaction, TextFieldState::Disabled),
-            hovered: false,
-            pressed: false,
-            checked: None,
-        };
-        vec![
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::TextInput)
-                .with_value(AccessValue::Text(text))
-                .with_state(access_state),
-        ]
+        let tag = <Self as WidgetCore>::tag();
+        // R790 §5.40 — the lifted textbox node SSOT. The deferred
+        // `aria-multiline` refinement above becomes an additive param to
+        // this helper once a 2nd textarea consumer surfaces.
+        vec![tf_paint::text_field_a11y_node(tag, text, *interaction, focused == Some(tag))]
     }
 }
 
