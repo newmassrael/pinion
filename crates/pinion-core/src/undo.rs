@@ -84,6 +84,28 @@ pub trait UndoCommand {
 
     /// Apply the edit's inverse.
     fn undo(&self);
+
+    /// R796 §5.52 — coalescing downcast hook (the `QUndoCommand` `mergeWith`
+    /// support). Default `None`: this command never participates in merging.
+    /// A command that overrides [`merge`](Self::merge) returns `Some(self)`
+    /// so the command it folds into can recover its concrete type — the
+    /// MSRV-1.85 stand-in for upcasting `dyn UndoCommand` to `dyn Any`
+    /// (trait upcasting stabilised only in 1.86).
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        None
+    }
+
+    /// R796 §5.52 — try to fold the freshly recorded `next` command into
+    /// `self` (the `QUndoCommand::mergeWith` peer). Return `true` when
+    /// absorbed: `next` is then discarded and `self` already updated to span
+    /// both edits, so the stack grows by zero and one Ctrl+Z reverses the
+    /// whole run (the textbook "typing collapses into one undo step").
+    /// Default: never merge — each [`record`](UndoStack::record) /
+    /// [`push_applied`](UndoStack::push_applied) is its own step.
+    /// Implementors recover `next`'s concrete type via [`as_any`](Self::as_any).
+    fn merge(&mut self, _next: &dyn UndoCommand) -> bool {
+        false
+    }
 }
 
 /// The common concrete [`UndoCommand`]: a reversible write to one reactive
@@ -235,20 +257,56 @@ impl UndoStack {
     /// command (snapshotting `before`) and hand it over, never mutating the
     /// target directly.
     pub fn record(&self, command: impl UndoCommand + 'static) {
-        let boxed: Box<dyn UndoCommand> = Box::new(command);
-        boxed.redo();
-        let new_index = {
-            let mut commands = self.commands.borrow_mut();
-            let cursor = self.index.get();
-            commands.truncate(cursor);
-            commands.push(boxed);
-            if let Some(cap) = self.capacity {
-                while commands.len() > cap {
-                    commands.remove(0);
+        self.commit(Box::new(command), false);
+    }
+
+    /// R796 §5.52 — append a command whose forward effect the **caller has
+    /// already applied**, skipping the initial [`redo`](UndoCommand::redo).
+    ///
+    /// The single mutation path of [`record`](Self::record) suits a reducer
+    /// that hands over a not-yet-applied edit. A text field, by contrast,
+    /// mutates its reactive buffer eagerly on every keystroke (selection
+    /// drain, run clipping, caret advance) and only needs the *history*
+    /// entry afterwards — re-running `redo` would redundantly re-set the
+    /// signals. This records the already-applied edit, attempting the same
+    /// coalescing merge with the top of the done prefix so a typing run
+    /// folds into one undo step.
+    pub fn push_applied(&self, command: impl UndoCommand + 'static) {
+        self.commit(Box::new(command), true);
+    }
+
+    /// Shared body of [`record`](Self::record) / [`push_applied`](Self::push_applied):
+    /// truncate the redo suffix, attempt to coalesce into the top command,
+    /// else append (honouring [`capacity`](Self::with_capacity)). `applied`
+    /// skips the initial forward application (the caller already performed it).
+    fn commit(&self, boxed: Box<dyn UndoCommand>, applied: bool) {
+        if !applied {
+            boxed.redo();
+        }
+        let mut commands = self.commands.borrow_mut();
+        let cursor = self.index.get();
+        // Drop any redone-then-superseded suffix. A non-empty suffix means
+        // the user undid and then made a fresh edit, so the surviving top is
+        // *not* part of the current typing run — skip coalescing in that case.
+        let had_suffix = commands.len() > cursor;
+        commands.truncate(cursor);
+        if !had_suffix && cursor > 0 {
+            if let Some(top) = commands.last_mut() {
+                if top.merge(boxed.as_ref()) {
+                    drop(commands);
+                    self.bump();
+                    return;
                 }
             }
-            commands.len()
-        };
+        }
+        commands.push(boxed);
+        if let Some(cap) = self.capacity {
+            while commands.len() > cap {
+                commands.remove(0);
+            }
+        }
+        let new_index = commands.len();
+        drop(commands);
         self.index.set(new_index);
         self.bump();
     }
@@ -653,6 +711,119 @@ mod tests {
 
             assert_eq!(ext.intervene("index", IntrospectValue::Int(3)), Err(InterveneError::ReadOnly));
             assert_eq!(ext.invoke("frobnicate", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+        });
+    }
+
+    // R796 §5.52 — coalescing + already-applied recording.
+
+    /// Counts how many times `redo` fires, so a test can prove
+    /// [`UndoStack::push_applied`] does **not** re-run the forward effect.
+    struct CountCmd {
+        redos: Rc<Cell<u32>>,
+    }
+    impl UndoCommand for CountCmd {
+        fn label(&self) -> Cow<'static, str> {
+            Cow::Borrowed("count")
+        }
+        fn redo(&self) {
+            self.redos.set(self.redos.get() + 1);
+        }
+        fn undo(&self) {}
+    }
+
+    /// A set-to-`after` command that coalesces with a contiguous successor
+    /// (`self.after == next.before`) while it stays `coalescable`.
+    struct AddCmd {
+        cell: Rc<Cell<i64>>,
+        before: i64,
+        after: i64,
+        coalescable: bool,
+    }
+    impl UndoCommand for AddCmd {
+        fn label(&self) -> Cow<'static, str> {
+            Cow::Borrowed("add")
+        }
+        fn redo(&self) {
+            self.cell.set(self.after);
+        }
+        fn undo(&self) {
+            self.cell.set(self.before);
+        }
+        fn as_any(&self) -> Option<&dyn core::any::Any> {
+            Some(self)
+        }
+        fn merge(&mut self, next: &dyn UndoCommand) -> bool {
+            let Some(next) = next.as_any().and_then(|a| a.downcast_ref::<AddCmd>()) else {
+                return false;
+            };
+            if !self.coalescable || self.after != next.before {
+                return false;
+            }
+            self.after = next.after;
+            self.coalescable = next.coalescable;
+            true
+        }
+    }
+
+    #[test]
+    fn push_applied_does_not_rerun_redo() {
+        Owner::new().run(|| {
+            let redos = Rc::new(Cell::new(0u32));
+            let stack = UndoStack::new();
+            stack.record(CountCmd { redos: redos.clone() });
+            assert_eq!(redos.get(), 1, "record applies the edit (one redo)");
+            stack.push_applied(CountCmd { redos: redos.clone() });
+            assert_eq!(redos.get(), 1, "push_applied does NOT re-run redo (caller already applied)");
+            assert_eq!(stack.len(), 2, "both are recorded");
+        });
+    }
+
+    #[test]
+    fn push_applied_coalesces_contiguous_run() {
+        Owner::new().run(|| {
+            let cell = Rc::new(Cell::new(0i64));
+            let stack = UndoStack::new();
+            cell.set(1);
+            stack.push_applied(AddCmd { cell: cell.clone(), before: 0, after: 1, coalescable: true });
+            cell.set(2);
+            stack.push_applied(AddCmd { cell: cell.clone(), before: 1, after: 2, coalescable: true });
+            assert_eq!(stack.len(), 1, "contiguous coalescable edits fold into one step");
+            assert_eq!(cell.get(), 2);
+            assert!(stack.undo());
+            assert_eq!(cell.get(), 0, "one undo reverses the whole coalesced run");
+            assert!(stack.redo());
+            assert_eq!(cell.get(), 2, "one redo re-applies the whole run");
+        });
+    }
+
+    #[test]
+    fn coalescing_breaks_when_not_contiguous_or_not_coalescable() {
+        Owner::new().run(|| {
+            let cell = Rc::new(Cell::new(0i64));
+            let stack = UndoStack::new();
+            // A non-coalescable command never absorbs its successor.
+            cell.set(1);
+            stack.push_applied(AddCmd { cell: cell.clone(), before: 0, after: 1, coalescable: false });
+            cell.set(2);
+            stack.push_applied(AddCmd { cell: cell.clone(), before: 1, after: 2, coalescable: true });
+            assert_eq!(stack.len(), 2, "a non-coalescable top stays its own step");
+        });
+    }
+
+    #[test]
+    fn no_coalesce_across_an_undo_then_edit() {
+        Owner::new().run(|| {
+            let cell = Rc::new(Cell::new(0i64));
+            let stack = UndoStack::new();
+            cell.set(1);
+            stack.push_applied(AddCmd { cell: cell.clone(), before: 0, after: 1, coalescable: true });
+            assert!(stack.undo(), "undo back to 0");
+            // Typing after an undo starts a fresh step — the truncated suffix
+            // means the surviving stack must not absorb this contiguous edit.
+            cell.set(1);
+            stack.push_applied(AddCmd { cell: cell.clone(), before: 0, after: 1, coalescable: true });
+            assert_eq!(stack.len(), 1, "the prior command was truncated, not merged into");
+            assert!(!stack.can_redo(), "no dangling redo branch");
         });
     }
 }

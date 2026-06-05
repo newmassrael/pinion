@@ -31243,6 +31243,66 @@
         "(c) drawer scrim light-dismiss + per-binding outcome unchanged (policy, not the mechanism)"
       ]
     },
+    "R796": {
+      "decision_summary": "Text-field undo/redo lands: the R748 UndoStack substrate gains coalescing (a defaulted UndoCommand::merge / as_any, the QUndoCommand mergeWith peer, zero churn to existing impls) plus UndoStack::push_applied for already-applied edits. TextEditState::attach_undo journals each content mutator as a whole-content TextEditCommand; consecutive typing coalesces into one word-level undo step (whitespace ends the run, caret restored), and apply_key handles Ctrl/Cmd+Z undo and Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redo. hello-textfield is the first consumer; other text bindings opt in additively.",
+      "changes_bullets": [
+        "UndoCommand gains defaulted merge/as_any (QUndoCommand mergeWith); zero churn to existing impls",
+        "UndoStack::push_applied appends an already-applied edit (skips redo) and coalesces into the top",
+        "TextEditState::attach_undo journals each content mutator as a whole-content TextEditCommand",
+        "coalescing = word-level: same-group contiguous edits fold, whitespace ends the run, caret restored",
+        "apply_key: Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redo (only when a stack is attached)",
+        "hello-textfield attaches the 1st text-undo consumer; other text bindings opt in additively"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5626 pass / 0 fail (+10: undo 4, text_edit 6 type/ws/caret/del)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic deny)",
+        "r796 demo: type -> Ctrl+Z(whole word) -> Ctrl+Z -> Ctrl+Y / Ctrl+Shift+Z redo -> backspace undo PASS",
+        "no new paint: text change witnessed by /external/text (the Signal paint reads); native not required",
+        "text demos regress PASS: textfield type/select/clipboard/compose, textarea multiline/rich-edit",
+        "validate-workspace: T1 orphan total=0, entries 720->721"
+      ],
+      "impact_refs": [
+        "5.52",
+        "5.22",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "(a) textarea/todomvc/rename/save-filename consumers can attach_undo additively -- deferred",
+        "(b) IME preedit undo granularity deferred: preedit is orthogonal, a commit records as one step",
+        "(c) macro/group transaction (begin_macro/end_macro) still consumer-0 (R748 carry unchanged)",
+        "(d) capacity bound via with_capacity only; use_undo_stack is unbounded (R748 carry unchanged)",
+        "(e) UndoStackExternal not wired into hello-textfield; the text round-trip is the witness for now"
+      ],
+      "publishable_decision_summary": "Text-field undo/redo lands: the R748 UndoStack substrate gains coalescing (a defaulted UndoCommand::merge / as_any, the QUndoCommand mergeWith peer, zero churn to existing impls) plus UndoStack::push_applied for already-applied edits. TextEditState::attach_undo journals each content mutator as a whole-content TextEditCommand; consecutive typing coalesces into one word-level undo step (whitespace ends the run, caret restored), and apply_key handles Ctrl/Cmd+Z undo and Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redo. hello-textfield is the first consumer; other text bindings opt in additively.",
+      "publishable_changes_bullets": [
+        "UndoCommand gains defaulted merge/as_any (QUndoCommand mergeWith); zero churn to existing impls",
+        "UndoStack::push_applied appends an already-applied edit (skips redo) and coalesces into the top",
+        "TextEditState::attach_undo journals each content mutator as a whole-content TextEditCommand",
+        "coalescing = word-level: same-group contiguous edits fold, whitespace ends the run, caret restored",
+        "apply_key: Ctrl/Cmd+Z undo, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redo (only when a stack is attached)",
+        "hello-textfield attaches the 1st text-undo consumer; other text bindings opt in additively"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5626 pass / 0 fail (+10: undo 4, text_edit 6 type/ws/caret/del)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean (pedantic deny)",
+        "r796 demo: type -> Ctrl+Z(whole word) -> Ctrl+Z -> Ctrl+Y / Ctrl+Shift+Z redo -> backspace undo PASS",
+        "no new paint: text change witnessed by /external/text (the Signal paint reads); native not required",
+        "text demos regress PASS: textfield type/select/clipboard/compose, textarea multiline/rich-edit",
+        "validate-workspace: T1 orphan total=0, entries 720->721"
+      ],
+      "publishable_impact_refs": [
+        "5.52",
+        "5.22",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "(a) textarea/todomvc/rename/save-filename consumers can attach_undo additively -- deferred",
+        "(b) IME preedit undo granularity deferred: preedit is orthogonal, a commit records as one step",
+        "(c) macro/group transaction (begin_macro/end_macro) still consumer-0 (R748 carry unchanged)",
+        "(d) capacity bound via with_capacity only; use_undo_stack is unbounded (R748 carry unchanged)",
+        "(e) UndoStackExternal not wired into hello-textfield; the text round-trip is the witness for now"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

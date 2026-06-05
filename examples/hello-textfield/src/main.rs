@@ -59,6 +59,7 @@ use pinion_platform_clipboard::use_app_clipboard;
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
+use pinion_core::undo::use_undo_stack;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
@@ -255,6 +256,11 @@ impl WidgetCore for TextFieldView {
     /// composes cleanly without per-binding scaffolding.
     fn create_external() -> Box<dyn External> {
         let text_state = use_text_edit_state(TF_TAG);
+        // R796 §5.52 — journal edits onto a shared undo stack so Ctrl+Z /
+        // Ctrl+Shift+Z (Ctrl+Y) undo / redo with word-level coalescing.
+        // Attached on the *state* (the single edit write path), so the view
+        // fn's same `Rc<TextEditState>` observes the history too.
+        text_state.attach_undo(use_undo_stack(TF_TAG));
         let blink = use_caret_blink(TF_TAG);
         // R56.1.e §5.22 — in-memory clipboard backing the demo's
         // Ctrl+C / Ctrl+X / Ctrl+V keystrokes. Shared via

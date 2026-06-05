@@ -79,12 +79,14 @@
 //! observe the text content without going through the `send` invoke
 //! channel.
 
-use std::cell::Cell;
+use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use crate::reactive::{batch, Owner, Signal};
 use crate::scene::StyleRun;
 use crate::style::TextStyle;
+use crate::undo::{UndoCommand, UndoStack};
 
 /// R56.1.b §5.38 §5.22 — Reactive text + caret pair for one
 /// [`TextField`](crate::widgets::text_field::TextField).
@@ -236,6 +238,120 @@ pub struct TextEditState {
     /// [`TextStyle`](crate::style::TextStyle) family (resolving the
     /// `Color`-is-serde-but-`TextStyle`-is-not inconsistency it surfaced).
     style_runs: Signal<Vec<StyleRun>>,
+    /// R796 §5.52 — optional attached undo / redo history. `None`
+    /// (the default) means edits are not journalled — every existing
+    /// caller is byte-unchanged. When a binding calls
+    /// [`Self::attach_undo`], each content-changing mutator records a
+    /// whole-content [`TextEditCommand`] (coalescing consecutive typing
+    /// into one step), and [`Self::undo`] / [`Self::redo`] replay it.
+    /// A `RefCell` (not a `Signal`): the attachment is wiring, not
+    /// observable content — no view-fn renders "is undo attached".
+    undo: RefCell<Option<Rc<UndoStack>>>,
+}
+
+/// R796 §5.52 — an immutable snapshot of the **content** axes a
+/// [`TextEditCommand`] reverses: byte buffer, caret, selection anchor, and
+/// style runs. The transient axes (IME preedit, goal column) are excluded —
+/// they are not part of the document an undo restores.
+#[derive(Clone, PartialEq, Debug)]
+struct EditSnapshot {
+    text: String,
+    caret: usize,
+    anchor: Option<usize>,
+    runs: Vec<StyleRun>,
+}
+
+/// R796 §5.52 — which edits may coalesce. Two commands fold into one undo
+/// step only when they share a non-[`Boundary`](CoalesceGroup::Boundary)
+/// group and are contiguous, so an insertion run, a Backspace run, and a
+/// Delete-forward run each collapse to one step while a wholesale replace or
+/// a selection-delete stands alone (`QTextDocument` typing-coalesce model).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum CoalesceGroup {
+    /// Never coalesces (`set_text`, or any selection-replacing edit).
+    Boundary,
+    /// Consecutive character insertions.
+    Insert,
+    /// Consecutive Backspace deletions.
+    DeleteBack,
+    /// Consecutive Delete-forward deletions.
+    DeleteForward,
+}
+
+/// R796 §5.52 — a reversible whole-content text edit (the text field's
+/// [`UndoCommand`]). It snapshots the four content signals `before` / `after`
+/// and restores them wholesale, robust against the per-mutator branch
+/// complexity (selection drain, run clipping) a fine-grained inverse would
+/// have to mirror. Consecutive same-group contiguous edits coalesce via
+/// [`merge`](UndoCommand::merge) so a typing run is one Ctrl+Z.
+#[derive(Debug)]
+pub struct TextEditCommand {
+    text: Signal<String>,
+    caret: Signal<usize>,
+    anchor: Signal<Option<usize>>,
+    runs: Signal<Vec<StyleRun>>,
+    before: EditSnapshot,
+    after: EditSnapshot,
+    group: CoalesceGroup,
+    /// Whether a following same-group edit may fold into this one. Cleared
+    /// once a word boundary (whitespace) lands, so the next keystroke opens a
+    /// fresh undo step (word-level granularity).
+    coalescable: bool,
+    label: Cow<'static, str>,
+}
+
+impl TextEditCommand {
+    /// Restore the four content signals to `snap` in one batched cascade
+    /// (the same atomic-multi-axis contract the mutators use).
+    fn restore(&self, snap: &EditSnapshot) {
+        batch(|| {
+            self.text.set(snap.text.clone());
+            self.caret.set(snap.caret);
+            self.anchor.set(snap.anchor);
+            self.runs.set(snap.runs.clone());
+        });
+    }
+}
+
+impl UndoCommand for TextEditCommand {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        self.restore(&self.after);
+    }
+
+    fn undo(&self) {
+        self.restore(&self.before);
+    }
+
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        Some(self)
+    }
+
+    fn merge(&mut self, next: &dyn UndoCommand) -> bool {
+        let Some(next) = next
+            .as_any()
+            .and_then(|a| a.downcast_ref::<TextEditCommand>())
+        else {
+            return false;
+        };
+        // Fold only a contiguous continuation of the *same* coalescable run.
+        if !self.coalescable
+            || self.group == CoalesceGroup::Boundary
+            || self.group != next.group
+            || self.after != next.before
+        {
+            return false;
+        }
+        self.after = next.after.clone();
+        // Inherit the continuation's coalescability: a whitespace insert
+        // (coalescable = false) ends the word, so the *next* keystroke after
+        // it opens a new step.
+        self.coalescable = next.coalescable;
+        true
+    }
 }
 
 impl TextEditState {
@@ -254,6 +370,7 @@ impl TextEditState {
             tag: None,
             goal_column: Cell::new(None),
             style_runs: Signal::new(Vec::new()),
+            undo: RefCell::new(None),
         }
     }
 
@@ -291,6 +408,7 @@ impl TextEditState {
             tag: None,
             goal_column: Cell::new(None),
             style_runs: Signal::new(Vec::new()),
+            undo: RefCell::new(None),
         }
     }
 
@@ -301,6 +419,83 @@ impl TextEditState {
     #[must_use]
     pub fn tag(&self) -> Option<&'static str> {
         self.tag
+    }
+
+    /// R796 §5.52 — attach an [`UndoStack`] so subsequent content edits are
+    /// journalled and [`undo`](Self::undo) / [`redo`](Self::redo) replay
+    /// them. Attaching on the **state** (not the external) is deliberate: the
+    /// content mutators here are the single write path, so this is where the
+    /// before/after delta is captured. Call once at wiring time with a
+    /// `use_undo_stack` handle; the default (unattached) leaves every
+    /// existing caller byte-unchanged. Re-attaching replaces the stack.
+    pub fn attach_undo(&self, stack: Rc<UndoStack>) {
+        *self.undo.borrow_mut() = Some(stack);
+    }
+
+    /// The attached [`UndoStack`], or `None` when no history is wired.
+    #[must_use]
+    pub fn undo_stack(&self) -> Option<Rc<UndoStack>> {
+        self.undo.borrow().clone()
+    }
+
+    /// Snapshot the four content axes for a [`TextEditCommand`].
+    fn content_snapshot(&self) -> EditSnapshot {
+        EditSnapshot {
+            text: self.text.get(),
+            caret: self.caret_pos.get(),
+            anchor: self.selection_anchor.get(),
+            runs: self.style_runs.get(),
+        }
+    }
+
+    /// Run a content mutation `f`, journalling its delta onto the attached
+    /// [`UndoStack`]. A no-op passthrough when no stack is attached (zero
+    /// snapshot cost — the default path). The edit is pushed *already
+    /// applied* (`f` wrote the signals eagerly), and a no-change `f` (empty
+    /// insert, Backspace at offset 0) records nothing.
+    fn record_edit(
+        &self,
+        group: CoalesceGroup,
+        coalescable: bool,
+        label: &'static str,
+        f: impl FnOnce(),
+    ) {
+        let Some(stack) = self.undo.borrow().clone() else {
+            f();
+            return;
+        };
+        let before = self.content_snapshot();
+        f();
+        let after = self.content_snapshot();
+        if before == after {
+            return;
+        }
+        stack.push_applied(TextEditCommand {
+            text: self.text.clone(),
+            caret: self.caret_pos.clone(),
+            anchor: self.selection_anchor.clone(),
+            runs: self.style_runs.clone(),
+            before,
+            after,
+            group,
+            coalescable,
+            label: Cow::Borrowed(label),
+        });
+    }
+
+    /// R796 §5.52 — step the attached history back one command, restoring the
+    /// prior content. `false` (no-op) when no stack is attached or it is
+    /// already at the bottom. The restore is a batched whole-content write,
+    /// so every subscribed view repaints exactly as the original edit did.
+    pub fn undo(&self) -> bool {
+        let stack = self.undo.borrow().clone();
+        stack.is_some_and(|s| s.undo())
+    }
+
+    /// Mirror of [`undo`](Self::undo): re-apply the next undone command.
+    pub fn redo(&self) -> bool {
+        let stack = self.undo.borrow().clone();
+        stack.is_some_and(|s| s.redo())
     }
 
     /// Current text buffer. Triggers a `Signal` subscription when
@@ -588,6 +783,12 @@ impl TextEditState {
     /// `selection_anchor`, `preedit_buffer`) collapse into one
     /// notification cascade via [`batch`].
     pub fn set_text(&self, new_text: String) {
+        self.record_edit(CoalesceGroup::Boundary, false, "Replace text", || {
+            self.set_text_inner(new_text);
+        });
+    }
+
+    fn set_text_inner(&self, new_text: String) {
         self.goal_column.set(None);
         let new_len = new_text.len();
         let cur_caret = self.caret_pos.get();
@@ -639,6 +840,18 @@ impl TextEditState {
     /// start (macOS / iOS / GTK / Web canonical "type to replace"
     /// behaviour). The selection collapses to `None` post-write.
     pub fn insert(&self, s: &str) {
+        // A selection-replacing insert is its own undo step (boundary); a
+        // plain insert coalesces with the typing run unless it is whitespace
+        // (which ends the word so the next keystroke opens a fresh step).
+        let (group, coalescable) = if self.has_selection() {
+            (CoalesceGroup::Boundary, false)
+        } else {
+            (CoalesceGroup::Insert, !s.chars().any(char::is_whitespace))
+        };
+        self.record_edit(group, coalescable, "Type", || self.insert_inner(s));
+    }
+
+    fn insert_inner(&self, s: &str) {
         self.goal_column.set(None);
         if s.is_empty() {
             return;
@@ -683,6 +896,17 @@ impl TextEditState {
     /// for `inputType: "deleteContentBackward"` with non-collapsed
     /// selection).
     pub fn backspace(&self) {
+        let group = if self.has_selection() {
+            CoalesceGroup::Boundary
+        } else {
+            CoalesceGroup::DeleteBack
+        };
+        self.record_edit(group, group == CoalesceGroup::DeleteBack, "Delete", || {
+            self.backspace_inner();
+        });
+    }
+
+    fn backspace_inner(&self) {
         self.goal_column.set(None);
         let mut buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
@@ -722,6 +946,20 @@ impl TextEditState {
     /// for `inputType: "deleteContentForward"` with non-collapsed
     /// selection).
     pub fn delete_forward(&self) {
+        let group = if self.has_selection() {
+            CoalesceGroup::Boundary
+        } else {
+            CoalesceGroup::DeleteForward
+        };
+        self.record_edit(
+            group,
+            group == CoalesceGroup::DeleteForward,
+            "Delete forward",
+            || self.delete_forward_inner(),
+        );
+    }
+
+    fn delete_forward_inner(&self) {
         self.goal_column.set(None);
         let mut buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
@@ -2896,5 +3134,94 @@ mod tests {
         let before = runs_seen.get();
         s.apply_style_run(0, 5, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
         assert!(runs_seen.get() > before, "a runs-only apply re-runs a style_runs subscriber");
+    }
+
+    // R796 §5.52 — undo / redo with word-level coalescing.
+
+    fn undoable() -> TextEditState {
+        let st = TextEditState::new();
+        st.attach_undo(Rc::new(crate::undo::UndoStack::new()));
+        st
+    }
+
+    #[test]
+    fn r796_unattached_undo_is_a_noop() {
+        Owner::new().run(|| {
+            let st = TextEditState::new();
+            st.insert("hi");
+            assert!(st.undo_stack().is_none());
+            assert!(!st.undo(), "no stack attached -> undo is a no-op");
+            assert_eq!(st.text(), "hi", "the edit stands; nothing was journalled");
+        });
+    }
+
+    #[test]
+    fn r796_type_coalesces_into_one_undo_step() {
+        Owner::new().run(|| {
+            let st = undoable();
+            st.insert("a");
+            st.insert("b");
+            assert_eq!(st.text(), "ab");
+            assert!(st.undo());
+            assert_eq!(st.text(), "", "one undo reverses the whole typing run");
+            assert_eq!(st.caret(), 0, "undo restores the caret too");
+            assert!(st.redo());
+            assert_eq!(st.text(), "ab", "redo re-applies the coalesced run");
+        });
+    }
+
+    #[test]
+    fn r796_whitespace_ends_the_word() {
+        Owner::new().run(|| {
+            let st = undoable();
+            for s in ["a", "b", " ", "c", "d"] {
+                st.insert(s);
+            }
+            assert_eq!(st.text(), "ab cd");
+            assert!(st.undo());
+            assert_eq!(st.text(), "ab ", "the second word undoes on its own");
+            assert!(st.undo());
+            assert_eq!(st.text(), "", "the first word + space is the prior step");
+        });
+    }
+
+    #[test]
+    fn r796_caret_move_breaks_the_run() {
+        Owner::new().run(|| {
+            let st = undoable();
+            st.insert("ab");
+            st.move_left();
+            st.insert("x");
+            assert_eq!(st.text(), "axb");
+            assert!(st.undo());
+            assert_eq!(st.text(), "ab", "only the post-move insert undoes (caret move broke coalescing)");
+        });
+    }
+
+    #[test]
+    fn r796_backspace_is_a_separate_run_from_typing() {
+        Owner::new().run(|| {
+            let st = undoable();
+            st.insert("abc");
+            st.backspace();
+            assert_eq!(st.text(), "ab");
+            assert!(st.undo());
+            assert_eq!(st.text(), "abc", "the delete is its own step (different group)");
+            assert!(st.undo());
+            assert_eq!(st.text(), "", "the typing run is the prior step");
+        });
+    }
+
+    #[test]
+    fn r796_selection_replace_is_one_step() {
+        Owner::new().run(|| {
+            let st = undoable();
+            st.insert("abc");
+            st.set_selection(0, 3);
+            st.insert("X");
+            assert_eq!(st.text(), "X");
+            assert!(st.undo());
+            assert_eq!(st.text(), "abc", "type-to-replace undoes back to the selected text in one step");
+        });
     }
 }

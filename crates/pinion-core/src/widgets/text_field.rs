@@ -343,6 +343,27 @@ pub fn apply_key(
                 state.set_selection(0, len);
                 return true;
             }
+            // R796 §5.52 — undo / redo chords. Ctrl/Cmd+Z undoes,
+            // Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y redoes — the cross-platform
+            // text-editor convention. Engaged only when a binding attached an
+            // undo stack (`attach_undo`); otherwise the chord falls through
+            // to the generic Ctrl-reject below so an application shortcut
+            // handler can claim it. Consumed (returns `true`) even at a stack
+            // boundary, so an attached field's Ctrl+Z never bubbles to a
+            // global undo.
+            if (modifiers.control_key() || modifiers.meta_key())
+                && !modifiers.alt_key()
+                && state.undo_stack().is_some()
+            {
+                if other == "z" && !modifiers.shift_key() {
+                    state.undo();
+                    return true;
+                }
+                if other == "y" || (other == "z" && modifiers.shift_key()) {
+                    state.redo();
+                    return true;
+                }
+            }
             // R56.1.e §5.22 — Ctrl-OR-Meta-modified printable chars
             // are clipboard / shortcut chords (Ctrl+C / Ctrl+V /
             // Ctrl+Z / etc.). The text-input layer must NOT treat
