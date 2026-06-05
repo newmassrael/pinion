@@ -37,6 +37,9 @@
 //! tracking so empty `Preedit` triggers `Cancel` and `Disabled`
 //! cancels an in-flight session.
 
+use crate::external::IntrospectValue;
+use crate::scene::Scene;
+
 /// R56.1.f.0 §5.13 — abstract modifier-key state, mirroring
 /// `winit::keyboard::ModifiersState` and W3C DOM Level 3
 /// `getModifierState` without the winit dependency. Four modifier
@@ -326,6 +329,58 @@ pub const KEYBOARD_ACTIVATE_EVENT: &str = "KeyboardActivate";
 #[must_use]
 pub fn is_activation_event(event_name: &str) -> bool {
     event_name == KEYBOARD_ACTIVATE_EVENT || event_name == PointerWireEvent::Up.as_wire_name()
+}
+
+/// R764.1 §5.38 §5.22 — forward a W3C `KeyboardEvent.key` to the
+/// `TextField`-class External tagged `tag`, the SSOT every `TextField`
+/// binding's `WidgetCore::apply_key` routes a recognised key through.
+/// Pre-R764.1 this `find_external_with_tag_mut` then `introspect_mut`
+/// then `invoke("key", …)` then match-`Bool` block was hand-rolled in 5
+/// sites across 4 bindings (hello-textfield, hello-textarea, todomvc
+/// `TF_TAG` and `EDIT_TF_TAG`, hello-combobox-editable `INPUT_TAG`).
+///
+/// R804 relocated this from `pinion-widget-paint::text_field` (its R764.1
+/// birthplace) into `pinion-core::input`: the body is pure `Scene` /
+/// `External` introspection with zero paint, so its GUI-crate home forced
+/// the TUI binding (which cannot depend on the vello paint crate) to keep
+/// a third hand-rolled copy. One core home lets every backend share it.
+///
+/// Empty `modifiers` sends the bare [`IntrospectValue::Text`] wire shape
+/// (the R56.1.d single-keystroke path); any held modifier sends the
+/// R56.1.f.0 Json shape carrying the four W3C bits so `Shift+Arrow` /
+/// `Ctrl+A` reach the substrate's modifier-aware selection arms.
+///
+/// Returns the External's recognition result (the W3C `defaultPrevented`
+/// semantic the binding propagates from `apply_key`): `true` only on
+/// `Ok(Bool(true))`, `false` on an unrecognised key or any non-`Bool`
+/// shape (a substrate misconfiguration defers to the shell fallback
+/// chain rather than silently swallowing the key). The binding keeps its
+/// own `focused == Some(<my tag>)` roving-tabindex guard before calling.
+#[must_use]
+pub fn forward_key_to_field(
+    scene: &mut Scene,
+    tag: &str,
+    key: &str,
+    modifiers: Modifiers,
+) -> bool {
+    let Some(node) = scene.find_external_with_tag_mut(tag) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    let args = if modifiers == Modifiers::empty() {
+        IntrospectValue::Text(key.to_owned())
+    } else {
+        IntrospectValue::Json(serde_json::json!({
+            "key": key,
+            "shift": modifiers.shift_key(),
+            "ctrl": modifiers.control_key(),
+            "alt": modifiers.alt_key(),
+            "meta": modifiers.meta_key(),
+        }))
+    };
+    matches!(intro.invoke("key", args), Ok(IntrospectValue::Bool(true)))
 }
 
 #[cfg(test)]

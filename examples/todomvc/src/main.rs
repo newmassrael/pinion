@@ -427,7 +427,7 @@ fn apply_key_textfield(scene: &mut Scene, key: &str) -> bool {
     // R764.1 §5.38 — forward through the lifted SSOT. The "add todo"
     // field takes no modifier shortcuts, so the empty-modifier (bare
     // Text) wire shape is behaviour-identical to the pre-lift call.
-    tf_paint::forward_key_to_field(scene, TF_TAG, key, pinion_core::Modifiers::empty())
+    pinion_core::forward_key_to_field(scene, TF_TAG, key, pinion_core::Modifiers::empty())
 }
 
 /// `apply_key` `FILTER_TAG` arm — W3C ARIA Authoring Practices
@@ -499,7 +499,7 @@ fn apply_key_edit(scene: &mut Scene, key: &str) -> bool {
         // R764.1 §5.38 — forward through the lifted SSOT (empty
         // modifiers = bare Text, behaviour-identical to the pre-lift
         // call; Enter/Escape are intercepted above).
-        _ => tf_paint::forward_key_to_field(
+        _ => pinion_core::forward_key_to_field(
             scene,
             EDIT_TF_TAG,
             key,

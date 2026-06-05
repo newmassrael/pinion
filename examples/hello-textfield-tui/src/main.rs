@@ -512,20 +512,15 @@ impl WidgetCore for HelloTextFieldTui {
     /// (the TUI shell passes `Some(V::tag())` unconditionally, so
     /// the gate is currently a no-op but stays in place for the
     /// future TUI [`FocusManager`] axis).
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: pinion_core::Modifiers) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, modifiers: pinion_core::Modifiers) -> bool {
         if focused != Some(TF_TAG) {
             return false;
         }
-        let Some(node) = scene.find_external_with_tag_mut(TF_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        match intro.invoke("key", IntrospectValue::Text(key.to_owned())) {
-            Ok(IntrospectValue::Bool(handled)) => handled,
-            _ => false,
-        }
+        // The `forward_key_to_field` SSOT moved to `pinion_core::input` in
+        // R804, so this TUI binding — which cannot depend on the GUI vello
+        // paint crate that previously owned it — finally shares it instead
+        // of hand-rolling a third copy. Modifiers ride along for selection.
+        pinion_core::forward_key_to_field(scene, TF_TAG, key, modifiers)
     }
 
     fn fmt_state_log(state: &Self::State) -> String {

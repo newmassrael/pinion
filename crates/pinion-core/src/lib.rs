@@ -49,7 +49,7 @@ pub use renderer::WidgetRenderer;
 pub use external::External;
 pub use widget_core::{WidgetCore, WidgetEventName, WidgetStateName, WidgetTag};
 pub use frame::Frame;
-pub use input::{CompositionEvent, Modifiers};
+pub use input::{forward_key_to_field, CompositionEvent, Modifiers};
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
     is_simulating, use_local_task_pump, Computed, Effect, FetchToken, IntoIntrospectValue,

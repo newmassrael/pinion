@@ -492,7 +492,7 @@ fn activate_active(scene: &mut Scene, state: &ComboViewState, filtered: &[usize]
 fn delegate_to_field(scene: &mut Scene, key: &str) -> bool {
     // R764.1 §5.38 — forward through the lifted SSOT (empty modifiers =
     // bare Text, behaviour-identical to the pre-lift call).
-    tf_paint::forward_key_to_field(scene, INPUT_TAG, key, pinion_core::Modifiers::empty())
+    pinion_core::forward_key_to_field(scene, INPUT_TAG, key, pinion_core::Modifiers::empty())
 }
 
 struct ComboView;

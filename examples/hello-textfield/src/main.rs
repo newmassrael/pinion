@@ -341,11 +341,11 @@ impl WidgetCore for TextFieldView {
             return false;
         }
         // R764.1 §5.38 §5.22 — forward through the lifted SSOT
-        // (`tf_paint::forward_key_to_field`); `modifiers` carries the
+        // (`pinion_core::forward_key_to_field`); `modifiers` carries the
         // four W3C bits so native Shift+Arrow / Ctrl+A reach the
         // substrate's selection arms (R763). The roving-tabindex guard
         // above keeps the forward scoped to this widget's focus.
-        tf_paint::forward_key_to_field(scene, TF_TAG, key, modifiers)
+        pinion_core::forward_key_to_field(scene, TF_TAG, key, modifiers)
     }
 
     /// R56.2.a §5.13 §5.38 — delegate platform IME composition events

@@ -585,7 +585,7 @@ impl WidgetCore for FileSaveView {
                     confirm();
                     return true;
                 }
-                tf_paint::forward_key_to_field(scene, FILENAME_TAG, key, modifiers)
+                pinion_core::forward_key_to_field(scene, FILENAME_TAG, key, modifiers)
             }
             Some(SAVE_TAG) => apply_aria_activate(scene, focused, key, SAVE_TAG),
             Some(CANCEL_TAG) => apply_aria_activate(scene, focused, key, CANCEL_TAG),

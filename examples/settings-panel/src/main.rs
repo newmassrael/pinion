@@ -1217,23 +1217,17 @@ const THEME_TOGGLE_INTENT_TAG: &str = intent_tag!("theme_toggle", "toggle");
 
 // ─── apply_key arms ───────────────────────────────────────────────
 
-fn apply_key_profile(scene: &mut Scene, key: &str) -> bool {
+fn apply_key_profile(scene: &mut Scene, key: &str, modifiers: pinion_core::Modifiers) -> bool {
     if key == "Enter" {
         let text_state = use_text_edit_state(PROFILE_TF_TAG);
         let name = use_display_name();
         name.set(text_state.text());
         return true;
     }
-    let Some(node) = scene.find_external_with_tag_mut(PROFILE_TF_TAG) else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
-        return false;
-    };
-    match intro.invoke("key", IntrospectValue::Text(key.to_owned())) {
-        Ok(IntrospectValue::Bool(handled)) => handled,
-        _ => false,
-    }
+    // Held modifiers ride along so `Shift+Arrow` / `Ctrl+A` reach the
+    // field's selection arms (the modifier-aware path the pre-R804
+    // bare-`Text` hand-roll silently dropped).
+    pinion_core::forward_key_to_field(scene, PROFILE_TF_TAG, key, modifiers)
 }
 
 fn apply_key_nav(scene: &mut Scene, key: &str) -> bool {
@@ -1508,10 +1502,10 @@ impl WidgetCore for SettingsPanelView {
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
-        _modifiers: pinion_core::Modifiers,
+        modifiers: pinion_core::Modifiers,
     ) -> bool {
         match focused {
-            Some(PROFILE_TF_TAG) => apply_key_profile(scene, key),
+            Some(PROFILE_TF_TAG) => apply_key_profile(scene, key, modifiers),
             Some(NAV_TAG) => apply_key_nav(scene, key),
             _ => false,
         }

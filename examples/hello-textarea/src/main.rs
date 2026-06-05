@@ -644,7 +644,7 @@ impl WidgetCore for TextAreaView {
         // R764.1 — forward everything else through the lifted SSOT
         // (modifier-aware: Shift+Arrow / Ctrl+A reach the substrate's
         // selection arms).
-        tf_paint::forward_key_to_field(scene, TA_TAG, key, modifiers)
+        pinion_core::forward_key_to_field(scene, TA_TAG, key, modifiers)
     }
 
     /// R56.2.a §5.13 — platform IME composition (mirror of

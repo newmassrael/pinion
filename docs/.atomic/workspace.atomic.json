@@ -31785,6 +31785,54 @@
         "R804+ = genuine high-leverage Phase B (OS-native menu/print own-renderer / Model-View at scale / §7 API)"
       ]
     },
+    "R804": {
+      "decision_summary": "Relocate forward_key_to_field to pinion-core::input and migrate 3 straggler bindings off the hand-rolled bare-Text key forward, fixing the dropped-Modifiers selection bug",
+      "changes_bullets": [
+        "Move forward_key_to_field from pinion-widget-paint::text_field to pinion-core::input (pure Scene introspect, no paint)",
+        "Re-export at pinion_core crate root; repoint 6 GUI consumers from tf_paint:: to pinion_core::",
+        "Migrate 3 straggler bindings (hello-number-input, settings-panel profile field, hello-textfield-tui) onto the SSOT",
+        "Plumb held Modifiers through their apply_key: Shift+Arrow / Shift+Home / Shift+End selection now reaches those fields",
+        "TUI binding finally shares the core helper; the GUI paint-crate home had forced a 3rd hand-rolled copy"
+      ],
+      "verification_bullets": [
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); test --workspace 134 ok / 0 fail",
+        "New tools/demos/r804_modifier_forward.py: 30 assertions, selection lifecycle via scene/key + scene/modifiers path",
+        "Regression PASS: r736_number_input, settings_panel_r667, hello_textfield_select/type, todomvc, r717, r764/r798, r789/r790/r791",
+        "Pre-R804 failure is compiler-guaranteed: _modifiers was an unused named param, so the bare-Text hand-roll dropped it"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "hello-textfield-tui has no automated RPC demo (TUI backend); migration verified by clean build + identical empty-modifier wire",
+        "forward_key_to_field is now core-homed, so any future TextField binding (GUI or TUI) shares one SSOT"
+      ],
+      "publishable_decision_summary": "Relocate forward_key_to_field to pinion-core::input and migrate 3 straggler bindings off the hand-rolled bare-Text key forward, fixing the dropped-Modifiers selection bug",
+      "publishable_changes_bullets": [
+        "Move forward_key_to_field from pinion-widget-paint::text_field to pinion-core::input (pure Scene introspect, no paint)",
+        "Re-export at pinion_core crate root; repoint 6 GUI consumers from tf_paint:: to pinion_core::",
+        "Migrate 3 straggler bindings (hello-number-input, settings-panel profile field, hello-textfield-tui) onto the SSOT",
+        "Plumb held Modifiers through their apply_key: Shift+Arrow / Shift+Home / Shift+End selection now reaches those fields",
+        "TUI binding finally shares the core helper; the GUI paint-crate home had forced a 3rd hand-rolled copy"
+      ],
+      "publishable_verification_bullets": [
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic); test --workspace 134 ok / 0 fail",
+        "New tools/demos/r804_modifier_forward.py: 30 assertions, selection lifecycle via scene/key + scene/modifiers path",
+        "Regression PASS: r736_number_input, settings_panel_r667, hello_textfield_select/type, todomvc, r717, r764/r798, r789/r790/r791",
+        "Pre-R804 failure is compiler-guaranteed: _modifiers was an unused named param, so the bare-Text hand-roll dropped it"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hello-textfield-tui has no automated RPC demo (TUI backend); migration verified by clean build + identical empty-modifier wire",
+        "forward_key_to_field is now core-homed, so any future TextField binding (GUI or TUI) shares one SSOT"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -380,21 +380,6 @@ fn view(state: &NumberViewState, _frame: &Frame) -> Scene {
     )
 }
 
-/// Delegate `key` to the text field's edit dispatch (caret motion + text
-/// edit). Returns whether the field recognised it (W3C `defaultPrevented`).
-fn delegate_to_field(scene: &mut Scene, key: &str) -> bool {
-    let Some(node) = scene.find_external_with_tag_mut(INPUT_TAG) else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
-        return false;
-    };
-    matches!(
-        intro.invoke("key", IntrospectValue::Text(key.to_owned())),
-        Ok(IntrospectValue::Bool(true))
-    )
-}
-
 struct NumberView;
 
 impl WidgetCore for NumberView {
@@ -466,7 +451,7 @@ impl WidgetCore for NumberView {
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
-        _modifiers: pinion_core::Modifiers,
+        modifiers: pinion_core::Modifiers,
     ) -> bool {
         if focused != Some(INPUT_TAG) {
             return false;
@@ -494,15 +479,18 @@ impl WidgetCore for NumberView {
                 commit_value(current_value());
                 true
             }
-            // Caret motion + text deletion always reach the field.
+            // Caret motion + text deletion always reach the field; the
+            // held modifiers ride along so `Shift+Arrow` / `Shift+Home`
+            // extend the field's selection (the modifier-aware path that
+            // the pre-R804 bare-`Text` hand-roll silently dropped).
             "ArrowLeft" | "ArrowRight" | "Home" | "End" | "Backspace" | "Delete" => {
-                delegate_to_field(scene, key)
+                pinion_core::forward_key_to_field(scene, INPUT_TAG, key, modifiers)
             }
             // Printable keys reach the field only if numeric; letters /
             // symbols drop (the <input type=number> keystroke gate).
             other => {
                 if is_numeric_char(other) {
-                    delegate_to_field(scene, other)
+                    pinion_core::forward_key_to_field(scene, INPUT_TAG, other, modifiers)
                 } else {
                     false
                 }

@@ -429,7 +429,7 @@ impl WidgetCore for FileManagerView {
                     cancel_rename();
                     return true;
                 }
-                _ => return tf_paint::forward_key_to_field(scene, RENAME_TF_TAG, key, modifiers),
+                _ => return pinion_core::forward_key_to_field(scene, RENAME_TF_TAG, key, modifiers),
             }
         }
         // R792 — while the file list owns focus, arrows move the roving

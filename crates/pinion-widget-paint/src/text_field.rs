@@ -63,7 +63,7 @@ use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
-use pinion_core::{Color, CompositionEvent, Modifiers, Scene, WidgetStateName};
+use pinion_core::{Color, CompositionEvent, Scene, WidgetStateName};
 use pinion_text::{
     byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
     caret_rect_for_byte_offset, selection_rects_for_range, CaretRect, LayoutCache,
@@ -1091,51 +1091,10 @@ pub fn byte_for_field_line_boundary(
     byte_offset_for_line_boundary(layout, visual_caret_byte, end)
 }
 
-/// R764.1 §5.38 §5.22 — forward a W3C `KeyboardEvent.key` to the
-/// `TextField`-class External tagged `tag`, the SSOT every `TextField`
-/// binding's `WidgetCore::apply_key` routes a recognised key through.
-/// Pre-R764.1 this `find_external_with_tag_mut` then `introspect_mut`
-/// then `invoke("key", …)` then match-`Bool` block was hand-rolled in 5
-/// sites across 4 bindings (hello-textfield, hello-textarea, todomvc
-/// `TF_TAG` and `EDIT_TF_TAG`, hello-combobox-editable `INPUT_TAG`).
-///
-/// Empty `modifiers` sends the bare [`IntrospectValue::Text`] wire shape
-/// (the R56.1.d single-keystroke path); any held modifier sends the
-/// R56.1.f.0 Json shape carrying the four W3C bits so `Shift+Arrow` /
-/// `Ctrl+A` reach the substrate's modifier-aware selection arms.
-///
-/// Returns the External's recognition result (the W3C `defaultPrevented`
-/// semantic the binding propagates from `apply_key`): `true` only on
-/// `Ok(Bool(true))`, `false` on an unrecognised key or any non-`Bool`
-/// shape (a substrate misconfiguration defers to the shell fallback
-/// chain rather than silently swallowing the key). The binding keeps its
-/// own `focused == Some(<my tag>)` roving-tabindex guard before calling.
-#[must_use]
-pub fn forward_key_to_field(
-    scene: &mut Scene,
-    tag: &str,
-    key: &str,
-    modifiers: Modifiers,
-) -> bool {
-    let Some(node) = scene.find_external_with_tag_mut(tag) else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
-        return false;
-    };
-    let args = if modifiers == Modifiers::empty() {
-        IntrospectValue::Text(key.to_owned())
-    } else {
-        IntrospectValue::Json(serde_json::json!({
-            "key": key,
-            "shift": modifiers.shift_key(),
-            "ctrl": modifiers.control_key(),
-            "alt": modifiers.alt_key(),
-            "meta": modifiers.meta_key(),
-        }))
-    };
-    matches!(intro.invoke("key", args), Ok(IntrospectValue::Bool(true)))
-}
+// `forward_key_to_field` relocated to `pinion_core::input` in R804 — the
+// body was pure `Scene` / `External` introspection (no paint), so this
+// GUI paint crate was the wrong home and forced the TUI binding to keep a
+// third hand-rolled copy. Callers use `pinion_core::forward_key_to_field`.
 
 /// R764.1 §5.38 §5.13 — forward a platform [`CompositionEvent`] to the
 /// `TextField`-class External tagged `tag`, the SSOT every `TextField`
