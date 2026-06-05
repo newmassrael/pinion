@@ -31459,6 +31459,56 @@
         "undo-on-State vs clipboard-on-External attach asymmetry (R796 carry) -- unreviewed"
       ]
     },
+    "R798": {
+      "decision_summary": "R798 §5.52 wire undo/redo into multi-line rich-text textarea (2nd attach_undo consumer)",
+      "changes_bullets": [
+        "hello-textarea: attach_undo(use_undo_stack(TA_TAG)) after the boot seed (seed = undo floor)",
+        "2nd attach_undo consumer (after hello-textfield); chords via forward_key_to_field substrate path",
+        "exercises R796.1 granular run-reversal on multi-line rich text (deleted coloured word restores run)",
+        "text_edit.rs: TextEditCommand pub -> pub(crate) (R796 API-surface debt; 0 external users)",
+        "attach asymmetry audit: undo-on-State (single write path) vs clipboard/blink-on-External = justified",
+        "module doc + Try-it updated; 2 binding tests (seed-floor undo/redo; deleted-style-run reversal)"
+      ],
+      "verification_bullets": [
+        "new demo r798_textarea_undo.py: 34 assert (coalesce undo/redo, Ctrl+Y, newline, run reversal) PASS",
+        "2 new hello-textarea binding tests pass; cargo test --workspace -j2 0 fail (true CARGO_EXIT)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: pedantic clean",
+        "validate T1=0 / new orphan +0"
+      ],
+      "impact_refs": [
+        "5.52",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "undo stays on TextEditState by design (model owns history); not folded into External builder",
+        "textarea reflective-toolbar = still deferred DESIGN round (R797 audit); joins rich-text-editor axis",
+        "R796 carry cleared: TextEditCommand visibility tightened + attach-asymmetry reviewed (justified)"
+      ],
+      "publishable_decision_summary": "R798 §5.52 wire undo/redo into multi-line rich-text textarea (2nd attach_undo consumer)",
+      "publishable_changes_bullets": [
+        "hello-textarea: attach_undo(use_undo_stack(TA_TAG)) after the boot seed (seed = undo floor)",
+        "2nd attach_undo consumer (after hello-textfield); chords via forward_key_to_field substrate path",
+        "exercises R796.1 granular run-reversal on multi-line rich text (deleted coloured word restores run)",
+        "text_edit.rs: TextEditCommand pub -> pub(crate) (R796 API-surface debt; 0 external users)",
+        "attach asymmetry audit: undo-on-State (single write path) vs clipboard/blink-on-External = justified",
+        "module doc + Try-it updated; 2 binding tests (seed-floor undo/redo; deleted-style-run reversal)"
+      ],
+      "publishable_verification_bullets": [
+        "new demo r798_textarea_undo.py: 34 assert (coalesce undo/redo, Ctrl+Y, newline, run reversal) PASS",
+        "2 new hello-textarea binding tests pass; cargo test --workspace -j2 0 fail (true CARGO_EXIT)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: pedantic clean",
+        "validate T1=0 / new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.52",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "undo stays on TextEditState by design (model owns history); not folded into External builder",
+        "textarea reflective-toolbar = still deferred DESIGN round (R797 audit); joins rich-text-editor axis",
+        "R796 carry cleared: TextEditCommand visibility tightened + attach-asymmetry reviewed (justified)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

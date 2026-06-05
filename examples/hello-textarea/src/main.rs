@@ -75,6 +75,17 @@
 //! with `style_at`. Bold / italic are metric-affecting runs, so the
 //! `field_shaping` SSOT keeps the caret + hit-test geometry exact.
 //!
+//! R798 adds **undo / redo**: the textarea is the 2nd
+//! [`TextEditState::attach_undo`](pinion_core::widgets::text_edit::TextEditState::attach_undo)
+//! consumer after hello-textfield, so `Ctrl+Z` / `Ctrl+Shift+Z` (`Ctrl+Y`)
+//! undo / redo with word-level coalescing through the same substrate path
+//! (`forward_key_to_field` recognises the chords once a stack is attached).
+//! The stack is attached *after* the boot seed, so the seeded multi-line
+//! rich-text document is the undo floor. R796.1 made the command granular —
+//! it carries the deleted `removed_runs` — so undoing a deleted coloured
+//! word restores both its text **and** its style run, exercising run
+//! reversal against real multi-line rich text.
+//!
 //! ## Try it
 //!
 //! ```text
@@ -87,7 +98,9 @@
 //! (hold `Shift` to select); drag across lines to select a multi-line
 //! band. Select a word and click **B** / **I** to bold / italicise it
 //! (keeping its colour), or a colour swatch to recolour it; the bordered
-//! swatch clears formatting.
+//! swatch clears formatting. `Ctrl+Z` undoes the last edit (a typing run
+//! reverts as one word), `Ctrl+Shift+Z` / `Ctrl+Y` redoes; deleting a
+//! coloured word and undoing brings its colour back with it.
 
 use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::External;
@@ -97,6 +110,7 @@ use pinion_core::style::{
     LayoutStyle, Size, TextAlign, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::undo::use_undo_stack;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
@@ -442,6 +456,16 @@ impl WidgetCore for TextAreaView {
                 StyleRun::new(23, 28, swatch_text_style(INK_BLUE)), // "third"  blue
             ]);
         }
+        // R798 §5.52 — journal edits onto a shared undo stack so Ctrl+Z /
+        // Ctrl+Shift+Z (Ctrl+Y) undo / redo with word-level coalescing, the
+        // textarea (multi-line + rich-text) being the 2nd `attach_undo`
+        // consumer after hello-textfield. Attached on the *state* (the single
+        // edit write path the view fn and the binding's apply_key share), and
+        // *after* the boot seed above so the initial document is the undo
+        // floor (you cannot undo past it). The R796.1 granular command
+        // restores deleted `removed_runs`, so undoing a deleted coloured word
+        // brings back both its text and its style run.
+        text_state.attach_undo(use_undo_stack(TA_TAG));
         let blink = use_caret_blink(TA_TAG);
         let clipboard = use_app_clipboard(TA_TAG);
         Box::new(
@@ -932,6 +956,61 @@ mod tests {
                 edit.selection_range(),
                 Some((4, 6)),
                 "Shift+Home selects from the line start to the original caret",
+            );
+        });
+    }
+
+    /// R798 §5.52 — the textarea journals edits onto the undo stack
+    /// (attached after the boot seed), so `Ctrl+Z` reverts an edit back to
+    /// the seeded document floor and `Ctrl+Shift+Z` redoes it.
+    #[test]
+    fn r798_ctrl_z_reverts_to_seed_floor_then_redoes() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            let mut scene =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            let seed = edit.text();
+            edit.set_caret(seed.len());
+            edit.insert("Z"); // a content edit recorded on the stack
+            assert_eq!(edit.text(), format!("{seed}Z"), "insert appended a char");
+            let ctrl = pinion_core::Modifiers { ctrl: true, ..pinion_core::Modifiers::empty() };
+            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "z", ctrl));
+            assert_eq!(edit.text(), seed, "Ctrl+Z reverts the insert to the seed floor");
+            // Cannot undo past the floor: the seed was below the attach point.
+            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "z", ctrl));
+            assert_eq!(edit.text(), seed, "no further undo past the seeded document");
+            let ctrl_shift = pinion_core::Modifiers {
+                ctrl: true,
+                shift: true,
+                ..pinion_core::Modifiers::empty()
+            };
+            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "z", ctrl_shift));
+            assert_eq!(edit.text(), format!("{seed}Z"), "Ctrl+Shift+Z redoes the insert");
+        });
+    }
+
+    /// R798 §5.52 / R796.1 — the granular command restores `removed_runs`:
+    /// deleting the seeded coloured leading word and undoing brings back both
+    /// its text *and* its style run (the multi-line rich-text 2nd consumer
+    /// that exercises run reversal end-to-end through the binding).
+    #[test]
+    fn r798_undo_restores_a_deleted_style_run() {
+        with_owner(|| {
+            let edit = use_text_edit_state(TA_TAG);
+            let mut scene =
+                Scene::External(ExternalNode::new(TextAreaView::create_external()).with_tag(TA_TAG));
+            // The seed styles "first" (bytes 0..5) red.
+            assert!(edit.style_at(0).is_some(), "the leading word seeds a style run");
+            edit.set_selection(0, 5);
+            edit.backspace(); // selection-delete drops "first" and clips its run
+            assert!(!edit.text().starts_with("first"), "the word is gone");
+            assert!(edit.style_at(0).is_none(), "its style run went with it");
+            let ctrl = pinion_core::Modifiers { ctrl: true, ..pinion_core::Modifiers::empty() };
+            assert!(TextAreaView::apply_key(&mut scene, Some(TA_TAG), "z", ctrl));
+            assert!(edit.text().starts_with("first"), "undo restored the deleted word");
+            assert!(
+                edit.style_at(0).is_some(),
+                "undo restored its style run (R796.1 removed_runs reversal)",
             );
         });
     }

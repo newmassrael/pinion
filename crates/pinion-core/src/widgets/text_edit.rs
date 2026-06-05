@@ -279,7 +279,7 @@ enum CoalesceGroup {
 /// contiguous edits coalesce via [`merge`](UndoCommand::merge) so a typing
 /// run is one Ctrl+Z.
 #[derive(Debug)]
-pub struct TextEditCommand {
+pub(crate) struct TextEditCommand {
     text: Signal<String>,
     caret: Signal<usize>,
     anchor: Signal<Option<usize>>,
