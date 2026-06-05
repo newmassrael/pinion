@@ -31049,6 +31049,48 @@
         "selection-follows-focus for file list (R792 carry-b) still deferred"
       ]
     },
+    "R793.1": {
+      "decision_summary": "R793.1 (user cost-no-object SSOT audit) lift the viewport-geometry helpers + the directory-change reset that R792 duplicated: page_rows + reveal_row to widgets::virtual_list (nav_select_key + dir_nav_key delegate), and enter_directory (batched) as DirectoryState's SSOT for the navigate/up/open_dir cwd+selection+cursor reset. Behaviour-preserving; the R792 self-grep checked clamp_nav but missed these surrounding axes (the R764.1 trap).",
+      "changes_bullets": [
+        "page_rows + reveal_row lifted to widgets::virtual_list (the scroll_offset_to_reveal siblings)",
+        "nav_select_key + dir_nav_key delegate — the byte-identical page+reveal R792 duplicated",
+        "enter_directory SSOT on DirectoryState: navigate/up/open_dir share the cwd+selection+cursor reset",
+        "enter_directory batched (delete/rename precedent) — the 4-signal change re-renders once"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace 0 fail (R793 5598 -> R793.1 5600, +2 page_rows/reveal_row); clippy clean",
+        "behavior-preserving lift: nav demos r776/r777/r780 + file demos r789/r791/r792/r793 regress PASS",
+        "no new demo — audit-clearance lift (R773 behaviour-preserving-refactor precedent)"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "R792 self-grep checked clamp_nav but missed the surrounding page/reveal/dir-reset axes (R764.1 trap)",
+        "modal-state query External (R788 carry-a) + selection-follows-focus (R792 carry-b) still deferred"
+      ],
+      "publishable_decision_summary": "R793.1 (user cost-no-object SSOT audit) lift the viewport-geometry helpers + the directory-change reset that R792 duplicated: page_rows + reveal_row to widgets::virtual_list (nav_select_key + dir_nav_key delegate), and enter_directory (batched) as DirectoryState's SSOT for the navigate/up/open_dir cwd+selection+cursor reset. Behaviour-preserving; the R792 self-grep checked clamp_nav but missed these surrounding axes (the R764.1 trap).",
+      "publishable_changes_bullets": [
+        "page_rows + reveal_row lifted to widgets::virtual_list (the scroll_offset_to_reveal siblings)",
+        "nav_select_key + dir_nav_key delegate — the byte-identical page+reveal R792 duplicated",
+        "enter_directory SSOT on DirectoryState: navigate/up/open_dir share the cwd+selection+cursor reset",
+        "enter_directory batched (delete/rename precedent) — the 4-signal change re-renders once"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace 0 fail (R793 5598 -> R793.1 5600, +2 page_rows/reveal_row); clippy clean",
+        "behavior-preserving lift: nav demos r776/r777/r780 + file demos r789/r791/r792/r793 regress PASS",
+        "no new demo — audit-clearance lift (R773 behaviour-preserving-refactor precedent)"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R792 self-grep checked clamp_nav but missed the surrounding page/reveal/dir-reset axes (R764.1 trap)",
+        "modal-state query External (R788 carry-a) + selection-follows-focus (R792 carry-b) still deferred"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

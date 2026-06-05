@@ -37,7 +37,6 @@ use crate::external::{
 use crate::input::is_activation_event;
 use crate::reactive::{Owner, Signal};
 use crate::widgets::scroll::ScrollState;
-use crate::widgets::virtual_list::scroll_offset_to_reveal;
 
 /// Join `name` onto the directory path `base` over `'/'` separators. A
 /// `base` of `"/"` yields `"/name"`; otherwise `"<base>/name"`. The leaf
@@ -231,6 +230,25 @@ impl DirectoryState {
         }
     }
 
+    /// R792.1 — enter a new directory context `new_cwd`: set the cwd, clear
+    /// the selection + keyboard cursor (a new listing has neither), and
+    /// refresh the listing. The single SSOT for the
+    /// [`navigate`](Self::navigate) / [`up`](Self::up) /
+    /// [`open_dir`](Self::open_dir) directory change (each previously inlined
+    /// the same four-signal reset). [`batch`](crate::reactive::batch)ed so
+    /// the change re-renders subscribers once — the
+    /// [`delete_selected`](Self::delete_selected) /
+    /// [`rename_selected`](Self::rename_selected) precedent. The effective
+    /// [`cursor`](Self::cursor) then defaults to the new listing's first row.
+    fn enter_directory(&self, new_cwd: String) {
+        crate::reactive::batch(|| {
+            self.cwd.set(new_cwd);
+            self.selected.set(None);
+            self.cursor.set(None);
+            self.refresh();
+        });
+    }
+
     /// Re-read the current directory's listing into the `entries` Signal
     /// (after a `cwd` change). An unreadable directory lists empty.
     fn refresh(&self) {
@@ -254,12 +272,7 @@ impl DirectoryState {
     pub fn navigate(&self, name: &str) -> String {
         let is_child_dir = self.entries.get().iter().any(|e| e.is_dir && e.name == name);
         if is_child_dir {
-            self.cwd.set(join_path(&self.cwd.get(), name));
-            self.selected.set(None);
-            // R792 — a new directory context resets the keyboard cursor; the
-            // effective cursor then defaults to the new listing's first row.
-            self.cursor.set(None);
-            self.refresh();
+            self.enter_directory(join_path(&self.cwd.get(), name));
         }
         self.cwd.get()
     }
@@ -274,10 +287,7 @@ impl DirectoryState {
     pub fn up(&self) -> String {
         let parent = parent_path(&self.cwd.get());
         if parent != self.cwd.get() {
-            self.cwd.set(parent);
-            self.selected.set(None);
-            self.cursor.set(None); // R792 — reset the keyboard cursor on a dir change.
-            self.refresh();
+            self.enter_directory(parent);
         }
         self.cwd.get()
     }
@@ -290,10 +300,7 @@ impl DirectoryState {
                   returned cwd (see `navigate`)"
     )]
     pub fn open_dir(&self, path: impl Into<String>) -> String {
-        self.cwd.set(path.into());
-        self.selected.set(None);
-        self.cursor.set(None); // R792 — reset the keyboard cursor on a dir change.
-        self.refresh();
+        self.enter_directory(path.into());
         self.cwd.get()
     }
 
@@ -451,7 +458,9 @@ pub fn use_directory_state(
 /// This is the `DirectoryState` peer of
 /// [`nav_select_key`](crate::widgets::virtual_select::nav_select_key): both
 /// reuse the shared [`clamp_nav`](crate::widgets::virtual_select::clamp_nav)
-/// key→index policy and [`scroll_offset_to_reveal`], but the state owner and
+/// key→index policy and the [`page_rows`](crate::widgets::virtual_list::page_rows)
+/// / [`reveal_row`](crate::widgets::virtual_list::reveal_row) viewport
+/// helpers, but the state owner and
 /// activation semantics differ — a `VirtualSelectExternal` *selects* the
 /// navigated index (selection-follows-focus), whereas a file list's `Enter`
 /// *navigates or picks* and the cursor is orthogonal to the picked leaf. So
@@ -481,16 +490,14 @@ pub fn dir_nav_key(
         dir.activate_cursor();
         return true;
     }
-    let (_, viewport_h) = scroll.measured_viewport();
-    let page = usize::try_from(viewport_h / row_pitch.max(1)).unwrap_or(1).max(1);
+    let page = crate::widgets::virtual_list::page_rows(scroll, row_pitch);
     if !dir.move_cursor(key, page) {
         return false;
     }
     // Scroll the navigated row into view (a cursor on a never-materialized
-    // row scrolls there — the same reveal `nav_select_key` performs).
+    // row scrolls there — the same `reveal_row` glue `nav_select_key` uses).
     if let Some(target) = dir.cursor() {
-        let reveal = scroll_offset_to_reveal(target, scroll.offset_y(), viewport_h, row_pitch);
-        scroll.scroll_to(0, reveal);
+        crate::widgets::virtual_list::reveal_row(scroll, target, row_pitch);
     }
     true
 }

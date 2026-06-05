@@ -43,7 +43,6 @@ use crate::external::{
 };
 use crate::intent::Intent;
 use crate::widgets::scroll::ScrollState;
-use crate::widgets::virtual_list::scroll_offset_to_reveal;
 use crate::widgets::IntentEmitter;
 use crate::Scene;
 use std::collections::BTreeSet;
@@ -814,8 +813,8 @@ pub struct RowMetrics {
 /// Every selection mutation goes through the coordinator's AI-first `invoke`
 /// funnel (the same wire a `scene/invoke` drives — keyboard and RPC
 /// selection are one funnel), then the navigated row is scrolled into view
-/// with [`scroll_offset_to_reveal`] (so navigating to a never-materialized
-/// row scrolls there).
+/// with [`reveal_row`](crate::widgets::virtual_list::reveal_row) (so
+/// navigating to a never-materialized row scrolls there).
 ///
 /// Returns `true` when the key was handled (the grid/list was focused and
 /// the key is a navigation / multi-select key), `false` otherwise — the
@@ -837,8 +836,7 @@ pub fn nav_select_key(
     if focused != Some(tag) {
         return false;
     }
-    let (_, measured_h) = scroll.measured_viewport();
-    let page = usize::try_from(measured_h / row_pitch.max(1)).unwrap_or(1).max(1);
+    let page = crate::widgets::virtual_list::page_rows(scroll, row_pitch);
 
     let Some(node) = scene.find_external_with_tag_mut(tag) else {
         return false;
@@ -880,8 +878,7 @@ pub fn nav_select_key(
     if let (Some(intro), Ok(t)) = (node.handle.introspect_mut(), i64::try_from(target)) {
         let _ = intro.invoke(action, IntrospectValue::Int(t));
     }
-    let reveal = scroll_offset_to_reveal(target, scroll.offset_y(), measured_h, row_pitch);
-    scroll.scroll_to(0, reveal);
+    crate::widgets::virtual_list::reveal_row(scroll, target, row_pitch);
     true
 }
 

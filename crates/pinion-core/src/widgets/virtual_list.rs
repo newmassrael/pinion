@@ -286,6 +286,37 @@ pub fn scroll_offset_to_reveal(index: usize, offset_y: i32, viewport_h: u32, row
     i32::try_from(target).unwrap_or(i32::MAX)
 }
 
+/// R793.1 §5.27 — **rows per measured viewport-ful**: the `PageUp` /
+/// `PageDown` step a keyboard-navigation controller takes over a
+/// uniform-pitch virtualized collection, derived from the [`ScrollState`]'s
+/// measured viewport height and `row_pitch`. Clamped to ≥ 1 (a viewport
+/// shorter than one row, or an unmeasured `0`-height viewport, still pages
+/// by a single row), with the `row_pitch.max(1)` guard against a divide by
+/// zero. The viewport-geometry sibling of [`scroll_offset_to_reveal`]; both
+/// `nav_select_key` and `dir_nav_key` read it so the page step is computed
+/// one way (the R792 self-grep lifted this byte-identical 2-controller
+/// derivation into its natural home next to the reveal computation).
+#[must_use]
+pub fn page_rows(scroll: &crate::widgets::scroll::ScrollState, row_pitch: u32) -> usize {
+    let (_, viewport_h) = scroll.measured_viewport();
+    usize::try_from(viewport_h / row_pitch.max(1)).unwrap_or(1).max(1)
+}
+
+/// R793.1 §5.27 — scroll a uniform-pitch virtualized collection so the row
+/// at `index` is revealed, from the [`ScrollState`]'s current offset. The
+/// `&ScrollState`-applying wrapper around [`scroll_offset_to_reveal`]:
+/// reads the current offset + measured viewport, computes the align-auto
+/// target, and hands it to [`ScrollState::scroll_to`](crate::widgets::scroll::ScrollState::scroll_to)
+/// (which clamps to `[0, max_y]`). Lifted (R792 self-grep) from the
+/// byte-identical reveal-glue both `nav_select_key` and `dir_nav_key`
+/// carried, so the scroll-into-view idiom lives once next to the geometry
+/// it applies.
+pub fn reveal_row(scroll: &crate::widgets::scroll::ScrollState, index: usize, row_pitch: u32) {
+    let (_, viewport_h) = scroll.measured_viewport();
+    let offset = scroll_offset_to_reveal(index, scroll.offset_y(), viewport_h, row_pitch);
+    scroll.scroll_to(0, offset);
+}
+
 /// R745 §5.27 — a prefix-sum offset table over **explicit per-row
 /// heights**, enabling O(log n) windowing for a variable-height
 /// virtualized list.
@@ -454,6 +485,33 @@ mod tests {
     const PITCH: u32 = 40;
     const VP: u32 = 200;
     const N: usize = 1000;
+
+    // ── R793.1 lifted viewport-geometry helpers ─────────────────────
+
+    #[test]
+    fn page_rows_is_measured_viewport_over_pitch_clamped() {
+        use crate::widgets::scroll::ScrollState;
+        let s = ScrollState::new();
+        // An unmeasured (0-height) viewport still pages by at least one row.
+        assert_eq!(page_rows(&s, 32), 1, "unmeasured viewport pages by one row");
+        s.set_measured_viewport(360, 320);
+        assert_eq!(page_rows(&s, 32), 10, "320px / 32px pitch = 10 rows per page");
+        assert_eq!(page_rows(&s, 0), 320, "zero pitch is guarded against div-by-zero");
+        s.set_measured_viewport(360, 20);
+        assert_eq!(page_rows(&s, 32), 1, "a viewport shorter than one row pages by one");
+    }
+
+    #[test]
+    fn reveal_row_scrolls_a_deep_row_into_view_from_current_offset() {
+        use crate::widgets::scroll::ScrollState;
+        let s = ScrollState::new();
+        s.set_max(0, 320_000);
+        s.set_measured_viewport(360, 384);
+        reveal_row(&s, 9_999, 32);
+        assert!(s.offset_y() > 300_000, "deep row revealed, offset {}", s.offset_y());
+        reveal_row(&s, 0, 32);
+        assert_eq!(s.offset_y(), 0, "row 0 reveals at the top");
+    }
 
     #[test]
     fn empty_dataset_is_empty_window() {
