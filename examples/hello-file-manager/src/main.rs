@@ -67,8 +67,7 @@ use pinion_widget_paint::button::{
     button_a11y_state, button_scene, read_button_focused, read_button_state, ButtonColors,
     ButtonStyle,
 };
-use pinion_widget_paint::file_browser::file_row;
-use pinion_widget_paint::virtual_list::view_virtual_list;
+use pinion_widget_paint::file_browser::{file_browser_pane, FileBrowserMetrics};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -139,14 +138,6 @@ fn unique_name(entries: &[DirEntry], base: &str, ext: &str) -> String {
     unreachable!("u32 range yields a free name long before exhaustion")
 }
 
-/// The visual index of the selected entry, or `None` (path-keyed selection
-/// → row position, so the painted Accent row + a11y `aria-selected` agree).
-fn selected_index(state: &DirectoryState) -> Option<usize> {
-    let selected = state.selected()?;
-    let cwd = state.cwd();
-    state.entries().iter().position(|e| pinion_core::widgets::file_browser::join_path(&cwd, &e.name) == selected)
-}
-
 /// Render one toolbar button via the [`pinion_widget_paint::button`]
 /// substrate (the opinionated filled-tonal default; the mechanical hover +
 /// view_button pairing is the lifted core).
@@ -181,11 +172,8 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let dir = directory();
     let scroll = use_scroll_state(SCROLL_KEY);
-
-    let cwd = dir.cwd();
-    let entries = dir.entries();
-    let sel_idx = selected_index(&dir);
     let has_selection = dir.selected().is_some();
+    let item_count = dir.entries().len();
 
     // ── toolbar ──────────────────────────────────────────────────
     let newdir = toolbar_button(NEWDIR_TAG, "New Folder", newdir_state, newdir_focused, NEWDIR_HOVER_KEY, &theme);
@@ -199,48 +187,20 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_align_items(AlignItems::Center).with_gap(8)),
     );
 
-    // ── breadcrumb (parent affordance + cwd) ─────────────────────
-    let up = Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            "../".to_string(),
-            Rect::default(),
-            TextStyle::new().with_size_px(15).with_fg(theme.resolve(ColorRole::OnSurface)),
-        ))])
-        .with_tag(format!("{DIR_TAG}#up"))
-        .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_size(Size::px(48, ROW_PITCH))
-                .with_padding(Rect::new(10, 0, 10, 0)),
-        ),
-    );
-    let path_label = Scene::Text(TextNode::styled(
-        cwd,
-        Rect::default(),
-        TextStyle::new().with_size_px(15).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-    ));
-    let topbar = Scene::Container(
-        ContainerNode::new(vec![up, path_label])
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_align_items(AlignItems::Center).with_gap(12)),
-    );
-
-    // ── virtualized entry list ───────────────────────────────────
-    let list = view_virtual_list(
+    // ── the lifted R789.1 file-browser pane (breadcrumb + list) ──
+    let pane = file_browser_pane(
+        DIR_TAG,
+        &dir,
         &scroll,
-        Rect::new(0, 0, LIST_W, LIST_H),
-        entries.len(),
-        ROW_PITCH,
-        OVERSCAN,
-        |index| file_row(DIR_TAG, index, &entries[index], sel_idx == Some(index), &theme, LIST_W, ROW_PITCH),
+        &theme,
+        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN },
     );
 
     let status = Scene::Text(
         TextNode::styled(
             match dir.selected() {
                 Some(p) => format!("Selected: {p}"),
-                None => format!("{} items", entries.len()),
+                None => format!("{item_count} items"),
             },
             Rect::default(),
             TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnSurface)),
@@ -249,7 +209,7 @@ fn view(state: FmViewState, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![toolbar, topbar, list, status])
+        ContainerNode::new(vec![toolbar, pane, status])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new().flex(FlexDirection::Column).with_gap(8).with_padding(Rect::new(12, 12, 12, 12)),
@@ -382,7 +342,7 @@ impl WidgetA11y for FileManagerView {
             "Files",
             u32::try_from(count).unwrap_or(u32::MAX),
             &window,
-            selected_index(&dir),
+            dir.selected_index(),
         ));
         nodes
     }

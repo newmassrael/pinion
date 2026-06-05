@@ -127,6 +127,20 @@ impl DirectoryState {
         self.selected.get()
     }
 
+    /// R789.1 — the **visual row index** of the current selection in the
+    /// current listing, or `None`. Maps the path-keyed
+    /// [`selected`](Self::selected) back to a row position, so a painted
+    /// Accent row and the a11y `aria-selected` agree. Subscribes (reads
+    /// `selected` / `cwd` / `entries`). The path→row mapping is the
+    /// `DirectoryState`'s own derivation — every file UI reads it rather
+    /// than re-deriving it (the SSOT the R789 examples duplicated).
+    #[must_use]
+    pub fn selected_index(&self) -> Option<usize> {
+        let selected = self.selected()?;
+        let cwd = self.cwd();
+        self.entries().iter().position(|e| join_path(&cwd, &e.name) == selected)
+    }
+
     /// Re-read the current directory's listing into the `entries` Signal
     /// (after a `cwd` change). An unreadable directory lists empty.
     fn refresh(&self) {
@@ -626,6 +640,16 @@ mod tests {
         let before = st.cwd();
         ext.invoke("send", IntrospectValue::Text("0:PointerEnter".into())).unwrap();
         assert_eq!(st.cwd(), before, "hover does not navigate");
+    }
+
+    #[test]
+    fn r789_1_selected_index_maps_path_to_row() {
+        let s = state(); // /proj: [src(dir), Cargo.toml, README.md]
+        assert_eq!(s.selected_index(), None, "no selection = None");
+        s.select("README.md");
+        assert_eq!(s.selected_index(), Some(2), "README.md is row 2");
+        s.navigate("src");
+        assert_eq!(s.selected_index(), None, "navigation cleared the selection");
     }
 
     #[test]

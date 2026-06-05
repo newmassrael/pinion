@@ -19,11 +19,17 @@
 //! (each UI sizes its list differently); only the ink + structure are the
 //! shared SSOT.
 
+use std::rc::Rc;
+
 use pinion_core::directory::DirEntry;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::widgets::file_browser::DirectoryState;
+use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::Scene;
+
+use crate::virtual_list::view_virtual_list;
 
 /// R789 — paint one file-browser entry row.
 ///
@@ -80,6 +86,96 @@ pub fn file_row(
     )
 }
 
+/// R789.1 — the list dimensions a [`file_browser_pane`] is laid out at.
+/// Bundled (the `view_virtual_table` arg-reduction convention) so the pane
+/// fn stays within the 7-argument budget; each file UI sizes its list
+/// differently, so these stay caller-supplied.
+#[derive(Clone, Copy, Debug)]
+pub struct FileBrowserMetrics {
+    /// Row + list width in logical px.
+    pub list_width: u32,
+    /// Visible list viewport height in logical px.
+    pub list_height: u32,
+    /// Per-row vertical slot in logical px.
+    pub row_pitch: u32,
+    /// Rows rendered beyond the viewport each side (windowing overscan).
+    pub overscan: usize,
+}
+
+/// R789.1 — the **file-browser pane**: a breadcrumb bar (the clickable
+/// `../` parent affordance + the current path) above the virtualized entry
+/// list (one [`file_row`] per visible entry). The recognizable own-rendered
+/// file-UI body every browser / picker / manager shares.
+///
+/// This is the lifted SSOT the R787-R789 examples each hand-rolled: the
+/// `../` affordance tagged `"{dir_tag}#up"`, the cwd label, and the
+/// `view_virtual_list` over [`file_row`] were byte-identical across
+/// `hello-file-browser`, `hello-file-open-dialog`, and
+/// `hello-file-manager` (a 3rd-consumer mechanical duplication —
+/// `divergence-is-a-bug`: a breadcrumb that tagged `#up` differently, or a
+/// row windowed on a different pitch, would silently break click routing).
+/// The caller wraps the pane with its own chrome (a dialog's actions, a
+/// manager's toolbar, a footer status line).
+///
+/// Reads the shared [`DirectoryState`] (cwd / entries / selection), so a
+/// navigate / select / create / delete repaints. The [`scroll`](ScrollState)
+/// drives the windowing.
+#[must_use]
+pub fn file_browser_pane(
+    dir_tag: &str,
+    dir: &DirectoryState,
+    scroll: &Rc<ScrollState>,
+    theme: &Theme,
+    metrics: FileBrowserMetrics,
+) -> Scene {
+    let cwd = dir.cwd();
+    let entries = dir.entries();
+    let sel_idx = dir.selected_index();
+    let FileBrowserMetrics { list_width, list_height, row_pitch, overscan } = metrics;
+
+    // Breadcrumb: the clickable `../` parent affordance + the cwd path.
+    let up = Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            "../".to_string(),
+            Rect::default(),
+            TextStyle::new().with_size_px(15).with_fg(theme.resolve(ColorRole::OnSurface)),
+        ))])
+        .with_tag(format!("{dir_tag}#up"))
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_size(Size::px(48, row_pitch))
+                .with_padding(Rect::new(10, 0, 10, 0)),
+        ),
+    );
+    let path_label = Scene::Text(TextNode::styled(
+        cwd,
+        Rect::default(),
+        TextStyle::new().with_size_px(15).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+    ));
+    let breadcrumb = Scene::Container(
+        ContainerNode::new(vec![up, path_label]).with_layout(
+            LayoutStyle::new().flex(FlexDirection::Row).with_align_items(AlignItems::Center).with_gap(12),
+        ),
+    );
+
+    let list = view_virtual_list(
+        scroll,
+        Rect::new(0, 0, list_width, list_height),
+        entries.len(),
+        row_pitch,
+        overscan,
+        |index| file_row(dir_tag, index, &entries[index], sel_idx == Some(index), theme, list_width, row_pitch),
+    );
+
+    Scene::Container(
+        ContainerNode::new(vec![breadcrumb, list])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Column).with_gap(8)),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +214,29 @@ mod tests {
         let Scene::Container(c) = &row else { panic!("container") };
         let Scene::Text(t) = &c.children[0] else { panic!("text child") };
         assert_eq!(t.content, "assets/", "directory label gets the navigable trailing slash");
+    }
+
+    #[test]
+    fn r789_1_pane_carries_breadcrumb_affordance_and_windowed_rows() {
+        use pinion_core::directory::InMemoryDirectory;
+        use pinion_core::reactive::Owner;
+        use pinion_core::widgets::scroll::use_scroll_state;
+
+        Owner::new().run(|| {
+            let d = InMemoryDirectory::new();
+            d.insert("/p", vec![DirEntry::dir("a"), DirEntry::file("b.txt")]);
+            let dir = DirectoryState::new(Rc::new(d), "/p");
+            let scroll = use_scroll_state("pane_test_scroll");
+            let pane = file_browser_pane(
+                "fb",
+                &dir,
+                &scroll,
+                &Theme::light(),
+                FileBrowserMetrics { list_width: 300, list_height: 200, row_pitch: 32, overscan: 2 },
+            );
+            assert!(pane.contains_tag("fb#up"), "pane carries the parent affordance");
+            assert!(pane.contains_tag("fb#0"), "row 0 windowed into the pane");
+            assert!(pane.contains_tag("fb#1"), "row 1 windowed into the pane");
+        });
     }
 }

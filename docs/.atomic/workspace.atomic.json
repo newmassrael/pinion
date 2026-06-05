@@ -30733,6 +30733,50 @@
         "prior file carries (defer): keyboard nav over the entry list / clickable breadcrumb segments / size + mtime metadata columns / glob filter"
       ]
     },
+    "R789.1": {
+      "decision_summary": "R789.1 audit cleanup (user SSOT 감사): lift the file-browser pane SSOT (selected_index -> DirectoryState method, breadcrumb+list -> file_browser_pane) — R789 lifted the row leaf but left the skeleton 3-copy (the R756.1/R758 trap)",
+      "changes_bullets": [
+        "audit-triggered (user \"교과서/SSOT?\" 감사): R789 lifted the file_row leaf but left the surrounding file-browser skeleton duplicated 3x — the R756.1/R758 trap (leaf 공유 != STRUCTURE 비복제), now cleared",
+        "selected_index -> DirectoryState::selected_index() method: the path-keyed-selection to visual-row mapping is a derivation over the state's own selected + cwd + entries, so it belongs on the state (one SSOT the view + a11y both read), not a byte-identical free fn in each of the 3 file UIs",
+        "breadcrumb + virtualized list -> pinion_widget_paint::file_browser::file_browser_pane(dir_tag, dir, scroll, theme, FileBrowserMetrics): the '../' parent affordance tagged {dir_tag}#up + cwd label + view_virtual_list over file_row were byte-identical across hello-file-browser / hello-file-open-dialog / hello-file-manager; lifted to one pane, the caller wraps it with its own chrome",
+        "all 3 examples migrated to the lifted pane + method; the unreferenced {ROOT_TAG}_path breadcrumb tag dropped"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5541 passed / 0 failed (R789 5539 -> +2: core selected_index method test + paint file_browser_pane test; the 3 examples migrate with no net test change)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (0 warnings)",
+        "3 file demos PASS after the pane lift (r787 file-browser / r788 file-open-dialog / r789 file-manager) — behaviour-identical, the breadcrumb + rows render + route exactly as before (tags + abs-rect layout preserved)",
+        "validate-workspace: T1 reject=0 / new orphan +0, atomic entries 710 -> 711"
+      ],
+      "impact_refs": [
+        "3",
+        "5.15",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "unchanged from R789: save dialog + filename TextField (R789 carry-a) / in-place rename / recursive create_dir_all (consumer 0) / modal dialog state 1st-class query External (R788 carry-a) / keyboard nav over file list / clickable breadcrumb / size+mtime / glob filter"
+      ],
+      "publishable_decision_summary": "R789.1 audit cleanup (user SSOT 감사): lift the file-browser pane SSOT (selected_index -> DirectoryState method, breadcrumb+list -> file_browser_pane) — R789 lifted the row leaf but left the skeleton 3-copy (the R756.1/R758 trap)",
+      "publishable_changes_bullets": [
+        "audit-triggered (user \"교과서/SSOT?\" 감사): R789 lifted the file_row leaf but left the surrounding file-browser skeleton duplicated 3x — the R756.1/R758 trap (leaf 공유 != STRUCTURE 비복제), now cleared",
+        "selected_index -> DirectoryState::selected_index() method: the path-keyed-selection to visual-row mapping is a derivation over the state's own selected + cwd + entries, so it belongs on the state (one SSOT the view + a11y both read), not a byte-identical free fn in each of the 3 file UIs",
+        "breadcrumb + virtualized list -> pinion_widget_paint::file_browser::file_browser_pane(dir_tag, dir, scroll, theme, FileBrowserMetrics): the '../' parent affordance tagged {dir_tag}#up + cwd label + view_virtual_list over file_row were byte-identical across hello-file-browser / hello-file-open-dialog / hello-file-manager; lifted to one pane, the caller wraps it with its own chrome",
+        "all 3 examples migrated to the lifted pane + method; the unreferenced {ROOT_TAG}_path breadcrumb tag dropped"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5541 passed / 0 failed (R789 5539 -> +2: core selected_index method test + paint file_browser_pane test; the 3 examples migrate with no net test change)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (0 warnings)",
+        "3 file demos PASS after the pane lift (r787 file-browser / r788 file-open-dialog / r789 file-manager) — behaviour-identical, the breadcrumb + rows render + route exactly as before (tags + abs-rect layout preserved)",
+        "validate-workspace: T1 reject=0 / new orphan +0, atomic entries 710 -> 711"
+      ],
+      "publishable_impact_refs": [
+        "3",
+        "5.15",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "unchanged from R789: save dialog + filename TextField (R789 carry-a) / in-place rename / recursive create_dir_all (consumer 0) / modal dialog state 1st-class query External (R788 carry-a) / keyboard nav over file list / clickable breadcrumb / size+mtime / glob filter"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

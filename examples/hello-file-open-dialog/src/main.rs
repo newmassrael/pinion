@@ -89,9 +89,7 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::widgets::file_browser::{
-    join_path, use_directory_state, DirectoryExternal, DirectoryState,
-};
+use pinion_core::widgets::file_browser::{use_directory_state, DirectoryExternal, DirectoryState};
 use pinion_core::widgets::modal::{use_modal, ModalState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
@@ -102,8 +100,7 @@ use pinion_widget_paint::button::{
     ButtonStyle,
 };
 use pinion_widget_paint::dialog::{view_dialog, DialogContent, DialogStyle};
-use pinion_widget_paint::file_browser::file_row;
-use pinion_widget_paint::virtual_list::view_virtual_list;
+use pinion_widget_paint::file_browser::{file_browser_pane, FileBrowserMetrics};
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -230,71 +227,21 @@ fn confirm() {
     });
 }
 
-/// The visual index of the selected entry in the current listing, or
-/// `None` — maps the path-keyed selection back to a row position so the
-/// painted row + the a11y `aria-selected` agree (mirrors hello-file-browser).
-fn selected_index(state: &DirectoryState) -> Option<usize> {
-    let selected = state.selected()?;
-    let cwd = state.cwd();
-    state.entries().iter().position(|e| join_path(&cwd, &e.name) == selected)
-}
-
-/// The browser pane that fills the dialog body: a breadcrumb bar (the
-/// clickable `../` parent affordance + the cwd path) above the virtualized
-/// entry list. Reads the shared [`DirectoryState`] so a navigate / select
-/// repaints.
+/// The browser pane that fills the dialog body: the lifted R789.1
+/// [`file_browser_pane`] (breadcrumb + virtualized [`file_row`] list) sized
+/// to the dialog. Reads the shared [`DirectoryState`] so a navigate /
+/// select repaints.
 fn browser_pane(
     dir: &DirectoryState,
     scroll: &Rc<pinion_core::widgets::scroll::ScrollState>,
     theme: &Theme,
 ) -> Scene {
-    let cwd = dir.cwd();
-    let entries = dir.entries();
-    let sel_idx = selected_index(dir);
-
-    let up = Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            "../".to_string(),
-            Rect::default(),
-            TextStyle::new().with_size_px(15).with_fg(theme.resolve(ColorRole::OnSurface)),
-        ))])
-        .with_tag(format!("{DIR_TAG}#up"))
-        .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_size(Size::px(48, ROW_PITCH))
-                .with_padding(Rect::new(10, 0, 10, 0)),
-        ),
-    );
-    let path_label = Scene::Text(TextNode::styled(
-        cwd,
-        Rect::default(),
-        TextStyle::new().with_size_px(15).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-    ));
-    let topbar = Scene::Container(
-        ContainerNode::new(vec![up, path_label]).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_gap(12),
-        ),
-    );
-
-    let list = view_virtual_list(
+    file_browser_pane(
+        DIR_TAG,
+        dir,
         scroll,
-        Rect::new(0, 0, LIST_W, LIST_H),
-        entries.len(),
-        ROW_PITCH,
-        OVERSCAN,
-        |index| file_row(DIR_TAG, index, &entries[index], sel_idx == Some(index), theme, LIST_W, ROW_PITCH),
-    );
-
-    Scene::Container(
-        ContainerNode::new(vec![topbar, list]).with_layout(
-            LayoutStyle::new().flex(FlexDirection::Column).with_gap(8),
-        ),
+        theme,
+        FileBrowserMetrics { list_width: LIST_W, list_height: LIST_H, row_pitch: ROW_PITCH, overscan: OVERSCAN },
     )
 }
 
@@ -552,7 +499,7 @@ impl WidgetA11y for FileOpenView {
             "Files",
             u32::try_from(count).unwrap_or(u32::MAX),
             &window,
-            selected_index(&dir),
+            dir.selected_index(),
         ));
         // OK reflects the selection gate (aria-disabled until a pick).
         let ok_posture =
