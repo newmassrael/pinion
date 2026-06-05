@@ -270,6 +270,49 @@ impl DirectoryState {
         }
     }
 
+    /// R802 §5.15 §5.40 — **selection-follows-focus** cursor move for a
+    /// single-select picker (the file-open dialog). Moves the keyboard cursor
+    /// like [`move_cursor`](Self::move_cursor), then syncs the file selection
+    /// to the row the cursor lands on (a file row becomes the selected leaf, a
+    /// directory row clears the selection — directories are navigation targets,
+    /// not picks, matching GTK / macOS open panels). [`batch`](crate::reactive::batch)ed
+    /// so the cursor + selection writes re-render subscribers once. Returns the
+    /// handled bool like `move_cursor`.
+    ///
+    /// This is the opt-in picker policy: the Files / Explorer model keeps using
+    /// `move_cursor` (cursor orthogonal to the picked leaf, R792). Which policy
+    /// applies is the consumer's choice of [`dir_nav_key`] vs
+    /// [`dir_nav_key_selecting`], not a mode flag on the controller.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "the handled-bool drives apply_key's result; a caller that just \
+                  wants to move + select legitimately ignores it (the move_cursor precedent)"
+    )]
+    pub fn move_cursor_selecting(&self, key: &str, page: usize) -> bool {
+        crate::reactive::batch(|| {
+            if !self.move_cursor(key, page) {
+                return false;
+            }
+            self.sync_selection_to_cursor();
+            true
+        })
+    }
+
+    /// R802 — set the file selection to the row under the effective keyboard
+    /// [`cursor`](Self::cursor): a file row becomes the selected leaf (its full
+    /// path), a directory row (or an empty listing) clears the selection. The
+    /// mechanism behind [`move_cursor_selecting`](Self::move_cursor_selecting)'s
+    /// selection-follows-focus policy.
+    fn sync_selection_to_cursor(&self) {
+        let entries = self.entries.get();
+        match self.cursor().and_then(|i| entries.get(i)) {
+            Some(entry) if !entry.is_dir => {
+                self.selected.set(Some(join_path(&self.cwd.get(), &entry.name)));
+            }
+            _ => self.selected.set(None),
+        }
+    }
+
     /// R792.1 — enter a new directory context `new_cwd`: set the cwd, clear
     /// the selection + keyboard cursor (a new listing has neither), and
     /// refresh the listing. The single SSOT for the
@@ -671,6 +714,46 @@ pub fn dir_nav_key(
     key: &str,
     row_pitch: u32,
 ) -> bool {
+    dir_nav_key_inner(dir, scroll, focused, tag, key, row_pitch, false)
+}
+
+/// R802 §5.15 §5.40 — **selection-follows-focus** variant of
+/// [`dir_nav_key`] for a single-select picker (the file-open dialog). Same
+/// keyboard model (`ArrowUp` / `ArrowDown` / `Home` / `End` / `PageUp` /
+/// `PageDown` move the roving cursor, `Enter` activates), but each cursor
+/// move also syncs the file selection to the focused row
+/// ([`move_cursor_selecting`](DirectoryState::move_cursor_selecting)): a file
+/// row becomes the selected leaf (so an OK gate enables as the user arrows),
+/// a directory row clears the selection. The shared nav body is identical —
+/// this is the W3C "selection follows focus" listbox policy the picker opts
+/// into, where [`dir_nav_key`] is the Files / Explorer model (cursor
+/// orthogonal to the picked leaf).
+///
+/// Returns `true` when the key was handled, `false` otherwise.
+#[must_use]
+pub fn dir_nav_key_selecting(
+    dir: &DirectoryState,
+    scroll: &ScrollState,
+    focused: Option<&str>,
+    tag: &str,
+    key: &str,
+    row_pitch: u32,
+) -> bool {
+    dir_nav_key_inner(dir, scroll, focused, tag, key, row_pitch, true)
+}
+
+/// Shared body for [`dir_nav_key`] (Files model) and
+/// [`dir_nav_key_selecting`] (picker model). The single divergence is whether
+/// a cursor move also syncs the file selection (`selection_follows_focus`).
+fn dir_nav_key_inner(
+    dir: &DirectoryState,
+    scroll: &ScrollState,
+    focused: Option<&str>,
+    tag: &str,
+    key: &str,
+    row_pitch: u32,
+    selection_follows_focus: bool,
+) -> bool {
     if focused != Some(tag) {
         return false;
     }
@@ -683,7 +766,12 @@ pub fn dir_nav_key(
         return true;
     }
     let page = crate::widgets::virtual_list::page_rows(scroll, row_pitch);
-    if !dir.move_cursor(key, page) {
+    let moved = if selection_follows_focus {
+        dir.move_cursor_selecting(key, page)
+    } else {
+        dir.move_cursor(key, page)
+    };
+    if !moved {
         return false;
     }
     // Scroll the navigated row into view (a cursor on a never-materialized
@@ -1306,6 +1394,48 @@ mod tests {
         assert!(dir_nav_key(&s, &scroll, Some("fb"), "fb", "Home", 34));
         assert_eq!(s.cursor(), Some(0));
         assert_eq!(scroll.offset_y(), 0, "Home scrolled back to the top");
+    }
+
+    // ── R802 selection-follows-focus (single-select picker) ─────────
+
+    #[test]
+    fn r802_move_cursor_selecting_follows_focus_over_files_and_dirs() {
+        let s = state(); // /proj: row0=src(dir), row1=Cargo.toml, row2=README.md
+        assert_eq!(s.selected(), None, "no selection on construction");
+        // ArrowDown lands on Cargo.toml (a file) → it becomes selected.
+        assert!(s.move_cursor_selecting("ArrowDown", 5), "ArrowDown handled");
+        assert_eq!(s.cursor(), Some(1));
+        assert_eq!(s.selected(), Some("/proj/Cargo.toml".to_string()), "file row selection follows focus");
+        // ArrowDown to README.md (a file) → selection follows.
+        assert!(s.move_cursor_selecting("ArrowDown", 5));
+        assert_eq!(s.selected(), Some("/proj/README.md".to_string()), "selection tracks the focused file");
+        // Home lands on src (a directory) → selection clears (dirs are not picks).
+        assert!(s.move_cursor_selecting("Home", 5));
+        assert_eq!(s.cursor(), Some(0));
+        assert_eq!(s.selected(), None, "a directory row under the cursor clears the selection");
+        // Plain move_cursor (the Files model) leaves the selection orthogonal.
+        s.move_cursor_selecting("End", 5); // select README.md again
+        assert_eq!(s.selected(), Some("/proj/README.md".to_string()));
+        assert!(s.move_cursor("Home", 5), "plain move_cursor moves the cursor");
+        assert_eq!(s.cursor(), Some(0), "cursor moved to the dir row");
+        assert_eq!(s.selected(), Some("/proj/README.md".to_string()), "plain move_cursor does not touch selection");
+    }
+
+    #[test]
+    fn r802_dir_nav_key_selecting_drives_the_picker_selection() {
+        use crate::widgets::scroll::ScrollState;
+        let s = state();
+        let scroll = ScrollState::new();
+        scroll.set_measured_viewport(300, 160);
+        // Unfocused → ignored, selection untouched.
+        assert!(!dir_nav_key_selecting(&s, &scroll, Some("other"), "fb", "ArrowDown", 34));
+        assert_eq!(s.selected(), None, "unfocused key selects nothing");
+        // Focused ArrowDown → row 1 (Cargo.toml) selected (the OK gate would enable).
+        assert!(dir_nav_key_selecting(&s, &scroll, Some("fb"), "fb", "ArrowDown", 34));
+        assert_eq!(s.selected(), Some("/proj/Cargo.toml".to_string()), "selection follows the focused file");
+        // Home → row 0 (src, a dir) → selection clears (the OK gate would disable).
+        assert!(dir_nav_key_selecting(&s, &scroll, Some("fb"), "fb", "Home", 34));
+        assert_eq!(s.selected(), None, "focusing a directory row clears the picker selection");
     }
 
     #[test]

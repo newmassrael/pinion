@@ -19,9 +19,14 @@ file-row inks by R787 (hello-file-browser); R788 is their composition.
   (A) closed shape — trigger present; no scrim / panel; "Chosen: (none)".
   (B) open via trigger click — scrim + panel + browser rows + OK + Cancel
       appear; the browser opens at /proj with nothing selected.
-  (C) modal trap — focus auto-moves onto Cancel; focus/get reports the
-      trap enumeration [Cancel, OK]; focus/next cycles + wraps; focus/set
-      to the trigger behind the scrim is rejected.
+  (C) modal trap — R802 auto-focuses the file list (the native open-panel
+      default); focus/get reports the trap enumeration [list, Cancel, OK];
+      focus/next cycles + wraps; focus/set to the trigger behind the scrim
+      is rejected.
+  (C2) R802 selection-follows-focus — with the list focused, `End` jumps to
+      the last (file) row and `selected` follows it (OK enables); `Home`
+      jumps to the first (directory) row and the selection clears (OK
+      disables). The keyboard picker the native file dialog provides.
   (D) browse by INVOKE — `navigate "src"` descends; `up` climbs (the
       DirectoryExternal, fully AI-first query + invoke).
   (E) browse by CLICK — clicking a directory row (`fb_dir#<i>`) descends
@@ -143,17 +148,34 @@ def body() -> None:
         assert_eq(tf.query(dpath("cwd")), "/proj", "browser opens at /proj")
         assert_eq(tf.query(dpath("selected")), None, "nothing selected on open")
 
-        # ── (C) modal trap (focus confined to the action buttons) ───
-        assert_eq(_focused(tf), CANCEL, "open auto-focuses Cancel (safe default)")
-        assert_eq(_tab_order(tf), [CANCEL, OK], "focus/get reports the trap enumeration")
+        # ── (C) modal trap (list + the two action buttons) ──────────
+        assert_eq(_focused(tf), DIR, "R802 open auto-focuses the file list")
+        assert_eq(_tab_order(tf), [DIR, CANCEL, OK], "focus/get reports the trap enumeration")
+        assert_eq(_focus_next(tf), CANCEL, "focus/next: list -> Cancel")
         assert_eq(_focus_next(tf), OK, "focus/next: Cancel -> OK")
-        assert_eq(_focus_next(tf), CANCEL, "focus/next wraps OK -> Cancel")
+        assert_eq(_focus_next(tf), DIR, "focus/next wraps OK -> list")
         rejected = False
         try:
             tf.request("focus/set", {"tag": TRIGGER})
         except RpcError:
             rejected = True
         assert rejected, "focus/set to the trigger behind the scrim is rejected"
+
+        # ── (C2) R802 selection-follows-focus over the file list ─────
+        assert_eq(_focused(tf), DIR, "the file list holds focus for keyboard nav")
+        assert_eq(tf.query(dpath("selected")), None, "no selection before arrowing")
+        # End jumps to the last row (a file) — selection follows focus.
+        tf.key(path=DIR, name="End")
+        time.sleep(PAUSE)
+        end_sel = tf.query(dpath("selected"))
+        assert end_sel and not end_sel.endswith("/"), f"End landed on + selected a file ({end_sel})"
+        ok_enabled_fill = _fill(_snap(tf), OK)
+        # Home jumps to the first row (a directory) — the selection clears.
+        tf.key(path=DIR, name="Home")
+        time.sleep(PAUSE)
+        assert_eq(tf.query(dpath("selected")), None, "a directory row under the cursor clears selection")
+        ok_disabled_fill = _fill(_snap(tf), OK)
+        assert ok_enabled_fill != ok_disabled_fill, "the OK gate tracks selection-follows-focus"
 
         # ── (D) browse by INVOKE (the AI-first path) ────────────────
         assert_eq(tf.invoke(dpath("navigate"), "src"), "/proj/src", "navigate descends")

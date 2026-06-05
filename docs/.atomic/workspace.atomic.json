@@ -31663,6 +31663,54 @@
         "toolbar keyboard (Ctrl+B / Tab) consumer-driven defer (R800 carry, unchanged)"
       ]
     },
+    "R802": {
+      "decision_summary": "R802 §5.15 §5.40 — selection-follows-focus picker for the file-open dialog (clears the R792 carry-a keyboard-nav-in-dialog + carry-b selection-follows-focus). The list becomes a focus-trap tab stop with selection following the roving cursor (a file row selects, a directory row clears), so a keyboard user enables the OK gate by arrowing — the own-rendered dialog now keyboard-equals a native open panel. dir_nav_key_selecting is a picker peer of dir_nav_key (Files model); both share one nav body.",
+      "changes_bullets": [
+        "DirectoryState::move_cursor_selecting + sync_selection_to_cursor (file selects, dir clears)",
+        "dir_nav_key_selecting picker variant + dir_nav_key/inner refactor (Files model unchanged)",
+        "open dialog: file list is the first focus-trap member (auto-focus); apply_key wires arrow nav",
+        "open dialog: Enter on a focused file confirms; access_focus_target rings the cursor row",
+        "r788 demo: trap [list, Cancel, OK]; End selects a file (OK enables), Home on a dir clears it"
+      ],
+      "verification_bullets": [
+        "pinion-core file_browser 36 + hello-file-open-dialog 15 + hello-file-manager 21 unit tests pass",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (pedantic deny)",
+        "demos PASS: r788 (new trap + selection-follows-focus) / r792 file-manager nav / r789 manager",
+        "cargo test --workspace exit 0"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "access_focus_target cursor-ring is a 2nd file-UI consumer but shares only R778-trivial {tag}#{i}",
+        "+ bare AccessFocus::composite with a divergent modal guard, so no lift (R778/R735.1)",
+        "full demo sweep deferred to push-time (sweep-at-push-not-every-round); affected demos verified"
+      ],
+      "publishable_decision_summary": "R802 §5.15 §5.40 — selection-follows-focus picker for the file-open dialog (clears the R792 carry-a keyboard-nav-in-dialog + carry-b selection-follows-focus). The list becomes a focus-trap tab stop with selection following the roving cursor (a file row selects, a directory row clears), so a keyboard user enables the OK gate by arrowing — the own-rendered dialog now keyboard-equals a native open panel. dir_nav_key_selecting is a picker peer of dir_nav_key (Files model); both share one nav body.",
+      "publishable_changes_bullets": [
+        "DirectoryState::move_cursor_selecting + sync_selection_to_cursor (file selects, dir clears)",
+        "dir_nav_key_selecting picker variant + dir_nav_key/inner refactor (Files model unchanged)",
+        "open dialog: file list is the first focus-trap member (auto-focus); apply_key wires arrow nav",
+        "open dialog: Enter on a focused file confirms; access_focus_target rings the cursor row",
+        "r788 demo: trap [list, Cancel, OK]; End selects a file (OK enables), Home on a dir clears it"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core file_browser 36 + hello-file-open-dialog 15 + hello-file-manager 21 unit tests pass",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (pedantic deny)",
+        "demos PASS: r788 (new trap + selection-follows-focus) / r792 file-manager nav / r789 manager",
+        "cargo test --workspace exit 0"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "access_focus_target cursor-ring is a 2nd file-UI consumer but shares only R778-trivial {tag}#{i}",
+        "+ bare AccessFocus::composite with a divergent modal guard, so no lift (R778/R735.1)",
+        "full demo sweep deferred to push-time (sweep-at-push-not-every-round); affected demos verified"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

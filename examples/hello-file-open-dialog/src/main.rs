@@ -77,7 +77,7 @@
 //! deferred axis); the modal trap over the action buttons is real and
 //! observable (`focus/get` shows it confined to `[Cancel, OK]`).
 
-use pinion_a11y::{windowed_list_nodes_selected, AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{windowed_list_nodes_selected, AccessFocus, AccessNode, AriaRole, WidgetA11y};
 use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::External;
 use pinion_core::reactive::{batch, Owner, Signal};
@@ -89,7 +89,9 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::widgets::file_browser::{use_directory_state, DirectoryExternal, DirectoryState};
+use pinion_core::widgets::file_browser::{
+    dir_nav_key_selecting, use_directory_state, DirectoryExternal, DirectoryState,
+};
 use pinion_core::widgets::modal::{modal_introspection_extra, use_modal, ModalState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
@@ -153,11 +155,14 @@ const LIST_W: u32 = PANEL_W - 48; // panel_width − 2 × m3 panel_padding (24)
 const LIST_H: u32 = 8 * ROW_PITCH;
 const OVERSCAN: usize = 3;
 
-/// The dialog's focusable controls, in Tab order. Cancel is first so it
-/// is auto-focused on open (the safe default); Tab moves Cancel → Open and
-/// wraps. The file rows are pointer/RPC-driven (R787), not Tab stops.
+/// The dialog's focusable controls, in Tab order. R802 makes the **file
+/// list** (`DIR_TAG`) the first member, so opening the dialog auto-focuses
+/// the list — the native open-panel default, where the user can immediately
+/// arrow through entries (selection-follows-focus). Tab then moves
+/// list → Cancel → Open and wraps. The list is a single Tab stop with an
+/// internal roving cursor (`aria-activedescendant`), not one stop per row.
 fn dialog_members() -> Vec<String> {
-    vec![CANCEL_TAG.to_string(), OK_TAG.to_string()]
+    vec![DIR_TAG.to_string(), CANCEL_TAG.to_string(), OK_TAG.to_string()]
 }
 
 /// The R788 modal panel style: the M3 default widened to hold the browser.
@@ -434,6 +439,15 @@ impl WidgetCore for FileOpenView {
     /// R788 §5.39 — Escape dismisses the open dialog as a cancel (the shell
     /// routes Escape here only while the trap is active). Enter / Space on a
     /// focused action button activate it through the shared ARIA helper.
+    ///
+    /// R802 §5.15 §5.40 — when the **file list** holds focus, the arrow keys
+    /// drive the selection-follows-focus picker
+    /// ([`dir_nav_key_selecting`]): each cursor move syncs `selected` to the
+    /// focused file (enabling the OK gate) or clears it on a directory row.
+    /// `Enter` on a *file* confirms the dialog (the native open-on-Enter);
+    /// `Enter` on a *directory* descends into it (handled inside
+    /// `dir_nav_key_selecting`). Runs in the shell root-owner scope, so
+    /// `directory()` / `use_scroll_state` resolve.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -446,6 +460,27 @@ impl WidgetCore for FileOpenView {
                 return true;
             }
             return false;
+        }
+        if focused == Some(DIR_TAG) {
+            let dir = directory();
+            // `Enter` on a focused *file* confirms (it is already selected,
+            // selection-follows-focus); a *directory* descends via the nav body.
+            if key == "Enter" {
+                if let Some(idx) = dir.cursor() {
+                    if dir.entries().get(idx).is_some_and(|e| !e.is_dir) {
+                        confirm();
+                        return true;
+                    }
+                }
+            }
+            return dir_nav_key_selecting(
+                &dir,
+                &use_scroll_state(SCROLL_KEY),
+                focused,
+                DIR_TAG,
+                key,
+                ROW_PITCH,
+            );
         }
         apply_aria_activate(scene, focused, key, TRIGGER_TAG)
             || apply_aria_activate(scene, focused, key, OK_TAG)
@@ -522,6 +557,21 @@ impl WidgetA11y for FileOpenView {
                 .with_size_of_set(2),
         );
         nodes
+    }
+
+    /// R802 §5.40 — while the file list holds focus, the focus ring tracks
+    /// the roving keyboard cursor (`aria-activedescendant`): the shell rings
+    /// the cursor row's composite tag (`fb_dir#<i>`) rather than the whole
+    /// list container, so the painted ring follows the arrow keys. Mirrors
+    /// the file-manager / file-browser roving-cursor wiring (R792). Any other
+    /// focus is the atomic focused tag.
+    fn access_focus_target(_state: &FileOpenViewState, focused: Option<&str>) -> Option<AccessFocus> {
+        if focused == Some(DIR_TAG) && modal().is_open() {
+            if let Some(cursor) = directory().cursor() {
+                return Some(AccessFocus::composite(DIR_TAG, format!("{DIR_TAG}#{cursor}")));
+            }
+        }
+        focused.map(AccessFocus::atomic)
     }
 }
 
