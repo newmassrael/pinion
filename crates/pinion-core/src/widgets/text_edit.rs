@@ -249,18 +249,6 @@ pub struct TextEditState {
     undo: RefCell<Option<Rc<UndoStack>>>,
 }
 
-/// R796 §5.52 — an immutable snapshot of the **content** axes a
-/// [`TextEditCommand`] reverses: byte buffer, caret, selection anchor, and
-/// style runs. The transient axes (IME preedit, goal column) are excluded —
-/// they are not part of the document an undo restores.
-#[derive(Clone, PartialEq, Debug)]
-struct EditSnapshot {
-    text: String,
-    caret: usize,
-    anchor: Option<usize>,
-    runs: Vec<StyleRun>,
-}
-
 /// R796 §5.52 — which edits may coalesce. Two commands fold into one undo
 /// step only when they share a non-[`Boundary`](CoalesceGroup::Boundary)
 /// group and are contiguous, so an insertion run, a Backspace run, and a
@@ -278,20 +266,37 @@ enum CoalesceGroup {
     DeleteForward,
 }
 
-/// R796 §5.52 — a reversible whole-content text edit (the text field's
-/// [`UndoCommand`]). It snapshots the four content signals `before` / `after`
-/// and restores them wholesale, robust against the per-mutator branch
-/// complexity (selection drain, run clipping) a fine-grained inverse would
-/// have to mirror. Consecutive same-group contiguous edits coalesce via
-/// [`merge`](UndoCommand::merge) so a typing run is one Ctrl+Z.
+/// R796.1 §5.52 — a reversible **granular** text edit (the text field's
+/// [`UndoCommand`]). It stores only the single contiguous splice it made —
+/// `removed` bytes at `offset` replaced by `inserted` — plus the style-run
+/// coverage that splice destroyed, so it reverses **without snapshotting the
+/// whole document**. Memory is `O(edit size + runs in the edited span)`, not
+/// `O(document)`: a keystroke in plain text costs one byte, not a full copy
+/// of the buffer (the `QTextDocument` / xi-editor delta-undo model). `redo`
+/// re-derives the run shift deterministically (the same clip+shift the
+/// mutators apply); `undo` reverses the splice and restores the destroyed
+/// run coverage from `removed_runs`, re-normalising. Consecutive same-group
+/// contiguous edits coalesce via [`merge`](UndoCommand::merge) so a typing
+/// run is one Ctrl+Z.
 #[derive(Debug)]
 pub struct TextEditCommand {
     text: Signal<String>,
     caret: Signal<usize>,
     anchor: Signal<Option<usize>>,
     runs: Signal<Vec<StyleRun>>,
-    before: EditSnapshot,
-    after: EditSnapshot,
+    /// Byte offset of the splice.
+    offset: usize,
+    /// Bytes removed by the edit (empty for a pure insert).
+    removed: String,
+    /// Bytes inserted by the edit (empty for a pure delete).
+    inserted: String,
+    /// Style-run fragments covering `[offset, offset + removed.len())` before
+    /// the edit (absolute byte positions), restored on undo.
+    removed_runs: Vec<StyleRun>,
+    caret_before: usize,
+    caret_after: usize,
+    anchor_before: Option<usize>,
+    anchor_after: Option<usize>,
     group: CoalesceGroup,
     /// Whether a following same-group edit may fold into this one. Cleared
     /// once a word boundary (whitespace) lands, so the next keystroke opens a
@@ -300,30 +305,43 @@ pub struct TextEditCommand {
     label: Cow<'static, str>,
 }
 
-impl TextEditCommand {
-    /// Restore the four content signals to `snap` in one batched cascade
-    /// (the same atomic-multi-axis contract the mutators use).
-    fn restore(&self, snap: &EditSnapshot) {
-        batch(|| {
-            self.text.set(snap.text.clone());
-            self.caret.set(snap.caret);
-            self.anchor.set(snap.anchor);
-            self.runs.set(snap.runs.clone());
-        });
-    }
-}
-
 impl UndoCommand for TextEditCommand {
     fn label(&self) -> Cow<'static, str> {
         self.label.clone()
     }
 
     fn redo(&self) {
-        self.restore(&self.after);
+        let mut buf = self.text.get();
+        buf.replace_range(self.offset..self.offset + self.removed.len(), &self.inserted);
+        let mut runs = self.runs.get();
+        // The same maintenance the forward mutators apply: drop the deleted
+        // span's coverage, then shift trailing runs right for the insert.
+        clip_runs_for_delete(&mut runs, self.offset, self.offset + self.removed.len());
+        shift_runs_for_insert(&mut runs, self.offset, self.inserted.len());
+        batch(|| {
+            self.text.set(buf);
+            self.caret.set(self.caret_after);
+            self.anchor.set(self.anchor_after);
+            self.runs.set(runs);
+        });
     }
 
     fn undo(&self) {
-        self.restore(&self.before);
+        let mut buf = self.text.get();
+        buf.replace_range(self.offset..self.offset + self.inserted.len(), &self.removed);
+        let mut runs = self.runs.get();
+        // Reverse the forward clip+shift, restore the coverage the delete
+        // destroyed, and re-fuse any survivor that was extended back over it.
+        clip_runs_for_delete(&mut runs, self.offset, self.offset + self.inserted.len());
+        shift_runs_for_insert(&mut runs, self.offset, self.removed.len());
+        runs.extend(self.removed_runs.iter().cloned());
+        normalize_runs(&mut runs);
+        batch(|| {
+            self.text.set(buf);
+            self.caret.set(self.caret_before);
+            self.anchor.set(self.anchor_before);
+            self.runs.set(runs);
+        });
     }
 
     fn as_any(&self) -> Option<&dyn core::any::Any> {
@@ -337,21 +355,131 @@ impl UndoCommand for TextEditCommand {
         else {
             return false;
         };
-        // Fold only a contiguous continuation of the *same* coalescable run.
-        if !self.coalescable
-            || self.group == CoalesceGroup::Boundary
-            || self.group != next.group
-            || self.after != next.before
-        {
+        if !self.coalescable || self.group != next.group {
             return false;
         }
-        self.after = next.after.clone();
+        match self.group {
+            // Pure inserts extend rightward: the next insert begins exactly
+            // where this one ended.
+            CoalesceGroup::Insert => {
+                if !self.removed.is_empty()
+                    || !next.removed.is_empty()
+                    || next.offset != self.offset + self.inserted.len()
+                {
+                    return false;
+                }
+                self.inserted.push_str(&next.inserted);
+            }
+            // Backspace runs grow leftward: the next delete ends where this
+            // one begins. Prepend its bytes + run coverage (already absolute).
+            CoalesceGroup::DeleteBack => {
+                if !self.inserted.is_empty()
+                    || !next.inserted.is_empty()
+                    || next.offset + next.removed.len() != self.offset
+                {
+                    return false;
+                }
+                let mut bytes = next.removed.clone();
+                bytes.push_str(&self.removed);
+                self.removed = bytes;
+                let mut cov = next.removed_runs.clone();
+                cov.extend(self.removed_runs.iter().cloned());
+                self.removed_runs = cov;
+                self.offset = next.offset;
+            }
+            // Delete-forward runs grow rightward at a fixed offset; the next
+            // delete removes what the previous one exposed, so its coverage
+            // re-bases past the already-removed bytes.
+            CoalesceGroup::DeleteForward => {
+                if !self.inserted.is_empty()
+                    || !next.inserted.is_empty()
+                    || next.offset != self.offset
+                {
+                    return false;
+                }
+                let shift = u32::try_from(self.removed.len()).unwrap_or(0);
+                self.removed.push_str(&next.removed);
+                self.removed_runs.extend(
+                    next.removed_runs
+                        .iter()
+                        .map(|r| StyleRun::new(r.start + shift, r.end + shift, r.style.clone())),
+                );
+            }
+            CoalesceGroup::Boundary => return false,
+        }
+        self.caret_after = next.caret_after;
+        self.anchor_after = next.anchor_after;
         // Inherit the continuation's coalescability: a whitespace insert
-        // (coalescable = false) ends the word, so the *next* keystroke after
-        // it opens a new step.
+        // (coalescable = false) ends the word, so the *next* keystroke opens
+        // a new step.
         self.coalescable = next.coalescable;
         true
     }
+}
+
+/// R796.1 §5.52 — the style-run fragments overlapping `[start, end)`, clamped
+/// to that range (absolute byte positions). Captures the formatting a delete
+/// destroys so [`TextEditCommand::undo`] can restore it.
+fn runs_over_range(runs: &[StyleRun], start: usize, end: usize) -> Vec<StyleRun> {
+    let (a, b) = (
+        u32::try_from(start).unwrap_or(u32::MAX),
+        u32::try_from(end).unwrap_or(u32::MAX),
+    );
+    runs.iter()
+        .filter(|r| r.start < b && r.end > a)
+        .map(|r| StyleRun::new(r.start.max(a), r.end.min(b), r.style.clone()))
+        .collect()
+}
+
+/// R796.1 §5.52 — canonicalise a run list after an undo restore: sort by
+/// start, then fuse runs that overlap or abut and share a style (so a
+/// survivor extended back over the restored span re-fuses with its restored
+/// fragment). Drops empty runs.
+fn normalize_runs(runs: &mut Vec<StyleRun>) {
+    runs.retain(|r| r.start < r.end);
+    runs.sort_by_key(|r| r.start);
+    let mut merged: Vec<StyleRun> = Vec::with_capacity(runs.len());
+    for r in runs.drain(..) {
+        if let Some(last) = merged.last_mut() {
+            if last.end >= r.start && last.style == r.style {
+                last.end = last.end.max(r.end);
+                continue;
+            }
+        }
+        merged.push(r);
+    }
+    *runs = merged;
+}
+
+/// R796.1 §5.52 — the minimal single contiguous splice between `before` and
+/// `after`: strip the common prefix + suffix (clamped to `char` boundaries)
+/// and return `(offset, removed, inserted)`. Each text mutator performs one
+/// contiguous edit, so this recovers exactly that edit for granular undo.
+fn text_diff(before: &str, after: &str) -> (usize, String, String) {
+    let (bb, ab) = (before.as_bytes(), after.as_bytes());
+    let max_p = bb.len().min(ab.len());
+    let mut p = 0;
+    while p < max_p && bb[p] == ab[p] {
+        p += 1;
+    }
+    while p > 0 && !before.is_char_boundary(p) {
+        p -= 1;
+    }
+    let mut s = 0;
+    let smax = (bb.len() - p).min(ab.len() - p);
+    while s < smax && bb[bb.len() - 1 - s] == ab[ab.len() - 1 - s] {
+        s += 1;
+    }
+    while s > 0
+        && (!before.is_char_boundary(bb.len() - s) || !after.is_char_boundary(ab.len() - s))
+    {
+        s -= 1;
+    }
+    (
+        p,
+        before[p..bb.len() - s].to_string(),
+        after[p..ab.len() - s].to_string(),
+    )
 }
 
 impl TextEditState {
@@ -438,21 +566,14 @@ impl TextEditState {
         self.undo.borrow().clone()
     }
 
-    /// Snapshot the four content axes for a [`TextEditCommand`].
-    fn content_snapshot(&self) -> EditSnapshot {
-        EditSnapshot {
-            text: self.text.get(),
-            caret: self.caret_pos.get(),
-            anchor: self.selection_anchor.get(),
-            runs: self.style_runs.get(),
-        }
-    }
-
-    /// Run a content mutation `f`, journalling its delta onto the attached
-    /// [`UndoStack`]. A no-op passthrough when no stack is attached (zero
-    /// snapshot cost — the default path). The edit is pushed *already
-    /// applied* (`f` wrote the signals eagerly), and a no-change `f` (empty
-    /// insert, Backspace at offset 0) records nothing.
+    /// Run a content mutation `f`, journalling its **granular** delta onto
+    /// the attached [`UndoStack`]. A no-op passthrough when no stack is
+    /// attached (the default path). The edit is pushed *already applied*
+    /// (`f` wrote the signals eagerly); the resulting before/after text is
+    /// diffed to the single contiguous splice (`offset`, `removed`,
+    /// `inserted`) so the command stores `O(edit)` bytes, not the whole
+    /// buffer. A no-change `f` (empty insert, Backspace at offset 0) records
+    /// nothing.
     fn record_edit(
         &self,
         group: CoalesceGroup,
@@ -464,19 +585,30 @@ impl TextEditState {
             f();
             return;
         };
-        let before = self.content_snapshot();
+        let before_text = self.text.get();
+        let caret_before = self.caret_pos.get();
+        let anchor_before = self.selection_anchor.get();
+        let before_runs = self.style_runs.get();
         f();
-        let after = self.content_snapshot();
-        if before == after {
+        let after_text = self.text.get();
+        if before_text == after_text {
             return;
         }
+        let (offset, removed, inserted) = text_diff(&before_text, &after_text);
+        let removed_runs = runs_over_range(&before_runs, offset, offset + removed.len());
         stack.push_applied(TextEditCommand {
             text: self.text.clone(),
             caret: self.caret_pos.clone(),
             anchor: self.selection_anchor.clone(),
             runs: self.style_runs.clone(),
-            before,
-            after,
+            offset,
+            removed,
+            inserted,
+            removed_runs,
+            caret_before,
+            caret_after: self.caret_pos.get(),
+            anchor_before,
+            anchor_after: self.selection_anchor.get(),
             group,
             coalescable,
             label: Cow::Borrowed(label),
@@ -3222,6 +3354,81 @@ mod tests {
             assert_eq!(st.text(), "X");
             assert!(st.undo());
             assert_eq!(st.text(), "abc", "type-to-replace undoes back to the selected text in one step");
+        });
+    }
+
+    // R796.1 §5.52 — granular run reversal: undo must restore style runs
+    // byte-exact, not just the text (the risky half of granular undo).
+
+    fn styled(text: &str, runs: Vec<StyleRun>) -> TextEditState {
+        let st = TextEditState::new();
+        st.set_text(text.to_string());
+        st.set_style_runs(runs);
+        st.attach_undo(Rc::new(crate::undo::UndoStack::new())); // attach AFTER seeding
+        st
+    }
+    fn red(s: u32, e: u32) -> StyleRun {
+        StyleRun::new(s, e, TextStyle::new().with_fg(Color::rgb(0xD0, 0x28, 0x28)))
+    }
+
+    #[test]
+    fn r796_1_undo_restores_a_clipped_run_exactly() {
+        Owner::new().run(|| {
+            let st = styled("abcdef", vec![red(0, 6)]);
+            st.set_selection(2, 4);
+            st.backspace(); // delete "cd" from inside the run
+            assert_eq!(st.text(), "abef");
+            assert_eq!(st.style_runs(), vec![red(0, 4)], "the run clips to the shorter text");
+            assert!(st.undo());
+            assert_eq!(st.text(), "abcdef");
+            assert_eq!(st.style_runs(), vec![red(0, 6)], "undo restores the run span exactly");
+        });
+    }
+
+    #[test]
+    fn r796_1_undo_restores_a_fully_deleted_run() {
+        Owner::new().run(|| {
+            let st = styled("first second", vec![red(0, 5)]);
+            st.set_selection(0, 5);
+            st.backspace();
+            assert_eq!(st.text(), " second");
+            assert_eq!(st.style_runs(), Vec::new(), "a fully-deleted run drops");
+            assert!(st.undo());
+            assert_eq!(st.text(), "first second");
+            assert_eq!(
+                st.style_runs(),
+                vec![red(0, 5)],
+                "undo restores the dropped run from removed_runs",
+            );
+        });
+    }
+
+    #[test]
+    fn r796_1_undo_reverses_the_run_shift_from_insert() {
+        Owner::new().run(|| {
+            let st = styled("abc", vec![red(0, 3)]);
+            st.set_caret(0);
+            st.insert("XY"); // shifts the run right by 2
+            assert_eq!(st.text(), "XYabc");
+            assert_eq!(st.style_runs(), vec![red(2, 5)], "insert before the run shifts it");
+            assert!(st.undo());
+            assert_eq!(st.text(), "abc");
+            assert_eq!(st.style_runs(), vec![red(0, 3)], "undo shifts the run back");
+        });
+    }
+
+    #[test]
+    fn r796_1_consecutive_backspaces_coalesce() {
+        Owner::new().run(|| {
+            let st = undoable();
+            st.insert("word");
+            st.backspace();
+            st.backspace();
+            assert_eq!(st.text(), "wo");
+            assert!(st.undo());
+            assert_eq!(st.text(), "word", "two backspaces undo as one coalesced step");
+            assert!(st.undo());
+            assert_eq!(st.text(), "", "the typing run is the prior step");
         });
     }
 }

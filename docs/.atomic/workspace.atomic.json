@@ -31303,6 +31303,56 @@
         "(e) UndoStackExternal not wired into hello-textfield; the text round-trip is the witness for now"
       ]
     },
+    "R796.1": {
+      "decision_summary": "Granular undo rework (cost-no-object self-review). R796 stored a whole-document EditSnapshot (before+after full text+runs) per command -- O(document) memory per keystroke, a north-star (self-hosted editor) scalability debt. Replace it with a granular TextEditCommand that stores only its single contiguous splice (offset + removed + inserted bytes) plus removed_runs (the run coverage the splice destroyed), reversed via the existing clip/shift run maintenance + normalize. Memory is O(edit), not O(document); a keystroke in plain text stores one byte. text_diff recovers the minimal contiguous edit from before/after; merge is rewritten granular per coalesce group. Behaviour is identical (r796 demo + tests unchanged); 4 new tests pin byte-exact run restoration.",
+      "changes_bullets": [
+        "replace R796's whole-document EditSnapshot command with a granular splice (offset+removed+inserted)",
+        "removed_runs stores only the deleted span's run coverage; redo re-derives the shift via clip/shift",
+        "undo reverses the splice + restores removed_runs + normalize_runs (byte-exact run restoration)",
+        "text_diff derives the minimal contiguous edit (char-boundary safe) from before/after text",
+        "merge rewritten granular per group (insert append / backspace prepend / delete-forward rebase)",
+        "O(edit) memory: a keystroke in plain text stores one byte, not a full copy of the document"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5630 pass / 0 fail (+4 granular run-exactness tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean",
+        "run reversal byte-exact: clipped run / fully-deleted run / insert-shift / coalesced backspace",
+        "r796 demo PASS unchanged (granular internals, identical behaviour)"
+      ],
+      "impact_refs": [
+        "5.52",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "(a) supersedes R796's EditSnapshot whole-document approach (R796 frozen; this is the granular truth)",
+        "(b) set_text (wholesale replace) still stores full old+new text -- intrinsic to a full replace, rare",
+        "(c) IME preedit undo granularity deferred (unchanged from R796)"
+      ],
+      "publishable_decision_summary": "Granular undo rework (cost-no-object self-review). R796 stored a whole-document EditSnapshot (before+after full text+runs) per command -- O(document) memory per keystroke, a north-star (self-hosted editor) scalability debt. Replace it with a granular TextEditCommand that stores only its single contiguous splice (offset + removed + inserted bytes) plus removed_runs (the run coverage the splice destroyed), reversed via the existing clip/shift run maintenance + normalize. Memory is O(edit), not O(document); a keystroke in plain text stores one byte. text_diff recovers the minimal contiguous edit from before/after; merge is rewritten granular per coalesce group. Behaviour is identical (r796 demo + tests unchanged); 4 new tests pin byte-exact run restoration.",
+      "publishable_changes_bullets": [
+        "replace R796's whole-document EditSnapshot command with a granular splice (offset+removed+inserted)",
+        "removed_runs stores only the deleted span's run coverage; redo re-derives the shift via clip/shift",
+        "undo reverses the splice + restores removed_runs + normalize_runs (byte-exact run restoration)",
+        "text_diff derives the minimal contiguous edit (char-boundary safe) from before/after text",
+        "merge rewritten granular per group (insert append / backspace prepend / delete-forward rebase)",
+        "O(edit) memory: a keystroke in plain text stores one byte, not a full copy of the document"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5630 pass / 0 fail (+4 granular run-exactness tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: clean",
+        "run reversal byte-exact: clipped run / fully-deleted run / insert-shift / coalesced backspace",
+        "r796 demo PASS unchanged (granular internals, identical behaviour)"
+      ],
+      "publishable_impact_refs": [
+        "5.52",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "(a) supersedes R796's EditSnapshot whole-document approach (R796 frozen; this is the granular truth)",
+        "(b) set_text (wholesale replace) still stores full old+new text -- intrinsic to a full replace, rare",
+        "(c) IME preedit undo granularity deferred (unchanged from R796)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
