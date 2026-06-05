@@ -92,6 +92,7 @@ members = [
     "examples/hello-toolbar",
     "examples/hello-dialog",
     "examples/hello-file-open-dialog",
+    "examples/hello-file-manager",
     "examples/hello-drawer",
     "examples/hello-combobox",
     "examples/hello-combobox-editable",

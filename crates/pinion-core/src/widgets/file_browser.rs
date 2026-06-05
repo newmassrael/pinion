@@ -205,6 +205,63 @@ impl DirectoryState {
         self.selected.get()
     }
 
+    /// R789 — create a directory named `name` inside the current
+    /// directory, refreshing the listing on success. Returns whether it
+    /// was created (`false` when the name is taken or the backing is
+    /// read-only). The file-manager "New folder" affordance.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "the returned success bool is the AI-first invoke outcome (mkdir); \
+                  the fire-and-forget toolbar-click reducer legitimately ignores it \
+                  and re-reads the listing (the navigate / set_width precedent)"
+    )]
+    pub fn create_dir(&self, name: &str) -> bool {
+        let ok = self.dir.create_dir(&join_path(&self.cwd.get(), name));
+        if ok {
+            self.refresh();
+        }
+        ok
+    }
+
+    /// R789 — create an empty file named `name` inside the current
+    /// directory, refreshing the listing on success. Returns whether it
+    /// was created. The "New file" affordance.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "setter-returns-outcome; the toolbar-click reducer ignores the \
+                  returned bool (see `create_dir`)"
+    )]
+    pub fn create_file(&self, name: &str) -> bool {
+        let ok = self.dir.create_file(&join_path(&self.cwd.get(), name));
+        if ok {
+            self.refresh();
+        }
+        ok
+    }
+
+    /// R789 — remove the currently [`selected`](Self::selected) entry (a
+    /// file or a directory + its subtree), clearing the selection and
+    /// refreshing the listing. A no-op (`false`) when nothing is selected
+    /// or the remove failed. The "Delete" affordance.
+    #[allow(
+        clippy::must_use_candidate,
+        reason = "setter-returns-outcome; the toolbar-click reducer ignores the \
+                  returned bool (see `create_dir`)"
+    )]
+    pub fn delete_selected(&self) -> bool {
+        let Some(path) = self.selected.get() else {
+            return false;
+        };
+        let ok = self.dir.remove(&path);
+        if ok {
+            crate::reactive::batch(|| {
+                self.selected.set(None);
+                self.refresh();
+            });
+        }
+        ok
+    }
+
     /// Activate the entry at **visual index** `idx` (a row click /
     /// keyboard activation): navigate into it if it is a directory, else
     /// select it. The browser's canonical single-affordance row gesture
@@ -325,6 +382,10 @@ impl ExternalIntrospect for DirectoryExternal {
             ("select", "string"),
             ("open", "string"),
             ("send", "string"),
+            // R789 write surface (file-manager mutations).
+            ("mkdir", "bool"),
+            ("touch", "bool"),
+            ("delete", "bool"),
         ])
     }
 
@@ -404,6 +465,18 @@ impl ExternalIntrospect for DirectoryExternal {
                 let path = args.as_str().ok_or(InvokeError::TypeMismatch)?;
                 Ok(IntrospectValue::Text(self.state.open_dir(path)))
             }
+            // R789 write surface — create/delete in the current directory.
+            // Each returns whether the mutation took effect (the AI re-reads
+            // `entries` / `count` to observe the new listing).
+            "mkdir" => {
+                let name = args.as_str().ok_or(InvokeError::TypeMismatch)?;
+                Ok(IntrospectValue::Bool(self.state.create_dir(name)))
+            }
+            "touch" => {
+                let name = args.as_str().ok_or(InvokeError::TypeMismatch)?;
+                Ok(IntrospectValue::Bool(self.state.create_file(name)))
+            }
+            "delete" => Ok(IntrospectValue::Bool(self.state.delete_selected())),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -553,6 +626,47 @@ mod tests {
         let before = st.cwd();
         ext.invoke("send", IntrospectValue::Text("0:PointerEnter".into())).unwrap();
         assert_eq!(st.cwd(), before, "hover does not navigate");
+    }
+
+    #[test]
+    fn r789_state_create_dir_file_and_delete_selected() {
+        let s = state(); // /proj: [src(dir), Cargo.toml, README.md]
+        assert!(s.create_dir("assets"), "new dir created in cwd");
+        assert!(s.entries().iter().any(|e| e.name == "assets" && e.is_dir), "assets listed");
+        assert!(s.create_file("notes.txt"), "new file created in cwd");
+        assert!(s.entries().iter().any(|e| e.name == "notes.txt" && !e.is_dir));
+        assert!(!s.create_dir("src"), "duplicate name rejected");
+        // delete_selected removes the picked entry + clears the selection.
+        s.select("Cargo.toml");
+        assert!(s.delete_selected(), "selected entry removed");
+        assert_eq!(s.selected(), None, "selection cleared after delete");
+        assert!(!s.entries().iter().any(|e| e.name == "Cargo.toml"), "Cargo.toml gone");
+        assert!(!s.delete_selected(), "delete with no selection is a false no-op");
+    }
+
+    #[test]
+    fn r789_external_write_invoke_surface() {
+        let st = Rc::new(state());
+        let mut ext = DirectoryExternal::new(Rc::clone(&st));
+        assert_eq!(
+            ext.invoke("mkdir", IntrospectValue::Text("assets".into())).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(st.count(), 4, "mkdir grew the listing");
+        assert_eq!(
+            ext.invoke("touch", IntrospectValue::Text("LICENSE".into())).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        // delete operates on the selection.
+        ext.invoke("select", IntrospectValue::Text("README.md".into())).unwrap();
+        assert_eq!(ext.invoke("delete", IntrospectValue::Null).unwrap(), IntrospectValue::Bool(true));
+        assert_eq!(st.selected(), None, "delete cleared the selection");
+        assert!(!st.entries().iter().any(|e| e.name == "README.md"));
+        // duplicate mkdir reports false (not an error).
+        assert_eq!(
+            ext.invoke("mkdir", IntrospectValue::Text("src".into())).unwrap(),
+            IntrospectValue::Bool(false),
+        );
     }
 
     #[test]

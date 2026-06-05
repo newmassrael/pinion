@@ -30677,6 +30677,62 @@
         "prior R787 carries (defer): keyboard nav over entries / save dialog + filename field + glob filter / mkdir + delete (Directory write side) / clickable breadcrumb segments / size + mtime metadata"
       ]
     },
+    "R789": {
+      "decision_summary": "R789 Directory write surface (create_dir/create_file/remove) + file-row paint lift + hello-file-manager (New Folder/New File/Delete, AI-drivable)",
+      "changes_bullets": [
+        "Directory trait write surface (create_dir / create_file / remove): default-no-op so read-only backings inherit a safe false and only writable ones (InMemoryDirectory, FsDirectory) override; total bool surface (no Result), the read_dir shape; one trait (the Storage load+save+remove precedent), not a split DirectoryWrite, so a picker holds a single Rc<dyn Directory> for browse + manage",
+        "DirectoryState write methods (create_dir / create_file / delete_selected) refresh the listing Signal; DirectoryExternal write invoke surface (mkdir / touch / delete) is the AI-first path, each returning a success bool the agent confirms by re-reading entries",
+        "file-row paint lifted to pinion_widget_paint::file_browser::file_row (the 3rd file-UI consumer per R788 carry-c): hello-file-browser + hello-file-open-dialog migrated to it; dir-raised / file-zebra / selected-Accent / tag are one SSOT, the caller supplies list dimensions",
+        "new example hello-file-manager: a New Folder / New File / Delete toolbar over the write surface; Delete gated on a selection (Disabled posture + aria-disabled, the R788 OK-gate); repeated New auto-names (New Folder 2); seeded InMemoryDirectory deterministic backing",
+        "FsDirectory real-fs writes (std::fs::create_dir non-recursive / File::create_new / remove_dir_all|remove_file via symlink_metadata) round-trip unit-tested under a tmp dir"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 5539 passed / 0 failed (R788 5520 -> +19); core directory:: 11 (6 new write), file_browser:: 13 (2 new write), paint file_browser:: 3 (lifted file_row), FsDirectory read+write 2, hello-file-manager 7",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (0 warnings)",
+        "r789 demo: 30 assertions E2E over RPC (New Folder / New File / Delete by click + mkdir / touch / delete by invoke, listing re-read as data each mutation), seeded InMemoryDirectory deterministic",
+        "migrated r787 + r788 demos PASS (file_row lift behavior-identical: r787 still renders distinct dir/file inks)",
+        "FsDirectory write round-trip unit-tested under a tmp dir (create + create_new dup-reject + recursive remove)",
+        "validate-workspace: T1 reject=0 / new orphan +0, atomic entries 709 -> 710"
+      ],
+      "impact_refs": [
+        "3",
+        "5.15",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "save dialog with a filename TextField deferred (R788 carry) — composing the TextField substrate into a modal (attach_state + caret blink + focus-trap member + scene/text routing) is its own focused round",
+        "in-place rename deferred — needs the same filename TextField as the save dialog",
+        "Directory create_dir is non-recursive (the parent must exist, matching std::fs::create_dir); a recursive create_dir_all has no consumer yet (deferred)",
+        "prior file carries (defer): keyboard nav over the entry list / clickable breadcrumb segments / size + mtime metadata columns / glob filter"
+      ],
+      "publishable_decision_summary": "R789 Directory write surface (create_dir/create_file/remove) + file-row paint lift + hello-file-manager (New Folder/New File/Delete, AI-drivable)",
+      "publishable_changes_bullets": [
+        "Directory trait write surface (create_dir / create_file / remove): default-no-op so read-only backings inherit a safe false and only writable ones (InMemoryDirectory, FsDirectory) override; total bool surface (no Result), the read_dir shape; one trait (the Storage load+save+remove precedent), not a split DirectoryWrite, so a picker holds a single Rc<dyn Directory> for browse + manage",
+        "DirectoryState write methods (create_dir / create_file / delete_selected) refresh the listing Signal; DirectoryExternal write invoke surface (mkdir / touch / delete) is the AI-first path, each returning a success bool the agent confirms by re-reading entries",
+        "file-row paint lifted to pinion_widget_paint::file_browser::file_row (the 3rd file-UI consumer per R788 carry-c): hello-file-browser + hello-file-open-dialog migrated to it; dir-raised / file-zebra / selected-Accent / tag are one SSOT, the caller supplies list dimensions",
+        "new example hello-file-manager: a New Folder / New File / Delete toolbar over the write surface; Delete gated on a selection (Disabled posture + aria-disabled, the R788 OK-gate); repeated New auto-names (New Folder 2); seeded InMemoryDirectory deterministic backing",
+        "FsDirectory real-fs writes (std::fs::create_dir non-recursive / File::create_new / remove_dir_all|remove_file via symlink_metadata) round-trip unit-tested under a tmp dir"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 5539 passed / 0 failed (R788 5520 -> +19); core directory:: 11 (6 new write), file_browser:: 13 (2 new write), paint file_browser:: 3 (lifted file_row), FsDirectory read+write 2, hello-file-manager 7",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (0 warnings)",
+        "r789 demo: 30 assertions E2E over RPC (New Folder / New File / Delete by click + mkdir / touch / delete by invoke, listing re-read as data each mutation), seeded InMemoryDirectory deterministic",
+        "migrated r787 + r788 demos PASS (file_row lift behavior-identical: r787 still renders distinct dir/file inks)",
+        "FsDirectory write round-trip unit-tested under a tmp dir (create + create_new dup-reject + recursive remove)",
+        "validate-workspace: T1 reject=0 / new orphan +0, atomic entries 709 -> 710"
+      ],
+      "publishable_impact_refs": [
+        "3",
+        "5.15",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "save dialog with a filename TextField deferred (R788 carry) — composing the TextField substrate into a modal (attach_state + caret blink + focus-trap member + scene/text routing) is its own focused round",
+        "in-place rename deferred — needs the same filename TextField as the save dialog",
+        "Directory create_dir is non-recursive (the parent must exist, matching std::fs::create_dir); a recursive create_dir_all has no consumer yet (deferred)",
+        "prior file carries (defer): keyboard nav over the entry list / clickable breadcrumb segments / size + mtime metadata columns / glob filter"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

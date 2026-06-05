@@ -16,15 +16,31 @@
 //! to be path-free, so this is its own minimal trait (one method) the
 //! same way `Clipboard` is separate from `Storage`.
 //!
-//! ## Why total + read-only (no `Result`, no mkdir/write)
+//! ## Why total (no `Result`)
 //!
-//! The browse surface is read-only this round (R787): a picker lists
-//! and navigates; creating / deleting entries is a later axis. IO
-//! failures (missing dir, permission denied, not-a-directory) surface
-//! as `None` — the same total-surface shape as `Storage::load`, so the
-//! widget treats "cannot list" as "empty / unreachable" without a
-//! fail-loud path. A caller that needs the underlying `std::io::Error`
-//! instantiates the concrete `FsDirectory` and consults it directly.
+//! Every method has a total surface: [`read_dir`](Directory::read_dir)
+//! returns `None` on any failure (missing dir, permission denied,
+//! not-a-directory) — the same shape as `Storage::load`, so the widget
+//! treats "cannot list" as "empty / unreachable" without a fail-loud
+//! path. The R789 mutation methods ([`create_dir`](Directory::create_dir)
+//! / [`create_file`](Directory::create_file) /
+//! [`remove`](Directory::remove)) return `bool` success rather than a
+//! `Result` for the same reason — a file manager re-reads the listing to
+//! observe the outcome, it does not branch on an error kind. A caller
+//! that needs the underlying `std::io::Error` instantiates the concrete
+//! `FsDirectory` and consults it directly.
+//!
+//! ## Why write is default-no-op on the same trait (not a `DirectoryWrite`)
+//!
+//! The mutation methods carry a default `false` (unsupported) body, so a
+//! read-only [`Directory`] (a bundled resource tree, a remote listing)
+//! inherits a safe no-op and only a writable backing
+//! ([`InMemoryDirectory`], `FsDirectory`) overrides them. This mirrors
+//! [`Storage`](crate::Storage) bundling `load` + `save` + `remove` on one
+//! trait (a file picker holds a single `Rc<dyn Directory>` for both
+//! browse and manage), and the default-no-op extension idiom the rest of
+//! the codebase uses to grow an object-safe trait without splitting the
+//! handle.
 //!
 //! ## Path model
 //!
@@ -90,6 +106,53 @@ pub trait Directory {
     /// surface — the browser renders an empty / unreachable folder
     /// rather than surfacing an error type).
     fn read_dir(&self, path: &str) -> Option<Vec<DirEntry>>;
+
+    /// R789 — create a new directory at the absolute `path` (its parent
+    /// must already exist). Returns `true` on success, `false` when the
+    /// parent does not exist, an entry of that name already exists, or
+    /// the backing is read-only (the default). A successful call makes
+    /// the new directory appear in its parent's [`read_dir`].
+    fn create_dir(&self, path: &str) -> bool {
+        let _ = path;
+        false
+    }
+
+    /// R789 — create a new empty file at the absolute `path` (its parent
+    /// must already exist). Returns `true` on success, `false` when the
+    /// parent does not exist, an entry of that name already exists, or
+    /// the backing is read-only (the default).
+    fn create_file(&self, path: &str) -> bool {
+        let _ = path;
+        false
+    }
+
+    /// R789 — remove the entry at the absolute `path` (a file, or a
+    /// directory and its subtree). Returns `true` when an entry was
+    /// removed, `false` when nothing was there or the backing is
+    /// read-only (the default). Idempotent — removing a missing path is a
+    /// `false` no-op, never a panic.
+    fn remove(&self, path: &str) -> bool {
+        let _ = path;
+        false
+    }
+}
+
+/// Split an absolute `'/'`-path into `(parent, leaf)` for the in-memory
+/// mutation methods: `"/proj/x"` → `("/proj", "x")`, `"/x"` →
+/// `("/", "x")`. A trailing slash is ignored. A path with no separator
+/// (or the bare root `"/"`) yields an empty leaf, which the callers treat
+/// as "no creatable target" (a `false` no-op). The widget layer owns the
+/// navigation join/parent arithmetic ([`crate::widgets::file_browser`]);
+/// this is the backing's own internal split for listing maintenance.
+fn split_parent_leaf(path: &str) -> (String, String) {
+    let trimmed = path.trim_end_matches('/');
+    match trimmed.rsplit_once('/') {
+        Some((parent, leaf)) => {
+            let parent = if parent.is_empty() { "/".to_string() } else { parent.to_string() };
+            (parent, leaf.to_string())
+        }
+        None => (String::new(), trimmed.to_string()),
+    }
 }
 
 /// R787 §3 §5.15 — pure-Rust in-memory [`Directory`]: a synthetic tree
@@ -132,6 +195,61 @@ impl Directory for InMemoryDirectory {
         let mut entries = self.tree.borrow().get(path).cloned()?;
         sort_entries(&mut entries);
         Some(entries)
+    }
+
+    fn create_dir(&self, path: &str) -> bool {
+        let (parent, leaf) = split_parent_leaf(path);
+        if leaf.is_empty() {
+            return false;
+        }
+        let mut tree = self.tree.borrow_mut();
+        match tree.get_mut(&parent) {
+            Some(listing) if !listing.iter().any(|e| e.name == leaf) => {
+                listing.push(DirEntry::dir(leaf));
+            }
+            // Parent unseeded (does not exist) or the name is taken.
+            _ => return false,
+        }
+        // The new directory lists empty until something is created inside.
+        tree.insert(path.to_string(), Vec::new());
+        true
+    }
+
+    fn create_file(&self, path: &str) -> bool {
+        let (parent, leaf) = split_parent_leaf(path);
+        if leaf.is_empty() {
+            return false;
+        }
+        let mut tree = self.tree.borrow_mut();
+        match tree.get_mut(&parent) {
+            Some(listing) if !listing.iter().any(|e| e.name == leaf) => {
+                listing.push(DirEntry::file(leaf));
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn remove(&self, path: &str) -> bool {
+        let (parent, leaf) = split_parent_leaf(path);
+        if leaf.is_empty() {
+            return false;
+        }
+        let mut tree = self.tree.borrow_mut();
+        let removed = match tree.get_mut(&parent) {
+            Some(listing) => {
+                let before = listing.len();
+                listing.retain(|e| e.name != leaf);
+                listing.len() != before
+            }
+            None => false,
+        };
+        if removed {
+            // Drop the removed entry's own listing (if it was a directory);
+            // a file has no subtree key, so this is a harmless no-op.
+            tree.remove(path);
+        }
+        removed
     }
 }
 
@@ -184,5 +302,76 @@ mod tests {
         let d: std::rc::Rc<dyn Directory> = concrete;
         assert_eq!(d.read_dir("/").map(|e| e.len()), Some(1));
         assert_eq!(d.read_dir("/missing"), None);
+    }
+
+    // ----- R789 write surface -----
+
+    #[test]
+    fn r789_split_parent_leaf() {
+        use super::split_parent_leaf;
+        assert_eq!(split_parent_leaf("/proj/x"), ("/proj".into(), "x".into()));
+        assert_eq!(split_parent_leaf("/x"), ("/".into(), "x".into()));
+        assert_eq!(split_parent_leaf("/proj/x/"), ("/proj".into(), "x".into()), "trailing slash ignored");
+        assert_eq!(split_parent_leaf("/"), (String::new(), String::new()), "root has no leaf");
+    }
+
+    #[test]
+    fn r789_create_dir_appears_in_parent_and_lists_empty() {
+        let d = InMemoryDirectory::new();
+        d.insert("/proj", vec![DirEntry::file("Cargo.toml")]);
+        assert!(d.create_dir("/proj/src"), "create succeeds under an existing parent");
+        let names: Vec<String> =
+            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
+        // Dirs sort first: src before Cargo.toml.
+        assert_eq!(names, ["src", "Cargo.toml"], "new dir appears in the parent listing");
+        assert_eq!(d.read_dir("/proj/src"), Some(vec![]), "the new dir lists empty");
+    }
+
+    #[test]
+    fn r789_create_file_appears_in_parent() {
+        let d = InMemoryDirectory::new();
+        d.insert("/proj", vec![DirEntry::dir("src")]);
+        assert!(d.create_file("/proj/README.md"));
+        let names: Vec<String> =
+            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["src", "README.md"], "new file appears (after the dir)");
+    }
+
+    #[test]
+    fn r789_create_rejects_missing_parent_and_duplicates() {
+        let d = InMemoryDirectory::new();
+        d.insert("/proj", vec![DirEntry::dir("src")]);
+        assert!(!d.create_dir("/nope/x"), "missing parent rejected");
+        assert!(!d.create_dir("/proj/src"), "duplicate name rejected");
+        assert!(!d.create_file("/proj/src"), "duplicate (as file) rejected");
+    }
+
+    #[test]
+    fn r789_remove_drops_entry_and_subtree() {
+        let d = InMemoryDirectory::new();
+        d.insert("/proj", vec![DirEntry::dir("src"), DirEntry::file("README.md")]);
+        d.insert("/proj/src", vec![DirEntry::file("main.rs")]);
+        assert!(d.remove("/proj/src"), "removing an existing dir succeeds");
+        let names: Vec<String> =
+            d.read_dir("/proj").unwrap().iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["README.md"], "removed dir gone from the parent listing");
+        assert_eq!(d.read_dir("/proj/src"), None, "removed dir's subtree dropped");
+        assert!(!d.remove("/proj/ghost"), "removing a missing entry is a false no-op");
+    }
+
+    #[test]
+    fn r789_read_only_default_is_noop() {
+        // A bare trait impl with only `read_dir` inherits the default
+        // mutation no-ops (read-only backing).
+        struct ReadOnly;
+        impl Directory for ReadOnly {
+            fn read_dir(&self, _path: &str) -> Option<Vec<DirEntry>> {
+                Some(vec![])
+            }
+        }
+        let d = ReadOnly;
+        assert!(!d.create_dir("/x"), "read-only create_dir = false");
+        assert!(!d.create_file("/x"), "read-only create_file = false");
+        assert!(!d.remove("/x"), "read-only remove = false");
     }
 }

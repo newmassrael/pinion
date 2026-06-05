@@ -102,6 +102,7 @@ use pinion_widget_paint::button::{
     ButtonStyle,
 };
 use pinion_widget_paint::dialog::{view_dialog, DialogContent, DialogStyle};
+use pinion_widget_paint::file_browser::file_row;
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use std::rc::Rc;
 
@@ -238,47 +239,6 @@ fn selected_index(state: &DirectoryState) -> Option<usize> {
     state.entries().iter().position(|e| join_path(&cwd, &e.name) == selected)
 }
 
-/// One entry row — a directory paints raised with a trailing `/`
-/// (navigable); a file zebra-stripes (selectable); the selected file
-/// washes Accent. Tagged `"fb_dir#<i>"` so a click routes to the
-/// [`DirectoryExternal`]. Mirrors hello-file-browser's row paint (the 2nd
-/// consumer of the file-row affordance — example-local presentation, the
-/// `button_scene` 2-consumer precedent; a 3rd consumer lifts a
-/// `pinion_widget_paint::file_browser` row helper).
-fn build_row(index: usize, entry: &DirEntry, selected_idx: Option<usize>, theme: &Theme) -> Scene {
-    let is_selected = selected_idx == Some(index);
-    let (fill, fg) = if is_selected {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
-    } else if entry.is_dir {
-        (theme.resolve(ColorRole::SurfaceContainerHigh), theme.resolve(ColorRole::OnSurface))
-    } else {
-        let stripe = if index % 2 == 0 {
-            ColorRole::SurfaceContainerLow
-        } else {
-            ColorRole::SurfaceContainer
-        };
-        (theme.resolve(stripe), theme.resolve(ColorRole::OnSurface))
-    };
-    let label = if entry.is_dir { format!("{}/", entry.name) } else { entry.name.clone() };
-    let text = Scene::Text(TextNode::styled(
-        label,
-        Rect::default(),
-        TextStyle::new().with_size_px(15).with_fg(fg),
-    ));
-    Scene::Container(
-        ContainerNode::new(vec![text])
-            .with_tag(format!("{DIR_TAG}#{index}"))
-            .with_style(BoxStyle::filled(fill))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(LIST_W, ROW_PITCH))
-                    .with_padding(Rect::new(14, 0, 14, 0)),
-            ),
-    )
-}
-
 /// The browser pane that fills the dialog body: a breadcrumb bar (the
 /// clickable `../` parent affordance + the cwd path) above the virtualized
 /// entry list. Reads the shared [`DirectoryState`] so a navigate / select
@@ -328,7 +288,7 @@ fn browser_pane(
         entries.len(),
         ROW_PITCH,
         OVERSCAN,
-        |index| build_row(index, &entries[index], sel_idx, theme),
+        |index| file_row(DIR_TAG, index, &entries[index], sel_idx == Some(index), theme, LIST_W, ROW_PITCH),
     );
 
     Scene::Container(

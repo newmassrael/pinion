@@ -43,7 +43,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
 };
-use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::file_browser::{
     join_path, use_directory_state, DirectoryExternal, DirectoryState,
@@ -51,6 +51,7 @@ use pinion_core::widgets::file_browser::{
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{DirEntry, Frame, Scene, WidgetCore};
+use pinion_widget_paint::file_browser::file_row;
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use std::rc::Rc;
@@ -116,45 +117,6 @@ fn selected_index(state: &DirectoryState) -> Option<usize> {
     state.entries().iter().position(|e| join_path(&cwd, &e.name) == selected)
 }
 
-/// One entry row. A directory paints on a raised
-/// [`ColorRole::SurfaceContainerHigh`] with a trailing `/` (navigable); a
-/// file zebra-stripes (selectable). The selected file washes
-/// [`ColorRole::Accent`]. Tagged `"fb_dir#<i>"` so a click routes to the
-/// [`DirectoryExternal`] (navigate-or-select on the row's `is_dir`).
-fn build_row(index: usize, entry: &DirEntry, selected_idx: Option<usize>, theme: &Theme) -> Scene {
-    let is_selected = selected_idx == Some(index);
-    let (fill, fg) = if is_selected {
-        (theme.resolve(ColorRole::Accent), theme.resolve(ColorRole::OnAccent))
-    } else if entry.is_dir {
-        (theme.resolve(ColorRole::SurfaceContainerHigh), theme.resolve(ColorRole::OnSurface))
-    } else {
-        let stripe = if index % 2 == 0 {
-            ColorRole::SurfaceContainerLow
-        } else {
-            ColorRole::SurfaceContainer
-        };
-        (theme.resolve(stripe), theme.resolve(ColorRole::OnSurface))
-    };
-    let label = if entry.is_dir { format!("{}/", entry.name) } else { entry.name.clone() };
-    let text = Scene::Text(TextNode::styled(
-        label,
-        Rect::default(),
-        TextStyle::new().with_size_px(15).with_fg(fg),
-    ));
-    Scene::Container(
-        ContainerNode::new(vec![text])
-            .with_tag(format!("{DIR_TAG}#{index}"))
-            .with_style(BoxStyle::filled(fill))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(LIST_W, ROW_PITCH))
-                    .with_padding(Rect::new(14, 0, 14, 0)),
-            ),
-    )
-}
-
 /// view-fn (§6.3): pure sync `() -> Scene`. Reads the shared
 /// [`DirectoryState`] (the same `Rc` the [`DirectoryExternal`] mutates) so
 /// a navigate / select repaints; the listing is virtualized over the
@@ -209,7 +171,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         entries.len(),
         ROW_PITCH,
         OVERSCAN,
-        |index| build_row(index, &entries[index], sel_idx, &theme),
+        |index| file_row(DIR_TAG, index, &entries[index], sel_idx == Some(index), &theme, LIST_W, ROW_PITCH),
     );
 
     let footer = Scene::Text(TextNode::styled(
@@ -321,6 +283,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_a11y::AriaRole;
+    use pinion_core::theme::Theme;
     use pinion_core::Owner;
 
     #[test]

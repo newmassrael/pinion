@@ -358,6 +358,32 @@ impl Directory for FsDirectory {
         pinion_core::directory::sort_entries(&mut entries);
         Some(entries)
     }
+
+    /// R789 — `std::fs::create_dir` at `path` (non-recursive: the parent
+    /// must exist, matching the in-memory backing). Fails (`false`) if the
+    /// parent is missing or `path` already exists.
+    fn create_dir(&self, path: &str) -> bool {
+        fs::create_dir(path).is_ok()
+    }
+
+    /// R789 — create a new empty file at `path`. `create_new` fails
+    /// (`false`) when the file already exists, mirroring the in-memory
+    /// backing's duplicate rejection.
+    fn create_file(&self, path: &str) -> bool {
+        fs::OpenOptions::new().write(true).create_new(true).open(path).is_ok()
+    }
+
+    /// R789 — remove the entry at `path`: a directory (and its subtree)
+    /// via `remove_dir_all`, a file via `remove_file`. `symlink_metadata`
+    /// does not follow a symlink (a symlinked dir is unlinked, not its
+    /// target's contents). `false` when nothing is there.
+    fn remove(&self, path: &str) -> bool {
+        match fs::symlink_metadata(path) {
+            Ok(meta) if meta.is_dir() => fs::remove_dir_all(path).is_ok(),
+            Ok(_) => fs::remove_file(path).is_ok(),
+            Err(_) => false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -625,5 +651,35 @@ mod tests {
         // A missing path lists None (the total-surface contract).
         assert_eq!(fsd.read_dir(&format!("{}/nope", tmp.path().display())), None);
         // TmpDir's Drop removes the seeded tree.
+    }
+
+    #[test]
+    fn r789_fs_directory_create_and_remove_round_trip() {
+        use super::FsDirectory;
+        use pinion_core::Directory;
+
+        let tmp = TmpDir::new("fsdir-write");
+        let root = tmp.path().to_str().expect("utf8 tmp path").to_string();
+        let fsd = FsDirectory::new();
+
+        // create_dir + create_file appear in the real listing.
+        assert!(fsd.create_dir(&format!("{root}/src")), "create_dir succeeds");
+        assert!(fsd.create_file(&format!("{root}/README.md")), "create_file succeeds");
+        let names: Vec<String> =
+            fsd.read_dir(&root).expect("lists").iter().map(|e| e.name.clone()).collect();
+        assert_eq!(names, ["src", "README.md"], "created entries appear (dir first)");
+
+        // create_new semantics: a duplicate file is rejected.
+        assert!(!fsd.create_file(&format!("{root}/README.md")), "duplicate file rejected");
+        // create_dir under a missing parent is rejected (non-recursive).
+        assert!(!fsd.create_dir(&format!("{root}/nope/deep")), "missing parent rejected");
+
+        // remove drops a file and (recursively) a directory.
+        assert!(fsd.remove(&format!("{root}/README.md")), "remove file succeeds");
+        fs::write(format!("{root}/src/main.rs"), b"fn main() {{}}").expect("seed subfile");
+        assert!(fsd.remove(&format!("{root}/src")), "remove dir (recursive) succeeds");
+        assert_eq!(fsd.read_dir(&root).expect("lists").len(), 0, "both removed");
+        assert!(!fsd.remove(&format!("{root}/ghost")), "removing a missing path = false");
+        // TmpDir's Drop removes the root.
     }
 }
