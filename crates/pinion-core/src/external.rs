@@ -27,6 +27,7 @@
 //! and to give tests/examples a baseline.
 
 use std::borrow::Cow;
+use std::rc::Rc;
 
 use crate::intent::Intent;
 use crate::Event;
@@ -628,6 +629,106 @@ pub trait External: core::fmt::Debug {
     /// the §5.12 `rewind` and `dry_run` paths.
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         None
+    }
+}
+
+/// R810.1 §5.38 §5.12 — a reactive state holder that exposes a
+/// **read-only** introspection view of itself: its declared schema and
+/// the live value at each path. Implement this on a widget's reactive
+/// holder (e.g. `ModalState`, `SnackbarTimer`) and wrap it in a
+/// [`QueryOnlyIntrospect`] to get a query-only RPC node — no hand-rolled
+/// `External` boilerplate, no second source of truth.
+///
+/// The "read-only" contract is enforced by [`QueryOnlyIntrospect`], not
+/// here: any path in [`introspect_schema`](Self::introspect_schema) is
+/// refused on `intervene` with [`InterveneError::ReadOnly`]. This is the
+/// right shape when the state is *driver-coupled* — a modal's open flag
+/// moves with its focus-trap, a snackbar's countdown is advanced by the
+/// animation driver — so a raw rewind would desync it. Mutations go
+/// through the holder's own methods (a reducer / action), never the wire.
+pub trait QuerySource {
+    /// The declared query paths and their type-name tags. Usually a
+    /// `'static` slice independent of `self` (the schema is fixed per
+    /// type), kept in lockstep with [`introspect_query`](Self::introspect_query).
+    fn introspect_schema(&self) -> IntrospectSchema;
+
+    /// The live value at `path`, or `None` for an undeclared path.
+    fn introspect_query(&self, path: &str) -> Option<IntrospectValue>;
+}
+
+/// R810.1 §5.38 §5.12 — the generic **query-only** introspection
+/// `External`: a node that paints nothing (RPC backend only), handles no
+/// events, and forwards `schema` / `query` to its [`QuerySource`] while
+/// refusing every `intervene` (read-only). It lifts the byte-identical
+/// `External` boilerplate that `ModalIntrospect` (R795) and
+/// `SnackbarIntrospect` (R810) had each hand-rolled — the
+/// [[abstraction-needs-second-consumer]] payoff, made now rather than at
+/// the 3rd consumer because pinion's AI-introspection thesis guarantees
+/// every transient widget grows one of these. Bindings register it via a
+/// thin `*_introspection_extra(tag, state)` helper
+/// (`ExtraExternal::new(tag, Box::new(QueryOnlyIntrospect::new(state)))`).
+#[derive(Debug)]
+pub struct QueryOnlyIntrospect<S> {
+    source: Rc<S>,
+}
+
+impl<S> QueryOnlyIntrospect<S> {
+    /// Wrap a shared [`QuerySource`] as its query-only introspection
+    /// node. The `Rc` is cloned, so the view / driver / this node all
+    /// report the same live state.
+    #[must_use]
+    pub fn new(source: Rc<S>) -> Self {
+        Self { source }
+    }
+}
+
+impl<S: QuerySource + core::fmt::Debug + 'static> External for QueryOnlyIntrospect<S> {
+    /// RPC-only: the node carries no pixels (the binding paints the real
+    /// surface), so the visual backends skip it while §5.12 `query` still
+    /// routes through it.
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn handles_event(&self, _event: &Event) -> bool {
+        false
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl<S: QuerySource + core::fmt::Debug + 'static> ExternalIntrospect for QueryOnlyIntrospect<S> {
+    fn schema(&self) -> IntrospectSchema {
+        self.source.introspect_schema()
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        self.source.introspect_query(path)
+    }
+
+    /// Every declared slot is read-only; an undeclared path is
+    /// `UnknownPath`. The schema is the single source of "which paths
+    /// exist", so a slot can never drift between `query` and `intervene`.
+    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+        if self.source.introspect_schema().fields.iter().any(|(name, _)| *name == path) {
+            Err(InterveneError::ReadOnly)
+        } else {
+            Err(InterveneError::UnknownPath)
+        }
     }
 }
 

@@ -32325,6 +32325,54 @@
         "snackbar countdown is wall-clock-live under a continuously-rendering backend; scene/tick injects extra time (deterministic only in a non-rendering/headless context) — the introspect reports the live value either way"
       ]
     },
+    "R810.1": {
+      "decision_summary": "R810.1 §5.38 §5.12 — SSOT cleanup of the R810 introspect (self-audit fix): lift the byte-identical query-only-introspect External boilerplate that ModalIntrospect (R795) and SnackbarIntrospect (R810) each hand-rolled into a generic QueryOnlyIntrospect<S> + QuerySource trait in pinion-core::external. ModalState/SnackbarTimer impl QuerySource; the *Introspect names become type aliases. R810 had copied the pattern wholesale (2nd consumer) instead of lifting it; abstracted at the 2nd consumer because the shape is forced + the AI-introspection thesis guarantees growth + the lift is net-reductive.",
+      "changes_bullets": [
+        "new generic QueryOnlyIntrospect<S> + QuerySource trait in pinion-core::external (the lifted read-only RPC node)",
+        "QueryOnlyIntrospect owns the External boilerplate (Rpc-only/no-paint/no-event) + schema-driven read-only intervene",
+        "ModalState + SnackbarTimer now impl QuerySource (the per-widget schema + live query); the modal/snackbar-specific part",
+        "ModalIntrospect / SnackbarIntrospect are now type aliases = QueryOnlyIntrospect<ModalState> / <SnackbarTimer> (names + ::new preserved)",
+        "deletes the two byte-identical hand-rolled External impls (R795 modal + R810 snackbar); ~20 LOC x2 -> one generic",
+        "root cause: R810 copied the ModalIntrospect pattern wholesale (2nd consumer) instead of lifting it = undeclared SSOT dup"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core: modal 9 + snackbar 13 green (RPC schema/query/intervene byte-identical through the aliases)",
+        "cargo clippy -p pinion-core --all-targets: clean (-D pedantic); test-only trait imports moved into the test modules (R789 trap)",
+        "r795_modal_introspection.py (4 modal bindings) + r810_snackbar_introspect.py: PASS (realgpu) — RPC behaviour unchanged",
+        "workspace test + clippy gate green"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "3rd+ query-only introspect consumers (caret_blink Tier-2, future transient widgets) now just impl QuerySource — no boilerplate",
+        "abstracted at the 2nd consumer (not the usual 3rd) because the abstraction is forced + the AI-introspection thesis guarantees growth + the lift is net-reductive; a judgment call ahead of the Rule-of-Three default"
+      ],
+      "publishable_decision_summary": "R810.1 §5.38 §5.12 — SSOT cleanup of the R810 introspect (self-audit fix): lift the byte-identical query-only-introspect External boilerplate that ModalIntrospect (R795) and SnackbarIntrospect (R810) each hand-rolled into a generic QueryOnlyIntrospect<S> + QuerySource trait in pinion-core::external. ModalState/SnackbarTimer impl QuerySource; the *Introspect names become type aliases. R810 had copied the pattern wholesale (2nd consumer) instead of lifting it; abstracted at the 2nd consumer because the shape is forced + the AI-introspection thesis guarantees growth + the lift is net-reductive.",
+      "publishable_changes_bullets": [
+        "new generic QueryOnlyIntrospect<S> + QuerySource trait in pinion-core::external (the lifted read-only RPC node)",
+        "QueryOnlyIntrospect owns the External boilerplate (Rpc-only/no-paint/no-event) + schema-driven read-only intervene",
+        "ModalState + SnackbarTimer now impl QuerySource (the per-widget schema + live query); the modal/snackbar-specific part",
+        "ModalIntrospect / SnackbarIntrospect are now type aliases = QueryOnlyIntrospect<ModalState> / <SnackbarTimer> (names + ::new preserved)",
+        "deletes the two byte-identical hand-rolled External impls (R795 modal + R810 snackbar); ~20 LOC x2 -> one generic",
+        "root cause: R810 copied the ModalIntrospect pattern wholesale (2nd consumer) instead of lifting it = undeclared SSOT dup"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core: modal 9 + snackbar 13 green (RPC schema/query/intervene byte-identical through the aliases)",
+        "cargo clippy -p pinion-core --all-targets: clean (-D pedantic); test-only trait imports moved into the test modules (R789 trap)",
+        "r795_modal_introspection.py (4 modal bindings) + r810_snackbar_introspect.py: PASS (realgpu) — RPC behaviour unchanged",
+        "workspace test + clippy gate green"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "3rd+ query-only introspect consumers (caret_blink Tier-2, future transient widgets) now just impl QuerySource — no boilerplate",
+        "abstracted at the 2nd consumer (not the usual 3rd) because the abstraction is forced + the AI-introspection thesis guarantees growth + the lift is net-reductive; a judgment call ahead of the Rule-of-Three default"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

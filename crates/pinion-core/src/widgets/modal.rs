@@ -38,11 +38,7 @@
 
 use std::rc::Rc;
 
-use crate::event::Event;
-use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
-};
+use crate::external::{IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource};
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
 
@@ -99,94 +95,40 @@ impl Default for ModalState {
     }
 }
 
-/// R795 §5.16 §5.12 — the **query-only** RPC introspection face of a
-/// [`ModalState`]. Registered as an extra-external (always present in the
-/// scene, open *or* closed), it surfaces the open flag at the introspect
-/// path `open`, so an AI agent driving over the §5.12 RPC plane can ask
-/// "is this modal up?" directly — the same first-class `open` query that
-/// [`ContextMenu`](super::context_menu::ContextMenu) already exposes.
-/// Before R795 the four modal surfaces (dialog / drawer / file-open /
-/// file-save) carried no introspect external, so their open state was only
-/// inferable from scene-tree panel presence; this closes that asymmetry
-/// without a second source of truth — the flag still lives once in
-/// [`ModalState`], and this node merely reads it.
+/// R795 §5.16 §5.12 / R810.1 — the **query-only** RPC introspection face
+/// of a [`ModalState`]: a [`QueryOnlyIntrospect`] over the modal's
+/// read-only [`QuerySource`] view. Registered as an extra-external
+/// (always present in the scene, open *or* closed), it surfaces the open
+/// flag at the introspect path `open`, so an AI agent driving over the
+/// §5.12 RPC plane can ask "is this modal up?" directly — the same
+/// first-class `open` query `ContextMenu` already exposes. Before R795
+/// the four modal surfaces (dialog / drawer / file-open / file-save)
+/// carried no introspect external, so their open state was only inferable
+/// from scene-tree panel presence; this closes that asymmetry without a
+/// second source of truth — the flag still lives once in [`ModalState`].
 ///
-/// ## Query-only by construction
-///
-/// The `open` flag must move in lockstep with the
-/// [`crate::modal_scope_request`] focus trap — that lockstep is the entire
-/// reason [`ModalState`] exists. A raw `intervene` write would raise the
-/// flag *without* installing the trap (the background goes Tab-reachable
-/// behind a visible scrim — the exact desync [`ModalState`] prevents), so
-/// the `open` slot is read-only: writes are refused with
-/// [`InterveneError::ReadOnly`]. Opening and closing go through
+/// R810.1 lifted the hand-rolled `External` boilerplate this shared with
+/// the snackbar introspect into the generic [`QueryOnlyIntrospect`]; the
+/// modal-specific `open` slot + its read-only rationale live in the
+/// [`QuerySource`] impl below.
+pub type ModalIntrospect = QueryOnlyIntrospect<ModalState>;
+
+/// R795 §5.16 §5.12 — the read-only introspection view of a modal: one
+/// `open` bool. **Read-only by construction**: the open flag must move in
+/// lockstep with the `modal_scope_request` focus trap (the entire reason
+/// [`ModalState`] exists), so a raw `intervene` write would raise the
+/// flag without installing the trap — the exact desync [`ModalState`]
+/// prevents — and is refused (`InterveneError::ReadOnly`, enforced by
+/// [`QueryOnlyIntrospect`]). Opening / closing go through
 /// [`ModalState::open`] / [`ModalState::close`] (a reducer / `External`
-/// `invoke` body), never by rewinding this node.
-#[derive(Debug)]
-pub struct ModalIntrospect {
-    state: Rc<ModalState>,
-}
-
-impl ModalIntrospect {
-    /// Wrap a shared [`ModalState`] as its query-only introspection node.
-    /// The `Rc` is cloned, so the view-fn and reducer keep driving the same
-    /// open flag this node reports.
-    #[must_use]
-    pub fn new(state: Rc<ModalState>) -> Self {
-        Self { state }
-    }
-}
-
-impl External for ModalIntrospect {
-    /// RPC-only: the node carries no pixels, so the visual backends skip it
-    /// (an empty placeholder) while §5.12 `query` still routes through it.
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Rpc], BackendFallback::Skip)
-    }
-
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn handles_event(&self, _event: &Event) -> bool {
-        false
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-}
-
-impl ExternalIntrospect for ModalIntrospect {
-    fn schema(&self) -> IntrospectSchema {
+/// invoke), never by rewinding the introspect node.
+impl QuerySource for ModalState {
+    fn introspect_schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[("open", "bool")])
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        if path == "open" {
-            Some(IntrospectValue::Bool(self.state.is_open()))
-        } else {
-            None
-        }
-    }
-
-    /// The `open` slot is read-only — see the type docs. Opening or closing
-    /// must preserve the focus-trap lockstep, so it routes through
-    /// [`ModalState::open`] / [`ModalState::close`], not a rewind here.
-    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        if path == "open" {
-            Err(InterveneError::ReadOnly)
-        } else {
-            Err(InterveneError::UnknownPath)
-        }
+    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+        (path == "open").then(|| IntrospectValue::Bool(self.is_open()))
     }
 }
 
@@ -229,6 +171,11 @@ pub fn modal_introspection_extra(tag: &'static str, state: Rc<ModalState>) -> Ex
 #[cfg(test)]
 mod tests {
     use super::*;
+    // R810.1 — named only in the tests now (the External / ExternalIntrospect
+    // impls moved to the generic `QueryOnlyIntrospect`); `External`'s methods
+    // are reached through the `Box<dyn External>` trait object, so only these
+    // two need importing for the concrete-type method calls + the error enum.
+    use crate::external::{ExternalIntrospect, InterveneError};
     use crate::modal_scope_request::{self, ModalRequest};
 
     #[test]

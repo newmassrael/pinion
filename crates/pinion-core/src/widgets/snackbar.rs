@@ -31,11 +31,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::animation::Tickable;
-use crate::event::Event;
-use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, ThreadOwnership,
-};
+use crate::external::{IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource};
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
 
@@ -173,82 +169,36 @@ pub fn use_snackbar_timer(key: &'static str) -> Rc<SnackbarTimer> {
         .register_animation_once(key, SnackbarTimer::new)
 }
 
-/// R810 §5.38 §5.12 — the **query-only** RPC introspection face of a
-/// [`SnackbarTimer`]. Registered as an extra-external (always present in
-/// the scene, shown *or* hidden), it surfaces the live countdown at the
-/// introspect paths `visible` / `remaining` / `duration`, so an AI agent
-/// driving over the §5.12 RPC plane can ask "is the snackbar up, and how
-/// long until it auto-dismisses?" directly — the same first-class query
-/// [`ModalIntrospect`](super::modal::ModalIntrospect) gives a modal.
+/// R810 §5.38 §5.12 / R810.1 — the **query-only** RPC introspection face
+/// of a [`SnackbarTimer`]: a [`QueryOnlyIntrospect`] over the snackbar's
+/// read-only [`QuerySource`] view. Registered as an extra-external
+/// (always present, shown *or* hidden), it surfaces the live countdown at
+/// `visible` / `remaining` / `duration`, so an AI agent driving over the
+/// §5.12 RPC plane can ask "is the snackbar up, and how long until it
+/// auto-dismisses?" directly — the same first-class query the modal
+/// introspect gives a modal. Before R810 the visibility lived only in the
+/// [`SnackbarTimer::visible`] [`Signal`] the view-fn reads to paint the
+/// overlay; an AI had to infer "is it shown?" from scene-tree presence
+/// (the asymmetry R795 closed for modals). No second source of truth —
+/// the flag/countdown still live once in [`SnackbarTimer`].
 ///
-/// Before R810 the snackbar's visibility lived only in the
-/// [`SnackbarTimer::visible`] [`Signal`] that the view-fn reads to paint
-/// the overlay; an AI client had to infer "is it shown?" from
-/// scene-tree presence (the exact asymmetry R795 closed for modals).
-/// This node closes it without a second source of truth — the flag,
-/// countdown, and horizon still live once in [`SnackbarTimer`], and this
-/// node merely reads them. Pairs naturally with the R724 `scene/tick`
-/// RPC: an agent shows the snackbar, queries `remaining`, ticks past the
-/// duration, and observes `visible` flip to `false` — all as data, no
-/// wall-clock wait and no pixels (§2 #7).
-///
-/// ## Query-only by construction
-///
-/// `visible` / `remaining` / `duration` are all timer-derived — the
-/// countdown is advanced by [`Tickable::tick`] and (re)started by
-/// [`SnackbarTimer::show`]. A raw `intervene` write would desync the
-/// reported state from the running countdown (e.g. forcing `visible`
-/// true without arming `elapsed`/`duration`), so every slot is
-/// read-only: writes are refused with [`InterveneError::ReadOnly`].
-/// Showing and dismissing go through [`SnackbarTimer::show`] /
-/// [`SnackbarTimer::dismiss`] (a reducer / action handler), never by
-/// rewinding this node.
-#[derive(Debug)]
-pub struct SnackbarIntrospect {
-    timer: Rc<SnackbarTimer>,
-}
+/// R810.1 lifted the hand-rolled `External` boilerplate this shared with
+/// the modal introspect into the generic [`QueryOnlyIntrospect`]; the
+/// snackbar-specific slots + their read-only rationale live in the
+/// [`QuerySource`] impl below.
+pub type SnackbarIntrospect = QueryOnlyIntrospect<SnackbarTimer>;
 
-impl SnackbarIntrospect {
-    /// Wrap a shared [`SnackbarTimer`] as its query-only introspection
-    /// node. The `Rc` is cloned, so the view-fn, the animation driver,
-    /// and this node all report the same live countdown.
-    #[must_use]
-    pub fn new(timer: Rc<SnackbarTimer>) -> Self {
-        Self { timer }
-    }
-}
-
-impl External for SnackbarIntrospect {
-    /// RPC-only: the node carries no pixels (the binding paints the
-    /// snackbar overlay itself), so the visual backends skip it while
-    /// §5.12 `query` still routes through it.
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Rpc], BackendFallback::Skip)
-    }
-
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn handles_event(&self, _event: &Event) -> bool {
-        false
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-}
-
-impl ExternalIntrospect for SnackbarIntrospect {
-    fn schema(&self) -> IntrospectSchema {
+/// R810 §5.38 §5.12 — the read-only introspection view of a snackbar: its
+/// live `visible` / `remaining` / `duration`. **Read-only by
+/// construction**: the countdown is timer-driven (advanced by
+/// [`Tickable::tick`], (re)started by [`SnackbarTimer::show`]), so a raw
+/// `intervene` write would desync the reported state from the running
+/// countdown — every slot is refused (`InterveneError::ReadOnly`,
+/// enforced by [`QueryOnlyIntrospect`]). Showing / dismissing go through
+/// [`SnackbarTimer::show`] / [`SnackbarTimer::dismiss`] (a reducer /
+/// action handler), never by rewinding the introspect node.
+impl QuerySource for SnackbarTimer {
+    fn introspect_schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[
             ("visible", "bool"),
             ("remaining", "float"),
@@ -256,23 +206,12 @@ impl ExternalIntrospect for SnackbarIntrospect {
         ])
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "visible" => Some(IntrospectValue::Bool(self.timer.visible())),
-            "remaining" => Some(IntrospectValue::Float(f64::from(self.timer.remaining()))),
-            "duration" => Some(IntrospectValue::Float(f64::from(self.timer.duration()))),
+            "visible" => Some(IntrospectValue::Bool(self.visible())),
+            "remaining" => Some(IntrospectValue::Float(f64::from(self.remaining()))),
+            "duration" => Some(IntrospectValue::Float(f64::from(self.duration()))),
             _ => None,
-        }
-    }
-
-    /// Every slot is read-only — see the type docs. The countdown is
-    /// timer-driven, so showing / dismissing route through
-    /// [`SnackbarTimer::show`] / [`SnackbarTimer::dismiss`], not a
-    /// rewind here.
-    fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        match path {
-            "visible" | "remaining" | "duration" => Err(InterveneError::ReadOnly),
-            _ => Err(InterveneError::UnknownPath),
         }
     }
 }
@@ -293,6 +232,10 @@ pub fn snackbar_introspection_extra(tag: &'static str, timer: Rc<SnackbarTimer>)
 #[cfg(test)]
 mod tests {
     use super::*;
+    // R810.1 — named only in the tests now (the External / ExternalIntrospect
+    // impls moved to the generic `QueryOnlyIntrospect`); `External`'s methods
+    // are reached through the `Box<dyn External>` trait object.
+    use crate::external::{ExternalIntrospect, InterveneError};
     use crate::reactive::Owner;
 
     #[test]
