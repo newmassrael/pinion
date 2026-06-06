@@ -82,7 +82,10 @@
 //! real DCC binding.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::BTreeSet;
 use std::rc::Rc;
+use std::time::Instant;
 
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::IntrospectValue;
@@ -95,7 +98,9 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+use pinion_core::widgets::tree_nav::{flat_visible, resolve_tree_key, TreeKey, VisibleRow};
 use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
+use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
 use pinion_widget_paint::devtools::{
     find_node_at_path, rebuild_with_highlight_at_path, scene_root_path_segment, scene_to_tree_item,
@@ -340,6 +345,125 @@ fn use_hovered_path() -> Rc<Signal<Option<String>>> {
         .cache("hello_dock_hovered_path", || Signal::new(None::<String>))
 }
 
+/// R811 §5.27 — Page Up/Down jump size for inspector keyboard nav
+/// (mirrors `hello-tree-view`'s `NAV_PAGE`).
+const INSPECTOR_NAV_PAGE: usize = 7;
+
+/// R811 §5.38 — owner-cache key for the inspector type-ahead cursor
+/// (buffer + last-typed instant); the shell-root `Owner` slot drops
+/// with the shell, so no stale search survives across shells.
+const INSPECTOR_TYPEAHEAD_KEY: &str = "hello_dock_panels::inspector_typeahead";
+
+/// R811 §5.50 §5.27 — the inspector tree's per-path collapse overlay.
+/// The inspector projects a fresh `TreeItem` tree from the live
+/// viewport scene every paint (all branches default expanded), so the
+/// expand state cannot live on the derived nodes; it lives here, keyed
+/// by node id (= the scene path / synthetic inspector id). A path in
+/// the set is collapsed; its absence means expanded — the boot default
+/// preserving R683.C's fully-expanded inspector.
+fn use_collapsed_paths() -> Rc<Signal<BTreeSet<String>>> {
+    Owner::current()
+        .expect("hello-dock-panels: view fn runs inside the substrate root owner scope")
+        .cache("hello_dock_collapsed_paths", || Signal::new(BTreeSet::new()))
+}
+
+/// R811 §5.50 — set branch `id`'s collapsed flag, writing the Signal
+/// only on an actual change (no redundant repaint). Inserting collapses
+/// the branch; removing expands it.
+fn set_collapsed(id: &str, collapsed: bool) {
+    let store = use_collapsed_paths();
+    let mut set = store.get();
+    let changed = if collapsed {
+        set.insert(id.to_owned())
+    } else {
+        set.remove(id)
+    };
+    if changed {
+        store.set(set);
+    }
+}
+
+/// R811 §5.50 — flip branch `id`'s collapsed flag (Space / Enter).
+fn toggle_collapsed(id: &str) {
+    let store = use_collapsed_paths();
+    let mut set = store.get();
+    // `remove` returns false when the id was absent (expanded) → collapse
+    // it; true when present (collapsed) → leave it removed (expand).
+    if !set.remove(id) {
+        set.insert(id.to_owned());
+    }
+    store.set(set);
+}
+
+/// R811 §5.50 §5.38 — type-ahead jump over the inspector's visible rows
+/// via the [`pinion_shell::typeahead`] substrate (the same matching step
+/// `hello-tree-view` and `hello-listbox` use). Moves the selection
+/// cursor ([`use_selected_path`]) to the next visible row whose label
+/// matches `key`. The policy half (which Signal to move, which cache
+/// slot) is per-binding; the match step is shared.
+fn inspector_typeahead(selected: &Signal<Option<String>>, rows: &[VisibleRow], key: &str) -> bool {
+    let Some(ch) = is_typeahead_char(key) else {
+        return false;
+    };
+    if rows.is_empty() {
+        return false;
+    }
+    let current = selected
+        .get()
+        .and_then(|id| rows.iter().position(|row| row.id == id));
+    let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
+    let owner = Owner::current()
+        .expect("hello-dock-panels inspector type-ahead must run inside the apply_key owner wrap");
+    let cursor: Rc<RefCell<TypeaheadCursor>> =
+        owner.cache(INSPECTOR_TYPEAHEAD_KEY, || RefCell::new(TypeaheadCursor::new()));
+    let target = cursor.borrow_mut().step(ch, current, Instant::now(), &labels);
+    let Some(idx) = target else {
+        return false;
+    };
+    selected.set(Some(rows[idx].id.clone()));
+    true
+}
+
+/// R811 §5.50 §5.27 — the inspector's visible `TreeItem` tree: the fixed
+/// two-row top level (the `ButtonState` leaf + the `viewport` branch
+/// wrapping the live scene projection) with the per-path collapse
+/// overlay applied. Shared by the paint path
+/// ([`view_inspector_content`]) and the keyboard-nav path
+/// ([`DockPanelsView`]'s `apply_key`) so both flatten the identical row
+/// sequence — the R809.1 single-traversal invariant across the two code
+/// paths.
+fn inspector_tree_items(state: ButtonState, theme: &Theme) -> Vec<TreeItem> {
+    let viewport_scene = view_viewport_raw(state, theme);
+    let root_segment = scene_root_path_segment(&viewport_scene);
+    let mut items = vec![
+        TreeItem::leaf("state", format!("ButtonState: {state:?}")),
+        TreeItem::branch(
+            "viewport",
+            "viewport scene",
+            true,
+            vec![scene_to_tree_item(&viewport_scene, &root_segment)],
+        ),
+    ];
+    let collapsed = use_collapsed_paths().get();
+    for item in &mut items {
+        apply_collapsed(item, &collapsed);
+    }
+    items
+}
+
+/// R811 §5.50 — apply the [`use_collapsed_paths`] overlay to a derived
+/// `TreeItem` subtree: a branch whose id is in `collapsed` paints
+/// collapsed (its descendants drop out of the flat visible sequence).
+/// Leaves and absent ids keep their projected (expanded) state.
+fn apply_collapsed(item: &mut TreeItem, collapsed: &BTreeSet<String>) {
+    if !item.children.is_empty() && collapsed.contains(&item.id) {
+        item.expanded = false;
+    }
+    for child in &mut item.children {
+        apply_collapsed(child, collapsed);
+    }
+}
+
 // ─── floating-window helpers ─────────────────────────────────────────
 
 /// Construct the canonical floating-window id for `panel_id`. Used by
@@ -526,17 +650,7 @@ fn view_viewport_content(state: ButtonState, theme: &Theme) -> Scene {
 /// as hello-multi-window's inspector). Reads
 /// [`use_selected_path`] for the focus state-layer.
 fn view_inspector_content(state: ButtonState, theme: &Theme) -> Scene {
-    let viewport_scene = view_viewport_raw(state, theme);
-    let root_segment = scene_root_path_segment(&viewport_scene);
-    let tree_items = vec![
-        TreeItem::leaf("state", format!("ButtonState: {state:?}")),
-        TreeItem::branch(
-            "viewport",
-            "viewport scene",
-            true,
-            vec![scene_to_tree_item(&viewport_scene, &root_segment)],
-        ),
-    ];
+    let tree_items = inspector_tree_items(state, theme);
     let selected = use_selected_path().get();
     let focus = TreeViewFocus {
         focused_id: selected.as_deref(),
@@ -898,6 +1012,67 @@ impl WidgetCore for DockPanelsView {
             _ => {}
         }
         Vec::new()
+    }
+
+    /// R811 §5.16 §5.27 — make the inspector tree a focusable single tab
+    /// stop alongside the viewport button, so keyboard focus can land on
+    /// it ([`apply_key`](Self::apply_key) gates inspector navigation on
+    /// it). Per WAI-ARIA, a tree is one tab stop with an
+    /// `aria-activedescendant` cursor — here the cursor is the shared
+    /// [`use_selected_path`] row, not per-row focus.
+    fn focusable_tags() -> Vec<&'static str> {
+        vec![VIEWPORT_BTN_TAG, INSPECTOR_TREE_TAG]
+    }
+
+    /// R811 §5.16 §5.27 §5.50 — WAI-ARIA APG 6.13 Tree keyboard
+    /// navigation for the inspector, the second consumer of the lifted
+    /// `pinion_core::widgets::tree_nav` substrate (`hello-tree-view` is
+    /// the first). Gated on the inspector tree holding keyboard focus
+    /// (routing and focus are separate axes): the viewport button keeps
+    /// Space/Enter for its own activation when *it* is focused.
+    ///
+    /// Selection-follows-focus — arrows move the shared
+    /// [`use_selected_path`] cursor, which already drives the inspector
+    /// focus state-layer + the viewport highlight bridge, so navigating
+    /// the tree previews the corresponding scene node. Expand / collapse
+    /// / toggle write the [`use_collapsed_paths`] overlay; an
+    /// unrecognised printable key falls through to
+    /// [`inspector_typeahead`].
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        if focused != Some(INSPECTOR_TREE_TAG) {
+            return false;
+        }
+        let state = Self::read_state(scene);
+        let theme = use_theme(THEME_TAG).theme_animated();
+        let items = inspector_tree_items(state, &theme);
+        let rows = flat_visible(&items);
+        let selected = use_selected_path();
+        let current = selected.get();
+        match resolve_tree_key(&rows, current.as_deref(), key, INSPECTOR_NAV_PAGE) {
+            TreeKey::Focus(id) => {
+                selected.set(Some(id));
+                true
+            }
+            TreeKey::Expand(id) => {
+                set_collapsed(&id, false);
+                true
+            }
+            TreeKey::Collapse(id) => {
+                set_collapsed(&id, true);
+                true
+            }
+            TreeKey::Toggle(id) => {
+                toggle_collapsed(&id);
+                true
+            }
+            TreeKey::Consumed => true,
+            TreeKey::Unhandled => inspector_typeahead(&selected, &rows, key),
+        }
     }
 }
 

@@ -200,6 +200,29 @@ impl TreeItem {
     }
 }
 
+/// R811 §5.50 §5.27 — `TreeItem` is the shipped [`TreeNode`] for the
+/// keyboard-navigation substrate: both inspector/tree consumers paint
+/// through `TreeItem`, so flattening the painted tree
+/// ([`flat_visible`](pinion_core::widgets::tree_nav::flat_visible)) and
+/// resolving keys against it
+/// ([`resolve_tree_key`](pinion_core::widgets::tree_nav::resolve_tree_key))
+/// navigate exactly the row sequence
+/// [`view_tree_focused`] renders.
+impl pinion_core::widgets::tree_nav::TreeNode for TreeItem {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn expanded(&self) -> bool {
+        self.expanded
+    }
+    fn children(&self) -> &[Self] {
+        &self.children
+    }
+}
+
 /// R671 §5.50 — collapsed-state expand glyph (`U+25B6` BLACK
 /// RIGHT-POINTING TRIANGLE). Named per [[non-ascii-literal-named-const-escape]].
 const GLYPH_COLLAPSED: &str = "\u{25B6}";

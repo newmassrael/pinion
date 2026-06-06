@@ -32373,6 +32373,70 @@
         "abstracted at the 2nd consumer (not the usual 3rd) because the abstraction is forced + the AI-introspection thesis guarantees growth + the lift is net-reductive; a judgment call ahead of the Rule-of-Three default"
       ]
     },
+    "R811": {
+      "decision_summary": "R811 §5.50 §5.27 — lift WAI-ARIA tree keyboard navigation to pinion_core::widgets::tree_nav (TreeNode trait + VisibleRow + flat_visible + resolve_tree_key), driven by adding DevTools inspector tree keyboard nav to hello-dock-panels as the organic 2nd interactive-tree consumer.",
+      "changes_bullets": [
+        "new pinion_core::widgets::tree_nav: TreeNode trait, VisibleRow, flat_visible, parent_row, TreeKey, resolve_tree_key",
+        "pure WAI-ARIA APG 6.13 keyboard resolver beside clamp_nav (§5.27); vertical via clamp_nav (clamp, not wrap)",
+        "TreeItem (pinion-widget-paint) and FileNode (hello-tree-view) impl TreeNode; nav reads one flat_visible walk",
+        "hello-tree-view refactored onto the substrate; R809/R809.1 behaviour byte-identical, example tests green",
+        "hello-dock-panels: DevTools inspector tree keyboard nav (the 2nd interactive-tree consumer of the substrate)",
+        "inspector tree is a focus-gated single tab stop (focusable_tags + apply_key gated on inspector focus)",
+        "path-keyed collapse overlay (use_collapsed_paths) since the inspector tree is projected per-frame from the scene",
+        "selection-follows-focus: arrows move use_selected_path, driving the focus ring + viewport highlight bridge",
+        "type-ahead via existing pinion_shell::typeahead; caller-owned storage boundary kept (not lifted)",
+        "clears SEED Phase-B candidate (e): tree-nav lift now that an organic 2nd interactive tree arrived"
+      ],
+      "verification_bullets": [
+        "pinion-core tree_nav: 21 unit tests green (WAI-ARIA resolver ported from hello-tree-view R809)",
+        "cargo test --workspace green (exit 0, no failures); pinion-widget-paint 447 + hello-tree-view 11 green",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r811_inspector_tree_keyboard.py PASS: 31 assertions, wait_until, scene-as-data (no pixels)",
+        "regression: r673 / r674 / r809 hello-tree-view demos PASS (substrate refactor behaviour-preserving)"
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.27",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "inspector tree emits no per-row AccessNodes (AT tree) — pre-existing gap; additive via access_rows over flat_visible",
+        "hello-multi-window inspector = future 3rd tree-nav consumer (same keyboard nav; organic when wanted)",
+        "paint walk (view_tree_focused) and flat_visible are two walks of the TreeItem visible seq — pre-existing, accepted (R809.1)",
+        "type-ahead Owner::cache glue stays per-consumer by typeahead.rs documented caller-owns-storage boundary (not a missed lift)"
+      ],
+      "publishable_decision_summary": "R811 §5.50 §5.27 — lift WAI-ARIA tree keyboard navigation to pinion_core::widgets::tree_nav (TreeNode trait + VisibleRow + flat_visible + resolve_tree_key), driven by adding DevTools inspector tree keyboard nav to hello-dock-panels as the organic 2nd interactive-tree consumer.",
+      "publishable_changes_bullets": [
+        "new pinion_core::widgets::tree_nav: TreeNode trait, VisibleRow, flat_visible, parent_row, TreeKey, resolve_tree_key",
+        "pure WAI-ARIA APG 6.13 keyboard resolver beside clamp_nav (§5.27); vertical via clamp_nav (clamp, not wrap)",
+        "TreeItem (pinion-widget-paint) and FileNode (hello-tree-view) impl TreeNode; nav reads one flat_visible walk",
+        "hello-tree-view refactored onto the substrate; R809/R809.1 behaviour byte-identical, example tests green",
+        "hello-dock-panels: DevTools inspector tree keyboard nav (the 2nd interactive-tree consumer of the substrate)",
+        "inspector tree is a focus-gated single tab stop (focusable_tags + apply_key gated on inspector focus)",
+        "path-keyed collapse overlay (use_collapsed_paths) since the inspector tree is projected per-frame from the scene",
+        "selection-follows-focus: arrows move use_selected_path, driving the focus ring + viewport highlight bridge",
+        "type-ahead via existing pinion_shell::typeahead; caller-owned storage boundary kept (not lifted)",
+        "clears SEED Phase-B candidate (e): tree-nav lift now that an organic 2nd interactive tree arrived"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core tree_nav: 21 unit tests green (WAI-ARIA resolver ported from hello-tree-view R809)",
+        "cargo test --workspace green (exit 0, no failures); pinion-widget-paint 447 + hello-tree-view 11 green",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r811_inspector_tree_keyboard.py PASS: 31 assertions, wait_until, scene-as-data (no pixels)",
+        "regression: r673 / r674 / r809 hello-tree-view demos PASS (substrate refactor behaviour-preserving)"
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.27",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "inspector tree emits no per-row AccessNodes (AT tree) — pre-existing gap; additive via access_rows over flat_visible",
+        "hello-multi-window inspector = future 3rd tree-nav consumer (same keyboard nav; organic when wanted)",
+        "paint walk (view_tree_focused) and flat_visible are two walks of the TreeItem visible seq — pre-existing, accepted (R809.1)",
+        "type-ahead Owner::cache glue stays per-consumer by typeahead.rs documented caller-owns-storage boundary (not a missed lift)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
