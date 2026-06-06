@@ -32225,6 +32225,54 @@
         "tree virtualization stays Phase-D-deferred (tree_view.rs doc); multi-select / drag-drop / inline rename deferred to future consumers"
       ]
     },
+    "R809.1": {
+      "decision_summary": "R809.1 §5.38 §5.27 §5.40 — SSOT cleanup of the R809 tree keyboard (self-audit fix): collapse the visible-row DFS to one flat_visible SSOT consumed by nav + type-ahead + a11y (it was three hand-written walks that had to agree by hand); rewrite resolve_tree_key as the canonical flat-list-with-depth algorithm, dissolving node_flags/first_child_id/parent_id; add aria-expanded to branch AccessNodes from that same SSOT. The R809 self-grep had missed the a11y access_node axis duplication (the R758 repeated-miss).",
+      "changes_bullets": [
+        "flat_visible is now the single visible-row DFS SSOT (id/label/depth/posinset/setsize/has_children/expanded)",
+        "nav + type-ahead + a11y all read flat_visible; access_rows became a pure map (was a 2nd hand-written walk)",
+        "resolve_tree_key rewritten as the canonical flat-list+depth algorithm (first-child = next row; parent = nearest earlier row at depth-1)",
+        "dissolved node_flags / first_child_id / parent_id (3 redundant find-by-id recursions); only find_node_mut remains (mutation path)",
+        "added aria-expanded (WAI-ARIA 1.2 6.6.3) to branch AccessNodes; leaves omit it; flag sourced from the same SSOT row the keyboard toggles",
+        "root cause: the R809 self-grep missed the a11y access_node axis (the duplicated visible-walk) = the R758 repeated-miss pattern"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-tree-view: 30 green (was 28; +aria-expanded test +flat_visible-axes test; resolver outcomes byte-identical)",
+        "cargo clippy -p hello-tree-view --all-targets: clean (-D pedantic); workspace clippy gate re-run by pre-commit hook",
+        "r809_tree_keyboard_waiaria.py + r673_tree_view_interactive.py: PASS (realgpu) — runtime behaviour unchanged (a11y addition is AT-only)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "TreeNav substrate lift still deferred to the 2nd interactive tree; flat_visible + resolve_tree_key are now a clean liftable unit over a TreeItem-shaped model",
+        "a11y aria-expanded now matches the paint disclosure glyph (both sourced from the node expanded flag); no remaining tree a11y gap known"
+      ],
+      "publishable_decision_summary": "R809.1 §5.38 §5.27 §5.40 — SSOT cleanup of the R809 tree keyboard (self-audit fix): collapse the visible-row DFS to one flat_visible SSOT consumed by nav + type-ahead + a11y (it was three hand-written walks that had to agree by hand); rewrite resolve_tree_key as the canonical flat-list-with-depth algorithm, dissolving node_flags/first_child_id/parent_id; add aria-expanded to branch AccessNodes from that same SSOT. The R809 self-grep had missed the a11y access_node axis duplication (the R758 repeated-miss).",
+      "publishable_changes_bullets": [
+        "flat_visible is now the single visible-row DFS SSOT (id/label/depth/posinset/setsize/has_children/expanded)",
+        "nav + type-ahead + a11y all read flat_visible; access_rows became a pure map (was a 2nd hand-written walk)",
+        "resolve_tree_key rewritten as the canonical flat-list+depth algorithm (first-child = next row; parent = nearest earlier row at depth-1)",
+        "dissolved node_flags / first_child_id / parent_id (3 redundant find-by-id recursions); only find_node_mut remains (mutation path)",
+        "added aria-expanded (WAI-ARIA 1.2 6.6.3) to branch AccessNodes; leaves omit it; flag sourced from the same SSOT row the keyboard toggles",
+        "root cause: the R809 self-grep missed the a11y access_node axis (the duplicated visible-walk) = the R758 repeated-miss pattern"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-tree-view: 30 green (was 28; +aria-expanded test +flat_visible-axes test; resolver outcomes byte-identical)",
+        "cargo clippy -p hello-tree-view --all-targets: clean (-D pedantic); workspace clippy gate re-run by pre-commit hook",
+        "r809_tree_keyboard_waiaria.py + r673_tree_view_interactive.py: PASS (realgpu) — runtime behaviour unchanged (a11y addition is AT-only)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TreeNav substrate lift still deferred to the 2nd interactive tree; flat_visible + resolve_tree_key are now a clean liftable unit over a TreeItem-shaped model",
+        "a11y aria-expanded now matches the paint disclosure glyph (both sourced from the node expanded flag); no remaining tree a11y gap known"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

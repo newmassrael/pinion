@@ -314,40 +314,67 @@ fn view(state: ButtonState) -> Scene {
     )
 }
 
-/// R809 §5.16 §5.50 — one visible row in the depth-first flattening of
-/// the tree: the stable id (composite-tag suffix) plus the visible
-/// label (the type-ahead search key). The flat sequence is exactly
-/// what `view_tree_focused` paints — a collapsed branch contributes
-/// its own row but hides its descendants.
+/// R809 §5.16 §5.50 / R809.1 — one row of the depth-first flattening of
+/// the visible tree: the canonical representation tree keyboard
+/// navigation works against (flatten the visible rows, carry each
+/// row's depth, then navigate by index + depth — the standard WAI-ARIA
+/// tree-nav structure). Carries every field its three consumers need —
+/// `id` (nav cursor + composite tag), `label` (type-ahead key + AT
+/// name), `depth` / `position_in_set` / `size_of_set` (WAI-ARIA
+/// hierarchical axes), `has_children` / `expanded` (expand / collapse /
+/// descend) — so all of them read one traversal.
 struct VisibleRow {
+    /// Stable node id — the nav cursor key + the composite-tag suffix.
     id: String,
+    /// Visible label — the type-ahead search key + the AT accessible name.
     label: String,
+    /// Zero-based tree depth (root nodes = 0). WAI-ARIA `aria-level` is
+    /// `depth + 1`; the Arrow Left parent search compares depths.
+    depth: u32,
+    /// One-based index among visible siblings (WAI-ARIA `aria-posinset`).
+    position_in_set: u32,
+    /// Visible sibling count (WAI-ARIA `aria-setsize`).
+    size_of_set: u32,
+    /// Whether this node is a branch (has children) — drives expand /
+    /// collapse / descend and the `aria-expanded` AT state.
+    has_children: bool,
+    /// Whether a branch is currently expanded.
+    expanded: bool,
 }
 
-/// Recursive helper: append `node` then recurse into expanded
-/// children. Hoisted out of [`flat_visible`] so
-/// `clippy::items_after_statements` stays clean.
-fn walk_visible(node: &FileNode, out: &mut Vec<VisibleRow>) {
-    out.push(VisibleRow {
-        id: node.id.clone(),
-        label: node.label.clone(),
-    });
-    if node.expanded {
-        for child in &node.children {
-            walk_visible(child, out);
+/// Recursive helper: append each sibling in `siblings` (all at `depth`)
+/// then descend into the expanded ones, recording each row's WAI-ARIA
+/// `posinset` / `setsize` from its sibling position. Hoisted out of
+/// [`flat_visible`] so `clippy::items_after_statements` stays clean.
+fn walk_visible(siblings: &[FileNode], depth: u32, out: &mut Vec<VisibleRow>) {
+    let size_of_set = u32::try_from(siblings.len()).unwrap_or(u32::MAX);
+    for (idx, node) in siblings.iter().enumerate() {
+        out.push(VisibleRow {
+            id: node.id.clone(),
+            label: node.label.clone(),
+            depth,
+            position_in_set: u32::try_from(idx + 1).unwrap_or(u32::MAX),
+            size_of_set,
+            has_children: !node.children.is_empty(),
+            expanded: node.expanded,
+        });
+        if node.expanded {
+            walk_visible(&node.children, depth + 1, out);
         }
     }
 }
 
-/// R673 §5.50 / R809 — DFS walk producing the flat visible-row
-/// sequence (exactly what `view_tree_focused` paints). The vertical
-/// keyboard axis ([`clamp_nav`]) and type-ahead both index into this
-/// sequence in O(visible rows).
+/// R673 §5.50 / R809 / R809.1 — the **single** depth-first walk of the
+/// visible row sequence (exactly what `view_tree_focused` paints): the
+/// SSOT consumed by keyboard navigation ([`resolve_tree_key`]),
+/// type-ahead ([`type_ahead_jump`]) **and** the AT tree
+/// ([`access_rows`]). Before R809.1 the nav walk and the a11y walk were
+/// two hand-written copies that had to agree by hand — a divergence
+/// would land the keyboard cursor on a row the AT mis-announces, or
+/// off the painted sequence. They now share this one traversal.
 fn flat_visible(nodes: &[FileNode]) -> Vec<VisibleRow> {
     let mut out: Vec<VisibleRow> = Vec::new();
-    for node in nodes {
-        walk_visible(node, &mut out);
-    }
+    walk_visible(nodes, 0, &mut out);
     out
 }
 
@@ -366,51 +393,6 @@ fn find_node_mut<'a>(
     None
 }
 
-/// R809 §5.50 — `(has_children, expanded)` for `target_id`, or `None`
-/// when the id is absent. The two flags drive the WAI-ARIA Arrow
-/// Right / Left expand-or-descend / collapse-or-ascend branch.
-fn node_flags(nodes: &[FileNode], target_id: &str) -> Option<(bool, bool)> {
-    for node in nodes {
-        if node.id == target_id {
-            return Some((!node.children.is_empty(), node.expanded));
-        }
-        if let Some(found) = node_flags(&node.children, target_id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-/// R809 §5.50 — the first child id of `target_id` (WAI-ARIA Arrow
-/// Right "descend into the first child" when already expanded). `None`
-/// when the id is absent or is a leaf.
-fn first_child_id(nodes: &[FileNode], target_id: &str) -> Option<String> {
-    for node in nodes {
-        if node.id == target_id {
-            return node.children.first().map(|c| c.id.clone());
-        }
-        if let Some(found) = first_child_id(&node.children, target_id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-/// R809 §5.50 — the parent id of `target_id` (WAI-ARIA Arrow Left
-/// "ascend to parent" when collapsed or a leaf). `None` at a
-/// root-level node (no parent) or when the id is absent. `parent`
-/// threads the current ancestor down the recursion.
-fn parent_id(nodes: &[FileNode], target_id: &str, parent: Option<&str>) -> Option<String> {
-    for node in nodes {
-        if node.id == target_id {
-            return parent.map(str::to_string);
-        }
-        if let Some(found) = parent_id(&node.children, target_id, Some(&node.id)) {
-            return Some(found);
-        }
-    }
-    None
-}
 
 /// R674 §5.50 — single source of truth for "toggle the expanded flag
 /// on `id`". Used by both [`apply_key_impl`]'s `Space` / `Enter` arm
@@ -478,49 +460,79 @@ enum TreeKey {
     Unhandled,
 }
 
-/// R809 §5.16 §5.50 — pure WAI-ARIA APG 6.13 Tree keyboard resolver.
-/// `current` is the focused row id; `page` is the Page Up/Down jump
-/// size. Vertical motion (Up/Down/Home/End/PageUp/PageDown) delegates
-/// to the shared [`clamp_nav`] SSOT over the flat visible-row index
-/// (clamp, not wrap — a tree has ends); Arrow Right / Left implement
-/// the tree-specific expand-or-descend / collapse-or-ascend traversal.
+/// R809.1 §5.50 — the visible row index of `current`'s **parent**: the
+/// nearest earlier row one level shallower. In a depth-first preorder
+/// flattening the parent is always the closest preceding row at
+/// `depth − 1`, so Arrow Left "ascend to parent" needs no separate
+/// tree walk — it reads the same [`flat_visible`] sequence nav already
+/// holds. `None` at depth 0 (a root row has no parent).
+fn parent_row(rows: &[VisibleRow], index: usize) -> Option<usize> {
+    let parent_depth = rows[index].depth.checked_sub(1)?;
+    rows[..index].iter().rposition(|row| row.depth == parent_depth)
+}
+
+/// R809 §5.16 §5.50 / R809.1 — pure WAI-ARIA APG 6.13 Tree keyboard
+/// resolver over the [`flat_visible`] SSOT. `current` is the focused
+/// row id; `page` is the Page Up/Down jump size. The keyboard cursor
+/// only ever sits on a visible row, so every axis is index + depth
+/// arithmetic over the one flattened sequence — no separate tree
+/// searches (R809.1 dissolved `node_flags` / `first_child_id` /
+/// `parent_id`):
+///
+/// - vertical (Up/Down/Home/End/Page) → the shared [`clamp_nav`] SSOT
+///   (clamp, not wrap — a tree has ends);
+/// - Arrow Right → collapsed branch expands; expanded branch descends
+///   to its first child (= the very next row in preorder); leaf no-op;
+/// - Arrow Left → expanded branch collapses; otherwise ascends to the
+///   [`parent_row`] (no-op at a parent-less root);
+/// - Space / Enter → toggle a branch.
 fn resolve_tree_key(nodes: &[FileNode], current: Option<&str>, key: &str, page: usize) -> TreeKey {
+    let rows = flat_visible(nodes);
+    let cursor = current.and_then(|id| rows.iter().position(|row| row.id == id));
     match key {
         "ArrowUp" | "ArrowDown" | "Home" | "End" | "PageUp" | "PageDown" => {
-            let visible = flat_visible(nodes);
-            let pos = current.and_then(|id| visible.iter().position(|row| row.id == id));
-            match clamp_nav(pos, key, visible.len(), page) {
-                Some(target) => TreeKey::Focus(visible[target].id.clone()),
+            match clamp_nav(cursor, key, rows.len(), page) {
+                Some(target) => TreeKey::Focus(rows[target].id.clone()),
                 None => TreeKey::Consumed,
             }
         }
-        "ArrowRight" => match current.and_then(|id| node_flags(nodes, id).map(|f| (id, f))) {
-            // Collapsed branch → expand it.
-            Some((id, (true, false))) => TreeKey::Expand(id.to_string()),
-            // Already-expanded branch → descend to the first child.
-            Some((id, (true, true))) => match first_child_id(nodes, id) {
-                Some(child) => TreeKey::Focus(child),
-                None => TreeKey::Consumed,
-            },
-            // Leaf (or no focus) → no-op, but consume the key.
-            _ => TreeKey::Consumed,
-        },
-        "ArrowLeft" => match current.and_then(|id| node_flags(nodes, id).map(|f| (id, f))) {
-            // Expanded branch → collapse it.
-            Some((id, (true, true))) => TreeKey::Collapse(id.to_string()),
-            // Collapsed branch or leaf → ascend to the parent (no-op
-            // at a root with no parent).
-            Some((id, _)) => match parent_id(nodes, id, None) {
-                Some(p) => TreeKey::Focus(p),
-                None => TreeKey::Consumed,
-            },
-            None => TreeKey::Consumed,
-        },
-        "Space" | "Enter" => match current.and_then(|id| node_flags(nodes, id).map(|f| (id, f))) {
-            // Only branches toggle; leaves (and no focus) are a no-op.
-            Some((id, (true, _))) => TreeKey::Toggle(id.to_string()),
-            _ => TreeKey::Consumed,
-        },
+        "ArrowRight" => {
+            let Some(i) = cursor else { return TreeKey::Consumed };
+            let row = &rows[i];
+            if !row.has_children {
+                TreeKey::Consumed // leaf
+            } else if !row.expanded {
+                TreeKey::Expand(row.id.clone()) // collapsed branch → expand
+            } else {
+                // Expanded branch → its first child is the next row in
+                // the preorder flattening.
+                match rows.get(i + 1) {
+                    Some(child) => TreeKey::Focus(child.id.clone()),
+                    None => TreeKey::Consumed,
+                }
+            }
+        }
+        "ArrowLeft" => {
+            let Some(i) = cursor else { return TreeKey::Consumed };
+            let row = &rows[i];
+            if row.has_children && row.expanded {
+                TreeKey::Collapse(row.id.clone()) // expanded branch → collapse
+            } else {
+                // Collapsed branch or leaf → ascend to the parent.
+                match parent_row(&rows, i) {
+                    Some(p) => TreeKey::Focus(rows[p].id.clone()),
+                    None => TreeKey::Consumed, // root row, no parent
+                }
+            }
+        }
+        "Space" | "Enter" => {
+            let Some(i) = cursor else { return TreeKey::Consumed };
+            if rows[i].has_children {
+                TreeKey::Toggle(rows[i].id.clone())
+            } else {
+                TreeKey::Consumed // leaf
+            }
+        }
         _ => TreeKey::Unhandled,
     }
 }
@@ -702,40 +714,40 @@ fn tree_row_access_tag(node_id: &str) -> String {
     format!("{TREE_TAG}#{node_id}")
 }
 
-/// R674 §5.40 — depth-first walk of `nodes` emitting one [`AccessNode`]
-/// per visible row in the same order the paint substrate paints it.
-/// Each row carries:
+/// R674 §5.40 / R809.1 — one [`AccessNode`] per visible row, built as a
+/// pure map over the [`flat_visible`] SSOT (R809.1 retired the separate
+/// `walk_access_rows` traversal that had to track the paint / nav order
+/// by hand). Each row carries:
 ///
 /// * `role: AriaRole::TreeItem` — AT announces "tree item …".
 /// * `name: label` — accessible name (announced first by the AT).
 /// * `level: depth + 1` — WAI-ARIA 1.2 §6.6.8 one-based depth (root
 ///   children → 1, grandchildren → 2, …).
-/// * `position_in_set: sibling_idx + 1` / `size_of_set: siblings.len()` —
-///   WAI-ARIA 1.2 §6.6.9 / §6.6.10 sibling addressing.
+/// * `position_in_set` / `size_of_set` — WAI-ARIA 1.2 §6.6.9 / §6.6.10
+///   sibling addressing.
+/// * `aria-expanded` on branches — WAI-ARIA 1.2 §6.6.3 disclosure
+///   state (R809.1; leaves omit it). The `expanded` flag rides the
+///   same SSOT row the keyboard model toggles, so the AT state can
+///   never disagree with the painted glyph.
 ///
-/// Collapsed branches contribute the branch row itself but skip
-/// their child rows (matching the visible row sequence the paint
-/// substrate produces — the AT announces the same set of items the
-/// user sees).
-fn walk_access_rows(
-    nodes: &[FileNode],
-    depth: u32,
-    out: &mut Vec<AccessNode>,
-) {
-    let setsize = u32::try_from(nodes.len()).unwrap_or(u32::MAX);
-    for (idx, node) in nodes.iter().enumerate() {
-        let position = u32::try_from(idx + 1).unwrap_or(u32::MAX);
-        out.push(
-            AccessNode::new(tree_row_access_tag(&node.id), AriaRole::TreeItem)
-                .with_name(node.label.clone())
-                .with_level(depth + 1)
-                .with_position_in_set(position)
-                .with_size_of_set(setsize),
-        );
-        if node.expanded && !node.children.is_empty() {
-            walk_access_rows(&node.children, depth + 1, out);
-        }
-    }
+/// Because it maps [`flat_visible`], the AT announces exactly the row
+/// set the user sees and the keyboard cursor navigates.
+fn access_rows(nodes: &[FileNode]) -> Vec<AccessNode> {
+    flat_visible(nodes)
+        .into_iter()
+        .map(|row| {
+            let node = AccessNode::new(tree_row_access_tag(&row.id), AriaRole::TreeItem)
+                .with_name(row.label)
+                .with_level(row.depth + 1)
+                .with_position_in_set(row.position_in_set)
+                .with_size_of_set(row.size_of_set);
+            if row.has_children {
+                node.with_expanded(row.expanded)
+            } else {
+                node
+            }
+        })
+        .collect()
 }
 
 impl WidgetA11y for TreeViewBinding {
@@ -754,17 +766,13 @@ impl WidgetA11y for TreeViewBinding {
         let tree_state = use_tree_state();
         let nodes = tree_state.nodes.get();
 
-        let mut out = Vec::new();
-        let mut walked = Vec::new();
-        walk_access_rows(&nodes, 0, &mut walked);
-        let children: Vec<String> = walked.iter().map(|n| n.tag.clone()).collect();
-
+        let rows = access_rows(&nodes);
         let mut root = AccessNode::new(ROOT_BTN_TAG, AriaRole::Tree);
-        for child in children {
-            root = root.with_child(child);
+        for row in &rows {
+            root = root.with_child(row.tag.clone());
         }
-        out.push(root);
-        out.extend(walked);
+        let mut out = vec![root];
+        out.extend(rows);
         out
     }
 }
@@ -809,13 +817,13 @@ mod r675_substrate_dotted_wire_test {
 
 #[cfg(test)]
 mod r674_per_row_access_node_tests {
-    //! R674 §5.40 — per-row [`AriaRole::TreeItem`] [`AccessNode`]
-    //! emission contract. Substrate-level tests against the
-    //! [`walk_access_rows`] helper directly so the WAI-ARIA 1.2
-    //! hierarchical axes (level / posinset / setsize) are verified
-    //! without going through the framework Owner cache.
+    //! R674 §5.40 / R809.1 — per-row [`AriaRole::TreeItem`]
+    //! [`AccessNode`] emission contract. Tests the [`access_rows`]
+    //! builder directly (R809.1: a pure map over the `flat_visible`
+    //! SSOT) so the WAI-ARIA 1.2 hierarchical axes (level / posinset /
+    //! setsize / aria-expanded) are verified without the Owner cache.
 
-    use super::{tree_row_access_tag, walk_access_rows, FileNode, TREE_TAG};
+    use super::{access_rows, tree_row_access_tag, FileNode, TREE_TAG};
     use pinion_a11y::AriaRole;
 
     fn sample_tree() -> Vec<FileNode> {
@@ -848,8 +856,7 @@ mod r674_per_row_access_node_tests {
         // src (expanded) → src/main.rs, src/widgets (expanded) →
         // src/widgets/mod.rs ; docs (collapsed). 5 visible rows.
         let nodes = sample_tree();
-        let mut out = Vec::new();
-        walk_access_rows(&nodes, 0, &mut out);
+        let out = access_rows(&nodes);
         let tags: Vec<&str> = out.iter().map(|n| n.tag.as_str()).collect();
         assert_eq!(
             tags,
@@ -867,8 +874,7 @@ mod r674_per_row_access_node_tests {
     #[test]
     fn r674_all_rows_carry_tree_item_role() {
         let nodes = sample_tree();
-        let mut out = Vec::new();
-        walk_access_rows(&nodes, 0, &mut out);
+        let out = access_rows(&nodes);
         for node in &out {
             assert_eq!(
                 node.role,
@@ -883,8 +889,7 @@ mod r674_per_row_access_node_tests {
     fn r674_level_is_depth_plus_one_one_based() {
         // WAI-ARIA 1.2 §6.6.8 — root children are at level 1, not 0.
         let nodes = sample_tree();
-        let mut out = Vec::new();
-        walk_access_rows(&nodes, 0, &mut out);
+        let out = access_rows(&nodes);
         // src, docs → level 1
         // src/main.rs, src/widgets → level 2
         // src/widgets/mod.rs → level 3
@@ -904,8 +909,7 @@ mod r674_per_row_access_node_tests {
         // WAI-ARIA 1.2 §6.6.9 — one-based; "item N of M" sentence
         // has N = position_in_set.
         let nodes = sample_tree();
-        let mut out = Vec::new();
-        walk_access_rows(&nodes, 0, &mut out);
+        let out = access_rows(&nodes);
         let by_tag: std::collections::HashMap<&str, Option<u32>> = out
             .iter()
             .map(|n| (n.tag.as_str(), n.position_in_set))
@@ -926,8 +930,7 @@ mod r674_per_row_access_node_tests {
         // visible set. Collapsed branches contribute to the parent
         // count (the branch itself is visible).
         let nodes = sample_tree();
-        let mut out = Vec::new();
-        walk_access_rows(&nodes, 0, &mut out);
+        let out = access_rows(&nodes);
         let by_tag: std::collections::HashMap<&str, Option<u32>> = out
             .iter()
             .map(|n| (n.tag.as_str(), n.size_of_set))
@@ -948,8 +951,7 @@ mod r674_per_row_access_node_tests {
         // — keeps the AT user and the sighted user reading the same
         // identifier.
         let nodes = sample_tree();
-        let mut out = Vec::new();
-        walk_access_rows(&nodes, 0, &mut out);
+        let out = access_rows(&nodes);
         let by_tag: std::collections::HashMap<&str, Option<&str>> = out
             .iter()
             .map(|n| (n.tag.as_str(), n.name.as_deref()))
@@ -965,8 +967,7 @@ mod r674_per_row_access_node_tests {
         // docs is collapsed; docs/README.md must NOT appear in the
         // visible row sequence (AT announces what the user sees).
         let nodes = sample_tree();
-        let mut out = Vec::new();
-        walk_access_rows(&nodes, 0, &mut out);
+        let out = access_rows(&nodes);
         let tags: Vec<&str> = out.iter().map(|n| n.tag.as_str()).collect();
         assert!(
             !tags.contains(&"file_tree#docs/README.md"),
@@ -979,9 +980,28 @@ mod r674_per_row_access_node_tests {
     #[test]
     fn r674_empty_tree_emits_no_rows() {
         let nodes: Vec<FileNode> = Vec::new();
-        let mut out = Vec::new();
-        walk_access_rows(&nodes, 0, &mut out);
+        let out = access_rows(&nodes);
         assert!(out.is_empty(), "empty tree contributes zero TreeItem rows");
+    }
+
+    #[test]
+    fn r809_1_branches_carry_aria_expanded_leaves_omit_it() {
+        // WAI-ARIA 1.2 §6.6.3 — an expandable treeitem must expose
+        // aria-expanded; a leaf must omit it. R809.1 sources the flag
+        // from the same flat_visible row the keyboard toggles, so the
+        // AT state can never disagree with the painted disclosure glyph.
+        let nodes = sample_tree();
+        let out = access_rows(&nodes);
+        let by_tag: std::collections::HashMap<&str, Option<bool>> =
+            out.iter().map(|n| (n.tag.as_str(), n.expanded)).collect();
+        // src is an expanded branch; src/widgets is an expanded branch;
+        // docs is a collapsed branch.
+        assert_eq!(by_tag["file_tree#src"], Some(true));
+        assert_eq!(by_tag["file_tree#src/widgets"], Some(true));
+        assert_eq!(by_tag["file_tree#docs"], Some(false));
+        // src/main.rs is a leaf — aria-expanded omitted.
+        assert_eq!(by_tag["file_tree#src/main.rs"], None);
+        assert_eq!(by_tag["file_tree#src/widgets/mod.rs"], None);
     }
 
     #[test]
@@ -1069,6 +1089,25 @@ mod r809_tree_keyboard_nav_tests {
         // Labels (the type-ahead search keys) mirror the visible text.
         let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
         assert_eq!(labels, ["src", "main.rs", "lib.rs", "widgets", "tests", "docs"]);
+    }
+
+    #[test]
+    fn flat_visible_carries_waiaria_axes_for_the_at_builder() {
+        // R809.1 — the one traversal also feeds the AT tree, so each row
+        // carries depth / posinset / setsize. src's three children sit
+        // at depth 1, posinset 1..=3 of a 3-sibling set; the roots
+        // (src/tests/docs) sit at depth 0, posinset 1..=3 of 3.
+        let rows = flat_visible(&sample());
+        let by_id = |id: &str| rows.iter().find(|r| r.id == id).expect("row present");
+        let src = by_id("src");
+        assert_eq!((src.depth, src.position_in_set, src.size_of_set), (0, 1, 3));
+        assert!(src.has_children && src.expanded);
+        let lib = by_id("src/lib.rs");
+        assert_eq!((lib.depth, lib.position_in_set, lib.size_of_set), (1, 2, 3));
+        assert!(!lib.has_children, "a leaf reports no children");
+        let docs = by_id("docs");
+        assert_eq!((docs.depth, docs.position_in_set, docs.size_of_set), (0, 3, 3));
+        assert!(docs.has_children && !docs.expanded, "docs is a collapsed branch");
     }
 
     #[test]
