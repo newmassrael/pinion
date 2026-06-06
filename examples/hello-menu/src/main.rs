@@ -69,12 +69,13 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::menu::MenuBarExternal;
+use pinion_core::widgets::menu::{MenuBarExternal, MenuItem};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::menu::{
-    composite_item_tag, composite_title_tag, view_menu_bar, view_menu_dropdown, MenuStyle,
+    composite_item_tag, composite_title_tag, view_menu_bar, view_menu_dropdown, MenuItemView,
+    MenuStyle,
 };
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -97,19 +98,87 @@ const FOOTER_FONT_PX: u32 = 12;
 /// `menu#t<m>`; the label is each title's WAI-ARIA name-from-contents.
 const MENU_TITLES: [&str; 3] = ["File", "Edit", "View"];
 
-/// Command items per menu. `MENU_ITEMS[m][i]` is the label of item `i`
-/// of menu `m` (tag `menu#i<i>` while that menu is open). The item
-/// counts (`4 / 5 / 3`) seed the `MenuBarExternal` structure.
-const MENU_ITEMS: [&[&str]; 3] = [
-    &["New", "Open", "Save", "Quit"],
-    &["Undo", "Redo", "Cut", "Copy", "Paste"],
-    &["Zoom In", "Zoom Out", "Reset Zoom"],
+/// R805 — one dropdown entry in the example's menu model: the WAI-ARIA
+/// item taxonomy this binding exercises. The `View` menu carries
+/// checkbox toggles, `Edit` a disabled command + a separator.
+#[derive(Clone, Copy)]
+enum Item {
+    /// A one-shot command (`menuitem`).
+    Command(&'static str),
+    /// A toggle (`menuitemcheckbox`) with its boot checked state.
+    Checkbox(&'static str, bool),
+    /// A non-interactive divider (`separator`).
+    Separator,
+    /// A disabled command (greyed, skipped, inert).
+    DisabledCommand(&'static str),
+}
+
+impl Item {
+    /// Project to the `MenuBarExternal` model entry (boot state).
+    fn to_model(self) -> MenuItem {
+        match self {
+            Item::Command(_) => MenuItem::command(),
+            Item::Checkbox(_, checked) => MenuItem::checkbox(checked),
+            Item::Separator => MenuItem::separator(),
+            Item::DisabledCommand(_) => MenuItem::command().disabled(),
+        }
+    }
+
+    /// Project to the paint descriptor, taking the *live* checked state
+    /// (read back from the External) for a checkbox.
+    fn to_view(self, checked: bool) -> MenuItemView<'static> {
+        match self {
+            Item::Command(l) => MenuItemView::command(l),
+            Item::Checkbox(l, _) => MenuItemView::checkbox(l, checked),
+            Item::Separator => MenuItemView::separator(),
+            Item::DisabledCommand(l) => MenuItemView::command(l).disabled(),
+        }
+    }
+
+    const fn is_separator(self) -> bool {
+        matches!(self, Item::Separator)
+    }
+}
+
+/// Per-menu item lists. `MENUS[m][i]` is item `i` of menu `m` (tag
+/// `menu#i<i>` while open). `File` is all commands; `Edit` shows a
+/// disabled `Redo` + a separator before the clipboard group; `View`
+/// shows two checkbox toggles + a separator before the zoom group.
+const MENUS: [&[Item]; 3] = [
+    &[
+        Item::Command("New"),
+        Item::Command("Open"),
+        Item::Command("Save"),
+        Item::Command("Quit"),
+    ],
+    &[
+        Item::Command("Undo"),
+        Item::DisabledCommand("Redo"),
+        Item::Separator,
+        Item::Command("Cut"),
+        Item::Command("Copy"),
+        Item::Command("Paste"),
+    ],
+    &[
+        Item::Checkbox("Show Grid", true),
+        Item::Checkbox("Show Rulers", false),
+        Item::Separator,
+        Item::Command("Zoom In"),
+        Item::Command("Zoom Out"),
+        Item::Command("Reset Zoom"),
+    ],
 ];
 
+/// Upper bound on items in any single menu (the live checked-state
+/// snapshot is a fixed-size `Copy` array, the hello-table-multi bitmap
+/// precedent — `MenuState` must stay `Copy`).
+const MAX_ITEMS: usize = 8;
+
 /// Cached projection of the menubar: the open dropdown, the active
-/// (highlighted) item within it, and the keyboard-focused top-level
-/// title. `Copy` so the shell hands the snapshot into the paint
-/// closure without lifetime gymnastics.
+/// (highlighted) item within it, the keyboard-focused top-level title,
+/// and the live checked state of the open menu's items. `Copy` so the
+/// shell hands the snapshot into the paint closure without lifetime
+/// gymnastics.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 struct MenuState {
     /// Open dropdown menu index, or `None` when closed.
@@ -120,6 +189,10 @@ struct MenuState {
     /// Keyboard-focused top-level title (the cursor that Arrow
     /// Left/Right moves while closed).
     bar_focus: usize,
+    /// Live checked state of the open menu's items (index-aligned with
+    /// `MENUS[open]`; all `false` when closed). Read back from the
+    /// External so the paint reflects runtime toggles.
+    checked: [bool; MAX_ITEMS],
 }
 
 /// view-fn (§6.3): pure sync mapping `MenuState -> Scene`. The
@@ -179,11 +252,19 @@ fn view(state: MenuState, _frame: &Frame) -> Scene {
         ));
         // Placed last so the absolutely-positioned dropdown paints
         // over the content container (and the barrier) below the bar.
+        // Each model item projects to a paint descriptor, with checkbox
+        // rows carrying the *live* checked state read back from the
+        // External (so a runtime toggle repaints the checkmark).
+        let items: Vec<MenuItemView> = MENUS[m]
+            .iter()
+            .enumerate()
+            .map(|(i, it)| it.to_view(state.checked.get(i).copied().unwrap_or(false)))
+            .collect();
         children.push(view_menu_dropdown(
             BAR_TAG,
             DROPDOWN_TAG,
             m,
-            MENU_ITEMS[m],
+            &items,
             state.active,
             &theme,
             &style,
@@ -214,8 +295,11 @@ impl WidgetCore for MenuView {
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
-        let items_per_menu: Vec<usize> = MENU_ITEMS.iter().map(|m| m.len()).collect();
-        Box::new(MenuBarExternal::new(items_per_menu))
+        let menus: Vec<Vec<MenuItem>> = MENUS
+            .iter()
+            .map(|items| items.iter().map(|it| it.to_model()).collect())
+            .collect();
+        Box::new(MenuBarExternal::with_items(menus))
     }
 
     fn tag() -> &'static str {
@@ -236,6 +320,17 @@ impl WidgetCore for MenuView {
             Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
             _ => 0,
         };
+        // R805 — snapshot the open menu's live checked state so the paint
+        // reflects runtime toggles (closed -> all false by default).
+        if let Some(m) = out.open {
+            let count = MENUS[m].len().min(MAX_ITEMS);
+            for i in 0..count {
+                out.checked[i] = matches!(
+                    intro.query(&format!("checked.{m}.{i}")),
+                    Some(IntrospectValue::Bool(true))
+                );
+            }
+        }
         out
     }
 
@@ -327,23 +422,42 @@ impl WidgetA11y for MenuView {
         }
 
         if let Some(m) = state.open {
-            let items = MENU_ITEMS[m];
-            let item_setsize = u32::try_from(items.len()).unwrap_or(u32::MAX);
+            let items = MENUS[m];
+            // R805 — separators are presentational: they are omitted from
+            // the AT item tree, and the remaining items' posinset / setsize
+            // count only the real menu items (WAI-ARIA `separator` is not a
+            // `menuitem` sibling).
+            let menu_items: Vec<usize> =
+                (0..items.len()).filter(|&i| !items[i].is_separator()).collect();
+            let item_setsize = u32::try_from(menu_items.len()).unwrap_or(u32::MAX);
             let mut menu =
                 AccessNode::new(DROPDOWN_TAG, AriaRole::Menu).with_name(MENU_TITLES[m]);
-            for i in 0..items.len() {
+            for &i in &menu_items {
                 menu = menu.with_child(composite_item_tag(BAR_TAG, i));
             }
             nodes.push(menu);
-            for i in 0..items.len() {
-                let item_focused = group_focused && state.active == Some(i);
+            for (pos, &i) in menu_items.iter().enumerate() {
+                let item = items[i];
+                // R805 — a checkbox is a `menuitemcheckbox` carrying
+                // `aria-checked`; a disabled command carries `aria-disabled`.
+                let role = match item {
+                    Item::Checkbox(..) => AriaRole::MenuItemCheckbox,
+                    _ => AriaRole::MenuItem,
+                };
+                let mut item_state = AccessState {
+                    focused: group_focused && state.active == Some(i),
+                    ..AccessState::default()
+                };
+                if let Item::Checkbox(..) = item {
+                    item_state.checked = Some(state.checked.get(i).copied().unwrap_or(false));
+                }
+                if let Item::DisabledCommand(..) = item {
+                    item_state.disabled = true;
+                }
                 nodes.push(
-                    AccessNode::new(composite_item_tag(BAR_TAG, i), AriaRole::MenuItem)
-                        .with_state(AccessState {
-                            focused: item_focused,
-                            ..AccessState::default()
-                        })
-                        .with_position_in_set(u32::try_from(i + 1).unwrap_or(u32::MAX))
+                    AccessNode::new(composite_item_tag(BAR_TAG, i), role)
+                        .with_state(item_state)
+                        .with_position_in_set(u32::try_from(pos + 1).unwrap_or(u32::MAX))
                         .with_size_of_set(item_setsize),
                 );
             }
@@ -462,6 +576,7 @@ mod a11y_tests {
             open: Some(m),
             active,
             bar_focus: m,
+            ..MenuState::default()
         }
     }
 
@@ -511,16 +626,57 @@ mod a11y_tests {
 
     #[test]
     fn r691_items_carry_posinset_setsize() {
+        // R805 — View = [checkbox, checkbox, separator, command, command,
+        // command]. The separator is omitted from the AT item tree, so the
+        // 5 remaining items carry posinset 1..=5 / setsize 5 (both the
+        // `MenuItemCheckbox` and `MenuItem` roles count as menu items).
         let nodes = MenuView::access_node(&open_menu(2, None), None);
         let items: Vec<&AccessNode> = nodes
             .iter()
-            .filter(|n| n.role == AriaRole::MenuItem && n.tag.starts_with("menu#i"))
+            .filter(|n| {
+                n.tag.starts_with("menu#i")
+                    && matches!(n.role, AriaRole::MenuItem | AriaRole::MenuItemCheckbox)
+            })
             .collect();
-        assert_eq!(items.len(), 3);
-        for (i, item) in items.iter().enumerate() {
-            assert_eq!(item.position_in_set, Some(u32::try_from(i + 1).unwrap()));
-            assert_eq!(item.size_of_set, Some(3));
+        assert_eq!(items.len(), 5);
+        for (pos, item) in items.iter().enumerate() {
+            assert_eq!(item.position_in_set, Some(u32::try_from(pos + 1).unwrap()));
+            assert_eq!(item.size_of_set, Some(5));
         }
+    }
+
+    #[test]
+    fn r805_view_checkbox_items_carry_role_and_aria_checked() {
+        let mut state = open_menu(2, None);
+        state.checked[0] = true; // Show Grid checked, Show Rulers (1) not.
+        let nodes = MenuView::access_node(&state, None);
+        let grid = nodes.iter().find(|n| n.tag == "menu#i0").unwrap();
+        assert_eq!(grid.role, AriaRole::MenuItemCheckbox);
+        assert_eq!(grid.state.checked, Some(true));
+        let rulers = nodes.iter().find(|n| n.tag == "menu#i1").unwrap();
+        assert_eq!(rulers.role, AriaRole::MenuItemCheckbox);
+        assert_eq!(rulers.state.checked, Some(false));
+    }
+
+    #[test]
+    fn r805_disabled_command_carries_aria_disabled() {
+        // Edit item 1 = DisabledCommand("Redo"); item 0 = Command("Undo").
+        let nodes = MenuView::access_node(&open_menu(1, None), None);
+        let redo = nodes.iter().find(|n| n.tag == "menu#i1").unwrap();
+        assert_eq!(redo.role, AriaRole::MenuItem);
+        assert!(redo.state.disabled, "disabled command carries aria-disabled");
+        let undo = nodes.iter().find(|n| n.tag == "menu#i0").unwrap();
+        assert!(!undo.state.disabled, "enabled command is not disabled");
+    }
+
+    #[test]
+    fn r805_separator_omitted_from_item_tree() {
+        // Edit item 2 = Separator -> no AccessNode, not a Menu child.
+        let nodes = MenuView::access_node(&open_menu(1, None), None);
+        assert!(nodes.iter().all(|n| n.tag != "menu#i2"), "separator has no AT node");
+        let menu = nodes.iter().find(|n| n.role == AriaRole::Menu).unwrap();
+        assert_eq!(menu.children.len(), 5, "5 menu items, separator excluded");
+        assert!(menu.children.iter().all(|c| c != "menu#i2"));
     }
 
     #[test]
@@ -529,6 +685,7 @@ mod a11y_tests {
             open: None,
             active: None,
             bar_focus: 2,
+            ..MenuState::default()
         };
         let nodes = MenuView::access_node(&state, Some("menu"));
         assert!(nodes[3].state.focused, "bar_focus title 2 is focused");
@@ -574,6 +731,7 @@ mod a11y_tests {
             open: None,
             active: None,
             bar_focus: 1,
+            ..MenuState::default()
         };
         let target = MenuView::access_focus_target(&state, Some("menu"))
             .expect("focused menubar returns Some");
@@ -600,8 +758,13 @@ mod key_tests {
     use pinion_core::scene::ExternalNode;
 
     fn scene() -> Scene {
-        let items: Vec<usize> = MENU_ITEMS.iter().map(|m| m.len()).collect();
-        Scene::External(ExternalNode::new(Box::new(MenuBarExternal::new(items))).with_tag(BAR_TAG))
+        let menus: Vec<Vec<MenuItem>> = MENUS
+            .iter()
+            .map(|items| items.iter().map(|it| it.to_model()).collect())
+            .collect();
+        Scene::External(
+            ExternalNode::new(Box::new(MenuBarExternal::with_items(menus))).with_tag(BAR_TAG),
+        )
     }
 
     fn open_of(scene: &Scene) -> Option<i64> {
@@ -731,6 +894,7 @@ mod key_tests {
             open: Some(0),
             active: None,
             bar_focus: 0,
+            ..MenuState::default()
         };
         let scene = pinion_core::Owner::new().run(|| view(open, &Frame::new()));
         assert!(

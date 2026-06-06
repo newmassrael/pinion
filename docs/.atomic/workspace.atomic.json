@@ -31833,6 +31833,58 @@
         "forward_key_to_field is now core-homed, so any future TextField binding (GUI or TUI) shares one SSOT"
       ]
     },
+    "R805": {
+      "decision_summary": "Add the WAI-ARIA stateful menu-item taxonomy (checkbox / separator / disabled) to MenuBar, enriching the flat command model into a typed MenuItem list with persistent checked state, nav-skip, and full RPC + a11y surfaces",
+      "changes_bullets": [
+        "Add MenuItem taxonomy (MenuItemKind Command/Checkbox/Separator + enabled flag) to MenuBar; new() stays all-command (R691 compat)",
+        "Nav/hover/activate skip separators + disabled rows; checkbox activation toggles a persistent checked state, emits command, closes",
+        "RPC introspection: item_kind / checked / enabled query + checked intervene + schema slots; menu_nav gains predicate skip variants",
+        "Paint: leading check-gutter glyph + separator divider + muted-disabled label in build_item (view_context_menu stays plain command)",
+        "a11y: add AriaRole::MenuItemCheckbox (accesskit MenuItemCheckBox) + commit-class actions; hello-menu View checkboxes + Edit disabled/separator"
+      ],
+      "verification_bullets": [
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; test --workspace 134 ok / 0 fail (76 core menu + 18 paint + 26 example)",
+        "New tools/demos/r805_menu_stateful.py: 30 assertions (item_kind / checked / toggle-persist / nav-skip / inert separator+disabled / intervene)",
+        "Regression PASS: r691_menu (File + keyboard model unchanged), r772_contextmenu (plain command rows via view_context_menu)",
+        "Checkbox toggle + persistence + separator/disabled skip verified through scene/key + send + query (AI-first path, not direct invoke)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R705 focus-ring overlay renders a thick top border for widgets flush at the window top edge (y=0); scene-data says 2px, rasterizer differs",
+        "That ring bug is pre-existing (shell/vello, not R805) and user-reported on the menubar; next-round fix candidate, separate from R805",
+        "radio (menuitemradio) deferred to R806: reuses this round gutter/checked substrate; its group-exclusivity is the distinct additive axis",
+        "ContextMenu stateful items (checkbox/separator) declared-defer until a real consumer needs them"
+      ],
+      "publishable_decision_summary": "Add the WAI-ARIA stateful menu-item taxonomy (checkbox / separator / disabled) to MenuBar, enriching the flat command model into a typed MenuItem list with persistent checked state, nav-skip, and full RPC + a11y surfaces",
+      "publishable_changes_bullets": [
+        "Add MenuItem taxonomy (MenuItemKind Command/Checkbox/Separator + enabled flag) to MenuBar; new() stays all-command (R691 compat)",
+        "Nav/hover/activate skip separators + disabled rows; checkbox activation toggles a persistent checked state, emits command, closes",
+        "RPC introspection: item_kind / checked / enabled query + checked intervene + schema slots; menu_nav gains predicate skip variants",
+        "Paint: leading check-gutter glyph + separator divider + muted-disabled label in build_item (view_context_menu stays plain command)",
+        "a11y: add AriaRole::MenuItemCheckbox (accesskit MenuItemCheckBox) + commit-class actions; hello-menu View checkboxes + Edit disabled/separator"
+      ],
+      "publishable_verification_bullets": [
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean; test --workspace 134 ok / 0 fail (76 core menu + 18 paint + 26 example)",
+        "New tools/demos/r805_menu_stateful.py: 30 assertions (item_kind / checked / toggle-persist / nav-skip / inert separator+disabled / intervene)",
+        "Regression PASS: r691_menu (File + keyboard model unchanged), r772_contextmenu (plain command rows via view_context_menu)",
+        "Checkbox toggle + persistence + separator/disabled skip verified through scene/key + send + query (AI-first path, not direct invoke)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R705 focus-ring overlay renders a thick top border for widgets flush at the window top edge (y=0); scene-data says 2px, rasterizer differs",
+        "That ring bug is pre-existing (shell/vello, not R805) and user-reported on the menubar; next-round fix candidate, separate from R805",
+        "radio (menuitemradio) deferred to R806: reuses this round gutter/checked substrate; its group-exclusivity is the distinct additive axis",
+        "ContextMenu stateful items (checkbox/separator) declared-defer until a real consumer needs them"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

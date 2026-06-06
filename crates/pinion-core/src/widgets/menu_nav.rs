@@ -24,13 +24,29 @@ pub(crate) fn step(current: usize, forward: bool, n: usize) -> usize {
 /// Move the active cursor over `count` items with wrap. From `Some(a)`
 /// it steps once; from `None` it lands on the first item (`forward`) or
 /// the last (`!forward`). An empty list (`count == 0`) leaves the cursor
-/// unchanged.
+/// unchanged. Every item is navigable — see [`nav_move_skip`] for the
+/// R805 separator-/disabled-skipping variant.
 #[must_use]
 pub(crate) fn nav_move(active: Option<usize>, count: usize, forward: bool) -> Option<usize> {
+    nav_move_skip(active, count, forward, |_| true)
+}
+
+/// R805 — like [`nav_move`] but skips indices where `navigable(i)` is
+/// `false` (separators / disabled menu items). Scans at most `count`
+/// positions from the next slot; if no index is navigable it leaves the
+/// cursor unchanged (`active`). From `None`, scanning starts at the first
+/// slot (`forward`) or the last (`!forward`) so the edge itself counts.
+#[must_use]
+pub(crate) fn nav_move_skip(
+    active: Option<usize>,
+    count: usize,
+    forward: bool,
+    navigable: impl Fn(usize) -> bool,
+) -> Option<usize> {
     if count == 0 {
         return active;
     }
-    Some(match active {
+    let mut idx = match active {
         Some(a) => step(a, forward, count),
         None => {
             if forward {
@@ -39,17 +55,44 @@ pub(crate) fn nav_move(active: Option<usize>, count: usize, forward: bool) -> Op
                 count - 1
             }
         }
-    })
+    };
+    for _ in 0..count {
+        if navigable(idx) {
+            return Some(idx);
+        }
+        idx = step(idx, forward, count);
+    }
+    active
 }
 
 /// Jump the active cursor to the first (`!last`) or last (`last`) item.
 /// An empty list yields `None` (leave the caller's cursor untouched).
+/// Every item is navigable — see [`nav_edge_skip`] for the R805 variant.
 #[must_use]
 pub(crate) fn nav_edge(count: usize, last: bool) -> Option<usize> {
+    nav_edge_skip(count, last, |_| true)
+}
+
+/// R805 — like [`nav_edge`] but lands on the first / last index where
+/// `navigable(i)` is `true`, scanning inward from the requested edge.
+/// `None` when the list is empty or has no navigable index.
+#[must_use]
+pub(crate) fn nav_edge_skip(
+    count: usize,
+    last: bool,
+    navigable: impl Fn(usize) -> bool,
+) -> Option<usize> {
     if count == 0 {
         return None;
     }
-    Some(if last { count - 1 } else { 0 })
+    let (mut idx, forward) = if last { (count - 1, false) } else { (0, true) };
+    for _ in 0..count {
+        if navigable(idx) {
+            return Some(idx);
+        }
+        idx = step(idx, forward, count);
+    }
+    None
 }
 
 #[cfg(test)]

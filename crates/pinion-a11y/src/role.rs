@@ -248,6 +248,14 @@ pub enum AriaRole {
     /// structurally (the dropdown `Menu` node is present only while
     /// open) rather than on the title's a11y state.
     MenuItem,
+    /// R805 §5.40 — WAI-ARIA 1.2 `menuitemcheckbox`: a dropdown item that
+    /// toggles a persistent boolean (View > Show Grid). Unlike
+    /// [`Self::MenuItem`] it carries `aria-checked`
+    /// ([`AccessState::checked`](crate::AccessState::checked)); activating
+    /// it flips the state and (like a command) closes the menu. The sibling
+    /// `menuitemradio` role lands additively when the menu radio-group
+    /// consumer arrives (R806).
+    MenuItemCheckbox,
     /// R692 §5.40 — WAI-ARIA 1.2 §3.4 `toolbar` role. A horizontal
     /// grouping of controls (the editor format / command strip every
     /// DCC / IDE / CAD tool ships) that owns the roving-tabindex
@@ -450,6 +458,7 @@ impl AriaRole {
             Self::MenuBar => Role::MenuBar,
             Self::Menu => Role::Menu,
             Self::MenuItem => Role::MenuItem,
+            Self::MenuItemCheckbox => Role::MenuItemCheckBox,
             Self::Toolbar => Role::Toolbar,
             Self::Dialog => Role::Dialog,
             Self::Tooltip => Role::Tooltip,
@@ -513,6 +522,7 @@ impl AriaRole {
             Self::MenuBar => "menubar",
             Self::Menu => "menu",
             Self::MenuItem => "menuitem",
+            Self::MenuItemCheckbox => "menuitemcheckbox",
             Self::Toolbar => "toolbar",
             Self::Dialog => "dialog",
             Self::Tooltip => "tooltip",
@@ -847,6 +857,12 @@ mod tests {
     #[test]
     fn menu_item_lowers_to_accesskit_menu_item() {
         assert_eq!(AriaRole::MenuItem.to_accesskit(), Role::MenuItem);
+    }
+
+    #[test]
+    fn r805_menu_item_checkbox_lowers_and_names() {
+        assert_eq!(AriaRole::MenuItemCheckbox.to_accesskit(), Role::MenuItemCheckBox);
+        assert_eq!(AriaRole::MenuItemCheckbox.aria_name(), "menuitemcheckbox");
     }
 
     #[test]

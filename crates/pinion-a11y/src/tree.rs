@@ -504,6 +504,10 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // item") but the action set matches Button / Tab — a base
         // `menuitem` is a one-shot command, not a selection.
         | AriaRole::MenuItem
+        // R805 §5.40 — `MenuItemCheckbox` shares the commit-class action
+        // set (Click toggles + activates, Focus moves the AT cursor); the
+        // toggled state surfaces separately through `aria-checked`.
+        | AriaRole::MenuItemCheckbox
         // R704 §5.40 — `GridCell` (a date-picker day cell) is commit-
         // class atomic: Click activates (selects the day), Focus moves
         // the AT cursor for the grid's two-dimensional roving model. The

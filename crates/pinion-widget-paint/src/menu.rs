@@ -67,6 +67,63 @@ use pinion_core::{Color, Scene};
 /// residual where this held a raw `0.08`).
 const ACTIVE_ITEM_STATE_LAYER: f32 = crate::state_layer::HOVER;
 
+/// R805 — the leading glyph painted in a checked checkbox item's gutter
+/// (U+2713 CHECK MARK). A named escaped const per the repo's no-raw-
+/// non-ASCII-literal rule.
+const CHECK_GLYPH: &str = "\u{2713}";
+
+/// R805 — height of a separator's divider rule in logical pixels (a thin
+/// M3 menu divider centred in an otherwise-empty item row).
+const SEPARATOR_RULE_HEIGHT: u32 = 1;
+
+/// R805 §5.40 — presentation descriptor for one dropdown row: the label
+/// plus the WAI-ARIA stateful-item adornments the binding maps from its
+/// [`MenuItem`](pinion_core::widgets::menu::MenuItem) model. The paint
+/// layer stays decoupled from the External model type — the binding
+/// projects each item into this view shape (mirrors how `tabs` /
+/// `radio_composite` take presentation structs, not the coordinator).
+#[derive(Clone, Copy, Debug)]
+pub struct MenuItemView<'a> {
+    /// The visible label (ignored for a [`Self::separator`]).
+    pub label: &'a str,
+    /// `Some(checked)` paints a leading checkbox gutter (the check glyph
+    /// when `true`, an empty gutter when `false`); `None` is a plain
+    /// command row that still indents to the gutter when the dropdown
+    /// reserves one.
+    pub checkmark: Option<bool>,
+    /// A non-interactive divider row (a thin rule; no label / state-layer).
+    pub separator: bool,
+    /// A disabled row paints its label muted and never takes a state-layer.
+    pub enabled: bool,
+}
+
+impl<'a> MenuItemView<'a> {
+    /// A plain enabled command row.
+    #[must_use]
+    pub const fn command(label: &'a str) -> Self {
+        Self { label, checkmark: None, separator: false, enabled: true }
+    }
+
+    /// A checkbox row with the given checked state.
+    #[must_use]
+    pub const fn checkbox(label: &'a str, checked: bool) -> Self {
+        Self { label, checkmark: Some(checked), separator: false, enabled: true }
+    }
+
+    /// A non-interactive divider row.
+    #[must_use]
+    pub const fn separator() -> Self {
+        Self { label: "", checkmark: None, separator: true, enabled: false }
+    }
+
+    /// Builder: mark this row disabled (muted, no state-layer).
+    #[must_use]
+    pub const fn disabled(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+}
+
 /// R691 §5.50 — Material 3 `MenuBar` dimensions. Mirrors the
 /// [`crate::tabs::TabsStyle`] carrier pattern so the widget catalog
 /// presents a uniform `Style` surface.
@@ -87,6 +144,10 @@ pub struct MenuStyle {
     pub item_font_px: u32,
     /// Leading inset of a dropdown item label (M3 menu padding ≈ 16 px).
     pub item_padding: u32,
+    /// R805 — width of the leading check-gutter column reserved when a
+    /// dropdown holds any checkbox item, so checkmarks align and command
+    /// rows indent to match (M3 menu leading icon slot ≈ 24 px).
+    pub check_gutter_width: u32,
     /// Dropdown container width (M3 menu min-width ≈ 200 px desktop).
     pub dropdown_width: u32,
     /// Vertical padding inside the dropdown container (top + bottom
@@ -111,6 +172,7 @@ impl MenuStyle {
             item_height: 36,
             item_font_px: 14,
             item_padding: 16,
+            check_gutter_width: 24,
             dropdown_width: 200,
             dropdown_v_padding: 8,
             dropdown_radius: 4,
@@ -259,20 +321,23 @@ pub fn view_menu_dropdown(
     bar_tag: &str,
     dropdown_tag: &'static str,
     menu_index: usize,
-    items: &[&str],
+    items: &[MenuItemView],
     active: Option<usize>,
     theme: &Theme,
     style: &MenuStyle,
 ) -> Scene {
     let surface = theme.resolve(ColorRole::SurfaceContainerHigh);
+    // R805 — reserve the leading check-gutter for *every* row when the
+    // dropdown holds any checkbox, so checkmarks and command labels align.
+    let reserve_gutter = items.iter().any(|it| it.checkmark.is_some());
     let mut rows: Vec<Scene> = Vec::with_capacity(items.len());
-    for (i, label) in items.iter().enumerate() {
+    for (i, item) in items.iter().enumerate() {
         rows.push(build_item(
             bar_tag,
             i,
-            label,
+            item,
             active == Some(i),
-            surface,
+            reserve_gutter,
             theme,
             style,
         ));
@@ -357,16 +422,11 @@ pub fn view_context_menu(
 ) -> Scene {
     let surface = theme.resolve(ColorRole::SurfaceContainerHigh);
     let mut rows: Vec<Scene> = Vec::with_capacity(items.len());
+    // A context menu carries plain command rows (its stateful-item axis is
+    // a declared-defer until a consumer needs it), so no gutter is reserved.
     for (i, label) in items.iter().enumerate() {
-        rows.push(build_item(
-            tag,
-            i,
-            label,
-            active == Some(i),
-            surface,
-            theme,
-            style,
-        ));
+        let item = MenuItemView::command(label);
+        rows.push(build_item(tag, i, &item, active == Some(i), false, theme, style));
     }
     let width = style.dropdown_width;
     let height = style.dropdown_height(u32::try_from(items.len()).unwrap_or(u32::MAX));
@@ -419,31 +479,61 @@ fn anchor_px(v: f32, max: u32) -> u32 {
     px
 }
 
-/// Compose one dropdown command row: a left-aligned label, background
-/// state-layered when it is the active descendant.
+/// Compose one dropdown row (R805). A [`MenuItemView::separator`] paints
+/// a thin divider; otherwise a left-aligned label, optionally preceded by
+/// a check-gutter (`reserve_gutter`) carrying the [`CHECK_GLYPH`] when the
+/// row is a checked checkbox. The label is muted + state-layer-free when
+/// disabled; an enabled active descendant carries the M3 state-layer.
 fn build_item(
     bar_tag: &str,
     index: usize,
-    label: &str,
+    item: &MenuItemView,
     is_active: bool,
-    surface: Color,
+    reserve_gutter: bool,
     theme: &Theme,
     style: &MenuStyle,
 ) -> Scene {
+    if item.separator {
+        return build_separator(bar_tag, index, theme, style);
+    }
+    let surface = theme.resolve(ColorRole::SurfaceContainerHigh);
     let fill = if is_active {
         surface.lerp(theme.resolve(ColorRole::OnSurface), ACTIVE_ITEM_STATE_LAYER)
     } else {
         Color::TRANSPARENT
     };
-    let label_node = Scene::Text(TextNode::styled(
-        label,
+    let fg = if item.enabled {
+        theme.resolve(ColorRole::OnSurface)
+    } else {
+        theme.resolve(ColorRole::OnSurfaceMuted)
+    };
+    let mut children: Vec<Scene> = Vec::new();
+    if reserve_gutter {
+        // The check-gutter: the glyph for a checked checkbox, else an empty
+        // fixed-width spacer so every label aligns past the gutter.
+        let glyph = if item.checkmark == Some(true) { CHECK_GLYPH } else { "" };
+        children.push(Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                glyph,
+                Rect::default(),
+                TextStyle::new().with_size_px(style.item_font_px).with_fg(fg),
+            ))])
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_justify(JustifyContent::Start)
+                    .with_size(Size::px(style.check_gutter_width, style.item_height)),
+            ),
+        ));
+    }
+    children.push(Scene::Text(TextNode::styled(
+        item.label,
         Rect::default(),
-        TextStyle::new()
-            .with_size_px(style.item_font_px)
-            .with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
+        TextStyle::new().with_size_px(style.item_font_px).with_fg(fg),
+    )));
     Scene::Container(
-        ContainerNode::new(vec![label_node])
+        ContainerNode::new(children)
             .with_tag(composite_item_tag(bar_tag, index))
             .with_style(BoxStyle::filled(fill))
             .with_layout(
@@ -451,6 +541,35 @@ fn build_item(
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::Start)
+                    .with_size(Size::auto().with_height(SizeValue::Px(style.item_height)))
+                    .with_padding(Rect::new(style.item_padding, 0, style.item_padding, 0)),
+            ),
+    )
+}
+
+/// R805 — a separator row: a thin [`ColorRole::Outline`] rule centred in an
+/// item-height row, inset by the item padding so it floats inside the
+/// dropdown. Tagged like any item so the index addressing stays 1:1 (an
+/// outside click on it is inert — the model never navigates here).
+fn build_separator(bar_tag: &str, index: usize, theme: &Theme, style: &MenuStyle) -> Scene {
+    let rule = Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Outline)))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_flex_grow(1.0)
+                    .with_size(Size::auto().with_height(SizeValue::Px(SEPARATOR_RULE_HEIGHT))),
+            ),
+    );
+    Scene::Container(
+        ContainerNode::new(vec![rule])
+            .with_tag(composite_item_tag(bar_tag, index))
+            .with_style(BoxStyle::filled(Color::TRANSPARENT))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_justify(JustifyContent::Center)
                     .with_size(Size::auto().with_height(SizeValue::Px(style.item_height)))
                     .with_padding(Rect::new(style.item_padding, 0, style.item_padding, 0)),
             ),
@@ -467,6 +586,13 @@ mod tests {
 
     const TITLES: [&str; 3] = ["File", "Edit", "View"];
     const ITEMS: [&str; 3] = ["New", "Open", "Save"];
+    /// The R691 dropdown tests drive all-command rows; R805 changed
+    /// `view_menu_dropdown` to take [`MenuItemView`]s.
+    const CMD_ITEMS: [MenuItemView; 3] = [
+        MenuItemView::command("New"),
+        MenuItemView::command("Open"),
+        MenuItemView::command("Save"),
+    ];
 
     fn collect_tags(scene: &Scene) -> Vec<String> {
         fn walk(scene: &Scene, out: &mut Vec<String>) {
@@ -525,6 +651,7 @@ mod tests {
         assert_eq!(s.item_height, 36);
         assert_eq!(s.item_font_px, 14);
         assert_eq!(s.item_padding, 16);
+        assert_eq!(s.check_gutter_width, 24);
         assert_eq!(s.dropdown_width, 200);
         assert_eq!(s.dropdown_v_padding, 8);
         assert_eq!(s.dropdown_radius, 4);
@@ -588,7 +715,7 @@ mod tests {
             "menu",
             "menu_dropdown",
             0,
-            &ITEMS,
+            &CMD_ITEMS,
             None,
             &theme(),
             &MenuStyle::m3_default(),
@@ -611,7 +738,7 @@ mod tests {
             "menu",
             "menu_dropdown",
             0,
-            &ITEMS,
+            &CMD_ITEMS,
             None,
             &theme(),
             &MenuStyle::m3_default(),
@@ -633,7 +760,7 @@ mod tests {
             "menu",
             "menu_dropdown",
             0,
-            &ITEMS,
+            &CMD_ITEMS,
             Some(2),
             &t,
             &MenuStyle::m3_default(),
@@ -649,7 +776,7 @@ mod tests {
     #[test]
     fn r691_dropdown_absolute_position_anchors_under_open_title() {
         let s = MenuStyle::m3_default();
-        let scene = view_menu_dropdown("menu", "menu_dropdown", 2, &ITEMS, None, &theme(), &s);
+        let scene = view_menu_dropdown("menu", "menu_dropdown", 2, &CMD_ITEMS, None, &theme(), &s);
         let Scene::Container(c) = &scene else {
             panic!("expected dropdown Container");
         };
@@ -724,5 +851,107 @@ mod tests {
             .lerp(t.resolve(ColorRole::OnSurface), ACTIVE_ITEM_STATE_LAYER);
         assert_eq!(tag_fill(&scene, "ctx#i2"), Some(expected));
         assert_eq!(tag_fill(&scene, "ctx#i0"), Some(Color::TRANSPARENT));
+    }
+
+    // ----- R805: stateful item paint -----
+
+    /// Find the container tagged `tag` anywhere in `scene`.
+    fn find_container<'a>(scene: &'a Scene, tag: &str) -> Option<&'a ContainerNode> {
+        if let Scene::Container(c) = scene {
+            if c.tag.as_deref() == Some(tag) {
+                return Some(c);
+            }
+            for child in &c.children {
+                if let Some(found) = find_container(child, tag) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
+    /// The `fg_color` of the last [`TextNode`] under `tag` (the label —
+    /// past any empty gutter spacer).
+    fn label_fg(scene: &Scene, tag: &str) -> Option<Color> {
+        fn last_text(scene: &Scene, out: &mut Option<Color>) {
+            match scene {
+                Scene::Text(t) => *out = Some(t.style.fg_color),
+                Scene::Container(c) => {
+                    for child in &c.children {
+                        last_text(child, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let c = find_container(scene, tag)?;
+        let mut out = None;
+        for child in &c.children {
+            last_text(child, &mut out);
+        }
+        out
+    }
+
+    fn rich_items() -> [MenuItemView<'static>; 4] {
+        [
+            MenuItemView::command("Undo"),
+            MenuItemView::checkbox("Show Grid", true),
+            MenuItemView::separator(),
+            MenuItemView::command("Redo").disabled(),
+        ]
+    }
+
+    #[test]
+    fn r805_checked_checkbox_paints_glyph_unchecked_empty() {
+        let items = [
+            MenuItemView::checkbox("On", true),
+            MenuItemView::checkbox("Off", false),
+        ];
+        let scene = view_menu_dropdown("menu", "menu_dropdown", 0, &items, None, &theme(), &MenuStyle::m3_default());
+        let texts = all_text(&scene);
+        assert_eq!(
+            texts.iter().filter(|t| *t == CHECK_GLYPH).count(),
+            1,
+            "exactly the checked checkbox paints the check glyph"
+        );
+        assert!(texts.contains(&"On".to_string()) && texts.contains(&"Off".to_string()));
+    }
+
+    #[test]
+    fn r805_gutter_reserved_only_when_a_checkbox_is_present() {
+        let style = MenuStyle::m3_default();
+        // All-command dropdown: no gutter, each row holds just its label.
+        let cmds = [MenuItemView::command("A"), MenuItemView::command("B")];
+        let plain = view_menu_dropdown("menu", "menu_dropdown", 0, &cmds, None, &theme(), &style);
+        assert_eq!(find_container(&plain, "menu#i0").unwrap().children.len(), 1);
+        // With a checkbox present, every row (incl. commands) gets a gutter.
+        let mixed = view_menu_dropdown("menu", "menu_dropdown", 0, &rich_items(), None, &theme(), &style);
+        assert_eq!(
+            find_container(&mixed, "menu#i0").unwrap().children.len(),
+            2,
+            "command row gains an empty gutter so labels align with checkmarks"
+        );
+    }
+
+    #[test]
+    fn r805_separator_paints_outline_rule() {
+        let t = theme();
+        let scene = view_menu_dropdown("menu", "menu_dropdown", 0, &rich_items(), None, &t, &MenuStyle::m3_default());
+        let sep = find_container(&scene, "menu#i2").expect("separator row tagged like an item");
+        assert_eq!(sep.style.fill, Color::TRANSPARENT, "separator row is transparent");
+        assert_eq!(sep.children.len(), 1, "separator holds a single rule child");
+        let Scene::Container(rule) = &sep.children[0] else {
+            panic!("separator child is the rule container");
+        };
+        assert_eq!(rule.style.fill, t.resolve(ColorRole::Outline), "rule is the Outline divider");
+    }
+
+    #[test]
+    fn r805_disabled_item_label_is_muted() {
+        let t = theme();
+        let scene = view_menu_dropdown("menu", "menu_dropdown", 0, &rich_items(), None, &t, &MenuStyle::m3_default());
+        // Item 3 ("Redo") is disabled -> muted; item 0 ("Undo") enabled.
+        assert_eq!(label_fg(&scene, "menu#i3"), Some(t.resolve(ColorRole::OnSurfaceMuted)));
+        assert_eq!(label_fg(&scene, "menu#i0"), Some(t.resolve(ColorRole::OnSurface)));
     }
 }

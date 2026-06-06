@@ -89,12 +89,79 @@ use crate::input::PointerWireEvent;
 use crate::widgets::wire::resolve_index;
 use crate::widgets::IntentEmitter;
 
+/// R805 §5.40 — the WAI-ARIA 1.2 menu-item taxonomy a dropdown item can
+/// carry. The R691 first slice modelled every item as a one-shot
+/// [`Self::Command`]; R805 adds the stateful + structural kinds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MenuItemKind {
+    /// A one-shot command (WAI-ARIA `menuitem`): activating it fires the
+    /// `"command"` intent and dismisses the menu. Carries no persistent
+    /// state.
+    Command,
+    /// A toggle (WAI-ARIA `menuitemcheckbox`): activating it flips the
+    /// item's persistent [`MenuItem::checked`] state, fires `"command"`,
+    /// and dismisses. The checked state survives close / reopen.
+    Checkbox,
+    /// A non-interactive divider (WAI-ARIA `separator`): never navigable,
+    /// never activatable — it only sections the dropdown visually.
+    Separator,
+}
+
+/// R805 §5.40 — one dropdown item: its [`MenuItemKind`], persistent
+/// `checked` state (meaningful only for [`MenuItemKind::Checkbox`]), and
+/// whether it is `enabled`. A disabled item paints muted, is skipped by
+/// keyboard / hover navigation, and cannot be activated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MenuItem {
+    /// The WAI-ARIA item kind.
+    pub kind: MenuItemKind,
+    /// Persistent checked state ([`MenuItemKind::Checkbox`] only).
+    pub checked: bool,
+    /// Whether the item is enabled (interactive).
+    pub enabled: bool,
+}
+
+impl MenuItem {
+    /// A one-shot enabled command item.
+    #[must_use]
+    pub const fn command() -> Self {
+        Self { kind: MenuItemKind::Command, checked: false, enabled: true }
+    }
+
+    /// An enabled checkbox item with the given initial checked state.
+    #[must_use]
+    pub const fn checkbox(checked: bool) -> Self {
+        Self { kind: MenuItemKind::Checkbox, checked, enabled: true }
+    }
+
+    /// A non-interactive divider.
+    #[must_use]
+    pub const fn separator() -> Self {
+        Self { kind: MenuItemKind::Separator, checked: false, enabled: false }
+    }
+
+    /// Builder: mark this item disabled (greyed, skipped, non-activatable).
+    #[must_use]
+    pub const fn disabled(mut self) -> Self {
+        self.enabled = false;
+        self
+    }
+
+    /// Whether keyboard / hover navigation may land on this item, and
+    /// whether activation has any effect: every enabled non-separator.
+    #[must_use]
+    pub const fn is_navigable(&self) -> bool {
+        self.enabled && !matches!(self.kind, MenuItemKind::Separator)
+    }
+}
+
 /// R691 §5.38 — logical menubar with N command menus. See module docs
 /// for the command-vs-selection rationale and the state model.
 pub struct MenuBar {
-    /// Item count per top-level menu. `items_per_menu.len()` is the
-    /// number of top-level titles.
-    items_per_menu: Vec<usize>,
+    /// Items per top-level menu. `menus.len()` is the number of top-level
+    /// titles; `menus[m]` is menu `m`'s ordered item list (R805 — was a
+    /// bare `Vec<usize>` count in R691).
+    menus: Vec<Vec<MenuItem>>,
     /// Open dropdown menu index, or `None` when every menu is closed.
     open: Option<usize>,
     /// Highlighted item within the open menu (the WAI-ARIA active
@@ -107,27 +174,42 @@ pub struct MenuBar {
 
 impl MenuBar {
     /// Construct a menubar whose menu `m` carries `items_per_menu[m]`
-    /// command items. All menus start closed.
+    /// **command** items (the R691 all-command shape). All menus start
+    /// closed. For the stateful R805 taxonomy use [`Self::with_items`].
     #[must_use]
     pub fn new(items_per_menu: Vec<usize>) -> Self {
-        Self {
-            items_per_menu,
-            open: None,
-            active: None,
-            bar_focus: 0,
-        }
+        let menus = items_per_menu
+            .into_iter()
+            .map(|count| vec![MenuItem::command(); count])
+            .collect();
+        Self { menus, open: None, active: None, bar_focus: 0 }
+    }
+
+    /// R805 — construct a menubar from explicit per-menu [`MenuItem`]
+    /// lists (checkbox / separator / disabled entries). All menus start
+    /// closed.
+    #[must_use]
+    pub fn with_items(menus: Vec<Vec<MenuItem>>) -> Self {
+        Self { menus, open: None, active: None, bar_focus: 0 }
     }
 
     /// Number of top-level menus.
     #[must_use]
     pub fn menu_count(&self) -> usize {
-        self.items_per_menu.len()
+        self.menus.len()
     }
 
     /// Item count of menu `m`, or `None` when `m` is out of range.
     #[must_use]
     pub fn item_count(&self, menu: usize) -> Option<usize> {
-        self.items_per_menu.get(menu).copied()
+        self.menus.get(menu).map(Vec::len)
+    }
+
+    /// R805 — the [`MenuItem`] at `(menu, item)`, or `None` when either
+    /// index is out of range.
+    #[must_use]
+    pub fn item(&self, menu: usize, item: usize) -> Option<MenuItem> {
+        self.menus.get(menu)?.get(item).copied()
     }
 
     /// The open dropdown's menu index, or `None`.
@@ -166,23 +248,30 @@ impl MenuBar {
     }
 
     /// Mouse: highlight item `i` of the open menu (hover). No-op when
-    /// no menu is open or `i` is out of range.
+    /// no menu is open, `i` is out of range, or item `i` is a separator /
+    /// disabled (R805 — hover skips non-navigable rows).
     fn hover_item(&mut self, i: usize) {
         if let Some(m) = self.open {
-            if i < self.items_per_menu[m] {
+            if self.menus[m].get(i).is_some_and(MenuItem::is_navigable) {
                 self.active = Some(i);
             }
         }
     }
 
     /// Activate item `i` of the open menu: returns `Some((menu, item))`
-    /// and closes the menu when valid, `None` otherwise. The caller
+    /// and closes the menu when valid, `None` otherwise. A separator /
+    /// disabled item is inert (R805). A [`MenuItemKind::Checkbox`] flips
+    /// its persistent `checked` state before closing. The caller
     /// (the [`MenuBarExternal`] adapter) emits the `"command"` intent
     /// from the returned coordinates.
     fn activate_item(&mut self, i: usize) -> Option<(usize, usize)> {
         let m = self.open?;
-        if i >= self.items_per_menu[m] {
+        let item = self.menus[m].get_mut(i)?;
+        if !item.is_navigable() {
             return None;
+        }
+        if item.kind == MenuItemKind::Checkbox {
+            item.checked = !item.checked;
         }
         self.close();
         self.bar_focus = m;
@@ -207,7 +296,7 @@ impl MenuBar {
     }
 
     /// Keyboard (closed): open the focused menu, highlighting its first
-    /// item (Arrow Down / Enter / Space on a top-level title).
+    /// navigable item (Arrow Down / Enter / Space on a top-level title).
     fn open_focused(&mut self) {
         let n = self.menu_count();
         if n == 0 {
@@ -215,16 +304,12 @@ impl MenuBar {
         }
         let m = self.bar_focus;
         self.open = Some(m);
-        self.active = if self.items_per_menu[m] == 0 {
-            None
-        } else {
-            Some(0)
-        };
+        self.active = self.first_navigable(m);
     }
 
     /// Keyboard (open): switch to the adjacent menu and open it with
-    /// its first item highlighted (Arrow Right/Left inside an open
-    /// menu — the WAI-ARIA menubar cross-navigation).
+    /// its first navigable item highlighted (Arrow Right/Left inside an
+    /// open menu — the WAI-ARIA menubar cross-navigation).
     fn menu_switch(&mut self, forward: bool) {
         let Some(m) = self.open else { return };
         let n = self.menu_count();
@@ -234,28 +319,35 @@ impl MenuBar {
         let next = menu_nav::step(m, forward, n);
         self.open = Some(next);
         self.bar_focus = next;
-        self.active = if self.items_per_menu[next] == 0 {
-            None
-        } else {
-            Some(0)
-        };
+        self.active = self.first_navigable(next);
     }
 
-    /// Keyboard (open): move the active item by `delta` with wrap.
-    /// With no active item, Down lands on the first item and Up on the
-    /// last.
+    /// Keyboard (open): move the active item by one with wrap, skipping
+    /// separators / disabled rows (R805). With no active item, Down lands
+    /// on the first navigable item and Up on the last.
     fn move_active(&mut self, forward: bool) {
         let Some(m) = self.open else { return };
-        self.active = menu_nav::nav_move(self.active, self.items_per_menu[m], forward);
+        let items = &self.menus[m];
+        self.active = menu_nav::nav_move_skip(self.active, items.len(), forward, |i| {
+            items[i].is_navigable()
+        });
     }
 
-    /// Keyboard (open): jump the active item to the first / last entry
-    /// (Home / End).
+    /// Keyboard (open): jump the active item to the first / last
+    /// **navigable** entry (Home / End).
     fn active_edge(&mut self, last: bool) {
         let Some(m) = self.open else { return };
-        if let Some(a) = menu_nav::nav_edge(self.items_per_menu[m], last) {
+        let items = &self.menus[m];
+        if let Some(a) = menu_nav::nav_edge_skip(items.len(), last, |i| items[i].is_navigable()) {
             self.active = Some(a);
         }
+    }
+
+    /// The first navigable item of menu `m` (skipping leading separators /
+    /// disabled rows), or `None` when the menu has no navigable item.
+    fn first_navigable(&self, m: usize) -> Option<usize> {
+        let items = &self.menus[m];
+        menu_nav::nav_edge_skip(items.len(), false, |i| items[i].is_navigable())
     }
 }
 
@@ -285,6 +377,15 @@ impl MenuBarExternal {
         }
     }
 
+    /// R805 — construct from explicit per-menu [`MenuItem`] lists
+    /// (checkbox / separator / disabled entries).
+    #[must_use]
+    pub fn with_items(menus: Vec<Vec<MenuItem>>) -> Self {
+        Self {
+            em: IntentEmitter::new(MenuBar::with_items(menus)),
+        }
+    }
+
     /// Number of top-level menus.
     #[must_use]
     pub fn menu_count(&self) -> usize {
@@ -295,6 +396,12 @@ impl MenuBarExternal {
     #[must_use]
     pub fn item_count(&self, menu: usize) -> Option<usize> {
         self.em.inner.item_count(menu)
+    }
+
+    /// R805 — the [`MenuItem`] at `(menu, item)`, or `None` out of range.
+    #[must_use]
+    pub fn item(&self, menu: usize, item: usize) -> Option<MenuItem> {
+        self.em.inner.item(menu, item)
     }
 
     /// The open dropdown's menu index, or `None`.
@@ -455,6 +562,23 @@ fn set_bar_focus(menu: &mut MenuBar, last: bool) {
     menu.bar_focus = if last { n - 1 } else { 0 };
 }
 
+/// R805 — parse a `<menu>.<item>` per-item slot suffix into its two
+/// indices. `None` for a missing dot or a non-numeric component.
+fn parse_menu_item(suffix: &str) -> Option<(usize, usize)> {
+    let (m, i) = suffix.split_once('.')?;
+    Some((m.parse().ok()?, i.parse().ok()?))
+}
+
+/// R805 — the WAI-ARIA wire name for a [`MenuItemKind`] (`item_kind`
+/// query value): the inverse of how an AI client reads an item's role.
+fn item_kind_name(kind: MenuItemKind) -> &'static str {
+    match kind {
+        MenuItemKind::Command => "command",
+        MenuItemKind::Checkbox => "checkbox",
+        MenuItemKind::Separator => "separator",
+    }
+}
+
 /// `Some(i)` → `Int(i)`, `None` → `Null` — shared optional-index
 /// lowering for `query` / the `send` return value.
 fn open_value(idx: Option<usize>) -> IntrospectValue {
@@ -519,6 +643,9 @@ impl ExternalIntrospect for MenuBarExternal {
             ("active", "int"),
             ("bar_focus", "int"),
             ("item_count.<menu>", "int"),
+            ("item_kind.<menu>.<item>", "string"),
+            ("checked.<menu>.<item>", "bool"),
+            ("enabled.<menu>.<item>", "bool"),
             ("send", "string"),
             ("key", "string"),
         ])
@@ -535,12 +662,28 @@ impl ExternalIntrospect for MenuBarExternal {
                 i64::try_from(self.bar_focus()).expect("bar_focus fits in i64"),
             )),
             _ => {
-                let suffix = path.strip_prefix("item_count.")?;
-                let menu: usize = suffix.parse().ok()?;
-                let count = self.item_count(menu)?;
-                Some(IntrospectValue::Int(
-                    i64::try_from(count).expect("item_count fits in i64"),
-                ))
+                if let Some(suffix) = path.strip_prefix("item_count.") {
+                    let menu: usize = suffix.parse().ok()?;
+                    let count = self.item_count(menu)?;
+                    return Some(IntrospectValue::Int(
+                        i64::try_from(count).expect("item_count fits in i64"),
+                    ));
+                }
+                // R805 — per-item stateful slots, keyed `<menu>.<item>`.
+                if let Some(suffix) = path.strip_prefix("item_kind.") {
+                    let (m, i) = parse_menu_item(suffix)?;
+                    let item = self.item(m, i)?;
+                    return Some(IntrospectValue::Text(item_kind_name(item.kind).to_owned()));
+                }
+                if let Some(suffix) = path.strip_prefix("checked.") {
+                    let (m, i) = parse_menu_item(suffix)?;
+                    return Some(IntrospectValue::Bool(self.item(m, i)?.checked));
+                }
+                if let Some(suffix) = path.strip_prefix("enabled.") {
+                    let (m, i) = parse_menu_item(suffix)?;
+                    return Some(IntrospectValue::Bool(self.item(m, i)?.enabled));
+                }
+                None
             }
         }
     }
@@ -567,7 +710,7 @@ impl ExternalIntrospect for MenuBarExternal {
             "active" => match value {
                 IntrospectValue::Int(i) => {
                     let m = self.open_menu().ok_or(InterveneError::OutOfRange)?;
-                    let item = resolve_index(i, self.em.inner.items_per_menu[m])?;
+                    let item = resolve_index(i, self.em.inner.menus[m].len())?;
                     self.em.inner.active = Some(item);
                     Ok(())
                 }
@@ -585,7 +728,28 @@ impl ExternalIntrospect for MenuBarExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            _ => Err(InterveneError::UnknownPath),
+            // R805 — programmatic checkbox toggle `checked.<menu>.<item>`
+            // (RPC restore / form default; fires no `"command"` intent).
+            _ => {
+                let suffix = path
+                    .strip_prefix("checked.")
+                    .ok_or(InterveneError::UnknownPath)?;
+                let (m, i) = parse_menu_item(suffix).ok_or(InterveneError::UnknownPath)?;
+                let item = self
+                    .em
+                    .inner
+                    .menus
+                    .get_mut(m)
+                    .and_then(|menu| menu.get_mut(i))
+                    .ok_or(InterveneError::OutOfRange)?;
+                match value {
+                    IntrospectValue::Bool(b) => {
+                        item.checked = b;
+                        Ok(())
+                    }
+                    _ => Err(InterveneError::TypeMismatch),
+                }
+            }
         }
     }
 
@@ -1076,9 +1240,172 @@ mod tests {
                 ("active", "int"),
                 ("bar_focus", "int"),
                 ("item_count.<menu>", "int"),
+                ("item_kind.<menu>.<item>", "string"),
+                ("checked.<menu>.<item>", "bool"),
+                ("enabled.<menu>.<item>", "bool"),
                 ("send", "string"),
                 ("key", "string"),
             ]
         );
+    }
+
+    // ----- R805: stateful item taxonomy -----
+
+    /// A menu mixing every R805 item kind:
+    /// `[Command, Checkbox(off), Separator, Checkbox(on), Command(disabled)]`.
+    fn rich() -> MenuBar {
+        MenuBar::with_items(vec![vec![
+            MenuItem::command(),
+            MenuItem::checkbox(false),
+            MenuItem::separator(),
+            MenuItem::checkbox(true),
+            MenuItem::command().disabled(),
+        ]])
+    }
+
+    #[test]
+    fn r805_new_builds_all_command_items() {
+        let m = MenuBar::new(vec![2]);
+        assert_eq!(m.item(0, 0), Some(MenuItem::command()));
+        assert_eq!(m.item(0, 1), Some(MenuItem::command()));
+        assert_eq!(m.item(0, 2), None);
+    }
+
+    #[test]
+    fn r805_is_navigable_classifies_kinds() {
+        assert!(MenuItem::command().is_navigable());
+        assert!(MenuItem::checkbox(false).is_navigable());
+        assert!(!MenuItem::separator().is_navigable());
+        assert!(!MenuItem::command().disabled().is_navigable());
+    }
+
+    #[test]
+    fn r805_activate_checkbox_toggles_and_persists() {
+        let mut m = rich();
+        m.toggle_title(0);
+        // Activate the unchecked checkbox (item 1) -> toggles on + closes.
+        assert_eq!(m.activate_item(1), Some((0, 1)));
+        assert!(m.item(0, 1).unwrap().checked, "checkbox toggled on");
+        assert_eq!(m.open_menu(), None, "activation closes");
+        // Reopen: the checked state survived.
+        m.toggle_title(0);
+        assert!(m.item(0, 1).unwrap().checked, "checked persists across reopen");
+        // Toggle it back off.
+        assert_eq!(m.activate_item(1), Some((0, 1)));
+        assert!(!m.item(0, 1).unwrap().checked, "checkbox toggled off");
+    }
+
+    #[test]
+    fn r805_separator_and_disabled_are_inert() {
+        let mut m = rich();
+        m.toggle_title(0);
+        assert_eq!(m.activate_item(2), None, "separator not activatable");
+        assert_eq!(m.open_menu(), Some(0), "inert activate leaves menu open");
+        assert_eq!(m.activate_item(4), None, "disabled not activatable");
+        assert_eq!(m.open_menu(), Some(0));
+        // Hover skips both.
+        m.hover_item(2);
+        assert_eq!(m.active_item(), None, "hover ignores separator");
+        m.hover_item(4);
+        assert_eq!(m.active_item(), None, "hover ignores disabled");
+        m.hover_item(3);
+        assert_eq!(m.active_item(), Some(3), "hover lands on the checkbox");
+    }
+
+    #[test]
+    fn r805_keyboard_nav_skips_separator_and_disabled() {
+        let mut m = rich();
+        m.toggle_title(0);
+        // Down from None -> first navigable (item 0, a command).
+        m.move_active(true);
+        assert_eq!(m.active_item(), Some(0));
+        // Down -> item 1 (checkbox); next Down skips the separator (2) and
+        // lands on item 3 (checkbox); the disabled item 4 is never reached,
+        // so a further Down wraps back to item 0.
+        m.move_active(true);
+        assert_eq!(m.active_item(), Some(1));
+        m.move_active(true);
+        assert_eq!(m.active_item(), Some(3), "skips separator at 2");
+        m.move_active(true);
+        assert_eq!(m.active_item(), Some(0), "skips disabled 4, wraps to 0");
+        // Up from 0 wraps backward past the disabled tail to item 3.
+        m.move_active(false);
+        assert_eq!(m.active_item(), Some(3), "Up wraps past disabled to last navigable");
+    }
+
+    #[test]
+    fn r805_active_edge_lands_on_navigable_bounds() {
+        let mut m = rich();
+        m.toggle_title(0);
+        m.active_edge(true);
+        assert_eq!(m.active_item(), Some(3), "End -> last navigable (3, not disabled 4)");
+        m.active_edge(false);
+        assert_eq!(m.active_item(), Some(0), "Home -> first navigable (0)");
+    }
+
+    #[test]
+    fn r805_open_focused_highlights_first_navigable() {
+        // A menu whose first two items are a separator + disabled command.
+        let mut m = MenuBar::with_items(vec![vec![
+            MenuItem::separator(),
+            MenuItem::command().disabled(),
+            MenuItem::command(),
+        ]]);
+        m.open_focused();
+        assert_eq!(m.active_item(), Some(2), "first navigable skips leading non-nav rows");
+    }
+
+    #[test]
+    fn r805_external_query_item_slots() {
+        let e = MenuBarExternal::with_items(vec![vec![
+            MenuItem::command(),
+            MenuItem::checkbox(true),
+            MenuItem::separator(),
+            MenuItem::command().disabled(),
+        ]]);
+        assert_eq!(e.query("item_kind.0.0"), Some(IntrospectValue::Text("command".into())));
+        assert_eq!(e.query("item_kind.0.1"), Some(IntrospectValue::Text("checkbox".into())));
+        assert_eq!(e.query("item_kind.0.2"), Some(IntrospectValue::Text("separator".into())));
+        assert_eq!(e.query("checked.0.1"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("enabled.0.0"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("enabled.0.3"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("checked.0.9"), None, "out-of-range item -> None");
+        assert_eq!(e.query("checked.9.0"), None, "out-of-range menu -> None");
+    }
+
+    #[test]
+    fn r805_external_intervene_checked_round_trip() {
+        let mut e = MenuBarExternal::with_items(vec![vec![MenuItem::checkbox(false)]]);
+        e.intervene("checked.0.0", IntrospectValue::Bool(true)).unwrap();
+        assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(true)));
+        assert!(!e.is_dirty(), "intervene fires no command intent");
+        assert_eq!(
+            e.intervene("checked.0.9", IntrospectValue::Bool(true)),
+            Err(InterveneError::OutOfRange)
+        );
+        assert_eq!(
+            e.intervene("checked.0.0", IntrospectValue::Int(1)),
+            Err(InterveneError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn r805_external_send_checkbox_activation_toggles_and_emits() {
+        let mut e = MenuBarExternal::with_items(vec![vec![
+            MenuItem::command(),
+            MenuItem::checkbox(false),
+        ]]);
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        // Click the checkbox (item 1).
+        for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+            e.invoke("send", IntrospectValue::Text(format!("i1:{ev}"))).unwrap();
+        }
+        assert!(e.item(0, 1).unwrap().checked, "checkbox toggled on via send");
+        assert_eq!(e.open_menu(), None, "activation closes");
+        let mut got = Vec::new();
+        e.drain_intents(&mut |i| got.push(i));
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].payload, IntrospectValue::Text("0.1".into()));
     }
 }
