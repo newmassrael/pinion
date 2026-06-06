@@ -32121,6 +32121,56 @@
         "filled widget border flush at y=0 with x!=0 unhandled (does not occur today; x=0 bars spared)"
       ]
     },
+    "R808": {
+      "decision_summary": "R808 §5.16 — upgrade Vello 0.6.0->0.9.0 + wgpu 26->29 (peniko 0.5->0.6, kurbo 0.12->0.13), spanning vello's 0.7 stroke-artifact fix / 0.8 wgpu28 / 0.9 wgpu29+perf, then re-verify VELLO-001 (the y=0 top-tile stroke flood). The pure-vello negative-control raster guard still passes on 0.9 — the flood is NOT fixed upstream — so the pinion_overlay::edge inset stays and both overlay guards remain green. The upgrade lands anyway for three versions of fixes + perf + the wgpu29 stack. API migration: paint_adapter push_clip_layer gained a clip_style arg (Fill::NonZero, 4 sites); headless_screenshot adapts to wgpu 29 (Instance::new by-value, InstanceDescriptor.display, DeviceDescriptor.experimental_features, PollType::wait_indefinitely); the forge Vello renderer template handles wgpu 29's get_current_texture returning a CurrentSurfaceTexture status enum instead of Result<_,SurfaceError>, its error enum dropping the SurfaceError From-conversion for a labelled Surface(&'static str) so the success states stay unrepresentable. New upstream limitation VELLO-002: vello 0.9's RenderContext builds its wgpu instance with display:None (upstream TODO), so wgpu 29's GL backend finds no surface-compatible adapter and returns NoCompatibleDevice, breaking the Xvfb + software-GL headless sweep; the sweep now defaults to a real GPU via Vulkan on the host display (sweep_headless.sh PINION_SWEEP_MODE=realgpu), 144/144 green.",
+      "changes_bullets": [
+        "Cargo: vello 0.6->0.9, wgpu 26->29 (peniko 0.5->0.6, kurbo 0.12->0.13)",
+        "paint_adapter: push_clip_layer gained clip_style arg -> Fill::NonZero (4 sites)",
+        "headless_screenshot: wgpu29 Instance::new by-value + display + experimental_features + Poll",
+        "forge Vello template: wgpu29 get_current_texture -> CurrentSurfaceTexture match, not Result",
+        "forge error enum: Surface(&'static str) label, drop From<SurfaceError> (illegal states out)",
+        "sweep_headless.sh: realgpu :0+Vulkan default vs legacy xvfb mode (VELLO-002 GL break)"
+      ],
+      "verification_bullets": [
+        "VELLO-001 re-verified PRESENT on vello 0.9: pure-vello negative-control flood guard still passes",
+        "cargo test --workspace --features vello green (60 suites, 0 fail) on vello 0.9",
+        "clippy --workspace --all-targets --features vello -D pedantic clean",
+        "5 headless raster guards green: negative-control floods, both overlay guards render thin",
+        "full 144-demo sweep 144/144 (real GPU/Vulkan; Xvfb+GL blocked by VELLO-002)"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "VELLO-001 STILL upstream on vello 0.9 (re-verified); file linebender/vello (user acct)",
+        "VELLO-002: vello 0.9 RenderContext display:None breaks wgpu29 GL windowed surface (upstream TODO)",
+        "headless sweep now needs real-GPU :0+Vulkan; xvfb+GL returns once VELLO-002 lands upstream"
+      ],
+      "publishable_decision_summary": "R808 §5.16 — upgrade Vello 0.6.0->0.9.0 + wgpu 26->29 (peniko 0.5->0.6, kurbo 0.12->0.13), spanning vello's 0.7 stroke-artifact fix / 0.8 wgpu28 / 0.9 wgpu29+perf, then re-verify VELLO-001 (the y=0 top-tile stroke flood). The pure-vello negative-control raster guard still passes on 0.9 — the flood is NOT fixed upstream — so the pinion_overlay::edge inset stays and both overlay guards remain green. The upgrade lands anyway for three versions of fixes + perf + the wgpu29 stack. API migration: paint_adapter push_clip_layer gained a clip_style arg (Fill::NonZero, 4 sites); headless_screenshot adapts to wgpu 29 (Instance::new by-value, InstanceDescriptor.display, DeviceDescriptor.experimental_features, PollType::wait_indefinitely); the forge Vello renderer template handles wgpu 29's get_current_texture returning a CurrentSurfaceTexture status enum instead of Result<_,SurfaceError>, its error enum dropping the SurfaceError From-conversion for a labelled Surface(&'static str) so the success states stay unrepresentable. New upstream limitation VELLO-002: vello 0.9's RenderContext builds its wgpu instance with display:None (upstream TODO), so wgpu 29's GL backend finds no surface-compatible adapter and returns NoCompatibleDevice, breaking the Xvfb + software-GL headless sweep; the sweep now defaults to a real GPU via Vulkan on the host display (sweep_headless.sh PINION_SWEEP_MODE=realgpu), 144/144 green.",
+      "publishable_changes_bullets": [
+        "Cargo: vello 0.6->0.9, wgpu 26->29 (peniko 0.5->0.6, kurbo 0.12->0.13)",
+        "paint_adapter: push_clip_layer gained clip_style arg -> Fill::NonZero (4 sites)",
+        "headless_screenshot: wgpu29 Instance::new by-value + display + experimental_features + Poll",
+        "forge Vello template: wgpu29 get_current_texture -> CurrentSurfaceTexture match, not Result",
+        "forge error enum: Surface(&'static str) label, drop From<SurfaceError> (illegal states out)",
+        "sweep_headless.sh: realgpu :0+Vulkan default vs legacy xvfb mode (VELLO-002 GL break)"
+      ],
+      "publishable_verification_bullets": [
+        "VELLO-001 re-verified PRESENT on vello 0.9: pure-vello negative-control flood guard still passes",
+        "cargo test --workspace --features vello green (60 suites, 0 fail) on vello 0.9",
+        "clippy --workspace --all-targets --features vello -D pedantic clean",
+        "5 headless raster guards green: negative-control floods, both overlay guards render thin",
+        "full 144-demo sweep 144/144 (real GPU/Vulkan; Xvfb+GL blocked by VELLO-002)"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "VELLO-001 STILL upstream on vello 0.9 (re-verified); file linebender/vello (user acct)",
+        "VELLO-002: vello 0.9 RenderContext display:None breaks wgpu29 GL windowed surface (upstream TODO)",
+        "headless sweep now needs real-GPU :0+Vulkan; xvfb+GL returns once VELLO-002 lands upstream"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -771,7 +771,7 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     }
 }
 
-/// Window + renderer lifecycle (R46.3.4 §5.16). Mirrors the Vello 0.6
+/// Window + renderer lifecycle (R46.3.4 §5.16). Mirrors the Vello 0.9
 /// canonical `RenderState` enum (Linebender examples / Xilem) so the
 /// shell survives the Android / Wayland suspend → resume cycle where
 /// the wgpu surface backing must be dropped and re-created. Desktop

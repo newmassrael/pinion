@@ -189,7 +189,7 @@ impl RendererBackend {
 
 /// Vello antialiasing mode. Closed enum mapping to
 /// [`vello::AaSupport`] + [`vello::AaConfig`] pairs. R46.2.1 introduces
-/// all three Vello 0.6 modes; future Vello releases adding new modes
+/// all three Vello 0.9 modes; future Vello releases adding new modes
 /// (e.g. distance-field shading) attach as additional variants.
 ///
 /// Default policy: `Area` — the cheapest analytic mode, canonical for

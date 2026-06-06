@@ -194,11 +194,14 @@ impl HeadlessScreenshot {
     ///
     /// Same as [`Self::new`].
     pub async fn new_async() -> Result<Self, HeadlessScreenshotError> {
-        let instance = Instance::new(&InstanceDescriptor {
+        let instance = Instance::new(InstanceDescriptor {
             backends: Backends::all(),
             flags: wgpu::InstanceFlags::default(),
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             backend_options: wgpu::BackendOptions::default(),
+            // wgpu 29 (R808): headless path has no windowing-system
+            // display handle to thread through for surface creation.
+            display: None,
         });
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -214,6 +217,8 @@ impl HeadlessScreenshot {
                 required_features: Features::empty(),
                 required_limits: Limits::default(),
                 memory_hints: MemoryHints::Performance,
+                // wgpu 29 (R808): no EXPERIMENTAL_* features enabled.
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 trace: wgpu::Trace::Off,
             })
             .await
@@ -338,8 +343,10 @@ impl HeadlessScreenshot {
         // wgpu requires an explicit poll to drive map_async on
         // native backends (web backends progress via the JS event
         // loop). `PollType::Wait` blocks until the queued work +
-        // map callback have both completed.
-        let _ = self.device.poll(PollType::Wait);
+        // map callback have both completed. wgpu 29 (R808) made `Wait`
+        // a struct variant; `wait_indefinitely()` is the no-timeout,
+        // most-recent-submission convenience constructor.
+        let _ = self.device.poll(PollType::wait_indefinitely());
         rx.recv()
             .map_err(|e| HeadlessScreenshotError::BufferMap(format!("{e}")))?
             .map_err(|e| HeadlessScreenshotError::BufferMap(format!("{e}")))?;

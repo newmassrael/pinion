@@ -104,7 +104,7 @@ fn emit_renderer(name: &str, backend: RendererBackend) -> String {
 /// Emits a self-contained Rust module wrapping
 /// `vello::util::RenderContext` + `RenderSurface` + `vello::Renderer`
 /// in a concrete type — zero virtual dispatch per §5.16 R45 (build-time
-/// codegen per target). Vello 0.6 canonical pattern (Xilem reference
+/// codegen per target). Vello 0.9 canonical pattern (Xilem reference
 /// impl): `render_to_texture` → `blitter.copy` → present. Async `new`
 /// because wgpu adapter+device acquisition is async; called once at
 /// app boot per §6.3 boundary.
@@ -124,7 +124,7 @@ fn emit_renderer_vello(name: &str, aa: VelloAaMode) -> String {
 
 /// Map [`VelloAaMode`] to the `vello::AaSupport` struct literal that
 /// selects exactly one mode at build time (Vello compiles only that
-/// mode's shaders → smaller binary, faster init). Uses Vello 0.6's
+/// mode's shaders → smaller binary, faster init). Uses Vello 0.9's
 /// `AaSupport { area, msaa8, msaa16 }` pub-fields shape rather than the
 /// `area_only()` helper so all three modes get a uniform emission.
 /// R46.3.3 — fully-qualified `::vello::AaSupport` path so the emitted
@@ -184,21 +184,27 @@ pub struct __NAME__ {
 }
 
 /// Errors returned by [`__NAME__`]. Closed enum so the caller can
-/// `match` exhaustively; conversions for `vello::Error` and
-/// `wgpu::SurfaceError` are provided so `?` propagation works.
+/// `match` exhaustively; the `vello::Error` conversion is provided so
+/// `?` propagation works for renderer init + frame submission.
 #[derive(Debug)]
 pub enum __ERR_NAME__ {
     /// Vello renderer init or frame submission failed.
     Vello(::vello::Error),
-    /// wgpu surface acquisition failed (lost / outdated / timeout).
-    Surface(::vello::wgpu::SurfaceError),
+    /// Swapchain surface acquisition did not yield a presentable
+    /// texture. The `&'static str` is the non-success
+    /// [`::vello::wgpu::CurrentSurfaceTexture`] state (timeout /
+    /// occluded / outdated / lost / validation) — a label rather than
+    /// the enum itself so the error type cannot represent the success
+    /// states (illegal-states-unrepresentable; wgpu 29 made
+    /// `get_current_texture` return a status enum, not a `Result`).
+    Surface(&'static str),
 }
 
 impl ::std::fmt::Display for __ERR_NAME__ {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match self {
             Self::Vello(e) => write!(f, "vello error: {e}"),
-            Self::Surface(e) => write!(f, "wgpu surface error: {e}"),
+            Self::Surface(reason) => write!(f, "wgpu surface acquisition failed: {reason}"),
         }
     }
 }
@@ -207,7 +213,7 @@ impl ::std::error::Error for __ERR_NAME__ {
     fn source(&self) -> ::std::option::Option<&(dyn ::std::error::Error + 'static)> {
         match self {
             Self::Vello(e) => ::std::option::Option::Some(e),
-            Self::Surface(e) => ::std::option::Option::Some(e),
+            Self::Surface(_) => ::std::option::Option::None,
         }
     }
 }
@@ -215,12 +221,6 @@ impl ::std::error::Error for __ERR_NAME__ {
 impl ::std::convert::From<::vello::Error> for __ERR_NAME__ {
     fn from(e: ::vello::Error) -> Self {
         Self::Vello(e)
-    }
-}
-
-impl ::std::convert::From<::vello::wgpu::SurfaceError> for __ERR_NAME__ {
-    fn from(e: ::vello::wgpu::SurfaceError) -> Self {
-        Self::Surface(e)
     }
 }
 
@@ -260,7 +260,7 @@ impl __NAME__ {
 
     /// Submit one Vello scene frame against the configured surface.
     /// Renders to the surface's intermediate texture, blits to the
-    /// swapchain texture, presents — Vello 0.6 canonical pattern
+    /// swapchain texture, presents — Vello 0.9 canonical pattern
     /// (Xilem reference impl).
     ///
     /// # Errors
@@ -285,7 +285,28 @@ impl __NAME__ {
                 antialiasing_method: __AA_METHOD__,
             },
         )?;
-        let surface_texture = self.surface.surface.get_current_texture()?;
+        // wgpu 29: `get_current_texture` returns a status enum instead
+        // of `Result<_, SurfaceError>`. Present on Success/Suboptimal;
+        // map the non-presentable states to a labelled surface error.
+        let surface_texture = match self.surface.surface.get_current_texture() {
+            ::vello::wgpu::CurrentSurfaceTexture::Success(t)
+            | ::vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            ::vello::wgpu::CurrentSurfaceTexture::Timeout => {
+                return ::std::result::Result::Err(__ERR_NAME__::Surface("timeout"));
+            }
+            ::vello::wgpu::CurrentSurfaceTexture::Occluded => {
+                return ::std::result::Result::Err(__ERR_NAME__::Surface("occluded"));
+            }
+            ::vello::wgpu::CurrentSurfaceTexture::Outdated => {
+                return ::std::result::Result::Err(__ERR_NAME__::Surface("outdated"));
+            }
+            ::vello::wgpu::CurrentSurfaceTexture::Lost => {
+                return ::std::result::Result::Err(__ERR_NAME__::Surface("lost"));
+            }
+            ::vello::wgpu::CurrentSurfaceTexture::Validation => {
+                return ::std::result::Result::Err(__ERR_NAME__::Surface("validation"));
+            }
+        };
         let mut encoder = device_handle.device.create_command_encoder(
             &::vello::wgpu::CommandEncoderDescriptor { label: ::std::option::Option::None },
         );

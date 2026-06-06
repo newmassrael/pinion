@@ -1059,26 +1059,31 @@ mod tests {
     #[test]
     fn emits_renderer_vello_error_enum_with_from_impls() {
         // The emitted module defines a closed error enum named
-        // `<Name>Error` carrying `::vello::Error` and
-        // `::vello::wgpu::SurfaceError` with `From` conversions so `?`
-        // propagation works inside the generated `new` / `render`
-        // bodies. R46.3.3 fully-qualified paths.
+        // `<Name>Error` carrying `::vello::Error` (with a `From`
+        // conversion so `?` propagation works for renderer init + frame
+        // submission) and a labelled `Surface(&'static str)` variant for
+        // the wgpu 29 `CurrentSurfaceTexture` non-success states (no
+        // `From`/`?` — the status enum is matched directly in `render`).
+        // R46.3.3 fully-qualified paths.
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Demo" backend="vello"/>"#;
         let rust = compile_str(xml, "demo.pinion.xml").expect("compile");
         assert!(rust.contains("pub enum DemoError {"));
         assert!(rust.contains("Vello(::vello::Error),"));
-        assert!(rust.contains("Surface(::vello::wgpu::SurfaceError),"));
+        assert!(rust.contains("Surface(&'static str),"));
         // std::error::Error + Display impls (fully-qualified)
         assert!(rust.contains("impl ::std::fmt::Display for DemoError"));
         assert!(rust.contains("impl ::std::error::Error for DemoError"));
-        // From impls for ? propagation (fully-qualified)
+        // From impl for ? propagation (vello::Error only; surface
+        // acquisition is a status-enum match, not a `?`-able Result).
         assert!(rust.contains("impl ::std::convert::From<::vello::Error> for DemoError"));
-        assert!(rust.contains("impl ::std::convert::From<::vello::wgpu::SurfaceError> for DemoError"));
+        assert!(!rust.contains("From<::vello::wgpu::SurfaceError>"));
+        // wgpu 29 surface acquisition match (status enum, not Result).
+        assert!(rust.contains("::vello::wgpu::CurrentSurfaceTexture::Success(t)"));
     }
 
     #[test]
     fn emits_renderer_vello_uses_canonical_vello_api_surface() {
-        // The template must use Vello 0.6 canonical surface helpers
+        // The template must use Vello 0.9 canonical surface helpers
         // (RenderContext, RenderSurface, util re-exports) and the
         // render_to_texture + blitter.copy + present pattern — not a
         // hand-rolled wgpu pipeline. R46.3.3: fully-qualified paths
@@ -1087,7 +1092,7 @@ mod tests {
         let rust = compile_str(xml, "x.pinion.xml").expect("compile");
         // No `use vello::*` items — R46.3.3 namespace contract.
         assert!(!rust.contains("use vello::"), "R46.3.3: no `use vello::*` imports in emitted code");
-        // Vello 0.6 canonical pattern markers (fully-qualified)
+        // Vello 0.9 canonical pattern markers (fully-qualified)
         assert!(rust.contains("::vello::util::RenderContext::new()"));
         assert!(rust.contains("render_to_texture("));
         assert!(rust.contains("self.surface.blitter.copy("));

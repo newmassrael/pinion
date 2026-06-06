@@ -159,13 +159,15 @@ pollster = "0.4"
 # §5.16 R41 hybrid path C — Linebender Vello as the UI-mode 2D rasterizer
 # (Phase 1, 18-24mo). R46.2 lands the first pinion-forge emit template
 # targeting this backend; R46.3 wires it into ai-introspect-demo. wgpu is
-# pinned to vello 0.6.x's transitive (vello 0.6.0 → wgpu 26) so consumers
+# pinned to vello 0.9.x's transitive (vello 0.9.0 → wgpu 29) so consumers
 # referencing `wgpu = { workspace = true }` deduplicate against vello's own
 # compile. The emit template itself touches wgpu only through the
 # `vello::wgpu` re-export; the direct workspace pin is forward-compatible
 # slot for R47+ headless renderer template + Phase 3 custom render passes.
-vello = "0.6"
-wgpu = "26"
+# R808 — bumped 0.6 → 0.9 (0.7 stroke-artifact fix / 0.8 wgpu28 / 0.9
+# wgpu29 + perf) to re-verify VELLO-001 (y=0 top-tile flood) upstream.
+vello = "0.9"
+wgpu = "29"
 
 # §5.20 intent system derive macro. Consumed only by pinion-derive.
 syn = { version = "2", features = ["full"] }

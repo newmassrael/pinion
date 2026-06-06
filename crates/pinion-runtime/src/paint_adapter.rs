@@ -158,7 +158,7 @@ fn to_vello_inner<F>(
                 f64::from(s.viewport.x.saturating_add(s.viewport.w)),
                 f64::from(s.viewport.y.saturating_add(s.viewport.h)),
             );
-            out.push_clip_layer(transform, &viewport_clip);
+            out.push_clip_layer(Fill::NonZero, transform, &viewport_clip);
             // Content paints in content-intrinsic coordinates; the
             // scroll container shifts so that content-intrinsic
             // `(0, 0)` lands at viewport `(viewport.x - offset_x,
@@ -675,7 +675,7 @@ fn to_vello_cached_inner<F>(
                 f64::from(s.viewport.x.saturating_add(s.viewport.w)),
                 f64::from(s.viewport.y.saturating_add(s.viewport.h)),
             );
-            sub.push_clip_layer(transform, &viewport_clip);
+            sub.push_clip_layer(Fill::NonZero, transform, &viewport_clip);
             let dx = f64::from(s.viewport.x) - f64::from(s.offset_x);
             let dy = f64::from(s.viewport.y) - f64::from(s.offset_y);
             let child_transform = transform * Affine::translate((dx, dy));
@@ -1066,7 +1066,7 @@ fn paint_image(out: &mut VelloScene, node: &ImageNode, image_cache: &mut ImageCa
     // Cover overflows the rect → clip so the overflow is cropped.
     let clip = matches!(node.style.fit, Fit::Cover);
     if clip {
-        out.push_clip_layer(transform, &KurboRect::new(rx, ry, rx + rw, ry + rh));
+        out.push_clip_layer(Fill::NonZero, transform, &KurboRect::new(rx, ry, rx + rw, ry + rh));
     }
     out.draw_image(&ImageBrush::new(data), place);
     if clip {
@@ -1309,7 +1309,7 @@ fn paint_text(
             f64::from(t.rect.x.saturating_add(t.rect.w)),
             f64::from(t.rect.y.saturating_add(t.rect.h)),
         );
-        out.push_clip_layer(parent_transform, &clip_rect);
+        out.push_clip_layer(Fill::NonZero, parent_transform, &clip_rect);
     }
     for line in layout.lines() {
         for item in line.items() {

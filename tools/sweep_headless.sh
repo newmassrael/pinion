@@ -1,30 +1,34 @@
 #!/usr/bin/env bash
-# tools/sweep_headless.sh — R720 deterministic headless demo sweep.
+# tools/sweep_headless.sh — headless demo sweep (R720 Xvfb / R808 real-GPU).
 #
-# Runs every `tools/demos/*.py` RPC-verification demo inside a single
-# throw-away Xvfb display so the sweep no longer borrows the developer's
-# physical X server (`:0`). Removing the physical display removes the
-# physical cursor, which is the *complete* textbook fix for the class of
-# boot-hover flakiness that R719 (`scene/pointer_leave` + boot baseline)
-# could only mask at the boot instant: under Xvfb the pointer is parked
-# forever, so a window the WM happens to map under the host cursor can no
-# longer receive a spurious boot `CursorMoved` (the R719 root cause).
+# Runs every `tools/demos/*.py` RPC-verification demo against real windowed
+# winit + wgpu shells (the same binaries an end user runs — framework code
+# is untouched per `[[abstraction-needs-second-consumer]]`; this is pure
+# test-harness env-selection).
 #
-# Framework code is untouched (`[[abstraction-needs-second-consumer]]`):
-# this is pure test-harness env-selection, not a pinion RPC-input-only
-# test mode. The framework binaries are the same windowed winit + wgpu
-# shells an end user runs.
+# Two render modes (PINION_SWEEP_MODE):
 #
-# wgpu backend: a windowed winit surface under lavapipe (Vulkan) panics
-# `Out of Memory` on the Xvfb framebuffer (rc=101). The GL/llvmpipe path
-# (`WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1`) creates the surface fine, so
-# the wrapper pins it. This is the same software-render combo CI uses for
-# headless GL; it is NOT the surfaceless `headless_screenshot.rs` (R637)
-# path — these demos are real windowed shells.
+#   realgpu (default, R808) — real GPU via Vulkan on the host X display
+#     (PINION_SWEEP_DISPLAY, default :0). Forced because vello 0.9 + wgpu 29
+#     broke the Xvfb + software-GL path: vello's RenderContext builds its
+#     instance with display:None (upstream TODO), so wgpu 29's GL backend
+#     finds no surface-compatible adapter -> NoCompatibleDevice (VELLO-002).
+#     The host cursor returns (the R720 Xvfb move had removed it), but the
+#     R719 `scene/pointer_leave` boot baseline absorbs the boot-hover, so
+#     the sweep stays green (144/144 verified R808).
+#
+#   xvfb (R720, legacy) — deterministic throw-away Xvfb display +
+#     software-GL (`WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1`); the parked
+#     cursor is the *complete* fix for R719 boot-hover flakiness. Broken on
+#     vello 0.9 by VELLO-002; retained for when the upstream display-handle
+#     fix lands (windowed lavapipe Vulkan still OOMs on the Xvfb buffer, so
+#     GL stays the Xvfb-mode backend). NOT the surfaceless
+#     `headless_screenshot.rs` (R637) path — these are real windowed shells.
 #
 # Usage:
-#   tools/sweep_headless.sh                 # run all demos
+#   tools/sweep_headless.sh                 # run all demos (realgpu mode)
 #   tools/sweep_headless.sh r719 r697       # run only demos whose filename matches a substring
+#   PINION_SWEEP_MODE=xvfb tools/sweep_headless.sh   # legacy Xvfb + GL path
 #
 # Exit 0 iff every selected demo passed.
 
@@ -33,17 +37,22 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT" || exit 2
 
-# --- headless render env (see header) -------------------------------------
-export WGPU_BACKEND="${WGPU_BACKEND:-gl}"
-export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
-# Drop any inherited DISPLAY so a stray `:0` cannot leak the physical
-# server back in; xvfb-run injects its own throw-away DISPLAY.
-unset DISPLAY
-
-if ! command -v xvfb-run >/dev/null 2>&1; then
-  echo "[sweep] FATAL: xvfb-run not found (install the 'xvfb' package)" >&2
-  exit 2
-fi
+# --- render mode ----------------------------------------------------------
+# R808: vello 0.9 + wgpu 29 broke the Xvfb + software-GL path. vello's
+# RenderContext builds its wgpu instance with display:None (an upstream
+# TODO in vello/src/util.rs), so wgpu 29's GL backend enumerates no
+# adapter compatible with the X11 window surface and vello returns
+# NoCompatibleDevice (= VELLO-002). The deterministic Xvfb path is
+# therefore unavailable on vello 0.9 until vello threads the window
+# display handle through.
+#
+# Until then the sweep defaults to a real GPU via Vulkan on the host X
+# display (PINION_SWEEP_DISPLAY, default :0) — 144/144 verified R808.
+# That reintroduces the host cursor the R720 Xvfb move removed, but the
+# R719 scene/pointer_leave boot baseline absorbs the boot-hover so the
+# sweep stays green. Set PINION_SWEEP_MODE=xvfb to restore the old Xvfb +
+# software-GL path once VELLO-002 lands upstream.
+PINION_SWEEP_MODE="${PINION_SWEEP_MODE:-realgpu}"
 
 # --- demo selection -------------------------------------------------------
 declare -a demos=()
@@ -63,12 +72,9 @@ if [ "${#demos[@]}" -eq 0 ]; then
   exit 2
 fi
 
-# --- run all demos under ONE Xvfb display ---------------------------------
-# The whole loop runs inside a single `xvfb-run`, so one virtual display is
-# created for the entire sweep instead of one per demo (faster + a single
-# parked cursor for the whole run).
-# The runner body is a single-quoted string so it survives the xvfb-run
-# boundary intact (exported bash *functions* do not cross xvfb-run's fresh
+# --- run all demos --------------------------------------------------------
+# The runner body is a single-quoted string so it survives the bash -c /
+# xvfb-run boundary intact (exported bash *functions* do not cross a fresh
 # shell). The demo list rides across as positional args.
 # shellcheck disable=SC2016  # intentional: expands in the child bash, not here
 runner='
@@ -88,5 +94,36 @@ runner='
   if [ -n "$failures" ]; then echo "[sweep] FAILURES:$failures" >&2; exit 1; fi
   exit 0
 '
-exec xvfb-run -a -s "-screen 0 1024x768x24" \
-  bash -c "$runner" _ "${demos[@]}"
+
+case "$PINION_SWEEP_MODE" in
+  realgpu)
+    # Real GPU via Vulkan on the host display (VELLO-002 workaround).
+    export WGPU_BACKEND="${WGPU_BACKEND:-vulkan}"
+    export DISPLAY="${PINION_SWEEP_DISPLAY:-:0}"
+    if ! xdpyinfo >/dev/null 2>&1; then
+      echo "[sweep] FATAL: host display $DISPLAY unavailable. A real-GPU X" >&2
+      echo "        server is required while VELLO-002 blocks Xvfb + GL on" >&2
+      echo "        vello 0.9. Set PINION_SWEEP_DISPLAY, or PINION_SWEEP_MODE" >&2
+      echo "        =xvfb once vello threads the window display handle." >&2
+      exit 2
+    fi
+    exec bash -c "$runner" _ "${demos[@]}"
+    ;;
+  xvfb)
+    # Legacy deterministic Xvfb + software-GL path. Broken on vello 0.9 by
+    # VELLO-002; retained for when the upstream display-handle fix lands.
+    export WGPU_BACKEND="${WGPU_BACKEND:-gl}"
+    export LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}"
+    unset DISPLAY
+    if ! command -v xvfb-run >/dev/null 2>&1; then
+      echo "[sweep] FATAL: xvfb-run not found (install the 'xvfb' package)" >&2
+      exit 2
+    fi
+    exec xvfb-run -a -s "-screen 0 1024x768x24" \
+      bash -c "$runner" _ "${demos[@]}"
+    ;;
+  *)
+    echo "[sweep] FATAL: unknown PINION_SWEEP_MODE='$PINION_SWEEP_MODE' (want realgpu|xvfb)" >&2
+    exit 2
+    ;;
+esac
