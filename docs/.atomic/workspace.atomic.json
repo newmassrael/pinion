@@ -31885,6 +31885,50 @@
         "ContextMenu stateful items (checkbox/separator) declared-defer until a real consumer needs them"
       ]
     },
+    "R805.1": {
+      "decision_summary": "Audit-correction (user cost-no-object review): make MenuItem a sum type so illegal states are unrepresentable, and reject intervene checked on non-checkbox items, closing the RPC path to a nonsensical checked-command state; bitmap the example checked snapshot",
+      "changes_bullets": [
+        "Refactor MenuItem struct{kind,checked,enabled} into a sum type enum{Command{enabled},Checkbox{checked,enabled},Separator}; remove MenuItemKind",
+        "Illegal states now unrepresentable: checked exists only on Checkbox, enabled only on interactive variants, a Separator carries neither",
+        "intervene(\"checked.<m>.<i>\") rejects a non-checkbox (ReadOnly) so the RPC surface cannot reach a checked command/separator (activate already respected kind)",
+        "hello-menu MenuState checked snapshot: magic-8 [bool;N] (silent truncation past 8) -> u64 bitmap + shared item_checked accessor"
+      ],
+      "verification_bullets": [
+        "clippy --workspace --all-targets vello clean; test --workspace 134 ok / 0 fail (77 core menu incl new reject test + 26 example)",
+        "r805_menu_stateful.py now 37 assertions (added: intervene checked on a command + separator is rejected over RPC, item stays unchecked)",
+        "Regression PASS: r691_menu, r772_contextmenu; enum change contained to core menu.rs (paint=MenuItemView, example=constructors only)",
+        "The sum type makes the illegal combos uncompilable; the ReadOnly reject closes the one runtime path that previously reached them"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "R705 focus-ring top-edge thick-border render bug stays the R806(a) candidate (pre-existing shell/vello, not menu)",
+        "radio (menuitemradio) still R806: reuses gutter/checked substrate, group-exclusivity is the distinct axis"
+      ],
+      "publishable_decision_summary": "Audit-correction (user cost-no-object review): make MenuItem a sum type so illegal states are unrepresentable, and reject intervene checked on non-checkbox items, closing the RPC path to a nonsensical checked-command state; bitmap the example checked snapshot",
+      "publishable_changes_bullets": [
+        "Refactor MenuItem struct{kind,checked,enabled} into a sum type enum{Command{enabled},Checkbox{checked,enabled},Separator}; remove MenuItemKind",
+        "Illegal states now unrepresentable: checked exists only on Checkbox, enabled only on interactive variants, a Separator carries neither",
+        "intervene(\"checked.<m>.<i>\") rejects a non-checkbox (ReadOnly) so the RPC surface cannot reach a checked command/separator (activate already respected kind)",
+        "hello-menu MenuState checked snapshot: magic-8 [bool;N] (silent truncation past 8) -> u64 bitmap + shared item_checked accessor"
+      ],
+      "publishable_verification_bullets": [
+        "clippy --workspace --all-targets vello clean; test --workspace 134 ok / 0 fail (77 core menu incl new reject test + 26 example)",
+        "r805_menu_stateful.py now 37 assertions (added: intervene checked on a command + separator is rejected over RPC, item stays unchecked)",
+        "Regression PASS: r691_menu, r772_contextmenu; enum change contained to core menu.rs (paint=MenuItemView, example=constructors only)",
+        "The sum type makes the illegal combos uncompilable; the ReadOnly reject closes the one runtime path that previously reached them"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R705 focus-ring top-edge thick-border render bug stays the R806(a) candidate (pre-existing shell/vello, not menu)",
+        "radio (menuitemradio) still R806: reuses gutter/checked substrate, group-exclusivity is the distinct axis"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

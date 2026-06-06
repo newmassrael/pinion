@@ -169,11 +169,6 @@ const MENUS: [&[Item]; 3] = [
     ],
 ];
 
-/// Upper bound on items in any single menu (the live checked-state
-/// snapshot is a fixed-size `Copy` array, the hello-table-multi bitmap
-/// precedent — `MenuState` must stay `Copy`).
-const MAX_ITEMS: usize = 8;
-
 /// Cached projection of the menubar: the open dropdown, the active
 /// (highlighted) item within it, the keyboard-focused top-level title,
 /// and the live checked state of the open menu's items. `Copy` so the
@@ -189,10 +184,21 @@ struct MenuState {
     /// Keyboard-focused top-level title (the cursor that Arrow
     /// Left/Right moves while closed).
     bar_focus: usize,
-    /// Live checked state of the open menu's items (index-aligned with
-    /// `MENUS[open]`; all `false` when closed). Read back from the
-    /// External so the paint reflects runtime toggles.
-    checked: [bool; MAX_ITEMS],
+    /// Live checked state of the open menu's items as a bitmap (bit `i`
+    /// = item `i` checked; `0` when closed). Read back from the External
+    /// so the paint reflects runtime toggles. A `u64` keeps `MenuState`
+    /// `Copy` without an arbitrary item cap (64 ≫ any real menu; the
+    /// R805.1 audit replaced a magic-8 `[bool; N]` that silently
+    /// truncated).
+    checked: u64,
+}
+
+impl MenuState {
+    /// Whether the open menu's item `i` is checked (bit `i` of the
+    /// snapshot bitmap). The single read accessor the paint + a11y share.
+    const fn item_checked(self, i: usize) -> bool {
+        i < 64 && (self.checked >> i) & 1 != 0
+    }
 }
 
 /// view-fn (§6.3): pure sync mapping `MenuState -> Scene`. The
@@ -258,7 +264,7 @@ fn view(state: MenuState, _frame: &Frame) -> Scene {
         let items: Vec<MenuItemView> = MENUS[m]
             .iter()
             .enumerate()
-            .map(|(i, it)| it.to_view(state.checked.get(i).copied().unwrap_or(false)))
+            .map(|(i, it)| it.to_view(state.item_checked(i)))
             .collect();
         children.push(view_menu_dropdown(
             BAR_TAG,
@@ -323,12 +329,14 @@ impl WidgetCore for MenuView {
         // R805 — snapshot the open menu's live checked state so the paint
         // reflects runtime toggles (closed -> all false by default).
         if let Some(m) = out.open {
-            let count = MENUS[m].len().min(MAX_ITEMS);
+            let count = MENUS[m].len().min(64);
             for i in 0..count {
-                out.checked[i] = matches!(
+                if matches!(
                     intro.query(&format!("checked.{m}.{i}")),
                     Some(IntrospectValue::Bool(true))
-                );
+                ) {
+                    out.checked |= 1 << i;
+                }
             }
         }
         out
@@ -449,7 +457,7 @@ impl WidgetA11y for MenuView {
                     ..AccessState::default()
                 };
                 if let Item::Checkbox(..) = item {
-                    item_state.checked = Some(state.checked.get(i).copied().unwrap_or(false));
+                    item_state.checked = Some(state.item_checked(i));
                 }
                 if let Item::DisabledCommand(..) = item {
                     item_state.disabled = true;
@@ -648,7 +656,7 @@ mod a11y_tests {
     #[test]
     fn r805_view_checkbox_items_carry_role_and_aria_checked() {
         let mut state = open_menu(2, None);
-        state.checked[0] = true; // Show Grid checked, Show Rulers (1) not.
+        state.checked |= 1; // bit 0 = Show Grid checked, Show Rulers (1) not.
         let nodes = MenuView::access_node(&state, None);
         let grid = nodes.iter().find(|n| n.tag == "menu#i0").unwrap();
         assert_eq!(grid.role, AriaRole::MenuItemCheckbox);

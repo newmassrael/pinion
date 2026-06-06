@@ -174,6 +174,24 @@ def body() -> None:
         assert_eq(tf.query("/external/checked.2.0"), True, "intervene set checked")
         _assert_no_command(tf, "intervene checked")
 
+        # ── (G) R805.1 — intervene checked on a non-checkbox is rejected ─
+        # View item 3 (Zoom In) is a command, item 2 a separator: neither
+        # has a writable checked slot, so the RPC surface cannot reach a
+        # nonsensical "checked command" state (sum-type model + ReadOnly).
+        rejected = False
+        try:
+            tf.intervene("/external/checked.2.3", True)  # Zoom In = command
+        except Exception:  # noqa: BLE001 - RpcError surfaces the ReadOnly reject
+            rejected = True
+        assert rejected, "intervene checked on a command must be rejected"
+        assert_eq(tf.query("/external/checked.2.3"), False, "command stays unchecked")
+        rejected_sep = False
+        try:
+            tf.intervene("/external/checked.2.2", True)  # separator
+        except Exception:  # noqa: BLE001
+            rejected_sep = True
+        assert rejected_sep, "intervene checked on a separator must be rejected"
+
 
 if __name__ == "__main__":
     sys.exit(run_demo("R805 §5.40 — stateful menu items", body))

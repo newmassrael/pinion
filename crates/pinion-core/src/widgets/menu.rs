@@ -89,69 +89,99 @@ use crate::input::PointerWireEvent;
 use crate::widgets::wire::resolve_index;
 use crate::widgets::IntentEmitter;
 
-/// R805 §5.40 — the WAI-ARIA 1.2 menu-item taxonomy a dropdown item can
-/// carry. The R691 first slice modelled every item as a one-shot
-/// [`Self::Command`]; R805 adds the stateful + structural kinds.
+/// R805 §5.40 — one dropdown item: the WAI-ARIA 1.2 menu-item taxonomy.
+/// A sum type so illegal states are unrepresentable (R805.1 audit: the
+/// prior `{ kind, checked, enabled }` struct let a `Separator` carry a
+/// `checked` flag, and `intervene("checked", …)` could set it on a
+/// non-checkbox — both nonsensical). `checked` now exists *only* on
+/// [`Self::Checkbox`]; `enabled` only on the interactive variants; a
+/// [`Self::Separator`] carries neither.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MenuItemKind {
+pub enum MenuItem {
     /// A one-shot command (WAI-ARIA `menuitem`): activating it fires the
-    /// `"command"` intent and dismisses the menu. Carries no persistent
-    /// state.
-    Command,
-    /// A toggle (WAI-ARIA `menuitemcheckbox`): activating it flips the
-    /// item's persistent [`MenuItem::checked`] state, fires `"command"`,
-    /// and dismisses. The checked state survives close / reopen.
-    Checkbox,
+    /// `"command"` intent and dismisses the menu. `enabled == false`
+    /// greys it and makes it inert.
+    Command {
+        /// Whether the command is interactive.
+        enabled: bool,
+    },
+    /// A toggle (WAI-ARIA `menuitemcheckbox`): activating it flips
+    /// `checked` (which survives close / reopen), fires `"command"`, and
+    /// dismisses.
+    Checkbox {
+        /// Persistent checked state.
+        checked: bool,
+        /// Whether the toggle is interactive.
+        enabled: bool,
+    },
     /// A non-interactive divider (WAI-ARIA `separator`): never navigable,
     /// never activatable — it only sections the dropdown visually.
     Separator,
-}
-
-/// R805 §5.40 — one dropdown item: its [`MenuItemKind`], persistent
-/// `checked` state (meaningful only for [`MenuItemKind::Checkbox`]), and
-/// whether it is `enabled`. A disabled item paints muted, is skipped by
-/// keyboard / hover navigation, and cannot be activated.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct MenuItem {
-    /// The WAI-ARIA item kind.
-    pub kind: MenuItemKind,
-    /// Persistent checked state ([`MenuItemKind::Checkbox`] only).
-    pub checked: bool,
-    /// Whether the item is enabled (interactive).
-    pub enabled: bool,
 }
 
 impl MenuItem {
     /// A one-shot enabled command item.
     #[must_use]
     pub const fn command() -> Self {
-        Self { kind: MenuItemKind::Command, checked: false, enabled: true }
+        Self::Command { enabled: true }
     }
 
     /// An enabled checkbox item with the given initial checked state.
     #[must_use]
     pub const fn checkbox(checked: bool) -> Self {
-        Self { kind: MenuItemKind::Checkbox, checked, enabled: true }
+        Self::Checkbox { checked, enabled: true }
     }
 
     /// A non-interactive divider.
     #[must_use]
     pub const fn separator() -> Self {
-        Self { kind: MenuItemKind::Separator, checked: false, enabled: false }
+        Self::Separator
     }
 
     /// Builder: mark this item disabled (greyed, skipped, non-activatable).
+    /// A [`Self::Separator`] is already inert, so this is a no-op there.
     #[must_use]
-    pub const fn disabled(mut self) -> Self {
-        self.enabled = false;
-        self
+    pub const fn disabled(self) -> Self {
+        match self {
+            Self::Command { .. } => Self::Command { enabled: false },
+            Self::Checkbox { checked, .. } => Self::Checkbox { checked, enabled: false },
+            Self::Separator => Self::Separator,
+        }
     }
 
     /// Whether keyboard / hover navigation may land on this item, and
     /// whether activation has any effect: every enabled non-separator.
     #[must_use]
     pub const fn is_navigable(&self) -> bool {
-        self.enabled && !matches!(self.kind, MenuItemKind::Separator)
+        matches!(
+            self,
+            Self::Command { enabled: true } | Self::Checkbox { enabled: true, .. }
+        )
+    }
+
+    /// The persistent checked state (`false` for non-checkbox items).
+    #[must_use]
+    pub const fn checked(&self) -> bool {
+        matches!(self, Self::Checkbox { checked: true, .. })
+    }
+
+    /// Whether the item is enabled (`false` for a separator).
+    #[must_use]
+    pub const fn enabled(&self) -> bool {
+        match self {
+            Self::Command { enabled } | Self::Checkbox { enabled, .. } => *enabled,
+            Self::Separator => false,
+        }
+    }
+
+    /// The WAI-ARIA wire name for this item's role (`item_kind` query).
+    #[must_use]
+    pub const fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Command { .. } => "command",
+            Self::Checkbox { .. } => "checkbox",
+            Self::Separator => "separator",
+        }
     }
 }
 
@@ -260,7 +290,7 @@ impl MenuBar {
 
     /// Activate item `i` of the open menu: returns `Some((menu, item))`
     /// and closes the menu when valid, `None` otherwise. A separator /
-    /// disabled item is inert (R805). A [`MenuItemKind::Checkbox`] flips
+    /// disabled item is inert (R805). A [`MenuItem::Checkbox`] flips
     /// its persistent `checked` state before closing. The caller
     /// (the [`MenuBarExternal`] adapter) emits the `"command"` intent
     /// from the returned coordinates.
@@ -270,8 +300,8 @@ impl MenuBar {
         if !item.is_navigable() {
             return None;
         }
-        if item.kind == MenuItemKind::Checkbox {
-            item.checked = !item.checked;
+        if let MenuItem::Checkbox { checked, .. } = item {
+            *checked = !*checked;
         }
         self.close();
         self.bar_focus = m;
@@ -569,16 +599,6 @@ fn parse_menu_item(suffix: &str) -> Option<(usize, usize)> {
     Some((m.parse().ok()?, i.parse().ok()?))
 }
 
-/// R805 — the WAI-ARIA wire name for a [`MenuItemKind`] (`item_kind`
-/// query value): the inverse of how an AI client reads an item's role.
-fn item_kind_name(kind: MenuItemKind) -> &'static str {
-    match kind {
-        MenuItemKind::Command => "command",
-        MenuItemKind::Checkbox => "checkbox",
-        MenuItemKind::Separator => "separator",
-    }
-}
-
 /// `Some(i)` → `Int(i)`, `None` → `Null` — shared optional-index
 /// lowering for `query` / the `send` return value.
 fn open_value(idx: Option<usize>) -> IntrospectValue {
@@ -672,16 +692,15 @@ impl ExternalIntrospect for MenuBarExternal {
                 // R805 — per-item stateful slots, keyed `<menu>.<item>`.
                 if let Some(suffix) = path.strip_prefix("item_kind.") {
                     let (m, i) = parse_menu_item(suffix)?;
-                    let item = self.item(m, i)?;
-                    return Some(IntrospectValue::Text(item_kind_name(item.kind).to_owned()));
+                    return Some(IntrospectValue::Text(self.item(m, i)?.kind_name().to_owned()));
                 }
                 if let Some(suffix) = path.strip_prefix("checked.") {
                     let (m, i) = parse_menu_item(suffix)?;
-                    return Some(IntrospectValue::Bool(self.item(m, i)?.checked));
+                    return Some(IntrospectValue::Bool(self.item(m, i)?.checked()));
                 }
                 if let Some(suffix) = path.strip_prefix("enabled.") {
                     let (m, i) = parse_menu_item(suffix)?;
-                    return Some(IntrospectValue::Bool(self.item(m, i)?.enabled));
+                    return Some(IntrospectValue::Bool(self.item(m, i)?.enabled()));
                 }
                 None
             }
@@ -730,6 +749,9 @@ impl ExternalIntrospect for MenuBarExternal {
             },
             // R805 — programmatic checkbox toggle `checked.<menu>.<item>`
             // (RPC restore / form default; fires no `"command"` intent).
+            // R805.1 — only a [`MenuItem::Checkbox`] has a writable checked
+            // slot; a command / separator rejects (`ReadOnly`), so the RPC
+            // surface cannot reach the nonsensical "checked command" state.
             _ => {
                 let suffix = path
                     .strip_prefix("checked.")
@@ -742,11 +764,12 @@ impl ExternalIntrospect for MenuBarExternal {
                     .get_mut(m)
                     .and_then(|menu| menu.get_mut(i))
                     .ok_or(InterveneError::OutOfRange)?;
-                match value {
-                    IntrospectValue::Bool(b) => {
-                        item.checked = b;
+                match (value, item) {
+                    (IntrospectValue::Bool(b), MenuItem::Checkbox { checked, .. }) => {
+                        *checked = b;
                         Ok(())
                     }
+                    (IntrospectValue::Bool(_), _) => Err(InterveneError::ReadOnly),
                     _ => Err(InterveneError::TypeMismatch),
                 }
             }
@@ -1285,14 +1308,14 @@ mod tests {
         m.toggle_title(0);
         // Activate the unchecked checkbox (item 1) -> toggles on + closes.
         assert_eq!(m.activate_item(1), Some((0, 1)));
-        assert!(m.item(0, 1).unwrap().checked, "checkbox toggled on");
+        assert!(m.item(0, 1).unwrap().checked(), "checkbox toggled on");
         assert_eq!(m.open_menu(), None, "activation closes");
         // Reopen: the checked state survived.
         m.toggle_title(0);
-        assert!(m.item(0, 1).unwrap().checked, "checked persists across reopen");
+        assert!(m.item(0, 1).unwrap().checked(), "checked persists across reopen");
         // Toggle it back off.
         assert_eq!(m.activate_item(1), Some((0, 1)));
-        assert!(!m.item(0, 1).unwrap().checked, "checkbox toggled off");
+        assert!(!m.item(0, 1).unwrap().checked(), "checkbox toggled off");
     }
 
     #[test]
@@ -1391,6 +1414,35 @@ mod tests {
     }
 
     #[test]
+    fn r805_1_intervene_checked_rejects_non_checkbox() {
+        // R805.1 — only a Checkbox has a writable checked slot. A command
+        // or separator rejects (ReadOnly), so the RPC surface cannot reach
+        // the nonsensical "checked command / separator" state the sum-type
+        // model already makes unrepresentable in code.
+        let mut e = MenuBarExternal::with_items(vec![vec![
+            MenuItem::command(),
+            MenuItem::separator(),
+            MenuItem::checkbox(false),
+        ]]);
+        assert_eq!(
+            e.intervene("checked.0.0", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly),
+            "command has no writable checked slot"
+        );
+        assert_eq!(
+            e.intervene("checked.0.1", IntrospectValue::Bool(true)),
+            Err(InterveneError::ReadOnly),
+            "separator has no writable checked slot"
+        );
+        // The command / separator still report checked = false.
+        assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("checked.0.1"), Some(IntrospectValue::Bool(false)));
+        // The checkbox accepts it.
+        e.intervene("checked.0.2", IntrospectValue::Bool(true)).unwrap();
+        assert_eq!(e.query("checked.0.2"), Some(IntrospectValue::Bool(true)));
+    }
+
+    #[test]
     fn r805_external_send_checkbox_activation_toggles_and_emits() {
         let mut e = MenuBarExternal::with_items(vec![vec![
             MenuItem::command(),
@@ -1401,7 +1453,7 @@ mod tests {
         for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
             e.invoke("send", IntrospectValue::Text(format!("i1:{ev}"))).unwrap();
         }
-        assert!(e.item(0, 1).unwrap().checked, "checkbox toggled on via send");
+        assert!(e.item(0, 1).unwrap().checked(), "checkbox toggled on via send");
         assert_eq!(e.open_menu(), None, "activation closes");
         let mut got = Vec::new();
         e.drain_intents(&mut |i| got.push(i));
