@@ -32171,6 +32171,60 @@
         "headless sweep now needs real-GPU :0+Vulkan; xvfb+GL returns once VELLO-002 lands upstream"
       ]
     },
+    "R809": {
+      "decision_summary": "R809 §5.38 §5.27 — complete the WAI-ARIA APG Tree keyboard model in hello-tree-view (Arrow Right descends to first child, Arrow Left ascends to parent), route the vertical axis through the clamp_nav SSOT (clamp not wrap, +Page keys), and add type-ahead via the pinion_shell::typeahead substrate; tree-specific helpers stay inline (only tree-keyboard consumer) so no framework code is added.",
+      "changes_bullets": [
+        "hello-tree-view: pure resolve_tree_key(nodes,current,key,page)->TreeKey (Owner-free, unit-testable)",
+        "ArrowRight: collapsed branch expands; already-expanded branch focuses first child (R673 future axis)",
+        "ArrowLeft: expanded branch collapses; collapsed branch / leaf ascends to parent (R673 future axis)",
+        "Up/Down/Home/End/PageUp/PageDown now delegate to the clamp_nav SSOT (clamp not wrap; +Page keys)",
+        "type-ahead: a printable key jumps to the next matching visible row via pinion_shell::typeahead",
+        "flat_visible->Vec<VisibleRow{id,label}>; node_flags / first_child_id / parent_id tree-walk helpers",
+        "set_expanded_in_signal(value) sibling of toggle_expanded_in_signal for the expand/collapse arms",
+        "footer + module doc updated to the WAI-ARIA-complete keyboard contract; no framework crate change"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 134 result-groups green (18 new resolver tests + 10 existing example tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean under -D pedantic",
+        "new demo tools/demos/r809_tree_keyboard_waiaria.py: PASS (realgpu, wait_until-polled, >=36 assertions)",
+        "r673_tree_view_interactive.py: PASS after wrap->clamp doc + leaf-section update (no edge-wrap asserted)",
+        "resolver tests cover clamp-at-ends, Page, Right->child, Left->parent, leaf no-op, printable->Unhandled"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "TreeNav substrate lift deferred: hello-tree-view is still the only tree-keyboard consumer (R671 inspector is read-only); lift at the 2nd interactive tree (file-tree editor / property grid / scene outliner) per abstraction-needs-second-consumer",
+        "tree virtualization stays Phase-D-deferred (tree_view.rs doc); multi-select / drag-drop / inline rename deferred to future consumers"
+      ],
+      "publishable_decision_summary": "R809 §5.38 §5.27 — complete the WAI-ARIA APG Tree keyboard model in hello-tree-view (Arrow Right descends to first child, Arrow Left ascends to parent), route the vertical axis through the clamp_nav SSOT (clamp not wrap, +Page keys), and add type-ahead via the pinion_shell::typeahead substrate; tree-specific helpers stay inline (only tree-keyboard consumer) so no framework code is added.",
+      "publishable_changes_bullets": [
+        "hello-tree-view: pure resolve_tree_key(nodes,current,key,page)->TreeKey (Owner-free, unit-testable)",
+        "ArrowRight: collapsed branch expands; already-expanded branch focuses first child (R673 future axis)",
+        "ArrowLeft: expanded branch collapses; collapsed branch / leaf ascends to parent (R673 future axis)",
+        "Up/Down/Home/End/PageUp/PageDown now delegate to the clamp_nav SSOT (clamp not wrap; +Page keys)",
+        "type-ahead: a printable key jumps to the next matching visible row via pinion_shell::typeahead",
+        "flat_visible->Vec<VisibleRow{id,label}>; node_flags / first_child_id / parent_id tree-walk helpers",
+        "set_expanded_in_signal(value) sibling of toggle_expanded_in_signal for the expand/collapse arms",
+        "footer + module doc updated to the WAI-ARIA-complete keyboard contract; no framework crate change"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 134 result-groups green (18 new resolver tests + 10 existing example tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean under -D pedantic",
+        "new demo tools/demos/r809_tree_keyboard_waiaria.py: PASS (realgpu, wait_until-polled, >=36 assertions)",
+        "r673_tree_view_interactive.py: PASS after wrap->clamp doc + leaf-section update (no edge-wrap asserted)",
+        "resolver tests cover clamp-at-ends, Page, Right->child, Left->parent, leaf no-op, printable->Unhandled"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TreeNav substrate lift deferred: hello-tree-view is still the only tree-keyboard consumer (R671 inspector is read-only); lift at the 2nd interactive tree (file-tree editor / property grid / scene outliner) per abstraction-needs-second-consumer",
+        "tree virtualization stays Phase-D-deferred (tree_view.rs doc); multi-select / drag-drop / inline rename deferred to future consumers"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -15,14 +15,17 @@ R673 atomic 3 verification scope (≥30 assertions):
   (B) initial visible rows — fresh boot focused on `src` with
       `src` expanded (3 children visible) + `tests` collapsed +
       `docs` collapsed.
-  (C) Arrow Up/Down navigation cycles through visible rows with
-      wrap-around at edges.
+  (C) Arrow Up/Down navigation moves through visible rows, clamping
+      at the edges (R809 made the vertical axis clamp, not wrap — see
+      r809_tree_keyboard_waiaria.py for the WAI-ARIA edge tests).
   (D) Arrow Right expands the focused branch (`tests` →
       tests/integration.rs + tests/snapshot.rs visible).
   (E) Arrow Left collapses the focused branch.
   (F) Space toggles expand on the focused branch.
   (G) Home / End jump to first / last visible row.
-  (H) Leaves do not respond to Arrow Right / Left / Space (no-op).
+  (H) Arrow Right on a leaf is a no-op (no children to expand). The
+      richer leaf semantics R809 completed (Arrow Left ascends to the
+      parent, type-ahead) live in r809_tree_keyboard_waiaria.py.
 """
 
 from __future__ import annotations
@@ -207,36 +210,26 @@ def body() -> None:
             "Space toggle (2nd press) on docs must collapse it"
         )
 
-        # ── (H) Leaves are no-op on expand keys ─────────────────────
-        # Navigate to a leaf (src/lib.rs).
+        # ── (H) Arrow Right on a leaf is a no-op (no children) ──────
+        # Navigate to a leaf (src/lib.rs). R809 completed the other
+        # leaf keys (Arrow Left = ascend to parent, type-ahead); those
+        # are exercised in r809_tree_keyboard_waiaria.py. Here we keep
+        # the one behaviour that is still a true in-place no-op.
         tf.key(at=(10.0, 10.0), name="Home")  # back to src
         time.sleep(0.15)
         tf.key(at=(10.0, 10.0), name="ArrowDown")  # main.rs
         time.sleep(0.15)
-        tf.key(at=(10.0, 10.0), name="ArrowDown")  # lib.rs
+        tf.key(at=(10.0, 10.0), name="ArrowDown")  # lib.rs (leaf)
         time.sleep(0.15)
         snap = tf.snapshot(source="paint", viewport=(480, 400))
         focus = _focused_row_id(snap)
         assert focus == "src/lib.rs"
         rows_before = set(_row_tags(snap))
-        # Arrow Right / Left / Space on leaf → no change to row set.
         tf.key(at=(10.0, 10.0), name="ArrowRight")
         time.sleep(0.2)
         snap = tf.snapshot(source="paint", viewport=(480, 400))
         assert set(_row_tags(snap)) == rows_before, (
             "Arrow Right on leaf must not change visible rows"
-        )
-        tf.key(at=(10.0, 10.0), name="ArrowLeft")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        assert set(_row_tags(snap)) == rows_before, (
-            "Arrow Left on leaf must not change visible rows"
-        )
-        tf.key(at=(10.0, 10.0), name="Space")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        assert set(_row_tags(snap)) == rows_before, (
-            "Space on leaf must not change visible rows"
         )
 
         # ── (D) Expand tests branch + verify children appear ────────

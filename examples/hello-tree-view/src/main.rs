@@ -22,36 +22,56 @@
 //! focused branch, and a Material 3 focused-row state-layer overlay
 //! that follows the keyboard cursor.
 //!
-//! ## Keyboard model (WAI-ARIA 1.2 §6.13 Tree)
+//! ## Keyboard model (WAI-ARIA 1.2 Tree, APG 6.13 — completed at R809)
 //!
-//! - Arrow Up — move focus to the previous visible row (wraps at
-//!   the top of the tree).
-//! - Arrow Down — move focus to the next visible row (wraps at the
-//!   bottom).
-//! - Arrow Right — expand the focused branch (no-op on leaves and
-//!   already-expanded branches; future axis: descend into the first
-//!   child when already expanded, per the WAI-ARIA spec extended
-//!   behaviour).
-//! - Arrow Left — collapse the focused branch (no-op on leaves;
-//!   future axis: jump to parent when already collapsed, per the
-//!   WAI-ARIA spec extended behaviour).
-//! - Home — focus the first visible row.
-//! - End — focus the last visible row.
+//! R673 shipped the arrow skeleton with two declared *future axes*
+//! (Right-descends-into-child / Left-ascends-to-parent) and a
+//! non-canonical wrap-at-edges Up/Down. R809 completes the WAI-ARIA
+//! APG Tree keyboard contract and routes the vertical axis through the
+//! shared `clamp_nav` SSOT (clamp, not wrap — a tree has ends), so the
+//! tree now navigates byte-identically to the virtualized list / grid:
+//!
+//! - Arrow Up / Down — move focus to the previous / next visible row.
+//!   **Clamp at the ends** (no wrap), via
+//!   [`clamp_nav`](pinion_core::widgets::virtual_select::clamp_nav) —
+//!   the same finite-collection policy `hello-virtual-nav` reuses.
+//! - Page Up / Page Down — jump a viewport-ful of rows
+//!   ([`NAV_PAGE`]), clamped, also through `clamp_nav`.
+//! - Arrow Right — on a *collapsed* branch, expand it; on an
+//!   *already-expanded* branch, move focus to its **first child**; a
+//!   no-op on leaves (WAI-ARIA APG 6.13 expand-or-descend).
+//! - Arrow Left — on an *expanded* branch, collapse it; on a
+//!   *collapsed* branch or a leaf, move focus to its **parent**; a
+//!   no-op at a root with no parent (WAI-ARIA APG 6.13
+//!   collapse-or-ascend).
+//! - Home — focus the first visible row; End — the last.
 //! - Space / Enter — toggle expanded on the focused branch (no-op
 //!   on leaves).
+//! - A printable character — **type-ahead** to the next visible row
+//!   whose label matches, via the
+//!   [`pinion_shell::typeahead`](pinion_shell::typeahead) substrate
+//!   (this binding is the `TreeView` consumer that substrate's module
+//!   doc named as a future taker). Single-char taps cycle; multi-char
+//!   within [`TYPEAHEAD_TIMEOUT`](pinion_shell::typeahead::TYPEAHEAD_TIMEOUT)
+//!   match a growing prefix (WAI-ARIA APG text-search algorithm).
 //!
-//! ## Non-goals for R673
+//! ## Why no new substrate (R809)
 //!
-//! Click-to-expand: routing tag-scoped click events into per-row
-//! `ExtraExternal` handlers is the canonical pattern (`composite_tag`
-//! 5-of-5 in todomvc) but multiplies binding LOC linearly with the
-//! row count. R673 demonstrates keyboard-driven interactivity as the
-//! WAI-ARIA spec's primary model; click-to-expand is a future axis
-//! once a real consumer (file-tree editor, property grid) surfaces
-//! the substrate-incompleteness signal.
+//! The arrow / page vertical motion delegates to the existing
+//! `clamp_nav` SSOT and type-ahead delegates to the existing
+//! `typeahead` substrate — R809 adds *no* framework code, only
+//! consumes two SSOTs the family already owns. The tree-specific
+//! pieces (the visible-row flattening, the Right-descend / Left-ascend
+//! traversal) stay inline here: `hello-tree-view` is still the *only*
+//! tree-keyboard consumer, so per [[abstraction-needs-second-consumer]]
+//! a `TreeNav` substrate waits for the second interactive tree
+//! (file-tree editor, property grid, scene outliner).
+//!
+//! ## Non-goals
 //!
 //! Multi-select, drag-drop, inline rename: all deferred to future
-//! consumers per [[abstraction-needs-second-consumer]].
+//! consumers per [[abstraction-needs-second-consumer]]. Click-to-toggle
+//! is already wired (R674 [`TreeRowClickExternal`]).
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::external::IntrospectValue;
@@ -64,8 +84,13 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+use pinion_core::widgets::virtual_select::clamp_nav;
 use pinion_core::{reactive, Frame, Owner, Scene, Signal, WidgetCore};
+use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::Instant;
 use pinion_widget_paint::tree_view::{
     view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
 };
@@ -80,6 +105,14 @@ const THEME_TAG: &str = "app";
 
 const WIN_W: u32 = 480;
 const WIN_H: u32 = 400;
+
+/// R809 §5.50 — Page Up / Page Down jump size, in visible rows. The
+/// content viewport (window height minus the header / footer / padding
+/// chrome) holds roughly `(400 - ~64) / 48 ≈ 7` M3 rows, so a
+/// page-key advances a near-viewport-ful. `clamp_nav` clamps the
+/// result to the listing's ends, so an over-shoot on a short tree just
+/// lands on the first / last visible row.
+const NAV_PAGE: usize = 7;
 
 /// R674 §5.20 — dotted wire-form intent tag the [`WidgetView::update`]
 /// reducer matches against for click-driven row toggles. Compile-time
@@ -236,7 +269,8 @@ fn view(state: ButtonState) -> Scene {
             .with_fg(on_surface_muted),
     ));
     let footer = Scene::Text(TextNode::styled(
-        "\u{2191}/\u{2193} navigate  \u{2192} expand  \u{2190} collapse  Space toggle  Home/End jump",
+        "\u{2191}/\u{2193} navigate  \u{2192} expand/child  \u{2190} collapse/parent  \
+         PgUp/PgDn page  A-Z jump  Space toggle  Home/End",
         Rect::default(),
         TextStyle::new()
             .with_size_px(FOOTER_FONT_PX)
@@ -280,25 +314,39 @@ fn view(state: ButtonState) -> Scene {
     )
 }
 
-/// Recursive helper: append `node.id` then recurse into expanded
-/// children. Hoisted out of [`flat_visible_ids`] so
+/// R809 §5.16 §5.50 — one visible row in the depth-first flattening of
+/// the tree: the stable id (composite-tag suffix) plus the visible
+/// label (the type-ahead search key). The flat sequence is exactly
+/// what `view_tree_focused` paints — a collapsed branch contributes
+/// its own row but hides its descendants.
+struct VisibleRow {
+    id: String,
+    label: String,
+}
+
+/// Recursive helper: append `node` then recurse into expanded
+/// children. Hoisted out of [`flat_visible`] so
 /// `clippy::items_after_statements` stays clean.
-fn walk_visible_ids(node: &FileNode, out: &mut Vec<String>) {
-    out.push(node.id.clone());
+fn walk_visible(node: &FileNode, out: &mut Vec<VisibleRow>) {
+    out.push(VisibleRow {
+        id: node.id.clone(),
+        label: node.label.clone(),
+    });
     if node.expanded {
         for child in &node.children {
-            walk_visible_ids(child, out);
+            walk_visible(child, out);
         }
     }
 }
 
-/// R673 §5.50 — DFS walk that produces the flat visible-row sequence
-/// (exactly what `view_tree_focused` paints). Used by `apply_key` to
-/// resolve Arrow Up/Down/Home/End targets in O(visible rows).
-fn flat_visible_ids(nodes: &[FileNode]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+/// R673 §5.50 / R809 — DFS walk producing the flat visible-row
+/// sequence (exactly what `view_tree_focused` paints). The vertical
+/// keyboard axis ([`clamp_nav`]) and type-ahead both index into this
+/// sequence in O(visible rows).
+fn flat_visible(nodes: &[FileNode]) -> Vec<VisibleRow> {
+    let mut out: Vec<VisibleRow> = Vec::new();
     for node in nodes {
-        walk_visible_ids(node, &mut out);
+        walk_visible(node, &mut out);
     }
     out
 }
@@ -318,16 +366,50 @@ fn find_node_mut<'a>(
     None
 }
 
-fn has_children(nodes: &[FileNode], target_id: &str) -> bool {
+/// R809 §5.50 — `(has_children, expanded)` for `target_id`, or `None`
+/// when the id is absent. The two flags drive the WAI-ARIA Arrow
+/// Right / Left expand-or-descend / collapse-or-ascend branch.
+fn node_flags(nodes: &[FileNode], target_id: &str) -> Option<(bool, bool)> {
     for node in nodes {
         if node.id == target_id {
-            return !node.children.is_empty();
+            return Some((!node.children.is_empty(), node.expanded));
         }
-        if has_children(&node.children, target_id) {
-            return true;
+        if let Some(found) = node_flags(&node.children, target_id) {
+            return Some(found);
         }
     }
-    false
+    None
+}
+
+/// R809 §5.50 — the first child id of `target_id` (WAI-ARIA Arrow
+/// Right "descend into the first child" when already expanded). `None`
+/// when the id is absent or is a leaf.
+fn first_child_id(nodes: &[FileNode], target_id: &str) -> Option<String> {
+    for node in nodes {
+        if node.id == target_id {
+            return node.children.first().map(|c| c.id.clone());
+        }
+        if let Some(found) = first_child_id(&node.children, target_id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// R809 §5.50 — the parent id of `target_id` (WAI-ARIA Arrow Left
+/// "ascend to parent" when collapsed or a leaf). `None` at a
+/// root-level node (no parent) or when the id is absent. `parent`
+/// threads the current ancestor down the recursion.
+fn parent_id(nodes: &[FileNode], target_id: &str, parent: Option<&str>) -> Option<String> {
+    for node in nodes {
+        if node.id == target_id {
+            return parent.map(str::to_string);
+        }
+        if let Some(found) = parent_id(&node.children, target_id, Some(&node.id)) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 /// R674 §5.50 — single source of truth for "toggle the expanded flag
@@ -355,106 +437,164 @@ fn toggle_expanded_in_signal(nodes_signal: &Signal<Vec<FileNode>>, id: &str) {
     });
 }
 
-fn apply_key_impl(key: &str) -> bool {
-    let tree_state = use_tree_state();
-    let nodes_clone = tree_state.nodes.get();
-    let visible_ids = flat_visible_ids(&nodes_clone);
-    if visible_ids.is_empty() {
+/// R809 §5.50 — set the expanded flag on branch `id` to `expanded`
+/// (the Arrow Right "expand" / Arrow Left "collapse" arms, which set a
+/// specific value rather than [`toggle_expanded_in_signal`]'s flip).
+/// A leaf or a redundant set is a no-op (no Signal write, no repaint).
+/// [`reactive::batch`]ed like its toggle sibling.
+fn set_expanded_in_signal(nodes_signal: &Signal<Vec<FileNode>>, id: &str, expanded: bool) {
+    reactive::batch(|| {
+        let mut nodes = nodes_signal.get();
+        if let Some(node) = find_node_mut(&mut nodes, id) {
+            if node.children.is_empty() || node.expanded == expanded {
+                return;
+            }
+            node.expanded = expanded;
+            nodes_signal.set(nodes);
+        }
+    });
+}
+
+/// R809 §5.16 §5.50 — the outcome of resolving one key against the
+/// tree, decoupled from the reactive [`TreeState`] mutation so the
+/// WAI-ARIA Tree keyboard contract is unit-testable without an
+/// [`Owner`] scope. [`apply_key_impl`] applies the outcome to the
+/// signals; [`resolve_tree_key`] is pure over `&[FileNode]`.
+#[derive(Debug, PartialEq, Eq)]
+enum TreeKey {
+    /// Move the keyboard cursor to this visible row id.
+    Focus(String),
+    /// Expand this collapsed branch.
+    Expand(String),
+    /// Collapse this expanded branch.
+    Collapse(String),
+    /// Toggle this branch's expanded flag (Space / Enter).
+    Toggle(String),
+    /// A recognised navigation key with no state change (clamp at an
+    /// end, Arrow Right on a leaf, Arrow Left at a parent-less root).
+    /// Consumed so it does not fall through to type-ahead.
+    Consumed,
+    /// Not a navigation key — the caller tries type-ahead next.
+    Unhandled,
+}
+
+/// R809 §5.16 §5.50 — pure WAI-ARIA APG 6.13 Tree keyboard resolver.
+/// `current` is the focused row id; `page` is the Page Up/Down jump
+/// size. Vertical motion (Up/Down/Home/End/PageUp/PageDown) delegates
+/// to the shared [`clamp_nav`] SSOT over the flat visible-row index
+/// (clamp, not wrap — a tree has ends); Arrow Right / Left implement
+/// the tree-specific expand-or-descend / collapse-or-ascend traversal.
+fn resolve_tree_key(nodes: &[FileNode], current: Option<&str>, key: &str, page: usize) -> TreeKey {
+    match key {
+        "ArrowUp" | "ArrowDown" | "Home" | "End" | "PageUp" | "PageDown" => {
+            let visible = flat_visible(nodes);
+            let pos = current.and_then(|id| visible.iter().position(|row| row.id == id));
+            match clamp_nav(pos, key, visible.len(), page) {
+                Some(target) => TreeKey::Focus(visible[target].id.clone()),
+                None => TreeKey::Consumed,
+            }
+        }
+        "ArrowRight" => match current.and_then(|id| node_flags(nodes, id).map(|f| (id, f))) {
+            // Collapsed branch → expand it.
+            Some((id, (true, false))) => TreeKey::Expand(id.to_string()),
+            // Already-expanded branch → descend to the first child.
+            Some((id, (true, true))) => match first_child_id(nodes, id) {
+                Some(child) => TreeKey::Focus(child),
+                None => TreeKey::Consumed,
+            },
+            // Leaf (or no focus) → no-op, but consume the key.
+            _ => TreeKey::Consumed,
+        },
+        "ArrowLeft" => match current.and_then(|id| node_flags(nodes, id).map(|f| (id, f))) {
+            // Expanded branch → collapse it.
+            Some((id, (true, true))) => TreeKey::Collapse(id.to_string()),
+            // Collapsed branch or leaf → ascend to the parent (no-op
+            // at a root with no parent).
+            Some((id, _)) => match parent_id(nodes, id, None) {
+                Some(p) => TreeKey::Focus(p),
+                None => TreeKey::Consumed,
+            },
+            None => TreeKey::Consumed,
+        },
+        "Space" | "Enter" => match current.and_then(|id| node_flags(nodes, id).map(|f| (id, f))) {
+            // Only branches toggle; leaves (and no focus) are a no-op.
+            Some((id, (true, _))) => TreeKey::Toggle(id.to_string()),
+            _ => TreeKey::Consumed,
+        },
+        _ => TreeKey::Unhandled,
+    }
+}
+
+/// R809 §5.22 §5.38 — owner-cache key for this binding's type-ahead
+/// cursor (buffer + last-typed instant). Mirrors `hello-listbox`'s
+/// `TYPEAHEAD_KEY`: the cursor lives on the shell's root [`Owner`] and
+/// drops with the shell, so no stale search survives across shells in
+/// the same thread.
+const TYPEAHEAD_KEY: &str = "hello_tree_view::typeahead";
+
+/// R809 §5.38 — type-ahead jump: focus the next visible row whose
+/// label matches `key`, via the [`pinion_shell::typeahead`] substrate
+/// (the `TreeView` consumer that substrate's module doc named as a
+/// future taker). Gated by [`is_typeahead_char`] (a single printable
+/// codepoint); a named / non-printable key returns `false` so the
+/// caller's `apply_key` reports unhandled. The search indexes into the
+/// flat visible rows (the same sequence the arrow keys navigate), so a
+/// match lands on a row the user can actually see.
+fn type_ahead_jump(focused_id: &Signal<Option<String>>, nodes: &[FileNode], key: &str) -> bool {
+    let Some(ch) = is_typeahead_char(key) else {
+        return false;
+    };
+    let visible = flat_visible(nodes);
+    if visible.is_empty() {
         return false;
     }
+    let current = focused_id
+        .get()
+        .and_then(|id| visible.iter().position(|row| row.id == id));
+    let labels: Vec<&str> = visible.iter().map(|row| row.label.as_str()).collect();
+    // R51.152 precedent — `Owner::current()` resolves to the shell's
+    // root scope because `CoreShell::apply_key` wraps the dispatch in
+    // `root_owner().run(...)`. A missing Owner means the apply_key path
+    // bypassed the framework wrap (a broken integration).
+    let owner = Owner::current()
+        .expect("hello-tree-view type-ahead must run inside CoreShell::apply_key wrap");
+    let cursor: Rc<RefCell<TypeaheadCursor>> =
+        owner.cache(TYPEAHEAD_KEY, || RefCell::new(TypeaheadCursor::new()));
+    let target = cursor.borrow_mut().step(ch, current, Instant::now(), &labels);
+    let Some(idx) = target else {
+        return false;
+    };
+    focused_id.set(Some(visible[idx].id.clone()));
+    true
+}
+
+/// R673 §5.50 / R809 — apply one key to the reactive [`TreeState`].
+/// Resolves the WAI-ARIA outcome via the pure [`resolve_tree_key`],
+/// writes the resulting signal mutation, and falls through to
+/// [`type_ahead_jump`] for an unrecognised (printable) key.
+fn apply_key_impl(key: &str) -> bool {
+    let tree_state = use_tree_state();
+    let nodes = tree_state.nodes.get();
     let current = tree_state.focused_id.get();
-    let current_idx = current
-        .as_ref()
-        .and_then(|id| visible_ids.iter().position(|v| v == id))
-        .unwrap_or(0);
-    match key {
-        "ArrowUp" => {
-            let new_idx = if current_idx == 0 {
-                visible_ids.len() - 1
-            } else {
-                current_idx - 1
-            };
-            tree_state
-                .focused_id
-                .set(Some(visible_ids[new_idx].clone()));
+    match resolve_tree_key(&nodes, current.as_deref(), key, NAV_PAGE) {
+        TreeKey::Focus(id) => {
+            tree_state.focused_id.set(Some(id));
             true
         }
-        "ArrowDown" => {
-            let new_idx = if current_idx + 1 >= visible_ids.len() {
-                0
-            } else {
-                current_idx + 1
-            };
-            tree_state
-                .focused_id
-                .set(Some(visible_ids[new_idx].clone()));
+        TreeKey::Expand(id) => {
+            set_expanded_in_signal(&tree_state.nodes, &id, true);
             true
         }
-        "Home" => {
-            tree_state.focused_id.set(Some(visible_ids[0].clone()));
+        TreeKey::Collapse(id) => {
+            set_expanded_in_signal(&tree_state.nodes, &id, false);
             true
         }
-        "End" => {
-            let last = visible_ids.len() - 1;
-            tree_state.focused_id.set(Some(visible_ids[last].clone()));
+        TreeKey::Toggle(id) => {
+            toggle_expanded_in_signal(&tree_state.nodes, &id);
             true
         }
-        "ArrowRight" => {
-            // Expand the focused branch (no-op on leaves + already-expanded).
-            let Some(focused_id) = current else {
-                return false;
-            };
-            if !has_children(&nodes_clone, &focused_id) {
-                return false;
-            }
-            reactive::batch(|| {
-                let mut nodes = tree_state.nodes.get();
-                if let Some(node) = find_node_mut(&mut nodes, &focused_id) {
-                    if node.expanded {
-                        return;
-                    }
-                    node.expanded = true;
-                    tree_state.nodes.set(nodes);
-                }
-            });
-            true
-        }
-        "ArrowLeft" => {
-            // Collapse the focused branch (no-op on leaves + already-collapsed).
-            let Some(focused_id) = current else {
-                return false;
-            };
-            if !has_children(&nodes_clone, &focused_id) {
-                return false;
-            }
-            reactive::batch(|| {
-                let mut nodes = tree_state.nodes.get();
-                if let Some(node) = find_node_mut(&mut nodes, &focused_id) {
-                    if !node.expanded {
-                        return;
-                    }
-                    node.expanded = false;
-                    tree_state.nodes.set(nodes);
-                }
-            });
-            true
-        }
-        "Space" | "Enter" => {
-            // R674 §5.50 — toggle expand on the focused branch (no-op
-            // on leaves). Routes through the shared
-            // [`toggle_expanded_in_signal`] helper so the keyboard
-            // path and the [`FileTreeRowExternal`] click path produce
-            // identical Signal mutations on identical input.
-            let Some(focused_id) = current else {
-                return false;
-            };
-            if !has_children(&nodes_clone, &focused_id) {
-                return false;
-            }
-            toggle_expanded_in_signal(&tree_state.nodes, &focused_id);
-            true
-        }
-        _ => false,
+        TreeKey::Consumed => true,
+        TreeKey::Unhandled => type_ahead_jump(&tree_state.focused_id, &nodes, key),
     }
 }
 
@@ -854,5 +994,182 @@ mod r674_per_row_access_node_tests {
             tree_row_access_tag("src/lib.rs"),
             format!("{TREE_TAG}#src/lib.rs"),
         );
+    }
+}
+
+#[cfg(test)]
+mod r809_tree_keyboard_nav_tests {
+    //! R809 §5.16 §5.50 — WAI-ARIA APG 6.13 Tree keyboard contract
+    //! over the pure [`resolve_tree_key`] resolver (no [`Owner`] scope,
+    //! so the keyboard semantics are unit-testable without the
+    //! framework reactive cache). Verifies the two axes R673 declared
+    //! as future work — Arrow Right descend-to-child and Arrow Left
+    //! ascend-to-parent — plus the clamp-not-wrap vertical motion now
+    //! delegated to the shared `clamp_nav` SSOT, plus Page Up/Down.
+
+    use super::{flat_visible, resolve_tree_key, FileNode, TreeKey, NAV_PAGE};
+
+    /// A deterministic sample tree:
+    /// ```text
+    /// src        (branch, expanded)
+    ///   main.rs  (leaf)
+    ///   lib.rs   (leaf)
+    ///   widgets  (branch, collapsed)   <- mod.rs hidden
+    /// tests      (branch, collapsed)   <- children hidden
+    /// docs       (branch, collapsed)   <- children hidden
+    /// ```
+    /// Visible row order: src, src/main.rs, src/lib.rs, src/widgets,
+    /// tests, docs (6 rows).
+    fn sample() -> Vec<FileNode> {
+        vec![
+            FileNode::branch(
+                "src",
+                "src",
+                true,
+                vec![
+                    FileNode::leaf("src/main.rs", "main.rs"),
+                    FileNode::leaf("src/lib.rs", "lib.rs"),
+                    FileNode::branch(
+                        "src/widgets",
+                        "widgets",
+                        false,
+                        vec![FileNode::leaf("src/widgets/mod.rs", "mod.rs")],
+                    ),
+                ],
+            ),
+            FileNode::branch(
+                "tests",
+                "tests",
+                false,
+                vec![FileNode::leaf("tests/it.rs", "it.rs")],
+            ),
+            FileNode::branch(
+                "docs",
+                "docs",
+                false,
+                vec![FileNode::leaf("docs/README.md", "README.md")],
+            ),
+        ]
+    }
+
+    fn key(current: Option<&str>, k: &str) -> TreeKey {
+        resolve_tree_key(&sample(), current, k, NAV_PAGE)
+    }
+
+    #[test]
+    fn flat_visible_is_paint_order_with_labels() {
+        let nodes = sample();
+        let rows = flat_visible(&nodes);
+        let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["src", "src/main.rs", "src/lib.rs", "src/widgets", "tests", "docs"],
+            "flat visible order = depth-first preorder over expanded branches",
+        );
+        // Labels (the type-ahead search keys) mirror the visible text.
+        let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
+        assert_eq!(labels, ["src", "main.rs", "lib.rs", "widgets", "tests", "docs"]);
+    }
+
+    #[test]
+    fn arrow_down_moves_to_next_visible_row() {
+        assert_eq!(key(Some("src"), "ArrowDown"), TreeKey::Focus("src/main.rs".into()));
+    }
+
+    #[test]
+    fn arrow_up_moves_to_previous_visible_row() {
+        assert_eq!(key(Some("src/lib.rs"), "ArrowUp"), TreeKey::Focus("src/main.rs".into()));
+    }
+
+    #[test]
+    fn arrow_down_clamps_at_last_row_no_wrap() {
+        // WAI-ARIA APG: a tree has ends. Down on the last visible row
+        // stays put (clamp via clamp_nav), it does NOT wrap to the top.
+        assert_eq!(key(Some("docs"), "ArrowDown"), TreeKey::Focus("docs".into()));
+    }
+
+    #[test]
+    fn arrow_up_clamps_at_first_row_no_wrap() {
+        assert_eq!(key(Some("src"), "ArrowUp"), TreeKey::Focus("src".into()));
+    }
+
+    #[test]
+    fn home_and_end_jump_to_first_and_last() {
+        assert_eq!(key(Some("tests"), "Home"), TreeKey::Focus("src".into()));
+        assert_eq!(key(Some("src"), "End"), TreeKey::Focus("docs".into()));
+    }
+
+    #[test]
+    fn page_down_and_up_jump_clamped() {
+        // NAV_PAGE (7) exceeds the 6-row listing, so PageDown from the
+        // top clamps to the last row and PageUp from the bottom clamps
+        // to the first — exercising the `clamp_nav` page arm.
+        assert_eq!(key(Some("src"), "PageDown"), TreeKey::Focus("docs".into()));
+        assert_eq!(key(Some("docs"), "PageUp"), TreeKey::Focus("src".into()));
+    }
+
+    #[test]
+    fn arrow_right_on_collapsed_branch_expands() {
+        assert_eq!(key(Some("tests"), "ArrowRight"), TreeKey::Expand("tests".into()));
+    }
+
+    #[test]
+    fn arrow_right_on_expanded_branch_descends_to_first_child() {
+        // R673 future axis, completed at R809: Right on an already-open
+        // branch moves focus to its first child rather than no-op.
+        assert_eq!(key(Some("src"), "ArrowRight"), TreeKey::Focus("src/main.rs".into()));
+    }
+
+    #[test]
+    fn arrow_right_on_leaf_is_consumed_noop() {
+        assert_eq!(key(Some("src/main.rs"), "ArrowRight"), TreeKey::Consumed);
+    }
+
+    #[test]
+    fn arrow_left_on_expanded_branch_collapses() {
+        assert_eq!(key(Some("src"), "ArrowLeft"), TreeKey::Collapse("src".into()));
+    }
+
+    #[test]
+    fn arrow_left_on_collapsed_branch_ascends_to_parent() {
+        // R673 future axis, completed at R809: Left on a collapsed
+        // branch jumps to its parent (src/widgets → src).
+        assert_eq!(key(Some("src/widgets"), "ArrowLeft"), TreeKey::Focus("src".into()));
+    }
+
+    #[test]
+    fn arrow_left_on_leaf_ascends_to_parent() {
+        assert_eq!(key(Some("src/main.rs"), "ArrowLeft"), TreeKey::Focus("src".into()));
+    }
+
+    #[test]
+    fn arrow_left_on_root_level_collapsed_branch_is_consumed() {
+        // tests is a collapsed branch at the root — no parent to ascend
+        // to, so Left is a consumed no-op (does not wrap or error).
+        assert_eq!(key(Some("tests"), "ArrowLeft"), TreeKey::Consumed);
+    }
+
+    #[test]
+    fn space_and_enter_toggle_a_branch() {
+        assert_eq!(key(Some("tests"), "Space"), TreeKey::Toggle("tests".into()));
+        assert_eq!(key(Some("src"), "Enter"), TreeKey::Toggle("src".into()));
+    }
+
+    #[test]
+    fn space_on_leaf_is_consumed_noop() {
+        assert_eq!(key(Some("src/main.rs"), "Space"), TreeKey::Consumed);
+    }
+
+    #[test]
+    fn printable_char_is_unhandled_for_typeahead_fallthrough() {
+        // A printable key is not a navigation key — the resolver
+        // reports Unhandled so apply_key routes it to type-ahead.
+        assert_eq!(key(Some("src"), "m"), TreeKey::Unhandled);
+        assert_eq!(key(Some("src"), "한"), TreeKey::Unhandled);
+    }
+
+    #[test]
+    fn unknown_named_key_is_unhandled() {
+        assert_eq!(key(Some("src"), "F1"), TreeKey::Unhandled);
     }
 }
