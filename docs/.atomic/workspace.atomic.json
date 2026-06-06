@@ -31981,6 +31981,58 @@
         "no new carry; full ~121-demo sweep deferred to push per sweep-at-push discipline"
       ]
     },
+    "R806.1": {
+      "decision_summary": "R806.1 §5.39 §5.16 (audit correction) — the reported 16px-thick menubar focus-ring top edge WAS real; my R806 'not reproduced, defect was placement' conclusion was wrong (it leaned on a single mis-measured live capture). Root-caused deterministically from code + an offscreen headless render (no live screenshot): vello's sparse rasteriser floods its top 16px coarse tile when a stroke's coverage reaches the framebuffer y=0 row. It is an upstream vello bug, pre-existing (R805 also placed the ring at y=0), so the R806 concentric-geometry fix was orthogonal and did not touch the visible symptom. Fix: build_focus_ring_box floors the ring TOP origin at TOP_EDGE_INSET (1px) so the top stroke clears the flood row; the left edge does not flood so its origin still floors at 0. Structural fix for the 'only a screenshot finds it' gap: a deterministic headless raster guard (offscreen wgpu readback through the same to_vello_cached the live shell uses) asserts the real injected ring top rasterises <=4px, with a negative control proving a raw y=0 border still floods (and flagging the day the upstream vello fix lands).",
+      "changes_bullets": [
+        "root cause: vello floods its top 16px coarse tile when stroke coverage hits y=0",
+        "focus-ring top stroke flush on the framebuffer top row rasterised ~16px not 2px",
+        "build_focus_ring_box: TOP_EDGE_INSET floors the ring top origin at 1 (off y=0)",
+        "left edge does not flood: left origin still floors at 0 (concentric File ring)",
+        "deterministic headless guard: real inject_focus_ring ring top <=4px end-to-end",
+        "negative control in the guard: raw y=0 border still floods >4px (test has teeth)",
+        "rpc_verify inflate mirror + r806 demo geometry updated to the y=1 top inset"
+      ],
+      "verification_bullets": [
+        "headless render-vs-intent guard (screenshot-free, offscreen wgpu readback) green",
+        "overlay 26 unit tests green; clippy --all-targets --features vello clean",
+        "live hello-menu Edit ring top edge now 2px (was 16px), uniform border confirmed",
+        "characterised deterministically: y=0 floods, y>=1 / x=0 / narrow do not"
+      ],
+      "impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "upstream vello bug: stroke coverage on the framebuffer y=0 row floods the top tile",
+        "TOP_EDGE_INSET is the workaround; retire it when vello fixes the top-tile coverage",
+        "the negative-control assertion flags the day the upstream fix lands"
+      ],
+      "publishable_decision_summary": "R806.1 §5.39 §5.16 (audit correction) — the reported 16px-thick menubar focus-ring top edge WAS real; my R806 'not reproduced, defect was placement' conclusion was wrong (it leaned on a single mis-measured live capture). Root-caused deterministically from code + an offscreen headless render (no live screenshot): vello's sparse rasteriser floods its top 16px coarse tile when a stroke's coverage reaches the framebuffer y=0 row. It is an upstream vello bug, pre-existing (R805 also placed the ring at y=0), so the R806 concentric-geometry fix was orthogonal and did not touch the visible symptom. Fix: build_focus_ring_box floors the ring TOP origin at TOP_EDGE_INSET (1px) so the top stroke clears the flood row; the left edge does not flood so its origin still floors at 0. Structural fix for the 'only a screenshot finds it' gap: a deterministic headless raster guard (offscreen wgpu readback through the same to_vello_cached the live shell uses) asserts the real injected ring top rasterises <=4px, with a negative control proving a raw y=0 border still floods (and flagging the day the upstream vello fix lands).",
+      "publishable_changes_bullets": [
+        "root cause: vello floods its top 16px coarse tile when stroke coverage hits y=0",
+        "focus-ring top stroke flush on the framebuffer top row rasterised ~16px not 2px",
+        "build_focus_ring_box: TOP_EDGE_INSET floors the ring top origin at 1 (off y=0)",
+        "left edge does not flood: left origin still floors at 0 (concentric File ring)",
+        "deterministic headless guard: real inject_focus_ring ring top <=4px end-to-end",
+        "negative control in the guard: raw y=0 border still floods >4px (test has teeth)",
+        "rpc_verify inflate mirror + r806 demo geometry updated to the y=1 top inset"
+      ],
+      "publishable_verification_bullets": [
+        "headless render-vs-intent guard (screenshot-free, offscreen wgpu readback) green",
+        "overlay 26 unit tests green; clippy --all-targets --features vello clean",
+        "live hello-menu Edit ring top edge now 2px (was 16px), uniform border confirmed",
+        "characterised deterministically: y=0 floods, y>=1 / x=0 / narrow do not"
+      ],
+      "publishable_impact_refs": [
+        "5.39",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "upstream vello bug: stroke coverage on the framebuffer y=0 row floods the top tile",
+        "TOP_EDGE_INSET is the workaround; retire it when vello fixes the top-tile coverage",
+        "the negative-control assertion flags the day the upstream fix lands"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -579,6 +579,110 @@ mod tests {
         );
     }
 
+    /// R806 §5.39 §2 #1/#7 — deterministic render-vs-intent guard for the
+    /// focus-ring **top-edge stroke thickness**. The scene-as-data carries a
+    /// 2px Inside border; this renders the exact overlay-box shape through
+    /// the SAME `to_vello_cached` the live shell uses, into an offscreen
+    /// wgpu texture, and reads the pixels back to assert the stroke
+    /// rasterises 2px on every edge — including the edge flush against the
+    /// framebuffer top (y = 0), where the live window showed a ~16px-thick
+    /// top band invisible to `scene/snapshot` (the rasteriser diverged from
+    /// the scene intent). A non-flush control box at y = 200 proves the
+    /// thickening is specific to the framebuffer-top edge. Screenshot-free
+    /// and CI-reproducible: the structural answer to "this was only
+    /// detectable via a live ffmpeg capture".
+    ///
+    /// `#[ignore]` for the same wgpu cold-boot reason as the other headless
+    /// tests; run with `--ignored`.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r806_focus_ring_top_edge_rasterizes_two_px_not_thick() {
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene};
+        use pinion_core::style::{Border, BoxStyle, Color};
+        use pinion_overlay::{inject_focus_ring, FocusRingStyle};
+        use pinion_runtime::paint_adapter::{root_background, to_vello_cached, FragmentCache};
+        use pinion_text::LayoutCache;
+
+        const W: u32 = 520;
+        const H: u32 = 320;
+        const BLUE: Color = Color::rgb(26, 115, 232);
+
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+
+        // Render `scene` and return the consecutive-blue top-edge run at
+        // column `cx` (counted from the first blue pixel downward).
+        let top_run = |shot: &mut HeadlessScreenshot, scene: &Scene, cx: u32| -> u32 {
+            let base = root_background(scene);
+            let mut tc = LayoutCache::new();
+            let mut ic = pinion_runtime::image_cache::ImageCache::new();
+            let mut fc = FragmentCache::new();
+            let mut vello = VelloScene::new();
+            to_vello_cached(scene, &|_| None, &mut tc, &mut ic, &mut fc, &mut vello);
+            let rgba8 = shot.render_to_rgba8(&vello, W, H, base).expect("render");
+            let is_blue = |x: u32, y: u32| {
+                let i = ((y * W + x) * 4) as usize;
+                let (r, g, b) =
+                    (i64::from(rgba8[i]), i64::from(rgba8[i + 1]), i64::from(rgba8[i + 2]));
+                (r - 26).abs() <= 45 && (g - 115).abs() <= 45 && (b - 232).abs() <= 45
+            };
+            let mut started = false;
+            let mut run = 0;
+            for y in 0..H {
+                if is_blue(cx, y) {
+                    started = true;
+                    run += 1;
+                } else if started {
+                    break;
+                }
+            }
+            run
+        };
+
+        let white_root = |child: Scene| -> Scene {
+            let mut root = ContainerNode::new(vec![child]);
+            root.rect = Rect::new(0, 0, W, H);
+            root.style = BoxStyle::filled(Color::rgb(255, 255, 255));
+            Scene::Container(root)
+        };
+
+        // (1) End-to-end: a top-flush widget framed by the REAL focus ring
+        // (inject_focus_ring -> build_focus_ring_box with the R806 top inset).
+        // The menubar "Edit" title geometry (96, 0, 96, 40) is tagged so the
+        // injector frames it; the ring's top stroke must rasterise ~2px, not
+        // the ~16px vello top-tile flood. scene/snapshot cannot see this — the
+        // scene always carries a 2px Inside border (the structural point).
+        let mut title =
+            BoxNode::new(Rect::new(96, 0, 96, 40), BoxStyle::filled(Color::TRANSPARENT));
+        title.tag = Some("menu#t1".into());
+        let framed = inject_focus_ring(
+            white_root(Scene::Box(title)),
+            Some("menu#t1"),
+            FocusRingStyle::default(),
+        );
+        let edge = top_run(&mut shot, &framed, 96 + 48);
+        assert!(
+            edge <= 4,
+            "focus-ring top edge rasterised {edge}px for a top-flush widget — \
+             expected the ~2px Inside border the scene carries. The R806 top \
+             inset must keep the stroke off the vello y=0 flood row.",
+        );
+
+        // (2) Negative control proving the guard has teeth: the SAME 2px
+        // Inside border drawn flush on the y=0 row (no inset) DOES flood
+        // ~16px. If this ever stops flooding, the upstream vello bug is fixed
+        // and build_focus_ring_box::TOP_EDGE_INSET can be retired.
+        let mut flush =
+            BoxNode::new(Rect::new(94, 0, 100, 42), BoxStyle::filled(Color::TRANSPARENT));
+        flush.style = flush.style.with_border(Border::new(BLUE, 2));
+        let flood = top_run(&mut shot, &white_root(Scene::Box(flush)), 94 + 50);
+        assert!(
+            flood > 4,
+            "a 2px Inside border flush on the framebuffer y=0 row no longer \
+             floods (got {flood}px) — the upstream vello top-tile bug may be \
+             fixed; revisit build_focus_ring_box::TOP_EDGE_INSET.",
+        );
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]

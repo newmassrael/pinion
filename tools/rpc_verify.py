@@ -832,15 +832,17 @@ def assert_focus_ring_concentric(snap: Any, offset: int = 2) -> Optional[str]:
         return None
 
     def inflate_sat(r: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
-        # Mirrors `build_focus_ring_box` (R806): clamp the near origin to 0
-        # and shrink the span by the same clamped amount so the far edge
-        # stays at `target + offset` — the ring is concentric, with the
-        # framebuffer edge clipping any lost top/left gap. Identical to the
-        # plain `+2*offset` inflate for any node clear of the top/left edge;
-        # for a flush node (x or y < offset) it shrinks instead of pushing
-        # the far edge an extra offset out (the pre-R806 corner defect).
+        # Mirrors `build_focus_ring_box` (R806): clamp the near origin and
+        # shrink the span by the same clamped amount so the far edge stays at
+        # `target + offset` — the ring is concentric, with the framebuffer
+        # edge clipping any lost near gap. The LEFT origin floors at 0; the
+        # TOP origin floors at TOP_EDGE_INSET (1px) to dodge the vello y=0
+        # top-tile flood (a stroke touching the framebuffer top row
+        # rasterises ~16px thick). Identical to the plain `+2*offset` inflate
+        # for any node clear of the top/left edge.
+        top_edge_inset = 1
         x = max(0, r[0] - offset)
-        y = max(0, r[1] - offset)
+        y = max(top_edge_inset, r[1] - offset)
         ideal_right = r[0] + r[2] + offset
         ideal_bottom = r[1] + r[3] + offset
         return (x, y, ideal_right - x, ideal_bottom - y)

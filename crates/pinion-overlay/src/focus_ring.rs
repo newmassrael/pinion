@@ -198,28 +198,37 @@ fn radius_opt(scene: &Scene, target: &str) -> Option<u32> {
     }
 }
 
+/// Minimum gap (logical px) the ring's painted geometry keeps below the
+/// **top** framebuffer edge (R806 §5.39 §5.16). Vello's sparse-strip
+/// rasteriser floods its whole top 16px coarse tile when a stroke's
+/// coverage reaches the `y = 0` scanline (reproduced deterministically in
+/// `pinion_shell::headless_screenshot` — a top-flush 2px Inside border
+/// rasterises a ~16px-thick top band, while the same border one pixel
+/// lower, or against the left edge, is a faithful 2px). The defect is
+/// invisible to `scene/snapshot` (the scene carries a 2px border) and was
+/// the real "thick menubar focus-ring top edge" the user observed. Until
+/// the upstream vello fix lands we keep the ring's top stroke one pixel
+/// inside the framebuffer; the left/right/bottom edges do NOT flood, so
+/// only the top is inset. See [[introspection-from-paint-not-screen]].
+const TOP_EDGE_INSET: u32 = 1;
+
 fn build_focus_ring_box(target: Rect, target_radius: u32, style: FocusRingStyle) -> BoxNode {
     let off = style.offset;
     // Concentric outset, boundary-clipped (R806 §5.39). `Rect` origins are
     // unsigned, so a widget flush against the top/left framebuffer edge
     // (`x` or `y` < `off`) cannot carry the negative origin a full outward
-    // offset needs. We clamp the origin to 0 and shrink the span by the
-    // *same* clamped amount, so the bottom/right edge still lands at
+    // offset needs. We clamp the origin and shrink the span by the *same*
+    // clamped amount, so the far (bottom/right) edge still lands at
     // `target + off` — the ring stays concentric with the widget and the
-    // framebuffer edge clips the lost top/left gap (exactly how a browser
-    // clips a viewport-corner focus ring).
+    // framebuffer edge clips the lost near gap.
     //
-    // The pre-R806 code used a naive `saturating_sub` on the origin while
-    // keeping the full `w + 2*off` / `h + 2*off` span. For a top-left-flush
-    // widget that pushed the bottom/right edge an extra `off` px out: a
-    // lopsided, oversized ring (e.g. a `(0,0,96,40)` menubar title got a
-    // `(0,0,100,44)` ring whose bottom/right carried a doubled gap while
-    // the top/left had none). This was the user-reported corner defect —
-    // the ring stroke itself was always a faithful `stroke_width` px (the
-    // "thick top edge" was the non-concentric outset, not a fat stroke;
-    // verified by live capture, [[introspection-from-paint-not-screen]]).
+    // Top edge additionally floors at `TOP_EDGE_INSET` (1px), not 0, to
+    // dodge the vello top-tile flood documented on that constant: a stroke
+    // whose coverage reaches `y = 0` is rasterised ~16px thick. The left
+    // edge does not flood, so `x` floors at 0 (a left-flush widget keeps a
+    // concentric left ring); only `y` carries the inset.
     let x = target.x.saturating_sub(off);
-    let y = target.y.saturating_sub(off);
+    let y = target.y.saturating_sub(off).max(TOP_EDGE_INSET);
     // Ideal far edges = widget far edge + the full outward offset. The span
     // back from the clamped near origin keeps the ring concentric.
     let ideal_right = target.x.saturating_add(target.w).saturating_add(off);
@@ -307,45 +316,48 @@ mod tests {
     fn ring_stays_concentric_at_top_left_flush_corner() {
         // R806 regression guard. A menubar title flush at the window
         // top-left corner: (0, 0, 96, 40). A full +2 outset would need a
-        // (-2, -2) origin the unsigned `Rect` cannot carry. The ring must
-        // clamp the origin to (0, 0) AND shrink the span so the bottom/right
-        // edge still lands at the concentric `target + 2` — i.e. the ring is
-        // (0, 0, 98, 42), NOT the pre-R806 naive (0, 0, 100, 44) whose
-        // bottom/right was pushed a doubled gap out.
+        // (-2, -2) origin the unsigned `Rect` cannot carry. The ring clamps
+        // the LEFT origin to 0 and the TOP origin to TOP_EDGE_INSET (1, to
+        // dodge the vello y=0 top-tile flood), shrinking the span so the
+        // bottom/right edge still lands at the concentric `target + 2` —
+        // i.e. the ring is (0, 1, 98, 41), NOT the pre-R806 naive
+        // (0, 0, 100, 44) whose bottom/right was pushed a doubled gap out.
         let scene = container(vec![tagged_box(0, 0, 96, 40, 0, "menu#t0")]);
         let out = inject_focus_ring(scene, Some("menu#t0"), FocusRingStyle::default());
         let ring = ring_child(&out);
-        assert_eq!(ring.rect, Rect::new(0, 0, 98, 42), "concentric clipped ring");
+        assert_eq!(ring.rect, Rect::new(0, 1, 98, 41), "concentric, top inset off y=0");
         // The far edges keep the full outward offset (concentric); only the
-        // top/left gap is clipped by the framebuffer boundary.
+        // near gap is clipped (left by the framebuffer, top by the inset).
         assert_eq!(ring.rect.x + ring.rect.w, 98, "right edge = widget right (96) + 2");
         assert_eq!(ring.rect.y + ring.rect.h, 42, "bottom edge = widget bottom (40) + 2");
+        assert!(ring.rect.y >= TOP_EDGE_INSET, "top stroke kept off the y=0 flood row");
     }
 
     #[test]
     fn ring_clips_only_the_overflowing_axis() {
         // A widget flush against the TOP edge only (y = 0) but well clear of
-        // the left edge (x = 200): the y-axis clamps concentrically while the
-        // x-axis keeps its symmetric outset. Proves the clamp is per-axis,
-        // not a whole-rect shift.
+        // the left edge (x = 200): the y-axis insets to TOP_EDGE_INSET while
+        // the x-axis keeps its symmetric outset. Proves the clamp is
+        // per-axis, not a whole-rect shift.
         let scene = container(vec![tagged_box(200, 0, 40, 30, 0, "btn")]);
         let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default());
         let ring = ring_child(&out);
         // x: 200-2=198, w: (200+40+2)-198 = 44 (full symmetric outset).
-        // y: 0 (clamped), h: (0+30+2)-0 = 32 (top gap clipped, bottom kept).
-        assert_eq!(ring.rect, Rect::new(198, 0, 44, 32));
+        // y: floored to 1 (off the flood row), h: (0+30+2)-1 = 31.
+        assert_eq!(ring.rect, Rect::new(198, 1, 44, 31));
     }
 
     #[test]
     fn ring_clamp_within_offset_of_edge_shrinks_partially() {
-        // A widget 1px below the top edge (y = 1), offset 2: the origin can
-        // only move up by 1 (to 0), so 1px of the top outset is clipped and
-        // the height shrinks by that 1px. Bottom edge stays concentric.
+        // A widget 1px below the top edge (y = 1), offset 2: the ideal top
+        // origin (y-2) saturates to 0 but floors to TOP_EDGE_INSET (1), so
+        // the top stroke clears the flood row and the height shrinks to suit.
+        // Bottom edge stays concentric.
         let scene = container(vec![tagged_box(50, 1, 40, 30, 0, "btn")]);
         let out = inject_focus_ring(scene, Some("btn"), FocusRingStyle::default());
         let ring = ring_child(&out);
-        // y: 1-2 saturates to 0 (moved up 1, lost 1). h: (1+30+2)-0 = 33.
-        assert_eq!(ring.rect, Rect::new(48, 0, 44, 33));
+        // y: max(1, 1-2)=1. h: (1+30+2)-1 = 32.
+        assert_eq!(ring.rect, Rect::new(48, 1, 44, 32));
         assert_eq!(ring.rect.y + ring.rect.h, 33, "bottom = widget bottom (31) + 2");
     }
 

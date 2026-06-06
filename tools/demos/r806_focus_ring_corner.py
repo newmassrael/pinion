@@ -59,26 +59,30 @@ from rpc_verify import (  # noqa: E402
 BAR = "menu"
 VIEWPORT = (520, 320)
 OFFSET = 2  # FocusRingStyle::default().offset
+TOP_EDGE_INSET = 1  # build_focus_ring_box: top stroke kept off the vello y=0 flood row
 SHOT = "/tmp/r806_focus_ring_corner.png"
 RING_BLUE = (26, 115, 232)  # Material focus blue #1A73E8
 
 # Expected window-absolute geometry of the three top-flush menubar titles
 # (hello-menu MENU_TITLES, 96px wide / 40px tall, packed from x=0 at y=0) and
-# the concentric boundary-clipped ring each must carry.
-#   File t0: flush top-left   -> origin clamps on BOTH axes -> (0,0,98,42)
-#   Edit t1: flush top only   -> origin clamps on y only    -> (94,0,100,42)
-#   View t2: flush top only   -> origin clamps on y only    -> (190,0,100,42)
+# the concentric ring each must carry. The TOP origin floors at
+# TOP_EDGE_INSET (1) — a stroke touching the framebuffer y=0 row is flooded
+# ~16px thick by vello — while the LEFT origin floors at 0 (no left flood).
+#   File t0: flush top-left -> x floors 0, y floors 1 -> (0,1,98,41)
+#   Edit t1: flush top only -> x = 96-2,  y floors 1 -> (94,1,100,41)
+#   View t2: flush top only -> x = 192-2, y floors 1 -> (190,1,100,41)
 TITLES = [
-    ("menu#t0", (0, 0, 96, 40), (0, 0, 98, 42)),
-    ("menu#t1", (96, 0, 96, 40), (94, 0, 100, 42)),
-    ("menu#t2", (192, 0, 96, 40), (190, 0, 100, 42)),
+    ("menu#t0", (0, 0, 96, 40), (0, 1, 98, 41)),
+    ("menu#t1", (96, 0, 96, 40), (94, 1, 100, 41)),
+    ("menu#t2", (192, 0, 96, 40), (190, 1, 100, 41)),
 ]
 
 
 def _concentric_clip(r: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
-    """Reference concentric boundary-clip inflate (mirrors the Rust fix)."""
+    """Reference concentric boundary-clip inflate (mirrors the Rust fix):
+    left origin floors at 0, top origin floors at TOP_EDGE_INSET."""
     x = max(0, r[0] - OFFSET)
-    y = max(0, r[1] - OFFSET)
+    y = max(TOP_EDGE_INSET, r[1] - OFFSET)
     return (x, y, r[0] + r[2] + OFFSET - x, r[1] + r[3] + OFFSET - y)
 
 
@@ -103,8 +107,9 @@ def _check_title(app: RpcSubprocess, bar_focus: int) -> None:
     framed = assert_focus_ring_concentric(snap, offset=OFFSET)
     assert_eq(framed, tag, f"helper frames {tag}")
 
-    # Per-axis clamp + concentric far edges.
-    assert_eq(ring[1], 0, f"{tag} top edge clamped to framebuffer (y=0)")
+    # Per-axis clamp + concentric far edges. The top floors at the inset
+    # (off the vello y=0 flood row), the left floors at 0.
+    assert_eq(ring[1], TOP_EDGE_INSET, f"{tag} top stroke kept off the y=0 flood row")
     assert_eq(ring[1] + ring[3], want_title[1] + want_title[3] + OFFSET,
               f"{tag} bottom edge concentric (widget bottom + offset)")
     assert_eq(ring[0] + ring[2], want_title[0] + want_title[2] + OFFSET,
@@ -179,9 +184,9 @@ def _pixel_check_file_ring() -> bool:
     miny = min(p[1] for p in blues)
     maxy = max(p[1] for p in blues)
 
-    # Concentric clipped ring is 98x42; allow +/-2 for anti-aliasing fringe.
+    # Concentric ring is 98x41 (top inset 1); allow +/-3 for AA fringe.
     assert abs((maxx - minx) - 98) <= 3, f"ring width {maxx - minx} != ~98"
-    assert abs((maxy - miny) - 42) <= 3, f"ring height {maxy - miny} != ~42"
+    assert abs((maxy - miny) - 41) <= 3, f"ring height {maxy - miny} != ~41"
 
     cx = (minx + maxx) // 2
     cy = (miny + maxy) // 2
