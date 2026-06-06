@@ -31929,6 +31929,58 @@
         "radio (menuitemradio) still R806: reuses gutter/checked substrate, group-exclusivity is the distinct axis"
       ]
     },
+    "R806": {
+      "decision_summary": "R806 §5.39 — focus ring is concentric at the top/left framebuffer edge. The R705 overlay outset used a naive saturating_sub that, for a widget flush against the top/left edge (origin < offset, unrepresentable as a negative in the unsigned Rect), clamped the origin to 0 but kept the full +2*offset span, pushing the far edge an extra offset out — a lopsided, oversized ring on every top-flush widget (the user-reported menubar corner defect). The fix clamps the near origin AND shrinks the span by the same amount so the far edge stays at target+offset (concentric; the framebuffer edge clips the lost gap, as a browser does). Investigation note: the reported 15px-thick top edge did not reproduce — live capture shows a faithful uniform 2px stroke; the defect was placement, never stroke width (introspection-from-paint-not-screen).",
+      "changes_bullets": [
+        "build_focus_ring_box: concentric boundary-clip outset replaces naive saturating_sub",
+        "top/left-flush widget keeps far edge at target+offset; near origin clamps to 0",
+        "pre-R806 kept full +2*offset span off clamped origin -> oversized non-concentric ring",
+        "menubar File title (0,0,96,40) now framed by concentric (0,0,98,42) not (0,0,100,44)",
+        "fix is single-site (sole rect-outset-from-target; highlight.rs does no outset)",
+        "rpc_verify assert_focus_ring_concentric: mirror inflate to the concentric-clip formula",
+        "3 unit tests: top-left corner, single-axis clip, sub-offset partial clip"
+      ],
+      "verification_bullets": [
+        "pinion-overlay 26 unit tests pass (3 new boundary-clip cases)",
+        "cargo test --workspace green; clippy --all-targets --features vello clean",
+        "r806_focus_ring_corner demo: 42 assertions, scene-data + live-pixel (File ring 97x41, all edges 2px)",
+        "r705_focus_ring_placement: 31 rings concentric across 24 examples (helper consumer, regression-free)",
+        "investigation: reported 15px top edge did NOT reproduce; live capture shows uniform 2px stroke",
+        "genuine defect was non-concentric placement at framebuffer top/left edge, not a fat stroke"
+      ],
+      "impact_refs": [
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "focus-ring boundary geometry now concentric on every top/left-flush widget",
+        "no new carry; full ~121-demo sweep deferred to push per sweep-at-push discipline"
+      ],
+      "publishable_decision_summary": "R806 §5.39 — focus ring is concentric at the top/left framebuffer edge. The R705 overlay outset used a naive saturating_sub that, for a widget flush against the top/left edge (origin < offset, unrepresentable as a negative in the unsigned Rect), clamped the origin to 0 but kept the full +2*offset span, pushing the far edge an extra offset out — a lopsided, oversized ring on every top-flush widget (the user-reported menubar corner defect). The fix clamps the near origin AND shrinks the span by the same amount so the far edge stays at target+offset (concentric; the framebuffer edge clips the lost gap, as a browser does). Investigation note: the reported 15px-thick top edge did not reproduce — live capture shows a faithful uniform 2px stroke; the defect was placement, never stroke width (introspection-from-paint-not-screen).",
+      "publishable_changes_bullets": [
+        "build_focus_ring_box: concentric boundary-clip outset replaces naive saturating_sub",
+        "top/left-flush widget keeps far edge at target+offset; near origin clamps to 0",
+        "pre-R806 kept full +2*offset span off clamped origin -> oversized non-concentric ring",
+        "menubar File title (0,0,96,40) now framed by concentric (0,0,98,42) not (0,0,100,44)",
+        "fix is single-site (sole rect-outset-from-target; highlight.rs does no outset)",
+        "rpc_verify assert_focus_ring_concentric: mirror inflate to the concentric-clip formula",
+        "3 unit tests: top-left corner, single-axis clip, sub-offset partial clip"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-overlay 26 unit tests pass (3 new boundary-clip cases)",
+        "cargo test --workspace green; clippy --all-targets --features vello clean",
+        "r806_focus_ring_corner demo: 42 assertions, scene-data + live-pixel (File ring 97x41, all edges 2px)",
+        "r705_focus_ring_placement: 31 rings concentric across 24 examples (helper consumer, regression-free)",
+        "investigation: reported 15px top edge did NOT reproduce; live capture shows uniform 2px stroke",
+        "genuine defect was non-concentric placement at framebuffer top/left edge, not a fat stroke"
+      ],
+      "publishable_impact_refs": [
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "focus-ring boundary geometry now concentric on every top/left-flush widget",
+        "no new carry; full ~121-demo sweep deferred to push per sweep-at-push discipline"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
