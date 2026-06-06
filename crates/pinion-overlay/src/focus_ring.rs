@@ -198,20 +198,6 @@ fn radius_opt(scene: &Scene, target: &str) -> Option<u32> {
     }
 }
 
-/// Minimum gap (logical px) the ring's painted geometry keeps below the
-/// **top** framebuffer edge (R806 §5.39 §5.16). Vello's sparse-strip
-/// rasteriser floods its whole top 16px coarse tile when a stroke's
-/// coverage reaches the `y = 0` scanline (reproduced deterministically in
-/// `pinion_shell::headless_screenshot` — a top-flush 2px Inside border
-/// rasterises a ~16px-thick top band, while the same border one pixel
-/// lower, or against the left edge, is a faithful 2px). The defect is
-/// invisible to `scene/snapshot` (the scene carries a 2px border) and was
-/// the real "thick menubar focus-ring top edge" the user observed. Until
-/// the upstream vello fix lands we keep the ring's top stroke one pixel
-/// inside the framebuffer; the left/right/bottom edges do NOT flood, so
-/// only the top is inset. See [[introspection-from-paint-not-screen]].
-const TOP_EDGE_INSET: u32 = 1;
-
 fn build_focus_ring_box(target: Rect, target_radius: u32, style: FocusRingStyle) -> BoxNode {
     let off = style.offset;
     // Concentric outset, boundary-clipped (R806 §5.39). `Rect` origins are
@@ -221,24 +207,23 @@ fn build_focus_ring_box(target: Rect, target_radius: u32, style: FocusRingStyle)
     // clamped amount, so the far (bottom/right) edge still lands at
     // `target + off` — the ring stays concentric with the widget and the
     // framebuffer edge clips the lost near gap.
-    //
-    // Top edge additionally floors at `TOP_EDGE_INSET` (1px), not 0, to
-    // dodge the vello top-tile flood documented on that constant: a stroke
-    // whose coverage reaches `y = 0` is rasterised ~16px thick. The left
-    // edge does not flood, so `x` floors at 0 (a left-flush widget keeps a
-    // concentric left ring); only `y` carries the inset.
     let x = target.x.saturating_sub(off);
-    let y = target.y.saturating_sub(off).max(TOP_EDGE_INSET);
+    let y = target.y.saturating_sub(off);
     // Ideal far edges = widget far edge + the full outward offset. The span
     // back from the clamped near origin keeps the ring concentric.
     let ideal_right = target.x.saturating_add(target.w).saturating_add(off);
     let ideal_bottom = target.y.saturating_add(target.h).saturating_add(off);
-    let ring_rect = Rect::new(
+    // R807 §5.16 — funnel the final rect through the shared overlay SSOT that
+    // keeps the top stroke off the vello `y = 0` flood row (see
+    // [`crate::edge`]); shared with the §5.33 highlight box so the workaround
+    // lives in exactly one place. The left/right/bottom edges do not flood,
+    // so only the top is nudged (a top-flush ring loses 1px of its top gap).
+    let ring_rect = crate::edge::clamp_top_off_flood_row(Rect::new(
         x,
         y,
         ideal_right.saturating_sub(x),
         ideal_bottom.saturating_sub(y),
-    );
+    ));
     // Keep the ring concentric with a rounded widget: grow the radius
     // by the same offset the rect grew. A sharp widget (radius 0) keeps
     // a sharp ring.
@@ -330,7 +315,10 @@ mod tests {
         // near gap is clipped (left by the framebuffer, top by the inset).
         assert_eq!(ring.rect.x + ring.rect.w, 98, "right edge = widget right (96) + 2");
         assert_eq!(ring.rect.y + ring.rect.h, 42, "bottom edge = widget bottom (40) + 2");
-        assert!(ring.rect.y >= TOP_EDGE_INSET, "top stroke kept off the y=0 flood row");
+        assert!(
+            ring.rect.y >= crate::edge::TOP_EDGE_INSET,
+            "top stroke kept off the y=0 flood row",
+        );
     }
 
     #[test]

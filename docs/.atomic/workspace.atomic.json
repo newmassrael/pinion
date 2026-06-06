@@ -32069,6 +32069,58 @@
         "untested: whether AaConfig::Msaa avoids the flood (Area-only headless renderer)"
       ]
     },
+    "R807": {
+      "decision_summary": "R807 §5.16 §5.33 §5.39 (SSOT promotion) — promote the VELLO-001 y=0 top-tile flood workaround from the focus ring alone (R806.1, which silently left the §5.33 AI highlight overlay unfixed despite it being the same transparent-fill bordered box) to a shared pinion_overlay::edge SSOT: clamp_top_off_flood_row + TOP_EDGE_INSET in one module, funnelled through by both build_focus_ring_box and build_highlight_box. The flood-trigger is a transparent-fill bordered overlay flush at the window top; that is exactly the overlay family, so the overlay crate is the correct SSOT scope. A renderer-side stroke clamp was deliberately rejected because it shifts the painted stroke without the scene reflecting it, breaking scene-as-data == screen (the AI-introspection invariant); geometry-inset on a transparent-fill box keeps scene-data byte-faithful to the pixels and leaves no fill gap. Filled widget borders flush at the top do not occur (top-flush borders are x=0, which the flood spares). Self-grep lesson: R806's 3rd-consumer self-grep used the wrong axis (rect-outset) and missed the highlight; the correct axis was edge-stroke overlay.",
+      "changes_bullets": [
+        "pinion_overlay::edge SSOT: clamp_top_off_flood_row + TOP_EDGE_INSET in one place",
+        "build_focus_ring_box and build_highlight_box both funnel their box through it",
+        "highlight overlay now flood-safe at the window top (R806.1 left it unfixed)",
+        "renderer-clamp rejected: would break scene-as-data == screen (the §2 #7 invariant)",
+        "geometry-inset is faithful because overlays are transparent-fill (no fill gap)",
+        "headless guards: focus ring + highlight end-to-end + pure-vello attribution"
+      ],
+      "verification_bullets": [
+        "pinion-overlay 31 unit tests green (edge SSOT + highlight top-flush + ring unchanged)",
+        "5 headless raster guards green (--ignored): both overlays render top edge <=4px",
+        "clippy pinion-overlay + pinion-shell --all-targets --features vello clean",
+        "focus ring geometry byte-identical to R806.1 (refactor, not behaviour change)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.33",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "VELLO-001 upstream: report linebender/vello with the pure-vello repro (user account)",
+        "wgpu raster guards are #[ignore] (cold-boot); no CI yet, run via --ignored in visual rounds",
+        "filled widget border flush at y=0 with x!=0 unhandled (does not occur today; x=0 bars spared)"
+      ],
+      "publishable_decision_summary": "R807 §5.16 §5.33 §5.39 (SSOT promotion) — promote the VELLO-001 y=0 top-tile flood workaround from the focus ring alone (R806.1, which silently left the §5.33 AI highlight overlay unfixed despite it being the same transparent-fill bordered box) to a shared pinion_overlay::edge SSOT: clamp_top_off_flood_row + TOP_EDGE_INSET in one module, funnelled through by both build_focus_ring_box and build_highlight_box. The flood-trigger is a transparent-fill bordered overlay flush at the window top; that is exactly the overlay family, so the overlay crate is the correct SSOT scope. A renderer-side stroke clamp was deliberately rejected because it shifts the painted stroke without the scene reflecting it, breaking scene-as-data == screen (the AI-introspection invariant); geometry-inset on a transparent-fill box keeps scene-data byte-faithful to the pixels and leaves no fill gap. Filled widget borders flush at the top do not occur (top-flush borders are x=0, which the flood spares). Self-grep lesson: R806's 3rd-consumer self-grep used the wrong axis (rect-outset) and missed the highlight; the correct axis was edge-stroke overlay.",
+      "publishable_changes_bullets": [
+        "pinion_overlay::edge SSOT: clamp_top_off_flood_row + TOP_EDGE_INSET in one place",
+        "build_focus_ring_box and build_highlight_box both funnel their box through it",
+        "highlight overlay now flood-safe at the window top (R806.1 left it unfixed)",
+        "renderer-clamp rejected: would break scene-as-data == screen (the §2 #7 invariant)",
+        "geometry-inset is faithful because overlays are transparent-fill (no fill gap)",
+        "headless guards: focus ring + highlight end-to-end + pure-vello attribution"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-overlay 31 unit tests green (edge SSOT + highlight top-flush + ring unchanged)",
+        "5 headless raster guards green (--ignored): both overlays render top edge <=4px",
+        "clippy pinion-overlay + pinion-shell --all-targets --features vello clean",
+        "focus ring geometry byte-identical to R806.1 (refactor, not behaviour change)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.33",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "VELLO-001 upstream: report linebender/vello with the pure-vello repro (user account)",
+        "wgpu raster guards are #[ignore] (cold-boot); no CI yet, run via --ignored in visual rounds",
+        "filled widget border flush at y=0 with x!=0 unhandled (does not occur today; x=0 bars spared)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -742,6 +742,67 @@ mod tests {
         );
     }
 
+    /// R807 §5.16 §5.33 — the §5.33 AI highlight overlay shares the focus
+    /// ring's `pinion_overlay::edge` flood-safe SSOT, so a highlight box flush
+    /// at the window top must also rasterise its border ~2px, not the ~16px
+    /// vello top-tile flood. End-to-end pixel proof that the R806.1
+    /// incompleteness (highlight was unfixed) is cleared: builds a top-flush
+    /// tagged widget, injects a real `inject_highlight`, renders through the
+    /// same `to_vello_cached`, and asserts the top edge is thin.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r807_highlight_top_edge_flood_safe() {
+        use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene};
+        use pinion_core::style::{BoxStyle, Color};
+        use pinion_overlay::{inject_highlight, HighlightStyle};
+        use pinion_runtime::paint_adapter::{root_background, to_vello_cached, FragmentCache};
+        use pinion_text::LayoutCache;
+        const W: u32 = 520;
+        const H: u32 = 320;
+        // Opaque red stroke so the readback is unambiguous (the default
+        // highlight colour's alpha makes pixel detection fiddly).
+        let red = Color::rgb(220, 0, 40);
+        let mut title = BoxNode::new(Rect::new(96, 0, 96, 40), BoxStyle::filled(Color::rgb(255, 255, 255)));
+        title.tag = Some("title".into());
+        let mut root = ContainerNode::new(vec![Scene::Box(title)]);
+        root.rect = Rect::new(0, 0, W, H);
+        root.style = BoxStyle::filled(Color::rgb(255, 255, 255));
+        let scene = inject_highlight(
+            Scene::Container(root),
+            "title",
+            HighlightStyle::default().with_stroke(red).with_stroke_width(2),
+        );
+        let base = root_background(&scene);
+        let mut tc = LayoutCache::new();
+        let mut ic = pinion_runtime::image_cache::ImageCache::new();
+        let mut fc = FragmentCache::new();
+        let mut vello = VelloScene::new();
+        to_vello_cached(&scene, &|_| None, &mut tc, &mut ic, &mut fc, &mut vello);
+        let mut shot = HeadlessScreenshot::new().expect("boot");
+        let px = shot.render_to_rgba8(&vello, W, H, base).expect("render");
+        let is_red = |x: u32, y: u32| {
+            let i = ((y * W + x) * 4) as usize;
+            (i64::from(px[i]) - 220).abs() <= 50
+                && i64::from(px[i + 1]) <= 70
+                && (i64::from(px[i + 2]) - 40).abs() <= 50
+        };
+        let (mut started, mut run) = (false, 0);
+        for y in 0..H {
+            if is_red(144, y) {
+                started = true;
+                run += 1;
+            } else if started {
+                break;
+            }
+        }
+        assert!(
+            run <= 4,
+            "highlight top edge rasterised {run}px for a top-flush widget — \
+             the shared pinion_overlay::edge SSOT must keep its border off \
+             the vello y=0 flood row, same as the focus ring.",
+        );
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]

@@ -147,7 +147,12 @@ fn is_highlight_child(child: &Scene) -> bool {
 fn build_highlight_box(bbox: Rect, tag: &str, style: HighlightStyle) -> BoxNode {
     let border = Border::new(style.stroke, style.stroke_width);
     let bstyle = BoxStyle::filled(Color::TRANSPARENT).with_border(border);
-    let mut node = BoxNode::new(bbox, bstyle);
+    // R807 §5.16 — like the §5.39 focus ring, a highlight box flush at the
+    // window top would have its 2px border flooded ~16px thick by the vello
+    // top-tile bug. Funnel the bbox through the shared overlay SSOT
+    // ([`crate::edge`]) so the workaround lives in one place; transparent
+    // fill means the 1px top nudge moves only the border, not a fill edge.
+    let mut node = BoxNode::new(crate::edge::clamp_top_off_flood_row(bbox), bstyle);
     node.tag = Some(tag.to_owned().into());
     // R705 §5.39 — overlays are decorative: pointer-transparent so the
     // highlighted widget keeps receiving input even when an overlay box
@@ -238,6 +243,22 @@ mod tests {
         );
         // bbox copied from the target
         assert_eq!(highlight.rect, Rect::new(10, 10, 50, 50));
+    }
+
+    #[test]
+    fn highlight_on_top_flush_widget_clears_the_vello_flood_row() {
+        // R807 §5.16 — a highlight box flush at the window top (y=0) must,
+        // like the focus ring, keep its 2px border off the vello y=0 flood
+        // row via the shared `crate::edge` SSOT. Top nudges to 1, bottom edge
+        // preserved (h shrinks 1); x/w untouched (the left edge does not
+        // flood). This is the R806.1 incompleteness (highlight was unfixed)
+        // cleared by routing both overlays through one helper.
+        let scene = container_with(vec![tagged_box_at(96, 0, 96, 40, "title")]);
+        let out = inject_highlight(scene, "title", HighlightStyle::default());
+        let Scene::Container(c) = &out else { panic!("Container") };
+        let Scene::Box(highlight) = &c.children[1] else { panic!("Box") };
+        assert_eq!(highlight.rect, Rect::new(96, 1, 96, 39), "top off flood row");
+        assert_eq!(highlight.rect.y + highlight.rect.h, 40, "bottom edge preserved");
     }
 
     #[test]

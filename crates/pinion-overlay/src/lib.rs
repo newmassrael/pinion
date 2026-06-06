@@ -42,6 +42,7 @@
 
 #![forbid(unsafe_code)]
 
+pub(crate) mod edge;
 pub mod event;
 pub mod focus_ring;
 pub mod highlight;
