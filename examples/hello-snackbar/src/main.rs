@@ -47,7 +47,9 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
-use pinion_core::widgets::snackbar::{use_snackbar_timer, SnackbarTimer};
+use pinion_core::widgets::snackbar::{
+    snackbar_introspection_extra, use_snackbar_timer, SnackbarTimer,
+};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
@@ -66,6 +68,12 @@ const THEME_TAG: &str = "app";
 const SHOW_TAG: &str = "show_snack";
 const UNDO_TAG: &str = "snack_undo";
 const SNACK_TAG: &str = "snackbar";
+/// R810 §5.38 §5.12 — tag of the query-only `SnackbarIntrospect`
+/// extra-external (distinct from the paint container [`SNACK_TAG`], the
+/// `dialog_state` vs `dialog` split the modal bindings use). An AI agent
+/// queries `snackbar_state.visible` / `.remaining` / `.duration` over
+/// the §5.12 RPC plane instead of inferring shown-state from paint.
+const SNACK_STATE_TAG: &str = "snackbar_state";
 const SHOW_HOVER_KEY: &str = "show_hover";
 const UNDO_HOVER_KEY: &str = "undo_hover";
 
@@ -252,7 +260,14 @@ impl WidgetCore for SnackbarView {
     }
 
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![ExtraExternal::new(UNDO_TAG, Box::new(ButtonExternal::new()))]
+        // R810 §5.38 §5.12 — register the query-only snackbar introspect
+        // node next to the action button, resolving the *same*
+        // `Rc<SnackbarTimer>` the view-fn reads (one SSOT) so an AI agent
+        // can query the live shown-state + countdown over RPC.
+        vec![
+            ExtraExternal::new(UNDO_TAG, Box::new(ButtonExternal::new())),
+            snackbar_introspection_extra(SNACK_STATE_TAG, snackbar()),
+        ]
     }
 
     fn tag() -> &'static str {

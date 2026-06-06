@@ -32273,6 +32273,58 @@
         "a11y aria-expanded now matches the paint disclosure glyph (both sourced from the node expanded flag); no remaining tree a11y gap known"
       ]
     },
+    "R810": {
+      "decision_summary": "R810 §5.38 §5.12 — close the snackbar AI-introspection gap (the #1 thesis: every interactive state is RPC-queryable, not paint-inferable): add a query-only SnackbarIntrospect External + snackbar_introspection_extra helper exposing visible/remaining/duration (read-only, timer-driven), mirroring R795 ModalIntrospect, and wire it into hello-snackbar. An introspection-coverage audit found snackbar was the sole Tier-1 gap; caret_blink (Tier-2) deferred.",
+      "changes_bullets": [
+        "new SnackbarIntrospect (query-only RPC External) wrapping the shared Rc<SnackbarTimer>, mirroring R795 ModalIntrospect",
+        "query slots: visible (bool) / remaining (float) / duration (float) — the live shown-state + countdown as data",
+        "all slots read-only: the countdown is timer-driven (tick/show), a raw intervene would desync it (ReadOnly)",
+        "snackbar_introspection_extra(tag, timer) helper registers it as an ExtraExternal (mirrors modal_introspection_extra)",
+        "hello-snackbar wires it at snackbar_state, resolving the same Owner-cached Rc the view-fn reads (one SSOT)",
+        "closes the R725 carry the SnackbarTimer doc itself flagged (\"remaining exposed so an AI client can read the countdown\")"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core --lib snackbar: 13 green (6 new introspect tests: query/read-only/schema/extra-helper)",
+        "cargo clippy -p pinion-core -p hello-snackbar --all-targets: clean (-D pedantic)",
+        "new demo r810_snackbar_introspect.py: PASS (realgpu, >=30 assertions, wait_until-polled)",
+        "r725_snackbar.py regression: PASS (the added extra-external does not disturb the paint/auto-dismiss path)",
+        "introspection audit (this round) confirmed snackbar was the sole Tier-1 gap; caret_blink Tier-2 deferred (no 2nd consumer)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "caret_blink visible-phase introspection deferred (Tier-2: animation feedback, no AI-driving need; lift at a 2nd/TUI consumer per abstraction-needs-second-consumer)",
+        "tree-nav substrate lift still deferred to an organic 2nd interactive tree consumer (DevTools inspector keyboard nav); not forced",
+        "snackbar countdown is wall-clock-live under a continuously-rendering backend; scene/tick injects extra time (deterministic only in a non-rendering/headless context) — the introspect reports the live value either way"
+      ],
+      "publishable_decision_summary": "R810 §5.38 §5.12 — close the snackbar AI-introspection gap (the #1 thesis: every interactive state is RPC-queryable, not paint-inferable): add a query-only SnackbarIntrospect External + snackbar_introspection_extra helper exposing visible/remaining/duration (read-only, timer-driven), mirroring R795 ModalIntrospect, and wire it into hello-snackbar. An introspection-coverage audit found snackbar was the sole Tier-1 gap; caret_blink (Tier-2) deferred.",
+      "publishable_changes_bullets": [
+        "new SnackbarIntrospect (query-only RPC External) wrapping the shared Rc<SnackbarTimer>, mirroring R795 ModalIntrospect",
+        "query slots: visible (bool) / remaining (float) / duration (float) — the live shown-state + countdown as data",
+        "all slots read-only: the countdown is timer-driven (tick/show), a raw intervene would desync it (ReadOnly)",
+        "snackbar_introspection_extra(tag, timer) helper registers it as an ExtraExternal (mirrors modal_introspection_extra)",
+        "hello-snackbar wires it at snackbar_state, resolving the same Owner-cached Rc the view-fn reads (one SSOT)",
+        "closes the R725 carry the SnackbarTimer doc itself flagged (\"remaining exposed so an AI client can read the countdown\")"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core --lib snackbar: 13 green (6 new introspect tests: query/read-only/schema/extra-helper)",
+        "cargo clippy -p pinion-core -p hello-snackbar --all-targets: clean (-D pedantic)",
+        "new demo r810_snackbar_introspect.py: PASS (realgpu, >=30 assertions, wait_until-polled)",
+        "r725_snackbar.py regression: PASS (the added extra-external does not disturb the paint/auto-dismiss path)",
+        "introspection audit (this round) confirmed snackbar was the sole Tier-1 gap; caret_blink Tier-2 deferred (no 2nd consumer)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "caret_blink visible-phase introspection deferred (Tier-2: animation feedback, no AI-driving need; lift at a 2nd/TUI consumer per abstraction-needs-second-consumer)",
+        "tree-nav substrate lift still deferred to an organic 2nd interactive tree consumer (DevTools inspector keyboard nav); not forced",
+        "snackbar countdown is wall-clock-live under a continuously-rendering backend; scene/tick injects extra time (deterministic only in a non-rendering/headless context) — the introspect reports the live value either way"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
