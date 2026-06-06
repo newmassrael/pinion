@@ -32033,6 +32033,42 @@
         "the negative-control assertion flags the day the upstream fix lands"
       ]
     },
+    "R806.2": {
+      "decision_summary": "R806.2 §5.16 (review-prompted attribution) — verified the R806.1 'upstream vello bug' claim instead of asserting it. A pure vello::Scene stroke (no pinion Scene, no to_vello_cached) at the same top-flush geometry floods the same ~16px, so the y=0 top-tile flood is in vello's stroke rasteriser, not pinion's Scene->vello translation — the TOP_EDGE_INSET workaround is at the correct (only available) layer. Added a permanent attribution test that fails the day a vello upgrade fixes the flood at the source, signalling the inset can be retired. Open: not yet isolated whether AaConfig::Msaa avoids it (headless renderer is Area-only).",
+      "changes_bullets": [
+        "pure-vello stroke (no pinion Scene, no to_vello_cached) at y=0 still floods 16px",
+        "confirms the top-tile flood is vello's stroke rasteriser, not pinion translation",
+        "permanent attribution test asserts the flood; fails when upstream vello fixes it"
+      ],
+      "verification_bullets": [
+        "r806_1_top_tile_flood_is_in_vello_not_the_adapter passes (pure vello floods >4px)",
+        "existing r806 end-to-end guard still green; clippy pinion-shell clean"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "attribution now evidence-backed: TOP_EDGE_INSET workaround is the correct layer",
+        "untested: whether AaConfig::Msaa avoids the flood (Area-only headless renderer)"
+      ],
+      "publishable_decision_summary": "R806.2 §5.16 (review-prompted attribution) — verified the R806.1 'upstream vello bug' claim instead of asserting it. A pure vello::Scene stroke (no pinion Scene, no to_vello_cached) at the same top-flush geometry floods the same ~16px, so the y=0 top-tile flood is in vello's stroke rasteriser, not pinion's Scene->vello translation — the TOP_EDGE_INSET workaround is at the correct (only available) layer. Added a permanent attribution test that fails the day a vello upgrade fixes the flood at the source, signalling the inset can be retired. Open: not yet isolated whether AaConfig::Msaa avoids it (headless renderer is Area-only).",
+      "publishable_changes_bullets": [
+        "pure-vello stroke (no pinion Scene, no to_vello_cached) at y=0 still floods 16px",
+        "confirms the top-tile flood is vello's stroke rasteriser, not pinion translation",
+        "permanent attribution test asserts the flood; fails when upstream vello fixes it"
+      ],
+      "publishable_verification_bullets": [
+        "r806_1_top_tile_flood_is_in_vello_not_the_adapter passes (pure vello floods >4px)",
+        "existing r806 end-to-end guard still green; clippy pinion-shell clean"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "attribution now evidence-backed: TOP_EDGE_INSET workaround is the correct layer",
+        "untested: whether AaConfig::Msaa avoids the flood (Area-only headless renderer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

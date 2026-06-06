@@ -683,6 +683,65 @@ mod tests {
         );
     }
 
+    /// R806.1 §5.16 — attribution pin: the y=0 top-tile flood lives in
+    /// vello's stroke rasteriser itself, NOT pinion's `Scene -> vello`
+    /// translation. Builds a `vello::Scene` DIRECTLY (no pinion `Scene`, no
+    /// `to_vello_cached`) with the exact stroke `stroke_rect` emits for a
+    /// top-flush 2px Inside border, and confirms it still floods ~16px. So
+    /// the R806.1 `TOP_EDGE_INSET` workaround is the right layer (we cannot
+    /// fix the bug at its source from here); if a future vello upgrade makes
+    /// this assertion fail, the flood is fixed upstream and the inset can be
+    /// retired. `#[ignore]` for wgpu cold-boot like the sibling tests.
+    #[test]
+    #[ignore = "wgpu adapter cold-boot too slow for default test suite; run with --ignored"]
+    fn r806_1_top_tile_flood_is_in_vello_not_the_adapter() {
+        use vello::kurbo::{Affine, Rect as KurboRect, Stroke};
+        use vello::peniko::{Color as PenikoColor, Fill};
+        const W: u32 = 520;
+        const H: u32 = 320;
+        let mut shot = HeadlessScreenshot::new().expect("headless screenshot bootstrap");
+        let white = PenikoColor::from_rgba8(255, 255, 255, 255);
+        let mut raw = VelloScene::new();
+        raw.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            white,
+            None,
+            &KurboRect::new(0.0, 0.0, f64::from(W), f64::from(H)),
+        );
+        // The exact stroke `stroke_rect` emits for a (94,0,100,42) box with a
+        // 2px Inside border: a 2px stroke on the inset rect (95,1,193,41).
+        raw.stroke(
+            &Stroke::new(2.0),
+            Affine::IDENTITY,
+            PenikoColor::from_rgba8(26, 115, 232, 255),
+            None,
+            &KurboRect::new(95.0, 1.0, 193.0, 41.0),
+        );
+        let px = shot.render_to_rgba8(&raw, W, H, white).expect("render");
+        let blue = |x: u32, y: u32| {
+            let i = ((y * W + x) * 4) as usize;
+            (i64::from(px[i]) - 26).abs() <= 45
+                && (i64::from(px[i + 1]) - 115).abs() <= 45
+                && (i64::from(px[i + 2]) - 232).abs() <= 45
+        };
+        let (mut started, mut run) = (false, 0);
+        for y in 0..H {
+            if blue(144, y) {
+                started = true;
+                run += 1;
+            } else if started {
+                break;
+            }
+        }
+        assert!(
+            run > 4,
+            "a pure vello 2px stroke flush on the y=0 row no longer floods \
+             (top edge {run}px) — the upstream vello bug is fixed; the \
+             build_focus_ring_box TOP_EDGE_INSET workaround can be retired.",
+        );
+    }
+
     /// Zero-dimension viewports short-circuit with a typed error
     /// rather than reaching the wgpu validation layer.
     #[test]
