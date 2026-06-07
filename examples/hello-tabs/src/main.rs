@@ -53,8 +53,12 @@
 //! [`RadioGroup`]: pinion_core::widgets::radio_group::RadioGroup
 
 use pinion_a11y::{
-    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y,
+    tablist_tab_nodes, AccessAction, AccessFocus, AccessNode, TabCell, WidgetA11y,
 };
+// R815 §5.40 — `AriaRole` is now only referenced by the test asserts (the
+// lifted `tablist_tab_nodes` builder owns the role + state tagging in prod).
+#[cfg(test)]
+use pinion_a11y::AriaRole;
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -293,36 +297,28 @@ impl WidgetA11y for TabsView {
     /// labelled-by-its-tab convention) have no single paint-scene
     /// equivalent, so they stay explicit overrides.
     fn access_node(state: &TabsState, focused: Option<&str>) -> Vec<AccessNode> {
+        // R815 §5.40 — lifted `tablist_tab_nodes` builder (one of two
+        // consumers). `label: None` — tab names come from
+        // `enrich_names_from_scene` (the painted tab text); the builder
+        // derives `aria-posinset` / `aria-setsize` from the slice.
         let group_focused = focused == Some(<Self as WidgetCore>::tag());
         let active = active_tab_index(*state);
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 2);
-
-        let mut tablist = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::TabList)
-            .with_name("Settings sections");
-        for i in 0..N {
-            tablist = tablist.with_child(composite_tab_tag(PRIMARY_TAG, i));
-        }
-        nodes.push(tablist);
-
-        let setsize = u32::try_from(N).unwrap_or(u32::MAX);
-        for i in 0..N {
-            let tab_state = AccessState {
+        let tab_tags: Vec<String> = (0..N).map(|i| composite_tab_tag(PRIMARY_TAG, i)).collect();
+        let tabs: Vec<TabCell<'_>> = (0..N)
+            .map(|i| TabCell {
+                tag: &tab_tags[i],
+                label: None,
+                selected: state.selected == Some(i),
                 focused: group_focused && i == active,
-                ..AccessState::default()
-            };
-            nodes.push(
-                AccessNode::new(composite_tab_tag(PRIMARY_TAG, i), AriaRole::Tab)
-                    .with_selected(state.selected == Some(i))
-                    .with_state(tab_state)
-                    .with_position_in_set(u32::try_from(i + 1).unwrap_or(u32::MAX))
-                    .with_size_of_set(setsize),
-            );
-        }
-
-        nodes.push(
-            AccessNode::new(PANEL_TAG, AriaRole::TabPanel).with_name(TAB_LABELS[active]),
-        );
-        nodes
+            })
+            .collect();
+        tablist_tab_nodes(
+            <Self as WidgetCore>::tag(),
+            "Settings sections",
+            &tabs,
+            PANEL_TAG,
+            TAB_LABELS[active],
+        )
     }
 
     /// R51.71 §5.40 — composite focus model. When the TabList itself is

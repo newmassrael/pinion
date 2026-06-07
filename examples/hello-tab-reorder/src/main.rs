@@ -61,8 +61,12 @@ use std::borrow::Cow;
 use std::cell::Cell;
 
 use pinion_a11y::{
-    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y,
+    tablist_tab_nodes, AccessAction, AccessFocus, AccessNode, TabCell, WidgetA11y,
 };
+// R815 §5.40 — `AriaRole` is now only referenced by the test asserts (the
+// lifted `tablist_tab_nodes` builder owns the role + state tagging in prod).
+#[cfg(test)]
+use pinion_a11y::AriaRole;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
     IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
@@ -703,40 +707,33 @@ impl WidgetA11y for TabReorderView {
     /// `aria-posinset`/`setsize`), and a [`AriaRole::TabPanel`] for the
     /// active tab's body.
     fn access_node(state: &TabsState, focused: Option<&str>) -> Vec<AccessNode> {
+        // R815 §5.40 — lifted `tablist_tab_nodes` builder. Tabs are
+        // addressed by *visual* slot `v` (`tab_tag(v)`); the data tab id is
+        // `state.order[v]`, which keys the explicit label. The builder
+        // derives `aria-posinset` / `aria-setsize` from the slice.
         let list_focused = focused == Some(<Self as WidgetCore>::tag());
         let active_cursor = state.focused.unwrap_or_else(|| {
             state.order.iter().position(|&id| id == state.selected).unwrap_or(0)
         });
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 2);
-
-        let mut tablist = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::TabList)
-            .with_name("Editor tabs");
-        for v in 0..N {
-            tablist = tablist.with_child(tab_tag(v));
-        }
-        nodes.push(tablist);
-
-        let setsize = u32::try_from(N).unwrap_or(u32::MAX);
-        for v in 0..N {
-            let id = state.order[v];
-            let tab_state = AccessState {
-                focused: list_focused && v == active_cursor,
-                ..AccessState::default()
-            };
-            nodes.push(
-                AccessNode::new(tab_tag(v), AriaRole::Tab)
-                    .with_name(TABS[id].0)
-                    .with_selected(id == state.selected)
-                    .with_state(tab_state)
-                    .with_position_in_set(u32::try_from(v + 1).unwrap_or(u32::MAX))
-                    .with_size_of_set(setsize),
-            );
-        }
-
-        nodes.push(
-            AccessNode::new(PANEL_TAG, AriaRole::TabPanel).with_name(TABS[state.selected].0),
-        );
-        nodes
+        let tab_tags: Vec<String> = (0..N).map(tab_tag).collect();
+        let tabs: Vec<TabCell<'_>> = (0..N)
+            .map(|v| {
+                let id = state.order[v];
+                TabCell {
+                    tag: &tab_tags[v],
+                    label: Some(TABS[id].0),
+                    selected: id == state.selected,
+                    focused: list_focused && v == active_cursor,
+                }
+            })
+            .collect();
+        tablist_tab_nodes(
+            <Self as WidgetCore>::tag(),
+            "Editor tabs",
+            &tabs,
+            PANEL_TAG,
+            TABS[state.selected].0,
+        )
     }
 
     /// Composite focus model: when the TabList holds focus, focus stays on

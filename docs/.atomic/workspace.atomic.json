@@ -32641,6 +32641,50 @@
         "atomic widgets (slider/button/etc.) emit a single node = no topology to lift"
       ]
     },
+    "R815": {
+      "decision_summary": "R815 §5.40 — lift tablist_tab_nodes (WAI-ARIA tablist + tab + tabpanel AccessNode builder) into pinion-a11y and adopt in hello-tabs + hello-tab-reorder (2 consumers)",
+      "changes_bullets": [
+        "Add pinion_a11y::tabs::tablist_tab_nodes + TabCell (TabList + Tab + active TabPanel nodes)",
+        "Builder auto-derives aria-posinset/aria-setsize from the slice; a tab uses aria-selected",
+        "Identical skeleton across two consumers; per-tab data (tag/label/selected/focused) = builder args",
+        "Migrate hello-tabs + hello-tab-reorder; the tabpanel is a sibling node, not a tablist child",
+        "Gate now-test-only AriaRole import under cfg(test) (builder owns role tagging in prod)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 181 pass (6 new tabs builder tests)",
+        "hello-tabs + hello-tab-reorder: tests green (role asserts now exercise the lifted builder)",
+        "cargo clippy pedantic -D clean (renamed tags->tab_tags for the similar_names lint)",
+        "demos PASS: r690 tabs, r743 tab-reorder"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "remaining 2-copy a11y families for future lift: menu (hello-menu+contextmenu), non-virtual table (hello-table+table-multi)",
+        "combobox / dialog trigger-class nodes stay bespoke (not a container+children list topology)"
+      ],
+      "publishable_decision_summary": "R815 §5.40 — lift tablist_tab_nodes (WAI-ARIA tablist + tab + tabpanel AccessNode builder) into pinion-a11y and adopt in hello-tabs + hello-tab-reorder (2 consumers)",
+      "publishable_changes_bullets": [
+        "Add pinion_a11y::tabs::tablist_tab_nodes + TabCell (TabList + Tab + active TabPanel nodes)",
+        "Builder auto-derives aria-posinset/aria-setsize from the slice; a tab uses aria-selected",
+        "Identical skeleton across two consumers; per-tab data (tag/label/selected/focused) = builder args",
+        "Migrate hello-tabs + hello-tab-reorder; the tabpanel is a sibling node, not a tablist child",
+        "Gate now-test-only AriaRole import under cfg(test) (builder owns role tagging in prod)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 181 pass (6 new tabs builder tests)",
+        "hello-tabs + hello-tab-reorder: tests green (role asserts now exercise the lifted builder)",
+        "cargo clippy pedantic -D clean (renamed tags->tab_tags for the similar_names lint)",
+        "demos PASS: r690 tabs, r743 tab-reorder"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "remaining 2-copy a11y families for future lift: menu (hello-menu+contextmenu), non-virtual table (hello-table+table-multi)",
+        "combobox / dialog trigger-class nodes stay bespoke (not a container+children list topology)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
