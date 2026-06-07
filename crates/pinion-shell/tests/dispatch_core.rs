@@ -2719,19 +2719,26 @@ mod r681_immediate_mode_paint_cycle {
         let driver = install_driver();
         set_emit_immediate(true);
         let mut core: ShellCore<R681View> = ShellCore::new();
-        // First paint — driver tick fires with dt=0.0 (no prior
-        // paint instant on the per-window clock).
+        // First paint — the per-window clock has no prior instant, so
+        // dt=0.0. R831: the fixed-timestep accumulator releases zero
+        // whole steps for a zero delta, so the driver is NOT ticked yet
+        // (the pre-R831 variable-step model ticked once per paint).
         let scene = core.compute_paint_scene_for_window("main", 200, 200);
         // The paint scene contains the ImmediateModeNode the view
         // fn emitted.
         assert!(scene.has_immediate_mode_subtree());
-        assert_eq!(driver.borrow().tick_count, 1, "one tick per paint cycle");
+        assert_eq!(
+            driver.borrow().tick_count, 0,
+            "dt=0 first paint releases no whole fixed step (R831 accumulator)",
+        );
         assert_eq!(
             driver.borrow().last_observed_dt,
             Duration::ZERO,
-            "first paint sees dt=0 (no prior paint instant)",
+            "driver untouched → last_observed_dt is still the ZERO sentinel",
         );
-        // Per-window + binding-wide redraw flags both armed.
+        // The redraw flags are armed by PRESENCE of the immediate node
+        // (`has_immediate_mode_subtree`), NOT by whether a step ticked —
+        // the game loop must keep painting so the accumulator fills.
         assert!(
             core.redraw_requested(),
             "immediate-mode arms binding-wide redraw_requested",
@@ -2744,23 +2751,40 @@ mod r681_immediate_mode_paint_cycle {
     }
 
     #[test]
-    fn r681_two_paints_accumulate_two_ticks_on_driver() {
+    fn r831_injected_time_drives_exact_fixed_steps() {
+        // R831 §2 #4 §5.28 — drive the immediate-mode game loop
+        // deterministically by INJECTING elapsed time via `scene/tick`
+        // (the §2 #2 RPC peer of a wall-clock advance), then painting to
+        // consume it through the fixed-timestep accumulator. 0.03 s is
+        // 3.6 fixed steps (1/120 s each), so the accumulator releases
+        // exactly 3 whole steps (floor), carrying the 0.6-step remainder
+        // — a deterministic count, unlike wall-clock timing.
         let _guard = super::TEST_LOCK.lock().unwrap();
         reset_state();
         let driver = install_driver();
         set_emit_immediate(true);
         let mut core: ShellCore<R681View> = ShellCore::new();
-        // First paint: tick 1, dt=0.
+        // Prime the per-window paint clock (first paint, dt=0, 0 steps).
         let _ = core.compute_paint_scene_for_window("main", 200, 200);
-        // Force a measurable dt between paints so the
-        // `Duration::from_secs_f32` conversion is non-zero on the
-        // second paint.
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        assert_eq!(driver.borrow().tick_count, 0, "dt=0 prime paint: no step");
+        // Inject 0.03 s of simulation time at the addressed (default)
+        // window, then paint to consume it.
+        let mut no_resize = |_w: u32, _h: u32| {};
+        let _ = core.dispatch_rpc(
+            r#"{"jsonrpc":"2.0","method":"scene/tick","params":{"dt":0.03},"id":1}"#,
+            &mut no_resize,
+        );
         let _ = core.compute_paint_scene_for_window("main", 200, 200);
-        assert_eq!(driver.borrow().tick_count, 2, "two paints → two ticks");
+        assert_eq!(
+            driver.borrow().tick_count, 3,
+            "0.03 s / (1/120 s) = 3.6 → exactly 3 whole fixed steps",
+        );
+        // Each step advanced by the FIXED timestep, not the injected
+        // total — last_observed_dt is one fixed step (~8.33 ms).
+        let last = driver.borrow().last_observed_dt;
         assert!(
-            driver.borrow().last_observed_dt > Duration::ZERO,
-            "second paint sees a positive dt",
+            (Duration::from_micros(8000)..=Duration::from_micros(8700)).contains(&last),
+            "each tick is the fixed 1/120 s step; saw {last:?}",
         );
         reset_state();
     }
@@ -2835,21 +2859,37 @@ mod r681_immediate_mode_paint_cycle {
     }
 
     #[test]
-    fn r681_last_dt_sidecar_published_on_painted_node() {
+    fn r831_last_dt_sidecar_publishes_the_fixed_step() {
+        // R831 §2 #4 §5.28 — with the fixed-timestep accumulator,
+        // `last_dt` publishes the FIXED simulation step (1/120 s ≈
+        // 8.33 ms), NOT the variable wall-clock frame delta. It stays at
+        // the `Duration::ZERO` sentinel until the first WHOLE fixed step
+        // fires.
         let _guard = super::TEST_LOCK.lock().unwrap();
         reset_state();
         let _driver = install_driver();
         set_emit_immediate(true);
         let mut core: ShellCore<R681View> = ShellCore::new();
-        // First paint sees dt=0 (sentinel-like; valid first frame).
+        // First paint sees dt=0 → zero whole steps → ZERO sentinel.
         let scene_1 = core.compute_paint_scene_for_window("main", 200, 200);
         if let Some(node) = walk_first_immediate(&scene_1) {
             assert_eq!(node.last_dt(), Duration::ZERO);
         }
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        // Sleep past one fixed step (≈8.33 ms) so the accumulated time
+        // crosses a whole-step boundary and the driver ticks once.
+        std::thread::sleep(std::time::Duration::from_millis(12));
         let scene_2 = core.compute_paint_scene_for_window("main", 200, 200);
         if let Some(node) = walk_first_immediate(&scene_2) {
-            assert!(node.last_dt() > Duration::ZERO);
+            let last = node.last_dt();
+            assert!(last > Duration::ZERO, "a whole fixed step fired");
+            // It is the FIXED step, not the ≥12 ms wall-clock frame — the
+            // defining property of the fixed-timestep loop.
+            assert!(
+                (Duration::from_micros(8000)..=Duration::from_micros(8700))
+                    .contains(&last),
+                "last_dt is the fixed 1/120 s step (~8333 us), not the \
+                 wall-clock frame delta; saw {last:?}",
+            );
         }
         reset_state();
     }
@@ -3224,9 +3264,12 @@ mod r683_remove_window_shell_side {
     }
 
     #[test]
-    fn r683_remove_window_drains_all_four_per_window_maps() {
+    fn r683_remove_window_drains_per_window_maps() {
         // Publish a secondary entry into every per-window map +
         // remove. Every getter then reports the empty / None default.
+        // (R831 added `pending_immediate_dt` + `sim_accumulator` to the
+        // drained set; they have no public getter, so the three with
+        // getters stand in for the whole cluster.)
         let _guard = TEST_LOCK.lock().unwrap();
         let mut core: ShellCore<TestView> = ShellCore::new();
         core.request_redraw_for_window("inspector");

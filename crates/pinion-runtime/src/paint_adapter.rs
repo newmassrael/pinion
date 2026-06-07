@@ -171,14 +171,15 @@ fn to_vello_inner<F>(
             to_vello_inner(&s.content, fill_hook, text_cache, image_cache, out, child_transform);
             out.pop_layer();
         }
-        // R681 §2 #4 atomic 1 — ImmediateModeNode paints through
-        // the backend-agnostic [`ImmediatePainter`] surface. The
-        // shell's [`pinion_shell::ShellCore::compute_paint_scene_internal`]
-        // has already invoked `node.handle.borrow_mut().tick(dt)`
-        // by the time the paint walker reaches this branch (the
-        // tick + paint phases are separated so future per-window
-        // [`ControlFlow::Poll`] pacing in atomic 2 can drive the
-        // tick independently of the encode step). The painter
+        // R681 §2 #4 — ImmediateModeNode paints through the
+        // backend-agnostic [`ImmediatePainter`] surface. The shell's
+        // [`pinion_shell::ShellCore::compute_paint_scene_internal`]
+        // has already advanced the driver via the R831 fixed-timestep
+        // accumulator (`node.handle.borrow_mut().tick(FIXED)`) by the
+        // time the paint walker reaches this branch (the tick + paint
+        // phases are separated so the per-window
+        // [`winit::event_loop::ControlFlow::WaitUntil`] game-loop pacing
+        // drives the tick independently of the encode step). The painter
         // composes `transform * translate(viewport.{x,y})` so the
         // driver paints in viewport-LOCAL coordinates and the
         // result lands at the correct screen-space position.

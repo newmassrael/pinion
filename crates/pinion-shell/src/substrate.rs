@@ -327,6 +327,25 @@ pub struct ShellCore<V: WidgetView> {
     /// continuous loop so wall-clock paints do not also advance it.
     /// Absent entry → live wall-clock advance (the R827 default).
     pending_immediate_dt_per_window: HashMap<String, f32>,
+    /// R831 §2 #4 §5.28 — per-window fixed-timestep accumulator for the
+    /// immediate-mode game loop. Every per-window paint feeds this
+    /// window's elapsed simulation time (the clamped wall-clock delta, OR
+    /// the injected `scene/tick` delta from
+    /// [`Self::pending_immediate_dt_per_window`]) into one
+    /// [`pinion_runtime::FixedTimestep`], which advances the
+    /// [`pinion_core::scene::ImmediateMode`] drivers in EXACTLY
+    /// fixed-timestep increments and carries the sub-step remainder
+    /// across frames (Glenn Fiedler, "Fix Your Timestep!"). Routing live
+    /// AND injected time through the SAME accumulator is what makes the
+    /// loop frame-rate-independent and makes `scene/tick` reproduce live
+    /// behaviour deterministically (the pre-R831 split: live ran one
+    /// variable wall-clock step, `scene/tick` ran the
+    /// [`pinion_runtime::substep`] splitter — two time bases that could
+    /// not reproduce each other). Reset to a zero phase on pause
+    /// (`scene/set_fps 0`, [`Self::set_target_fps_for_window`]) so an AI
+    /// client frame-steps from a known fixed-step boundary. Absent entry
+    /// → a fresh zero-phase accumulator (lazy-inserted on first paint).
+    sim_accumulator_per_window: HashMap<String, pinion_runtime::FixedTimestep>,
     /// R682 §5.16 atomic 3 — per-window fragment cache observability
     /// snapshot. The surface-side `AppShell::render_window` calls
     /// [`Self::publish_fragment_cache_stats`] after each paint cycle
@@ -474,6 +493,7 @@ impl<V: WidgetView> ShellCore<V> {
             last_paint_instants: HashMap::new(),
             target_fps_per_window: HashMap::new(),
             pending_immediate_dt_per_window: HashMap::new(),
+            sim_accumulator_per_window: HashMap::new(),
             fragment_cache_stats_per_window: HashMap::new(),
             text_select_drag: None,
         }
@@ -732,6 +752,19 @@ impl<V: WidgetView> ShellCore<V> {
     pub fn set_target_fps_for_window(&mut self, window_id: &str, fps: u32) {
         self.target_fps_per_window
             .insert(window_id.to_owned(), fps);
+        // R831 §2 #4 §5.28 — pausing (`fps == 0`) snaps the immediate-mode
+        // accumulator back to a zero phase, so an AI client that then
+        // frame-steps via `scene/tick` advances from a known fixed-step
+        // boundary (the deterministic-debugging contract — a debugger
+        // breaks between frames, not mid-sub-step). The discarded
+        // remainder is sub-fixed (< ~8 ms of simulation). Resume keeps
+        // the post-pause accumulator (fresh zero phase) so live wall-clock
+        // restarts cleanly.
+        if fps == 0 {
+            if let Some(acc) = self.sim_accumulator_per_window.get_mut(window_id) {
+                acc.reset();
+            }
+        }
     }
 
     /// R681 §2 #4 atomic 3 §5.16 §5.28 — read the per-window target
@@ -760,10 +793,11 @@ impl<V: WidgetView> ShellCore<V> {
     /// R683 §5.16 §5.41 — drop every shell-side per-window state
     /// entry for `window_id`.
     ///
-    /// Walks the four per-window `HashMap`s lifted onto `ShellCore`
-    /// since R680 atomic 2 / R681 atomic 3 / R682 atomic 3
+    /// Walks the per-window `HashMap`s lifted onto `ShellCore` since
+    /// R680 atomic 2 / R681 atomic 3 / R682 atomic 3 / R829 / R831
     /// (`redraw_requested_per_window`, `last_paint_instants`,
-    /// `target_fps_per_window`, `fragment_cache_stats_per_window`)
+    /// `target_fps_per_window`, `fragment_cache_stats_per_window`,
+    /// `pending_immediate_dt_per_window`, `sim_accumulator_per_window`)
     /// and drops the entry keyed by `window_id`. Then forwards into
     /// [`pinion_runtime::CoreShell::remove_window`] which drains the
     /// runtime-side per-window state (`routers`, `window_owners`).
@@ -787,6 +821,14 @@ impl<V: WidgetView> ShellCore<V> {
             .is_some()
             | self.last_paint_instants.remove(window_id).is_some()
             | self.target_fps_per_window.remove(window_id).is_some()
+            | self
+                .pending_immediate_dt_per_window
+                .remove(window_id)
+                .is_some()
+            | self
+                .sim_accumulator_per_window
+                .remove(window_id)
+                .is_some()
             | self
                 .fragment_cache_stats_per_window
                 .remove(window_id)
@@ -1921,18 +1963,18 @@ impl<V: WidgetView> ShellCore<V> {
             });
             compute_layout(&mut paint_scene, &mut self.text_cache, w, h);
         }
-        // R681 §2 #4 atomic 1 — per-window immediate-mode tick. The
-        // paint scene the view fn just produced may contain one or
-        // more [`Scene::ImmediateModeNode`]s; each driver advances
-        // its own state by the per-window `dt` and the same value
-        // lands in [`ImmediateModeNode::last_dt`] for AI
+        // R681 §2 #4 atomic 1 / R831 — per-window immediate-mode tick.
+        // The paint scene the view fn just produced may contain one or
+        // more [`Scene::ImmediateModeNode`]s; each driver advances its
+        // own state in fixed-timestep steps (R831 accumulator below), and
+        // the fixed step lands in [`ImmediateModeNode::last_dt`] for AI
         // introspection. The paint adapter
         // ([`pinion_runtime::paint_adapter::to_vello`]) invokes
         // [`pinion_core::scene::ImmediateMode::paint`] later in the
         // frame (after this tick), so the painted geometry reflects
         // the post-tick driver state.
         //
-        // The non-zero count signal flags this binding as
+        // The immediate-mode presence signal flags this binding as
         // immediate-mode-active for the rest of the paint cycle:
         // we mark `redraw_requested` so the next frame fires from
         // the per-window paint clock without waiting on input —
@@ -1942,51 +1984,59 @@ impl<V: WidgetView> ShellCore<V> {
         // [`ApplicationHandler::about_to_wait`](crate::app) (R681
         // atomics 2 + 3 — per-window deadline +
         // [`pinion_runtime::frame_pacing::frame_budget_for_window`]).
-        // R829 §2 #4 §5.28 — deterministic immediate-mode stepping. When
-        // a `scene/tick` injected a `dt` for this window (typically
-        // paused via `scene/set_fps 0` so the continuous loop does not
-        // also advance it), tick the immediate-mode drivers by exactly
-        // that delta — substepped through the shared fixed-timestep so a
-        // large injected `dt` stays integrator-stable — INSTEAD of the
-        // wall-clock delta, so an AI client frame-steps the game loop
-        // deterministically. Live (unpaused) windows have no pending
-        // entry and fall through to the R827 wall-clock advance.
-        // R830 §2 #4 §5.28 — "is this window paused" (`scene/set_fps 0`),
-        // computed once: it gates BOTH the frozen-clock branch below and
-        // the continuous-loop redraw re-arm further down, so the two
+        // R831 §2 #4 §5.28 — fixed-timestep accumulator (Glenn Fiedler,
+        // "Fix Your Timestep!"). Whichever clock sourced this frame's
+        // elapsed time, feed it into the SAME per-window
+        // [`pinion_runtime::FixedTimestep`] so the immediate-mode game
+        // loop advances in EXACTLY fixed steps with the sub-step
+        // remainder carried forward — making the simulation
+        // frame-rate-independent AND making `scene/tick` reproduce live
+        // behaviour deterministically (the pre-R831 split ran live as one
+        // variable wall-clock step and `scene/tick` through the
+        // [`pinion_runtime::substep`] splitter — two time bases that
+        // could not reproduce each other; [[verify-seed-claims-audit-first]]).
+        //
+        // `paused` (computed once) gates BOTH this frame's source clock
+        // AND the continuous-loop redraw re-arm further down, so the two
         // cannot disagree on the pause state.
         let paused = self.target_fps_for_window(window_key) == Some(0);
-        let immediate_count = if let Some(injected) =
+        // Simulation seconds to advance this frame:
+        //   - a pending `scene/tick` injection (an AI client frame-stepping
+        //     a — typically paused — window), if present; else
+        //   - `0.0` when paused: the sim clock is FROZEN, so an incidental
+        //     repaint (a click forwarding `on_pointer_down`, a focus-ring
+        //     redraw, a resize) does NOT fast-forward a long-paused game;
+        //   - the clamped wall-clock delta otherwise (the live loop).
+        let sim_dt = if let Some(injected) =
             self.pending_immediate_dt_per_window.remove(window_key)
         {
-            // R829 deterministic step: advance by exactly the injected
-            // `dt` through the shared fixed-timestep
-            // [`pinion_runtime::substep`] policy. `count` accumulates the
-            // per-sub-step node count (used only as a `> 0` presence flag
-            // below, so over-counting is harmless).
-            let mut count = 0;
-            pinion_runtime::substep(injected, |step| {
-                count += paint_scene.tick_immediate_mode(Duration::from_secs_f32(step));
-            });
-            count
+            injected
         } else if paused {
-            // R830 §2 #4 §5.28 — paused with no pending step: the
-            // simulation clock is FROZEN. Tick by `Duration::ZERO` — a
-            // no-op *advance* (so an incidental repaint, e.g. a click
-            // forwarding `on_pointer_down`, a focus-ring redraw, a resize,
-            // does NOT fast-forward a long-paused game) that still returns
-            // the true immediate-node count, so the drain below still runs
-            // and harvests any §5.20 intent `on_pointer_down` queued
-            // (R830: the intent drain must not be coupled to whether the
-            // sim ADVANCED — `on_pointer_down` is an intent producer
-            // independent of ticking). Only `scene/tick` advances a paused
-            // window (the branch above).
-            paint_scene.tick_immediate_mode(Duration::ZERO)
+            0.0
         } else {
-            let immediate_dt = Duration::from_secs_f32(dt.max(0.0));
-            paint_scene.tick_immediate_mode(immediate_dt)
+            dt.max(0.0)
         };
-        if immediate_count > 0 {
+        // Drive the accumulator: it invokes `tick_immediate_mode` once per
+        // WHOLE fixed step and carries the remainder. `last_dt` therefore
+        // publishes the fixed simulation timestep (not the wall-clock
+        // frame delta) — `Duration::ZERO` until the first whole step
+        // fires. A frame whose accumulated time is still sub-fixed (or a
+        // frozen/paused frame) runs zero steps and leaves the drivers
+        // untouched.
+        self.sim_accumulator_per_window
+            .entry(window_key.to_owned())
+            .or_default()
+            .advance(sim_dt, |fixed| {
+                paint_scene.tick_immediate_mode(Duration::from_secs_f32(fixed));
+            });
+        // R830 §2 #4 §5.20 — presence gate, decoupled from whether the sim
+        // ADVANCED this frame. A pointer press buffers a §5.20 intent via
+        // `on_pointer_down` independently of ticking, so the drain below
+        // must run on EVERY frame that has immediate-mode nodes — even a
+        // paused/sub-fixed frame that ran zero steps. `has_immediate_mode_subtree`
+        // is the pure presence check (no tick, no `last_dt` side effect),
+        // replacing R830's `tick(ZERO)`-for-the-count workaround.
+        if paint_scene.has_immediate_mode_subtree() {
             // R829 §2 #4 §5.28 — re-arm the continuous game loop UNLESS
             // this window is paused (`scene/set_fps 0`). The immediate
             // tick self-re-arming the redraw is the R681 "first half of

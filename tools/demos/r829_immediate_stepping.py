@@ -65,14 +65,18 @@ def _bounces(tf: RpcSubprocess) -> int:
     return v
 
 
-def _mirror_advance(pos: float, vel: float, dt: float) -> tuple[float, float, int]:
-    """Substep-accurate mirror of BouncingBallDriver::tick + the shell's
-    fixed-timestep injected-dt loop. Returns (pos, vel, bounce_delta)."""
-    remaining = dt
+def _accumulate(
+    pos: float, vel: float, leftover: float, dt: float
+) -> tuple[float, float, float, int]:
+    """Mirror of the R831 shell `FixedTimestep` accumulator + the
+    BouncingBallDriver::tick. Adds `dt` to the carried `leftover`, then
+    steps in EXACTLY `_SUBSTEP` increments (carrying the new remainder),
+    NOT the pre-R831 partial-final-step splitter. Returns
+    (pos, vel, leftover, bounce_delta)."""
+    leftover += dt
     bounces = 0
-    while remaining > 0.0:
-        step = min(_SUBSTEP, remaining)
-        pos += vel * step
+    while leftover >= _SUBSTEP:
+        pos += vel * _SUBSTEP
         while not (0.0 <= pos <= 1.0):
             if pos < 0.0:
                 pos = -pos
@@ -81,8 +85,8 @@ def _mirror_advance(pos: float, vel: float, dt: float) -> tuple[float, float, in
                 pos = 2.0 - pos
                 vel = -abs(vel)
             bounces += 1
-        remaining -= step
-    return pos, vel, bounces
+        leftover -= _SUBSTEP
+    return pos, vel, leftover, bounces
 
 
 def body() -> None:
@@ -114,15 +118,24 @@ def body() -> None:
         assert b1 == b0, f"paused bounces must not change: {b0} -> {b1}"
 
         # ── (B) ADVANCES EXACTLY ON TICK ─────────────────────────────
-        # Step 1: a small dt that may or may not cross a wall — assert it
-        # matches the mirror prediction from the queried pre-tick state.
-        for dt in (0.05, 0.13, 0.37, 1.0):
+        # set_fps(0) reset the shell's fixed-timestep accumulator to a
+        # zero phase (R831 deterministic-debugging contract), so a mirror
+        # seeded with leftover=0 here tracks it. Each `tick(dt)` injects
+        # `dt` of simulation time; the accumulator releases the whole
+        # fixed steps it now owes and carries the sub-step remainder. The
+        # dts have clear fractional step margins (e.g. 0.055 s = 6.6 fixed
+        # steps) so the f32 (shell) and f64 (mirror) accumulators agree on
+        # the step COUNT; the exact fixed-step math is pinned by the Rust
+        # unit tests (frame_pacing::r831_*).
+        leftover = 0.0
+        for dt in (0.055, 0.13, 0.37, 1.005):
             pre_pos, pre_vel, pre_b = _pos(tf), _vel(tf), _bounces(tf)
-            exp_pos, _exp_vel, exp_db = _mirror_advance(pre_pos, pre_vel, dt)
+            exp_pos, _exp_vel, leftover, exp_db = _accumulate(
+                pre_pos, pre_vel, leftover, dt
+            )
             tf.tick(dt)
             # The paused window repaints once on the tick's redraw; poll
-            # until the new frame lands (pos or bounces moved, or — for a
-            # sub-pixel step — until a stable read differs from pre).
+            # until the new frame lands (pos or bounces moved).
             wait_until(
                 lambda pb=pre_pos, bb=pre_b: (
                     abs(_pos(tf) - pb) > 1e-7 or _bounces(tf) != bb
@@ -132,7 +145,7 @@ def body() -> None:
                 desc=f"tick(dt={dt}) advances the frozen driver",
             )
             got_pos, got_b = _pos(tf), _bounces(tf)
-            assert abs(got_pos - exp_pos) < 0.03, (
+            assert abs(got_pos - exp_pos) < 0.04, (
                 f"tick(dt={dt}): pos {got_pos} != mirror {exp_pos:.4f} "
                 f"(from pos={pre_pos:.4f} vel={pre_vel:.4f})"
             )

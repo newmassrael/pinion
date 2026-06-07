@@ -33783,6 +33783,74 @@
         "query implicit paint-fallback vs snapshot explicit from: selector — API-consistency note, defer to spec"
       ]
     },
+    "R831": {
+      "decision_summary": "R831: fixed-timestep accumulator for the immediate-mode game loop (Fiedler 'Fix Your Timestep'). Live wall-clock and scene/tick injected dt now feed ONE per-window FixedTimestep that steps in exact 1/120s increments and carries the remainder, making the simulation frame-rate-independent and making scene/tick reproduce live (the pre-R831 split ran live as one variable step and scene/tick through the substep splitter -> two time bases that could not reproduce each other). Round driven by a cost-no-object self-audit; bundled the stale-doc cleanup it surfaced (ControlFlow::Poll, R681 atomic-scaffold).",
+      "changes_bullets": [
+        "pinion-runtime: new FixedTimestep accumulator (advance/reset/remainder) in frame_pacing",
+        "FixedTimestep is the game-loop step SSOT: exact 1/120s steps + carried remainder (Fiedler)",
+        "substep doc corrected: it is the animation-clock splitter (partial final step), not an accumulator",
+        "8 new frame_pacing unit tests pin carry, chunk-independence, frozen, reset, exact-step",
+        "substrate: per-window sim_accumulator_per_window; one accumulator for live|injected|paused(0) dt",
+        "compute_paint_scene_internal feeds the frame dt through advance(); drain gate now presence-based",
+        "has_immediate_mode_subtree() replaces R830 tick(ZERO)-for-count drain workaround (no side effect)",
+        "set_target_fps_for_window(0) resets the accumulator -> deterministic frame-step from a known phase",
+        "remove_window now also drains pending_immediate_dt + sim_accumulator",
+        "last_dt publishes the fixed sim step (not the wall-clock frame delta); docs updated accordingly",
+        "doc cleanup: ControlFlow::Poll -> WaitUntil (5 sites); R681 atomic-scaffold staleness -> landed history",
+        "demos: new r831_fixed_timestep (sub-fixed-carry observable, 36 checks); r829 mirror -> accumulator"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: green (frame_pacing 23 incl 8 new; shell dispatch_core 107)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "demos PASS (realgpu :0): r831 new (36 checks), r829 updated, r830/r827/r828/r681 regression",
+        "round driven by 2 independent audit subagents (SSOT + workaround/staleness lenses)"
+      ],
+      "impact_refs": [
+        "5.28",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "substep is now a 1-consumer helper (animation clock); kept as the distinct in-place splitter policy",
+        "animation clock keeps live-variable + RPC-substep asymmetry (springs are attractors); unify if a deterministic-animation consumer appears",
+        "f32 accumulator: determinism = same-dt-sequence reproducibility; cross-machine bit-determinism would need f64/fixed-point (no consumer)",
+        "TUI backend does not tick immediate-mode nodes (GUI-only); a future TUI immediate loop must share FixedTimestep",
+        "ImmediatePainter arc/path/image + pointer up/move/keyboard immediate input remain additive-on-consumer (YAGNI)",
+        "immediate-mode intervene/invoke (_mut resolver closure refactor) still deferred (driver state read-only, no mutation consumer)"
+      ],
+      "publishable_decision_summary": "R831: fixed-timestep accumulator for the immediate-mode game loop (Fiedler 'Fix Your Timestep'). Live wall-clock and scene/tick injected dt now feed ONE per-window FixedTimestep that steps in exact 1/120s increments and carries the remainder, making the simulation frame-rate-independent and making scene/tick reproduce live (the pre-R831 split ran live as one variable step and scene/tick through the substep splitter -> two time bases that could not reproduce each other). Round driven by a cost-no-object self-audit; bundled the stale-doc cleanup it surfaced (ControlFlow::Poll, R681 atomic-scaffold).",
+      "publishable_changes_bullets": [
+        "pinion-runtime: new FixedTimestep accumulator (advance/reset/remainder) in frame_pacing",
+        "FixedTimestep is the game-loop step SSOT: exact 1/120s steps + carried remainder (Fiedler)",
+        "substep doc corrected: it is the animation-clock splitter (partial final step), not an accumulator",
+        "8 new frame_pacing unit tests pin carry, chunk-independence, frozen, reset, exact-step",
+        "substrate: per-window sim_accumulator_per_window; one accumulator for live|injected|paused(0) dt",
+        "compute_paint_scene_internal feeds the frame dt through advance(); drain gate now presence-based",
+        "has_immediate_mode_subtree() replaces R830 tick(ZERO)-for-count drain workaround (no side effect)",
+        "set_target_fps_for_window(0) resets the accumulator -> deterministic frame-step from a known phase",
+        "remove_window now also drains pending_immediate_dt + sim_accumulator",
+        "last_dt publishes the fixed sim step (not the wall-clock frame delta); docs updated accordingly",
+        "doc cleanup: ControlFlow::Poll -> WaitUntil (5 sites); R681 atomic-scaffold staleness -> landed history",
+        "demos: new r831_fixed_timestep (sub-fixed-carry observable, 36 checks); r829 mirror -> accumulator"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: green (frame_pacing 23 incl 8 new; shell dispatch_core 107)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "demos PASS (realgpu :0): r831 new (36 checks), r829 updated, r830/r827/r828/r681 regression",
+        "round driven by 2 independent audit subagents (SSOT + workaround/staleness lenses)"
+      ],
+      "publishable_impact_refs": [
+        "5.28",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "substep is now a 1-consumer helper (animation clock); kept as the distinct in-place splitter policy",
+        "animation clock keeps live-variable + RPC-substep asymmetry (springs are attractors); unify if a deterministic-animation consumer appears",
+        "f32 accumulator: determinism = same-dt-sequence reproducibility; cross-machine bit-determinism would need f64/fixed-point (no consumer)",
+        "TUI backend does not tick immediate-mode nodes (GUI-only); a future TUI immediate loop must share FixedTimestep",
+        "ImmediatePainter arc/path/image + pointer up/move/keyboard immediate input remain additive-on-consumer (YAGNI)",
+        "immediate-mode intervene/invoke (_mut resolver closure refactor) still deferred (driver state read-only, no mutation consumer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

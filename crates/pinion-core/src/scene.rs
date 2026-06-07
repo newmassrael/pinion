@@ -66,14 +66,16 @@ pub enum Scene {
     /// `dt` the shell drove. The retained tree treats this node as
     /// a paint-opaque leaf (mirrors [`Scene::External`] for input /
     /// path-lookup purposes) while the per-window paint cycle
-    /// invokes `handle.borrow_mut().tick(dt)` on every frame —
+    /// advances each driver in fixed-timestep steps (R831
+    /// [`pinion_runtime::FixedTimestep`] accumulator) every frame —
     /// substrate for the §2 #4 immediate-mode ↔ retained widget
     /// tree dual execution model (Phase C entry).
     ///
-    /// First-cut scaffold (R681 atomic 0): only the data shape +
-    /// trait surface land. Backend paint integration (atomic 1),
-    /// per-window [`ControlFlow::Poll`] pacing (atomic 2), and the
-    /// first consumer binding (atomic 4) follow in the same round.
+    /// Landed across R681 (data shape + trait surface + Vello paint
+    /// bridge + per-window [`winit::event_loop::ControlFlow::WaitUntil`]
+    /// pacing + first consumer), R827 (intent bridge), R828
+    /// (introspection), R829 (deterministic stepping), R830 (pointer
+    /// input), and R831 (fixed-timestep accumulator).
     ImmediateModeNode(ImmediateModeNode),
 }
 
@@ -297,12 +299,15 @@ impl Scene {
     /// ([`pinion_runtime::paint_adapter::to_vello`]'s walker invokes
     /// [`ImmediateMode::paint`] inside the same frame).
     ///
-    /// Returns the number of [`ImmediateModeNode`]s ticked. Callers
-    /// (the per-window paint cycle in `pinion-shell`) use the count
-    /// as a redraw signal: any non-zero count means the binding has
-    /// an immediate-mode subtree active and the surface should drive
-    /// the next frame from the per-window paint clock (R681 atomic 2
-    /// wires [`ControlFlow::Poll`] pacing on top of this signal).
+    /// R831: the shell invokes this once per WHOLE fixed timestep its
+    /// per-window [`pinion_runtime::FixedTimestep`] accumulator
+    /// releases, so `dt` is the fixed simulation step (not the
+    /// wall-clock frame delta) and `last_dt` publishes that fixed
+    /// step. A sub-fixed / frozen frame invokes it zero times. The
+    /// presence signal that gates the game-loop redraw re-arm is
+    /// [`Self::has_immediate_mode_subtree`] (no tick side effect), so
+    /// the returned count is informational (number of drivers ticked
+    /// this step).
     ///
     /// Walks the same branches as [`Self::contains_tag`]: descends
     /// `Container.children` in declaration order, `Scroll.content`.
@@ -340,8 +345,10 @@ impl Scene {
     /// R681 §2 #4 atomic 1 — `true` iff this scene tree contains at
     /// least one [`Scene::ImmediateModeNode`]. Cheaper than
     /// [`Self::tick_immediate_mode`] when the caller only needs the
-    /// presence signal (e.g. per-window [`ControlFlow::Poll`] pacing
-    /// decision in R681 atomic 2).
+    /// presence signal (the per-window
+    /// [`winit::event_loop::ControlFlow::WaitUntil`] game-loop pacing
+    /// decision, and — R831 — the immediate→retained intent-drain gate,
+    /// which must run even on a frame that ticked zero whole steps).
     ///
     /// Short-circuits on the first hit (DFS pre-order).
     #[must_use]
@@ -2391,12 +2398,13 @@ impl ScrollNode {
 // ---------------------------------------------------------------------------
 // R681 §2 #4 — `ImmediateModeNode` + `ImmediateMode` trait.
 //
-// First-cut scaffold (R681 atomic 0): only the data shape + trait
-// surface land. Backend paint integration (atomic 1), per-window
-// `ControlFlow::Poll` pacing (atomic 2), `frame_pacing::target_fps`
-// extension (atomic 3), and the first consumer binding (atomic 4)
-// follow in the same round. Substrate is paint-inert until atomic 1
-// wires `AppShell::render_window` to invoke `tick` + the Vello bridge.
+// Landed across R681 (data shape + trait surface + Vello paint bridge +
+// per-window `ControlFlow::WaitUntil` pacing + `frame_pacing::target_fps`
+// + first consumer `hello-immediate-mode-canvas`), then grown by R827
+// (intent bridge), R828 (introspection), R829 (deterministic stepping),
+// R830 (pointer input), and R831 (fixed-timestep accumulator). The
+// `ImmediateMode` trait surface stays minimal and additive: new methods
+// ship with default impls so existing drivers compile unchanged.
 // ---------------------------------------------------------------------------
 
 /// R681 §2 #4 — opaque immediate-mode driver trait (axis 2 of the
@@ -2556,13 +2564,14 @@ pub trait ImmediateMode: core::fmt::Debug {
 /// chooses GPU pipeline" while staying minimal enough to grow
 /// additively as concrete consumers surface needs.
 ///
-/// First-cut surface (R681 atomic 1): `clear` + `fill_rect` +
-/// `fill_triangle` + `stroke_line` — enough to drive the canonical
-/// rotating-shape demo (atomic 4 first consumer) and the future
-/// R&lt;X&gt; fps-overlay / waveform-viewer / minimap-overlay
-/// consumers. The surface is `#[non_exhaustive]` via trait extension
-/// (every new method ships with a default impl so existing impls
-/// compile unchanged).
+/// First-cut surface (R681): `clear` + `fill_rect` + `fill_triangle` +
+/// `stroke_line` — enough to drive the `hello-immediate-mode-canvas`
+/// first consumer (a rotating triangle) and the `hello-immediate-intent`
+/// bouncing-ball game loop, with future fps-overlay / waveform-viewer /
+/// minimap-overlay consumers driving additive surface growth (arc /
+/// path / image when a real consumer needs them). The surface is
+/// `#[non_exhaustive]` via trait extension (every new method ships with
+/// a default impl so existing impls compile unchanged).
 ///
 /// Coordinates are VIEWPORT-LOCAL: `(0, 0)` is the top-left of the
 /// [`ImmediateModeNode::viewport`] the backend bridge handed the
@@ -2679,18 +2688,22 @@ pub struct ImmediateModeNode {
     /// `V::update` reducer matches them exactly as it matches
     /// `Scene::External` widget intents.
     pub tag: Option<Cow<'static, str>>,
-    /// Last per-paint `dt` the shell drove into this node's
-    /// [`ImmediateMode::tick`]. Published by the per-window paint
-    /// cycle post-tick (atomic 1 wires this); read-side surfaced
-    /// via [`Self::last_dt`] for AI introspection (`scene/query`
-    /// over [`ImmediateMode::introspect`] schema slot
-    /// `"last_dt_ms"` is the canonical lift in atomic 4).
+    /// The `dt` of the last [`ImmediateMode::tick`] the shell drove
+    /// into this node. Published by the per-window paint cycle
+    /// post-tick; read-side surfaced via [`Self::last_dt`] for AI
+    /// introspection (`scene/snapshot` exposes it as `last_dt_micros`,
+    /// R828).
     ///
-    /// `Duration::ZERO` is the sentinel for "no tick yet" — first
-    /// paint, before the shell has driven one. Distinct from any
-    /// valid measured `dt` because the shell clamps to
-    /// `[1us, 1/30s]` per [`pinion_runtime::frame_pacing::clamp_frame_dt`]
-    /// (R51.145).
+    /// R831: this is the FIXED simulation timestep
+    /// ([`pinion_runtime::FixedTimestep`], 1/120 s), not the wall-clock
+    /// frame delta — the shell advances the driver in whole fixed steps
+    /// and carries the sub-step remainder across frames. A frame whose
+    /// accumulated time is still sub-fixed (or a frozen / paused frame)
+    /// ticks zero times and leaves this unchanged.
+    ///
+    /// `Duration::ZERO` is the sentinel for "no whole step yet" — the
+    /// first paints, before the accumulator releases its first fixed
+    /// step.
     pub last_dt: Cell<Duration>,
 }
 
@@ -2752,11 +2765,10 @@ impl ImmediateModeNode {
         self.last_dt.get()
     }
 
-    /// Publish a freshly measured per-paint `dt` into the sidecar.
-    /// Called by the per-window paint cycle (atomic 1 wires this)
-    /// AFTER the [`ImmediateMode::tick`] call, so reads via
-    /// [`Self::last_dt`] in the same frame return the value that
-    /// drove the tick.
+    /// Publish the fixed step into the sidecar. Called by the
+    /// per-window paint cycle AFTER each [`ImmediateMode::tick`] call,
+    /// so reads via [`Self::last_dt`] in the same frame return the
+    /// value that drove the tick (R831: the fixed simulation step).
     pub fn set_last_dt(&self, dt: Duration) {
         self.last_dt.set(dt);
     }
@@ -4395,10 +4407,11 @@ mod tests {
     // ───────────────────────────────────────────────────────────────
     // R681 §2 #4 — ImmediateModeNode + ImmediateMode trait surface.
     //
-    // Atomic 0 substrate. Paint integration (atomic 1) wires the
-    // tick dispatch + Vello bridge; these tests pin the data shape
-    // + trait surface + scene-method exhaustiveness so atomic 1
-    // builds on a verified baseline.
+    // These tests pin the core data shape + trait surface +
+    // scene-method exhaustiveness (tick walk, presence check, tag /
+    // path / hit-test leaf semantics). The shell-side tick dispatch +
+    // Vello paint bridge are covered by `pinion-shell` integration
+    // tests; here we verify the core primitive in isolation.
     // ───────────────────────────────────────────────────────────────
 
     #[test]
@@ -4801,18 +4814,18 @@ mod tests {
     }
 
     #[test]
-    fn r681_immediate_mode_node_paint_inert_in_paint_adapter() {
-        // Atomic 0 contract: ImmediateModeNode is paint-inert until
-        // atomic 1 wires the Vello bridge. Pinned by virtue of the
-        // workspace clippy + build passing with the wildcard arm in
-        // `paint_adapter::to_vello_inner` — no extra runtime
-        // assertion needed here. This test stays as documentation
-        // of the invariant and as a placeholder for the atomic 1
-        // companion `r681_immediate_mode_node_paint_invokes_tick`.
-        let _ = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+    fn r681_immediate_mode_node_is_a_recognised_paint_leaf() {
+        // An ImmediateModeNode is a paint-opaque retained-tree leaf: it
+        // carries no children to descend, but the tick walk and the
+        // presence check both recognise it. (The Vello paint bridge
+        // itself lives in `pinion-runtime::paint_adapter` and is covered
+        // there + in `pinion-shell` integration tests.)
+        let scene = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
             StubImmediateMode::new(),
             Rect::new(0, 0, 16, 16),
         ));
+        assert!(scene.has_immediate_mode_subtree());
+        assert_eq!(scene.tick_immediate_mode(Duration::from_millis(1)), 1);
     }
 
     // ── R681 atomic 1: ImmediatePainter trait + paint dispatch ─────

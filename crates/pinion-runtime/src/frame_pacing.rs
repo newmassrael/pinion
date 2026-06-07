@@ -75,22 +75,120 @@ pub fn clamp_frame_dt(dt: f32) -> f32 {
 /// granularity.
 const FIXED_TIMESTEP_SUBSTEP_SECS: f32 = 1.0 / 120.0;
 
-/// R830 §5.28 — drive `step_fn` over `dt` in fixed
-/// [`FIXED_TIMESTEP_SUBSTEP_SECS`] sub-steps (the canonical
-/// fixed-timestep accumulator). SSOT for the sub-stepping *policy* — the
-/// `max(0.0)` floor, the `min` clamp, the `remaining -= step`
-/// accumulation, and the semi-implicit-Euler stability decision — shared
-/// by every RPC-injected time advance (`scene/tick` animation clock +
-/// the R829 deterministic immediate-mode step) so the two time bases
-/// cannot silently desync (R829 lifted the constant; R830 lifts the loop
-/// the constant lived inside). `dt <= 0.0` invokes `step_fn` zero times
-/// (a frozen clock).
+/// R830 §5.28 — advance `step_fn` over the WHOLE of `dt` in fixed
+/// [`FIXED_TIMESTEP_SUBSTEP_SECS`] sub-steps, with a partial final step
+/// so the entire delta is consumed and NOTHING is carried. SSOT for the
+/// §5.28 *animation-clock* sub-stepping policy — the `max(0.0)` floor,
+/// the `min` clamp, the `remaining -= step` drain, and the
+/// semi-implicit-Euler stability decision. `dt <= 0.0` invokes `step_fn`
+/// zero times (a frozen clock).
+///
+/// This is a *splitter*, NOT an accumulator (it keeps no state and
+/// leaves no remainder) — the right shape for the animation clock, which
+/// `scene/tick` advances IN PLACE: a §5.28 spring is an attractor that
+/// converges to its target regardless of step size, so the contract is
+/// "advance the whole injected delta now, sub-stepped only for
+/// integrator stability." The §2 #4 immediate-mode game loop has the
+/// opposite requirement (path-dependent simulations, deferred to the
+/// paint cycle) and uses [`FixedTimestep`] — a true remainder-carrying
+/// accumulator — instead. The shared [`FIXED_TIMESTEP_SUBSTEP_SECS`]
+/// constant keeps the two sub-step granularities in lockstep without
+/// conflating the two policies.
 pub fn substep(dt: f32, mut step_fn: impl FnMut(f32)) {
     let mut remaining = dt.max(0.0);
     while remaining > 0.0 {
         let step = remaining.min(FIXED_TIMESTEP_SUBSTEP_SECS);
         step_fn(step);
         remaining -= step;
+    }
+}
+
+/// R831 §2 #4 §5.28 — fixed-timestep accumulator for the immediate-mode
+/// game loop (Glenn Fiedler, "Fix Your Timestep!"). Carries the leftover
+/// simulation time across frames and steps the simulation in EXACTLY
+/// [`FIXED_TIMESTEP_SUBSTEP_SECS`] increments — discarding nothing,
+/// adding nothing. Contrast [`substep`], which consumes a whole injected
+/// delta with a partial final step and keeps no state.
+///
+/// Two execution models, two policies:
+///
+/// - [`substep`] drives the §5.28 animation clock (advanced IN PLACE by
+///   `scene/tick`; springs are attractors → "advance the whole delta
+///   now, sub-stepped for stability", no remainder).
+/// - [`FixedTimestep`] drives the §2 #4 immediate-mode game loop
+///   (DEFERRED to the per-window paint cycle; drivers run arbitrary,
+///   often non-attractor simulations → every step must be the same size
+///   and the sub-step remainder must carry to the next frame).
+///
+/// The carry is what gives the immediate-mode loop its two canonical
+/// game-loop properties:
+///
+/// - **frame-rate independence** — a 30fps and a 144fps render of the
+///   same wall-clock window take the same number of fixed steps (modulo
+///   a sub-step of carried phase), so simulation behaviour does not
+///   depend on render cadence.
+/// - **`dt`-chunking determinism** — one `scene/tick 1.0` and a hundred
+///   `scene/tick 0.01` calls advance the simulation IDENTICALLY: only
+///   the total elapsed time matters, not how it was delivered. This is
+///   what lets `scene/tick` reproduce live behaviour (§2 #3 dry-run /
+///   deterministic-stepping guarantee extended to Phase C).
+///
+/// The pre-R831 immediate-mode path had neither: live ticked the full
+/// wall-clock delta in one variable step, while `scene/tick` ran
+/// [`substep`]'s partial-final-step splitter — two divergent time bases
+/// that could not reproduce each other. R831 routes BOTH through one
+/// accumulator.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FixedTimestep {
+    /// Simulation seconds accumulated but not yet consumed by a whole
+    /// [`FIXED_TIMESTEP_SUBSTEP_SECS`] step. Always in
+    /// `[0, FIXED_TIMESTEP_SUBSTEP_SECS)` once [`Self::advance`] returns.
+    accumulator: f32,
+}
+
+impl FixedTimestep {
+    /// Add `dt` elapsed seconds (a clamped wall-clock delta OR an
+    /// injected `scene/tick` delta — the SAME accumulator serves both,
+    /// which is precisely why `scene/tick` reproduces live) and invoke
+    /// `step_fn(FIXED_TIMESTEP_SUBSTEP_SECS)` once per whole fixed step
+    /// the accumulator now holds, carrying the remainder forward.
+    /// Returns the number of fixed steps taken.
+    ///
+    /// `dt <= 0.0` (and `NaN`, via `max`) adds nothing and steps zero
+    /// times — a frozen clock. The caller pre-clamps live wall-clock
+    /// `dt` to [`MAX_FRAME_DT_SECS`], bounding the live step count (no
+    /// spiral of death); an injected `scene/tick` delta is intentionally
+    /// unbounded — an AI client asking to advance 10 seconds
+    /// deterministically runs every fixed step it asked for.
+    pub fn advance(&mut self, dt: f32, mut step_fn: impl FnMut(f32)) -> u32 {
+        self.accumulator += dt.max(0.0);
+        let mut steps = 0;
+        while self.accumulator >= FIXED_TIMESTEP_SUBSTEP_SECS {
+            step_fn(FIXED_TIMESTEP_SUBSTEP_SECS);
+            self.accumulator -= FIXED_TIMESTEP_SUBSTEP_SECS;
+            steps += 1;
+        }
+        steps
+    }
+
+    /// Discard the sub-step remainder, snapping the accumulator back to
+    /// a zero phase. `pinion_shell` calls this when a window pauses
+    /// (`scene/set_fps 0`) so an AI client frame-steps the loop from a
+    /// known fixed-step boundary — the deterministic-debugging contract
+    /// (pause snaps to a frame edge, like a debugger breaking between
+    /// frames). The discarded remainder is below
+    /// [`FIXED_TIMESTEP_SUBSTEP_SECS`] (< ~8 ms of simulation), beneath
+    /// any observable threshold.
+    pub fn reset(&mut self) {
+        self.accumulator = 0.0;
+    }
+
+    /// The carried sub-step remainder in seconds, in
+    /// `[0, FIXED_TIMESTEP_SUBSTEP_SECS)`. Exposed for tests and future
+    /// introspection.
+    #[must_use]
+    pub fn remainder(self) -> f32 {
+        self.accumulator
     }
 }
 
@@ -209,8 +307,9 @@ pub fn frame_budget_for_window(
 #[cfg(test)]
 mod tests {
     use super::{
-        clamp_frame_dt, default_window_frame_policy, frame_budget_for_window,
-        WindowFramePolicy, DEFAULT_IMMEDIATE_MODE_FPS, MAX_FRAME_DT_SECS,
+        clamp_frame_dt, default_window_frame_policy, frame_budget_for_window, substep,
+        FixedTimestep, WindowFramePolicy, DEFAULT_IMMEDIATE_MODE_FPS,
+        FIXED_TIMESTEP_SUBSTEP_SECS, MAX_FRAME_DT_SECS,
     };
     use core::time::Duration;
 
@@ -378,5 +477,130 @@ mod tests {
         // Override raises rate above default.
         let high = frame_budget_for_window(true, Some(144)).expect("144fps override");
         assert!(high < Duration::from_secs_f64(1.0 / 60.0));
+    }
+
+    // ── R830 substep splitter (animation clock) ──────────────────────
+
+    #[test]
+    fn r830_substep_consumes_whole_delta_with_partial_final() {
+        // The splitter advances the WHOLE delta: a delta that is not a
+        // multiple of FIXED runs `ceil` steps whose sizes sum back to
+        // the input exactly (last step partial), leaving no remainder.
+        let mut seen: Vec<f32> = Vec::new();
+        substep(2.5 * FIXED_TIMESTEP_SUBSTEP_SECS, |s| seen.push(s));
+        assert_eq!(seen.len(), 3, "2.5 fixed steps → 3 sub-steps (2 full + partial)");
+        let total: f32 = seen.iter().sum();
+        assert!(
+            (total - 2.5 * FIXED_TIMESTEP_SUBSTEP_SECS).abs() < 1e-7,
+            "sub-steps sum back to the whole delta: {total}",
+        );
+        // The final (partial) step is half a fixed step.
+        assert!((seen[2] - 0.5 * FIXED_TIMESTEP_SUBSTEP_SECS).abs() < 1e-7);
+    }
+
+    #[test]
+    fn r830_substep_frozen_clock_runs_zero_steps() {
+        let mut n = 0;
+        substep(0.0, |_| n += 1);
+        substep(-1.0, |_| n += 1);
+        assert_eq!(n, 0, "dt <= 0 is a frozen clock");
+    }
+
+    // ── R831 FixedTimestep accumulator (immediate-mode game loop) ─────
+
+    #[test]
+    fn r831_advance_steps_in_exact_fixed_increments() {
+        let mut ts = FixedTimestep::default();
+        let mut steps: Vec<f32> = Vec::new();
+        let n = ts.advance(2.5 * FIXED_TIMESTEP_SUBSTEP_SECS, |s| steps.push(s));
+        // Floor (not ceil): 2 whole steps, 0.5 carried — the opposite of
+        // the splitter, which would run 3 sub-steps with a partial final.
+        assert_eq!(n, 2, "2.5 fixed steps → 2 whole steps, remainder carried");
+        assert_eq!(steps.len(), 2);
+        assert!(
+            steps.iter().all(|s| (s - FIXED_TIMESTEP_SUBSTEP_SECS).abs() < 1e-9),
+            "every step is EXACTLY one fixed timestep, never partial",
+        );
+        assert!(
+            (ts.remainder() - 0.5 * FIXED_TIMESTEP_SUBSTEP_SECS).abs() < 1e-7,
+            "the 0.5-step remainder carries forward: {}",
+            ts.remainder(),
+        );
+    }
+
+    #[test]
+    fn r831_remainder_carries_across_calls() {
+        // Two sub-fixed advances that individually step zero times sum to
+        // a whole step on the second call — the carry is the whole point.
+        let mut ts = FixedTimestep::default();
+        let mut fired = 0;
+        let first = ts.advance(0.6 * FIXED_TIMESTEP_SUBSTEP_SECS, |_| fired += 1);
+        assert_eq!(first, 0, "0.6 of a step does not fire yet");
+        assert_eq!(fired, 0);
+        let second = ts.advance(0.6 * FIXED_TIMESTEP_SUBSTEP_SECS, |_| fired += 1);
+        // 0.6 + 0.6 = 1.2 → one whole step on the second call, 0.2 carried.
+        assert_eq!(second, 1, "0.6 + 0.6 carries to exactly one fixed step");
+        assert_eq!(fired, 1);
+        assert!((ts.remainder() - 0.2 * FIXED_TIMESTEP_SUBSTEP_SECS).abs() < 1e-6);
+    }
+
+    #[test]
+    fn r831_chunking_determinism_total_steps_independent_of_delivery() {
+        // THE canonical property: the same total elapsed time produces
+        // the same number of fixed steps regardless of how it is chunked
+        // — what makes `scene/tick` reproduce live and the simulation
+        // frame-rate-independent. (The splitter `substep` would NOT: it
+        // runs a partial step per call, so 100 calls = 100 partials.)
+        let total = 1.0_f32; // a full second
+        let mut one_shot = FixedTimestep::default();
+        let mut steps_one = 0u32;
+        steps_one += one_shot.advance(total, |_| {});
+
+        let mut chunked = FixedTimestep::default();
+        let mut steps_many = 0u32;
+        // 1000 chunks of 1ms — none a multiple of the 1/120 fixed step,
+        // so this exercises the carry hard.
+        for _ in 0..1000 {
+            steps_many += chunked.advance(0.001, |_| {});
+        }
+        assert_eq!(
+            steps_one, steps_many,
+            "one-shot {steps_one} vs chunked {steps_many} fixed steps must match",
+        );
+        // And the leftover phase agrees to within an f32 epsilon budget.
+        assert!(
+            (one_shot.remainder() - chunked.remainder()).abs() < 1e-3,
+            "carried phase converges: {} vs {}",
+            one_shot.remainder(),
+            chunked.remainder(),
+        );
+    }
+
+    #[test]
+    fn r831_advance_frozen_and_negative_step_zero() {
+        let mut ts = FixedTimestep::default();
+        let mut fired = 0;
+        let mut n = ts.advance(0.0, |_| fired += 1);
+        n += ts.advance(-5.0, |_| fired += 1);
+        n += ts.advance(f32::NAN, |_| fired += 1);
+        assert_eq!(n, 0, "dt <= 0 and NaN add nothing and step zero times");
+        assert_eq!(fired, 0);
+        assert_eq!(ts.remainder().to_bits(), 0.0_f32.to_bits());
+    }
+
+    #[test]
+    fn r831_reset_snaps_to_zero_phase() {
+        // Pause discards the sub-step remainder so frame-stepping starts
+        // from a known boundary.
+        let mut ts = FixedTimestep::default();
+        ts.advance(0.7 * FIXED_TIMESTEP_SUBSTEP_SECS, |_| {});
+        assert!(ts.remainder() > 0.0, "a sub-fixed advance leaves a remainder");
+        ts.reset();
+        assert_eq!(ts.remainder().to_bits(), 0.0_f32.to_bits(), "reset clears it");
+        // After reset, an exact-multiple advance fires exactly that many
+        // steps with no off-by-one from a stale phase.
+        let mut fired = 0;
+        ts.advance(3.0 * FIXED_TIMESTEP_SUBSTEP_SECS, |_| fired += 1);
+        assert_eq!(fired, 3, "clean phase → exact step count");
     }
 }
