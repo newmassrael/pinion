@@ -1,3 +1,21 @@
+// R822 — `clippy::large_stack_arrays` fires, **only on the unit-test target**,
+// on a 16 KB+ array that is not pinion-core code: libtest's generated runner
+// builds a `[&test::TestDescAndFn; N]` descriptor table — one 8-byte reference
+// per `#[test]` in the crate. At N = 2048 that table is exactly 16384 bytes (the
+// lint threshold; it fires on strictly `>`), so the 2049th test tips it over and
+// the lint blames the synthetic runner, whose span collapses to the crate root
+// (`lib.rs:1`) where no item-scoped `#[allow]` can reach. (The earlier diagnosis
+// — a serde `Signal<Vec<_>>` deserialization buffer, R820/R821 — was wrong:
+// MIR shows the only >16384-byte array in the test target is
+// `[&test::TestDescAndFn; N]`, and N equals the crate's `#[test]` count exactly.)
+//
+// Gating the allow on `cfg(test)` relaxes it for the test target only; the
+// production `--lib` lint pass (and every downstream crate) still denies
+// `large_stack_arrays` at full strength, so a genuine oversized stack array in
+// pinion-core's non-test code is still caught. This restores headroom to add
+// in-crate unit tests for core logic rather than exiling them to examples.
+#![cfg_attr(test, allow(clippy::large_stack_arrays))]
+
 pub mod animation;
 pub mod app;
 pub mod clipboard;

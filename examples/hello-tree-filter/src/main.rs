@@ -35,12 +35,15 @@
 //!   rows is ever a scene node; `Node` (matches all 240 leaves) windows the
 //!   whole 252-row tree, `Node03_05` windows a 2-row result.
 //!
-//! The tree is **immutable** (a filter demo, not an expand/collapse demo —
-//! `hello-virtual-tree` owns that axis): the boot expand flags never change,
-//! so the proxy memoizes its filtered flattening on the query string alone
-//! (the [`OrderMemo`](pinion_core::widgets) contract the two sort proxies
-//! share, here over `Vec<VisibleRow>`). Keyboard navigation is vertical
-//! roving over the visible rows (the windowed-widget keyboard model
+//! This demo's tree is **immutable in normal use** (a filter demo, not an
+//! expand/collapse demo — `hello-virtual-tree` owns that axis): the boot
+//! expand flags never change, so only the query ever drives a recompute. The
+//! proxy is nonetheless backed by a reactive `Computed` (R821.1) that tracks
+//! *both* the query and the source-tree `Signal`, so a live tree edit would
+//! update the filtered view too — the soundness witness
+//! `filter_re_derives_when_the_source_tree_mutates` mutates the tree under an
+//! unchanged query to prove it. Keyboard navigation is vertical roving over
+//! the visible rows (the windowed-widget keyboard model
 //! `hello-virtual-select` / `hello-virtual-nav` use).
 
 use pinion_a11y::{tree_access_nodes, AccessNode, WidgetA11y};
@@ -533,7 +536,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_key_impl, initial_nodes, use_filter, use_tree_state, view, SceneGraphFilter,
+        apply_key_impl, initial_nodes, use_filter, use_tree_state, view, SceneGraphFilter, TreeRow,
         CHILDREN_PER, CLICK_INTENT_TAG, EXPANDED_AT_BOOT, GROUPS, ROW_PITCH, SCROLL_KEY,
         TOTAL_NODES, TREE_TAG,
     };
@@ -695,77 +698,11 @@ mod tests {
         });
     }
 
-    // ── flat_visible_filtered algorithm (unit-tested here per R820: the core
-    //    fn's detailed assertions exercise serde-`Signal`-free `TreeRow` data,
-    //    but pinion-core's own test target is at the large_stack_arrays
-    //    boundary, so the SSOT decision is verified through this consumer) ──
-
-    use super::TreeRow;
-    use pinion_core::widgets::tree_nav::{flat_visible_filtered, TreeNode, VisibleRow};
-
-    /// `(id, depth, posinset, setsize, has_children, expanded)` per row.
-    fn shape(rows: &[VisibleRow]) -> Vec<(&str, u32, u32, u32, bool, bool)> {
-        rows.iter()
-            .map(|r| {
-                (r.id.as_str(), r.depth, r.position_in_set, r.size_of_set, r.has_children, r.expanded)
-            })
-            .collect()
-    }
-
-    /// A 3-node fixture: one collapsed branch with two leaves + a leaf sibling.
-    fn mini() -> Vec<TreeRow> {
-        vec![
-            TreeRow {
-                id: "g".to_string(),
-                label: "Group".to_string(),
-                expanded: false,
-                children: vec![
-                    TreeRow::leaf("g-a".to_string(), "ItemA".to_string()),
-                    TreeRow::leaf("g-b".to_string(), "ItemB".to_string()),
-                ],
-            },
-            TreeRow::leaf("o".to_string(), "Other".to_string()),
-        ]
-    }
-
-    fn label_contains(needle: &str) -> impl Fn(&TreeRow) -> bool + '_ {
-        move |n: &TreeRow| n.label().to_lowercase().contains(&needle.to_lowercase())
-    }
-
-    #[test]
-    fn filter_reveals_path_to_match_and_renumbers_over_survivors() {
-        // "Item" matches both leaves → the collapsed `Group` is revealed as
-        // path context, the `Other` sibling is pruned, and posinset/setsize
-        // renumber over the surviving group (Group is 1-of-1, not 1-of-2).
-        let rows = flat_visible_filtered(&mini(), label_contains("Item"));
-        assert_eq!(
-            shape(&rows),
-            [
-                ("g", 0, 1, 1, true, true),
-                ("g-a", 1, 1, 2, false, false),
-                ("g-b", 1, 2, 2, false, false),
-            ],
-        );
-    }
-
-    #[test]
-    fn filter_matching_branch_with_pruned_children_is_a_leaf() {
-        // "Group" matches the branch by name; its `Item*` children do not →
-        // it shows as a filtered leaf (has_children = false), `Other` pruned.
-        let rows = flat_visible_filtered(&mini(), label_contains("Group"));
-        assert_eq!(shape(&rows), [("g", 0, 1, 1, false, false)]);
-    }
-
-    #[test]
-    fn filter_no_match_is_empty_and_case_insensitive() {
-        assert!(flat_visible_filtered(&mini(), label_contains("zzz")).is_empty());
-        // Case-insensitive: "item" finds the same path as "Item".
-        assert_eq!(
-            flat_visible_filtered(&mini(), label_contains("item")).len(),
-            3,
-            "lowercase query matches the same 3-row path",
-        );
-    }
+    // The `flat_visible_filtered` core algorithm (path-to-match recursion,
+    // sibling renumbering, matching-branch-as-leaf, no-match) is unit-tested
+    // next to its definition in `pinion_core::widgets::tree_nav`; the tests
+    // below are this consumer's integration coverage over its real `use_filter`
+    // coordinator and `TreeRow` tree.
 
     // ── TreeFilterExternal RPC adapter (query / invoke / intervene + guards) ──
 

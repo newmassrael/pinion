@@ -33177,6 +33177,110 @@
         "investigation; a dedicated round with the right tooling is the textbook fix (not further test-homing)"
       ]
     },
+    "R822": {
+      "decision_summary": "Root-cause pinion-core clippy::large_stack_arrays test ceiling to libtest's [&TestDescAndFn;N] runner table (16384 bytes at the 2049th #[test]), not a serde Signal buffer as R820/R821 misdiagnosed (proved via MIR); fix with a cfg(test)-scoped crate-level allow in lib.rs and restore the exiled core tree tests to pinion-core.",
+      "changes_bullets": [
+        "root-cause: pinion-core's `clippy::large_stack_arrays` test ceiling is",
+        "libtest's `[&TestDescAndFn; N]` runner table, one 8-byte ref per `#[test]`",
+        "at N=2048 the table is exactly 16384 bytes (= threshold); the 2049th test",
+        "→ 16392 > 16384, firing at the crate-root span where no scoped allow reaches",
+        "the R820/R821 \"serde `Signal<Vec<_>>` deserialization buffer\" diagnosis was",
+        "wrong; proved via MIR (`--emit=mir`) — array length == the crate `#[test]` count",
+        "fix: `#![cfg_attr(test, allow(clippy::large_stack_arrays))]` in lib.rs;",
+        "relaxes the lint only for the unit-test target, production `--lib` still denies",
+        "verified production guard: a temp 20000-byte array in a non-test fn still",
+        "errors under `clippy -p pinion-core --lib` (allow does not apply without cfg test)",
+        "debt clearance: restored the misdiagnosis-exiled core tests to where they",
+        "belong — `flat_visible_filtered` algorithm + `set_expanded_in` / `toggle_expanded`",
+        "/ `apply_tree_key` over `Signal<Vec<TestNode>>` in tree_nav.rs (+serde derives)",
+        "restored `TreeFilterState` / `TreeFilterExternal` / `use_tree_filter` unit tests",
+        "to tree_filter.rs (self-contained synthetic node, incl. R821.1 Computed witness)",
+        "removed the now-duplicated pure-algorithm block from hello-tree-filter; kept its",
+        "`use_filter` integration tests; corrected stale serde + R821.1 OrderMemo doc text"
+      ],
+      "verification_bullets": [
+        "reproduced: clean tree passes `clippy -p pinion-core --all-targets`; adding any",
+        "one `#[test]` (even `assert_eq!(1+1,2)`) → large_stack_arrays at lib.rs:1",
+        "MIR dump: only >16384-byte array is `[&test::TestDescAndFn; 2049]`; grep of",
+        "`#[test]`/`#[tokio::test]` count == 2049 (with probe) confirms it is the count",
+        "`cargo clippy -p pinion-core --all-targets -j2` clean at 2058 unit tests",
+        "`cargo test -p pinion-core -j2`: 2058 passed / 0 failed (10 restored tree tests",
+        "green: 6 in tree_nav, 4 in tree_filter)",
+        "production guard verified: temp 20000-byte array in a non-test fn still errors",
+        "under `clippy -p pinion-core --lib`; temp removed",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green",
+        "`cargo test -p hello-tree-filter -j2`: 12 passed (block removal left helpers clean)",
+        "per-crate audit: only pinion-core (~2060 tests) is near the 2048 boundary;",
+        "next is pinion-rpc (~784) — single-crate fix is sufficient"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "pinion-core test-target headroom restored; new core-fn tests may live in-crate",
+        "again (the R820/R821 \"exile to examples\" rule is retired)",
+        "if another crate later crosses ~2048 `#[test]`, apply the same one-line",
+        "`#![cfg_attr(test, allow(clippy::large_stack_arrays))]`; only pinion-core is",
+        "near it today (next is pinion-rpc ~784)",
+        "consumer integration tests for tree toggle/keyboard remain in hello-tree-view",
+        "(r809 RPC demo) / hello-virtual-tree by design (they exercise consumer glue,",
+        "not just the core algorithm now unit-tested in tree_nav.rs)",
+        "no new external/upstream debt; no spec change (test-config only)"
+      ],
+      "publishable_decision_summary": "Root-cause pinion-core clippy::large_stack_arrays test ceiling to libtest's [&TestDescAndFn;N] runner table (16384 bytes at the 2049th #[test]), not a serde Signal buffer as R820/R821 misdiagnosed (proved via MIR); fix with a cfg(test)-scoped crate-level allow in lib.rs and restore the exiled core tree tests to pinion-core.",
+      "publishable_changes_bullets": [
+        "root-cause: pinion-core's `clippy::large_stack_arrays` test ceiling is",
+        "libtest's `[&TestDescAndFn; N]` runner table, one 8-byte ref per `#[test]`",
+        "at N=2048 the table is exactly 16384 bytes (= threshold); the 2049th test",
+        "→ 16392 > 16384, firing at the crate-root span where no scoped allow reaches",
+        "the R820/R821 \"serde `Signal<Vec<_>>` deserialization buffer\" diagnosis was",
+        "wrong; proved via MIR (`--emit=mir`) — array length == the crate `#[test]` count",
+        "fix: `#![cfg_attr(test, allow(clippy::large_stack_arrays))]` in lib.rs;",
+        "relaxes the lint only for the unit-test target, production `--lib` still denies",
+        "verified production guard: a temp 20000-byte array in a non-test fn still",
+        "errors under `clippy -p pinion-core --lib` (allow does not apply without cfg test)",
+        "debt clearance: restored the misdiagnosis-exiled core tests to where they",
+        "belong — `flat_visible_filtered` algorithm + `set_expanded_in` / `toggle_expanded`",
+        "/ `apply_tree_key` over `Signal<Vec<TestNode>>` in tree_nav.rs (+serde derives)",
+        "restored `TreeFilterState` / `TreeFilterExternal` / `use_tree_filter` unit tests",
+        "to tree_filter.rs (self-contained synthetic node, incl. R821.1 Computed witness)",
+        "removed the now-duplicated pure-algorithm block from hello-tree-filter; kept its",
+        "`use_filter` integration tests; corrected stale serde + R821.1 OrderMemo doc text"
+      ],
+      "publishable_verification_bullets": [
+        "reproduced: clean tree passes `clippy -p pinion-core --all-targets`; adding any",
+        "one `#[test]` (even `assert_eq!(1+1,2)`) → large_stack_arrays at lib.rs:1",
+        "MIR dump: only >16384-byte array is `[&test::TestDescAndFn; 2049]`; grep of",
+        "`#[test]`/`#[tokio::test]` count == 2049 (with probe) confirms it is the count",
+        "`cargo clippy -p pinion-core --all-targets -j2` clean at 2058 unit tests",
+        "`cargo test -p pinion-core -j2`: 2058 passed / 0 failed (10 restored tree tests",
+        "green: 6 in tree_nav, 4 in tree_filter)",
+        "production guard verified: temp 20000-byte array in a non-test fn still errors",
+        "under `clippy -p pinion-core --lib`; temp removed",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green",
+        "`cargo test -p hello-tree-filter -j2`: 12 passed (block removal left helpers clean)",
+        "per-crate audit: only pinion-core (~2060 tests) is near the 2048 boundary;",
+        "next is pinion-rpc (~784) — single-crate fix is sufficient"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pinion-core test-target headroom restored; new core-fn tests may live in-crate",
+        "again (the R820/R821 \"exile to examples\" rule is retired)",
+        "if another crate later crosses ~2048 `#[test]`, apply the same one-line",
+        "`#![cfg_attr(test, allow(clippy::large_stack_arrays))]`; only pinion-core is",
+        "near it today (next is pinion-rpc ~784)",
+        "consumer integration tests for tree toggle/keyboard remain in hello-tree-view",
+        "(r809 RPC demo) / hello-virtual-tree by design (they exercise consumer glue,",
+        "not just the core algorithm now unit-tested in tree_nav.rs)",
+        "no new external/upstream debt; no spec change (test-config only)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

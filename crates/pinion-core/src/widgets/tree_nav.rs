@@ -455,8 +455,11 @@ mod tests {
     //! its `FileNode` [`TreeNode`] glue.
 
     use super::{
-        find_node_mut, flat_visible, parent_row, resolve_tree_key, TreeKey, TreeNode, VisibleRow,
+        apply_tree_key, find_node_mut, flat_visible, flat_visible_filtered, parent_row,
+        resolve_tree_key, set_expanded_in, toggle_expanded, TreeKey, TreeNode, VisibleRow,
     };
+    use crate::reactive::Owner;
+    use crate::Signal;
 
     /// Page jump used by the tree consumers (mirrors `hello-tree-view`'s
     /// `NAV_PAGE`); larger than the sample listing so the page arm
@@ -464,7 +467,12 @@ mod tests {
     const NAV_PAGE: usize = 7;
 
     /// A minimal [`TreeNode`] for the resolver tests, standing in for the
-    /// real consumer node types (`FileNode` / `TreeItem`).
+    /// real consumer node types (`FileNode` / `TreeItem`). Derives the
+    /// `Signal` value bounds (`Clone + PartialEq + Serialize +
+    /// DeserializeOwned`) so the retained-tree helpers
+    /// ([`set_expanded_in`] / [`toggle_expanded`] / [`apply_tree_key`])
+    /// are exercised here over a `Signal<Vec<TestNode>>` directly.
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
     struct TestNode {
         id: String,
         label: String,
@@ -714,23 +722,124 @@ mod tests {
         assert!(find_node_mut(&mut nodes, "absent").is_none(), "missing id -> None");
     }
 
-    // `flat_visible_filtered` (the R821 recursive path-to-match proxy) is
-    // unit-tested in the `hello-tree-filter` consumer example, not here:
-    // pinion-core's own test target already sits at the `clippy::large_stack_arrays`
-    // 16 KB threshold (a serde-`Signal` monomorphization R820 surfaced), so any
-    // added test here trips it at the crate root where no scoped `#[allow]`
-    // reaches. The example's `filter_*` tests cover every arm (path-to-match,
-    // sibling renumbering, matching-branch-as-leaf, no-match) over its `TreeRow`.
+    // ── `flat_visible_filtered` recursive path-to-match proxy (R821) ──
+    //
+    // Restored to pinion-core at R822: the test target's
+    // `clippy::large_stack_arrays` ceiling was libtest's own
+    // `[&TestDescAndFn; N]` runner table crossing 16384 bytes at the 2049th
+    // test, not a serde `Signal` buffer (the R820/R821 diagnosis was wrong);
+    // a `cfg(test)`-scoped crate allow in `lib.rs` lifts it, so the SSOT
+    // decision is unit-tested next to its definition again.
 
-    // The `Signal<Vec<N>>` flag-store helpers (`set_expanded_in` /
-    // `toggle_expanded` / the `apply_tree_key` bridge) are integration-
-    // tested through their consumers rather than here: instantiating
-    // `Signal<Vec<TestNode>>` inside pinion-core's own tests monomorphizes
-    // serde's deserialization buffer (a >16KB array in generated code) and
-    // trips `clippy::large_stack_arrays` at the crate root, where no scoped
-    // `#[allow]` reaches. End-to-end coverage lives in `hello-tree-view`'s
-    // `r809_tree_keyboard_waiaria` demo (every `apply_tree_key` arm) and
-    // `hello-virtual-tree`'s `toggle_collapses_then_expands_a_branch` test;
-    // the decision logic each composes (`resolve_tree_key` + the pure
-    // `find_node_mut` above) is unit-tested here directly.
+    /// `(id, depth, posinset, setsize, has_children, expanded)` per row.
+    fn shape(rows: &[VisibleRow]) -> Vec<(&str, u32, u32, u32, bool, bool)> {
+        rows.iter()
+            .map(|r| {
+                (r.id.as_str(), r.depth, r.position_in_set, r.size_of_set, r.has_children, r.expanded)
+            })
+            .collect()
+    }
+
+    fn label_contains(needle: &str) -> impl Fn(&TestNode) -> bool + '_ {
+        move |n: &TestNode| n.label().to_lowercase().contains(&needle.to_lowercase())
+    }
+
+    #[test]
+    fn filter_reveals_path_to_match_through_a_collapsed_branch() {
+        // "mod" matches only `src/widgets/mod.rs`, which lives in the
+        // *collapsed* `widgets` branch. Path-to-match reveals the ancestors
+        // regardless of expand state, prunes every non-path sibling, and
+        // renumbers posinset/setsize over the surviving (single-child) groups.
+        let rows = flat_visible_filtered(&sample(), label_contains("mod"));
+        assert_eq!(
+            shape(&rows),
+            [
+                ("src", 0, 1, 1, true, true),
+                ("src/widgets", 1, 1, 1, true, true),
+                ("src/widgets/mod.rs", 2, 1, 1, false, false),
+            ],
+        );
+    }
+
+    #[test]
+    fn filter_matching_branch_with_no_matching_children_is_a_leaf() {
+        // "widgets" matches the branch by name; its `mod.rs` child does not,
+        // so the branch shows as a filtered leaf (has_children = false) and
+        // the `tests` / `docs` siblings are pruned.
+        let rows = flat_visible_filtered(&sample(), label_contains("widgets"));
+        assert_eq!(shape(&rows), [("src", 0, 1, 1, true, true), ("src/widgets", 1, 1, 1, false, false)]);
+    }
+
+    #[test]
+    fn filter_no_match_is_empty_and_query_is_case_insensitive() {
+        assert!(flat_visible_filtered(&sample(), label_contains("zzz")).is_empty());
+        // A lowercase query finds the same path as the original-case label.
+        let upper = flat_visible_filtered(&sample(), label_contains("MAIN"));
+        assert_eq!(
+            shape(&upper),
+            [("src", 0, 1, 1, true, true), ("src/main.rs", 1, 1, 1, false, false)],
+        );
+    }
+
+    // ── retained-tree flag-store helpers over `Signal<Vec<TestNode>>` ──
+    //
+    // Restored to pinion-core at R822 (see the note above): `set_expanded_in`
+    // / `toggle_expanded` / the `apply_tree_key` bridge mutate a reactive
+    // `Signal<Vec<N>>`, so they are exercised here against a real signal under
+    // an `Owner` scope, the same shape `hello-tree-view` / `hello-virtual-tree`
+    // drive.
+
+    #[test]
+    fn toggle_expanded_flips_a_branch_and_is_a_noop_on_leaves() {
+        Owner::new().run(|| {
+            let nodes = Signal::new(sample());
+            // `tests` boots collapsed → toggling reveals its child row.
+            toggle_expanded(&nodes, "tests");
+            let ids: Vec<String> = flat_visible(&nodes.get()).iter().map(|r| r.id.clone()).collect();
+            assert!(ids.iter().any(|id| id == "tests/it.rs"), "toggled branch reveals its child");
+            // Toggling back hides it again.
+            toggle_expanded(&nodes, "tests");
+            let after = flat_visible(&nodes.get());
+            assert!(after.iter().all(|r| r.id != "tests/it.rs"), "second toggle re-collapses");
+            // A leaf toggle is a no-op: no value change, so no revision bump.
+            let rev = nodes.revision();
+            toggle_expanded(&nodes, "src/main.rs");
+            assert_eq!(nodes.revision(), rev, "toggling a leaf does not write the signal");
+        });
+    }
+
+    #[test]
+    fn set_expanded_in_collapses_a_branch_and_skips_redundant_writes() {
+        Owner::new().run(|| {
+            let nodes = Signal::new(sample());
+            // `src` boots expanded → collapsing hides every descendant.
+            set_expanded_in(&nodes, "src", false);
+            let ids: Vec<String> = flat_visible(&nodes.get()).iter().map(|r| r.id.clone()).collect();
+            assert_eq!(ids, ["src", "tests", "docs"], "collapsed branch hides its subtree");
+            // Re-collapsing an already-collapsed branch is a no-op.
+            let rev = nodes.revision();
+            set_expanded_in(&nodes, "src", false);
+            assert_eq!(nodes.revision(), rev, "redundant set does not write the signal");
+        });
+    }
+
+    #[test]
+    fn apply_tree_key_bridges_resolver_outcomes_to_the_flag_store() {
+        Owner::new().run(|| {
+            let nodes = Signal::new(sample());
+            let focused = Signal::new(Some(String::from("src")));
+            // A navigation key moves the focus cursor and reports handled.
+            assert!(apply_tree_key(&nodes, &focused, "ArrowDown", NAV_PAGE));
+            assert_eq!(focused.get().as_deref(), Some("src/main.rs"));
+            // Arrow Right on a collapsed branch expands it in the flag store.
+            focused.set(Some(String::from("tests")));
+            assert!(apply_tree_key(&nodes, &focused, "ArrowRight", NAV_PAGE));
+            assert!(
+                find_node_mut(&mut nodes.get(), "tests").unwrap().expanded(),
+                "ArrowRight expanded the collapsed branch via set_expanded_in",
+            );
+            // A printable key is unhandled → the caller falls through to type-ahead.
+            assert!(!apply_tree_key(&nodes, &focused, "m", NAV_PAGE));
+        });
+    }
 }

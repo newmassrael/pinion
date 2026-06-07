@@ -71,9 +71,9 @@
 //! filter" → the normal expand-respecting
 //! [`flat_visible`](crate::widgets::tree_nav::flat_visible), not the
 //! fully-expanded accept-all flattening). The proxy owns only the query
-//! Signal + the memo, so `pinion-core` carries no node-type generics and the
-//! `Signal<Vec<serde-struct>>` `clippy::large_stack_arrays` monomorphization
-//! (R820) never enters this crate.
+//! Signal + the memo, so `pinion-core` carries no node-type generics — the
+//! coordinator is one concrete type regardless of the consumer's node type,
+//! exactly as `QSortFilterProxyModel` is one class over any `sourceModel()`.
 
 use std::rc::Rc;
 
@@ -391,14 +391,176 @@ fn id_value(rest: &str, lookup: impl Fn(usize) -> Option<String>) -> IntrospectV
 }
 
 
-// Unit + behaviour coverage for `TreeFilterState` / `TreeFilterExternal` lives
-// in the `hello-tree-filter` consumer example and the `r821_tree_filter` RPC
-// demo, not here: constructing the proxy in pinion-core's own test target
-// exercises the `Signal<String>` snapshot serde path, whose monomorphized
-// deserialization buffer trips `clippy::large_stack_arrays` at the crate root
-// where no scoped `#[allow]` reaches (R820
-// [[clippy-large-stack-arrays-serde-signal]]). The example exercises every
-// path: `external_query_invoke_intervene` (query / set_filter / intervene /
-// read-only + type-mismatch guards), `filter_reveals_matches_inside_a_collapsed_group`,
-// `matching_group_with_no_matching_children_is_a_filtered_leaf`, and the pure
-// `id_value` projection through `query("visible_at.<pos>")`.
+#[cfg(test)]
+mod tests {
+    //! R821 §5.27 §5.50 coverage for the tree-filter proxy, restored to
+    //! pinion-core at R822. The earlier note exiled these to the
+    //! `hello-tree-filter` example on the theory that constructing the proxy
+    //! in-crate tripped `clippy::large_stack_arrays` via a serde `Signal`
+    //! buffer; that diagnosis was wrong (the lint fired on libtest's own
+    //! `[&TestDescAndFn; N]` runner table once the crate passed 2048 tests),
+    //! so a `cfg(test)`-scoped crate allow in `lib.rs` lets the proxy
+    //! coordinator be tested next to its definition.
+
+    use super::{use_tree_filter, TreeFilterExternal, TreeFilterState, TreeRowsFn};
+    use crate::external::{ExternalIntrospect, InterveneError, InvokeError, IntrospectValue};
+    use crate::reactive::{Owner, Signal};
+    use crate::widgets::tree_nav::{flat_visible, flat_visible_filtered, TreeNode};
+    use std::rc::Rc;
+
+    #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    struct Node {
+        id: String,
+        label: String,
+        expanded: bool,
+        children: Vec<Node>,
+    }
+
+    impl Node {
+        fn leaf(id: &str, label: &str) -> Self {
+            Self { id: id.to_owned(), label: label.to_owned(), expanded: false, children: Vec::new() }
+        }
+        fn branch(id: &str, label: &str, children: Vec<Node>) -> Self {
+            Self { id: id.to_owned(), label: label.to_owned(), expanded: true, children }
+        }
+    }
+
+    impl TreeNode for Node {
+        fn id(&self) -> &str {
+            &self.id
+        }
+        fn label(&self) -> &str {
+            &self.label
+        }
+        fn expanded(&self) -> bool {
+            self.expanded
+        }
+        fn children(&self) -> &[Self] {
+            &self.children
+        }
+        fn children_mut(&mut self) -> &mut [Self] {
+            &mut self.children
+        }
+        fn set_expanded(&mut self, expanded: bool) {
+            self.expanded = expanded;
+        }
+    }
+
+    /// Two expanded groups (6 rows unfiltered); "Ap" matches only `g0`'s two
+    /// leaves, "rry" only `g1`'s `Cherry`.
+    fn fixture() -> Vec<Node> {
+        vec![
+            Node::branch("g0", "Group0", vec![Node::leaf("a0", "Apple"), Node::leaf("a1", "Apricot")]),
+            Node::branch("g1", "Group1", vec![Node::leaf("b0", "Banana"), Node::leaf("b1", "Cherry")]),
+        ]
+    }
+
+    /// The consumer's recompute closure: an empty query shows the full
+    /// expand-respecting tree; otherwise a case-insensitive label substring
+    /// drives [`flat_visible_filtered`]. Captures the source-tree `Signal` so
+    /// the `Computed` memo tracks live tree edits.
+    fn rows_fn_over(nodes: Signal<Vec<Node>>) -> TreeRowsFn {
+        Box::new(move |q: &str| {
+            let tree = nodes.get();
+            if q.is_empty() {
+                flat_visible(&tree)
+            } else {
+                let needle = q.to_lowercase();
+                flat_visible_filtered(&tree, move |n: &Node| n.label().to_lowercase().contains(&needle))
+            }
+        })
+    }
+
+    #[test]
+    fn state_boots_unfiltered_and_set_query_reports_the_new_count() {
+        Owner::new().run(|| {
+            let state = Rc::new(TreeFilterState::new(rows_fn_over(Signal::new(fixture()))));
+            assert_eq!(state.query(), "");
+            assert!(!state.is_filtering());
+            assert_eq!(state.visible_count(), 6, "empty query = full expand-respecting tree");
+            // set_query returns the resulting filtered count in one round-trip.
+            assert_eq!(state.set_query("Ap"), 3, "g0 + its two Ap* leaves; g1 pruned");
+            assert!(state.is_filtering());
+            assert_eq!(state.visible_id_at(0).as_deref(), Some("g0"));
+            assert_eq!(state.visible_label_at(1).as_deref(), Some("Apple"));
+            assert_eq!(state.visible_id_at(99), None, "out-of-range filtered position");
+            assert_eq!(state.set_query(""), 6, "clearing the query restores the full view");
+        });
+    }
+
+    #[test]
+    fn external_query_invoke_intervene_and_guards() {
+        Owner::new().run(|| {
+            let state = Rc::new(TreeFilterState::new(rows_fn_over(Signal::new(fixture()))));
+            let mut ext = TreeFilterExternal::new(Rc::clone(&state));
+            // Boot: empty query, full view.
+            assert_eq!(ext.query("query"), Some(IntrospectValue::Text(String::new())));
+            assert_eq!(ext.query("visible_count"), Some(IntrospectValue::Int(6)));
+            // invoke set_filter returns the resulting visible_count in one trip.
+            assert_eq!(
+                ext.invoke("set_filter", IntrospectValue::Text("rry".into())),
+                Ok(IntrospectValue::Int(2)),
+                "g1 + Cherry",
+            );
+            assert_eq!(ext.query("query"), Some(IntrospectValue::Text("rry".into())));
+            assert_eq!(ext.query("visible_at.0"), Some(IntrospectValue::Text("g1".into())));
+            assert_eq!(ext.query("label_at.1"), Some(IntrospectValue::Text("Cherry".into())));
+            assert_eq!(
+                ext.query("visible_at.999"),
+                Some(IntrospectValue::Null),
+                "out-of-range filtered position is present-but-empty",
+            );
+            assert_eq!(ext.query("nope"), None, "undeclared path is absent");
+            // intervene sets the query (admin / restore); read-only + type guards.
+            ext.intervene("query", IntrospectValue::Text("Ap".into())).unwrap();
+            assert_eq!(state.query(), "Ap");
+            assert_eq!(
+                ext.intervene("visible_count", IntrospectValue::Int(1)),
+                Err(InterveneError::ReadOnly),
+            );
+            assert_eq!(
+                ext.intervene("query", IntrospectValue::Int(1)),
+                Err(InterveneError::TypeMismatch),
+            );
+            assert_eq!(ext.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+            // Null clears via invoke → back to the full view.
+            assert_eq!(ext.invoke("set_filter", IntrospectValue::Null), Ok(IntrospectValue::Int(6)));
+            assert_eq!(state.query(), "");
+        });
+    }
+
+    #[test]
+    fn filter_re_derives_when_the_source_tree_mutates() {
+        // The decisive soundness witness for the R821.1 reactive `Computed`
+        // memo: a tree edit under an unchanged active filter must update the
+        // filtered view. A memo keyed on the query alone (the sort-proxy
+        // pattern, sound only for an owned immutable source) would return
+        // stale rows here; the `Computed` tracks the source-tree `Signal`.
+        Owner::new().run(|| {
+            let nodes = Signal::new(fixture());
+            let state = Rc::new(TreeFilterState::new(rows_fn_over(nodes.clone())));
+            assert_eq!(state.set_query("Ap"), 3);
+            // Append a new matching leaf to g0 WITHOUT touching the query.
+            let mut tree = nodes.get();
+            tree[0].children.push(Node::leaf("a2", "Applesauce"));
+            nodes.set(tree);
+            assert_eq!(
+                state.visible_count(),
+                4,
+                "a live tree edit updates the filtered view (Computed tracks the tree, not just the query)",
+            );
+        });
+    }
+
+    #[test]
+    fn use_tree_filter_caches_one_shared_state_per_key() {
+        Owner::new().run(|| {
+            let make = || {
+                use_tree_filter("r822-tree-filter-test", || rows_fn_over(Signal::new(fixture())))
+            };
+            let a = make();
+            let b = make();
+            assert!(Rc::ptr_eq(&a, &b), "the same key resolves to one shared Rc (factory runs once)");
+        });
+    }
+}
