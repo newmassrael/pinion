@@ -75,7 +75,10 @@
 //! - The input paints no keyboard-focus ring (the shared shell-focus-
 //!   paint axis R690 deferred; focus is real + RPC-observable).
 
-use pinion_a11y::{AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, AutoComplete, WidgetA11y};
+use pinion_a11y::{
+    listbox_option_nodes, AccessFocus, AccessNode, AccessState, AccessValue, AriaRole, AutoComplete,
+    ListOption, WidgetA11y,
+};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -669,27 +672,25 @@ impl WidgetA11y for ComboView {
             });
         let mut nodes = vec![combo];
         if open && !filtered.is_empty() {
+            // R814 §5.40 — popup via the lifted `listbox_option_nodes`
+            // builder over the *filtered* matches; the builder numbers
+            // `aria-posinset` / `aria-setsize` within the filtered slice
+            // (the active match is the `aria-activedescendant`).
             let active = resolve_active(state, &filtered);
-            let mut list =
-                AccessNode::new(OPTIONS_TAG, AriaRole::Listbox).with_name("Fruit options");
-            for &abs in &filtered {
-                list = list.with_child(format!("{OPTIONS_TAG}#{abs}"));
-            }
-            nodes.push(list);
-            let set_size = u32::try_from(filtered.len()).expect("filtered len fits in u32");
-            for (pos, &abs) in filtered.iter().enumerate() {
-                nodes.push(
-                    AccessNode::new(format!("{OPTIONS_TAG}#{abs}"), AriaRole::ListBoxOption)
-                        .with_name(LABELS[abs])
-                        .with_selected(state.selected == Some(abs))
-                        .with_position_in_set(u32::try_from(pos + 1).expect("index fits in u32"))
-                        .with_size_of_set(set_size)
-                        .with_state(AccessState {
-                            focused: input_focused && active == Some(abs),
-                            ..AccessState::from_interaction(state.options[abs], None)
-                        }),
-                );
-            }
+            let tags: Vec<String> =
+                filtered.iter().map(|&abs| format!("{OPTIONS_TAG}#{abs}")).collect();
+            let options: Vec<ListOption<'_>> = filtered
+                .iter()
+                .enumerate()
+                .map(|(pos, &abs)| ListOption {
+                    tag: &tags[pos],
+                    label: Some(LABELS[abs]),
+                    state: state.options[abs],
+                    selected: state.selected == Some(abs),
+                    focused: input_focused && active == Some(abs),
+                })
+                .collect();
+            nodes.extend(listbox_option_nodes(OPTIONS_TAG, "Fruit options", false, &options));
         }
         nodes
     }

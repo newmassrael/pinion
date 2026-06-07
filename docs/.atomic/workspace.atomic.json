@@ -32591,6 +32591,56 @@
         "per-window access_focus_target not split: global target + build() root-fallback suffices today"
       ]
     },
+    "R814": {
+      "decision_summary": "R814 §5.40 — lift listbox_option_nodes (WAI-ARIA listbox + option AccessNode builder) into pinion-a11y and adopt across hello-listbox, hello-listbox-multi, and the combobox / editable-combobox popups (4 consumers)",
+      "changes_bullets": [
+        "Add pinion_a11y::listbox::listbox_option_nodes + ListOption (Listbox + ListBoxOption nodes)",
+        "Builder auto-derives aria-posinset/aria-setsize from the slice (option N of M)",
+        "multiselectable lowers aria-multiselectable; ListboxItemState drives the per-option state",
+        "Listbox was a 4-copy hand-rolled gap (radio/nav/toolbar/toggle/virtual-list/grid/tree already lifted)",
+        "Migrate hello-listbox + hello-listbox-multi; the combobox + editable-combobox popups reuse it",
+        "Unifies a divergence: plain listbox options now gain posinset/setsize (their absence was the bug)",
+        "combobox-editable numbers within its filtered slice (WAI-ARIA dynamically filtered listbox)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 175 pass (8 new listbox builder tests)",
+        "four consumer crates: tests green (binding role asserts now exercise the lifted builder)",
+        "cargo clippy pedantic -D clean (AriaRole gated cfg(test) where it became builder-owned)",
+        "demos PASS: hello-listbox row-click + snapshot, r780 multi-select, r714 combobox, r717 editable"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "combobox trigger node (ComboBox/EditableComboBox aria-expanded/controls/autocomplete) stays bespoke",
+        "a11y builder-lift audit found more 2-copy families: tabs (tabs+tab-reorder), menu (menu+contextmenu), non-virtual table (table+table-multi) = future lift rounds",
+        "atomic widgets (slider/button/etc.) emit a single node = no topology to lift"
+      ],
+      "publishable_decision_summary": "R814 §5.40 — lift listbox_option_nodes (WAI-ARIA listbox + option AccessNode builder) into pinion-a11y and adopt across hello-listbox, hello-listbox-multi, and the combobox / editable-combobox popups (4 consumers)",
+      "publishable_changes_bullets": [
+        "Add pinion_a11y::listbox::listbox_option_nodes + ListOption (Listbox + ListBoxOption nodes)",
+        "Builder auto-derives aria-posinset/aria-setsize from the slice (option N of M)",
+        "multiselectable lowers aria-multiselectable; ListboxItemState drives the per-option state",
+        "Listbox was a 4-copy hand-rolled gap (radio/nav/toolbar/toggle/virtual-list/grid/tree already lifted)",
+        "Migrate hello-listbox + hello-listbox-multi; the combobox + editable-combobox popups reuse it",
+        "Unifies a divergence: plain listbox options now gain posinset/setsize (their absence was the bug)",
+        "combobox-editable numbers within its filtered slice (WAI-ARIA dynamically filtered listbox)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 175 pass (8 new listbox builder tests)",
+        "four consumer crates: tests green (binding role asserts now exercise the lifted builder)",
+        "cargo clippy pedantic -D clean (AriaRole gated cfg(test) where it became builder-owned)",
+        "demos PASS: hello-listbox row-click + snapshot, r780 multi-select, r714 combobox, r717 editable"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "combobox trigger node (ComboBox/EditableComboBox aria-expanded/controls/autocomplete) stays bespoke",
+        "a11y builder-lift audit found more 2-copy families: tabs (tabs+tab-reorder), menu (menu+contextmenu), non-virtual table (table+table-multi) = future lift rounds",
+        "atomic widgets (slider/button/etc.) emit a single node = no topology to lift"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

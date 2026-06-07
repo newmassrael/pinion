@@ -70,7 +70,9 @@
 //! combobox, a menu-button) would trigger lifting a `ComboBoxExternal`
 //! coordinator + a `pinion_widget_paint::combobox` chrome helper.
 
-use pinion_a11y::{AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    listbox_option_nodes, AccessFocus, AccessNode, AccessState, AriaRole, ListOption, WidgetA11y,
+};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -615,28 +617,26 @@ impl WidgetA11y for ComboView {
             });
         let mut nodes = vec![combo];
         if open {
+            // R814 §5.40 — the popup is the lifted `listbox_option_nodes`
+            // topology (the combobox trigger above stays bespoke). The
+            // builder derives `aria-posinset` / `aria-setsize` from the
+            // slice; the active option is reported focused while the trigger
+            // owns shell focus (the `aria-activedescendant`).
             let active = active_option(state);
-            let mut list = AccessNode::new(OPTIONS_TAG, AriaRole::Listbox).with_name("T-shirt size options");
-            for i in 0..N {
-                list = list.with_child(format!("{OPTIONS_TAG}#{i}"));
-            }
-            nodes.push(list);
-            let set_size = u32::try_from(N).expect("N fits in u32");
-            for (i, (label, &item_state)) in LABELS.iter().zip(state.options.iter()).enumerate() {
-                nodes.push(
-                    AccessNode::new(format!("{OPTIONS_TAG}#{i}"), AriaRole::ListBoxOption)
-                        .with_name(*label)
-                        .with_selected(state.selected == Some(i))
-                        .with_position_in_set(u32::try_from(i + 1).expect("index fits in u32"))
-                        .with_size_of_set(set_size)
-                        .with_state(AccessState {
-                            // The active descendant is reported focused while
-                            // the trigger (the combobox) owns shell focus.
-                            focused: trigger_focused && i == active,
-                            ..AccessState::from_interaction(item_state, None)
-                        }),
-                );
-            }
+            let tags: Vec<String> = (0..N).map(|i| format!("{OPTIONS_TAG}#{i}")).collect();
+            let options: Vec<ListOption<'_>> = LABELS
+                .iter()
+                .zip(state.options.iter())
+                .enumerate()
+                .map(|(i, (label, &item_state))| ListOption {
+                    tag: &tags[i],
+                    label: Some(*label),
+                    state: item_state,
+                    selected: state.selected == Some(i),
+                    focused: trigger_focused && i == active,
+                })
+                .collect();
+            nodes.extend(listbox_option_nodes(OPTIONS_TAG, "T-shirt size options", false, &options));
         }
         nodes
     }

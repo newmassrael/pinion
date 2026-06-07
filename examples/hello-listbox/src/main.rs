@@ -64,7 +64,13 @@
 use std::cell::RefCell;
 use std::time::Instant;
 
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    listbox_option_nodes, AccessAction, AccessFocus, AccessNode, ListOption, WidgetA11y,
+};
+// R814 §5.40 — `AriaRole` is now only referenced by the test asserts (the
+// lifted `listbox_option_nodes` builder owns the role tagging in prod).
+#[cfg(test)]
+use pinion_a11y::AriaRole;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::style::{
@@ -623,32 +629,28 @@ impl WidgetA11y for ListBoxView {
     /// so it stays as an explicit override on the parent
     /// `AccessNode`.
     fn access_node(state: &ListState, focused: Option<&str>) -> Vec<AccessNode> {
+        // R814 §5.40 — lifted `listbox_option_nodes` builder (one of four
+        // consumers). `ListBoxOption` uses WAI-ARIA `aria-selected` (the
+        // container-membership axis), not `aria-checked`. `label: None` —
+        // option names come from `enrich_names_from_scene` (the painted
+        // row text).
         let list_focused = focused == Some(<Self as WidgetCore>::tag());
         let active_idx = active_option_index(*state);
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(N + 1);
-        let mut list = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Listbox)
-            .with_name("Fruit picker");
-        for i in 0..N {
-            list = list.with_child(format!("{PRIMARY_TAG}#{i}"));
-        }
-        nodes.push(list);
-        for (i, (item_state, selected)) in state.rows.iter().copied().enumerate() {
-            let option_tag = format!("{PRIMARY_TAG}#{i}");
-            // R51.98 §5.40 — ListBoxOption uses WAI-ARIA
-            // `aria-selected` (container-membership axis), not
-            // `aria-checked` (two-state truthy axis used by Switch /
-            // CheckBox / RadioButton).
-            let access_state = AccessState {
+        let tags: Vec<String> = (0..N).map(|i| format!("{PRIMARY_TAG}#{i}")).collect();
+        let options: Vec<ListOption<'_>> = state
+            .rows
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, (item_state, selected))| ListOption {
+                tag: &tags[i],
+                label: None,
+                state: item_state,
+                selected,
                 focused: list_focused && i == active_idx,
-                ..AccessState::from_interaction(item_state, None)
-            };
-            nodes.push(
-                AccessNode::new(&option_tag, AriaRole::ListBoxOption)
-                    .with_selected(selected)
-                    .with_state(access_state),
-            );
-        }
-        nodes
+            })
+            .collect();
+        listbox_option_nodes(<Self as WidgetCore>::tag(), "Fruit picker", false, &options)
     }
 
     /// R51.71 §5.40 — composite focus model. When the listbox itself
