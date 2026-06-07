@@ -25,7 +25,7 @@
 
 use std::rc::Rc;
 
-use crate::external::IntrospectValue;
+use crate::external::{at_index, IntrospectValue};
 
 /// A single-entry memo of an order permutation (`Rc<Vec<usize>>`) keyed on a
 /// config snapshot `K`. [`get`](Self::get) returns the cached permutation when
@@ -68,11 +68,12 @@ pub(crate) fn source_at_value(
     rest: &str,
     lookup: impl Fn(usize) -> Option<usize>,
 ) -> IntrospectValue {
-    rest.parse::<usize>()
-        .ok()
-        .and_then(lookup)
-        .and_then(|src| i64::try_from(src).ok())
-        .map_or(IntrospectValue::Null, IntrospectValue::Int)
+    // The sort-proxy binding of the shared [`at_index`] projection: look up
+    // the source index, project it to an `Int` (an out-of-`i64` index also
+    // collapses to `Null`).
+    at_index(rest, lookup, |src| {
+        i64::try_from(src).map_or(IntrospectValue::Null, IntrospectValue::Int)
+    })
 }
 
 #[cfg(test)]

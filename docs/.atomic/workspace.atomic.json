@@ -33511,6 +33511,78 @@
         "no new external/upstream debt; no spec change (additive reserved query path)"
       ]
     },
+    "R826": {
+      "decision_summary": "Audit-fix (user cost-no-object review): lift the position-indexed introspect projection decision (parse pos -> out-of-range/unparseable yields Null else project) into one SSOT primitive external::at_index. R823's tree_nav::row_at was a 3rd byte-identical copy of a decision already in order_memo::source_at_value (R821) and tree_filter::id_value (R821), added without the mandatory 3rd-consumer self-grep. The three now delegate as thin (get, project) bindings, so the present-but-empty convention lives in one place.",
+      "changes_bullets": [
+        "lift `external::at_index<T>(rest, get, project)` as the single SSOT for the",
+        "position-indexed introspect projection: parse a visual position, out-of-range or",
+        "unparseable yields `Null` (the §5.12 present-but-empty convention), else project",
+        "delegate the three byte-identical copies to it: `order_memo::source_at_value`",
+        "(sort proxies, Int), `tree_filter::id_value` (Text), `tree_nav::row_at` (general",
+        "slice) — each now a thin (get, project) binding, so the out-of-range policy lives",
+        "in exactly one place",
+        "root cause: R823's `row_at` was a 3rd copy added without the mandatory",
+        "3rd-consumer self-grep (the exact failure the SEED repeatedly warns about);",
+        "surfaced by the user's cost-no-object audit, not a green-gate",
+        "behaviour-preserving: the delegations are equivalent; no test assertions changed"
+      ],
+      "verification_bullets": [
+        "`cargo clippy -p pinion-core --all-targets -j2` clean",
+        "`cargo test -p pinion-core -j2`: 2061 pass — source_at_value_projects_and_null_pads,",
+        "grid_sort/view_order source_at, tree_filter external query, tree_nav tree_view_introspect",
+        "all green with byte-identical behaviour through the lifted primitive",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green",
+        "audit-clearance round (behaviour-preserving SSOT lift): no new feature, so the",
+        "visible-deliverable / RPC-demo mandate is exempt; existing tests are the witness"
+      ],
+      "impact_refs": [
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "in-crate tree test-node fixtures (`tree_nav::tests::TestNode` +",
+        "`tree_filter::tests::Node`) are a deliberate 2-copy — Rule-of-Three boundary;",
+        "defer a shared fixture lift to a 3rd in-crate consumer (cross-test-module sharing",
+        "needs the test-fixtures gating pattern, premature at 2)",
+        "schemas still declare paths + types only, not per-path mutability (R825 carry)",
+        "no new external/upstream debt; no spec change"
+      ],
+      "publishable_decision_summary": "Audit-fix (user cost-no-object review): lift the position-indexed introspect projection decision (parse pos -> out-of-range/unparseable yields Null else project) into one SSOT primitive external::at_index. R823's tree_nav::row_at was a 3rd byte-identical copy of a decision already in order_memo::source_at_value (R821) and tree_filter::id_value (R821), added without the mandatory 3rd-consumer self-grep. The three now delegate as thin (get, project) bindings, so the present-but-empty convention lives in one place.",
+      "publishable_changes_bullets": [
+        "lift `external::at_index<T>(rest, get, project)` as the single SSOT for the",
+        "position-indexed introspect projection: parse a visual position, out-of-range or",
+        "unparseable yields `Null` (the §5.12 present-but-empty convention), else project",
+        "delegate the three byte-identical copies to it: `order_memo::source_at_value`",
+        "(sort proxies, Int), `tree_filter::id_value` (Text), `tree_nav::row_at` (general",
+        "slice) — each now a thin (get, project) binding, so the out-of-range policy lives",
+        "in exactly one place",
+        "root cause: R823's `row_at` was a 3rd copy added without the mandatory",
+        "3rd-consumer self-grep (the exact failure the SEED repeatedly warns about);",
+        "surfaced by the user's cost-no-object audit, not a green-gate",
+        "behaviour-preserving: the delegations are equivalent; no test assertions changed"
+      ],
+      "publishable_verification_bullets": [
+        "`cargo clippy -p pinion-core --all-targets -j2` clean",
+        "`cargo test -p pinion-core -j2`: 2061 pass — source_at_value_projects_and_null_pads,",
+        "grid_sort/view_order source_at, tree_filter external query, tree_nav tree_view_introspect",
+        "all green with byte-identical behaviour through the lifted primitive",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green",
+        "audit-clearance round (behaviour-preserving SSOT lift): no new feature, so the",
+        "visible-deliverable / RPC-demo mandate is exempt; existing tests are the witness"
+      ],
+      "publishable_impact_refs": [
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "in-crate tree test-node fixtures (`tree_nav::tests::TestNode` +",
+        "`tree_filter::tests::Node`) are a deliberate 2-copy — Rule-of-Three boundary;",
+        "defer a shared fixture lift to a 3rd in-crate consumer (cross-test-module sharing",
+        "needs the test-fixtures gating pattern, premature at 2)",
+        "schemas still declare paths + types only, not per-path mutability (R825 carry)",
+        "no new external/upstream debt; no spec change"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

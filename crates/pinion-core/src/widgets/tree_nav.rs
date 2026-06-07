@@ -28,7 +28,9 @@
 use std::rc::Rc;
 
 use super::virtual_select::clamp_nav;
-use crate::external::{IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource};
+use crate::external::{
+    at_index, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource,
+};
 use crate::reactive::batch;
 use crate::widget_core::ExtraExternal;
 use crate::Signal;
@@ -460,7 +462,9 @@ fn row_at(
     rows: &[VisibleRow],
     project: impl Fn(&VisibleRow) -> IntrospectValue,
 ) -> IntrospectValue {
-    rest.parse::<usize>().ok().and_then(|i| rows.get(i)).map_or(IntrospectValue::Null, project)
+    // The tree-view binding of the shared [`at_index`] projection: index the
+    // visible-row slice, project the row to its per-axis value.
+    at_index(rest, |i| rows.get(i), project)
 }
 
 /// R823 §5.50 §5.12 — the **read-only introspection source** for a tree

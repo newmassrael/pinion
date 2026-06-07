@@ -245,6 +245,28 @@ impl IntrospectValue {
     }
 }
 
+/// R826 §5.12 — the shared `<axis>.<pos>` introspect projection. Resolve a
+/// visual position (`rest`, the part after a matched `<axis>.` prefix)
+/// through `get`, then `project` the looked-up item to an
+/// [`IntrospectValue`]. An out-of-range or unparseable position — or a
+/// `project` that itself yields it — reports [`IntrospectValue::Null`]
+/// (present-but-empty), never absence: the §5.12 convention every
+/// position-indexed introspect path shares.
+///
+/// The single source of truth for that convention, lifted at R826 from the
+/// three byte-identical copies the sort proxies
+/// ([`source_at_value`](crate::widgets::order_memo)), the tree filter
+/// (`id_value`), and the tree view (`row_at`) had each grown — each now a
+/// thin `(get, project)` binding over this primitive, so the out-of-range
+/// policy lives in exactly one place.
+pub(crate) fn at_index<T>(
+    rest: &str,
+    get: impl Fn(usize) -> Option<T>,
+    project: impl Fn(T) -> IntrospectValue,
+) -> IntrospectValue {
+    rest.parse::<usize>().ok().and_then(get).map_or(IntrospectValue::Null, project)
+}
+
 /// R742 §5.51 — typed drag-and-drop payload. Produced by a drag source
 /// via [`External::begin_drag`] and carried by the router's drag session
 /// until the matching drop, mirroring the

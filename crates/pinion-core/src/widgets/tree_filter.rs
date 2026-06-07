@@ -384,10 +384,9 @@ impl ExternalIntrospect for TreeFilterExternal {
 /// [`source_at_value`](crate::widgets::order_memo) for a `String`-valued
 /// projection (the sort proxies' `source_at` is `Int`-valued, hence not shared).
 fn id_value(rest: &str, lookup: impl Fn(usize) -> Option<String>) -> IntrospectValue {
-    rest.parse::<usize>()
-        .ok()
-        .and_then(lookup)
-        .map_or(IntrospectValue::Null, IntrospectValue::Text)
+    // The tree-filter binding of the shared [`at_index`] projection:
+    // look up a `String` at the position, project it as `Text`.
+    crate::external::at_index(rest, lookup, IntrospectValue::Text)
 }
 
 
