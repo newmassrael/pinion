@@ -1,0 +1,822 @@
+//! R821 §5.27 §5.40 §5.50 — **recursive tree filter proxy** consumer: a
+//! scene-graph outliner whose search box filters the whole tree to the
+//! paths that lead to a match.
+//!
+//! This is the hierarchical member of the Model/View proxy family. R747
+//! lands the 1-D list sort/filter proxy (`hello-virtual-sort`) and R778/R783
+//! the data-grid column sort/filter proxy (`hello-grid-sort` /
+//! `hello-grid-filter`); this demo lands the **tree** proxy a scene-graph /
+//! asset outliner needs — exactly the editor-tree search the Phase-D
+//! self-hosted editor's outliner will use. The recursion is Qt's
+//! `QSortFilterProxyModel` with `setRecursiveFilteringEnabled(true)`: a node
+//! is kept iff it matches the query **or any descendant matches**, so a
+//! match buried inside a collapsed group is *revealed* — its ancestors shown
+//! as path context, auto-expanded — while every non-match sibling is pruned.
+//!
+//! ## What it demonstrates
+//!
+//! - **Recursive path-to-match filtering**
+//!   ([`flat_visible_filtered`](pinion_core::widgets::tree_nav::flat_visible_filtered),
+//!   the SSOT decision). The filtered visible-row sequence drops into
+//!   [`view_virtual_tree`] and
+//!   [`tree_access_nodes`](pinion_a11y::tree_access_nodes) with **no** change
+//!   — the filtered tree is just another `VisibleRow` flattening, so it
+//!   windows + lowers to WAI-ARIA exactly like the unfiltered tree.
+//! - **Reveal-inside-collapsed**: groups 4..12 boot collapsed; an empty
+//!   query hides their children, but filtering `Node09` surfaces
+//!   `Group09 → Node09_*` regardless of the collapsed flag (the filter
+//!   ignores expand state along match paths).
+//! - **AI-first**: the primary path is RPC —
+//!   [`TreeFilterExternal`](pinion_core::widgets::tree_filter::TreeFilterExternal)
+//!   `invoke "set_filter"` / `query "visible_count"` / `query
+//!   "visible_at.<pos>"`. Keyboard type-to-filter is the GUI peer (an
+//!   alphanumeric char appends, Backspace pops, Escape clears).
+//! - **Virtualization ⊥ filter**: only the windowed slice of the filtered
+//!   rows is ever a scene node; `Node` (matches all 240 leaves) windows the
+//!   whole 252-row tree, `Node03_05` windows a 2-row result.
+//!
+//! The tree is **immutable** (a filter demo, not an expand/collapse demo —
+//! `hello-virtual-tree` owns that axis): the boot expand flags never change,
+//! so the proxy memoizes its filtered flattening on the query string alone
+//! (the [`OrderMemo`](pinion_core::widgets) contract the two sort proxies
+//! share, here over `Vec<VisibleRow>`). Keyboard navigation is vertical
+//! roving over the visible rows (the windowed-widget keyboard model
+//! `hello-virtual-select` / `hello-virtual-nav` use).
+
+use pinion_a11y::{tree_access_nodes, AccessNode, WidgetA11y};
+use pinion_core::external::{External, IntrospectValue};
+use pinion_core::intent::Intent;
+use pinion_core::intent_tag;
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::style::{
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+};
+use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
+use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
+use pinion_core::widgets::tree_filter::{use_tree_filter, TreeFilterExternal, TreeFilterState};
+use pinion_core::widgets::tree_nav::{
+    flat_visible, flat_visible_filtered, resolve_tree_key, TreeKey, TreeNode, VisibleRow,
+};
+use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
+use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
+use pinion_shell::typeahead::is_typeahead_char;
+use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
+use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
+use pinion_widget_paint::tree_view::{
+    view_virtual_tree, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
+};
+use std::rc::Rc;
+
+include!(concat!(env!("OUT_DIR"), "/app.rs"));
+vello_renderer_impl!(HelloTreeFilterRenderer, HelloTreeFilterRendererError);
+
+const WIN_W: u32 = 520;
+const WIN_H: u32 = 560;
+const THEME_TAG: &str = "app";
+/// Composite-tag prefix the windowed rows carry (`{TREE_TAG}#{id}`) and the
+/// [`TreeRowClickExternal`] anchor clicks route to.
+const TREE_TAG: &str = "sgtree";
+/// Focusable tree-root External tag (the WAI-ARIA `tree` node + the
+/// `read_state` anchor). Distinct from [`TREE_TAG`] (root External vs row
+/// container), like `hello-virtual-tree`.
+const ROOT_TAG: &str = "sgtree_root";
+/// The filter proxy External tag — the AI-first `set_filter` / `query`
+/// surface ([`TreeFilterExternal`]).
+const FILTER_TAG: &str = "sgtree_filter";
+/// `use_tree_filter` cache key (shared by the view, the a11y pass, the
+/// keyboard handler and the [`TreeFilterExternal`]).
+const FILTER_KEY: &str = "hello_tree_filter::filter";
+const SCROLL_KEY: &str = "sgtree_scroll";
+const SCROLLBAR_TAG: &str = "sgtree_scrollbar";
+/// The search-box container tag (a plain container, addressable for the RPC
+/// demo's live-pixel guard — not a routing/External tag).
+const SEARCH_TAG: &str = "sgtree_search";
+
+/// Top-level scene-graph groups.
+const GROUPS: usize = 12;
+/// Leaf nodes per group.
+const CHILDREN_PER: usize = 20;
+/// Total dataset: each group row + its leaves.
+const TOTAL_NODES: usize = GROUPS * (1 + CHILDREN_PER);
+/// Groups expanded at boot; the rest stay collapsed so filtering visibly
+/// reveals matches buried inside a collapsed group.
+const EXPANDED_AT_BOOT: usize = 4;
+
+/// Uniform per-row vertical slot. Must equal [`TreeViewStyle::row_height`]
+/// (`view_virtual_tree` derives its slot pitch from the style); asserted in
+/// the view.
+const ROW_PITCH: u32 = 48;
+/// Rows rendered beyond the strict window on each side.
+const OVERSCAN: usize = 3;
+/// Gutter reserved for the scrollbar peer.
+const SCROLLBAR_W: u32 = 12;
+const HEADER_FONT_PX: u32 = 14;
+/// Page Up / Down jump in rows (a viewport-ful, clamped via `clamp_nav`).
+const NAV_PAGE: usize = 9;
+
+/// The dotted wire form of the [`TreeRowClickExternal`] row-click intent,
+/// composed via [`intent_tag!`] so the literal stays in lockstep with the
+/// substrate's bare `"click"` event name (pinned in [`tests`]).
+const CLICK_INTENT_TAG: &str = intent_tag!("sgtree", "click");
+
+/// One scene-graph node. Carries its own `expanded` flag (the retained
+/// flag-on-node storage the tree family uses). The `serde` + `PartialEq`
+/// derives satisfy the §5.22 introspect bound `Signal<T>` carries.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+struct TreeRow {
+    id: String,
+    label: String,
+    expanded: bool,
+    children: Vec<TreeRow>,
+}
+
+impl TreeRow {
+    fn leaf(id: String, label: String) -> Self {
+        Self { id, label, expanded: false, children: Vec::new() }
+    }
+}
+
+impl TreeNode for TreeRow {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn expanded(&self) -> bool {
+        self.expanded
+    }
+    fn children(&self) -> &[Self] {
+        &self.children
+    }
+    fn children_mut(&mut self) -> &mut [Self] {
+        &mut self.children
+    }
+    fn set_expanded(&mut self, expanded: bool) {
+        self.expanded = expanded;
+    }
+}
+
+/// Build the synthetic scene graph. Deterministic ids (`g{s}` /
+/// `g{s}-n{i}`) and labels (`Group{ss}` / `Node{ss}_{ii}`) so the RPC demo
+/// can address matches by a stable, predictable query:
+/// - `Group03` matches only that group (its `Node03_*` leaves do not), so a
+///   matched branch with no matching child shows as a filtered leaf;
+/// - `Node03` matches all 20 leaves of group 3 → the group is revealed as
+///   path context;
+/// - `_05` matches one leaf per group → 12 groups each revealed with 1 leaf.
+fn initial_nodes() -> Vec<TreeRow> {
+    (0..GROUPS)
+        .map(|s| {
+            let children = (0..CHILDREN_PER)
+                .map(|i| TreeRow::leaf(format!("g{s}-n{i}"), format!("Node{s:02}_{i:02}")))
+                .collect();
+            TreeRow {
+                id: format!("g{s}"),
+                label: format!("Group{s:02}"),
+                expanded: s < EXPANDED_AT_BOOT,
+                children,
+            }
+        })
+        .collect()
+}
+
+/// Reactive holder for the retained (immutable) tree + the keyboard cursor.
+/// The tree never mutates in this demo — the filter is the only structural
+/// control — so the proxy can memoize its filtered flattening on the query
+/// string alone.
+struct TreeState {
+    nodes: Signal<Vec<TreeRow>>,
+    /// The keyboard cursor's row id (WAI-ARIA `aria-activedescendant` / the
+    /// painted focus row). `None` until the first key / click lands.
+    focused_id: Signal<Option<String>>,
+}
+
+fn use_tree_state() -> Rc<TreeState> {
+    let owner =
+        Owner::current().expect("use_tree_state must run inside a CoreShell view / reducer wrap");
+    owner.cache("hello_tree_filter::state", || TreeState {
+        nodes: Signal::new(initial_nodes()),
+        focused_id: Signal::new(None),
+    })
+}
+
+/// Resolve the shared filter proxy. The recompute closure captures the
+/// retained tree (resolved *first*, never inside `use_tree_filter`'s factory
+/// — that would nest `Owner::cache`): an empty query is the "no filter"
+/// fallback (the normal expand-respecting [`flat_visible`]), a non-empty
+/// query a case-insensitive label substring through [`flat_visible_filtered`].
+fn use_filter() -> Rc<TreeFilterState> {
+    let tree = use_tree_state();
+    use_tree_filter(FILTER_KEY, move || {
+        Box::new(move |query: &str| {
+            let nodes = tree.nodes.get();
+            if query.is_empty() {
+                flat_visible(&nodes)
+            } else {
+                let needle = query.to_lowercase();
+                flat_visible_filtered(&nodes, |n| n.label().to_lowercase().contains(&needle))
+            }
+        })
+    })
+}
+
+/// Scroll the keyboard cursor's row into the window
+/// ([`scroll_offset_to_reveal`]) so navigating to an off-window row scrolls
+/// there and materializes it (keyboard ⊥ virtualization). No-op when nothing
+/// is focused or the cursor row is not in the current (filtered) view.
+fn reveal_cursor(focused: Option<&str>, rows: &[VisibleRow], scroll: &Rc<ScrollState>) {
+    let Some(id) = focused else {
+        return;
+    };
+    let Some(index) = rows.iter().position(|row| row.id == id) else {
+        return;
+    };
+    let (_, measured_h) = scroll.measured_viewport();
+    let offset = scroll_offset_to_reveal(index, scroll.offset_y(), measured_h, ROW_PITCH);
+    scroll.scroll_to(0, offset);
+}
+
+/// Apply one key while the tree root is focused: type-to-filter (an
+/// alphanumeric char appends to the query, Backspace pops, Escape clears),
+/// then vertical roving navigation over the *visible* (filtered) rows. The
+/// filtered flattening is just another `VisibleRow` sequence, so the pure
+/// [`resolve_tree_key`] resolver navigates it with no special-casing.
+fn apply_key_impl(key: &str) -> bool {
+    let filter = use_filter();
+    if let Some(ch) = is_typeahead_char(key) {
+        let mut query = filter.query();
+        query.push(ch);
+        filter.set_query(query);
+        return true;
+    }
+    match key {
+        "Backspace" => {
+            let mut query = filter.query();
+            if query.pop().is_some() {
+                filter.set_query(query);
+            }
+            true
+        }
+        "Escape" => {
+            if filter.is_filtering() {
+                filter.set_query(String::new());
+                true
+            } else {
+                false
+            }
+        }
+        "ArrowUp" | "ArrowDown" | "Home" | "End" | "PageUp" | "PageDown" => {
+            let state = use_tree_state();
+            let rows = filter.visible_rows();
+            let current = state.focused_id.get();
+            if let TreeKey::Focus(id) =
+                resolve_tree_key(&rows, current.as_deref(), key, NAV_PAGE)
+            {
+                state.focused_id.set(Some(id));
+                reveal_cursor(
+                    state.focused_id.get().as_deref(),
+                    &rows,
+                    &use_scroll_state(SCROLL_KEY),
+                );
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The search box: shows the active query (with a block caret) or a muted
+/// placeholder. Display-only — input is the keyboard `apply_key` path + the
+/// RPC `set_filter` channel.
+fn search_box(query: &str, theme: &Theme) -> Scene {
+    let (label, fg) = if query.is_empty() {
+        (
+            "Type to filter the scene graph\u{2026}".to_string(),
+            theme.resolve(ColorRole::OnSurfaceMuted),
+        )
+    } else {
+        (format!("Filter: {query}\u{2588}"), theme.resolve(ColorRole::OnSurface))
+    };
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            label,
+            Rect::default(),
+            TextStyle::new().with_size_px(HEADER_FONT_PX).with_fg(fg),
+        ))])
+        .with_tag(SEARCH_TAG)
+        .with_style(
+            BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)).with_corner_radius(8),
+        )
+        .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 9, 12, 9))),
+    )
+}
+
+/// Header status line: the dataset size + the current filtered-row count.
+fn header(query: &str, visible: usize, theme: &Theme) -> Scene {
+    let muted = theme.resolve(ColorRole::OnSurfaceMuted);
+    let summary = if query.is_empty() {
+        format!("{TOTAL_NODES} nodes \u{00B7} {visible} rows visible \u{00B7} windowed render")
+    } else {
+        format!("{TOTAL_NODES} nodes \u{00B7} filter \u{2192} {visible} match rows")
+    };
+    Scene::Text(TextNode::styled(
+        summary,
+        Rect::default(),
+        TextStyle::new().with_size_px(HEADER_FONT_PX).with_fg(muted),
+    ))
+}
+
+/// view-fn (§6.3): pure sync mapping. The dataset is virtual —
+/// `view_virtual_tree` builds rows only for the indices in the current
+/// scroll window, taken from the *filtered* `visible_rows` flattening.
+#[allow(clippy::trivially_copy_pass_by_ref)] // mirrors the WidgetCore::view `&Frame` signature
+fn view(_state: ButtonState, _frame: &Frame) -> Scene {
+    // `view_virtual_tree` derives its slot pitch from `style.row_height`;
+    // keep ROW_PITCH (the a11y windowing math uses it) in lockstep.
+    debug_assert_eq!(TreeViewStyle::m3_default().row_height, ROW_PITCH);
+
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let state = use_tree_state();
+    let filter = use_filter();
+    let rows = filter.visible_rows();
+    let query = filter.query();
+    let focused = state.focused_id.get();
+    let scroll = use_scroll_state(SCROLL_KEY);
+
+    let tree = view_virtual_tree(
+        TREE_TAG,
+        &scroll,
+        &rows,
+        &TreeViewFocus { focused_id: focused.as_deref() },
+        OVERSCAN,
+        &theme,
+        &TreeViewStyle::m3_default(),
+    );
+
+    let (_, measured_h) = scroll.measured_viewport();
+    let scrollbar_style = VerticalScrollbarStyle::material(measured_h, SCROLLBAR_TAG);
+    let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
+    let scrollbar_visual =
+        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+
+    // Row band: the windowed tree beside the scrollbar peer, flex-grow so it
+    // fills the window below the search box + header.
+    let band = Scene::Container(
+        ContainerNode::new(vec![tree, scrollbar_visual])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_flex_grow(1.0)),
+    );
+
+    // Invisible 0x0 root External keeps the SCXML state surface alive for
+    // read_state / RPC introspect (the WAI-ARIA `tree` node also lands here).
+    let invisible_root = Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag(ROOT_TAG)
+            .with_layout(LayoutStyle::new().with_size(Size::px(0, 0))),
+    );
+
+    Scene::Container(
+        ContainerNode::new(vec![
+            search_box(&query, &theme),
+            header(&query, rows.len(), &theme),
+            band,
+            invisible_root,
+        ])
+        .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Stretch)
+                .with_justify(JustifyContent::Start)
+                .with_gap(8)
+                .with_padding(Rect::new(12, 12, 12 + SCROLLBAR_W, 12)),
+        ),
+    )
+}
+
+struct SceneGraphFilter;
+
+impl WidgetCore for SceneGraphFilter {
+    type State = ButtonState;
+    type Event = ButtonEvent;
+
+    fn tag() -> &'static str {
+        ROOT_TAG
+    }
+
+    fn title() -> &'static str {
+        "pinion hello-tree-filter (R821 §5.27 recursive tree filter proxy)"
+    }
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(ButtonExternal::new())
+    }
+
+    /// `TreeRowClickExternal` sibling (composite `{TREE_TAG}#{id}` clicks →
+    /// the §5.20 intent channel → [`SceneGraphFilter::update`]) + the filter
+    /// proxy External + the `ScrollBarExternal` sharing the tree's
+    /// `Rc<ScrollState>`.
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        let filter = use_filter();
+        vec![
+            ExtraExternal::new(TREE_TAG, Box::new(TreeRowClickExternal::new())),
+            ExtraExternal::new(FILTER_TAG, Box::new(TreeFilterExternal::new(Rc::clone(&filter)))),
+            scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
+        ]
+    }
+
+    fn read_state(scene: &Scene) -> Self::State {
+        if let Some(node) = scene.find_external_with_tag(ROOT_TAG)
+            && let Some(intro) = node.handle.introspect()
+            && let Some(IntrospectValue::Text(name)) = intro.query("state")
+        {
+            return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(&name);
+        }
+        ButtonState::Idle
+    }
+
+    fn event_name(event: Self::Event) -> &'static str {
+        <Self::Event as pinion_core::WidgetEventName>::as_name(&event)
+    }
+
+    fn view(state: Self::State, frame: &Frame) -> Scene {
+        view(state, frame)
+    }
+
+    /// Click a row → move the keyboard cursor to it (selection-follows-click;
+    /// the row stays a plain windowed node, the cursor is the AT
+    /// active-descendant). Side-effect-only reducer
+    /// ([[scxml-as-model-update-transient]]): the `Signal::set` is the
+    /// mutation, so the command list is empty.
+    fn update(_state: Self::State, intent: &Intent) -> Vec<pinion_core::command::Command> {
+        if intent.tag_str() == CLICK_INTENT_TAG
+            && let IntrospectValue::Text(id) = &intent.payload
+        {
+            use_tree_state().focused_id.set(Some(id.clone()));
+        }
+        Vec::new()
+    }
+
+    /// The tree is a single keyboard tab stop (WAI-ARIA tree convention: one
+    /// tab stop + `aria-activedescendant` roving). The focusable element is
+    /// the [`ROOT_TAG`] tree root; keys then type-to-filter or move the cursor
+    /// via [`apply_key_impl`].
+    fn focusable_tags() -> Vec<&'static str> {
+        vec![ROOT_TAG]
+    }
+
+    /// WAI-ARIA tree keyboard: type-to-filter + vertical roving over the
+    /// filtered rows. Single tab stop — keys apply only while the tree root
+    /// [`ROOT_TAG`] is focused. The gate is required, not cosmetic: an
+    /// ungated tree would steal keys from sibling panels in a multi-pane host
+    /// (the eventual self-hosted editor's outliner beside its viewport), so it
+    /// honours the same `focused == Some(tag)` guard the windowed-tree /
+    /// virtual-nav consumers use ([[routing-and-focus-are-separate-axes]]).
+    /// The RPC demo issues `focus/set` first, like every other gated example.
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        let _ = scene;
+        if focused != Some(ROOT_TAG) {
+            return false;
+        }
+        apply_key_impl(key)
+    }
+
+    fn fmt_state_log(_state: &ButtonState) -> String {
+        format!("scene-graph filter over {TOTAL_NODES} nodes (recursive path-to-match)")
+    }
+}
+
+impl WidgetA11y for SceneGraphFilter {
+    /// WAI-ARIA virtualized `tree` over the **filtered** window: one
+    /// `AriaRole::Tree` root referencing only the windowed rows, plus one
+    /// `AriaRole::TreeItem` per rendered row carrying its (renumbered, over
+    /// the filtered sibling group) `aria-level` / `aria-posinset` /
+    /// `aria-setsize` / `aria-expanded`. Built through the same
+    /// [`tree_access_nodes`] (R812) the unfiltered virtual tree uses — the
+    /// filtered flattening is just another `VisibleRow` slice, so the AT tree
+    /// and the painted tree never diverge. The keyboard cursor row carries
+    /// `aria-selected` (selection-follows-focus / `aria-activedescendant`).
+    fn access_node(_state: &ButtonState, _focused: Option<&str>) -> Vec<AccessNode> {
+        let state = use_tree_state();
+        let filter = use_filter();
+        let cursor = state.focused_id.get();
+        let rows = filter.visible_rows();
+        let scroll = use_scroll_state(SCROLL_KEY);
+        let (_, measured_h) = scroll.measured_viewport();
+        let window =
+            compute_visible_range(scroll.offset_y(), measured_h, rows.len(), ROW_PITCH, OVERSCAN);
+        let slice: &[VisibleRow] = &rows[window.first..window.first + window.count];
+        tree_access_nodes(ROOT_TAG, TREE_TAG, Some("Scene graph"), slice, cursor.as_deref())
+    }
+}
+
+impl WidgetView for SceneGraphFilter {
+    type Renderer = HelloTreeFilterRenderer;
+
+    fn initial_size_strategy() -> SizeStrategy {
+        SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+    }
+}
+
+fn main() {
+    pinion_shell::run::<SceneGraphFilter>();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        apply_key_impl, initial_nodes, use_filter, use_tree_state, view, SceneGraphFilter,
+        CHILDREN_PER, CLICK_INTENT_TAG, EXPANDED_AT_BOOT, GROUPS, ROW_PITCH, SCROLL_KEY,
+        TOTAL_NODES, TREE_TAG,
+    };
+    use pinion_a11y::{AriaRole, WidgetA11y};
+    use pinion_core::widgets::button::ButtonState;
+    use pinion_core::widgets::scroll::use_scroll_state;
+    use pinion_core::{Frame, Owner, Scene};
+    use pinion_widget_paint::tree_view::{TreeViewStyle, TREE_ROW_CLICK_EVENT};
+
+    const WIN_VIEWPORT_W: u32 = 480;
+    const WIN_VIEWPORT_H: u32 = 384;
+
+    #[test]
+    fn dataset_size_matches_total_nodes() {
+        let nodes = initial_nodes();
+        let count: usize = nodes.iter().map(|g| 1 + g.children.len()).sum();
+        assert_eq!(count, TOTAL_NODES);
+        assert_eq!(nodes.len(), GROUPS);
+    }
+
+    #[test]
+    fn slot_pitch_matches_style_row_height() {
+        assert_eq!(TreeViewStyle::m3_default().row_height, ROW_PITCH);
+    }
+
+    #[test]
+    fn click_intent_tag_matches_substrate_event() {
+        assert_eq!(CLICK_INTENT_TAG, format!("{TREE_TAG}.{TREE_ROW_CLICK_EVENT}"));
+    }
+
+    #[test]
+    fn empty_filter_shows_groups_plus_expanded_children() {
+        Owner::new().run(|| {
+            let filter = use_filter();
+            // Boot: no filter → groups + the boot-expanded groups' children.
+            let expected = GROUPS + EXPANDED_AT_BOOT * CHILDREN_PER;
+            assert_eq!(filter.visible_count(), expected, "boot visible rows");
+            assert!(!filter.is_filtering());
+        });
+    }
+
+    #[test]
+    fn filter_reveals_matches_inside_a_collapsed_group() {
+        Owner::new().run(|| {
+            let filter = use_filter();
+            // Group09 boots collapsed (9 >= EXPANDED_AT_BOOT), so its children
+            // are hidden unfiltered…
+            let unfiltered_labels: Vec<String> = filter
+                .visible_rows()
+                .iter()
+                .map(|r| r.label.clone())
+                .collect();
+            assert!(
+                !unfiltered_labels.iter().any(|l| l == "Node09_00"),
+                "a collapsed group's child is hidden unfiltered",
+            );
+            // …but filtering reveals Group09 → Node09_* regardless of the flag.
+            assert_eq!(filter.set_query("Node09"), 1 + CHILDREN_PER, "group 9 + its 20 leaves");
+            let labels: Vec<String> =
+                filter.visible_rows().iter().map(|r| r.label.clone()).collect();
+            assert_eq!(labels[0], "Group09", "the ancestor is revealed as path context");
+            assert!(labels.iter().any(|l| l == "Node09_00"), "the buried match is revealed");
+        });
+    }
+
+    #[test]
+    fn matching_group_with_no_matching_children_is_a_filtered_leaf() {
+        Owner::new().run(|| {
+            let filter = use_filter();
+            // "Group03" matches only the group; its Node03_* leaves do not.
+            assert_eq!(filter.set_query("Group03"), 1, "just the matched group");
+            let rows = filter.visible_rows();
+            assert_eq!(rows[0].label, "Group03");
+            assert!(!rows[0].has_children, "a matched branch with no matching child is a leaf");
+        });
+    }
+
+    #[test]
+    fn filter_is_case_insensitive_and_clears() {
+        Owner::new().run(|| {
+            let filter = use_filter();
+            assert_eq!(filter.set_query("node03"), 1 + CHILDREN_PER, "lowercase matches Node03");
+            assert_eq!(filter.set_query(""), GROUPS + EXPANDED_AT_BOOT * CHILDREN_PER, "clear");
+        });
+    }
+
+    #[test]
+    fn type_to_filter_then_backspace_and_escape() {
+        Owner::new().run(|| {
+            let filter = use_filter();
+            // Type "Group" one char at a time (alphanumeric → appends).
+            for ch in ["G", "r", "o", "u", "p"] {
+                assert!(apply_key_impl(ch), "an alphanumeric key is consumed by the filter");
+            }
+            assert_eq!(filter.query(), "Group");
+            assert_eq!(filter.visible_count(), GROUPS, "every group label contains 'Group'");
+            // Backspace pops one char.
+            assert!(apply_key_impl("Backspace"));
+            assert_eq!(filter.query(), "Grou");
+            // Escape clears.
+            assert!(apply_key_impl("Escape"));
+            assert_eq!(filter.query(), "");
+            // Escape with no active filter is not consumed (bubbles).
+            assert!(!apply_key_impl("Escape"));
+        });
+    }
+
+    /// Count the rendered `{TREE_TAG}#<id>` row containers under the scroll
+    /// wrapper.
+    fn rendered_row_count(scene: &Scene) -> usize {
+        fn walk(scene: &Scene, prefix: &str) -> usize {
+            match scene {
+                Scene::Scroll(s) => walk(s.content.as_ref(), prefix),
+                Scene::Container(c) => {
+                    let here =
+                        usize::from(c.tag.as_deref().is_some_and(|t| t.starts_with(prefix)));
+                    here + c.children.iter().map(|ch| walk(ch, prefix)).sum::<usize>()
+                }
+                _ => 0,
+            }
+        }
+        walk(scene, &format!("{TREE_TAG}#"))
+    }
+
+    #[test]
+    fn view_windows_only_a_slice_of_the_filtered_rows() {
+        Owner::new().run(|| {
+            // Give the scroll a measured viewport so windowing renders a bounded
+            // slice rather than the whole (unmeasured) column.
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_VIEWPORT_W, WIN_VIEWPORT_H);
+            // Filter to all leaves (the whole 252-row tree) and assert the
+            // rendered window is far smaller than the dataset.
+            use_filter().set_query("Node");
+            let scene = view(ButtonState::Idle, &Frame::default());
+            let rendered = rendered_row_count(&scene);
+            assert!(rendered > 0, "some rows render");
+            assert!(rendered < TOTAL_NODES, "only a window renders, not all {TOTAL_NODES}");
+        });
+    }
+
+    #[test]
+    fn a11y_tree_lowers_filtered_window_with_cursor_selected() {
+        Owner::new().run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_VIEWPORT_W, WIN_VIEWPORT_H);
+            let filter = use_filter();
+            filter.set_query("Node03"); // Group03 + 20 leaves
+            use_tree_state().focused_id.set(Some("g3".to_string()));
+            let nodes = SceneGraphFilter::access_node(&ButtonState::Idle, None);
+            assert_eq!(nodes[0].role, AriaRole::Tree, "first node is the tree root");
+            assert!(
+                nodes[1..].iter().all(|n| n.role == AriaRole::TreeItem),
+                "windowed rows are treeitems",
+            );
+            // The cursor row (Group03 = id g3) carries aria-selected.
+            assert!(
+                nodes.iter().any(|n| n.selected == Some(true)),
+                "the cursor row is aria-selected (selection-follows-focus)",
+            );
+        });
+    }
+
+    // ── flat_visible_filtered algorithm (unit-tested here per R820: the core
+    //    fn's detailed assertions exercise serde-`Signal`-free `TreeRow` data,
+    //    but pinion-core's own test target is at the large_stack_arrays
+    //    boundary, so the SSOT decision is verified through this consumer) ──
+
+    use super::TreeRow;
+    use pinion_core::widgets::tree_nav::{flat_visible_filtered, TreeNode, VisibleRow};
+
+    /// `(id, depth, posinset, setsize, has_children, expanded)` per row.
+    fn shape(rows: &[VisibleRow]) -> Vec<(&str, u32, u32, u32, bool, bool)> {
+        rows.iter()
+            .map(|r| {
+                (r.id.as_str(), r.depth, r.position_in_set, r.size_of_set, r.has_children, r.expanded)
+            })
+            .collect()
+    }
+
+    /// A 3-node fixture: one collapsed branch with two leaves + a leaf sibling.
+    fn mini() -> Vec<TreeRow> {
+        vec![
+            TreeRow {
+                id: "g".to_string(),
+                label: "Group".to_string(),
+                expanded: false,
+                children: vec![
+                    TreeRow::leaf("g-a".to_string(), "ItemA".to_string()),
+                    TreeRow::leaf("g-b".to_string(), "ItemB".to_string()),
+                ],
+            },
+            TreeRow::leaf("o".to_string(), "Other".to_string()),
+        ]
+    }
+
+    fn label_contains(needle: &str) -> impl Fn(&TreeRow) -> bool + '_ {
+        move |n: &TreeRow| n.label().to_lowercase().contains(&needle.to_lowercase())
+    }
+
+    #[test]
+    fn filter_reveals_path_to_match_and_renumbers_over_survivors() {
+        // "Item" matches both leaves → the collapsed `Group` is revealed as
+        // path context, the `Other` sibling is pruned, and posinset/setsize
+        // renumber over the surviving group (Group is 1-of-1, not 1-of-2).
+        let rows = flat_visible_filtered(&mini(), label_contains("Item"));
+        assert_eq!(
+            shape(&rows),
+            [
+                ("g", 0, 1, 1, true, true),
+                ("g-a", 1, 1, 2, false, false),
+                ("g-b", 1, 2, 2, false, false),
+            ],
+        );
+    }
+
+    #[test]
+    fn filter_matching_branch_with_pruned_children_is_a_leaf() {
+        // "Group" matches the branch by name; its `Item*` children do not →
+        // it shows as a filtered leaf (has_children = false), `Other` pruned.
+        let rows = flat_visible_filtered(&mini(), label_contains("Group"));
+        assert_eq!(shape(&rows), [("g", 0, 1, 1, false, false)]);
+    }
+
+    #[test]
+    fn filter_no_match_is_empty_and_case_insensitive() {
+        assert!(flat_visible_filtered(&mini(), label_contains("zzz")).is_empty());
+        // Case-insensitive: "item" finds the same path as "Item".
+        assert_eq!(
+            flat_visible_filtered(&mini(), label_contains("item")).len(),
+            3,
+            "lowercase query matches the same 3-row path",
+        );
+    }
+
+    // ── TreeFilterExternal RPC adapter (query / invoke / intervene + guards) ──
+
+    #[test]
+    fn external_query_invoke_intervene_and_guards() {
+        use pinion_core::external::{
+            ExternalIntrospect, InterveneError, InvokeError, IntrospectValue,
+        };
+        use pinion_core::widgets::tree_filter::TreeFilterExternal;
+        use std::rc::Rc;
+
+        let boot = i64::try_from(GROUPS + EXPANDED_AT_BOOT * CHILDREN_PER).unwrap();
+        let node03 = i64::try_from(1 + CHILDREN_PER).unwrap();
+        Owner::new().run(|| {
+            let state = use_filter();
+            let mut ext = TreeFilterExternal::new(Rc::clone(&state));
+            // Boot: empty query, full view.
+            assert_eq!(ext.query("query"), Some(IntrospectValue::Text(String::new())));
+            assert_eq!(ext.query("visible_count"), Some(IntrospectValue::Int(boot)));
+            // invoke set_filter returns the resulting visible_count in one trip.
+            assert_eq!(
+                ext.invoke("set_filter", IntrospectValue::Text("Node03".into())),
+                Ok(IntrospectValue::Int(node03)),
+            );
+            assert_eq!(ext.query("query"), Some(IntrospectValue::Text("Node03".into())));
+            assert_eq!(ext.query("visible_at.0"), Some(IntrospectValue::Text("g3".into())));
+            assert_eq!(ext.query("label_at.0"), Some(IntrospectValue::Text("Group03".into())));
+            assert_eq!(
+                ext.query("visible_at.999"),
+                Some(IntrospectValue::Null),
+                "out-of-range filtered position is present-but-empty",
+            );
+            assert_eq!(ext.query("nope"), None, "undeclared path is absent");
+            // intervene sets the query (admin/restore); read-only + type guards.
+            ext.intervene("query", IntrospectValue::Text("Group07".into())).unwrap();
+            assert_eq!(state.query(), "Group07");
+            assert_eq!(
+                ext.intervene("visible_count", IntrospectValue::Int(1)),
+                Err(InterveneError::ReadOnly),
+            );
+            assert_eq!(
+                ext.intervene("query", IntrospectValue::Int(1)),
+                Err(InterveneError::TypeMismatch),
+            );
+            assert_eq!(ext.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+            // Null clears via invoke → back to the full view.
+            assert_eq!(
+                ext.invoke("set_filter", IntrospectValue::Null),
+                Ok(IntrospectValue::Int(boot)),
+            );
+            assert_eq!(state.query(), "");
+        });
+    }
+}

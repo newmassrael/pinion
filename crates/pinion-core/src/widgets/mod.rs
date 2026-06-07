@@ -37,6 +37,7 @@ pub mod toggle;
 pub mod toggle_group;
 pub mod toolbar;
 pub mod tooltip;
+pub mod tree_filter;
 pub mod tree_nav;
 pub mod view_order;
 pub mod virtual_list;

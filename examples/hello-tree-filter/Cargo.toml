@@ -1,0 +1,30 @@
+[package]
+name = "hello-tree-filter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R821 §5.27 §5.40 §5.50 — recursive tree filter proxy consumer: a scene-graph outliner whose search box filters the whole tree to the paths that lead to a match (QSortFilterProxyModel recursive). Type or RPC set_filter and matches buried inside collapsed groups are revealed, auto-expanded, with non-match siblings pruned; the filtered visible-row sequence windows + lowers to WAI-ARIA exactly like the unfiltered tree."
+publish = false
+
+[[bin]]
+name = "hello-tree-filter"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R821 §5.27 — `view_virtual_tree` windowed tree paint + the
+# `view_vertical_scrollbar` peer; the filtered `flat_visible_filtered`
+# sequence drops into both unchanged.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+serde = { workspace = true, features = ["derive"] }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

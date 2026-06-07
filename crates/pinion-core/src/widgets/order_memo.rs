@@ -11,46 +11,53 @@
 //! divergence in either would be a bug, not a style choice — so they live here
 //! once (the R780 audit lift, on the second proxy consumer):
 //!
-//! - [`OrderMemo`] — the single-entry memo of the visual→source order
-//!   permutation, keyed on a config snapshot. The cache-invalidation dance
+//! - [`OrderMemo`] — the single-entry memo of a derived view value
+//!   (`Rc<T>`), keyed on a config snapshot. The cache-invalidation dance
 //!   (recompute only when the key changes) is the error-prone part; one
-//!   correct copy serves both proxies.
+//!   correct copy serves all the proxies. The two sort proxies memoize a
+//!   visual→source permutation (`T = Vec<usize>`, the default); the R821
+//!   tree filter proxy is the **third** consumer, memoizing its filtered
+//!   `Vec<VisibleRow>` flattening on the query string — the same
+//!   invalidation contract over a different derived value.
 //! - [`source_at_value`] — the `source_at.<pos>` introspect projection both
-//!   proxy externals expose (out-of-range → `Null`, never absence).
+//!   sort proxy externals expose (out-of-range → `Null`, never absence).
+//!   (The tree filter's visible rows are addressed by id, not source index,
+//!   so it does not reuse this — its peerhood, like the permutation's.)
 
 use std::rc::Rc;
 
 use crate::external::IntrospectValue;
 
-/// A single-entry memo of an order permutation (`Rc<Vec<usize>>`) keyed on a
-/// config snapshot `K`. [`get`](Self::get) returns the cached permutation when
-/// the key is unchanged, else recomputes and re-keys. `Option<K>` subsumes the
-/// "never computed yet" state, so there is no separate `valid` flag to forget
-/// to set (the bug the per-proxy `OrderCache` structs risked).
-pub(crate) struct OrderMemo<K> {
+/// A single-entry memo of a derived view value (`Rc<T>`) keyed on a config
+/// snapshot `K`. [`get`](Self::get) returns the cached value when the key is
+/// unchanged, else recomputes and re-keys. `Option<K>` subsumes the "never
+/// computed yet" state, so there is no separate `valid` flag to forget to set
+/// (the bug the per-proxy `OrderCache` structs risked).
+///
+/// `T` defaults to `Vec<usize>` — the visual→source permutation the two sort
+/// proxies memoize — so `OrderMemo<K>` keeps their meaning unchanged. The
+/// R821 tree filter proxy instantiates `OrderMemo<String, Vec<VisibleRow>>`:
+/// the *invalidation* contract is identical, only the derived value differs.
+pub(crate) struct OrderMemo<K, T = Vec<usize>> {
     key: Option<K>,
-    order: Rc<Vec<usize>>,
+    value: Rc<T>,
 }
 
-impl<K: PartialEq> OrderMemo<K> {
+impl<K: PartialEq, T: Default> OrderMemo<K, T> {
     /// An empty memo (no key computed yet).
     pub(crate) fn new() -> Self {
-        Self { key: None, order: Rc::new(Vec::new()) }
+        Self { key: None, value: Rc::new(T::default()) }
     }
 
-    /// The memoized order for `key`: a cheap `Rc` clone on a hit, else
+    /// The memoized value for `key`: a cheap `Rc` clone on a hit, else
     /// `recompute()` re-keyed. The single source of truth for "recompute the
-    /// permutation only when the sort/filter config changed".
-    pub(crate) fn get(
-        &mut self,
-        key: K,
-        recompute: impl FnOnce() -> Vec<usize>,
-    ) -> Rc<Vec<usize>> {
+    /// derived view value only when the config (sort/filter/query) changed".
+    pub(crate) fn get(&mut self, key: K, recompute: impl FnOnce() -> T) -> Rc<T> {
         if self.key.as_ref() != Some(&key) {
-            self.order = Rc::new(recompute());
+            self.value = Rc::new(recompute());
             self.key = Some(key);
         }
-        Rc::clone(&self.order)
+        Rc::clone(&self.value)
     }
 }
 

@@ -33025,6 +33025,90 @@
         "typeahead unifying tree + listbox is a future axis if a 3rd distinct row-shape consumer appears"
       ]
     },
+    "R821": {
+      "decision_summary": "R821 §5.27 §5.40 §5.50 — recursive tree filter proxy (QSortFilterProxyModel-over-tree): flat_visible_filtered path-to-match SSOT + TreeFilterState/TreeFilterExternal coordinator + OrderMemo 3rd consumer + hello-tree-filter demo; completes the list/grid/tree Model/View proxy family",
+      "changes_bullets": [
+        "flat_visible_filtered (tree_nav): recursive QSortFilterProxyModel path-to-match — keep a node iff it",
+        "matches OR any descendant matches; ancestors revealed, non-match siblings pruned, posinset/setsize",
+        "renumbered over surviving siblings; has_children/expanded reflect the filtered structure (O(n))",
+        "tree_filter module: TreeFilterState (reactive query Signal + node-type-agnostic rows_fn closure +",
+        "memoized Vec<VisibleRow>) + use_tree_filter Owner-cache, mirroring ViewOrderState",
+        "TreeFilterExternal RPC adapter: query/visible_count + visible_at.<pos>/label_at.<pos> projections,",
+        "invoke set_filter (returns visible_count), intervene query + read-only/type guards",
+        "OrderMemo<K> generalized to OrderMemo<K, T=Vec<usize>> (defaulted, zero-churn for the two sort",
+        "proxies) so the tree filter is its 3rd consumer, memoizing a filtered flattening on the query string",
+        "hello-tree-filter demo: 252-node scene-graph outliner; RPC set_filter (AI-first) + keyboard",
+        "type-to-filter; filtered rows drop into view_virtual_tree + tree_access_nodes unchanged",
+        "audit-first finding: list/grid have sort/filter proxies, the tree had none (the genuine gap); the",
+        "shared decisions (windowing/memo/comparator/selection) are already SSOT, so no retained Model trait",
+        "(a wrong abstraction over divergent data shapes; order_memo.rs already reasoned this)"
+      ],
+      "verification_bullets": [
+        "pinion-core lib 2048 tests green (OrderMemo generalization zero-churn); hello-tree-filter 14 tests green",
+        "full workspace cargo clippy --all-targets --features pinion-runtime/vello -D pedantic: clean",
+        "r821_tree_filter RPC demo PASS (realgpu, ~50 assertions): set_filter reveals matches inside collapsed",
+        "groups, matching-branch-as-leaf, multi-group, case-insensitive, clear, intervene guards, keyboard",
+        "flat_visible_filtered + TreeFilterExternal unit-tested in the hello-tree-filter example, not in",
+        "pinion-core: the crate's own test target sits at the clippy::large_stack_arrays 16KB threshold (a",
+        "serde-Signal monomorphization, R820), so any added core test trips it at the crate root"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "pinion-core test target is at the clippy::large_stack_arrays 16KB boundary: ANY added core test",
+        "crosses it (a ~16KB serde Deserialize buffer from a Signal<Vec<serde-struct>> monomorphization, R820).",
+        "New tree-fn tests live in the consumer example. Root-causing/shrinking that buffer is a latent",
+        "pinion-core fragility deserving a dedicated fix round (not a feature workaround).",
+        "tree filter matcher is caller-side (case-insensitive substring); multi-facet / kind / glob filters are",
+        "additive when a consumer needs them, mirroring the list/grid proxies' single-facet first slice",
+        "demo tree is immutable (filter is the only structural control) so the proxy memoizes on the query",
+        "alone; expand/collapse interaction stays hello-virtual-tree's axis (filtered view is auto-expanded)"
+      ],
+      "publishable_decision_summary": "R821 §5.27 §5.40 §5.50 — recursive tree filter proxy (QSortFilterProxyModel-over-tree): flat_visible_filtered path-to-match SSOT + TreeFilterState/TreeFilterExternal coordinator + OrderMemo 3rd consumer + hello-tree-filter demo; completes the list/grid/tree Model/View proxy family",
+      "publishable_changes_bullets": [
+        "flat_visible_filtered (tree_nav): recursive QSortFilterProxyModel path-to-match — keep a node iff it",
+        "matches OR any descendant matches; ancestors revealed, non-match siblings pruned, posinset/setsize",
+        "renumbered over surviving siblings; has_children/expanded reflect the filtered structure (O(n))",
+        "tree_filter module: TreeFilterState (reactive query Signal + node-type-agnostic rows_fn closure +",
+        "memoized Vec<VisibleRow>) + use_tree_filter Owner-cache, mirroring ViewOrderState",
+        "TreeFilterExternal RPC adapter: query/visible_count + visible_at.<pos>/label_at.<pos> projections,",
+        "invoke set_filter (returns visible_count), intervene query + read-only/type guards",
+        "OrderMemo<K> generalized to OrderMemo<K, T=Vec<usize>> (defaulted, zero-churn for the two sort",
+        "proxies) so the tree filter is its 3rd consumer, memoizing a filtered flattening on the query string",
+        "hello-tree-filter demo: 252-node scene-graph outliner; RPC set_filter (AI-first) + keyboard",
+        "type-to-filter; filtered rows drop into view_virtual_tree + tree_access_nodes unchanged",
+        "audit-first finding: list/grid have sort/filter proxies, the tree had none (the genuine gap); the",
+        "shared decisions (windowing/memo/comparator/selection) are already SSOT, so no retained Model trait",
+        "(a wrong abstraction over divergent data shapes; order_memo.rs already reasoned this)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core lib 2048 tests green (OrderMemo generalization zero-churn); hello-tree-filter 14 tests green",
+        "full workspace cargo clippy --all-targets --features pinion-runtime/vello -D pedantic: clean",
+        "r821_tree_filter RPC demo PASS (realgpu, ~50 assertions): set_filter reveals matches inside collapsed",
+        "groups, matching-branch-as-leaf, multi-group, case-insensitive, clear, intervene guards, keyboard",
+        "flat_visible_filtered + TreeFilterExternal unit-tested in the hello-tree-filter example, not in",
+        "pinion-core: the crate's own test target sits at the clippy::large_stack_arrays 16KB threshold (a",
+        "serde-Signal monomorphization, R820), so any added core test trips it at the crate root"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pinion-core test target is at the clippy::large_stack_arrays 16KB boundary: ANY added core test",
+        "crosses it (a ~16KB serde Deserialize buffer from a Signal<Vec<serde-struct>> monomorphization, R820).",
+        "New tree-fn tests live in the consumer example. Root-causing/shrinking that buffer is a latent",
+        "pinion-core fragility deserving a dedicated fix round (not a feature workaround).",
+        "tree filter matcher is caller-side (case-insensitive substring); multi-facet / kind / glob filters are",
+        "additive when a consumer needs them, mirroring the list/grid proxies' single-facet first slice",
+        "demo tree is immutable (filter is the only structural control) so the proxy memoizes on the query",
+        "alone; expand/collapse interaction stays hello-virtual-tree's axis (filtered view is auto-expanded)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

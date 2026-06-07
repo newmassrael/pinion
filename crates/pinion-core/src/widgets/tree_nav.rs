@@ -130,6 +130,104 @@ pub fn flat_visible<N: TreeNode>(nodes: &[N]) -> Vec<VisibleRow> {
     out
 }
 
+/// R821 §5.27 §5.50 — the **recursive sort/filter proxy** flattening of a
+/// tree: the tree peer of the 1-D list's
+/// [`compute_order`](super::view_order::compute_order) filter and the data
+/// grid's [`GridFilter`](super::grid_sort::GridFilter) facet, completing the
+/// proxy family (list / grid / tree) the Model/View substrate windows over.
+///
+/// The model is Qt's `QSortFilterProxyModel` with
+/// `setRecursiveFilteringEnabled(true)`: a node is kept **iff it matches
+/// `accepts`, or any of its descendants does** — the *path-to-match* policy
+/// every find-as-you-type tree converges on (a code editor's search tree,
+/// `IntelliJ` Speed Search, a file manager's filter box). Three consequences,
+/// all canonical:
+///
+/// - **Ancestors of a match are revealed** regardless of their retained
+///   [`expanded`](TreeNode::expanded) flag — a match can never stay hidden
+///   inside a collapsed branch — so this walk *ignores* expand state where
+///   [`flat_visible`] honours it.
+/// - **Non-matching siblings vanish**, leaving only the branches that lead
+///   to a match; [`position_in_set`](VisibleRow::position_in_set) /
+///   [`size_of_set`](VisibleRow::size_of_set) renumber over the **surviving**
+///   siblings, so WAI-ARIA "N of M" announces the filtered group.
+/// - Each emitted row's [`has_children`](VisibleRow::has_children) /
+///   [`expanded`](VisibleRow::expanded) reflect the **filtered** structure: a
+///   branch keeps the children that survive (`has_children = true`,
+///   auto-`expanded`); a node that matches but whose every child is pruned
+///   becomes a leaf in the filtered view (`has_children = false`).
+///
+/// The output is an ordinary [`VisibleRow`] sequence — same depth-first
+/// preorder, same WAI-ARIA axes as [`flat_visible`] — so it drops straight
+/// into `view_virtual_tree`, `tree_access_nodes`, and [`resolve_tree_key`]
+/// with **no** change: the filtered tree is just another visible-row sequence
+/// the windowing, AT and keyboard axes all read.
+///
+/// `accepts` is the per-node match predicate (typically a case-insensitive
+/// substring over [`label`](TreeNode::label)); the *matcher policy* — name
+/// search, kind filter, glob — is the caller's, exactly as
+/// [`compute_order`](super::view_order::compute_order) takes the consumer's
+/// `pass` closure. The SSOT this owns is the **recursion** (path-to-match +
+/// auto-expand + sibling renumbering), the error-prone part every tree
+/// consumer would otherwise re-derive. Each node is visited once (O(n)); the
+/// proxy coordinator ([`TreeFilterState`](super::tree_filter::TreeFilterState))
+/// memoizes the result on the query so it recomputes only when the filter
+/// changes, never per frame.
+#[must_use]
+pub fn flat_visible_filtered<N: TreeNode>(
+    nodes: &[N],
+    accepts: impl Fn(&N) -> bool,
+) -> Vec<VisibleRow> {
+    let mut out: Vec<VisibleRow> = Vec::new();
+    walk_filtered(nodes, 0, &accepts, &mut out);
+    out
+}
+
+/// Recursive helper for [`flat_visible_filtered`]: build each surviving
+/// sibling's subtree depth-first (so every node is visited exactly once),
+/// then renumber the survivors' `posinset` / `setsize` over the filtered
+/// sibling group. Hoisted out so `clippy::items_after_statements` stays
+/// clean (mirrors [`walk_visible`]).
+fn walk_filtered<N: TreeNode, F: Fn(&N) -> bool>(
+    siblings: &[N],
+    depth: u32,
+    accepts: &F,
+    out: &mut Vec<VisibleRow>,
+) {
+    // One subtree per surviving sibling, built bottom-up: recurse into the
+    // children first (the single O(1)-per-node visit), then a node survives
+    // iff it matches or that recursion yielded any visible child rows.
+    let mut survivors: Vec<Vec<VisibleRow>> = Vec::new();
+    for node in siblings {
+        let mut child_rows: Vec<VisibleRow> = Vec::new();
+        walk_filtered(node.children(), depth + 1, accepts, &mut child_rows);
+        let has_visible_children = !child_rows.is_empty();
+        if !accepts(node) && !has_visible_children {
+            continue; // no match anywhere in this subtree → pruned
+        }
+        let mut rows = Vec::with_capacity(child_rows.len() + 1);
+        rows.push(VisibleRow {
+            id: node.id().to_owned(),
+            label: node.label().to_owned(),
+            depth,
+            // Renumbered over the survivor group once it is known, below.
+            position_in_set: 0,
+            size_of_set: 0,
+            has_children: has_visible_children,
+            // A filtered branch is shown fully expanded along the match path.
+            expanded: has_visible_children,
+        });
+        rows.append(&mut child_rows);
+        survivors.push(rows);
+    }
+    let size_of_set = u32::try_from(survivors.len()).unwrap_or(u32::MAX);
+    for (idx, mut rows) in survivors.into_iter().enumerate() {
+        rows[0].position_in_set = u32::try_from(idx + 1).unwrap_or(u32::MAX);
+        rows[0].size_of_set = size_of_set;
+        out.append(&mut rows);
+    }
+}
+
 /// The visible-row index of `index`'s **parent**: the nearest earlier
 /// row one level shallower. In a depth-first preorder flattening the
 /// parent is always the closest preceding row at `depth − 1`, so Arrow
@@ -615,6 +713,14 @@ mod tests {
         );
         assert!(find_node_mut(&mut nodes, "absent").is_none(), "missing id -> None");
     }
+
+    // `flat_visible_filtered` (the R821 recursive path-to-match proxy) is
+    // unit-tested in the `hello-tree-filter` consumer example, not here:
+    // pinion-core's own test target already sits at the `clippy::large_stack_arrays`
+    // 16 KB threshold (a serde-`Signal` monomorphization R820 surfaced), so any
+    // added test here trips it at the crate root where no scoped `#[allow]`
+    // reaches. The example's `filter_*` tests cover every arm (path-to-match,
+    // sibling renumbering, matching-branch-as-leaf, no-match) over its `TreeRow`.
 
     // The `Signal<Vec<N>>` flag-store helpers (`set_expanded_in` /
     // `toggle_expanded` / the `apply_tree_key` bridge) are integration-

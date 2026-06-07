@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R821 §5.27 §5.40 §5.50 recursive tree filter proxy consumer:
+  pinion-forge renderer manifest for hello-tree-filter. Same
+  single-source-of-truth template as the other hello-* renderers; only
+  the struct name diverges. backend=vello + default Area antialiasing.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloTreeFilterRenderer"
+        backend="vello"/>
