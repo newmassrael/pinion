@@ -62,7 +62,13 @@
 //! is queryable via `scene/snapshot` on the `ctx` panel node (§2
 //! invariant #7).
 
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    menu_item_nodes, AccessAction, AccessFocus, AccessNode, MenuItemCell, WidgetA11y,
+};
+// R817 §5.40 — `AriaRole` is now only referenced by the test asserts (the
+// lifted `menu_item_nodes` builder owns role + state tagging in prod).
+#[cfg(test)]
+use pinion_a11y::AriaRole;
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -287,33 +293,25 @@ impl WidgetA11y for ContextMenuView {
     /// from each label `TextNode`; the menu container name has no single
     /// paint equivalent so it stays an explicit override.
     fn access_node(state: &ContextState, focused: Option<&str>) -> Vec<AccessNode> {
+        // R817 §5.40 — lifted `menu_item_nodes` builder (one of two
+        // consumers). The closed menu emits nothing; every item is a plain
+        // command menuitem (no checkbox / disabled / separator here).
         if state.open_at.is_none() {
             return Vec::new();
         }
         let group_focused = focused == Some(<Self as WidgetCore>::tag());
-        let mut nodes: Vec<AccessNode> = Vec::new();
-
-        let mut menu =
-            AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Menu).with_name("Context menu");
-        for i in 0..ITEMS.len() {
-            menu = menu.with_child(composite_item_tag(CTX_TAG, i));
-        }
-        nodes.push(menu);
-
-        let setsize = u32::try_from(ITEMS.len()).unwrap_or(u32::MAX);
-        for i in 0..ITEMS.len() {
-            let item_focused = group_focused && state.active == Some(i);
-            nodes.push(
-                AccessNode::new(composite_item_tag(CTX_TAG, i), AriaRole::MenuItem)
-                    .with_state(AccessState {
-                        focused: item_focused,
-                        ..AccessState::default()
-                    })
-                    .with_position_in_set(u32::try_from(i + 1).unwrap_or(u32::MAX))
-                    .with_size_of_set(setsize),
-            );
-        }
-        nodes
+        let tags: Vec<String> =
+            (0..ITEMS.len()).map(|i| composite_item_tag(CTX_TAG, i)).collect();
+        let items: Vec<MenuItemCell<'_>> = (0..ITEMS.len())
+            .map(|i| MenuItemCell {
+                tag: &tags[i],
+                label: None,
+                checked: None,
+                disabled: false,
+                focused: group_focused && state.active == Some(i),
+            })
+            .collect();
+        menu_item_nodes(<Self as WidgetCore>::tag(), "Context menu", &items)
     }
 
     /// R772 §5.40 — composite focus model. While the menu owns focus and

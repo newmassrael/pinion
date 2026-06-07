@@ -32731,6 +32731,52 @@
         "dialog (hello-dialog/file-dialog/drawer) is Dialog+action-buttons but the buttons vary per binding (not a uniform list topology)"
       ]
     },
+    "R817": {
+      "decision_summary": "R817 §5.40 — lift menu_item_nodes (WAI-ARIA menu + menuitem AccessNode builder; menuitemcheckbox via checked Option) into pinion-a11y and adopt the shared inner menu unit in hello-menu dropdown + hello-contextmenu",
+      "changes_bullets": [
+        "Add pinion_a11y::menu::menu_item_nodes + MenuItemCell (Menu + MenuItem/MenuItemCheckbox)",
+        "Item role from checked: Some -> menuitemcheckbox + aria-checked, None -> menuitem; plus disabled axis",
+        "Builder auto-derives posinset/setsize from the slice (caller drops separators first, per R805)",
+        "Adopt: hello-contextmenu (full) + hello-menu dropdown; the menu-bar 2-level skeleton stays inline",
+        "Partial lift: only the shared inner Menu+items unit is lifted (nesting depth diverges, no over-merge)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 194 pass (6 new menu builder tests)",
+        "hello-menu + hello-contextmenu: tests green (role asserts now exercise the lifted builder)",
+        "cargo clippy pedantic -D clean (AriaRole gated cfg(test) in contextmenu; hello-menu keeps it for the menubar)",
+        "demos PASS: r691 menu, r772 contextmenu, r805 stateful (checkbox/separator/disabled)"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "a11y builder-lift axis now exhausted: every interactive family (radio/nav/toolbar/toggle/virtual-list/virtual-grid/tree/listbox/tabs/non-virtual-grid/menu) routes AT nodes through a lifted pinion-a11y builder",
+        "dialog (Dialog + action-buttons) has a per-binding-varying action set = not a uniform list topology, not a lift candidate",
+        "R818+ audit-first shifts off the builder-lift axis (AI-introspection coverage or other quality gaps)"
+      ],
+      "publishable_decision_summary": "R817 §5.40 — lift menu_item_nodes (WAI-ARIA menu + menuitem AccessNode builder; menuitemcheckbox via checked Option) into pinion-a11y and adopt the shared inner menu unit in hello-menu dropdown + hello-contextmenu",
+      "publishable_changes_bullets": [
+        "Add pinion_a11y::menu::menu_item_nodes + MenuItemCell (Menu + MenuItem/MenuItemCheckbox)",
+        "Item role from checked: Some -> menuitemcheckbox + aria-checked, None -> menuitem; plus disabled axis",
+        "Builder auto-derives posinset/setsize from the slice (caller drops separators first, per R805)",
+        "Adopt: hello-contextmenu (full) + hello-menu dropdown; the menu-bar 2-level skeleton stays inline",
+        "Partial lift: only the shared inner Menu+items unit is lifted (nesting depth diverges, no over-merge)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 194 pass (6 new menu builder tests)",
+        "hello-menu + hello-contextmenu: tests green (role asserts now exercise the lifted builder)",
+        "cargo clippy pedantic -D clean (AriaRole gated cfg(test) in contextmenu; hello-menu keeps it for the menubar)",
+        "demos PASS: r691 menu, r772 contextmenu, r805 stateful (checkbox/separator/disabled)"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "a11y builder-lift axis now exhausted: every interactive family (radio/nav/toolbar/toggle/virtual-list/virtual-grid/tree/listbox/tabs/non-virtual-grid/menu) routes AT nodes through a lifted pinion-a11y builder",
+        "dialog (Dialog + action-buttons) has a per-binding-varying action set = not a uniform list topology, not a lift candidate",
+        "R818+ audit-first shifts off the builder-lift axis (AI-introspection coverage or other quality gaps)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

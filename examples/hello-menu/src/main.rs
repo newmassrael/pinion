@@ -62,7 +62,10 @@
 //! dropdown is queryable via `scene/snapshot` on the `menu_dropdown`
 //! node (§2 invariant #7).
 
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    menu_item_nodes, AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, MenuItemCell,
+    WidgetA11y,
+};
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -430,45 +433,32 @@ impl WidgetA11y for MenuView {
         }
 
         if let Some(m) = state.open {
+            // R817 §5.40 — the open dropdown is the lifted `menu_item_nodes`
+            // unit (the MenuBar + title MenuItems above stay bespoke: the
+            // two-level menu-bar skeleton diverges from the one-level
+            // context menu, so only the inner menu+items is shared). R805 —
+            // separators are presentational, dropped before building the
+            // slice so the items' posinset / setsize count real items only;
+            // a checkbox item maps to `checked: Some(..)` (= menuitemcheckbox
+            // + aria-checked), a disabled command to `disabled`.
             let items = MENUS[m];
-            // R805 — separators are presentational: they are omitted from
-            // the AT item tree, and the remaining items' posinset / setsize
-            // count only the real menu items (WAI-ARIA `separator` is not a
-            // `menuitem` sibling).
             let menu_items: Vec<usize> =
                 (0..items.len()).filter(|&i| !items[i].is_separator()).collect();
-            let item_setsize = u32::try_from(menu_items.len()).unwrap_or(u32::MAX);
-            let mut menu =
-                AccessNode::new(DROPDOWN_TAG, AriaRole::Menu).with_name(MENU_TITLES[m]);
-            for &i in &menu_items {
-                menu = menu.with_child(composite_item_tag(BAR_TAG, i));
-            }
-            nodes.push(menu);
-            for (pos, &i) in menu_items.iter().enumerate() {
-                let item = items[i];
-                // R805 — a checkbox is a `menuitemcheckbox` carrying
-                // `aria-checked`; a disabled command carries `aria-disabled`.
-                let role = match item {
-                    Item::Checkbox(..) => AriaRole::MenuItemCheckbox,
-                    _ => AriaRole::MenuItem,
-                };
-                let mut item_state = AccessState {
+            let tags: Vec<String> =
+                menu_items.iter().map(|&i| composite_item_tag(BAR_TAG, i)).collect();
+            let cells: Vec<MenuItemCell<'_>> = menu_items
+                .iter()
+                .enumerate()
+                .map(|(pos, &i)| MenuItemCell {
+                    tag: &tags[pos],
+                    label: None,
+                    checked: matches!(items[i], Item::Checkbox(..))
+                        .then(|| state.item_checked(i)),
+                    disabled: matches!(items[i], Item::DisabledCommand(..)),
                     focused: group_focused && state.active == Some(i),
-                    ..AccessState::default()
-                };
-                if let Item::Checkbox(..) = item {
-                    item_state.checked = Some(state.item_checked(i));
-                }
-                if let Item::DisabledCommand(..) = item {
-                    item_state.disabled = true;
-                }
-                nodes.push(
-                    AccessNode::new(composite_item_tag(BAR_TAG, i), role)
-                        .with_state(item_state)
-                        .with_position_in_set(u32::try_from(pos + 1).unwrap_or(u32::MAX))
-                        .with_size_of_set(item_setsize),
-                );
-            }
+                })
+                .collect();
+            nodes.extend(menu_item_nodes(DROPDOWN_TAG, MENU_TITLES[m], &cells));
         }
         nodes
     }
