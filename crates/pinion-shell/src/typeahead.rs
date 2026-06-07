@@ -43,6 +43,10 @@
 //!   [`char::to_lowercase`] — i18n labels (CJK, accented Latin,
 //!   Hangul, etc.) all participate.
 
+use pinion_core::widgets::tree_nav::VisibleRow;
+use pinion_core::{Owner, Signal};
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 /// W3C ARIA Authoring Practices common default for the typeahead
@@ -188,9 +192,91 @@ pub fn char_match_ci(a: char, b: char) -> bool {
     a.to_lowercase().eq(b.to_lowercase())
 }
 
+/// R820.1 §5.27 §5.38 — type-ahead jump over a tree's flat visible rows:
+/// the shared glue funnelling [`TypeaheadCursor`] for every tree consumer
+/// (`hello-tree-view`, `hello-virtual-tree`, the `hello-dock-panels`
+/// inspector). Gate on a printable char, locate the cursor's flat index by
+/// id, collect the visible labels, step the owner-cached cursor, and move
+/// `focused` to the matched row. Returns `false` on a non-printable key or
+/// no match (the caller reports the key unhandled).
+///
+/// `cache_key` is the only caller-side parameter: the [`TypeaheadCursor`]
+/// lives on the shell's root [`Owner`] under a per-binding slot (R811 —
+/// the *cursor storage* is caller-choice; the surrounding flatten → index →
+/// step → set glue is not, so it is the SSOT here). `rows` is the already
+/// flattened visible sequence
+/// ([`flat_visible`](pinion_core::widgets::tree_nav::flat_visible)), which
+/// keeps this crate-direction clean: [`VisibleRow`] / [`Signal`] are
+/// `pinion-core`, [`TypeaheadCursor`] is local to `pinion-shell`.
+///
+/// # Panics
+///
+/// Panics if called outside a `CoreShell::apply_key` reactive scope (no
+/// [`Owner::current`]) — every shell key-dispatch path wraps the call in
+/// the root Owner, so a panic here means the binding bypassed that wrap.
+#[must_use]
+pub fn tree_typeahead_jump(
+    focused: &Signal<Option<String>>,
+    rows: &[VisibleRow],
+    cache_key: &'static str,
+    key: &str,
+) -> bool {
+    let Some(ch) = is_typeahead_char(key) else {
+        return false;
+    };
+    if rows.is_empty() {
+        return false;
+    }
+    let current = focused
+        .get()
+        .and_then(|id| rows.iter().position(|row| row.id == id));
+    let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
+    let owner =
+        Owner::current().expect("tree_typeahead_jump must run inside the apply_key Owner wrap");
+    let cursor: Rc<RefCell<TypeaheadCursor>> =
+        owner.cache(cache_key, || RefCell::new(TypeaheadCursor::new()));
+    let target = cursor.borrow_mut().step(ch, current, Instant::now(), &labels);
+    let Some(idx) = target else {
+        return false;
+    };
+    focused.set(Some(rows[idx].id.clone()));
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::Owner;
+
+    /// Minimal flat visible row for the `tree_typeahead_jump` test (only
+    /// `id` + `label` matter to type-ahead).
+    fn row(id: &str, label: &str) -> VisibleRow {
+        VisibleRow {
+            id: id.to_owned(),
+            label: label.to_owned(),
+            depth: 0,
+            position_in_set: 1,
+            size_of_set: 1,
+            has_children: false,
+            expanded: false,
+        }
+    }
+
+    #[test]
+    fn tree_typeahead_jump_moves_focus_to_matching_label_and_reports_unhandled() {
+        Owner::new().run(|| {
+            let rows = vec![row("a", "Apple"), row("b", "Banana"), row("c", "Cherry")];
+            let focused = Signal::new(Some(String::from("a")));
+            // 'b' jumps the cursor to the next label starting with B.
+            assert!(tree_typeahead_jump(&focused, &rows, "tree_ta_test", "b"), "printable handled");
+            assert_eq!(focused.get().as_deref(), Some("b"), "cursor moved to Banana");
+            // A non-printable named key is unhandled (caller falls through).
+            assert!(!tree_typeahead_jump(&focused, &rows, "tree_ta_test", "ArrowDown"), "named key unhandled");
+            // No match leaves the cursor and reports unhandled.
+            assert!(!tree_typeahead_jump(&focused, &rows, "tree_ta_test", "z"), "no-match unhandled");
+            assert_eq!(focused.get().as_deref(), Some("b"), "cursor unchanged on no match");
+        });
+    }
 
     fn labels_abc() -> Vec<&'static str> {
         vec!["Apple", "Banana", "Cherry", "Date"]

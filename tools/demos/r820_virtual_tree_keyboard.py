@@ -196,6 +196,11 @@ def body() -> None:
         assert "s99" not in present_ids(snap), "a deep section is NOT rendered at boot"
         assert len(present_ids(snap)) < 40, "virtualized: small window over many visible rows"
 
+        # The tree is a single tab stop with a focus gate (apply_key returns
+        # false unless ROOT_TAG is focused), so focus it before driving keys
+        # — the convention every gated single-widget demo follows.
+        tf.request("focus/set", {"tag": ROOT_TAG})
+
         # ── (B) Arrow Down/Up move + clamp ──────────────────────────
         # Up at the first row clamps (no wrap to the last row).
         press("ArrowUp")

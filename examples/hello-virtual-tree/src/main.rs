@@ -61,13 +61,11 @@ use pinion_core::widgets::tree_nav::{
 };
 use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
-use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
+use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::tree_view::{view_virtual_tree, TreeViewFocus, TreeViewStyle};
-use std::cell::RefCell;
 use std::rc::Rc;
-use std::time::Instant;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloVirtualTreeRenderer, HelloVirtualTreeRendererError);
@@ -184,10 +182,18 @@ fn initial_nodes() -> Vec<TreeRow> {
 
 /// Reactive holder for the retained tree + keyboard cursor. Lifted into
 /// [`Owner::cache`] so every view-fn pass + the a11y pass + the click
-/// reducer + `apply_key` read the same `Signal`s. Mirrors
-/// `hello-tree-view`'s `TreeState`; the find / toggle / key-bridge glue is
-/// now the shared `pinion_core::widgets::tree_nav` SSOT (R820), so this
-/// holder carries only the per-consumer state (the storage choice itself).
+/// reducer + `apply_key` read the same `Signal`s.
+///
+/// This is a trivial two-`Signal` aggregate identical in shape to
+/// `hello-tree-view`'s `TreeState` (only the node type `N` differs). A
+/// generic `TreeState<N>` is deliberately NOT lifted: it is an aggregate,
+/// not a decision (R818 — lift decisions, not field bundles), the constructor
+/// would thread the same per-consumer config (cache key / initial nodes /
+/// boot cursor) it replaces, and the third tree consumer (the dock-panels
+/// inspector) uses a divergent collapse-set holder — so per R735.1 a generic
+/// wrapper for two consumers is premature. The *decision-bearing* glue
+/// (`apply_tree_key` / `find_node_mut` / `toggle_expanded` / typeahead) IS
+/// the shared `tree_nav` + `typeahead` SSOT (R820 / R820.1).
 struct TreeState {
     nodes: Signal<Vec<TreeRow>>,
     /// The keyboard cursor's row id (WAI-ARIA `aria-activedescendant` /
@@ -205,35 +211,6 @@ fn use_tree_state() -> Rc<TreeState> {
         // stop, so a defined `aria-activedescendant` exists from frame one.
         focused_id: Signal::new(Some(String::from("s0"))),
     })
-}
-
-/// R820 §5.27 — type-ahead jump over the flat visible rows (the WAI-ARIA
-/// tree text-search), caller-side per the `tree_nav` purity boundary
-/// (the search cursor is application state; R811). On a match it moves the
-/// keyboard cursor; the caller then scrolls it into view.
-fn type_ahead_jump(state: &TreeState, key: &str) -> bool {
-    let Some(ch) = is_typeahead_char(key) else {
-        return false;
-    };
-    let nodes = state.nodes.get();
-    let visible = flat_visible(&nodes);
-    if visible.is_empty() {
-        return false;
-    }
-    let current = state
-        .focused_id
-        .get()
-        .and_then(|id| visible.iter().position(|row| row.id == id));
-    let labels: Vec<&str> = visible.iter().map(|row| row.label.as_str()).collect();
-    let owner = Owner::current().expect("type-ahead runs inside CoreShell::apply_key wrap");
-    let cursor: Rc<RefCell<TypeaheadCursor>> =
-        owner.cache(TYPEAHEAD_KEY, || RefCell::new(TypeaheadCursor::new()));
-    let target = cursor.borrow_mut().step(ch, current, Instant::now(), &labels);
-    let Some(idx) = target else {
-        return false;
-    };
-    state.focused_id.set(Some(visible[idx].id.clone()));
-    true
 }
 
 /// R820 §5.27 — scroll the keyboard cursor's row into the window
@@ -257,13 +234,13 @@ fn reveal_cursor(state: &TreeState, scroll: &Rc<pinion_core::widgets::scroll::Sc
 
 /// R820 §5.27 §5.50 — apply one key to the windowed tree: the lifted
 /// [`apply_tree_key`] resolve → flag-store bridge (shared with
-/// `hello-tree-view`), falling through to caller-side [`type_ahead_jump`],
-/// then scrolling the resulting cursor into the window via
-/// [`reveal_cursor`] (the windowed-tree-specific step).
+/// `hello-tree-view`), falling through to the lifted [`tree_typeahead_jump`]
+/// (R820.1, shared with all tree consumers), then scrolling the resulting
+/// cursor into the window via [`reveal_cursor`] (the windowed-tree step).
 fn apply_key_impl(key: &str) -> bool {
     let state = use_tree_state();
-    let handled =
-        apply_tree_key(&state.nodes, &state.focused_id, key, NAV_PAGE) || type_ahead_jump(&state, key);
+    let handled = apply_tree_key(&state.nodes, &state.focused_id, key, NAV_PAGE)
+        || tree_typeahead_jump(&state.focused_id, &flat_visible(&state.nodes.get()), TYPEAHEAD_KEY, key);
     if handled {
         reveal_cursor(&state, &use_scroll_state(SCROLL_KEY));
     }
@@ -427,18 +404,24 @@ impl WidgetCore for VirtualTreeView {
     /// into the window (so navigating to an off-window row scrolls there and
     /// materializes it — keyboard ⊥ virtualization).
     ///
-    /// Like `hello-tree-view`, this standalone single-widget tree applies
-    /// keys unconditionally (the `focused` sub-element is irrelevant — there
-    /// is no other focusable peer to steal them). A multi-pane host that
-    /// embeds the windowed tree would gate on `focused == Some(ROOT_TAG)`
-    /// the way the dock-panels inspector does ([[routing-and-focus-are-separate-axes]]).
+    /// Single tab stop (WAI-ARIA tree + `aria-activedescendant`): keys
+    /// apply only while the tree root [`ROOT_TAG`] is focused. The gate is
+    /// required, not cosmetic — an ungated windowed tree would steal keys
+    /// from sibling panels when embedded in a multi-pane host (the eventual
+    /// self-hosted editor), so it honours the same `focused == Some(tag)`
+    /// guard `hello-virtual-nav`'s `nav_select_key` and the dock-panels
+    /// inspector use ([[routing-and-focus-are-separate-axes]]). The RPC
+    /// demo issues `focus/set` first, like every other gated example.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        let _ = (scene, focused);
+        let _ = scene;
+        if focused != Some(ROOT_TAG) {
+            return false;
+        }
         apply_key_impl(key)
     }
 
@@ -497,10 +480,11 @@ mod tests {
         ROOT_TAG, ROW_PITCH, SCROLL_KEY, SECTIONS, TOTAL_NODES, TREE_TAG,
     };
     use pinion_a11y::{AriaRole, WidgetA11y};
+    use pinion_core::scene::ContainerNode;
     use pinion_core::widgets::button::ButtonState;
     use pinion_core::widgets::scroll::use_scroll_state;
     use pinion_core::widgets::virtual_list::compute_visible_range;
-    use pinion_core::{Frame, Owner, Scene};
+    use pinion_core::{Frame, Modifiers, Owner, Scene, WidgetCore};
     use pinion_widget_paint::tree_view::{TreeViewStyle, TREE_ROW_CLICK_EVENT};
 
     fn count_nodes(nodes: &[TreeRow]) -> usize {
@@ -673,6 +657,30 @@ mod tests {
 
             // A non-navigation, non-typeahead key is unhandled.
             assert!(!apply_key_impl("F5"), "F5 is not a tree key");
+        });
+    }
+
+    #[test]
+    fn apply_key_gates_on_root_focus() {
+        // R820.1 regression: keys apply ONLY when the tree root is focused
+        // (single tab stop) — an ungated tree would steal keys from sibling
+        // panels in a multi-pane host. Guards against re-removing the gate.
+        let owner = Owner::new();
+        owner.run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(440, 10 * ROW_PITCH);
+            let mut scene = Scene::Container(ContainerNode::new(Vec::new()));
+            assert!(
+                !VirtualTreeView::apply_key(&mut scene, None, "ArrowDown", Modifiers::default()),
+                "no focus -> key dropped"
+            );
+            assert!(
+                !VirtualTreeView::apply_key(&mut scene, Some("other"), "ArrowDown", Modifiers::default()),
+                "focus elsewhere -> key dropped"
+            );
+            assert!(
+                VirtualTreeView::apply_key(&mut scene, Some(ROOT_TAG), "ArrowDown", Modifiers::default()),
+                "focus on the tree root -> key applies"
+            );
         });
     }
 

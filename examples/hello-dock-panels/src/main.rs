@@ -82,10 +82,8 @@
 //! real DCC binding.
 
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::rc::Rc;
-use std::time::Instant;
 
 use pinion_a11y::{tree_access_nodes, AccessFocus, AccessNode, WidgetA11y};
 use pinion_core::external::IntrospectValue;
@@ -98,9 +96,9 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::widgets::tree_nav::{flat_visible, resolve_tree_key, TreeKey, VisibleRow};
+use pinion_core::widgets::tree_nav::{flat_visible, resolve_tree_key, TreeKey};
 use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
-use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
+use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
 use pinion_widget_paint::devtools::{
     find_node_at_path, rebuild_with_highlight_at_path, scene_root_path_segment, scene_to_tree_item,
@@ -399,34 +397,11 @@ fn toggle_collapsed(id: &str) {
     store.set(set);
 }
 
-/// R811 §5.50 §5.38 — type-ahead jump over the inspector's visible rows
-/// via the [`pinion_shell::typeahead`] substrate (the same matching step
-/// `hello-tree-view` and `hello-listbox` use). Moves the selection
-/// cursor ([`use_selected_path`]) to the next visible row whose label
-/// matches `key`. The policy half (which Signal to move, which cache
-/// slot) is per-binding; the match step is shared.
-fn inspector_typeahead(selected: &Signal<Option<String>>, rows: &[VisibleRow], key: &str) -> bool {
-    let Some(ch) = is_typeahead_char(key) else {
-        return false;
-    };
-    if rows.is_empty() {
-        return false;
-    }
-    let current = selected
-        .get()
-        .and_then(|id| rows.iter().position(|row| row.id == id));
-    let labels: Vec<&str> = rows.iter().map(|row| row.label.as_str()).collect();
-    let owner = Owner::current()
-        .expect("hello-dock-panels inspector type-ahead must run inside the apply_key owner wrap");
-    let cursor: Rc<RefCell<TypeaheadCursor>> =
-        owner.cache(INSPECTOR_TYPEAHEAD_KEY, || RefCell::new(TypeaheadCursor::new()));
-    let target = cursor.borrow_mut().step(ch, current, Instant::now(), &labels);
-    let Some(idx) = target else {
-        return false;
-    };
-    selected.set(Some(rows[idx].id.clone()));
-    true
-}
+// R820.1 §5.27 §5.38 — the inspector's type-ahead glue was lifted to
+// `pinion_shell::typeahead::tree_typeahead_jump` when it became the third
+// byte-identical tree-typeahead copy (with hello-tree-view + hello-virtual-
+// tree). The per-binding policy is just the cache key + which Signal moves,
+// both passed as arguments; the match step was already the shared substrate.
 
 /// R811 §5.50 §5.27 — the inspector's visible `TreeItem` tree: the fixed
 /// two-row top level (the `ButtonState` leaf + the `viewport` branch
@@ -1075,7 +1050,9 @@ impl WidgetCore for DockPanelsView {
                 true
             }
             TreeKey::Consumed => true,
-            TreeKey::Unhandled => inspector_typeahead(&selected, &rows, key),
+            TreeKey::Unhandled => {
+                tree_typeahead_jump(&selected, &rows, INSPECTOR_TYPEAHEAD_KEY, key)
+            }
         }
     }
 }

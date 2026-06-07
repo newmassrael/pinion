@@ -32961,6 +32961,70 @@
         "deserialization buffer) at the crate root, where no scoped allow reaches"
       ]
     },
+    "R820.1": {
+      "decision_summary": "R820.1 cost-no-object audit correction: (1) restore the apply_key focus gate removed in R820 as a workaround — an ungated windowed tree steals keys from sibling panels, breaking the northern-star multi-pane editor; hello-tree-view gated too for consistency; demos focus/set first. (2) lift the 3-copy tree typeahead glue to pinion_shell::typeahead::tree_typeahead_jump (the R811 caller-side boundary covers only the cursor cache key, not the glue).",
+      "changes_bullets": [
+        "restore apply_key focus gate in hello-virtual-tree (focused==ROOT_TAG): R820 had removed it as a",
+        "workaround for a focus-less demo; an ungated tree steals sibling-panel keys (breaks the editor)",
+        "hello-tree-view gated too (focused==ROOT_BTN_TAG) for family consistency + multi-pane correctness",
+        "r809 + r820 demos now issue focus/set before keys (the convention every gated demo follows)",
+        "lift the 3-copy tree typeahead glue -> pinion_shell::typeahead::tree_typeahead_jump(focused, rows,",
+        "cache_key, key); migrate hello-tree-view / hello-virtual-tree / dock-panels inspector",
+        "hello-virtual-tree: apply_key gate regression test; honest TreeState-holder comment (2-copy)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: all green; clippy --workspace --all-targets (-D pedantic): clean",
+        "tree_typeahead_jump unit test in pinion-shell (Signal<Option<String>> path, no large_stack_arrays)",
+        "r809 + r820 + r811 demos PASS realgpu (gate + focus/set + lifted typeahead all behaviour-correct)",
+        "self-grep: tree typeahead now single SSOT in pinion-shell (3 example copies removed); apply_key",
+        "focus-gating now consistent across hello-tree-view / hello-virtual-tree / dock-panels inspector",
+        "audit: 2 subagents read shell focus/dispatch source + all tree consumers; flipped my R820 'clean'",
+        "self-assessment (6th cost-no-object catch, after R758/R809.1/R810.1/R811.1/R818)"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.38",
+        "5.16",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "TreeState<N> holder NOT lifted: trivial 2-Signal aggregate, 2 consumers, inspector diverges",
+        "(collapse-set), R818 aggregate-not-decision + R735.1 premature-for-2; documented in-code",
+        "listbox typeahead (hello-listbox/-multi) is a separate non-VisibleRow row shape; a trait-generic",
+        "typeahead unifying tree + listbox is a future axis if a 3rd distinct row-shape consumer appears"
+      ],
+      "publishable_decision_summary": "R820.1 cost-no-object audit correction: (1) restore the apply_key focus gate removed in R820 as a workaround — an ungated windowed tree steals keys from sibling panels, breaking the northern-star multi-pane editor; hello-tree-view gated too for consistency; demos focus/set first. (2) lift the 3-copy tree typeahead glue to pinion_shell::typeahead::tree_typeahead_jump (the R811 caller-side boundary covers only the cursor cache key, not the glue).",
+      "publishable_changes_bullets": [
+        "restore apply_key focus gate in hello-virtual-tree (focused==ROOT_TAG): R820 had removed it as a",
+        "workaround for a focus-less demo; an ungated tree steals sibling-panel keys (breaks the editor)",
+        "hello-tree-view gated too (focused==ROOT_BTN_TAG) for family consistency + multi-pane correctness",
+        "r809 + r820 demos now issue focus/set before keys (the convention every gated demo follows)",
+        "lift the 3-copy tree typeahead glue -> pinion_shell::typeahead::tree_typeahead_jump(focused, rows,",
+        "cache_key, key); migrate hello-tree-view / hello-virtual-tree / dock-panels inspector",
+        "hello-virtual-tree: apply_key gate regression test; honest TreeState-holder comment (2-copy)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: all green; clippy --workspace --all-targets (-D pedantic): clean",
+        "tree_typeahead_jump unit test in pinion-shell (Signal<Option<String>> path, no large_stack_arrays)",
+        "r809 + r820 + r811 demos PASS realgpu (gate + focus/set + lifted typeahead all behaviour-correct)",
+        "self-grep: tree typeahead now single SSOT in pinion-shell (3 example copies removed); apply_key",
+        "focus-gating now consistent across hello-tree-view / hello-virtual-tree / dock-panels inspector",
+        "audit: 2 subagents read shell focus/dispatch source + all tree consumers; flipped my R820 'clean'",
+        "self-assessment (6th cost-no-object catch, after R758/R809.1/R810.1/R811.1/R818)"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.38",
+        "5.16",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TreeState<N> holder NOT lifted: trivial 2-Signal aggregate, 2 consumers, inspector diverges",
+        "(collapse-set), R818 aggregate-not-decision + R735.1 premature-for-2; documented in-code",
+        "listbox typeahead (hello-listbox/-multi) is a separate non-VisibleRow row shape; a trait-generic",
+        "typeahead unifying tree + listbox is a future axis if a 3rd distinct row-shape consumer appears"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

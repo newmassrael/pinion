@@ -269,6 +269,9 @@ def body() -> None:
         snap0 = tf.snapshot(source="paint", viewport=(480, 400))
         rows_base_h = set(_row_tags(snap0))
         # Navigate to docs (last row in the visible sequence).
+        # R820.1 — the tree is now a focus-gated single tab stop; focus it
+        # before driving keys (clicks route to the row External regardless).
+        tf.request("focus/set", {"tag": "tree_root"})
         tf.key(at=(10.0, 10.0), name="End")
         time.sleep(0.15)
         snap = tf.snapshot(source="paint", viewport=(480, 400))

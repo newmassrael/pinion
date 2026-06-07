@@ -136,6 +136,11 @@ def body() -> None:
             f"initial focus highlight must be on src; got: {initial_focus!r}"
         )
 
+        # R820.1 — hello-tree-view's tree is now a focus-gated single tab
+        # stop (apply_key drops keys unless the root is focused), so focus
+        # it before driving keys, like every other gated demo.
+        tf.request("focus/set", {"tag": "tree_root"})
+
         # ── (C) Arrow Down moves focus through visible rows ─────────
         tf.key(at=(10.0, 10.0), name="ArrowDown")
         time.sleep(0.2)

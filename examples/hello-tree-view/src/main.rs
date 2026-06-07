@@ -86,11 +86,8 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::widgets::tree_nav::{apply_tree_key, flat_visible, toggle_expanded, TreeNode};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
-use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
+use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::time::Instant;
 use pinion_widget_paint::tree_view::{
     view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
 };
@@ -356,54 +353,23 @@ fn view(state: ButtonState) -> Scene {
 /// the same thread.
 const TYPEAHEAD_KEY: &str = "hello_tree_view::typeahead";
 
-/// R809 §5.38 — type-ahead jump: focus the next visible row whose
-/// label matches `key`, via the [`pinion_shell::typeahead`] substrate
-/// (the `TreeView` consumer that substrate's module doc named as a
-/// future taker). Gated by [`is_typeahead_char`] (a single printable
-/// codepoint); a named / non-printable key returns `false` so the
-/// caller's `apply_key` reports unhandled. The search indexes into the
-/// flat visible rows (the same sequence the arrow keys navigate), so a
-/// match lands on a row the user can actually see.
-fn type_ahead_jump(focused_id: &Signal<Option<String>>, nodes: &[FileNode], key: &str) -> bool {
-    let Some(ch) = is_typeahead_char(key) else {
-        return false;
-    };
-    let visible = flat_visible(nodes);
-    if visible.is_empty() {
-        return false;
-    }
-    let current = focused_id
-        .get()
-        .and_then(|id| visible.iter().position(|row| row.id == id));
-    let labels: Vec<&str> = visible.iter().map(|row| row.label.as_str()).collect();
-    // R51.152 precedent — `Owner::current()` resolves to the shell's
-    // root scope because `CoreShell::apply_key` wraps the dispatch in
-    // `root_owner().run(...)`. A missing Owner means the apply_key path
-    // bypassed the framework wrap (a broken integration).
-    let owner = Owner::current()
-        .expect("hello-tree-view type-ahead must run inside CoreShell::apply_key wrap");
-    let cursor: Rc<RefCell<TypeaheadCursor>> =
-        owner.cache(TYPEAHEAD_KEY, || RefCell::new(TypeaheadCursor::new()));
-    let target = cursor.borrow_mut().step(ch, current, Instant::now(), &labels);
-    let Some(idx) = target else {
-        return false;
-    };
-    focused_id.set(Some(visible[idx].id.clone()));
-    true
-}
-
-/// R673 §5.50 / R809 / R820 — apply one key to the reactive [`TreeState`].
-/// The WAI-ARIA resolve → flag-store bridge is the lifted
-/// [`apply_tree_key`] (R820, shared with `hello-virtual-tree`); an
-/// unrecognised (printable) key falls through to [`type_ahead_jump`],
-/// which stays caller-side per the substrate's purity boundary (the
-/// search cursor is application state).
+/// R673 §5.50 / R809 / R820 / R820.1 — apply one key to the reactive
+/// [`TreeState`]. The WAI-ARIA resolve → flag-store bridge is the lifted
+/// [`apply_tree_key`] (R820); an unrecognised (printable) key falls
+/// through to the lifted [`tree_typeahead_jump`] (R820.1, shared by all
+/// tree consumers — the cursor cache key [`TYPEAHEAD_KEY`] is the only
+/// caller-side bit).
 fn apply_key_impl(key: &str) -> bool {
     let tree_state = use_tree_state();
     if apply_tree_key(&tree_state.nodes, &tree_state.focused_id, key, NAV_PAGE) {
         return true;
     }
-    type_ahead_jump(&tree_state.focused_id, &tree_state.nodes.get(), key)
+    tree_typeahead_jump(
+        &tree_state.focused_id,
+        &flat_visible(&tree_state.nodes.get()),
+        TYPEAHEAD_KEY,
+        key,
+    )
 }
 
 struct TreeViewBinding;
@@ -467,13 +433,22 @@ impl WidgetCore for TreeViewBinding {
         view(state)
     }
 
+    /// R820.1 — single tab stop: keys apply only while the tree root
+    /// [`ROOT_BTN_TAG`] is focused (WAI-ARIA tree + `aria-activedescendant`,
+    /// the same `focused == Some(tag)` guard `hello-virtual-nav` and the
+    /// dock-panels inspector use). Gating here (rather than ignoring
+    /// `focused`) keeps the tree from stealing keys when embedded beside a
+    /// sibling focusable; the RPC demo issues `focus/set` first.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        let _ = (scene, focused);
+        let _ = scene;
+        if focused != Some(ROOT_BTN_TAG) {
+            return false;
+        }
         apply_key_impl(key)
     }
 

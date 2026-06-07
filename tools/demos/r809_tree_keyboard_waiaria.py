@@ -139,6 +139,11 @@ def body() -> None:
         assert "file_tree#src/widgets/tree_view.rs" not in rows(), "collapsed widgets hides children"
         assert focus() == "src", f"initial focus on src; got {focus()!r}"
 
+        # R820.1 — the tree is a single tab stop with a focus gate
+        # (apply_key returns false unless the tree root is focused), so
+        # focus it before driving keys, like every other gated demo.
+        tf.request("focus/set", {"tag": "tree_root"})
+
         # ── (B) Arrow Up clamps at the first row (no wrap) ──────────
         press("ArrowUp")
         await_focus("src")  # stays on src, does NOT wrap to docs
