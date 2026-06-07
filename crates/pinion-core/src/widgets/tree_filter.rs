@@ -26,15 +26,23 @@
 //!
 //! The two sort proxies memoize a visual→source **permutation**
 //! (`Vec<usize>`) and address rows by source index; a tree filter changes
-//! the visible **set and structure**, so it memoizes a filtered
+//! the visible **set and structure**, so it derives a filtered
 //! `Vec<VisibleRow>` flattening and addresses rows by **id** (a sorted flat
 //! list has the same rows in a new order; a filtered tree has *different*
-//! rows at *different* depths). They genuinely diverge — so, exactly as the
-//! 1-D and grid proxies are [`order_memo`](crate::widgets::order_memo) peers
-//! rather than one merged type, the tree filter is a third peer. What it
-//! *does* share is the cache-invalidation contract: it is the **third
-//! consumer** of [`OrderMemo`], recomputing only when the query changes
-//! (never per frame), the error-prone part one correct copy serves.
+//! rows at *different* depths). They genuinely diverge — peers, not one
+//! merged type.
+//!
+//! Crucially they also diverge in **how the derived view is memoized**, and
+//! the sort proxies' [`OrderMemo`](crate::widgets::order_memo) is the *wrong*
+//! tool here. The sort proxies **own** an immutable materialized source (their
+//! key column / cell grid is fixed at construction), so a memo keyed on the
+//! `(sort, filter)` config alone is sound — the source can never invalidate
+//! it. A tree filter **borrows** the consumer's *mutable* retained tree (via
+//! `rows_fn`), so a query-keyed memo would go stale on any tree edit. This
+//! proxy therefore derives its rows through a reactive [`Computed`](crate::reactive::Computed)
+//! that tracks the query **and** the tree, recomputing when either changes —
+//! the correct memoization for a live source (the scene graph the Phase-D
+//! editor mutates).
 //!
 //! ## One reactive source of truth ([`TreeFilterState`] + [`use_tree_filter`])
 //!
@@ -67,15 +75,13 @@
 //! `Signal<Vec<serde-struct>>` `clippy::large_stack_arrays` monomorphization
 //! (R820) never enters this crate.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use crate::reactive::{Owner, Signal};
-use crate::widgets::order_memo::OrderMemo;
+use crate::reactive::{Computed, Owner, Signal};
 use crate::widgets::tree_nav::VisibleRow;
 
 /// The recompute closure shape: a filtered visible-row flattening for a query
@@ -97,25 +103,38 @@ pub type TreeRowsFn = Box<dyn Fn(&str) -> Vec<VisibleRow>>;
 pub struct TreeFilterState {
     tag: Option<&'static str>,
     query: Signal<String>,
-    rows_fn: TreeRowsFn,
-    /// Memoized filtered flattening, recomputed only when the query changes —
-    /// the shared [`OrderMemo`] (R780 lift), here over `Vec<VisibleRow>`
-    /// rather than the sort proxies' `Vec<usize>` permutation.
-    visible: RefCell<OrderMemo<String, Vec<VisibleRow>>>,
+    /// The filtered flattening as a **reactive derived value**: a
+    /// [`Computed`] that auto-tracks *both* the `query` [`Signal`] and the
+    /// source-tree `Signal` read inside the consumer's `rows_fn`, so it
+    /// recomputes when **either** changes (the textbook reactive memo —
+    /// Solid `createMemo`, Leptos `Memo`).
+    ///
+    /// This is the decisive divergence from the sort proxies'
+    /// [`OrderMemo`](crate::widgets::order_memo): they **own** an immutable
+    /// materialized source (the key column / cell grid is fixed at
+    /// construction), so keying a memo on the `(sort, filter)` config alone is
+    /// sound. A tree filter instead **borrows** the consumer's *mutable*
+    /// retained tree through `rows_fn`, so a memo keyed on the query alone
+    /// would return stale rows the moment the tree is edited (a node added,
+    /// removed, or relabelled) without the query changing — exactly the live
+    /// scene-graph the Phase-D editor mutates. The `Computed` dependency graph
+    /// keeps the filtered view correct (and the repaint subscription complete)
+    /// across tree edits, which a value-keyed memo cannot.
+    visible: Computed<Rc<Vec<VisibleRow>>>,
 }
 
 impl TreeFilterState {
     /// Construct over a recompute closure (see [`TreeRowsFn`]). Starts with an
     /// empty query — the closure's "no filter" fallback decides what an empty
-    /// query shows (normally the full expand-respecting tree).
+    /// query shows (normally the full expand-respecting tree). The `rows_fn`
+    /// is wrapped in a [`Computed`] so every source it reads (the query +
+    /// the consumer's tree `Signal`) is tracked.
     #[must_use]
     pub fn new(rows_fn: TreeRowsFn) -> Self {
-        Self {
-            tag: None,
-            query: Signal::new(String::new()),
-            rows_fn,
-            visible: RefCell::new(OrderMemo::new()),
-        }
+        let query = Signal::new(String::new());
+        let q = query.clone();
+        let visible = Computed::new(move || Rc::new(rows_fn(&q.get())));
+        Self { tag: None, query, visible }
     }
 
     /// As [`new`](Self::new) but records the `use_tree_filter` cache key, for
@@ -144,14 +163,13 @@ impl TreeFilterState {
     }
 
     /// The filtered visible-row flattening for the current query, recomputed
-    /// only when the query changes (memoized). Subscribes to the query
-    /// `Signal`, so a view that calls this repaints on a filter change. Cheap
-    /// `Rc` clone on a cache hit.
+    /// only when the query **or the source tree** changes (the [`Computed`]
+    /// memo). Reading it inside a view-fn auto-subscribes to both, so the view
+    /// repaints on a filter change *and* on a live tree edit. Cheap `Rc` clone
+    /// on a cache hit.
     #[must_use]
     pub fn visible_rows(&self) -> Rc<Vec<VisibleRow>> {
-        let query = self.query.get();
-        let rows_fn = &self.rows_fn;
-        self.visible.borrow_mut().get(query.clone(), || rows_fn(&query))
+        self.visible.get()
     }
 
     /// Number of rows in the current filtered view.

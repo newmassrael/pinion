@@ -33109,6 +33109,74 @@
         "alone; expand/collapse interaction stays hello-virtual-tree's axis (filtered view is auto-expanded)"
       ]
     },
+    "R821.1": {
+      "decision_summary": "R821.1 §5.27 §5.40 §5.50 — soundness fix (self-audit): TreeFilterState memoizes via reactive Computed (tracks query + source tree), not OrderMemo query-keyed memo — a tree filter borrows a MUTABLE source so a config-keyed memo went stale on tree edits; reverted the speculative OrderMemo<K,T> generalization",
+      "changes_bullets": [
+        "TreeFilterState now derives visible_rows through a reactive Computed (tracks the query Signal AND the",
+        "source-tree Signal read inside rows_fn), replacing the OrderMemo query-keyed memo",
+        "soundness fix: the sort proxies own an immutable materialized source so a config-keyed memo is sound;",
+        "a tree filter borrows the consumer's MUTABLE tree, so a query-keyed memo returned stale rows on any",
+        "tree edit (a live scene-graph add/remove) — the exact case the Phase-D editor needs",
+        "reverted the R821 OrderMemo<K> -> OrderMemo<K,T=Vec<usize>> generalization: with the tree filter on",
+        "Computed, OrderMemo has no 2nd-type consumer, so the type param was speculative (YAGNI); the two sort",
+        "proxies are unchanged",
+        "added hello-tree-filter filter_re_derives_when_the_source_tree_mutates: a tree edit under an unchanged",
+        "active filter updates the filtered view (a query-keyed memo would miss it)"
+      ],
+      "verification_bullets": [
+        "pinion-core lib 2048 tests green (OrderMemo revert, view_order/grid_sort unchanged); hello-tree-filter",
+        "15 tests green incl. the new mutable-tree soundness witness",
+        "full workspace clippy --all-targets -D pedantic clean; r821_tree_filter RPC demo PASS (realgpu)",
+        "Computed<Rc<Vec<VisibleRow>>> needs only Clone+PartialEq (no serde), so the large_stack_arrays trap is",
+        "unaffected; tree-fn/External tests still home in the example"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "the R821 changelog/SEED framed the OrderMemo reuse as a \"3rd consumer win\"; that was wrong (a",
+        "misapplication of the immutable-source memo to a mutable source) and is corrected here — self-audit",
+        "lesson, not a code carry",
+        "large_stack_arrays root-cause (the pre-existing ~16KB serde Deserialize buffer in pinion-core's test",
+        "target) is still open: -Zprint-type-sizes does not surface per-fn stack locals, so it needs MIR-level",
+        "investigation; a dedicated round with the right tooling is the textbook fix (not further test-homing)"
+      ],
+      "publishable_decision_summary": "R821.1 §5.27 §5.40 §5.50 — soundness fix (self-audit): TreeFilterState memoizes via reactive Computed (tracks query + source tree), not OrderMemo query-keyed memo — a tree filter borrows a MUTABLE source so a config-keyed memo went stale on tree edits; reverted the speculative OrderMemo<K,T> generalization",
+      "publishable_changes_bullets": [
+        "TreeFilterState now derives visible_rows through a reactive Computed (tracks the query Signal AND the",
+        "source-tree Signal read inside rows_fn), replacing the OrderMemo query-keyed memo",
+        "soundness fix: the sort proxies own an immutable materialized source so a config-keyed memo is sound;",
+        "a tree filter borrows the consumer's MUTABLE tree, so a query-keyed memo returned stale rows on any",
+        "tree edit (a live scene-graph add/remove) — the exact case the Phase-D editor needs",
+        "reverted the R821 OrderMemo<K> -> OrderMemo<K,T=Vec<usize>> generalization: with the tree filter on",
+        "Computed, OrderMemo has no 2nd-type consumer, so the type param was speculative (YAGNI); the two sort",
+        "proxies are unchanged",
+        "added hello-tree-filter filter_re_derives_when_the_source_tree_mutates: a tree edit under an unchanged",
+        "active filter updates the filtered view (a query-keyed memo would miss it)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core lib 2048 tests green (OrderMemo revert, view_order/grid_sort unchanged); hello-tree-filter",
+        "15 tests green incl. the new mutable-tree soundness witness",
+        "full workspace clippy --all-targets -D pedantic clean; r821_tree_filter RPC demo PASS (realgpu)",
+        "Computed<Rc<Vec<VisibleRow>>> needs only Clone+PartialEq (no serde), so the large_stack_arrays trap is",
+        "unaffected; tree-fn/External tests still home in the example"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the R821 changelog/SEED framed the OrderMemo reuse as a \"3rd consumer win\"; that was wrong (a",
+        "misapplication of the immutable-source memo to a mutable source) and is corrected here — self-audit",
+        "lesson, not a code carry",
+        "large_stack_arrays root-cause (the pre-existing ~16KB serde Deserialize buffer in pinion-core's test",
+        "target) is still open: -Zprint-type-sizes does not surface per-fn stack locals, so it needs MIR-level",
+        "investigation; a dedicated round with the right tooling is the textbook fix (not further test-homing)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

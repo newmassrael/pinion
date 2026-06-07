@@ -819,4 +819,31 @@ mod tests {
             assert_eq!(state.query(), "");
         });
     }
+
+    #[test]
+    fn filter_re_derives_when_the_source_tree_mutates() {
+        // The decisive soundness witness for the reactive `Computed` memo: a
+        // tree edit *under an unchanged active filter* must update the filtered
+        // view. A memo keyed on the query alone (the sort-proxy pattern, valid
+        // only for an owned immutable source) would return stale rows here; the
+        // `Computed` tracks the source-tree `Signal` and re-derives.
+        Owner::new().run(|| {
+            let filter = use_filter();
+            let tree = use_tree_state();
+            filter.set_query("Node03"); // Group03 + its 20 matching leaves
+            let before = filter.visible_count();
+            assert_eq!(before, 1 + CHILDREN_PER);
+            // Append a new matching leaf to group 3 WITHOUT touching the query.
+            let mut nodes = tree.nodes.get();
+            nodes[3]
+                .children
+                .push(TreeRow::leaf("g3-nNEW".to_string(), "Node03_NEW".to_string()));
+            tree.nodes.set(nodes);
+            assert_eq!(
+                filter.visible_count(),
+                before + 1,
+                "a live tree edit updates the filtered view (Computed tracks the tree, not just the query)",
+            );
+        });
+    }
 }
