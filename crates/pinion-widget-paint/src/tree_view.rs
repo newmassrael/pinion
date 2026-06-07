@@ -41,9 +41,14 @@
 //!   read-only — the 2nd consumer (file-tree editor, property grid)
 //!   surfaces the substrate-incompleteness signal that lifts kbd nav.
 //! - **Virtualization** (`LazyVStack` pattern for N>1000 row trees).
-//!   Phase D editor — when scene-graph trees grow large enough that
-//!   the flat row walk becomes a paint-cycle bottleneck — surfaces
-//!   this axis.
+//!   Landed at R819 as [`view_virtual_tree`] (first consumer
+//!   `hello-virtual-tree`): windows the [`flat_visible`] sequence through
+//!   the [`crate::virtual_list`] geometry so only the rows in the scroll
+//!   window become scene nodes — the Phase D editor's scene-graph / asset
+//!   trees grow past the point where a full flat row walk is a paint-cycle
+//!   bottleneck. Keyboard roving + scroll-into-view over the window is a
+//!   later additive axis (the R730 / `hello-virtual-select` windowed-list
+//!   keyboard-defer precedent).
 //! - **Multi-select / drag-drop / inline rename**. Not in R671 scope.
 
 use pinion_core::composite_tag::parse_send_payload;
@@ -58,8 +63,13 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::tree_nav::{flat_visible, VisibleRow};
+use pinion_core::widgets::virtual_list::{compute_visible_range, content_height};
 use pinion_core::{Color, Scene};
+use std::rc::Rc;
+
+use crate::virtual_list::{assemble_windowed_flex, uniform_slots};
 
 /// R671 §5.16 §5.50 — Material 3 `TreeView` row dimensions. Mirrors
 /// the [`crate::checkbox::CheckboxStyle`] pattern so the binding
@@ -319,6 +329,74 @@ pub fn view_tree_focused(
                     .with_align_items(AlignItems::Stretch),
             ),
     )
+}
+
+/// R819 §5.16 §5.27 §5.50 — **virtualized** `TreeView` paint: render only
+/// the rows inside the current scroll window, not the whole visible tree.
+/// The tree-virtualization axis the module doc named for the Phase D
+/// editor (scene-graph / asset trees that grow past the
+/// point where a full flat row walk is a paint-cycle bottleneck).
+///
+/// This is a pure composition of the two substrates that already exist:
+/// the windowing geometry from [`crate::virtual_list`]
+/// ([`compute_visible_range`] + [`content_height`] + the shared
+/// [`uniform_slots`] / [`assemble_windowed_flex`] assembly) and the
+/// per-row visual [`build_row`] SSOT that [`view_tree_focused`] also
+/// renders — so a windowed row is byte-identical to the same row in the
+/// non-virtual path, and only the slot count differs. The caller passes
+/// the full [`flat_visible`] sequence; `view_virtual_tree` resolves the
+/// window over its length and invokes [`build_row`] once per visible
+/// index. Off-window rows never become scene nodes, so `scene/snapshot`
+/// reports only the windowed `{tag}#{id}` rows (the §2 #7 witness that the
+/// tree is virtualized, not merely clipped).
+///
+/// The clip-window height is read from the measured viewport
+/// ([`ScrollState::measured_viewport`]) like [`view_flex_virtual_list`],
+/// so the rendered row count follows the pane's real flex-computed size
+/// (the `AutoSizer` pattern) rather than a caller const.
+///
+/// # Parameters
+///
+/// - `tag` — the tree's composite-tag prefix; each windowed row is tagged
+///   `{tag}#{id}` so row clicks route through the
+///   [[multi-external-substrate-extra-externals-pattern]] like the
+///   non-virtual tree.
+/// - `scroll` — the reactive [`ScrollState`] shared with the scrollbar
+///   peer; both the offset and the measured viewport are read from it.
+/// - `rows` — the full [`flat_visible`] flattening of the visible tree
+///   (the same SSOT the keyboard model and AT tree read); only the
+///   windowed slice is rendered.
+/// - `focus` — the keyboard-focus carrier; the focused row paints the M3
+///   state-layer exactly as in [`view_tree_focused`].
+/// - `overscan` — rows rendered beyond the strict window on each side.
+///
+/// The uniform per-row slot pitch is [`TreeViewStyle::row_height`]: the
+/// non-virtual [`view_tree_focused`] stacks rows at their natural
+/// `row_height` with no gap, so the windowed slot pitch must equal it for
+/// the two paths to render identically (deriving it rather than taking a
+/// separate `row_pitch` argument removes the misalignment footgun).
+///
+/// [`view_flex_virtual_list`]: crate::virtual_list::view_flex_virtual_list
+#[must_use]
+pub fn view_virtual_tree(
+    tag: &'static str,
+    scroll: &Rc<ScrollState>,
+    rows: &[VisibleRow],
+    focus: &TreeViewFocus<'_>,
+    overscan: usize,
+    theme: &Theme,
+    style: &TreeViewStyle,
+) -> Scene {
+    let row_pitch = style.row_height;
+    let (measured_w, measured_h) = scroll.measured_viewport();
+    let window = compute_visible_range(scroll.offset_y(), measured_h, rows.len(), row_pitch, overscan);
+    let total_h = content_height(rows.len(), row_pitch);
+    let slots = uniform_slots(&window, measured_w, row_pitch, |index| {
+        let row = &rows[index];
+        let is_focused = focus.focused_id == Some(row.id.as_str());
+        build_row(tag, row, theme, style, is_focused)
+    });
+    assemble_windowed_flex(scroll, measured_w, total_h, slots)
 }
 
 /// Compose one row from its [`VisibleRow`] (the shared flattening): depth
@@ -1728,5 +1806,190 @@ mod r678_tree_row_hover_external_tests {
         // the dotted intent name via
         // intent_tag!(MY_TREE_TAG, TREE_ROW_HOVER_EVENT) literally.
         assert_eq!(TREE_ROW_HOVER_EVENT, "hover");
+    }
+}
+
+#[cfg(test)]
+mod r819_virtual_tree_tests {
+    //! R819 §5.16 §5.27 §5.50 — [`view_virtual_tree`] windows the
+    //! [`flat_visible`] sequence so only the scroll-window rows become
+    //! scene nodes (the §2 #7 virtualization witness), while reusing the
+    //! [`build_row`] SSOT [`view_tree_focused`] also renders (a windowed
+    //! row is byte-identical to the same row in the non-virtual path).
+    use super::{
+        view_virtual_tree, Color, ColorRole, Scene, SizeValue, Theme, TreeItem, TreeViewFocus,
+        TreeViewStyle,
+    };
+    use pinion_core::widgets::scroll::ScrollState;
+    use pinion_core::widgets::tree_nav::flat_visible;
+    use pinion_core::Owner;
+    use std::rc::Rc;
+
+    const PITCH: u32 = 48;
+    const OVERSCAN: usize = 2;
+    const TREE_TAG: &str = "vtree";
+    /// Total visible rows in the test tree — large enough that a small
+    /// viewport windows far fewer than all of them.
+    const TOTAL: usize = 60;
+
+    /// `TOTAL` depth-0 leaves; flattening is the leaf list itself, so the
+    /// windowing arithmetic is unambiguous to assert against.
+    fn flat_tree() -> Vec<TreeItem> {
+        (0..TOTAL)
+            .map(|i| TreeItem::leaf(format!("n{i}"), format!("Node {i:02}")))
+            .collect()
+    }
+
+    /// Render with the scroll offset + measured viewport seeded directly
+    /// (bypass the cache for a deterministic unit shape, like the
+    /// `virtual_list` tests). `viewport_rows` is the visible window height
+    /// in whole rows.
+    fn run(offset_rows: usize, viewport_rows: u32, focused: Option<&str>) -> Scene {
+        let items = flat_tree();
+        let rows = flat_visible(&items);
+        let state = Rc::new(ScrollState::new());
+        let pitch = i32::try_from(PITCH).expect("pitch fits i32");
+        state.set_max(0, i32::try_from(rows.len()).expect("len fits i32") * pitch);
+        state.set_measured_viewport(280, viewport_rows * PITCH);
+        state.scroll_to(0, i32::try_from(offset_rows).expect("offset fits i32") * pitch);
+        let focus = TreeViewFocus {
+            focused_id: focused,
+        };
+        // `view_virtual_tree` derives its slot pitch from
+        // `style.row_height`; `m3_default().row_height == PITCH`, so the
+        // seeded scroll math (which uses `PITCH`) stays consistent.
+        assert_eq!(TreeViewStyle::m3_default().row_height, PITCH);
+        Owner::new().run(|| {
+            view_virtual_tree(
+                TREE_TAG,
+                &state,
+                &rows,
+                &focus,
+                OVERSCAN,
+                &Theme::light(),
+                &TreeViewStyle::m3_default(),
+            )
+        })
+    }
+
+    /// Collect the `vtree#<id>` row ids that became scene nodes,
+    /// descending the `Scroll` wrapper + nested containers.
+    fn rendered_ids(scene: &Scene) -> Vec<String> {
+        fn walk(scene: &Scene, prefix: &str, out: &mut Vec<String>) {
+            match scene {
+                Scene::Scroll(s) => walk(s.content.as_ref(), prefix, out),
+                Scene::Container(c) => {
+                    if let Some(tag) = c.tag.as_deref() {
+                        if let Some(id) = tag.strip_prefix(prefix) {
+                            out.push(id.to_string());
+                        }
+                    }
+                    for child in &c.children {
+                        walk(child, prefix, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        walk(scene, &format!("{TREE_TAG}#"), &mut out);
+        out
+    }
+
+    /// The fill color of the `vtree#<id>` row container, or `None` if the
+    /// row was not rendered (off-window).
+    fn row_fill(scene: &Scene, id: &str) -> Option<Color> {
+        fn walk(scene: &Scene, want: &str) -> Option<Color> {
+            match scene {
+                Scene::Scroll(s) => walk(s.content.as_ref(), want),
+                Scene::Container(c) => {
+                    if c.tag.as_deref() == Some(want) {
+                        return Some(c.style.fill);
+                    }
+                    c.children.iter().find_map(|ch| walk(ch, want))
+                }
+                _ => None,
+            }
+        }
+        walk(scene, &format!("{TREE_TAG}#{id}"))
+    }
+
+    #[test]
+    fn renders_only_the_window_not_the_whole_tree() {
+        // 5-row viewport + 2 overscan each side -> ~9 rows, far below 60.
+        let scene = run(0, 5, None);
+        let ids = rendered_ids(&scene);
+        assert!(
+            ids.len() < 15,
+            "windowed render is a small slice, got {} of {TOTAL}",
+            ids.len()
+        );
+        assert!(ids.contains(&"n0".to_string()), "first window row present");
+        assert!(
+            !ids.contains(&"n59".to_string()),
+            "off-window last row never became a scene node"
+        );
+    }
+
+    #[test]
+    fn window_slides_with_scroll() {
+        let top = rendered_ids(&run(0, 5, None));
+        let mid = rendered_ids(&run(30, 5, None));
+        assert!(top.contains(&"n0".to_string()), "row 0 in the top window");
+        assert!(
+            !top.contains(&"n30".to_string()),
+            "row 30 is below the top window"
+        );
+        assert!(
+            mid.contains(&"n30".to_string()),
+            "row 30 materializes in the scrolled window"
+        );
+        assert!(
+            !mid.contains(&"n0".to_string()),
+            "row 0 left the scrolled window (off-window rows are dropped)"
+        );
+    }
+
+    #[test]
+    fn sizer_height_spans_the_full_dataset_not_the_window() {
+        // The scroll extent reflects all TOTAL rows so the scrollbar
+        // thumb sizes against the whole tree, not the rendered slice.
+        let scene = run(0, 5, None);
+        let Scene::Scroll(s) = &scene else {
+            panic!("root must be a Scroll");
+        };
+        let Scene::Container(wrapper) = s.content.as_ref() else {
+            panic!("content root must be the wrapper Container");
+        };
+        let Scene::Container(sizer) = &wrapper.children[0] else {
+            panic!("wrapper child must be the full-height sizer");
+        };
+        let SizeValue::Px(h) = sizer.layout.size.height else {
+            panic!("sizer height must be Px");
+        };
+        assert_eq!(
+            h,
+            u32::try_from(TOTAL).expect("total fits u32") * PITCH,
+            "sizer spans the full dataset height"
+        );
+    }
+
+    #[test]
+    fn windowed_row_reuses_build_row_focus_ssot() {
+        // The focused window row paints the M3 focus fill via the same
+        // `build_row` the non-virtual `view_tree_focused` uses; unfocused
+        // rows stay transparent.
+        let scene = run(0, 5, Some("n2"));
+        let focus_bg = Theme::light().resolve(ColorRole::SurfaceContainerHighest);
+        assert_eq!(
+            row_fill(&scene, "n2"),
+            Some(focus_bg),
+            "focused window row carries the M3 focus state-layer"
+        );
+        assert_ne!(
+            row_fill(&scene, "n1"),
+            Some(focus_bg),
+            "unfocused window row stays transparent"
+        );
     }
 }

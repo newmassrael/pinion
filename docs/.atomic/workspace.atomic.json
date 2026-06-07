@@ -32819,6 +32819,76 @@
         "next direction should shift off the a11y axis toward northern-star progress (Phase C 0% / big Phase B structure)"
       ]
     },
+    "R819": {
+      "decision_summary": "R819 §5.27 land tree virtualization: view_virtual_tree windows flat_visible via the R774 AutoSizer geometry + the build_row per-row SSOT (the documented Phase-D-editor future axis); first consumer hello-virtual-tree renders a 10,000-node tree at ~window size. No core/trait changes; storage glue deferred per R818 iteration-not-decision + R811 storage-caller-choice.",
+      "changes_bullets": [
+        "pinion-widget-paint::tree_view: add view_virtual_tree — windows the flat_visible row sequence",
+        "via the R774 uniform_slots/assemble_windowed_flex geometry + the build_row per-row SSOT, so a",
+        "windowed row is byte-identical to view_tree_focused; slot pitch derived from style.row_height",
+        "module-doc Future-axes \"Virtualization\" entry marked landed at R819 (Phase-D-editor axis)",
+        "new example hello-virtual-tree: 10,000-node tree (100 sections x 99 leaves), flag-on-node Signal",
+        "holder, ButtonExternal root + TreeRowClickExternal click->toggle reducer, ScrollState + scrollbar",
+        "peer, windowed view_virtual_tree paint, windowed tree_access_nodes a11y, AI-first header count",
+        "registered in workspace members; +4 paint unit tests, +8 example unit tests"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: all green (pinion-widget-paint +4, hello-virtual-tree 8)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "tools/demos/r819_virtual_tree.py PASS realgpu, 32 assertions: boot window over 496 visible",
+        "rows == windowing math at the measured viewport; off-window sections absent; scroll slides;",
+        "collapse/re-expand changes visible count + window; deep s50 expand reveals leaves; pixel pass",
+        "3b self-grep: view_virtual_tree reuses uniform_slots/assemble_windowed_flex (3) + build_row",
+        "SSOT (no dup); storage glue find_node_mut/toggle = 2 flag consumers, inspector diverges (R811)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.27",
+        "5.50",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R820: windowed-tree keyboard roving + scroll-into-view (resolve_tree_key + scroll_offset_to_reveal",
+        "+ clamp_nav SSOTs); deferred per R730/hello-virtual-select windowed-widget keyboard precedent",
+        "lazy flatten for >100k expanded nodes (flat_visible is O(visible)/frame); future axis",
+        "retained-tree storage lift (find_node_mut/toggle/TreeState) deferred: 2 flag consumers,",
+        "iteration-not-decision (R818), inspector 3rd diverges to collapsed-set (R811); lift needs",
+        "TreeNode::children_mut+set_expanded trait surface (R735.1); revisit at a 3rd flag consumer"
+      ],
+      "publishable_decision_summary": "R819 §5.27 land tree virtualization: view_virtual_tree windows flat_visible via the R774 AutoSizer geometry + the build_row per-row SSOT (the documented Phase-D-editor future axis); first consumer hello-virtual-tree renders a 10,000-node tree at ~window size. No core/trait changes; storage glue deferred per R818 iteration-not-decision + R811 storage-caller-choice.",
+      "publishable_changes_bullets": [
+        "pinion-widget-paint::tree_view: add view_virtual_tree — windows the flat_visible row sequence",
+        "via the R774 uniform_slots/assemble_windowed_flex geometry + the build_row per-row SSOT, so a",
+        "windowed row is byte-identical to view_tree_focused; slot pitch derived from style.row_height",
+        "module-doc Future-axes \"Virtualization\" entry marked landed at R819 (Phase-D-editor axis)",
+        "new example hello-virtual-tree: 10,000-node tree (100 sections x 99 leaves), flag-on-node Signal",
+        "holder, ButtonExternal root + TreeRowClickExternal click->toggle reducer, ScrollState + scrollbar",
+        "peer, windowed view_virtual_tree paint, windowed tree_access_nodes a11y, AI-first header count",
+        "registered in workspace members; +4 paint unit tests, +8 example unit tests"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: all green (pinion-widget-paint +4, hello-virtual-tree 8)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "tools/demos/r819_virtual_tree.py PASS realgpu, 32 assertions: boot window over 496 visible",
+        "rows == windowing math at the measured viewport; off-window sections absent; scroll slides;",
+        "collapse/re-expand changes visible count + window; deep s50 expand reveals leaves; pixel pass",
+        "3b self-grep: view_virtual_tree reuses uniform_slots/assemble_windowed_flex (3) + build_row",
+        "SSOT (no dup); storage glue find_node_mut/toggle = 2 flag consumers, inspector diverges (R811)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.27",
+        "5.50",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R820: windowed-tree keyboard roving + scroll-into-view (resolve_tree_key + scroll_offset_to_reveal",
+        "+ clamp_nav SSOTs); deferred per R730/hello-virtual-select windowed-widget keyboard precedent",
+        "lazy flatten for >100k expanded nodes (flat_visible is O(visible)/frame); future axis",
+        "retained-tree storage lift (find_node_mut/toggle/TreeState) deferred: 2 flag consumers,",
+        "iteration-not-decision (R818), inspector 3rd diverges to collapsed-set (R811); lift needs",
+        "TreeNode::children_mut+set_expanded trait surface (R735.1); revisit at a 3rd flag consumer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

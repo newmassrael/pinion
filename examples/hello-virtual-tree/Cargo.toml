@@ -1,0 +1,29 @@
+[package]
+name = "hello-virtual-tree"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R819 §5.16 §5.27 §5.50 — virtualized TreeView consumer: a 10,000-node hierarchical tree where only the rows inside the scroll window become scene nodes (view_virtual_tree windows the flat_visible sequence). Expand/collapse a branch and the visible-row count changes; scroll and the window slides so off-window rows never exist; the WAI-ARIA treeitem nodes window with it."
+publish = false
+
+[[bin]]
+name = "hello-virtual-tree"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R819 §5.27 — `view_virtual_tree` windowed tree paint + the
+# `view_vertical_scrollbar` peer (R659 lift).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+serde = { workspace = true, features = ["derive"] }
+vello = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
