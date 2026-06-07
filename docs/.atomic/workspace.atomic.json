@@ -33435,6 +33435,82 @@
         "change, no spec change, no new external/upstream debt"
       ]
     },
+    "R825": {
+      "decision_summary": "Add the reserved $schema introspect path to scene/query: /<tag>/external/$schema returns the external's declared IntrospectSchema (paths + types) as JSON — the introspection discovery primitive (GraphQL __schema-style meta-path) that scene/snapshot cannot provide because it drops parametric paths whose bare-name query resolves to None. Reuses the whole query resolution; intercepted after resolution so opted-out externals still report IntrospectionOptedOut.",
+      "changes_bullets": [
+        "add the reserved `$schema` introspect path to `scene/query`: querying",
+        "`/<tag>/external/$schema` returns the external's declared `IntrospectSchema`",
+        "(every queryable path + its type tag) as JSON — the discovery primitive",
+        "closes the discovery gap: `scene/snapshot` shows only each *scalar* path's",
+        "current value (parametric paths like `id_at`/`level_at` resolve to None on a",
+        "bare name and are dropped), so it never reveals the full contract; `$schema` does",
+        "minimal + uniform: reuses the whole `scene/query` resolution",
+        "(`resolve_external_introspect`) — no new RPC method, no new wire type, no harness",
+        "change; intercepted after resolution so an opted-out external still reports",
+        "`IntrospectionOptedOut`",
+        "3 unit tests (CountedExternal contract, window-prefix, opted-out) + the r825 demo",
+        "(~31 assertions over hello-tree-view's button / click-router / tree-state externals)"
+      ],
+      "verification_bullets": [
+        "`cargo clippy -p pinion-rpc --all-targets -j2` clean; 3 `$schema` unit tests pass",
+        "`r825_schema_discovery.py` PASS (~31 assertions): 7-path tree-state contract with",
+        "types, parametric paths present in `$schema` but absent from the snapshot introspect",
+        "map, scalars queryable per the contract, uniform `$schema` across all 3 externals,",
+        "snapshot-tags -> `$schema`-contract discovery flow",
+        "`r823_tree_view_introspect.py` PASS (regression: normal query path unaffected)",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green"
+      ],
+      "impact_refs": [
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "a no-arg \"list ALL externals + their schemas\" manifest walker is a natural",
+        "extension; deferred because `scene/snapshot` already lists every external tag, so",
+        "snapshot(tags) + `$schema`(per tag) is already a complete discovery flow",
+        "`$schema` reports paths + types only (IntrospectSchema's content); per-path",
+        "mutability (query vs intervene vs invoke) is not declared — a richer schema is a",
+        "future extension if a consumer needs it",
+        "no new external/upstream debt; no spec change (additive reserved query path)"
+      ],
+      "publishable_decision_summary": "Add the reserved $schema introspect path to scene/query: /<tag>/external/$schema returns the external's declared IntrospectSchema (paths + types) as JSON — the introspection discovery primitive (GraphQL __schema-style meta-path) that scene/snapshot cannot provide because it drops parametric paths whose bare-name query resolves to None. Reuses the whole query resolution; intercepted after resolution so opted-out externals still report IntrospectionOptedOut.",
+      "publishable_changes_bullets": [
+        "add the reserved `$schema` introspect path to `scene/query`: querying",
+        "`/<tag>/external/$schema` returns the external's declared `IntrospectSchema`",
+        "(every queryable path + its type tag) as JSON — the discovery primitive",
+        "closes the discovery gap: `scene/snapshot` shows only each *scalar* path's",
+        "current value (parametric paths like `id_at`/`level_at` resolve to None on a",
+        "bare name and are dropped), so it never reveals the full contract; `$schema` does",
+        "minimal + uniform: reuses the whole `scene/query` resolution",
+        "(`resolve_external_introspect`) — no new RPC method, no new wire type, no harness",
+        "change; intercepted after resolution so an opted-out external still reports",
+        "`IntrospectionOptedOut`",
+        "3 unit tests (CountedExternal contract, window-prefix, opted-out) + the r825 demo",
+        "(~31 assertions over hello-tree-view's button / click-router / tree-state externals)"
+      ],
+      "publishable_verification_bullets": [
+        "`cargo clippy -p pinion-rpc --all-targets -j2` clean; 3 `$schema` unit tests pass",
+        "`r825_schema_discovery.py` PASS (~31 assertions): 7-path tree-state contract with",
+        "types, parametric paths present in `$schema` but absent from the snapshot introspect",
+        "map, scalars queryable per the contract, uniform `$schema` across all 3 externals,",
+        "snapshot-tags -> `$schema`-contract discovery flow",
+        "`r823_tree_view_introspect.py` PASS (regression: normal query path unaffected)",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green"
+      ],
+      "publishable_impact_refs": [
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "a no-arg \"list ALL externals + their schemas\" manifest walker is a natural",
+        "extension; deferred because `scene/snapshot` already lists every external tag, so",
+        "snapshot(tags) + `$schema`(per tag) is already a complete discovery flow",
+        "`$schema` reports paths + types only (IntrospectSchema's content); per-path",
+        "mutability (query vs intervene vs invoke) is not declared — a richer schema is a",
+        "future extension if a consumer needs it",
+        "no new external/upstream debt; no spec change (additive reserved query path)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

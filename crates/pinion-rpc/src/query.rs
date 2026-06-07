@@ -22,11 +22,38 @@
 //! Transport (JSON-RPC 2.0 framing per §5.7) is a separate slice — this
 //! module exposes the typed dispatcher only.
 
-use pinion_core::external::IntrospectValue;
+use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::Scene;
+use serde_json::{json, Value};
 
 use crate::path::PathError;
 use crate::resolve::{resolve_external_introspect, ResolveExternalError};
+
+/// R825 §5.12 — reserved introspect path that returns an external's
+/// **declared schema** (every queryable path + its type tag) instead of a
+/// value. The discovery primitive under the whole introspection surface: a
+/// plain `scene/query` reads one *known* path, and `scene/snapshot` shows
+/// the current value of each *scalar* path — but neither reveals the
+/// **contract** (the parametric paths like `id_at` / `level_at`, which
+/// `query("id_at")` without a `.<pos>` index resolves to `None`, so they
+/// never appear in a snapshot). Querying `/<tag>/external/$schema` returns
+/// the full `IntrospectSchema` as JSON, so an AI client discovers what it
+/// can ask for without hard-coded knowledge ([[ai-first-rpc-introspection-obligation]]).
+/// The `$` prefix cannot collide with a real introspect path (no widget
+/// declares one).
+pub const SCHEMA_PATH: &str = "$schema";
+
+/// Render an external's declared schema as a JSON array of
+/// `{"path", "type"}` objects, in the schema's declared field order.
+fn schema_value(intro: &dyn ExternalIntrospect) -> IntrospectValue {
+    let fields: Vec<Value> = intro
+        .schema()
+        .fields
+        .iter()
+        .map(|(path, ty)| json!({ "path": path, "type": ty }))
+        .collect();
+    IntrospectValue::Json(Value::Array(fields))
+}
 
 /// Reasons the typed [`query`] dispatcher can fail.
 #[non_exhaustive]
@@ -77,6 +104,12 @@ pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryErro
     // Container/Scroll walk + multi-widget primary descent + §5.15
     // introspect lookup lifted into [`resolve_external_introspect`].
     let (intro, introspect_path) = resolve_external_introspect(scene, raw_path)?;
+    // R825 — the reserved `$schema` path returns the declared schema rather
+    // than a value (the discovery primitive). Intercepted after resolution
+    // so an opted-out external still reports `IntrospectionOptedOut`.
+    if introspect_path == SCHEMA_PATH {
+        return Ok(schema_value(intro));
+    }
     intro
         .query(&introspect_path)
         .ok_or(QueryError::UnknownIntrospectPath)
@@ -296,6 +329,36 @@ mod tests {
         assert_eq!(
             query(&scene, "/info/external/count").unwrap_err(),
             QueryError::NoExternalAtPath,
+        );
+    }
+
+    #[test]
+    fn schema_path_returns_declared_fields_as_json() {
+        // `$schema` returns the contract (paths + types), not a value.
+        let scene = counted_scene(3);
+        assert_eq!(
+            query(&scene, "/external/$schema").unwrap(),
+            IntrospectValue::Json(serde_json::json!([{ "path": "count", "type": "int" }])),
+        );
+    }
+
+    #[test]
+    fn schema_path_resolves_through_the_window_prefix() {
+        let scene = counted_scene(0);
+        assert_eq!(
+            query(&scene, "/window[main]/external/$schema").unwrap(),
+            IntrospectValue::Json(serde_json::json!([{ "path": "count", "type": "int" }])),
+        );
+    }
+
+    #[test]
+    fn schema_path_on_opted_out_external_reports_opted_out() {
+        // An external with no introspect surface has no schema to report —
+        // resolution fails before the `$schema` interception.
+        let scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
+        assert_eq!(
+            query(&scene, "/external/$schema").unwrap_err(),
+            QueryError::IntrospectionOptedOut,
         );
     }
 }
