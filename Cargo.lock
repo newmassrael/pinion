@@ -2108,6 +2108,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-immediate-intent"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-runtime",
+ "pinion-shell",
+ "pinion-text",
+ "vello",
+]
+
+[[package]]
 name = "hello-immediate-mode-canvas"
 version = "0.0.1"
 dependencies = [

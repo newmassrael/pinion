@@ -1,0 +1,43 @@
+[package]
+name = "hello-immediate-intent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R827 §2 #4 §5.20 first consumer of the immediate-mode -> retained intent bridge (ImmediateMode::drain_intents). A bouncing-value driver emits a `bounce` §5.20 intent on each wall reflection; the retained V::update reducer counts the prefixed `ball.bounce` intents into an Owner::cache Signal rendered as text, closing the bidirectional dual-execution contract (game loop drives retained app state)."
+publish = false
+
+[[bin]]
+name = "hello-immediate-intent"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Tier-1 Button widget (dismiss trigger + a11y scaffolding) +
+# the binding's required External adapter, Signal, Command, scene
+# primitives (ImmediateModeNode / ImmediatePainter / TextNode).
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.63 §5.40 — `AccessNode` / `AriaRole` types for the test module.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R641 §5.16 — `#[widget(...)]` attribute macro (WidgetCore +
+# WidgetA11y + WidgetView forwarding trio + R27 `update` reducer).
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell. R827 wires the immediate -> retained
+# intent drain into this crate's per-window paint cycle.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the codegen renderer emitted by build.rs references
+# `::vello::*` directly; the macro expansion also names `::vello::*`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R827 §2 #4 — `pinion_runtime::compute_layout` lets the test module
+# exercise the same layout pipeline production renders against.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the binding's Vello renderer.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -49,8 +49,8 @@ use pinion_rpc::{
 };
 use pinion_runtime::{
     clamp_frame_dt, compute_layout, compute_layout_with_scroll_dirty, rect_for_tag,
-    CommandExecutor, CoreShell, DispatchTail,
-    FocusManager, Modifiers, PointerId, Touch, TouchPhase,
+    walk_scene_and_drain_immediate, CommandExecutor, CoreShell, DispatchTail,
+    FocusManager, IntentQueue, Modifiers, PointerId, Touch, TouchPhase,
 };
 use pinion_text::LayoutCache;
 
@@ -1845,14 +1845,37 @@ impl<V: WidgetView> ShellCore<V> {
         // immediate-mode-active for the rest of the paint cycle:
         // we mark `redraw_requested` so the next frame fires from
         // the per-window paint clock without waiting on input —
-        // first half of the §2 #4 game-loop contract. The full
-        // [`ControlFlow::Poll`] / [`ControlFlow::WaitUntil`] pacing
-        // wiring lands in atomic 2 on top of this signal.
+        // the §2 #4 game-loop contract. The
+        // [`ControlFlow::WaitUntil`] frame-budget pacing on top of
+        // this signal lives in
+        // [`ApplicationHandler::about_to_wait`](crate::app) (R681
+        // atomics 2 + 3 — per-window deadline +
+        // [`pinion_runtime::frame_pacing::frame_budget_for_window`]).
         let immediate_dt = Duration::from_secs_f32(dt.max(0.0));
         let immediate_count = paint_scene.tick_immediate_mode(immediate_dt);
         if immediate_count > 0 {
             self.redraw_requested = true;
             self.request_redraw_for_window(window_key);
+            // R827 §2 #4 §5.20 — immediate → retained intent bridge.
+            // Each driver just advanced its simulation in
+            // `tick_immediate_mode`; harvest any §5.20 intents it
+            // emitted and route them through `V::update`, the same
+            // reducer arc retained widget intents flow through
+            // ([`Self::handle_tail`]). This closes the §2 #4
+            // dual-execution *bidirectional* contract: retained → immediate
+            // shares the driver handle via the view fn; immediate →
+            // retained flows here, so the game loop drives retained app
+            // state (score, game-over, spawned entities). The mutated
+            // reactive state reflects on the NEXT frame — the armed
+            // redraw above guarantees that frame fires from the
+            // per-window paint clock. Drains only `ImmediateModeNode`s
+            // (not `Scene::External`, already harvested from the state
+            // scene in [`CoreShell::tail`]), so no widget double-drains.
+            let mut immediate_intents = IntentQueue::new();
+            walk_scene_and_drain_immediate(&mut paint_scene, &mut immediate_intents);
+            for intent in immediate_intents.drain() {
+                let _ = self.core.route_intent_through_update(&intent);
+            }
         }
         // R51.147 §5.28 — keep painting while any animation registered
         // on the binding is still moving. `request_redraw` is

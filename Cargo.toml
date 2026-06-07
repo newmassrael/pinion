@@ -107,6 +107,7 @@ members = [
     "examples/hello-tooltip-rich",
     "examples/hello-breadcrumb",
     "examples/hello-immediate-mode-canvas",
+    "examples/hello-immediate-intent",
     "examples/hello-dock-panels",
     "examples/hello-dock-panels-editor",
     "examples/hello-stepper",

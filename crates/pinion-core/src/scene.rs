@@ -2435,6 +2435,41 @@ pub trait ImmediateMode: core::fmt::Debug {
     /// without boilerplate. Real drivers override.
     fn paint(&mut self, _painter: &mut dyn ImmediatePainter) {}
 
+    /// R827 §2 #4 §5.20 — drain the §5.20 intents this driver emitted
+    /// during the current frame's [`tick`](Self::tick), pushing each
+    /// into `sink`. Mirrors
+    /// [`External::drain_intents`](crate::external::External::drain_intents):
+    /// real drivers accumulate intents in an internal buffer while
+    /// `tick` advances simulation state (a game object reaching a goal,
+    /// a physics body crossing a trigger volume, an animation reaching a
+    /// keyframe) and drain that buffer here. Default no-op so inert /
+    /// rendering-only drivers (the R681 first consumer) compile
+    /// unchanged.
+    ///
+    /// **Drain timing diverges from `External`.** Retained `External`
+    /// nodes live in the boot-frozen *state scene* and drain through
+    /// [`CoreShell::tail`](crate::widget_core) on each input dispatch.
+    /// Immediate-mode drivers live only in the per-frame *paint scene*
+    /// (the view fn pulls the driver from
+    /// [`Owner::cache`](crate::reactive::Owner::cache) and emits a fresh
+    /// [`Scene::ImmediateModeNode`] each render — see
+    /// [[state-scene-vs-paint-scene-introspect]]), so the runtime drains
+    /// them in the per-window paint cycle, immediately AFTER
+    /// [`Scene::tick_immediate_mode`], via
+    /// `pinion_runtime::walk_scene_and_drain_immediate`. Each drained
+    /// intent's tag is prefixed with the node's §5.20
+    /// [`ImmediateModeNode::tag`] (`<tag>.<kind>`, R22 convention) and
+    /// routed through `V::update` so the game loop drives retained app
+    /// state — the §2 #4 dual-execution *bidirectional* contract
+    /// (retained → immediate via the shared driver handle; immediate →
+    /// retained via this intent channel).
+    ///
+    /// No `is_dirty` short-circuit (unlike `External`): immediate-mode
+    /// drivers `tick` every frame regardless, so there is no idle
+    /// virtual-dispatch to avoid — the default no-op already drains
+    /// nothing on the frames a driver emits no intent.
+    fn drain_intents(&mut self, _sink: &mut dyn FnMut(crate::intent::Intent)) {}
+
     /// (R681 §5.15 echo) Surface the [`ExternalIntrospect`] view of
     /// this driver, when the author opts in. Default returns `None`;
     /// override with `Some(self)` after `impl ExternalIntrospect for
@@ -2584,11 +2619,13 @@ pub struct ImmediateModeNode {
     /// align). Default is [`LayoutStyle::new`] (no flex
     /// participation, sized by `viewport.{w,h}`).
     pub layout: LayoutStyle,
-    /// §5.20 intent-system carrier — drained intents from the
-    /// immediate-mode driver (when the impl emits them via the
-    /// future R681.x intent-bridge) will be prefixed with `<tag>.`
-    /// by the runtime walk, completing the `<widget>.<kind>`
-    /// convention (R22).
+    /// §5.20 intent-system carrier — intents the immediate-mode driver
+    /// emits via [`ImmediateMode::drain_intents`] are prefixed with
+    /// `<tag>.` by the runtime walk
+    /// (`pinion_runtime::walk_scene_and_drain_immediate`, R827),
+    /// completing the `<widget>.<kind>` convention (R22) so the retained
+    /// `V::update` reducer matches them exactly as it matches
+    /// `Scene::External` widget intents.
     pub tag: Option<Cow<'static, str>>,
     /// Last per-paint `dt` the shell drove into this node's
     /// [`ImmediateMode::tick`]. Published by the per-window paint

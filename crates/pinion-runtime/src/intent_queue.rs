@@ -96,12 +96,63 @@ fn drain_one(handle: &mut dyn External, queue: &mut IntentQueue, prefix: Option<
     if !handle.is_dirty() {
         return;
     }
-    handle.drain_intents(&mut |mut intent| {
-        if let Some(prefix) = prefix {
-            intent.tag = Cow::Owned(format!("{prefix}.{}", intent.tag_str()));
+    handle.drain_intents(&mut |intent| push_prefixed(queue, intent, prefix));
+}
+
+/// R827 §5.20 R22 — SSOT for the `<tag>.<kind>` intent-tag prefix
+/// decision. Both the retained `External` drain ([`drain_one`]) and the
+/// immediate-mode driver drain ([`walk_scene_and_drain_immediate`])
+/// apply the producing node's §5.20 tag as a `<prefix>.` namespace to
+/// each drained intent before queueing it, so the wire-form respects
+/// the `<widget>.<kind>` convention regardless of which side of the
+/// §2 #4 retained / immediate boundary produced it. Untagged nodes
+/// (`prefix == None`) pass the intent through unchanged.
+fn push_prefixed(queue: &mut IntentQueue, mut intent: Intent, prefix: Option<&str>) {
+    if let Some(prefix) = prefix {
+        intent.tag = Cow::Owned(format!("{prefix}.{}", intent.tag_str()));
+    }
+    queue.push(intent);
+}
+
+/// R827 §2 #4 §5.20 — paint-scene peer of [`walk_scene_and_drain`] for
+/// immediate-mode drivers.
+///
+/// Walks `scene`, drains every [`Scene::ImmediateModeNode`] driver's
+/// pending intents via [`ImmediateMode::drain_intents`], and pushes the
+/// `<tag>.`-prefixed result into `queue`. Recurses through
+/// `Scene::Container` children (the canonical §2 #4 placement — an
+/// immediate-mode subtree opts in inside a container); other primitives
+/// carry no immediate-mode driver and are skipped.
+///
+/// Distinct from [`walk_scene_and_drain`] because the two drains target
+/// different scenes (see [[state-scene-vs-paint-scene-introspect]]):
+/// `External` nodes live in the boot-frozen *state scene* and drain on
+/// input dispatch ([`crate::CoreShell::tail`]); immediate-mode drivers
+/// live only in the per-frame *paint scene* and drain in the per-window
+/// paint cycle, immediately after [`Scene::tick_immediate_mode`]. This
+/// walk deliberately ignores `Scene::External` so reusing it on the
+/// paint scene cannot double-drain a widget already harvested from the
+/// state scene.
+pub fn walk_scene_and_drain_immediate(scene: &mut Scene, queue: &mut IntentQueue) {
+    match scene {
+        Scene::ImmediateModeNode(node) => {
+            // Capture the tag prefix before borrowing the handle.
+            let prefix = node.tag.as_deref().map(str::to_owned);
+            node.handle
+                .borrow_mut()
+                .drain_intents(&mut |intent| push_prefixed(queue, intent, prefix.as_deref()));
         }
-        queue.push(intent);
-    });
+        Scene::Container(container) => {
+            for child in &mut container.children {
+                walk_scene_and_drain_immediate(child, queue);
+            }
+        }
+        // Closed primitives + retained `External` nodes never carry an
+        // immediate-mode driver. The wildcard also absorbs future
+        // `#[non_exhaustive]` additions until a follow-up slice opts
+        // them in.
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -283,5 +334,119 @@ mod tests {
         let mut q2 = IntentQueue::new();
         walk_scene_and_drain(&mut scene, &mut q2);
         assert!(q2.is_empty());
+    }
+
+    // ---- R827 §2 #4 §5.20 — immediate-mode intent bridge ----
+
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use pinion_core::scene::{ImmediateMode, ImmediateModeNode};
+
+    /// Immediate-mode peer of [`ArmedEmitter`]: a driver that buffers
+    /// one static `Intent` and drains it on
+    /// [`ImmediateMode::drain_intents`]. No `tick` / `paint` override —
+    /// the bridge only cares about the intent channel.
+    #[derive(Debug)]
+    struct ArmedImmediateDriver {
+        pending: Vec<Intent>,
+    }
+
+    impl ArmedImmediateDriver {
+        fn with_one(tag: &'static str) -> Self {
+            Self {
+                pending: vec![Intent::new_static(tag, IntrospectValue::Null)],
+            }
+        }
+    }
+
+    impl ImmediateMode for ArmedImmediateDriver {
+        fn drain_intents(&mut self, sink: &mut dyn FnMut(Intent)) {
+            for intent in self.pending.drain(..) {
+                sink(intent);
+            }
+        }
+    }
+
+    fn immediate_node(driver: ArmedImmediateDriver) -> ImmediateModeNode {
+        ImmediateModeNode::new(Rc::new(RefCell::new(driver)), Rect::default())
+    }
+
+    #[test]
+    fn walk_immediate_drains_a_single_driver_at_root() {
+        let mut scene =
+            Scene::ImmediateModeNode(immediate_node(ArmedImmediateDriver::with_one("bounce")));
+        let mut q = IntentQueue::new();
+        walk_scene_and_drain_immediate(&mut scene, &mut q);
+        let drained = q.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].tag_str(), "bounce");
+    }
+
+    #[test]
+    fn walk_immediate_prefixes_with_node_tag() {
+        // §5.20 R22 convention via the SSOT `push_prefixed`: a tagged
+        // ImmediateModeNode turns `bounce` into `ball.bounce`, the same
+        // `<widget>.<kind>` shape `Scene::External` produces.
+        let mut scene = Scene::ImmediateModeNode(
+            immediate_node(ArmedImmediateDriver::with_one("bounce")).with_tag("ball"),
+        );
+        let mut q = IntentQueue::new();
+        walk_scene_and_drain_immediate(&mut scene, &mut q);
+        let drained = q.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].tag_str(), "ball.bounce");
+    }
+
+    #[test]
+    fn walk_immediate_untagged_passes_intent_tag_through() {
+        let mut scene =
+            Scene::ImmediateModeNode(immediate_node(ArmedImmediateDriver::with_one("custom.event")));
+        let mut q = IntentQueue::new();
+        walk_scene_and_drain_immediate(&mut scene, &mut q);
+        let drained = q.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].tag_str(), "custom.event");
+    }
+
+    #[test]
+    fn walk_immediate_recurses_into_container_children() {
+        // The canonical §2 #4 placement: an immediate-mode subtree opts
+        // in inside a Container. The walk descends and prefixes with the
+        // node tag (the Container tag does not participate).
+        let node = Scene::ImmediateModeNode(
+            immediate_node(ArmedImmediateDriver::with_one("bounce")).with_tag("ball"),
+        );
+        let mut scene = Scene::Container(ContainerNode::new(vec![node]).with_tag("game"));
+        let mut q = IntentQueue::new();
+        walk_scene_and_drain_immediate(&mut scene, &mut q);
+        let drained = q.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].tag_str(), "ball.bounce");
+    }
+
+    #[test]
+    fn walk_immediate_ignores_external_nodes() {
+        // Critical no-double-drain guard: the immediate walk must skip
+        // `Scene::External` (already harvested from the state scene in
+        // `CoreShell::tail`). A dirty External left intact proves the
+        // walk does not touch it.
+        let mut scene =
+            Scene::External(ExternalNode::new(Box::new(ArmedEmitter::with_one("x.click"))));
+        let mut q = IntentQueue::new();
+        walk_scene_and_drain_immediate(&mut scene, &mut q);
+        assert!(q.is_empty(), "immediate walk must not drain External nodes");
+        // The External is still dirty — the retained walk drains it.
+        walk_scene_and_drain(&mut scene, &mut q);
+        assert_eq!(q.drain().len(), 1);
+    }
+
+    #[test]
+    fn walk_immediate_skips_closed_primitives() {
+        let mut scene =
+            Scene::Box(BoxNode::filled(Rect::default(), Color::default()).with_tag("just_a_box"));
+        let mut q = IntentQueue::new();
+        walk_scene_and_drain_immediate(&mut scene, &mut q);
+        assert!(q.is_empty());
     }
 }

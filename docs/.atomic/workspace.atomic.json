@@ -33583,6 +33583,58 @@
         "no new external/upstream debt; no spec change"
       ]
     },
+    "R827": {
+      "decision_summary": "R827: immediate-mode -> retained intent bridge. ImmediateMode::drain_intents + walk_scene_and_drain_immediate route per-frame driver intents through V::update, closing the §2 #4 bidirectional dual-execution contract",
+      "changes_bullets": [
+        "pinion-core: ImmediateMode::drain_intents default no-op trait method (mirrors External::drain_intents)",
+        "pinion-runtime: walk_scene_and_drain_immediate paint-scene walk; lift <tag>. prefix to push_prefixed SSOT",
+        "pinion-shell: drain+route immediate intents after tick_immediate_mode in compute_paint_scene_internal",
+        "fix stale substrate comment: ControlFlow::WaitUntil pacing lives in about_to_wait (R681 atomic 2/3 done)",
+        "new example hello-immediate-intent: bouncing-ball driver emits bounce; reducer counts into Owner::cache Signal",
+        "demo r827_immediate_intent.py: 30+ assertions, retained Bounces count climbs via scene/snapshot"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (-j2); 6 new runtime immediate-walk tests + 10 hello-immediate-intent tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r827_immediate_intent.py PASS (realgpu :0): retained bounce count climbs from game-loop intents",
+        "self-grep by decision fingerprint: <tag>. prefix single SSOT at push_prefixed, no duplicate decision",
+        "no-double-drain guard: walk_immediate ignores Scene::External (unit-tested)"
+      ],
+      "impact_refs": [
+        "2",
+        "5.20"
+      ],
+      "carry_forward_bullets": [
+        "deterministic scene/tick immediate stepping deferred; verification uses wall-clock + wait_until (YAGNI)",
+        "immediate-mode-emitted Commands drain on next dispatch pump (first consumer emits none)",
+        "TUI backend does not drive immediate-mode (GUI-only game loop); no producer-parity gap"
+      ],
+      "publishable_decision_summary": "R827: immediate-mode -> retained intent bridge. ImmediateMode::drain_intents + walk_scene_and_drain_immediate route per-frame driver intents through V::update, closing the §2 #4 bidirectional dual-execution contract",
+      "publishable_changes_bullets": [
+        "pinion-core: ImmediateMode::drain_intents default no-op trait method (mirrors External::drain_intents)",
+        "pinion-runtime: walk_scene_and_drain_immediate paint-scene walk; lift <tag>. prefix to push_prefixed SSOT",
+        "pinion-shell: drain+route immediate intents after tick_immediate_mode in compute_paint_scene_internal",
+        "fix stale substrate comment: ControlFlow::WaitUntil pacing lives in about_to_wait (R681 atomic 2/3 done)",
+        "new example hello-immediate-intent: bouncing-ball driver emits bounce; reducer counts into Owner::cache Signal",
+        "demo r827_immediate_intent.py: 30+ assertions, retained Bounces count climbs via scene/snapshot"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (-j2); 6 new runtime immediate-walk tests + 10 hello-immediate-intent tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r827_immediate_intent.py PASS (realgpu :0): retained bounce count climbs from game-loop intents",
+        "self-grep by decision fingerprint: <tag>. prefix single SSOT at push_prefixed, no duplicate decision",
+        "no-double-drain guard: walk_immediate ignores Scene::External (unit-tested)"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.20"
+      ],
+      "publishable_carry_forward_bullets": [
+        "deterministic scene/tick immediate stepping deferred; verification uses wall-clock + wait_until (YAGNI)",
+        "immediate-mode-emitted Commands drain on next dispatch pump (first consumer emits none)",
+        "TUI backend does not drive immediate-mode (GUI-only game loop); no producer-parity gap"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
