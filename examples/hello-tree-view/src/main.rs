@@ -84,7 +84,9 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::widgets::tree_nav::{apply_tree_key, flat_visible, toggle_expanded, TreeNode};
+use pinion_core::widgets::tree_nav::{
+    apply_tree_key, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
+};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
@@ -99,6 +101,12 @@ vello_renderer_impl!(HelloTreeViewRenderer, HelloTreeViewRendererError);
 const TREE_TAG: &str = "file_tree";
 const ROOT_BTN_TAG: &str = "tree_root";
 const THEME_TAG: &str = "app";
+/// R823 §5.50 §5.12 — query-only tree-state introspection External
+/// ([`tree_view_introspection_extra`]). Surfaces the tree's structure +
+/// cursor (`row_count` / `cursor` / `cursor_index` / `id_at` / `label_at`
+/// / `level_at` / `expanded_at`) to `scene/query`, so an AI client reads
+/// the tree as data instead of scraping the paint scene.
+const TREE_STATE_TAG: &str = "file_tree_state";
 
 const WIN_W: u32 = 480;
 const WIN_H: u32 = 400;
@@ -402,10 +410,22 @@ impl WidgetCore for TreeViewBinding {
     /// the hello-multi-window inspector became the 2nd consumer,
     /// firing the [[abstraction-needs-second-consumer]] gate.)
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![ExtraExternal::new(
-            TREE_TAG,
-            Box::new(TreeRowClickExternal::new()),
-        )]
+        // R823 — the query-only tree-state introspection sibling reads the
+        // same `Owner::cache`d `TreeState` Signals the view paints, so the
+        // RPC `scene/query` surface reports the live cursor + visible rows.
+        // `create_extra_externals` runs inside the root owner scope, so
+        // `use_tree_state` resolves the shared handle ([[callback-root-owner-wrap]]).
+        let tree_state = use_tree_state();
+        let nodes = tree_state.nodes.clone();
+        let focused = tree_state.focused_id.clone();
+        vec![
+            ExtraExternal::new(TREE_TAG, Box::new(TreeRowClickExternal::new())),
+            tree_view_introspection_extra(
+                TREE_STATE_TAG,
+                move || flat_visible(&nodes.get()),
+                move || focused.get(),
+            ),
+        ]
     }
 
     fn read_state(scene: &Scene) -> Self::State {

@@ -33281,6 +33281,92 @@
         "no new external/upstream debt; no spec change (test-config only)"
       ]
     },
+    "R823": {
+      "decision_summary": "First-class tree-state RPC introspection: add TreeViewIntrospect (a QuerySource) + tree_view_introspection_extra exposing the base tree's structure + keyboard cursor (row_count/cursor/cursor_index/id_at/label_at/level_at/expanded_at) over scene/query — the 3rd consumer of the R810.1 QueryOnlyIntrospect lift (read-only; click+scene/key own mutation). Closes the AI-first gap where the tree's nav/structure was paint-scrape-only. Wired into hello-tree-view with in-crate unit tests + the r823 RPC demo.",
+      "changes_bullets": [
+        "add `TreeViewIntrospect` (a `QuerySource`) + `tree_view_introspection_extra`",
+        "helper to tree_nav.rs: the base tree's read-only RPC introspection surface",
+        "surfaces `row_count` / `cursor` / `cursor_index` and per visible position",
+        "`id_at` / `label_at` / `level_at` (aria-level) / `expanded_at` (aria-expanded:",
+        "Bool for a branch, Null for a leaf) over `scene/query`",
+        "closes the AI-first gap: the tree's only Externals were the ButtonExternal",
+        "primary + TreeRowClickExternal (transient pressed/hovered only), so structural",
+        "+ nav state was paint-scrape-only (no a11y RPC method exists)",
+        "3rd consumer of the R810.1 `QueryOnlyIntrospect` lift (after ModalState /",
+        "SnackbarTimer) — read-only, since click + scene/key already own mutation",
+        "node-type agnostic like TreeFilterState: two closures read the consumer's",
+        "retained nodes + cursor Signals fresh per query, so core carries no node generics",
+        "wired into hello-tree-view (registered alongside the click router); 3 in-crate",
+        "unit tests (now possible post-R822) + r823 RPC demo (47 assertions, realgpu)"
+      ],
+      "verification_bullets": [
+        "`cargo clippy -p pinion-core --all-targets -j2` clean; 3 TreeViewIntrospect",
+        "unit tests green (structure+cursor, unset/off-set cursor, schema axes)",
+        "`cargo clippy -p hello-tree-view --all-targets -j2` clean",
+        "`r823_tree_view_introspect.py` PASS (47 assertions: boot structure, paint-vs-query",
+        "agreement, cursor tracks scene/key nav, row_count+expanded_at track collapse/expand,",
+        "out-of-range Null, collapsed-away cursor has no index)",
+        "`r809_tree_keyboard_waiaria.py` PASS (regression: RPC-only External paints nothing,",
+        "keyboard/paint unaffected)",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green"
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "hello-virtual-tree is the natural 2nd consumer of tree_view_introspection_extra",
+        "(same TreeState shape); defer wiring until its demo needs the query surface —",
+        "the substrate is proven by hello-tree-view, no duplication owed",
+        "the inspector (collapse-set overlay tree) could expose the same surface; its",
+        "state shape diverges (R811 storage-caller-choice), so it would supply its own",
+        "rows/cursor closures — no substrate change needed",
+        "no new external/upstream debt; no spec change"
+      ],
+      "publishable_decision_summary": "First-class tree-state RPC introspection: add TreeViewIntrospect (a QuerySource) + tree_view_introspection_extra exposing the base tree's structure + keyboard cursor (row_count/cursor/cursor_index/id_at/label_at/level_at/expanded_at) over scene/query — the 3rd consumer of the R810.1 QueryOnlyIntrospect lift (read-only; click+scene/key own mutation). Closes the AI-first gap where the tree's nav/structure was paint-scrape-only. Wired into hello-tree-view with in-crate unit tests + the r823 RPC demo.",
+      "publishable_changes_bullets": [
+        "add `TreeViewIntrospect` (a `QuerySource`) + `tree_view_introspection_extra`",
+        "helper to tree_nav.rs: the base tree's read-only RPC introspection surface",
+        "surfaces `row_count` / `cursor` / `cursor_index` and per visible position",
+        "`id_at` / `label_at` / `level_at` (aria-level) / `expanded_at` (aria-expanded:",
+        "Bool for a branch, Null for a leaf) over `scene/query`",
+        "closes the AI-first gap: the tree's only Externals were the ButtonExternal",
+        "primary + TreeRowClickExternal (transient pressed/hovered only), so structural",
+        "+ nav state was paint-scrape-only (no a11y RPC method exists)",
+        "3rd consumer of the R810.1 `QueryOnlyIntrospect` lift (after ModalState /",
+        "SnackbarTimer) — read-only, since click + scene/key already own mutation",
+        "node-type agnostic like TreeFilterState: two closures read the consumer's",
+        "retained nodes + cursor Signals fresh per query, so core carries no node generics",
+        "wired into hello-tree-view (registered alongside the click router); 3 in-crate",
+        "unit tests (now possible post-R822) + r823 RPC demo (47 assertions, realgpu)"
+      ],
+      "publishable_verification_bullets": [
+        "`cargo clippy -p pinion-core --all-targets -j2` clean; 3 TreeViewIntrospect",
+        "unit tests green (structure+cursor, unset/off-set cursor, schema axes)",
+        "`cargo clippy -p hello-tree-view --all-targets -j2` clean",
+        "`r823_tree_view_introspect.py` PASS (47 assertions: boot structure, paint-vs-query",
+        "agreement, cursor tracks scene/key nav, row_count+expanded_at track collapse/expand,",
+        "out-of-range Null, collapsed-away cursor has no index)",
+        "`r809_tree_keyboard_waiaria.py` PASS (regression: RPC-only External paints nothing,",
+        "keyboard/paint unaffected)",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green"
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hello-virtual-tree is the natural 2nd consumer of tree_view_introspection_extra",
+        "(same TreeState shape); defer wiring until its demo needs the query surface —",
+        "the substrate is proven by hello-tree-view, no duplication owed",
+        "the inspector (collapse-set overlay tree) could expose the same surface; its",
+        "state shape diverges (R811 storage-caller-choice), so it would supply its own",
+        "rows/cursor closures — no substrate change needed",
+        "no new external/upstream debt; no spec change"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

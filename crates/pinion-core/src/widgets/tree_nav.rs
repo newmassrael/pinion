@@ -25,8 +25,12 @@
 //! resolver because both expose their tree through the [`TreeNode`]
 //! trait.
 
+use std::rc::Rc;
+
 use super::virtual_select::clamp_nav;
+use crate::external::{IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource};
 use crate::reactive::batch;
+use crate::widget_core::ExtraExternal;
 use crate::Signal;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -445,6 +449,142 @@ where
     }
 }
 
+/// Resolve a visible position (`rest`, the part after a matched
+/// `<axis>_at.` prefix) to a per-row projection. An out-of-range or
+/// unparseable position reports [`IntrospectValue::Null`]
+/// (present-but-empty) — the same convention
+/// [`TreeFilterExternal`](super::tree_filter::TreeFilterExternal) uses for
+/// its `visible_at.<pos>`.
+fn row_at(
+    rest: &str,
+    rows: &[VisibleRow],
+    project: impl Fn(&VisibleRow) -> IntrospectValue,
+) -> IntrospectValue {
+    rest.parse::<usize>().ok().and_then(|i| rows.get(i)).map_or(IntrospectValue::Null, project)
+}
+
+/// R823 §5.50 §5.12 — the **read-only introspection source** for a tree
+/// widget's interactive state: the visible-row flattening + the keyboard
+/// cursor, surfaced to the §5.12 `scene/query` path so an AI client reads
+/// the tree's structure and navigation state *as data* rather than
+/// scraping the paint scene ([[ai-first-rpc-introspection-obligation]]).
+///
+/// It is the base-tree peer of
+/// [`TreeFilterExternal`](super::tree_filter::TreeFilterExternal) (which
+/// surfaces the *filtered* view): where the row-click router
+/// (`TreeRowClickExternal`) exposes only the transient `pressed`/`hovered`
+/// pointer state, this exposes the structural + WAI-ARIA axes —
+/// `row_count`, the `cursor` id + its `cursor_index`, and per visible
+/// position `id_at` / `label_at` / `level_at` (aria-level) / `expanded_at`
+/// (aria-expanded: a `Bool` for a branch, `Null` for a leaf).
+///
+/// **Read-only by design**: navigation and expand/collapse already mutate
+/// through the click router and `scene/key`, so this node owns no mutation
+/// path — it is the third consumer of the
+/// [`QueryOnlyIntrospect`](crate::external::QueryOnlyIntrospect) lift
+/// (after `ModalState` / `SnackbarTimer`). It is **node-type agnostic**
+/// like [`TreeFilterState`](super::tree_filter::TreeFilterState): it holds
+/// two closures that read the consumer's retained tree + cursor `Signal`s
+/// fresh on each query, so `pinion-core` carries no node generics and the
+/// consumer keeps its own state storage (R811 storage-is-caller-choice).
+pub struct TreeViewIntrospect {
+    rows: Box<dyn Fn() -> Vec<VisibleRow>>,
+    cursor: Box<dyn Fn() -> Option<String>>,
+}
+
+impl TreeViewIntrospect {
+    /// Construct over the consumer's state readers: `rows` yields the
+    /// current visible-row flattening (typically `move || flat_visible(&nodes.get())`)
+    /// and `cursor` the focused row id (typically `move || focused.get()`).
+    /// Both are read fresh on every query, so the introspection always
+    /// reports live state.
+    #[must_use]
+    pub fn new(
+        rows: impl Fn() -> Vec<VisibleRow> + 'static,
+        cursor: impl Fn() -> Option<String> + 'static,
+    ) -> Self {
+        Self { rows: Box::new(rows), cursor: Box::new(cursor) }
+    }
+}
+
+impl core::fmt::Debug for TreeViewIntrospect {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TreeViewIntrospect")
+            .field("row_count", &(self.rows)().len())
+            .field("cursor", &(self.cursor)())
+            .finish_non_exhaustive()
+    }
+}
+
+impl QuerySource for TreeViewIntrospect {
+    fn introspect_schema(&self) -> IntrospectSchema {
+        // `row_count`   — visible row count (int).
+        // `cursor`      — keyboard cursor row id (string), Null when unset.
+        // `cursor_index`— cursor's index among visible rows (int), Null when
+        //                 unset or off the visible set.
+        // `id_at`       — `id_at.<pos>` visible position → node id.
+        // `label_at`    — `label_at.<pos>` visible position → label.
+        // `level_at`    — `level_at.<pos>` → WAI-ARIA aria-level (depth + 1).
+        // `expanded_at` — `expanded_at.<pos>` → aria-expanded (Bool for a
+        //                 branch, Null for a leaf).
+        IntrospectSchema::new(&[
+            ("row_count", "int"),
+            ("cursor", "string"),
+            ("cursor_index", "int"),
+            ("id_at", "string"),
+            ("label_at", "string"),
+            ("level_at", "int"),
+            ("expanded_at", "bool"),
+        ])
+    }
+
+    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+        let rows = (self.rows)();
+        if let Some(rest) = path.strip_prefix("id_at.") {
+            return Some(row_at(rest, &rows, |r| IntrospectValue::Text(r.id.clone())));
+        }
+        if let Some(rest) = path.strip_prefix("label_at.") {
+            return Some(row_at(rest, &rows, |r| IntrospectValue::Text(r.label.clone())));
+        }
+        if let Some(rest) = path.strip_prefix("level_at.") {
+            return Some(row_at(rest, &rows, |r| IntrospectValue::Int(i64::from(r.depth) + 1)));
+        }
+        if let Some(rest) = path.strip_prefix("expanded_at.") {
+            return Some(row_at(rest, &rows, |r| {
+                // aria-expanded is undefined (Null) for a leaf, Bool for a branch.
+                if r.has_children { IntrospectValue::Bool(r.expanded) } else { IntrospectValue::Null }
+            }));
+        }
+        match path {
+            "row_count" => Some(IntrospectValue::Int(i64::try_from(rows.len()).unwrap_or(i64::MAX))),
+            "cursor" => Some((self.cursor)().map_or(IntrospectValue::Null, IntrospectValue::Text)),
+            "cursor_index" => {
+                let index = (self.cursor)().and_then(|id| rows.iter().position(|r| r.id == id));
+                Some(index.map_or(IntrospectValue::Null, |i| {
+                    IntrospectValue::Int(i64::try_from(i).unwrap_or(i64::MAX))
+                }))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// R823 §5.50 §5.12 — register a [`TreeViewIntrospect`] as a query-only
+/// [`ExtraExternal`] at `tag`, mirroring
+/// [`modal_introspection_extra`](super::modal::modal_introspection_extra) /
+/// [`snackbar_introspection_extra`](super::snackbar::snackbar_introspection_extra).
+/// `rows` / `cursor` are the consumer's live-state readers (see
+/// [`TreeViewIntrospect::new`]). The node paints nothing — it surfaces the
+/// tree's state to `scene/query` only.
+#[must_use]
+pub fn tree_view_introspection_extra(
+    tag: &'static str,
+    rows: impl Fn() -> Vec<VisibleRow> + 'static,
+    cursor: impl Fn() -> Option<String> + 'static,
+) -> ExtraExternal {
+    ExtraExternal::new(tag, Box::new(QueryOnlyIntrospect::new(Rc::new(TreeViewIntrospect::new(rows, cursor)))))
+}
+
 #[cfg(test)]
 mod tests {
     //! R811 §5.50 §5.27 — the WAI-ARIA APG 6.13 Tree keyboard contract
@@ -841,5 +981,59 @@ mod tests {
             // A printable key is unhandled → the caller falls through to type-ahead.
             assert!(!apply_tree_key(&nodes, &focused, "m", NAV_PAGE));
         });
+    }
+
+    // ── TreeViewIntrospect: read-only tree-state RPC introspection (R823) ──
+
+    #[test]
+    fn tree_view_introspect_exposes_structure_and_cursor() {
+        use super::TreeViewIntrospect;
+        use crate::external::{IntrospectValue, QuerySource};
+        // sample() visible order: src, src/main.rs, src/lib.rs, src/widgets,
+        // tests, docs (6 rows); cursor parked on src/lib.rs.
+        let src = TreeViewIntrospect::new(|| flat_visible(&sample()), || Some(String::from("src/lib.rs")));
+        assert_eq!(src.introspect_query("row_count"), Some(IntrospectValue::Int(6)));
+        assert_eq!(src.introspect_query("cursor"), Some(IntrospectValue::Text("src/lib.rs".into())));
+        assert_eq!(src.introspect_query("cursor_index"), Some(IntrospectValue::Int(2)));
+        // Per-position id / label.
+        assert_eq!(src.introspect_query("id_at.0"), Some(IntrospectValue::Text("src".into())));
+        assert_eq!(src.introspect_query("label_at.1"), Some(IntrospectValue::Text("main.rs".into())));
+        // aria-level = depth + 1; aria-expanded = Bool for a branch.
+        assert_eq!(src.introspect_query("level_at.0"), Some(IntrospectValue::Int(1)));
+        assert_eq!(src.introspect_query("expanded_at.0"), Some(IntrospectValue::Bool(true)));
+        // src/widgets is a collapsed branch one level deeper.
+        assert_eq!(src.introspect_query("level_at.3"), Some(IntrospectValue::Int(2)));
+        assert_eq!(src.introspect_query("expanded_at.3"), Some(IntrospectValue::Bool(false)));
+        // A leaf's aria-expanded is undefined (Null).
+        assert_eq!(src.introspect_query("expanded_at.1"), Some(IntrospectValue::Null));
+        // Out-of-range position is present-but-empty; undeclared path is absent.
+        assert_eq!(src.introspect_query("id_at.99"), Some(IntrospectValue::Null));
+        assert_eq!(src.introspect_query("nope"), None);
+    }
+
+    #[test]
+    fn tree_view_introspect_handles_unset_and_off_set_cursor() {
+        use super::TreeViewIntrospect;
+        use crate::external::{IntrospectValue, QuerySource};
+        let none = TreeViewIntrospect::new(|| flat_visible(&sample()), || None);
+        assert_eq!(none.introspect_query("cursor"), Some(IntrospectValue::Null));
+        assert_eq!(none.introspect_query("cursor_index"), Some(IntrospectValue::Null));
+        // A cursor on a collapsed-away id is reported but has no visible index.
+        let hidden =
+            TreeViewIntrospect::new(|| flat_visible(&sample()), || Some(String::from("tests/it.rs")));
+        assert_eq!(hidden.introspect_query("cursor"), Some(IntrospectValue::Text("tests/it.rs".into())));
+        assert_eq!(hidden.introspect_query("cursor_index"), Some(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn tree_view_introspect_schema_lists_every_query_axis() {
+        use super::TreeViewIntrospect;
+        use crate::external::QuerySource;
+        let src = TreeViewIntrospect::new(Vec::new, || None);
+        let names: Vec<&str> = src.introspect_schema().fields.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            ["row_count", "cursor", "cursor_index", "id_at", "label_at", "level_at", "expanded_at"],
+        );
     }
 }
