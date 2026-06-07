@@ -56,6 +56,17 @@ use pinion_text::LayoutCache;
 
 use super::WidgetView;
 
+/// R724 / R829 §5.28 — fixed-timestep sub-step (seconds) for advancing
+/// time-driven state from an RPC-injected `dt`. The §5.28 spring solver
+/// is semi-implicit Euler (stable only for small steps; real frames cap
+/// at `1/30s`), so a large injected delta is advanced in sub-steps
+/// rather than one giant step that would overshoot. SSOT shared by the
+/// `scene/tick` animation advance ([`ShellCore::drain_deferred_inputs_for_window`])
+/// and the R829 deterministic immediate-mode step
+/// ([`ShellCore::compute_paint_scene_internal`]) so the two cannot
+/// diverge on the timestep granularity.
+const FIXED_TIMESTEP_SUBSTEP_SECS: f32 = 1.0 / 120.0;
+
 /// R51.76 §5.40 — framework-side dispatch substrate, decoupled from
 /// winit / wgpu / `accesskit_winit`.
 ///
@@ -316,6 +327,17 @@ pub struct ShellCore<V: WidgetView> {
     /// [`pinion_runtime::frame_pacing::default_window_frame_policy`]
     /// derived from the slot's `has_immediate_mode_subtree` signal.
     target_fps_per_window: HashMap<String, u32>,
+    /// R829 §2 #4 §5.28 — per-window pending injected immediate-mode `dt`
+    /// (seconds). A `scene/tick` ([`pinion_rpc::DeferredInput::Tick`])
+    /// accumulates its delta here; the next per-window paint
+    /// ([`Self::compute_paint_scene_internal`]) advances that window's
+    /// [`pinion_core::scene::ImmediateMode`] drivers by exactly this
+    /// amount (substepped) INSTEAD of the wall-clock delta, then clears
+    /// the entry. Lets an AI client frame-step the §2 #4 game loop
+    /// deterministically — pair with `scene/set_fps 0` to pause the
+    /// continuous loop so wall-clock paints do not also advance it.
+    /// Absent entry → live wall-clock advance (the R827 default).
+    pending_immediate_dt_per_window: HashMap<String, f32>,
     /// R682 §5.16 atomic 3 — per-window fragment cache observability
     /// snapshot. The surface-side `AppShell::render_window` calls
     /// [`Self::publish_fragment_cache_stats`] after each paint cycle
@@ -462,6 +484,7 @@ impl<V: WidgetView> ShellCore<V> {
             redraw_requested_per_window: HashMap::new(),
             last_paint_instants: HashMap::new(),
             target_fps_per_window: HashMap::new(),
+            pending_immediate_dt_per_window: HashMap::new(),
             fragment_cache_stats_per_window: HashMap::new(),
             text_select_drag: None,
         }
@@ -1554,13 +1577,43 @@ impl<V: WidgetView> ShellCore<V> {
                 // so the next `scene/snapshot` re-render reflects the
                 // advanced frame. `dt == 0.0` is a no-op (clock frozen).
                 DeferredInput::Tick { dt } => {
-                    const TICK_SUBSTEP: f32 = 1.0 / 120.0;
                     let mut remaining = dt;
                     while remaining > 0.0 {
-                        let step = remaining.min(TICK_SUBSTEP);
+                        let step = remaining.min(FIXED_TIMESTEP_SUBSTEP_SECS);
                         self.core.tick_animations_for_window(window_id, step);
                         remaining -= step;
                     }
+                    // R829 §2 #4 §5.28 — also queue this `dt` as the
+                    // window's pending immediate-mode step. The animation
+                    // clock advanced in-place above; immediate-mode
+                    // drivers live in the paint scene, so they advance on
+                    // the next paint, which this redraw request triggers
+                    // even when the window is paused (`scene/set_fps 0`)
+                    // and the continuous loop is therefore quiescent.
+                    // `compute_paint_scene_internal` consumes the
+                    // accumulated delta deterministically (substepped)
+                    // instead of the wall-clock delta. `dt == 0` is a
+                    // no-op (frozen clock); skip so a 0-tick does not arm
+                    // a needless repaint.
+                    if dt > 0.0 {
+                        *self
+                            .pending_immediate_dt_per_window
+                            .entry(window_id.to_owned())
+                            .or_insert(0.0) += dt;
+                        self.request_redraw_for_window(window_id);
+                    }
+                }
+                // R829 §2 #4 §5.28 — `scene/set_fps`: the AI-facing peer
+                // of [`Self::set_target_fps_for_window`]. Sets the §2 #4
+                // game-loop pacing policy for the addressed window;
+                // `fps == 0` pauses the continuous paint clock so the AI
+                // can frame-step the immediate-mode loop deterministically
+                // via `scene/tick`. The redraw request lets the new
+                // policy take effect (and, on un-pause, restarts the
+                // loop) on the next event-loop iteration.
+                DeferredInput::SetTargetFps { fps } => {
+                    self.set_target_fps_for_window(window_id, fps);
+                    self.request_redraw_for_window(window_id);
                 }
                 // R763 §5.49 §5.39 — `scene/modifiers`: the winit
                 // `WindowEvent::ModifiersChanged` RPC peer. Sets the
@@ -1851,11 +1904,46 @@ impl<V: WidgetView> ShellCore<V> {
         // [`ApplicationHandler::about_to_wait`](crate::app) (R681
         // atomics 2 + 3 — per-window deadline +
         // [`pinion_runtime::frame_pacing::frame_budget_for_window`]).
-        let immediate_dt = Duration::from_secs_f32(dt.max(0.0));
-        let immediate_count = paint_scene.tick_immediate_mode(immediate_dt);
+        // R829 §2 #4 §5.28 — deterministic immediate-mode stepping. When
+        // a `scene/tick` injected a `dt` for this window (typically
+        // paused via `scene/set_fps 0` so the continuous loop does not
+        // also advance it), tick the immediate-mode drivers by exactly
+        // that delta — substepped through the shared fixed-timestep so a
+        // large injected `dt` stays integrator-stable — INSTEAD of the
+        // wall-clock delta, so an AI client frame-steps the game loop
+        // deterministically. Live (unpaused) windows have no pending
+        // entry and fall through to the R827 wall-clock advance.
+        let immediate_count = if let Some(injected) =
+            self.pending_immediate_dt_per_window.remove(window_key)
+        {
+            let mut remaining = injected.max(0.0);
+            let mut count = 0;
+            while remaining > 0.0 {
+                let step = remaining.min(FIXED_TIMESTEP_SUBSTEP_SECS);
+                count += paint_scene.tick_immediate_mode(Duration::from_secs_f32(step));
+                remaining -= step;
+            }
+            count
+        } else {
+            let immediate_dt = Duration::from_secs_f32(dt.max(0.0));
+            paint_scene.tick_immediate_mode(immediate_dt)
+        };
         if immediate_count > 0 {
-            self.redraw_requested = true;
-            self.request_redraw_for_window(window_key);
+            // R829 §2 #4 §5.28 — re-arm the continuous game loop UNLESS
+            // this window is paused (`scene/set_fps 0`). The immediate
+            // tick self-re-arming the redraw is the R681 "first half of
+            // the game-loop contract" — but a paused window must advance
+            // ONLY on an explicit `scene/tick` step and then refreeze, so
+            // suppressing the re-arm here is what makes the pause
+            // actually stop the loop (the `about_to_wait` `WaitUntil`
+            // deadline alone does not — this flag would keep firing
+            // paints uncapped). The single stepped paint was already
+            // triggered by the `scene/tick` drain's redraw request; not
+            // re-arming lets `about_to_wait` settle to `ControlFlow::Wait`.
+            if self.target_fps_for_window(window_key) != Some(0) {
+                self.redraw_requested = true;
+                self.request_redraw_for_window(window_key);
+            }
             // R827 §2 #4 §5.20 — immediate → retained intent bridge.
             // Each driver just advanced its simulation in
             // `tick_immediate_mode`; harvest any §5.20 intents it

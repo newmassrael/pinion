@@ -540,6 +540,19 @@ pub enum DeferredInput {
         alt: bool,
         meta: bool,
     },
+    /// R829 §2 #4 §5.28 — `scene/set_fps` injection: the AI-facing peer
+    /// of [`pinion_shell::ShellCore::set_target_fps_for_window`]. Sets
+    /// the addressed window's target frame rate, the §2 #4 game-loop
+    /// pacing policy: `0` *pauses* the per-window paint clock (the
+    /// continuous immediate-mode loop stops auto-painting — the window
+    /// only repaints on an explicit redraw such as a [`Self::Tick`]
+    /// step), and `N` polls it at N fps. Pausing then stepping via
+    /// `scene/tick` lets an AI client frame-step the immediate-mode
+    /// game loop *deterministically* (the §2 #2 "every input a human
+    /// makes has an RPC peer" invariant — a developer can pause/throttle
+    /// a render loop in a debugger; an AI client now can too), which a
+    /// continuous wall-clock loop cannot offer.
+    SetTargetFps { fps: u32 },
 }
 
 impl<'a> DispatchContext<'a> {
@@ -965,6 +978,17 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
             (
                 handle_scene_tick(inbox, request.params.as_ref()),
+                HandlerKind::Mutate,
+            )
+        }
+        "scene/set_fps" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "Vec is not DerefMut; manual reborrow required"
+            )]
+            let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
+            (
+                handle_scene_set_fps(inbox, request.params.as_ref()),
                 HandlerKind::Mutate,
             )
         }
@@ -1553,6 +1577,33 @@ fn handle_scene_tick(
     }
     #[allow(clippy::cast_possible_truncation)]
     inbox.push(DeferredInput::Tick { dt: dt as f32 });
+    Ok(Value::Null)
+}
+
+/// R829 §2 #4 §5.28 — `scene/set_fps` handler: enqueue a
+/// [`DeferredInput::SetTargetFps`] setting the addressed window's target
+/// frame rate (the §2 #4 game-loop pacing policy). `fps` must be a
+/// non-negative integer; `0` pauses the per-window paint clock so the
+/// AI client can frame-step the immediate-mode loop deterministically
+/// via `scene/tick`. Window-scoped like [`handle_scene_tick`] (the
+/// per-frame `window` field routes the drain). Returns `null` on
+/// success.
+fn handle_scene_set_fps(
+    inbox: Option<&mut Vec<DeferredInput>>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    let Some(inbox) = inbox else {
+        return Err(RpcError::invalid_params("InputInjectionUnavailable"));
+    };
+    let fps = params
+        .and_then(|p| p.get("fps"))
+        .and_then(Value::as_u64)
+        .ok_or_else(|| {
+            RpcError::invalid_params("params.fps missing or not a non-negative integer")
+        })?;
+    let fps = u32::try_from(fps)
+        .map_err(|_| RpcError::invalid_params("params.fps exceeds the u32 frame-rate range"))?;
+    inbox.push(DeferredInput::SetTargetFps { fps });
     Ok(Value::Null)
 }
 

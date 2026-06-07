@@ -852,6 +852,62 @@ fn scene_tick_rejects_negative_and_nan_dt() {
     }
 }
 
+// ---- R829 §2 #4 §5.28 — scene/set_fps (DeferredInput::SetTargetFps) ----
+
+#[test]
+fn scene_set_fps_enqueues_target_fps() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/set_fps","params":{"fps":0},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::SetTargetFps { fps } = inbox[0] else {
+        panic!("expected SetTargetFps variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(fps, 0, "fps=0 pauses the per-window paint clock");
+}
+
+#[test]
+fn scene_set_fps_accepts_positive_rate() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/set_fps","params":{"fps":144},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::SetTargetFps { fps } = inbox[0] else {
+        panic!("expected SetTargetFps variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(fps, 144);
+}
+
+#[test]
+fn scene_set_fps_rejects_missing_negative_and_non_integer() {
+    for bad in [r"{}", r#"{"fps":-1}"#, r#"{"fps":"x"}"#, r#"{"fps":1.5}"#] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/set_fps","params":{bad},"id":7}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert!(resp.error.is_some(), "fps {bad} must error");
+        assert!(inbox.is_empty(), "no set_fps enqueued for {bad}");
+    }
+}
+
 // ---- R763 §5.49 §5.39 — scene/modifiers (DeferredInput::SetModifiers) ----
 
 #[test]

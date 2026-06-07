@@ -520,6 +520,20 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         """
         self.request("scene/tick", {"dt": dt})
 
+    def set_fps(self, fps: int) -> None:
+        """`scene/set_fps` typed wrapper (R829 §2 #4 §5.28).
+
+        Sets the addressed window's target frame rate — the §2 #4
+        game-loop pacing policy. `fps=0` *pauses* the per-window paint
+        clock so the continuous immediate-mode loop stops auto-advancing;
+        the window then only repaints on an explicit `tick()` step, so an
+        AI client frame-steps the immediate-mode game loop
+        deterministically (`set_fps(0)` then `tick(dt)` advances the
+        drivers by exactly `dt`). `fps=N` (re)starts the continuous loop
+        at N fps. `fps` must be a non-negative integer.
+        """
+        self.request("scene/set_fps", {"fps": fps})
+
     def double_click(
         self,
         at: Optional[tuple[float, float]] = None,

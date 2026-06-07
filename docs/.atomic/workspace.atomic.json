@@ -33681,6 +33681,52 @@
         "deterministic scene/tick immediate stepping still deferred (R827 carry); driver state is tick-driven"
       ]
     },
+    "R829": {
+      "decision_summary": "R829: deterministic immediate-mode frame stepping. scene/set_fps pauses the per-window game loop; scene/tick then advances immediate drivers by exactly dt (substepped) so an AI client frame-steps the §2 #4 loop deterministically",
+      "changes_bullets": [
+        "pinion-rpc: scene/set_fps method + DeferredInput::SetTargetFps (AI peer of set_target_fps_for_window)",
+        "shell: scene/tick accumulates per-window pending immediate dt; compute_paint_scene steps by it (substepped)",
+        "shell: gate immediate redraw re-arm on !paused so set_fps(0) actually freezes the loop (R827 self-arm)",
+        "lift FIXED_TIMESTEP_SUBSTEP_SECS const SSOT (animation tick + immediate step share the granularity)",
+        "demo r829_immediate_stepping.py: frozen-while-paused + advances-exactly-on-tick (Python mirror), 30+ assert"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (-j2); 3 new scene/set_fps dispatch tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r829 demo PASS (realgpu :0, 30+ assert); r827 + r828 regressions PASS",
+        "self-grep: substep granularity SSOT (FIXED_TIMESTEP_SUBSTEP_SECS); explicit-pause check single site"
+      ],
+      "impact_refs": [
+        "2",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "immediate-mode intervene/invoke still deferred (borrow-returning _mut resolver vs RefCell; driver read-only)",
+        "substep accumulator loop inline in 2 sites (iteration not decision per R818; lift at 3rd consumer)"
+      ],
+      "publishable_decision_summary": "R829: deterministic immediate-mode frame stepping. scene/set_fps pauses the per-window game loop; scene/tick then advances immediate drivers by exactly dt (substepped) so an AI client frame-steps the §2 #4 loop deterministically",
+      "publishable_changes_bullets": [
+        "pinion-rpc: scene/set_fps method + DeferredInput::SetTargetFps (AI peer of set_target_fps_for_window)",
+        "shell: scene/tick accumulates per-window pending immediate dt; compute_paint_scene steps by it (substepped)",
+        "shell: gate immediate redraw re-arm on !paused so set_fps(0) actually freezes the loop (R827 self-arm)",
+        "lift FIXED_TIMESTEP_SUBSTEP_SECS const SSOT (animation tick + immediate step share the granularity)",
+        "demo r829_immediate_stepping.py: frozen-while-paused + advances-exactly-on-tick (Python mirror), 30+ assert"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (-j2); 3 new scene/set_fps dispatch tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r829 demo PASS (realgpu :0, 30+ assert); r827 + r828 regressions PASS",
+        "self-grep: substep granularity SSOT (FIXED_TIMESTEP_SUBSTEP_SECS); explicit-pause check single site"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "immediate-mode intervene/invoke still deferred (borrow-returning _mut resolver vs RefCell; driver read-only)",
+        "substep accumulator loop inline in 2 sites (iteration not decision per R818; lift at 3rd consumer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
