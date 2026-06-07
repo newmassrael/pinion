@@ -2043,7 +2043,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`Self::plan_access_emit`] from a freshly-computed paint
     /// scene.
     ///
-    /// Runs the pipeline `V::access_node` → `enrich_names_from_scene`
+    /// Runs the pipeline `V::access_node_for_window` (R813 — per-window,
+    /// default-forwards to `V::access_node`) → `enrich_names_from_scene`
     /// → `rect_for_tag` → `V::access_focus_target` in one place so
     /// the surface-side render path does not have to interleave four
     /// reads against substrate-internal state. R51.83 §5.40: the
@@ -2055,6 +2056,7 @@ impl<V: WidgetView> ShellCore<V> {
     #[must_use]
     pub fn collect_access_emit_inputs(
         &self,
+        window_id: &str,
         paint_scene: &Scene,
     ) -> (Vec<AccessNode>, Option<AccessFocus>) {
         let focused = self.focus.focused().map(str::to_owned);
@@ -2071,7 +2073,12 @@ impl<V: WidgetView> ShellCore<V> {
         // pre-R56.1.b.1 example) are unaffected: their access_node
         // impls ignore the Owner context.
         let owner = self.core.root_owner();
-        let mut nodes = owner.run(|| V::access_node(cached, focused.as_deref()));
+        // R813 §5.40 — per-window node contribution (default forwards to
+        // the global `V::access_node`, so single-window bindings are
+        // unchanged). Multi-window bindings return only the addressed
+        // window's nodes, so foreign-window ghost nodes never enter this
+        // window's `TreeUpdate`.
+        let mut nodes = owner.run(|| V::access_node_for_window(window_id, cached, focused.as_deref()));
         pinion_a11y::enrich_names_from_scene(&mut nodes, paint_scene);
         for node in &mut nodes {
             if let Some(rect) = rect_for_tag(paint_scene, &node.tag) {

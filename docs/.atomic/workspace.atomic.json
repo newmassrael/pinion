@@ -32539,6 +32539,58 @@
         "broad hello-dock-panels a11y (viewport button etc.) stays a pre-existing gap (additive, not R812)"
       ]
     },
+    "R813": {
+      "decision_summary": "R813 §5.40 §5.16 — per-window WidgetView::access_node_for_window so multi-window bindings contribute per-window AT node sets (no cross-window ghost nodes); adopt in hello-multi-window inspector (3rd tree_access_nodes consumer) + hello-dock-panels",
+      "changes_bullets": [
+        "Add WidgetView::access_node_for_window(window_id, state, focused); default forwards to access_node",
+        "Thread window_id through ShellCore::collect_access_emit_inputs for per-window node contribution",
+        "Thread resolved spec_id through AppShell::emit_accesskit_for_window to the substrate",
+        "access_focus_target stays global; AccessTreeBuilder::build drops an absent focus tag to window root",
+        "hello-multi-window: inspector window emits tree AT nodes (3rd tree_access_nodes consumer); main empty",
+        "hello-dock-panels: inspector nodes emit only for the host window (main while docked, floating once torn off)",
+        "Closes the R812 carry: V::access_node was one global set leaking ghost nodes onto every window"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-shell dispatch_core (collect_access_emit_inputs per-window): PASS",
+        "hello-multi-window + hello-dock-panels: 2 new R813 per-window AT tests PASS + existing green",
+        "cargo clippy pedantic -D clean on pinion-shell + the three example consumers",
+        "demos PASS: r671 inspector, r811 dock keyboard, r809 tree, r670b multi-window, r676 devtools"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "single-window bindings unchanged (default access_node_for_window forwards to global access_node)",
+        "only two multi-window consumers exist (both migrated); no remaining global-access_node ghost leak",
+        "per-window access_focus_target not split: global target + build() root-fallback suffices today"
+      ],
+      "publishable_decision_summary": "R813 §5.40 §5.16 — per-window WidgetView::access_node_for_window so multi-window bindings contribute per-window AT node sets (no cross-window ghost nodes); adopt in hello-multi-window inspector (3rd tree_access_nodes consumer) + hello-dock-panels",
+      "publishable_changes_bullets": [
+        "Add WidgetView::access_node_for_window(window_id, state, focused); default forwards to access_node",
+        "Thread window_id through ShellCore::collect_access_emit_inputs for per-window node contribution",
+        "Thread resolved spec_id through AppShell::emit_accesskit_for_window to the substrate",
+        "access_focus_target stays global; AccessTreeBuilder::build drops an absent focus tag to window root",
+        "hello-multi-window: inspector window emits tree AT nodes (3rd tree_access_nodes consumer); main empty",
+        "hello-dock-panels: inspector nodes emit only for the host window (main while docked, floating once torn off)",
+        "Closes the R812 carry: V::access_node was one global set leaking ghost nodes onto every window"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-shell dispatch_core (collect_access_emit_inputs per-window): PASS",
+        "hello-multi-window + hello-dock-panels: 2 new R813 per-window AT tests PASS + existing green",
+        "cargo clippy pedantic -D clean on pinion-shell + the three example consumers",
+        "demos PASS: r671 inspector, r811 dock keyboard, r809 tree, r670b multi-window, r676 devtools"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "single-window bindings unchanged (default access_node_for_window forwards to global access_node)",
+        "only two multi-window consumers exist (both migrated); no remaining global-access_node ghost leak",
+        "per-window access_focus_target not split: global target + build() root-fallback suffices today"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

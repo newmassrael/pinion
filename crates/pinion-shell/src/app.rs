@@ -529,6 +529,7 @@ impl<V: WidgetView> AppShell<V> {
     fn emit_accesskit_for_window(
         &mut self,
         window_id: WindowId,
+        spec_id: &str,
         paint_scene: &pinion_core::Scene,
         size_w: u32,
         size_h: u32,
@@ -537,7 +538,10 @@ impl<V: WidgetView> AppShell<V> {
         if slot.accesskit.is_none() {
             return;
         }
-        let (nodes, at_focus) = self.core.collect_access_emit_inputs(paint_scene);
+        // R813 §5.40 — thread the resolved spec id so the substrate calls
+        // `V::access_node_for_window(spec_id, ...)`: each window's AT tree
+        // carries only its own nodes (no cross-window ghost nodes).
+        let (nodes, at_focus) = self.core.collect_access_emit_inputs(spec_id, paint_scene);
         let window_bounds = pinion_core::scene::Rect::new(0, 0, size_w, size_h);
         let decision = self.core.plan_access_emit(&nodes, at_focus.as_ref());
         // Re-acquire the slot mutable borrow now that the substrate
@@ -756,6 +760,7 @@ impl<V: WidgetView> AppShell<V> {
         // above released the long-held slot borrow so this is safe.
         self.emit_accesskit_for_window(
             window_id,
+            &spec_id,
             &paint_scene,
             size.width,
             size.height,

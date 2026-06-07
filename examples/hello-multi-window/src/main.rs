@@ -58,6 +58,10 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
 #[cfg(test)]
 use pinion_a11y::WidgetA11y;
+// R813 §5.40 — per-window AT nodes for the inspector window (the 3rd
+// consumer of the lifted tree AccessNode builder).
+use pinion_a11y::{tree_access_nodes, AccessNode};
+use pinion_core::widgets::tree_nav::flat_visible;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
 // R678 §5.16 §5.49 — `DevTools` substrate (path addressing + highlight
 // overlay composition) consumer; lifted from this binding at R678
@@ -116,6 +120,8 @@ const MAIN_BTN_TAG: &str = "main_btn";
 /// `scene/snapshot {window: "inspector"}` walks down to per-row
 /// containers via this prefix.
 const INSPECTOR_TREE_TAG: &str = "inspector_tree";
+/// R813 §5.40 — accessible name for the inspector's `role=tree` root.
+const INSPECTOR_TREE_NAME: &str = "Main window scene";
 
 /// R675 §5.16 §5.20 — dotted-form intent tag the
 /// [`TreeRowClickExternal`] (substrate at
@@ -494,6 +500,27 @@ fn path_depth(p: &str) -> usize {
     p.matches('/').count()
 }
 
+/// R671 §5.50 / R813 §5.40 — the inspector's visible `TreeItem` tree: a
+/// fixed `State:` leaf plus a `main` branch wrapping the main window's
+/// live paint-scene projection. Shared by the paint path
+/// ([`view_inspector`]) and the per-window AT path
+/// ([`MultiWindowView::access_node_for_window`]) so both flatten the
+/// identical row sequence (the R811.1 single-traversal invariant across
+/// the two code paths).
+fn inspector_tree_items(state: ButtonState) -> Vec<TreeItem> {
+    let main_scene = view_main_raw(state);
+    let main_root_path = scene_root_path_segment(&main_scene);
+    vec![
+        TreeItem::leaf("state", format!("State: {state:?}")),
+        TreeItem::branch(
+            "main",
+            "main window scene",
+            true,
+            vec![scene_to_tree_item(&main_scene, &main_root_path)],
+        ),
+    ]
+}
+
 /// R671 §5.16 §5.50 — `Inspector` window paint upgraded from a single
 /// state-debug `TextNode` to a `TreeView` mirror of the main window's
 /// live paint scene. Builds `view_main(state)` internally each paint
@@ -521,16 +548,7 @@ fn view_inspector(state: ButtonState) -> Scene {
     // (`inspector_tree#state`) is the canonical RPC entry point for
     // state introspection; the main scene tree underneath the
     // `main` row carries the same information structurally.
-    let main_root_path = scene_root_path_segment(&main_scene);
-    let tree_items = vec![
-        TreeItem::leaf("state", format!("State: {state:?}")),
-        TreeItem::branch(
-            "main",
-            "main window scene",
-            true,
-            vec![scene_to_tree_item(&main_scene, &main_root_path)],
-        ),
-    ];
+    let tree_items = inspector_tree_items(state);
     // R675 §5.16 §5.50 — paint the focus state-layer on the row
     // matching the cross-window-shared `selected_path` Signal so
     // the user sees which row they just clicked. The substrate's
@@ -1033,6 +1051,35 @@ impl WidgetView for MultiWindowView {
             _ => view_main(state),
         }
     }
+
+    /// R813 §5.40 §5.16 — per-window AT nodes: the inspector window gets
+    /// the WAI-ARIA `tree` + `treeitem` semantic tree (the 3rd consumer
+    /// of the lifted [`tree_access_nodes`](pinion_a11y::tree_access_nodes)
+    /// builder, unblocked by R813's per-window `access_node`). The main
+    /// window contributes none (its single Button keeps the pre-existing
+    /// default-empty AT surface). Before R813 the shell's global
+    /// `access_node` would have stamped the inspector's tree rows onto the
+    /// main window's AT tree as ghosts — the gap this round closes. The
+    /// click-selected row ([`use_selected_path`]) carries `aria-selected`.
+    fn access_node_for_window(
+        window_id: &str,
+        state: &Self::State,
+        _focused: Option<&str>,
+    ) -> Vec<AccessNode> {
+        if window_id != "inspector" {
+            return Vec::new();
+        }
+        let items = inspector_tree_items(*state);
+        let rows = flat_visible(&items);
+        let selected = use_selected_path().get();
+        tree_access_nodes(
+            INSPECTOR_TREE_TAG,
+            INSPECTOR_TREE_TAG,
+            Some(INSPECTOR_TREE_NAME),
+            &rows,
+            selected.as_deref(),
+        )
+    }
 }
 
 fn main() {
@@ -1053,6 +1100,40 @@ mod r670_b_multi_window_tests {
         assert_eq!(specs.len(), 2, "main + inspector");
         assert_eq!(specs[0].id, "main");
         assert_eq!(specs[1].id, "inspector");
+    }
+
+    /// (R813 §5.40 §5.16) Per-window AT nodes: the inspector window emits
+    /// the WAI-ARIA tree subtree (3rd consumer of `tree_access_nodes`);
+    /// the main window emits none, so its AT tree never carries the
+    /// inspector's tree rows as ghosts (the cross-window leak R813 closes).
+    #[test]
+    fn r813_only_inspector_window_carries_tree_at_nodes() {
+        use pinion_a11y::AriaRole;
+        Owner::new().run(|| {
+            let inspector = <MultiWindowView as WidgetView>::access_node_for_window(
+                "inspector",
+                &ButtonState::Idle,
+                None,
+            );
+            assert!(!inspector.is_empty(), "inspector window emits the tree AT subtree");
+            assert_eq!(inspector[0].role, AriaRole::Tree, "root node is role=tree");
+            assert_eq!(inspector[0].tag, INSPECTOR_TREE_TAG);
+            assert!(
+                inspector[1..].iter().all(|n| n.role == AriaRole::TreeItem),
+                "every non-root node is a treeitem",
+            );
+            assert!(
+                inspector.iter().any(|n| n.tag == format!("{INSPECTOR_TREE_TAG}#state")),
+                "the fixed State leaf is present as a row",
+            );
+
+            let main = <MultiWindowView as WidgetView>::access_node_for_window(
+                "main",
+                &ButtonState::Idle,
+                None,
+            );
+            assert!(main.is_empty(), "main window AT tree carries no inspector ghost nodes");
+        });
     }
 
     /// (R677 §5.16 §5.49) Inspector window resized to 480×320 to

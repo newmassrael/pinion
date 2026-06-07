@@ -1080,43 +1080,31 @@ impl WidgetCore for DockPanelsView {
     }
 }
 
-impl WidgetA11y for DockPanelsView {
-    /// R812 §5.40 §5.50 §5.27 — the `DevTools` inspector tree's WAI-ARIA
-    /// `tree` + `treeitem` semantic tree, built through the lifted
-    /// [`tree_access_nodes`](pinion_a11y::tree_access_nodes) substrate (the
-    /// second consumer; `hello-tree-view` is the first). This clears the
-    /// R811 inspector "AT-tree nodes 0" carry: the R811 keyboard nav now
-    /// has an AT counterpart, so a screen reader announces "tree item,
-    /// <label>, level N, M of K, expanded" as the cursor moves. The
-    /// selection-follows-focus row ([`use_selected_path`]) carries
-    /// `aria-selected`; the expand state rides the same [`flat_visible`]
-    /// SSOT the painted glyph and keyboard model read, so AT state can
-    /// never disagree with the screen.
-    ///
-    /// Emitted for the single docked main window (the default topology).
-    /// `V::access_node` is one global set shared across windows, so a
-    /// torn-off floating panel would also receive these nodes — the
-    /// per-window `access_node` axis is a separate substrate gap (round
-    /// carry), not introduced here for the default docked inspector.
-    fn access_node(state: &Self::State, _focused: Option<&str>) -> Vec<AccessNode> {
-        let theme = use_theme(THEME_TAG).theme_animated();
-        let items = inspector_tree_items(*state, &theme);
-        let rows = flat_visible(&items);
-        let selected = use_selected_path().get();
-        tree_access_nodes(
-            INSPECTOR_TREE_TAG,
-            INSPECTOR_TREE_TAG,
-            Some(INSPECTOR_TREE_NAME),
-            &rows,
-            selected.as_deref(),
-        )
+/// R813 §5.40 §5.50 — which window currently hosts the inspector tree
+/// (so its AT nodes land in the window that actually paints them, not as
+/// ghosts in a sibling window). The inspector pane shows in the main dock
+/// while docked, and moves to its own floating window once torn off.
+fn inspector_host_window() -> String {
+    let panels = use_windows_topology().get();
+    if is_panel_floating(&panels, INSPECTOR_PANEL_TAG) {
+        floating_window_id(INSPECTOR_PANEL_TAG)
+    } else {
+        "main".to_owned()
     }
+}
 
+impl WidgetA11y for DockPanelsView {
     /// R812 §5.40 §5.27 — when the inspector tree owns the keyboard tab
     /// stop, AT focus stays on the tree root and `aria-activedescendant`
     /// names the selection-follows-focus cursor row (the WAI-ARIA
     /// roving-tabindex tree model: one tab stop, a moving active
     /// descendant). Any other focus (the viewport button) is atomic.
+    ///
+    /// Global (not per-window): the shell passes this one target to every
+    /// window's `AccessTreeBuilder`, which drops the composite tag back to
+    /// the window root for any window whose node set
+    /// ([`Self::access_node_for_window`]) lacks it — so it self-corrects to
+    /// the inspector's host window (R813).
     fn access_focus_target(
         _state: &Self::State,
         focused: Option<&str>,
@@ -1135,6 +1123,43 @@ impl WidgetA11y for DockPanelsView {
 
 impl WidgetView for DockPanelsView {
     type Renderer = HelloDockPanelsRenderer;
+
+    /// R812 §5.40 §5.50 §5.27 / R813 §5.40 §5.16 — the `DevTools`
+    /// inspector tree's WAI-ARIA `tree` + `treeitem` semantic tree, built
+    /// through the lifted [`tree_access_nodes`](pinion_a11y::tree_access_nodes)
+    /// substrate (the second consumer; `hello-tree-view` is the first).
+    /// Clears the R811 inspector "AT-tree nodes 0" carry: the R811
+    /// keyboard nav now has an AT counterpart, so a screen reader
+    /// announces "tree item, <label>, level N, M of K, expanded" as the
+    /// cursor moves. The selection-follows-focus row ([`use_selected_path`])
+    /// carries `aria-selected`; the expand state rides the same
+    /// [`flat_visible`] SSOT the painted glyph and keyboard model read, so
+    /// AT state can never disagree with the screen.
+    ///
+    /// R813 §5.40 — emitted only for the window that actually paints the
+    /// tree ([`inspector_host_window`]): the main dock while docked, the
+    /// floating window once torn off. Every other window returns no nodes,
+    /// so a sibling window's AT tree never carries ghost inspector rows.
+    fn access_node_for_window(
+        window_id: &str,
+        state: &Self::State,
+        _focused: Option<&str>,
+    ) -> Vec<AccessNode> {
+        if window_id != inspector_host_window() {
+            return Vec::new();
+        }
+        let theme = use_theme(THEME_TAG).theme_animated();
+        let items = inspector_tree_items(*state, &theme);
+        let rows = flat_visible(&items);
+        let selected = use_selected_path().get();
+        tree_access_nodes(
+            INSPECTOR_TREE_TAG,
+            INSPECTOR_TREE_TAG,
+            Some(INSPECTOR_TREE_NAME),
+            &rows,
+            selected.as_deref(),
+        )
+    }
 
     fn initial_size_strategy() -> SizeStrategy {
         SizeStrategy::Fixed {
@@ -1317,6 +1342,49 @@ mod tests {
             let after_dock = signal.get();
             assert_eq!(after_dock.len(), 1, "dock-back must remove the floating spec");
             assert!(after_dock.iter().all(|w| w.id != "torn-inspector"));
+        });
+    }
+
+    /// (R813 §5.40 §5.16) Per-window AT nodes: the inspector tree's
+    /// `tree` + `treeitem` subtree is emitted only for the window that
+    /// paints it — "main" while docked, "torn-inspector" once floated —
+    /// and a sibling window's node set is empty (no cross-window ghosts).
+    #[test]
+    fn r813_inspector_at_nodes_emit_for_host_window_only() {
+        use pinion_a11y::AriaRole;
+        Owner::new().run(|| {
+            // Default topology: inspector docked → host is "main".
+            let main = <DockPanelsView as WidgetView>::access_node_for_window(
+                "main",
+                &ButtonState::Idle,
+                None,
+            );
+            assert!(!main.is_empty(), "docked inspector emits its tree for the main window");
+            assert_eq!(main[0].role, AriaRole::Tree, "root node is role=tree");
+            assert_eq!(main[0].tag, INSPECTOR_TREE_TAG);
+            // A non-host sibling window carries no ghost inspector nodes.
+            let sibling = <DockPanelsView as WidgetView>::access_node_for_window(
+                "torn-viewport",
+                &ButtonState::Idle,
+                None,
+            );
+            assert!(sibling.is_empty(), "non-host window AT tree has no inspector ghost nodes");
+
+            // Float the inspector: the host moves to its floating window.
+            toggle_panel_floating(INSPECTOR_PANEL_TAG);
+            let main_after = <DockPanelsView as WidgetView>::access_node_for_window(
+                "main",
+                &ButtonState::Idle,
+                None,
+            );
+            assert!(main_after.is_empty(), "floated inspector leaves no ghosts in the main window");
+            let floating = <DockPanelsView as WidgetView>::access_node_for_window(
+                &floating_window_id(INSPECTOR_PANEL_TAG),
+                &ButtonState::Idle,
+                None,
+            );
+            assert!(!floating.is_empty(), "the floating inspector window now carries the tree");
+            assert_eq!(floating[0].role, AriaRole::Tree);
         });
     }
 

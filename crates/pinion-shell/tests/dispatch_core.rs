@@ -1095,7 +1095,11 @@ fn r51_80_collect_access_emit_inputs_runs_pipeline() {
 
     let mut core = ShellCore::<TestView>::new();
     let scene = core.compute_paint_scene(64, 32);
-    let (nodes, focus) = core.collect_access_emit_inputs(&scene);
+    // R813 §5.40 — per-window node contribution; the default window id
+    // routes through `access_node_for_window`'s default forward to the
+    // global `access_node` (TestView opts out → empty either way).
+    let (nodes, focus) =
+        core.collect_access_emit_inputs(pinion_runtime::DEFAULT_WINDOW, &scene);
 
     // TestView::access_node defaults to empty (Vec::new) — opt-out
     // path. The substrate must still run name enrichment + bounds

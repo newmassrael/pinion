@@ -769,6 +769,41 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         let _ = window_id;
         Self::view(state, frame)
     }
+
+    /// R813 §5.40 §5.16 — per-window accessibility node contribution,
+    /// the AT mirror of [`Self::view_for_window`].
+    ///
+    /// AccessKit emits one `TreeUpdate` per window (1 adapter = 1
+    /// window), so a multi-window binding whose windows paint different
+    /// content via [`Self::view_for_window`] must also contribute
+    /// *different* AT node sets per window — otherwise every window's AT
+    /// tree carries every other window's nodes as un-enriched ghosts (no
+    /// bounds, no name, since the foreign window's paint scene lacks
+    /// their tags). The shell calls this once per window per emit,
+    /// threading the resolved [`WindowSpec::id`]; the returned nodes are
+    /// enriched against *that* window's paint scene.
+    ///
+    /// Default forwards to
+    /// [`WidgetA11y::access_node`](pinion_a11y::WidgetA11y::access_node)
+    /// ignoring `window_id`, so single-window bindings and any binding
+    /// that does not override this stay bit-identical to the global node
+    /// set the shell emitted before R813.
+    ///
+    /// `access_focus_target` is deliberately *not* split per window: the
+    /// shell passes the one global focus target to every window's
+    /// builder, and `AccessTreeBuilder::build` drops a focus /
+    /// active-descendant tag that is absent from a window's node set
+    /// back to the window root — so the focus self-corrects to whichever
+    /// window actually holds the focused tag.
+    #[must_use]
+    fn access_node_for_window(
+        window_id: &str,
+        state: &<Self as WidgetCore>::State,
+        focused: Option<&str>,
+    ) -> Vec<pinion_a11y::AccessNode> {
+        let _ = window_id;
+        Self::access_node(state, focused)
+    }
 }
 
 /// Window + renderer lifecycle (R46.3.4 §5.16). Mirrors the Vello 0.9
