@@ -33851,6 +33851,66 @@
         "immediate-mode intervene/invoke (_mut resolver closure refactor) still deferred (driver state read-only, no mutation consumer)"
       ]
     },
+    "R832": {
+      "decision_summary": "R832: own-rendered application menu bar — the first menu-DRIVEN pinion application. The R805 MenuBar substrate composed as application chrome: a persistent File/Edit/View menu bar whose commands drive a real document model (content + dirty), exposed for AI-first introspection via a QueryOnlyIntrospect node. Pure composition over the R805 menu + R810.1 QueryOnlyIntrospect substrates; no new core code. Own-rendered (§5.53) so the whole click->open->select->command->app-state loop is Linux-RPC-verifiable, unlike the native (muda) menu bar. User-directed; print (own-dialog + CUPS) is the next OS-native item.",
+      "changes_bullets": [
+        "new example hello-menu-app: File/Edit/View menu bar (MenuBarExternal) driving a real document model",
+        "DocModel reactive holder (content + dirty) in Owner::cache; shared by view, reducer, and introspect node",
+        "QueryOnlyIntrospect `doc` extra-external exposes content_len/line_count/dirty/empty (R810.1 reuse, AI-first)",
+        "File New/Open Sample/Save + Edit Append Line/Clear route the menu.command intent into V::update -> doc mutations",
+        "View checkbox toggles (Show Status Bar, Uppercase) read back from the R805 MenuBarExternal checked state in the view",
+        "read_state + apply_key resolve the primary external by tag (find_external_with_tag) for the multi-external Container scene",
+        "pure composition over R805 menu (view_menu_bar/dropdown/barrier) + menu_item_nodes a11y; no new core substrate",
+        "r832 demo: full click->open->select->command->app-state loop via doc query + snapshot + keyboard nav (36+ asserts)",
+        "5 unit tests (parse_command_payload/line_count/parse_sub_tag + a11y menubar/checkbox smoke)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: green (hello-menu-app 5 new tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "full headless sweep (realgpu :0): r832 new + r691/r805/r772 menu regression",
+        "own-rendered + Linux-RPC-verifiable (vs muda native menu, Linux-unverifiable per [[native-menu-macos-windows-only-verify]])"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.50",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "menu overlay (dismiss_barrier + view_menu_dropdown) is a mechanical 2-copy (hello-menu + hello-menu-app); defer view_menu_overlay lift to a 3rd menu-bar consumer (mechanical-2-copy rule)",
+        "forward_key_to_external / read_state default assumes a bare Scene::External; multi-external bindings hand-walk via find_external_with_tag (widespread idiom); container-aware forward_key_to_external is a possible substrate hardening (blast radius = all keyboard widgets, defer to focused round)",
+        "submenus (cascading), accelerator/mnemonic keys, hover-follow between top-level titles remain documented additive menu axes (menu.rs module doc) for future rounds",
+        "print (own-dialog + CUPS) is the next OS-native-integration item (user-directed sequencing after this menu bar)"
+      ],
+      "publishable_decision_summary": "R832: own-rendered application menu bar — the first menu-DRIVEN pinion application. The R805 MenuBar substrate composed as application chrome: a persistent File/Edit/View menu bar whose commands drive a real document model (content + dirty), exposed for AI-first introspection via a QueryOnlyIntrospect node. Pure composition over the R805 menu + R810.1 QueryOnlyIntrospect substrates; no new core code. Own-rendered (§5.53) so the whole click->open->select->command->app-state loop is Linux-RPC-verifiable, unlike the native (muda) menu bar. User-directed; print (own-dialog + CUPS) is the next OS-native item.",
+      "publishable_changes_bullets": [
+        "new example hello-menu-app: File/Edit/View menu bar (MenuBarExternal) driving a real document model",
+        "DocModel reactive holder (content + dirty) in Owner::cache; shared by view, reducer, and introspect node",
+        "QueryOnlyIntrospect `doc` extra-external exposes content_len/line_count/dirty/empty (R810.1 reuse, AI-first)",
+        "File New/Open Sample/Save + Edit Append Line/Clear route the menu.command intent into V::update -> doc mutations",
+        "View checkbox toggles (Show Status Bar, Uppercase) read back from the R805 MenuBarExternal checked state in the view",
+        "read_state + apply_key resolve the primary external by tag (find_external_with_tag) for the multi-external Container scene",
+        "pure composition over R805 menu (view_menu_bar/dropdown/barrier) + menu_item_nodes a11y; no new core substrate",
+        "r832 demo: full click->open->select->command->app-state loop via doc query + snapshot + keyboard nav (36+ asserts)",
+        "5 unit tests (parse_command_payload/line_count/parse_sub_tag + a11y menubar/checkbox smoke)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: green (hello-menu-app 5 new tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "full headless sweep (realgpu :0): r832 new + r691/r805/r772 menu regression",
+        "own-rendered + Linux-RPC-verifiable (vs muda native menu, Linux-unverifiable per [[native-menu-macos-windows-only-verify]])"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.50",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "menu overlay (dismiss_barrier + view_menu_dropdown) is a mechanical 2-copy (hello-menu + hello-menu-app); defer view_menu_overlay lift to a 3rd menu-bar consumer (mechanical-2-copy rule)",
+        "forward_key_to_external / read_state default assumes a bare Scene::External; multi-external bindings hand-walk via find_external_with_tag (widespread idiom); container-aware forward_key_to_external is a possible substrate hardening (blast radius = all keyboard widgets, defer to focused round)",
+        "submenus (cascading), accelerator/mnemonic keys, hover-follow between top-level titles remain documented additive menu axes (menu.rs module doc) for future rounds",
+        "print (own-dialog + CUPS) is the next OS-native-integration item (user-directed sequencing after this menu bar)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
