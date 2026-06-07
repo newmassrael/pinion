@@ -41,7 +41,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use pinion_core::external::IntrospectValue;
+use pinion_core::external::{ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue};
 use pinion_core::scene::{
     ContainerNode, ImmediateMode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
 };
@@ -138,6 +138,15 @@ struct BouncingBallDriver {
     /// magnitude is fixed at [`BALL_SPEED`] (reflections flip the sign,
     /// never the speed).
     vel: f32,
+    /// Cumulative wall reflections this driver has performed — its own
+    /// simulation-side bounce tally, surfaced through the R828
+    /// [`ImmediateMode::introspect`] channel (`scene/query
+    /// "/ball/external/bounces"`). Distinct from the *retained* bounce
+    /// count: the reducer derives that independently by counting the
+    /// `ball.bounce` intents drained from this driver, so the two must
+    /// converge — a live cross-check that the R827 write bridge and the
+    /// R828 read channel observe the same events.
+    bounces: u32,
     /// §5.20 intents emitted during the current frame's [`tick`], drained
     /// by the runtime immediately after via [`drain_intents`]. One
     /// `bounce` per wall reflection.
@@ -157,6 +166,7 @@ impl Default for BouncingBallDriver {
         Self {
             pos: 0.0,
             vel: BALL_SPEED,
+            bounces: 0,
             pending: Vec::new(),
             fill: Color::default(),
             track: Color::default(),
@@ -181,9 +191,24 @@ impl ImmediateMode for BouncingBallDriver {
                 self.pos = 2.0 - self.pos;
                 self.vel = -self.vel.abs();
             }
+            self.bounces = self.bounces.saturating_add(1);
             self.pending
                 .push(Intent::new_static(BOUNCE_EVENT, IntrospectValue::Null));
         }
+    }
+
+    // R828 §2 #4 §5.12 — opt in to the §5.15 item 8 introspection
+    // channel so an AI client reads live simulation state
+    // (`scene/query "/ball/external/{pos,velocity,bounces}"`) through the
+    // same surface it queries `Scene::External` widgets, preserving the
+    // §2 #2 + §2 #7 scene-as-data invariant across the retained /
+    // immediate boundary. First consumer of the R681-deferred channel.
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
     }
 
     fn paint(&mut self, painter: &mut dyn ImmediatePainter) {
@@ -213,6 +238,32 @@ impl ImmediateMode for BouncingBallDriver {
         for intent in self.pending.drain(..) {
             sink(intent);
         }
+    }
+}
+
+/// R828 §2 #4 §5.12 — the driver's §5.15 item 8 introspection surface.
+/// Read-only: `pos` / `velocity` / `bounces` are all owned by the
+/// `tick` simulation (the game loop is the single writer), so `intervene`
+/// rejects every write with [`InterveneError::ReadOnly`] — a raw poke
+/// would desync state from the simulation (same contract as the R823
+/// tree / R810 snackbar read-only introspects, whose state is event- /
+/// timer-driven rather than RPC-driven).
+impl ExternalIntrospect for BouncingBallDriver {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[("pos", "float"), ("velocity", "float"), ("bounces", "int")])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "pos" => Some(IntrospectValue::Float(f64::from(self.pos))),
+            "velocity" => Some(IntrospectValue::Float(f64::from(self.vel))),
+            "bounces" => Some(IntrospectValue::Int(i64::from(self.bounces))),
+            _ => None,
+        }
+    }
+
+    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+        Err(InterveneError::ReadOnly)
     }
 }
 
@@ -503,6 +554,39 @@ mod r827_immediate_intent_tests {
             "pos stays bounded under a huge dt; got {}",
             driver.pos,
         );
+    }
+
+    #[test]
+    fn r828_driver_introspect_exposes_pos_velocity_bounces() {
+        let mut driver = BouncingBallDriver::default();
+        // Advance past the right wall to register one bounce.
+        driver.tick(Duration::from_secs_f32(1.0 / BALL_SPEED + 0.1));
+        assert!(driver.bounces >= 1);
+        let intro = driver.introspect().expect("driver opts into introspection");
+        // `bounces` mirrors the driver's own simulation tally.
+        assert_eq!(
+            intro.query("bounces"),
+            Some(IntrospectValue::Int(i64::from(driver.bounces))),
+        );
+        // pos / velocity surface as floats; unknown paths are None.
+        assert!(matches!(intro.query("pos"), Some(IntrospectValue::Float(_))));
+        assert!(matches!(intro.query("velocity"), Some(IntrospectValue::Float(_))));
+        assert_eq!(intro.query("ghost"), None);
+        // Schema declares exactly the three queryable fields.
+        assert_eq!(
+            intro.schema().fields,
+            &[("pos", "float"), ("velocity", "float"), ("bounces", "int")],
+        );
+    }
+
+    #[test]
+    fn r828_driver_introspect_intervene_is_read_only() {
+        let mut driver = BouncingBallDriver::default();
+        let intro = driver.introspect_mut().expect("driver opts into introspection");
+        assert!(matches!(
+            intro.intervene("pos", IntrospectValue::Float(0.5)),
+            Err(InterveneError::ReadOnly),
+        ));
     }
 
     #[test]

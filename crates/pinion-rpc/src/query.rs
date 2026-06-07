@@ -27,7 +27,7 @@ use pinion_core::Scene;
 use serde_json::{json, Value};
 
 use crate::path::PathError;
-use crate::resolve::{resolve_external_introspect, ResolveExternalError};
+use crate::resolve::{introspect_at, resolve_external_path, ResolveExternalError};
 
 /// R825 §5.12 — reserved introspect path that returns an external's
 /// **declared schema** (every queryable path + its type tag) instead of a
@@ -42,6 +42,25 @@ use crate::resolve::{resolve_external_introspect, ResolveExternalError};
 /// The `$` prefix cannot collide with a real introspect path (no widget
 /// declares one).
 pub const SCHEMA_PATH: &str = "$schema";
+
+/// R828 §5.12 — the schema-or-value decision SSOT shared by the
+/// retained-`External` and immediate-mode-driver query branches. The
+/// reserved `$schema` path (R825) returns the declared schema (discovery);
+/// any other path reads the value, or fails [`QueryError::UnknownIntrospectPath`].
+/// One site so the two branches cannot diverge on discovery support — a
+/// new reserved path is handled for both at once.
+fn introspect_or_schema(
+    intro: &dyn ExternalIntrospect,
+    introspect_path: &str,
+) -> Result<IntrospectValue, QueryError> {
+    if introspect_path == SCHEMA_PATH {
+        Ok(schema_value(intro))
+    } else {
+        intro
+            .query(introspect_path)
+            .ok_or(QueryError::UnknownIntrospectPath)
+    }
+}
 
 /// Render an external's declared schema as a JSON array of
 /// `{"path", "type"}` objects, in the schema's declared field order.
@@ -100,19 +119,37 @@ impl From<ResolveExternalError> for QueryError {
 /// does not match the path shape, or the underlying `External` rejects
 /// the introspect path.
 pub fn query(scene: &Scene, raw_path: &str) -> Result<IntrospectValue, QueryError> {
-    // R667 §5.34 — `/window[id]/<segs>/external/<intro>` parse +
-    // Container/Scroll walk + multi-widget primary descent + §5.15
-    // introspect lookup lifted into [`resolve_external_introspect`].
-    let (intro, introspect_path) = resolve_external_introspect(scene, raw_path)?;
-    // R825 — the reserved `$schema` path returns the declared schema rather
-    // than a value (the discovery primitive). Intercepted after resolution
-    // so an opted-out external still reports `IntrospectionOptedOut`.
-    if introspect_path == SCHEMA_PATH {
-        return Ok(schema_value(intro));
+    // R667 §5.34 — `/window[id]/<segs>/external/<intro>` parse into the
+    // borrow-free (scene_segments, introspect_path) pair.
+    let (scene_segments, introspect_path) = resolve_external_path(raw_path)?;
+    // R828 §2 #4 §5.12 — immediate-mode driver introspect branch. An
+    // [`Scene::ImmediateModeNode`] holds its driver behind
+    // `Rc<RefCell<dyn ImmediateMode>>` (interior mutability), so unlike a
+    // `Box<dyn External>` it is only *transiently* borrowable — the
+    // borrow cannot outlive this call. That lifetime seam is exactly why
+    // R681 deferred the introspect consumer (atomic 4). It dissolves on
+    // the read path: `query` returns an *owned* [`IntrospectValue`], so
+    // we borrow the driver, read the value WITHIN scope, and drop the
+    // borrow before returning — no `&dyn ExternalIntrospect` escapes the
+    // `RefCell`. Mirrors the External branch's §5.15 introspect + R825
+    // `$schema` semantics. (`intervene` / `invoke` return a borrow that
+    // *does* need to outlive resolution, so immediate-mode mutation stays
+    // deferred until a consumer needs it — driver state is tick-driven,
+    // read-only like the R823 tree introspect.)
+    if let Some(Scene::ImmediateModeNode(node)) = scene.lookup_path_ref(&scene_segments) {
+        let driver = node.handle.borrow();
+        let intro = driver
+            .introspect()
+            .ok_or(QueryError::IntrospectionOptedOut)?;
+        return introspect_or_schema(intro, &introspect_path);
     }
-    intro
-        .query(&introspect_path)
-        .ok_or(QueryError::UnknownIntrospectPath)
+    // §5.15 retained-`External` branch — `lookup_path_ref` +
+    // `primary_external` + §5.15 introspect, lifted into
+    // [`introspect_at`] (R667). `$schema` (R825) is intercepted after
+    // resolution so an opted-out external still reports
+    // `IntrospectionOptedOut` rather than a schema.
+    let intro = introspect_at(scene, &scene_segments)?;
+    introspect_or_schema(intro, &introspect_path)
 }
 
 #[cfg(test)]
@@ -358,6 +395,97 @@ mod tests {
         let scene = Scene::External(ExternalNode::new(Box::new(StubExternal::new())));
         assert_eq!(
             query(&scene, "/external/$schema").unwrap_err(),
+            QueryError::IntrospectionOptedOut,
+        );
+    }
+
+    // ---- R828 §2 #4 §5.12 — immediate-mode driver introspect ----
+
+    use pinion_core::external::{InterveneError, IntrospectSchema};
+    use pinion_core::scene::{ContainerNode, ImmediateMode, ImmediateModeNode};
+
+    /// Read-only immediate-mode driver exposing one `pos` float — the
+    /// query peer of `CountedExternal`.
+    #[derive(Debug)]
+    struct PosDriver {
+        pos: f64,
+    }
+
+    impl ImmediateMode for PosDriver {
+        fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+            Some(self)
+        }
+    }
+
+    impl ExternalIntrospect for PosDriver {
+        fn schema(&self) -> IntrospectSchema {
+            IntrospectSchema::new(&[("pos", "float")])
+        }
+        fn query(&self, path: &str) -> Option<IntrospectValue> {
+            (path == "pos").then_some(IntrospectValue::Float(self.pos))
+        }
+        fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {
+            Err(InterveneError::ReadOnly)
+        }
+    }
+
+    /// Immediate-mode driver that does NOT opt in to introspection
+    /// (default `introspect()` returns `None`).
+    #[derive(Debug)]
+    struct OpaqueDriver;
+    impl ImmediateMode for OpaqueDriver {}
+
+    fn immediate_root(pos: f64) -> Scene {
+        Scene::ImmediateModeNode(ImmediateModeNode::from_driver(PosDriver { pos }, Rect::default()))
+    }
+
+    #[test]
+    fn immediate_driver_query_at_root() {
+        let scene = immediate_root(0.5);
+        assert_eq!(
+            query(&scene, "/external/pos").unwrap(),
+            IntrospectValue::Float(0.5),
+        );
+    }
+
+    #[test]
+    fn immediate_driver_query_via_tagged_descendant() {
+        let node = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(PosDriver { pos: 0.25 }, Rect::default()).with_tag("ball"),
+        );
+        let scene = Scene::Container(ContainerNode::new(vec![node]));
+        assert_eq!(
+            query(&scene, "/ball/external/pos").unwrap(),
+            IntrospectValue::Float(0.25),
+        );
+    }
+
+    #[test]
+    fn immediate_driver_schema_discovery() {
+        let scene = immediate_root(0.0);
+        assert_eq!(
+            query(&scene, "/external/$schema").unwrap(),
+            IntrospectValue::Json(serde_json::json!([{ "path": "pos", "type": "float" }])),
+        );
+    }
+
+    #[test]
+    fn immediate_driver_unknown_path_propagates() {
+        let scene = immediate_root(0.0);
+        assert_eq!(
+            query(&scene, "/external/ghost").unwrap_err(),
+            QueryError::UnknownIntrospectPath,
+        );
+    }
+
+    #[test]
+    fn immediate_driver_opted_out_reports_opted_out() {
+        let scene = Scene::ImmediateModeNode(ImmediateModeNode::from_driver(
+            OpaqueDriver,
+            Rect::default(),
+        ));
+        assert_eq!(
+            query(&scene, "/external/pos").unwrap_err(),
             QueryError::IntrospectionOptedOut,
         );
     }

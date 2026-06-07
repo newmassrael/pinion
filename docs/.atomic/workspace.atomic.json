@@ -33635,6 +33635,52 @@
         "TUI backend does not drive immediate-mode (GUI-only game loop); no producer-parity gap"
       ]
     },
+    "R828": {
+      "decision_summary": "R828: first ImmediateMode::introspect consumer (R681 atomic 4). scene/query reaches immediate-mode drivers via a paint-scene fallback; the driver exposes pos/velocity/bounces read-only — the read peer of R827's intent bridge",
+      "changes_bullets": [
+        "pinion-rpc query.rs: scene/query immediate-mode branch (borrow RefCell + introspect within owned-return scope)",
+        "pinion-rpc dispatch.rs: handle_scene_query paint-scene fallback on NoExternalAtPath (immediate nodes paint-only)",
+        "pinion-rpc: lift schema-or-value decision to introspect_or_schema SSOT (2-branch divergence-is-a-bug)",
+        "hello-immediate-intent: BouncingBallDriver impl ExternalIntrospect (pos/velocity/bounces read-only) + introspect opt-in",
+        "demo r828_immediate_introspect.py: 30+ assert, driver state via scene/query, cross-check vs retained count"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (-j2); 5 new query immediate tests + 2 example introspect tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r828_immediate_introspect.py PASS (realgpu :0, 30+ assert); r827 regression PASS",
+        "self-grep: schema-or-value decision lifted to introspect_or_schema SSOT, no remaining dup"
+      ],
+      "impact_refs": [
+        "2",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "immediate-mode intervene/invoke deferred (borrow-returning _mut resolver vs RefCell; driver read-only, no consumer)",
+        "deterministic scene/tick immediate stepping still deferred (R827 carry); driver state is tick-driven"
+      ],
+      "publishable_decision_summary": "R828: first ImmediateMode::introspect consumer (R681 atomic 4). scene/query reaches immediate-mode drivers via a paint-scene fallback; the driver exposes pos/velocity/bounces read-only — the read peer of R827's intent bridge",
+      "publishable_changes_bullets": [
+        "pinion-rpc query.rs: scene/query immediate-mode branch (borrow RefCell + introspect within owned-return scope)",
+        "pinion-rpc dispatch.rs: handle_scene_query paint-scene fallback on NoExternalAtPath (immediate nodes paint-only)",
+        "pinion-rpc: lift schema-or-value decision to introspect_or_schema SSOT (2-branch divergence-is-a-bug)",
+        "hello-immediate-intent: BouncingBallDriver impl ExternalIntrospect (pos/velocity/bounces read-only) + introspect opt-in",
+        "demo r828_immediate_introspect.py: 30+ assert, driver state via scene/query, cross-check vs retained count"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (-j2); 5 new query immediate tests + 2 example introspect tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r828_immediate_introspect.py PASS (realgpu :0, 30+ assert); r827 regression PASS",
+        "self-grep: schema-or-value decision lifted to introspect_or_schema SSOT, no remaining dup"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "immediate-mode intervene/invoke deferred (borrow-returning _mut resolver vs RefCell; driver read-only, no consumer)",
+        "deterministic scene/tick immediate stepping still deferred (R827 carry); driver state is tick-driven"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

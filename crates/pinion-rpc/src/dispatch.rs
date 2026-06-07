@@ -880,7 +880,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // mismatch). See `HandlerKind` docstring for the read-vs-mutate
     // taxonomy.
     let (outcome, kind) = match request.method.as_str() {
-        "scene/query" => (handle_scene_query(scene, request.params.as_ref()), HandlerKind::Read),
+        "scene/query" => (
+            handle_scene_query(scene, last_paint_scene, request.params.as_ref()),
+            HandlerKind::Read,
+        ),
         "scene/click" => {
             #[allow(
                 clippy::option_as_ref_deref,
@@ -1363,7 +1366,11 @@ enum HandlerKind {
     Mutate,
 }
 
-fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+fn handle_scene_query(
+    scene: &Scene,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
     let params = require_params(params)?;
     let Some(path) = params.get("path").and_then(Value::as_str) else {
         return Err(RpcError::invalid_params("params.path missing or not a string"));
@@ -1371,6 +1378,25 @@ fn handle_scene_query(scene: &Scene, params: Option<&Value>) -> Result<Value, Rp
 
     match query(scene, path) {
         Ok(value) => Ok(introspect_value_to_json(value)),
+        // R828 §2 #4 §5.12 — paint-scene fallback for immediate-mode
+        // drivers. `Scene::ImmediateModeNode`s live only in the per-frame
+        // paint scene (the view fn emits them; they are absent from the
+        // boot-frozen state scene the query above walked — see
+        // [[state-scene-vs-paint-scene-introspect]]). When the
+        // state-scene walk finds no node at the path, retry against the
+        // last painted scene, whose `ImmediateModeNode.handle` is the
+        // same `Owner::cache` driver `Rc` the live game loop ticks, so
+        // the query reads current simulation state. State-scene authority
+        // is preserved: paint is consulted ONLY on `NoExternalAtPath`, so
+        // a retained widget that opted out (`IntrospectionOptedOut`) or
+        // any other resolution outcome is returned verbatim.
+        Err(QueryError::NoExternalAtPath) => match last_paint_scene {
+            Some(paint) => match query(paint, path) {
+                Ok(value) => Ok(introspect_value_to_json(value)),
+                Err(err) => Err(query_error_to_rpc(err)),
+            },
+            None => Err(query_error_to_rpc(QueryError::NoExternalAtPath)),
+        },
         Err(err) => Err(query_error_to_rpc(err)),
     }
 }
