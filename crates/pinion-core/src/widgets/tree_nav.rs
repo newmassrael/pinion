@@ -26,6 +26,10 @@
 //! trait.
 
 use super::virtual_select::clamp_nav;
+use crate::reactive::batch;
+use crate::Signal;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 /// A node in a navigable tree. The substrate reads only the four facets
 /// WAI-ARIA tree navigation needs — a stable id, the visible label,
@@ -48,6 +52,19 @@ pub trait TreeNode {
     fn children(&self) -> &[Self]
     where
         Self: Sized;
+    /// Mutable child access, so the R820 flag-storage helpers
+    /// ([`find_node_mut`] / [`set_expanded_in`] / [`toggle_expanded`]) can
+    /// descend and mutate a retained `Vec<Self>` tree in place. A node
+    /// whose tree is *derived* (the inspector projects a fresh tree each
+    /// frame and never calls these) may return an empty slice.
+    fn children_mut(&mut self) -> &mut [Self]
+    where
+        Self: Sized;
+    /// Set this node's expanded flag — the write side of [`expanded`] the
+    /// R820 [`set_expanded_in`] / [`toggle_expanded`] mutators go through.
+    ///
+    /// [`expanded`]: TreeNode::expanded
+    fn set_expanded(&mut self, expanded: bool);
 }
 
 /// One row of the depth-first flattening of the *visible* tree: the
@@ -218,6 +235,118 @@ pub fn resolve_tree_key(
     }
 }
 
+/// R820 §5.27 §5.50 — recursive find-by-id for a mutable node in a
+/// retained `Vec<N>` tree. The depth-first search the flag-storage
+/// mutators ([`set_expanded_in`] / [`toggle_expanded`]) descend; pure
+/// (no reactive scope), so it is unit-testable on a plain `Vec`. `None`
+/// when no node carries `id`.
+///
+/// Lifted at R820 when `hello-virtual-tree` became the second retained
+/// flag-on-node consumer (with `hello-tree-view`). The `DevTools`
+/// inspector is a third tree consumer but retains a *collapse-set
+/// overlay*, not flag-on-node, so it drives the pure [`resolve_tree_key`]
+/// directly and never calls these helpers ([[ssot-lift-grep-repo-wide-cross-enum]]:
+/// storage glue is caller-choice; only the flag-on-node shape is shared).
+#[must_use]
+pub fn find_node_mut<'a, N: TreeNode>(nodes: &'a mut [N], id: &str) -> Option<&'a mut N> {
+    for node in nodes {
+        if node.id() == id {
+            return Some(node);
+        }
+        if let Some(found) = find_node_mut(node.children_mut(), id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// R820 §5.27 §5.50 — set branch `id`'s expanded flag to `expanded` in a
+/// reactive `Signal<Vec<N>>` flag store. A leaf or a redundant set is a
+/// no-op (no `Signal::set`, so no repaint). Wrapped in [`batch`] so the
+/// single write coalesces.
+pub fn set_expanded_in<N>(nodes_signal: &Signal<Vec<N>>, id: &str, expanded: bool)
+where
+    N: TreeNode + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
+{
+    batch(|| {
+        let mut nodes = nodes_signal.get();
+        if let Some(node) = find_node_mut(&mut nodes, id) {
+            if node.children().is_empty() || node.expanded() == expanded {
+                return;
+            }
+            node.set_expanded(expanded);
+            nodes_signal.set(nodes);
+        }
+    });
+}
+
+/// R820 §5.27 §5.50 — flip branch `id`'s expanded flag in a reactive
+/// `Signal<Vec<N>>` flag store (the click / Space-Enter toggle path).
+/// Leaves are a no-op. [`batch`]ed like [`set_expanded_in`].
+pub fn toggle_expanded<N>(nodes_signal: &Signal<Vec<N>>, id: &str)
+where
+    N: TreeNode + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
+{
+    batch(|| {
+        let mut nodes = nodes_signal.get();
+        if let Some(node) = find_node_mut(&mut nodes, id) {
+            if node.children().is_empty() {
+                return;
+            }
+            let next = !node.expanded();
+            node.set_expanded(next);
+            nodes_signal.set(nodes);
+        }
+    });
+}
+
+/// R820 §5.27 §5.50 — apply one key to a retained flag-on-node tree held
+/// in a `Signal<Vec<N>>` + a `Signal<Option<String>>` focus cursor: the
+/// [`resolve_tree_key`] → flag-store bridge shared by the retained-tree
+/// consumers (`hello-tree-view`, `hello-virtual-tree`). Returns `true`
+/// when the key was a recognised navigation key (the caller falls through
+/// to type-ahead on `false`, which stays caller-side per the module-doc
+/// purity boundary — the cursor's search buffer is application state).
+///
+/// Storage-specific by design (the pure [`resolve_tree_key`] stays the
+/// SSOT every consumer shares; this convenience only serves the
+/// flag-on-node `Signal` shape — the inspector's collapse-set overlay
+/// applies the same `TreeKey` outcome to its own store).
+#[must_use]
+pub fn apply_tree_key<N>(
+    nodes_signal: &Signal<Vec<N>>,
+    focused: &Signal<Option<String>>,
+    key: &str,
+    page: usize,
+) -> bool
+where
+    N: TreeNode + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
+{
+    let nodes = nodes_signal.get();
+    let rows = flat_visible(&nodes);
+    let current = focused.get();
+    match resolve_tree_key(&rows, current.as_deref(), key, page) {
+        TreeKey::Focus(id) => {
+            focused.set(Some(id));
+            true
+        }
+        TreeKey::Expand(id) => {
+            set_expanded_in(nodes_signal, &id, true);
+            true
+        }
+        TreeKey::Collapse(id) => {
+            set_expanded_in(nodes_signal, &id, false);
+            true
+        }
+        TreeKey::Toggle(id) => {
+            toggle_expanded(nodes_signal, &id);
+            true
+        }
+        TreeKey::Consumed => true,
+        TreeKey::Unhandled => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! R811 §5.50 §5.27 — the WAI-ARIA APG 6.13 Tree keyboard contract
@@ -227,7 +356,9 @@ mod tests {
     //! resolver was lifted here at R811; the example now exercises only
     //! its `FileNode` [`TreeNode`] glue.
 
-    use super::{flat_visible, parent_row, resolve_tree_key, TreeKey, TreeNode, VisibleRow};
+    use super::{
+        find_node_mut, flat_visible, parent_row, resolve_tree_key, TreeKey, TreeNode, VisibleRow,
+    };
 
     /// Page jump used by the tree consumers (mirrors `hello-tree-view`'s
     /// `NAV_PAGE`); larger than the sample listing so the page arm
@@ -275,6 +406,12 @@ mod tests {
         }
         fn children(&self) -> &[Self] {
             &self.children
+        }
+        fn children_mut(&mut self) -> &mut [Self] {
+            &mut self.children
+        }
+        fn set_expanded(&mut self, expanded: bool) {
+            self.expanded = expanded;
         }
     }
 
@@ -464,4 +601,30 @@ mod tests {
             TreeKey::Focus("src".into()),
         );
     }
+
+    #[test]
+    fn find_node_mut_descends_to_a_nested_branch_and_mutates() {
+        let mut nodes = sample();
+        let found = find_node_mut(&mut nodes, "src/widgets").expect("nested branch found");
+        assert_eq!(found.id(), "src/widgets");
+        // The write side of the R820 trait extension persists through the tree.
+        found.set_expanded(true);
+        assert!(
+            find_node_mut(&mut nodes, "src/widgets").unwrap().expanded(),
+            "set_expanded mutation persists"
+        );
+        assert!(find_node_mut(&mut nodes, "absent").is_none(), "missing id -> None");
+    }
+
+    // The `Signal<Vec<N>>` flag-store helpers (`set_expanded_in` /
+    // `toggle_expanded` / the `apply_tree_key` bridge) are integration-
+    // tested through their consumers rather than here: instantiating
+    // `Signal<Vec<TestNode>>` inside pinion-core's own tests monomorphizes
+    // serde's deserialization buffer (a >16KB array in generated code) and
+    // trips `clippy::large_stack_arrays` at the crate root, where no scoped
+    // `#[allow]` reaches. End-to-end coverage lives in `hello-tree-view`'s
+    // `r809_tree_keyboard_waiaria` demo (every `apply_tree_key` arm) and
+    // `hello-virtual-tree`'s `toggle_collapses_then_expands_a_branch` test;
+    // the decision logic each composes (`resolve_tree_key` + the pure
+    // `find_node_mut` above) is unit-tested here directly.
 }

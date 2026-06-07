@@ -32889,6 +32889,78 @@
         "TreeNode::children_mut+set_expanded trait surface (R735.1); revisit at a 3rd flag consumer"
       ]
     },
+    "R820": {
+      "decision_summary": "R820 §5.27 windowed-tree keyboard: lift the retained-tree coordinator (apply_tree_key resolve-to-flag-store bridge + find_node_mut/toggle_expanded/set_expanded_in + TreeNode::children_mut/set_expanded) to tree_nav, clearing the R819 storage-glue carry (hello-tree-view migrated, behaviour-preserving). hello-virtual-tree gains WAI-ARIA APG 6.13 keyboard nav over the window with scroll_offset_to_reveal scroll-into-view (keyboard orthogonal to virtualization).",
+      "changes_bullets": [
+        "pinion-core::tree_nav: TreeNode += children_mut + set_expanded; lift find_node_mut +",
+        "set_expanded_in + toggle_expanded + apply_tree_key (the resolve_tree_key -> flag-store bridge)",
+        "TreeItem (paint) + FileNode + TreeRow each impl the two new trait methods (4 impls total)",
+        "hello-tree-view migrated: apply_key_impl -> apply_tree_key + caller-side typeahead; local",
+        "find / toggle / set glue removed (the R819 storage-glue carry cleared, behaviour-preserving)",
+        "hello-virtual-tree: focusable tree root + apply_key (apply_tree_key + typeahead + reveal_cursor",
+        "scroll_offset_to_reveal scroll-into-view); boot cursor on s0; a11y selected_id = cursor row"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: all green (tree_nav, hello-tree-view, hello-virtual-tree +keyboard)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "tools/demos/r820_virtual_tree_keyboard.py PASS realgpu, 34 assertions: keyboard ortho",
+        "virtualization (drive cursor past window -> scroll-into-view materializes the target row);",
+        "Arrow expand/collapse; Home/End/PageDown clamp; type-ahead; focus-highlight pixels",
+        "tools/demos/r809_tree_keyboard_waiaria.py PASS (hello-tree-view migration behaviour-preserving)",
+        "3b self-grep: find/toggle/set/apply_tree_key now ONLY in tree_nav (R819 carry cleared);",
+        "scroll_offset_to_reveal consumed as SSOT (4 consumers); typeahead caller-side (R811-settled)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.27",
+        "5.50",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "type_ahead_jump = 4 caller-side copies (R811 documented boundary: typeahead cursor storage is",
+        "caller-choice); not a lift target. reveal_cursor is tree-specific (1 consumer), inline.",
+        "a multi-pane host embedding the windowed tree would gate apply_key on focused==ROOT_TAG (the",
+        "dock-panels inspector precedent); the standalone example applies keys unconditionally",
+        "Signal-helper unit tests live in the examples: pinion-core cannot instantiate",
+        "Signal<Vec<serde-struct>> in its own tests without tripping clippy large_stack_arrays (serde",
+        "deserialization buffer) at the crate root, where no scoped allow reaches"
+      ],
+      "publishable_decision_summary": "R820 §5.27 windowed-tree keyboard: lift the retained-tree coordinator (apply_tree_key resolve-to-flag-store bridge + find_node_mut/toggle_expanded/set_expanded_in + TreeNode::children_mut/set_expanded) to tree_nav, clearing the R819 storage-glue carry (hello-tree-view migrated, behaviour-preserving). hello-virtual-tree gains WAI-ARIA APG 6.13 keyboard nav over the window with scroll_offset_to_reveal scroll-into-view (keyboard orthogonal to virtualization).",
+      "publishable_changes_bullets": [
+        "pinion-core::tree_nav: TreeNode += children_mut + set_expanded; lift find_node_mut +",
+        "set_expanded_in + toggle_expanded + apply_tree_key (the resolve_tree_key -> flag-store bridge)",
+        "TreeItem (paint) + FileNode + TreeRow each impl the two new trait methods (4 impls total)",
+        "hello-tree-view migrated: apply_key_impl -> apply_tree_key + caller-side typeahead; local",
+        "find / toggle / set glue removed (the R819 storage-glue carry cleared, behaviour-preserving)",
+        "hello-virtual-tree: focusable tree root + apply_key (apply_tree_key + typeahead + reveal_cursor",
+        "scroll_offset_to_reveal scroll-into-view); boot cursor on s0; a11y selected_id = cursor row"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: all green (tree_nav, hello-tree-view, hello-virtual-tree +keyboard)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "tools/demos/r820_virtual_tree_keyboard.py PASS realgpu, 34 assertions: keyboard ortho",
+        "virtualization (drive cursor past window -> scroll-into-view materializes the target row);",
+        "Arrow expand/collapse; Home/End/PageDown clamp; type-ahead; focus-highlight pixels",
+        "tools/demos/r809_tree_keyboard_waiaria.py PASS (hello-tree-view migration behaviour-preserving)",
+        "3b self-grep: find/toggle/set/apply_tree_key now ONLY in tree_nav (R819 carry cleared);",
+        "scroll_offset_to_reveal consumed as SSOT (4 consumers); typeahead caller-side (R811-settled)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.27",
+        "5.50",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "type_ahead_jump = 4 caller-side copies (R811 documented boundary: typeahead cursor storage is",
+        "caller-choice); not a lift target. reveal_cursor is tree-specific (1 consumer), inline.",
+        "a multi-pane host embedding the windowed tree would gate apply_key on focused==ROOT_TAG (the",
+        "dock-panels inspector precedent); the standalone example applies keys unconditionally",
+        "Signal-helper unit tests live in the examples: pinion-core cannot instantiate",
+        "Signal<Vec<serde-struct>> in its own tests without tripping clippy large_stack_arrays (serde",
+        "deserialization buffer) at the crate root, where no scoped allow reaches"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

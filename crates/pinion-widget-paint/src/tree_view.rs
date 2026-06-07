@@ -232,6 +232,12 @@ impl pinion_core::widgets::tree_nav::TreeNode for TreeItem {
     fn children(&self) -> &[Self] {
         &self.children
     }
+    fn children_mut(&mut self) -> &mut [Self] {
+        &mut self.children
+    }
+    fn set_expanded(&mut self, expanded: bool) {
+        self.expanded = expanded;
+    }
 }
 
 /// R671 §5.50 — collapsed-state expand glyph (`U+25B6` BLACK

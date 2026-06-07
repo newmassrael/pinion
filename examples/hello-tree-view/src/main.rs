@@ -84,8 +84,8 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::widgets::tree_nav::{flat_visible, resolve_tree_key, TreeKey, TreeNode};
-use pinion_core::{reactive, Frame, Owner, Scene, Signal, WidgetCore};
+use pinion_core::widgets::tree_nav::{apply_tree_key, flat_visible, toggle_expanded, TreeNode};
+use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::{is_typeahead_char, TypeaheadCursor};
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
 use std::cell::RefCell;
@@ -200,6 +200,12 @@ impl TreeNode for FileNode {
     }
     fn children(&self) -> &[Self] {
         &self.children
+    }
+    fn children_mut(&mut self) -> &mut [Self] {
+        &mut self.children
+    }
+    fn set_expanded(&mut self, expanded: bool) {
+        self.expanded = expanded;
     }
 }
 
@@ -335,64 +341,13 @@ fn view(state: ButtonState) -> Scene {
     )
 }
 
-fn find_node_mut<'a>(
-    nodes: &'a mut [FileNode],
-    target_id: &str,
-) -> Option<&'a mut FileNode> {
-    for node in nodes {
-        if node.id == target_id {
-            return Some(node);
-        }
-        if let Some(found) = find_node_mut(&mut node.children, target_id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-
-/// R674 §5.50 — single source of truth for "toggle the expanded flag
-/// on `id`". Used by both [`apply_key_impl`]'s `Space` / `Enter` arm
-/// (keyboard path) and [`TreeViewBinding::update`]'s
-/// `file_tree.click` reducer arm (click path), so the two paths
-/// produce bit-identical reactive state mutations on identical input
-/// and the §6.3 `dry_run` invariant continues to hold under both
-/// input modes.
-///
-/// Leaves are a no-op: only branches with children expand or
-/// collapse. Wrapping the mutation in [`reactive::batch`] suppresses
-/// double-paint on the single-Signal `set` that follows, matching
-/// the keyboard handler's pre-R674 wire.
-fn toggle_expanded_in_signal(nodes_signal: &Signal<Vec<FileNode>>, id: &str) {
-    reactive::batch(|| {
-        let mut nodes = nodes_signal.get();
-        if let Some(node) = find_node_mut(&mut nodes, id) {
-            if node.children.is_empty() {
-                return;
-            }
-            node.expanded = !node.expanded;
-            nodes_signal.set(nodes);
-        }
-    });
-}
-
-/// R809 §5.50 — set the expanded flag on branch `id` to `expanded`
-/// (the Arrow Right "expand" / Arrow Left "collapse" arms, which set a
-/// specific value rather than [`toggle_expanded_in_signal`]'s flip).
-/// A leaf or a redundant set is a no-op (no Signal write, no repaint).
-/// [`reactive::batch`]ed like its toggle sibling.
-fn set_expanded_in_signal(nodes_signal: &Signal<Vec<FileNode>>, id: &str, expanded: bool) {
-    reactive::batch(|| {
-        let mut nodes = nodes_signal.get();
-        if let Some(node) = find_node_mut(&mut nodes, id) {
-            if node.children.is_empty() || node.expanded == expanded {
-                return;
-            }
-            node.expanded = expanded;
-            nodes_signal.set(nodes);
-        }
-    });
-}
+// R820 §5.27 §5.50 — the find / toggle / set-expanded flag-store glue
+// that R674–R809 kept inline here was lifted to
+// `pinion_core::widgets::tree_nav` (`find_node_mut` / `toggle_expanded` /
+// `set_expanded_in`) when `hello-virtual-tree` became the 2nd retained
+// flag-on-node consumer. The `apply_tree_key` bridge below replaces the
+// R809 hand-rolled `resolve_tree_key` match; type-ahead stays caller-side
+// per the substrate's purity boundary.
 
 /// R809 §5.22 §5.38 — owner-cache key for this binding's type-ahead
 /// cursor (buffer + last-typed instant). Mirrors `hello-listbox`'s
@@ -437,35 +392,18 @@ fn type_ahead_jump(focused_id: &Signal<Option<String>>, nodes: &[FileNode], key:
     true
 }
 
-/// R673 §5.50 / R809 — apply one key to the reactive [`TreeState`].
-/// Resolves the WAI-ARIA outcome via the pure [`resolve_tree_key`],
-/// writes the resulting signal mutation, and falls through to
-/// [`type_ahead_jump`] for an unrecognised (printable) key.
+/// R673 §5.50 / R809 / R820 — apply one key to the reactive [`TreeState`].
+/// The WAI-ARIA resolve → flag-store bridge is the lifted
+/// [`apply_tree_key`] (R820, shared with `hello-virtual-tree`); an
+/// unrecognised (printable) key falls through to [`type_ahead_jump`],
+/// which stays caller-side per the substrate's purity boundary (the
+/// search cursor is application state).
 fn apply_key_impl(key: &str) -> bool {
     let tree_state = use_tree_state();
-    let nodes = tree_state.nodes.get();
-    let current = tree_state.focused_id.get();
-    let rows = flat_visible(&nodes);
-    match resolve_tree_key(&rows, current.as_deref(), key, NAV_PAGE) {
-        TreeKey::Focus(id) => {
-            tree_state.focused_id.set(Some(id));
-            true
-        }
-        TreeKey::Expand(id) => {
-            set_expanded_in_signal(&tree_state.nodes, &id, true);
-            true
-        }
-        TreeKey::Collapse(id) => {
-            set_expanded_in_signal(&tree_state.nodes, &id, false);
-            true
-        }
-        TreeKey::Toggle(id) => {
-            toggle_expanded_in_signal(&tree_state.nodes, &id);
-            true
-        }
-        TreeKey::Consumed => true,
-        TreeKey::Unhandled => type_ahead_jump(&tree_state.focused_id, &nodes, key),
+    if apply_tree_key(&tree_state.nodes, &tree_state.focused_id, key, NAV_PAGE) {
+        return true;
     }
+    type_ahead_jump(&tree_state.focused_id, &tree_state.nodes.get(), key)
 }
 
 struct TreeViewBinding;
@@ -540,10 +478,10 @@ impl WidgetCore for TreeViewBinding {
     }
 
     /// R674 §5.23 R27 — bridge [`FileTreeRowExternal`]'s `click`
-    /// intent into the shared [`toggle_expanded_in_signal`] sink.
+    /// intent into the lifted [`toggle_expanded`] sink (R820).
     /// Side-effect-only ([[scxml-as-model-update-transient]]) — empty
     /// `Vec<Command>` return; the `Signal::set` write inside
-    /// `toggle_expanded_in_signal` is the mutation.
+    /// `toggle_expanded` is the mutation.
     ///
     /// Reducer arms compare against the dotted wire form
     /// [`FILE_TREE_CLICK_INTENT_TAG`] per
@@ -557,7 +495,7 @@ impl WidgetCore for TreeViewBinding {
             && let IntrospectValue::Text(id) = &intent.payload
         {
             let tree_state = use_tree_state();
-            toggle_expanded_in_signal(&tree_state.nodes, id);
+            toggle_expanded(&tree_state.nodes, id);
         }
         Vec::new()
     }
