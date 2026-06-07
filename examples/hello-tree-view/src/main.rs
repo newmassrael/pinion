@@ -73,7 +73,7 @@
 //! consumers per [[abstraction-needs-second-consumer]]. Click-to-toggle
 //! is already wired (R674 [`TreeRowClickExternal`]).
 
-use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{tree_access_nodes, AccessNode, WidgetA11y};
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -563,75 +563,27 @@ impl WidgetCore for TreeViewBinding {
     }
 }
 
-/// R674 §5.40 — composite row tag the AT-side
-/// [`TreeViewBinding::access_node`] walker emits per visible row.
-/// Same format the paint substrate stamps so the AT NodeId hashes
-/// through the same key as the hit-test target — AT actions on a
-/// row land on the same tag the click router consumes.
-fn tree_row_access_tag(node_id: &str) -> String {
-    format!("{TREE_TAG}#{node_id}")
-}
-
-/// R674 §5.40 / R809.1 — one [`AccessNode`] per visible row, built as a
-/// pure map over the [`flat_visible`] SSOT (R809.1 retired the separate
-/// `walk_access_rows` traversal that had to track the paint / nav order
-/// by hand). Each row carries:
-///
-/// * `role: AriaRole::TreeItem` — AT announces "tree item …".
-/// * `name: label` — accessible name (announced first by the AT).
-/// * `level: depth + 1` — WAI-ARIA 1.2 §6.6.8 one-based depth (root
-///   children → 1, grandchildren → 2, …).
-/// * `position_in_set` / `size_of_set` — WAI-ARIA 1.2 §6.6.9 / §6.6.10
-///   sibling addressing.
-/// * `aria-expanded` on branches — WAI-ARIA 1.2 §6.6.3 disclosure
-///   state (R809.1; leaves omit it). The `expanded` flag rides the
-///   same SSOT row the keyboard model toggles, so the AT state can
-///   never disagree with the painted glyph.
-///
-/// Because it maps [`flat_visible`], the AT announces exactly the row
-/// set the user sees and the keyboard cursor navigates.
-fn access_rows(nodes: &[FileNode]) -> Vec<AccessNode> {
-    flat_visible(nodes)
-        .into_iter()
-        .map(|row| {
-            let node = AccessNode::new(tree_row_access_tag(&row.id), AriaRole::TreeItem)
-                .with_name(row.label)
-                .with_level(row.depth + 1)
-                .with_position_in_set(row.position_in_set)
-                .with_size_of_set(row.size_of_set);
-            if row.has_children {
-                node.with_expanded(row.expanded)
-            } else {
-                node
-            }
-        })
-        .collect()
-}
-
 impl WidgetA11y for TreeViewBinding {
+    /// R674 §5.40 / R812 §5.40 §5.50 — the WAI-ARIA `tree` + per-row
+    /// `treeitem` semantic tree, built through the lifted
+    /// [`tree_access_nodes`](pinion_a11y::tree_access_nodes) substrate
+    /// (R812 — `hello-tree-view` is its first consumer; the
+    /// `hello-dock-panels` inspector is the second). The root advertises
+    /// the `Tree` role on the focusable [`ROOT_BTN_TAG`] External and
+    /// references every visible row; each row (under the [`TREE_TAG`]
+    /// composite prefix the paint substrate stamps) carries the WAI-ARIA
+    /// 1.2 hierarchical axes (level / posinset / setsize / aria-expanded)
+    /// the builder derives from the [`flat_visible`] SSOT — so the AT
+    /// announces exactly the row set the user sees and the keyboard cursor
+    /// navigates. This tree carries no selection model, so `selected_id`
+    /// is `None`.
     fn access_node(
         _state: &<Self as WidgetCore>::State,
         _focused: Option<&str>,
     ) -> Vec<AccessNode> {
-        // R674 §5.40 — root advertises Tree role + lists every
-        // visible row as a child so the AT-side topology mirrors the
-        // paint topology. Each child row carries hierarchical axes
-        // (level / posinset / setsize) per
-        // WAI-ARIA 1.2 §6.6.8 / §6.6.9 / §6.6.10 — required for
-        // custom-widget roles
-        // because AT does NOT infer hierarchy from DOM nesting on
-        // `role="treeitem"`.
         let tree_state = use_tree_state();
         let nodes = tree_state.nodes.get();
-
-        let rows = access_rows(&nodes);
-        let mut root = AccessNode::new(ROOT_BTN_TAG, AriaRole::Tree);
-        for row in &rows {
-            root = root.with_child(row.tag.clone());
-        }
-        let mut out = vec![root];
-        out.extend(rows);
-        out
+        tree_access_nodes(ROOT_BTN_TAG, TREE_TAG, None, &flat_visible(&nodes), None)
     }
 }
 
@@ -674,15 +626,24 @@ mod r675_substrate_dotted_wire_test {
 }
 
 #[cfg(test)]
-mod r674_per_row_access_node_tests {
-    //! R674 §5.40 / R809.1 — per-row [`AriaRole::TreeItem`]
-    //! [`AccessNode`] emission contract. Tests the [`access_rows`]
-    //! builder directly (R809.1: a pure map over the `flat_visible`
-    //! SSOT) so the WAI-ARIA 1.2 hierarchical axes (level / posinset /
-    //! setsize / aria-expanded) are verified without the Owner cache.
+mod r812_tree_access_node_lockstep {
+    //! R812 §5.40 §5.50 — binding-side pin that the lifted
+    //! [`tree_access_nodes`](pinion_a11y::tree_access_nodes) builder, fed
+    //! this binding's tags, emits row composite tags identical to the
+    //! paint substrate's
+    //! [`composite_row_tag`](pinion_widget_paint::tree_view::composite_row_tag)
+    //! — the cross-crate format lockstep that can only be verified here
+    //! (the example depends on both `pinion-a11y` and `pinion-widget-paint`).
+    //! AT `NodeId`s hash through the same key the hit-test walker uses, so
+    //! AT-side `Click` actions resolve to the same row the click router
+    //! consumes. The WAI-ARIA hierarchical-axis coverage (level / posinset
+    //! / setsize / aria-expanded / aria-selected) moved with the builder to
+    //! `pinion_a11y::tree_view`'s own tests when it was lifted at R812.
 
-    use super::{access_rows, tree_row_access_tag, FileNode, TREE_TAG};
-    use pinion_a11y::AriaRole;
+    use super::{FileNode, ROOT_BTN_TAG, TREE_TAG};
+    use pinion_a11y::{tree_access_nodes, AriaRole};
+    use pinion_core::widgets::tree_nav::flat_visible;
+    use pinion_widget_paint::tree_view::composite_row_tag;
 
     fn sample_tree() -> Vec<FileNode> {
         vec![
@@ -690,15 +651,7 @@ mod r674_per_row_access_node_tests {
                 "src",
                 "src",
                 true,
-                vec![
-                    FileNode::leaf("src/main.rs", "main.rs"),
-                    FileNode::branch(
-                        "src/widgets",
-                        "widgets",
-                        true,
-                        vec![FileNode::leaf("src/widgets/mod.rs", "mod.rs")],
-                    ),
-                ],
+                vec![FileNode::leaf("src/main.rs", "main.rs")],
             ),
             FileNode::branch(
                 "docs",
@@ -710,167 +663,19 @@ mod r674_per_row_access_node_tests {
     }
 
     #[test]
-    fn r674_walk_emits_one_node_per_visible_row_in_paint_order() {
-        // src (expanded) → src/main.rs, src/widgets (expanded) →
-        // src/widgets/mod.rs ; docs (collapsed). 5 visible rows.
-        let nodes = sample_tree();
-        let out = access_rows(&nodes);
-        let tags: Vec<&str> = out.iter().map(|n| n.tag.as_str()).collect();
-        assert_eq!(
-            tags,
-            vec![
-                "file_tree#src",
-                "file_tree#src/main.rs",
-                "file_tree#src/widgets",
-                "file_tree#src/widgets/mod.rs",
-                "file_tree#docs",
-            ],
-            "paint order = depth-first preorder over visible rows",
-        );
-    }
-
-    #[test]
-    fn r674_all_rows_carry_tree_item_role() {
-        let nodes = sample_tree();
-        let out = access_rows(&nodes);
-        for node in &out {
-            assert_eq!(
-                node.role,
-                AriaRole::TreeItem,
-                "per-row tag {} must report treeitem role",
-                node.tag,
-            );
+    fn r812_root_uses_focusable_tag_rows_use_paint_composite_format() {
+        // hello-tree-view's focusable element is the invisible-root
+        // External (ROOT_BTN_TAG), distinct from the painted tree
+        // container's row prefix (TREE_TAG) — the builder takes both.
+        let rows = flat_visible(&sample_tree());
+        let out = tree_access_nodes(ROOT_BTN_TAG, TREE_TAG, None, &rows, None);
+        assert_eq!(out[0].tag, ROOT_BTN_TAG, "Tree root node = the focusable External");
+        assert_eq!(out[0].role, AriaRole::Tree);
+        // Every row tag matches the paint substrate's composite form, so
+        // the AT NodeId and the hit-test target hash through one key.
+        for (node, row) in out[1..].iter().zip(&rows) {
+            assert_eq!(node.tag, composite_row_tag(TREE_TAG, &row.id));
+            assert_eq!(node.role, AriaRole::TreeItem);
         }
-    }
-
-    #[test]
-    fn r674_level_is_depth_plus_one_one_based() {
-        // WAI-ARIA 1.2 §6.6.8 — root children are at level 1, not 0.
-        let nodes = sample_tree();
-        let out = access_rows(&nodes);
-        // src, docs → level 1
-        // src/main.rs, src/widgets → level 2
-        // src/widgets/mod.rs → level 3
-        let by_tag: std::collections::HashMap<&str, Option<u32>> = out
-            .iter()
-            .map(|n| (n.tag.as_str(), n.level))
-            .collect();
-        assert_eq!(by_tag["file_tree#src"], Some(1));
-        assert_eq!(by_tag["file_tree#docs"], Some(1));
-        assert_eq!(by_tag["file_tree#src/main.rs"], Some(2));
-        assert_eq!(by_tag["file_tree#src/widgets"], Some(2));
-        assert_eq!(by_tag["file_tree#src/widgets/mod.rs"], Some(3));
-    }
-
-    #[test]
-    fn r674_position_in_set_is_sibling_index_plus_one() {
-        // WAI-ARIA 1.2 §6.6.9 — one-based; "item N of M" sentence
-        // has N = position_in_set.
-        let nodes = sample_tree();
-        let out = access_rows(&nodes);
-        let by_tag: std::collections::HashMap<&str, Option<u32>> = out
-            .iter()
-            .map(|n| (n.tag.as_str(), n.position_in_set))
-            .collect();
-        // Root: src is 1st of 2, docs is 2nd of 2.
-        assert_eq!(by_tag["file_tree#src"], Some(1));
-        assert_eq!(by_tag["file_tree#docs"], Some(2));
-        // Under src: main.rs is 1st of 2, widgets is 2nd of 2.
-        assert_eq!(by_tag["file_tree#src/main.rs"], Some(1));
-        assert_eq!(by_tag["file_tree#src/widgets"], Some(2));
-        // Under src/widgets: mod.rs is 1st of 1.
-        assert_eq!(by_tag["file_tree#src/widgets/mod.rs"], Some(1));
-    }
-
-    #[test]
-    fn r674_size_of_set_is_sibling_count() {
-        // WAI-ARIA 1.2 §6.6.10 — total siblings in the parent's
-        // visible set. Collapsed branches contribute to the parent
-        // count (the branch itself is visible).
-        let nodes = sample_tree();
-        let out = access_rows(&nodes);
-        let by_tag: std::collections::HashMap<&str, Option<u32>> = out
-            .iter()
-            .map(|n| (n.tag.as_str(), n.size_of_set))
-            .collect();
-        // Root has 2 siblings (src, docs).
-        assert_eq!(by_tag["file_tree#src"], Some(2));
-        assert_eq!(by_tag["file_tree#docs"], Some(2));
-        // src has 2 children siblings (main.rs, widgets).
-        assert_eq!(by_tag["file_tree#src/main.rs"], Some(2));
-        assert_eq!(by_tag["file_tree#src/widgets"], Some(2));
-        // src/widgets has 1 child sibling (mod.rs).
-        assert_eq!(by_tag["file_tree#src/widgets/mod.rs"], Some(1));
-    }
-
-    #[test]
-    fn r674_name_mirrors_label() {
-        // AT-side announcement = the visible label, by convention
-        // — keeps the AT user and the sighted user reading the same
-        // identifier.
-        let nodes = sample_tree();
-        let out = access_rows(&nodes);
-        let by_tag: std::collections::HashMap<&str, Option<&str>> = out
-            .iter()
-            .map(|n| (n.tag.as_str(), n.name.as_deref()))
-            .collect();
-        assert_eq!(by_tag["file_tree#src"], Some("src"));
-        assert_eq!(by_tag["file_tree#src/main.rs"], Some("main.rs"));
-        assert_eq!(by_tag["file_tree#src/widgets/mod.rs"], Some("mod.rs"));
-        assert_eq!(by_tag["file_tree#docs"], Some("docs"));
-    }
-
-    #[test]
-    fn r674_collapsed_branch_hides_children_from_at_tree() {
-        // docs is collapsed; docs/README.md must NOT appear in the
-        // visible row sequence (AT announces what the user sees).
-        let nodes = sample_tree();
-        let out = access_rows(&nodes);
-        let tags: Vec<&str> = out.iter().map(|n| n.tag.as_str()).collect();
-        assert!(
-            !tags.contains(&"file_tree#docs/README.md"),
-            "collapsed branch must hide descendants from the visible row set",
-        );
-        // But docs itself stays visible.
-        assert!(tags.contains(&"file_tree#docs"));
-    }
-
-    #[test]
-    fn r674_empty_tree_emits_no_rows() {
-        let nodes: Vec<FileNode> = Vec::new();
-        let out = access_rows(&nodes);
-        assert!(out.is_empty(), "empty tree contributes zero TreeItem rows");
-    }
-
-    #[test]
-    fn r809_1_branches_carry_aria_expanded_leaves_omit_it() {
-        // WAI-ARIA 1.2 §6.6.3 — an expandable treeitem must expose
-        // aria-expanded; a leaf must omit it. R809.1 sources the flag
-        // from the same flat_visible row the keyboard toggles, so the
-        // AT state can never disagree with the painted disclosure glyph.
-        let nodes = sample_tree();
-        let out = access_rows(&nodes);
-        let by_tag: std::collections::HashMap<&str, Option<bool>> =
-            out.iter().map(|n| (n.tag.as_str(), n.expanded)).collect();
-        // src is an expanded branch; src/widgets is an expanded branch;
-        // docs is a collapsed branch.
-        assert_eq!(by_tag["file_tree#src"], Some(true));
-        assert_eq!(by_tag["file_tree#src/widgets"], Some(true));
-        assert_eq!(by_tag["file_tree#docs"], Some(false));
-        // src/main.rs is a leaf — aria-expanded omitted.
-        assert_eq!(by_tag["file_tree#src/main.rs"], None);
-        assert_eq!(by_tag["file_tree#src/widgets/mod.rs"], None);
-    }
-
-    #[test]
-    fn r674_tree_row_access_tag_uses_composite_format() {
-        // Lockstep with `composite_row_tag` in the paint substrate —
-        // AT NodeId hashes through the same key the hit-test walker
-        // uses, so AT-side `Click` actions resolve to the same row
-        // the click router consumes.
-        assert_eq!(
-            tree_row_access_tag("src/lib.rs"),
-            format!("{TREE_TAG}#src/lib.rs"),
-        );
     }
 }

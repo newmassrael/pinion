@@ -32483,6 +32483,62 @@
         "hello-multi-window inspector = future 3rd tree-nav consumer (carried from R811)"
       ]
     },
+    "R812": {
+      "decision_summary": "R812 §5.40 §5.50 §5.27 — lift WAI-ARIA tree/treeitem AccessNode builder (tree_access_nodes) into pinion-a11y and adopt it in hello-tree-view + the hello-dock-panels DevTools inspector",
+      "changes_bullets": [
+        "Add pinion_a11y::tree_view::tree_access_nodes: role=tree root + per-row role=treeitem",
+        "Builder derives WAI-ARIA level/posinset/setsize/aria-expanded from the flat_visible SSOT",
+        "selected_id maps to aria-selected on the cursor row; None leaves a tree with no selection",
+        "Tree was the only interactive family with no lifted a11y node builder (the R758 gap)",
+        "Migrate hello-tree-view access_node to the builder; drop hand-rolled access_rows + tag fn",
+        "Adopt in hello-dock-panels inspector: access_node + composite active-descendant",
+        "Clears the R811 inspector AT-tree-nodes-0 carry; keyboard nav now has an AT counterpart",
+        "Port R674/R809.1 axis tests to the substrate; keep one binding-side composite lockstep pin"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 166 pass (13 new tree_view tests)",
+        "cargo test -p hello-tree-view -p hello-dock-panels: green (a11y migration behaviour-preserving)",
+        "cargo clippy pedantic -D clean on pinion-a11y + both example consumers",
+        "demo r811 inspector keyboard PASS (31 assert); r809 tree keyboard; r674 clickable; r671 inspector"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.50",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "hello-multi-window inspector = tree_access_nodes 3rd consumer, blocked on per-window access_node",
+        "V::access_node is one global set across windows; a torn-off dock panel would leak inspector nodes",
+        "broad hello-dock-panels a11y (viewport button etc.) stays a pre-existing gap (additive, not R812)"
+      ],
+      "publishable_decision_summary": "R812 §5.40 §5.50 §5.27 — lift WAI-ARIA tree/treeitem AccessNode builder (tree_access_nodes) into pinion-a11y and adopt it in hello-tree-view + the hello-dock-panels DevTools inspector",
+      "publishable_changes_bullets": [
+        "Add pinion_a11y::tree_view::tree_access_nodes: role=tree root + per-row role=treeitem",
+        "Builder derives WAI-ARIA level/posinset/setsize/aria-expanded from the flat_visible SSOT",
+        "selected_id maps to aria-selected on the cursor row; None leaves a tree with no selection",
+        "Tree was the only interactive family with no lifted a11y node builder (the R758 gap)",
+        "Migrate hello-tree-view access_node to the builder; drop hand-rolled access_rows + tag fn",
+        "Adopt in hello-dock-panels inspector: access_node + composite active-descendant",
+        "Clears the R811 inspector AT-tree-nodes-0 carry; keyboard nav now has an AT counterpart",
+        "Port R674/R809.1 axis tests to the substrate; keep one binding-side composite lockstep pin"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 166 pass (13 new tree_view tests)",
+        "cargo test -p hello-tree-view -p hello-dock-panels: green (a11y migration behaviour-preserving)",
+        "cargo clippy pedantic -D clean on pinion-a11y + both example consumers",
+        "demo r811 inspector keyboard PASS (31 assert); r809 tree keyboard; r674 clickable; r671 inspector"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.50",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "hello-multi-window inspector = tree_access_nodes 3rd consumer, blocked on per-window access_node",
+        "V::access_node is one global set across windows; a torn-off dock panel would leak inspector nodes",
+        "broad hello-dock-panels a11y (viewport button etc.) stays a pre-existing gap (additive, not R812)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

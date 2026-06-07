@@ -87,7 +87,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::time::Instant;
 
-use pinion_a11y::WidgetA11y;
+use pinion_a11y::{tree_access_nodes, AccessFocus, AccessNode, WidgetA11y};
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -114,7 +114,8 @@ use pinion_widget_paint::splitter::{
     view_splitter, SplitterExternal, SplitterOrientation, SplitterStyle,
 };
 use pinion_widget_paint::tree_view::{
-    view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus, TreeViewStyle,
+    composite_row_tag, view_tree_focused, TreeItem, TreeRowClickExternal, TreeViewFocus,
+    TreeViewStyle,
 };
 
 use pinion_widget_paint::state_layer::{HOVER, PRESSED};
@@ -180,6 +181,9 @@ const LEFT_SPLITTER_TAG: &str = "left_splitter";
 /// `hello-multi-window` inspector. Composite per-row tags are
 /// `inspector_tree#{path}` per the R51.42 substrate.
 const INSPECTOR_TREE_TAG: &str = "inspector_tree";
+/// R812 §5.40 — accessible name for the inspector's `role=tree` root, so a
+/// screen reader announces the tree by purpose before its rows.
+const INSPECTOR_TREE_NAME: &str = "Scene inspector";
 /// Property pane root tag — outermost Container around the field-row
 /// stack. AI clients walk via `scene/snapshot {path:
 /// "/property_pane"}` to read the pane's content.
@@ -1076,7 +1080,58 @@ impl WidgetCore for DockPanelsView {
     }
 }
 
-impl WidgetA11y for DockPanelsView {}
+impl WidgetA11y for DockPanelsView {
+    /// R812 §5.40 §5.50 §5.27 — the `DevTools` inspector tree's WAI-ARIA
+    /// `tree` + `treeitem` semantic tree, built through the lifted
+    /// [`tree_access_nodes`](pinion_a11y::tree_access_nodes) substrate (the
+    /// second consumer; `hello-tree-view` is the first). This clears the
+    /// R811 inspector "AT-tree nodes 0" carry: the R811 keyboard nav now
+    /// has an AT counterpart, so a screen reader announces "tree item,
+    /// <label>, level N, M of K, expanded" as the cursor moves. The
+    /// selection-follows-focus row ([`use_selected_path`]) carries
+    /// `aria-selected`; the expand state rides the same [`flat_visible`]
+    /// SSOT the painted glyph and keyboard model read, so AT state can
+    /// never disagree with the screen.
+    ///
+    /// Emitted for the single docked main window (the default topology).
+    /// `V::access_node` is one global set shared across windows, so a
+    /// torn-off floating panel would also receive these nodes — the
+    /// per-window `access_node` axis is a separate substrate gap (round
+    /// carry), not introduced here for the default docked inspector.
+    fn access_node(state: &Self::State, _focused: Option<&str>) -> Vec<AccessNode> {
+        let theme = use_theme(THEME_TAG).theme_animated();
+        let items = inspector_tree_items(*state, &theme);
+        let rows = flat_visible(&items);
+        let selected = use_selected_path().get();
+        tree_access_nodes(
+            INSPECTOR_TREE_TAG,
+            INSPECTOR_TREE_TAG,
+            Some(INSPECTOR_TREE_NAME),
+            &rows,
+            selected.as_deref(),
+        )
+    }
+
+    /// R812 §5.40 §5.27 — when the inspector tree owns the keyboard tab
+    /// stop, AT focus stays on the tree root and `aria-activedescendant`
+    /// names the selection-follows-focus cursor row (the WAI-ARIA
+    /// roving-tabindex tree model: one tab stop, a moving active
+    /// descendant). Any other focus (the viewport button) is atomic.
+    fn access_focus_target(
+        _state: &Self::State,
+        focused: Option<&str>,
+    ) -> Option<AccessFocus> {
+        if focused == Some(INSPECTOR_TREE_TAG)
+            && let Some(id) = use_selected_path().get()
+        {
+            return Some(AccessFocus::composite(
+                INSPECTOR_TREE_TAG,
+                composite_row_tag(INSPECTOR_TREE_TAG, &id),
+            ));
+        }
+        focused.map(AccessFocus::atomic)
+    }
+}
 
 impl WidgetView for DockPanelsView {
     type Renderer = HelloDockPanelsRenderer;
