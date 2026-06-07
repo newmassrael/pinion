@@ -99,18 +99,31 @@ const BALL_DRIVER_CACHE_KEY: &str = "hello_immediate_intent.driver";
 /// the reducer increments and the view fn reads.
 const BOUNCE_COUNT_CACHE_KEY: &str = "hello_immediate_intent.bounce_count";
 
+/// (R830 §5.20) `Owner::cache` slot key for the retained *click* counter
+/// — the reducer increments it from `ball.click` intents the driver emits
+/// on [`ImmediateMode::on_pointer_down`] (the R830 input channel). It
+/// exercises the R830 paused-window intent-drain path: a click on a
+/// paused window must still route its intent to `V::update`.
+const CLICK_COUNT_CACHE_KEY: &str = "hello_immediate_intent.click_count";
+
 /// (R827 §5.20) The unprefixed intent kind the driver emits on a wall
 /// reflection. The runtime walk prefixes it with [`BALL_NODE_TAG`].
 const BOUNCE_EVENT: &str = "bounce";
 
+/// (R830 §5.20) The unprefixed intent kind the driver emits on a pointer
+/// press, prefixed with [`BALL_NODE_TAG`] → `ball.click`.
+const CLICK_EVENT: &str = "click";
+
 /// (R827 §5.20 R22) Tags on the paint tree. [`BALL_NODE_TAG`] is the
 /// immediate-mode node's §5.20 intent tag (so its drained `bounce`
 /// becomes `ball.bounce`); [`DISMISS_BTN_TAG`] is the retained Button's
-/// tag (`<BallView as WidgetCore>::tag()`); [`COUNT_READOUT_TAG`] tags
-/// the retained text the demo reads; [`VIEW_TAG`] tags the root.
+/// tag (`<BallView as WidgetCore>::tag()`); [`COUNT_READOUT_TAG`] /
+/// [`CLICK_READOUT_TAG`] tag the retained text the demo reads;
+/// [`VIEW_TAG`] tags the root.
 const BALL_NODE_TAG: &str = "ball";
 const DISMISS_BTN_TAG: &str = "dismiss_btn";
 const COUNT_READOUT_TAG: &str = "bounce_readout";
+const CLICK_READOUT_TAG: &str = "click_readout";
 const VIEW_TAG: &str = "ball_view";
 
 /// (R827 §5.20 R22) The fully-prefixed wire tag the reducer matches —
@@ -118,6 +131,9 @@ const VIEW_TAG: &str = "ball_view";
 /// `intent_tag!` SSOT so the dotted form cannot drift from the node tag
 /// / event-kind constants. [[intent-tag-dotted-wire-form]].
 const BOUNCE_INTENT_TAG: &str = pinion_core::intent_tag!("ball", "bounce");
+
+/// (R830 §5.20 R22) The fully-prefixed `ball.click` wire tag.
+const CLICK_INTENT_TAG: &str = pinion_core::intent_tag!("ball", "click");
 
 const HEADER_TEXT: &str = "Bouncing ball (R827 immediate -> retained intent)";
 const BTN_LABEL: &str = "Dismiss";
@@ -147,6 +163,13 @@ struct BouncingBallDriver {
     /// converge — a live cross-check that the R827 write bridge and the
     /// R828 read channel observe the same events.
     bounces: u32,
+    /// R830 §5.15 — viewport-local position of the most recent pointer
+    /// press the framework forwarded to [`ImmediateMode::on_pointer_down`]
+    /// (the player → game input channel), or `None` before the first
+    /// click. Surfaced through the introspect channel so the demo
+    /// verifies the coordinate translation, and used by `on_pointer_down`
+    /// to flip the ball's direction (a click reverses travel).
+    last_click: Option<(f32, f32)>,
     /// §5.20 intents emitted during the current frame's [`tick`], drained
     /// by the runtime immediately after via [`drain_intents`]. One
     /// `bounce` per wall reflection.
@@ -167,6 +190,7 @@ impl Default for BouncingBallDriver {
             pos: 0.0,
             vel: BALL_SPEED,
             bounces: 0,
+            last_click: None,
             pending: Vec::new(),
             fill: Color::default(),
             track: Color::default(),
@@ -239,6 +263,23 @@ impl ImmediateMode for BouncingBallDriver {
             sink(intent);
         }
     }
+
+    // R830 §2 #4 §5.15 — player → game pointer input. A click reverses
+    // the ball's travel direction (a trivially-observable game response)
+    // and records the viewport-local press point so the demo can verify
+    // the framework forwarded the coordinates correctly. `(x, y)` are
+    // viewport-local logical pixels — the same space `paint` draws in.
+    //
+    // R830 §5.20 — it ALSO emits a `click` §5.20 intent: a press is a
+    // second intent producer independent of `tick`, so this exercises the
+    // paused-window intent-drain path (a click on a paused window must
+    // still route its intent to the retained `V::update`).
+    fn on_pointer_down(&mut self, x: f32, y: f32) {
+        self.vel = -self.vel;
+        self.last_click = Some((x, y));
+        self.pending
+            .push(Intent::new_static(CLICK_EVENT, IntrospectValue::Null));
+    }
 }
 
 /// R828 §2 #4 §5.12 — the driver's §5.15 item 8 introspection surface.
@@ -250,7 +291,14 @@ impl ImmediateMode for BouncingBallDriver {
 /// timer-driven rather than RPC-driven).
 impl ExternalIntrospect for BouncingBallDriver {
     fn schema(&self) -> IntrospectSchema {
-        IntrospectSchema::new(&[("pos", "float"), ("velocity", "float"), ("bounces", "int")])
+        IntrospectSchema::new(&[
+            ("pos", "float"),
+            ("velocity", "float"),
+            ("bounces", "int"),
+            ("clicked", "bool"),
+            ("last_click_x", "float"),
+            ("last_click_y", "float"),
+        ])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
@@ -258,6 +306,18 @@ impl ExternalIntrospect for BouncingBallDriver {
             "pos" => Some(IntrospectValue::Float(f64::from(self.pos))),
             "velocity" => Some(IntrospectValue::Float(f64::from(self.vel))),
             "bounces" => Some(IntrospectValue::Int(i64::from(self.bounces))),
+            // R830 — the forwarded player-input state (Null before the
+            // first click, so the parametric paths are still schema-
+            // declared but resolve to "no value yet").
+            "clicked" => Some(IntrospectValue::Bool(self.last_click.is_some())),
+            "last_click_x" => Some(
+                self.last_click
+                    .map_or(IntrospectValue::Null, |(x, _)| IntrospectValue::Float(f64::from(x))),
+            ),
+            "last_click_y" => Some(
+                self.last_click
+                    .map_or(IntrospectValue::Null, |(_, y)| IntrospectValue::Float(f64::from(y))),
+            ),
             _ => None,
         }
     }
@@ -290,6 +350,17 @@ fn use_bounce_count() -> Rc<Signal<u32>> {
     owner.cache(BOUNCE_COUNT_CACHE_KEY, || Signal::new(0_u32))
 }
 
+/// (R830 §5.20) [`Owner::cache`] hook for the retained *click* counter.
+/// The reducer increments it from `ball.click` intents the driver emits
+/// on a pointer press (R830 input → R827 intent bridge), proving the
+/// paused-window intent-drain path: a click on a paused window still
+/// routes its intent to `V::update`.
+fn use_click_count() -> Rc<Signal<u32>> {
+    let owner =
+        Owner::current().expect("use_click_count must run inside Owner::run wrap (view / reducer)");
+    owner.cache(CLICK_COUNT_CACHE_KEY, || Signal::new(0_u32))
+}
+
 /// view-fn (§6.3) — pure sync mapping `(ButtonState) -> Scene`.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ButtonState, _frame: &Frame) -> Scene {
@@ -312,6 +383,9 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     // Read the retained bounce count the reducer has accumulated from
     // immediate-mode `ball.bounce` intents — the bridge's observable.
     let bounces = use_bounce_count().get();
+    // R830 — the retained click count, accumulated from `ball.click`
+    // intents the driver emits on a pointer press.
+    let clicks = use_click_count().get();
 
     let header = Scene::Text(TextNode::styled(
         HEADER_TEXT,
@@ -340,6 +414,17 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
                 .with_fg(on_surface),
         )
         .with_tag(COUNT_READOUT_TAG),
+    );
+
+    let click_readout = Scene::Text(
+        TextNode::styled(
+            format!("Clicks: {clicks}"),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(BODY_FONT_PX)
+                .with_fg(on_surface_muted),
+        )
+        .with_tag(CLICK_READOUT_TAG),
     );
 
     // Dismiss Button — `ButtonState` mapped to M3 surface tier +
@@ -374,7 +459,7 @@ fn view(state: ButtonState, _frame: &Frame) -> Scene {
     );
 
     Scene::Container(
-        ContainerNode::new(vec![header, canvas, readout, button])
+        ContainerNode::new(vec![header, canvas, readout, click_readout, button])
             .with_tag(VIEW_TAG)
             .with_style(BoxStyle::filled(surface))
             .with_layout(
@@ -440,18 +525,26 @@ impl BallView {
         pinion_core::widgets::aria::apply_aria_activate(scene, focused, key, Self::tag())
     }
 
-    /// R827 §2 #4 §5.20 — the immediate -> retained reducer. Every
-    /// `ball.bounce` intent the immediate-mode driver emitted (drained by
-    /// the runtime and routed here through `route_intent_through_update`)
-    /// bumps the retained bounce counter. Runs under `root_owner`, so
-    /// [`use_bounce_count`] resolves the same Signal the view fn reads.
-    /// Returns no `Command`s — the side effect is the reactive Signal
-    /// mutation, which marks the owner dirty so the next frame re-renders
-    /// the updated `Bounces:` readout.
+    /// R827 / R830 §2 #4 §5.20 — the immediate -> retained reducer. Each
+    /// `ball.bounce` intent (driver wall reflection) bumps the retained
+    /// bounce counter; each `ball.click` intent (driver pointer press,
+    /// R830 input) bumps the retained click counter. Both are drained by
+    /// the runtime and routed here through `route_intent_through_update`.
+    /// Runs under `root_owner`, so the `use_*_count` Signals resolve the
+    /// same instances the view fn reads. Returns no `Command`s — the side
+    /// effect is the reactive Signal mutation, which marks the owner dirty
+    /// so the next frame re-renders the updated readouts.
     fn update(_state: ButtonState, intent: &Intent) -> Vec<pinion_core::command::Command> {
-        if intent.tag_str() == BOUNCE_INTENT_TAG {
-            let count = use_bounce_count();
-            count.set(count.get() + 1);
+        match intent.tag_str() {
+            BOUNCE_INTENT_TAG => {
+                let count = use_bounce_count();
+                count.set(count.get() + 1);
+            }
+            CLICK_INTENT_TAG => {
+                let count = use_click_count();
+                count.set(count.get() + 1);
+            }
+            _ => {}
         }
         Vec::new()
     }
@@ -572,10 +665,18 @@ mod r827_immediate_intent_tests {
         assert!(matches!(intro.query("pos"), Some(IntrospectValue::Float(_))));
         assert!(matches!(intro.query("velocity"), Some(IntrospectValue::Float(_))));
         assert_eq!(intro.query("ghost"), None);
-        // Schema declares exactly the three queryable fields.
+        // Schema declares the simulation fields plus the R830 forwarded-
+        // input fields.
         assert_eq!(
             intro.schema().fields,
-            &[("pos", "float"), ("velocity", "float"), ("bounces", "int")],
+            &[
+                ("pos", "float"),
+                ("velocity", "float"),
+                ("bounces", "int"),
+                ("clicked", "bool"),
+                ("last_click_x", "float"),
+                ("last_click_y", "float"),
+            ],
         );
     }
 
@@ -587,6 +688,49 @@ mod r827_immediate_intent_tests {
             intro.intervene("pos", IntrospectValue::Float(0.5)),
             Err(InterveneError::ReadOnly),
         ));
+    }
+
+    #[test]
+    fn r830_on_pointer_down_reverses_direction_and_records_click() {
+        let mut driver = BouncingBallDriver::default();
+        let v0 = driver.vel;
+        assert!(driver.last_click.is_none(), "no click before first press");
+        driver.on_pointer_down(12.5, 7.0);
+        // A click reverses travel: vel == -v0 (so vel + v0 == 0).
+        assert!((driver.vel + v0).abs() < 1e-6, "click must reverse velocity");
+        let (lx, ly) = driver.last_click.expect("click recorded");
+        assert!((lx - 12.5).abs() < 1e-6 && (ly - 7.0).abs() < 1e-6, "viewport-local coords stored");
+    }
+
+    #[test]
+    fn r830_on_pointer_down_emits_click_intent() {
+        // R830 — a press is an intent producer independent of `tick`; the
+        // emitted `click` (prefixed `ball.click`) is what the paused
+        // intent-drain fix routes to the reducer.
+        let mut driver = BouncingBallDriver::default();
+        driver.on_pointer_down(1.0, 1.0);
+        let mut drained: Vec<Intent> = Vec::new();
+        driver.drain_intents(&mut |i| drained.push(i));
+        assert_eq!(drained.len(), 1, "one press -> one click intent");
+        assert_eq!(drained[0].tag_str(), CLICK_EVENT);
+        assert_eq!(CLICK_INTENT_TAG, "ball.click");
+    }
+
+    #[test]
+    fn r830_introspect_surfaces_forwarded_click() {
+        let mut driver = BouncingBallDriver::default();
+        // Null / false before the first press (borrow scoped so the
+        // mutating press below can take `&mut driver`).
+        {
+            let intro = driver.introspect().expect("opt-in");
+            assert_eq!(intro.query("clicked"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(intro.query("last_click_x"), Some(IntrospectValue::Null));
+        }
+        driver.on_pointer_down(40.0, 18.0);
+        let intro = driver.introspect().expect("opt-in");
+        assert_eq!(intro.query("clicked"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(intro.query("last_click_x"), Some(IntrospectValue::Float(40.0)));
+        assert_eq!(intro.query("last_click_y"), Some(IntrospectValue::Float(18.0)));
     }
 
     #[test]

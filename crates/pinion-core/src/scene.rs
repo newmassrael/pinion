@@ -220,6 +220,39 @@ impl Scene {
         }
     }
 
+    /// R830 §2 #4 §5.15 — immediate-mode peer of
+    /// [`find_external_with_tag`](Self::find_external_with_tag): resolve
+    /// the [`ImmediateModeNode`] carrying `target` as its §5.20 tag. Used
+    /// by the shell to forward a resolved pointer press to the addressed
+    /// game driver (the node lives only in the paint scene, so the shell
+    /// walks the *paint* scene with this — see
+    /// [[state-scene-vs-paint-scene-introspect]]). Returns the node (not
+    /// the driver) so the caller reads [`ImmediateModeNode::viewport`]
+    /// for viewport-local coordinate translation and `borrow_mut`s the
+    /// shared handle to dispatch [`ImmediateMode::on_pointer_down`].
+    #[must_use]
+    pub fn find_immediate_with_tag(&self, target: &str) -> Option<&ImmediateModeNode> {
+        match self {
+            Scene::ImmediateModeNode(n) => {
+                if n.tag.as_deref() == Some(target) {
+                    Some(n)
+                } else {
+                    None
+                }
+            }
+            Scene::Container(c) => {
+                c.children.iter().find_map(|s| s.find_immediate_with_tag(target))
+            }
+            Scene::Scroll(s) => s.content.find_immediate_with_tag(target),
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_)
+            | Scene::External(_) => None,
+        }
+    }
+
     /// (R55.D.5 §5.45) Resolve to the substrate's *primary* External
     /// — the first [`ExternalNode`] reached by a depth-first
     /// pre-order walk. Returns `Some(self)` directly for the
@@ -2470,6 +2503,25 @@ pub trait ImmediateMode: core::fmt::Debug {
     /// nothing on the frames a driver emits no intent.
     fn drain_intents(&mut self, _sink: &mut dyn FnMut(crate::intent::Intent)) {}
 
+    /// R830 §2 #4 §5.15 — pointer-press input forwarding (§5.15 item 5).
+    /// The framework calls this when a pointer press resolves to this
+    /// driver's [`ImmediateModeNode`] viewport, handing VIEWPORT-LOCAL
+    /// logical-pixel coordinates: `(0, 0)` is the viewport top-left, the
+    /// SAME coordinate space [`paint`](Self::paint) draws in — so a
+    /// driver hit-tests a press against the geometry it rendered without
+    /// any transform bookkeeping. This is the player → game input
+    /// channel completing the §2 #4 immediate-mode I/O surface (time via
+    /// [`tick`](Self::tick), output via [`paint`](Self::paint), game →
+    /// app via [`drain_intents`](Self::drain_intents), observe via
+    /// [`introspect`](Self::introspect), and now player → game here).
+    ///
+    /// Default no-op so rendering-only drivers (the R681 first consumer)
+    /// compile unchanged. Pointer-move / release forwarding are additive
+    /// future methods (the trait grows as concrete consumers surface the
+    /// need, mirroring the [`ImmediatePainter`] surface), so a driver
+    /// that only cares about discrete clicks overrides just this.
+    fn on_pointer_down(&mut self, _x: f32, _y: f32) {}
+
     /// (R681 §5.15 echo) Surface the [`ExternalIntrospect`] view of
     /// this driver, when the author opts in. Default returns `None`;
     /// override with `Some(self)` after `impl ExternalIntrospect for
@@ -4445,6 +4497,30 @@ mod tests {
             container.primary_external().and_then(|n| n.tag.as_deref()),
             Some("real_ext"),
         );
+    }
+
+    #[test]
+    fn r830_find_immediate_with_tag_resolves_driver_and_skips_external() {
+        // R830 §5.15 — the immediate-mode peer of find_external_with_tag.
+        // Resolves an ImmediateModeNode by tag (through Container descent)
+        // and ignores Scene::External, the inverse of the external walker.
+        let immediate = Scene::ImmediateModeNode(
+            ImmediateModeNode::from_driver(StubImmediateMode::new(), Rect::default())
+                .with_tag("ball"),
+        );
+        let external = Scene::External(
+            ExternalNode::new(Box::new(StubExternal::new())).with_tag("real_ext"),
+        );
+        let container = Scene::Container(ContainerNode::new(vec![immediate, external]));
+        assert!(
+            container.find_immediate_with_tag("ball").is_some(),
+            "resolves the immediate-mode driver by its §5.20 tag",
+        );
+        assert!(
+            container.find_immediate_with_tag("real_ext").is_none(),
+            "immediate finder must skip Scene::External (inverse of find_external_with_tag)",
+        );
+        assert!(container.find_immediate_with_tag("absent").is_none());
     }
 
     #[test]

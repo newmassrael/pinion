@@ -66,6 +66,34 @@ pub fn clamp_frame_dt(dt: f32) -> f32 {
     dt.clamp(0.0, MAX_FRAME_DT_SECS)
 }
 
+/// R724 / R829 §5.28 — fixed-timestep sub-step (seconds) for advancing
+/// time-driven state from an RPC-injected `dt`. The §5.28 spring solver
+/// is semi-implicit Euler — stable only for small steps — so a large
+/// injected delta is advanced in sub-steps rather than one giant step
+/// that would overshoot. Private: the policy is exposed only through
+/// [`substep`], so no caller can re-derive the loop with a different
+/// granularity.
+const FIXED_TIMESTEP_SUBSTEP_SECS: f32 = 1.0 / 120.0;
+
+/// R830 §5.28 — drive `step_fn` over `dt` in fixed
+/// [`FIXED_TIMESTEP_SUBSTEP_SECS`] sub-steps (the canonical
+/// fixed-timestep accumulator). SSOT for the sub-stepping *policy* — the
+/// `max(0.0)` floor, the `min` clamp, the `remaining -= step`
+/// accumulation, and the semi-implicit-Euler stability decision — shared
+/// by every RPC-injected time advance (`scene/tick` animation clock +
+/// the R829 deterministic immediate-mode step) so the two time bases
+/// cannot silently desync (R829 lifted the constant; R830 lifts the loop
+/// the constant lived inside). `dt <= 0.0` invokes `step_fn` zero times
+/// (a frozen clock).
+pub fn substep(dt: f32, mut step_fn: impl FnMut(f32)) {
+    let mut remaining = dt.max(0.0);
+    while remaining > 0.0 {
+        let step = remaining.min(FIXED_TIMESTEP_SUBSTEP_SECS);
+        step_fn(step);
+        remaining -= step;
+    }
+}
+
 /// R681 §2 #4 atomic 3 — per-window paint pacing policy. Selects
 /// between input-driven (idle) and game-loop (polled) lifecycles for
 /// a window slot.

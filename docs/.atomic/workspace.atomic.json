@@ -33727,6 +33727,62 @@
         "substep accumulator loop inline in 2 sites (iteration not decision per R818; lift at 3rd consumer)"
       ]
     },
+    "R830": {
+      "decision_summary": "R830: immediate-mode pointer input forwarding (player->game, §5.15). A click in an ImmediateModeNode viewport reaches the driver's on_pointer_down; self-audit also lifted substep() SSOT and fixed the paused-window intent drain",
+      "changes_bullets": [
+        "core: ImmediateMode::on_pointer_down (viewport-local px) + Scene::find_immediate_with_tag paint finder",
+        "shell: forward_pointer_down_to_immediate bridges the router hit-target to the driver (no router-core change)",
+        "driver: click reverses direction + records press + emits ball.click; introspect clicked/last_click_{x,y}",
+        "self-audit fix: lift pinion_runtime::substep() SSOT (R829 lifted the const, not the loop policy)",
+        "self-audit fix: paused intent-drain (frozen tick ZERO so the drain runs) + reactive catch-up redraw (R705.1)",
+        "demo r830 (30+ assert): paused click reverses dir, forwards coords, routes intent; r827-829 regress green"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (-j2); +substep + on_pointer_down/click-intent/find_immediate tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r830 PASS (realgpu :0, 30+ assert); r827/r828/r829 regressions PASS",
+        "2 independent audit subagents: SSOT (substep) + hack/arch (paused drain) findings cleared",
+        "self-grep: tag-finder family KEEP (iteration + exhaustive-match SSOT); prefix/schema/substep/paused single-site"
+      ],
+      "impact_refs": [
+        "2",
+        "5.15",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "immediate-mode intervene/invoke deferred (borrow-returning _mut resolver vs RefCell; driver read-only, no consumer)",
+        "on_pointer up/move + keyboard/wheel forwarding additive (YAGNI; on_pointer_down is the click consumer)",
+        "last_dt reports final substep during stepped frames (latent, no consumer; pre-existing R724 shape)",
+        "query implicit paint-fallback vs snapshot explicit from: selector — API-consistency note, defer to spec"
+      ],
+      "publishable_decision_summary": "R830: immediate-mode pointer input forwarding (player->game, §5.15). A click in an ImmediateModeNode viewport reaches the driver's on_pointer_down; self-audit also lifted substep() SSOT and fixed the paused-window intent drain",
+      "publishable_changes_bullets": [
+        "core: ImmediateMode::on_pointer_down (viewport-local px) + Scene::find_immediate_with_tag paint finder",
+        "shell: forward_pointer_down_to_immediate bridges the router hit-target to the driver (no router-core change)",
+        "driver: click reverses direction + records press + emits ball.click; introspect clicked/last_click_{x,y}",
+        "self-audit fix: lift pinion_runtime::substep() SSOT (R829 lifted the const, not the loop policy)",
+        "self-audit fix: paused intent-drain (frozen tick ZERO so the drain runs) + reactive catch-up redraw (R705.1)",
+        "demo r830 (30+ assert): paused click reverses dir, forwards coords, routes intent; r827-829 regress green"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (-j2); +substep + on_pointer_down/click-intent/find_immediate tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r830 PASS (realgpu :0, 30+ assert); r827/r828/r829 regressions PASS",
+        "2 independent audit subagents: SSOT (substep) + hack/arch (paused drain) findings cleared",
+        "self-grep: tag-finder family KEEP (iteration + exhaustive-match SSOT); prefix/schema/substep/paused single-site"
+      ],
+      "publishable_impact_refs": [
+        "2",
+        "5.15",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "immediate-mode intervene/invoke deferred (borrow-returning _mut resolver vs RefCell; driver read-only, no consumer)",
+        "on_pointer up/move + keyboard/wheel forwarding additive (YAGNI; on_pointer_down is the click consumer)",
+        "last_dt reports final substep during stepped frames (latent, no consumer; pre-existing R724 shape)",
+        "query implicit paint-fallback vs snapshot explicit from: selector — API-consistency note, defer to spec"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

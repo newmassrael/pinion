@@ -56,17 +56,6 @@ use pinion_text::LayoutCache;
 
 use super::WidgetView;
 
-/// R724 / R829 §5.28 — fixed-timestep sub-step (seconds) for advancing
-/// time-driven state from an RPC-injected `dt`. The §5.28 spring solver
-/// is semi-implicit Euler (stable only for small steps; real frames cap
-/// at `1/30s`), so a large injected delta is advanced in sub-steps
-/// rather than one giant step that would overshoot. SSOT shared by the
-/// `scene/tick` animation advance ([`ShellCore::drain_deferred_inputs_for_window`])
-/// and the R829 deterministic immediate-mode step
-/// ([`ShellCore::compute_paint_scene_internal`]) so the two cannot
-/// diverge on the timestep granularity.
-const FIXED_TIMESTEP_SUBSTEP_SECS: f32 = 1.0 / 120.0;
-
 /// R51.76 §5.40 — framework-side dispatch substrate, decoupled from
 /// winit / wgpu / `accesskit_winit`.
 ///
@@ -1267,7 +1256,59 @@ impl<V: WidgetView> ShellCore<V> {
         let tail = self.core.pointer_down_for_window(window_id, pid);
         self.click_to_focus_for_window(window_id, pid);
         self.position_caret_after_press(window_id, pid);
+        self.forward_pointer_down_to_immediate(window_id, pid);
         self.handle_tail(&tail);
+    }
+
+    /// R830 §2 #4 §5.15 — player → game pointer input forwarding. When a
+    /// press resolves (via the router's paint-scene hit-test) to an
+    /// [`pinion_core::scene::ImmediateModeNode`] viewport, forward it to
+    /// that driver's [`pinion_core::scene::ImmediateMode::on_pointer_down`]
+    /// in VIEWPORT-LOCAL logical pixels — the same space the driver
+    /// paints in. The retained input core dispatches to `Scene::External`
+    /// widgets in the *state* scene (`dispatch_send` by tag); immediate
+    /// drivers are paint-scene-only and not `External`, so the router's
+    /// `pointer_down` no-ops for them. This shell-level branch bridges
+    /// that without touching the router: it reads the router's already-
+    /// resolved hit target + cursor, finds the addressed driver in the
+    /// last paint scene, and dispatches. Idempotent / no-op when the hit
+    /// target is a retained widget (or nothing) — `find_immediate_with_tag`
+    /// returns `None`, so widget presses are unaffected.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "window-local logical-pixel cursor coords fit f32 in every realistic viewport"
+    )]
+    fn forward_pointer_down_to_immediate(&mut self, window_id: &str, pid: PointerId) {
+        let Some(hit_tag) = self
+            .core
+            .hover_target_for_window(window_id, pid)
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        let Some((cx, cy)) = self.core.cursor_position_for_window(window_id, pid) else {
+            return;
+        };
+        // Resolve the addressed driver handle + viewport from the paint
+        // scene, then drop that borrow before mutating `self.core`.
+        let resolved = self
+            .core
+            .last_paint_scene_for_window(window_id)
+            .and_then(|paint| paint.find_immediate_with_tag(&hit_tag))
+            .map(|node| (node.handle.clone(), node.viewport));
+        let Some((handle, viewport)) = resolved else {
+            return;
+        };
+        // Viewport-local logical pixels: cursor minus the viewport
+        // top-left (the §5.21 layout pass resolved `viewport`).
+        let local_x = (cx - f64::from(viewport.x)) as f32;
+        let local_y = (cy - f64::from(viewport.y)) as f32;
+        handle.borrow_mut().on_pointer_down(local_x, local_y);
+        // The driver advanced its state (and may have queued a §5.20
+        // intent, drained on the next paint's `tick_immediate_mode`
+        // walk); repaint so the response is observed.
+        self.redraw_requested = true;
+        self.request_redraw_for_window(window_id);
     }
 
     /// R762 §5.36 §5.38 / R763 §5.22 — after a press focuses a widget,
@@ -1568,8 +1609,8 @@ impl<V: WidgetView> ShellCore<V> {
                 // §5.28 spring integrator is semi-implicit Euler, which
                 // is only stable for small steps (real frames cap at
                 // 1/30 s), so a large RPC-injected `dt` is advanced in
-                // fixed `TICK_SUBSTEP`-second sub-steps (the canonical
-                // fixed-timestep accumulator) — feeding `dt` as one
+                // fixed sub-steps via the shared
+                // [`pinion_runtime::substep`] policy — feeding `dt` as one
                 // giant step would overshoot / destabilise the spring.
                 // A settled spring converges to its target regardless
                 // of step size, so the settled value is deterministic.
@@ -1577,12 +1618,9 @@ impl<V: WidgetView> ShellCore<V> {
                 // so the next `scene/snapshot` re-render reflects the
                 // advanced frame. `dt == 0.0` is a no-op (clock frozen).
                 DeferredInput::Tick { dt } => {
-                    let mut remaining = dt;
-                    while remaining > 0.0 {
-                        let step = remaining.min(FIXED_TIMESTEP_SUBSTEP_SECS);
+                    pinion_runtime::substep(dt, |step| {
                         self.core.tick_animations_for_window(window_id, step);
-                        remaining -= step;
-                    }
+                    });
                     // R829 §2 #4 §5.28 — also queue this `dt` as the
                     // window's pending immediate-mode step. The animation
                     // clock advanced in-place above; immediate-mode
@@ -1913,17 +1951,37 @@ impl<V: WidgetView> ShellCore<V> {
         // wall-clock delta, so an AI client frame-steps the game loop
         // deterministically. Live (unpaused) windows have no pending
         // entry and fall through to the R827 wall-clock advance.
+        // R830 §2 #4 §5.28 — "is this window paused" (`scene/set_fps 0`),
+        // computed once: it gates BOTH the frozen-clock branch below and
+        // the continuous-loop redraw re-arm further down, so the two
+        // cannot disagree on the pause state.
+        let paused = self.target_fps_for_window(window_key) == Some(0);
         let immediate_count = if let Some(injected) =
             self.pending_immediate_dt_per_window.remove(window_key)
         {
-            let mut remaining = injected.max(0.0);
+            // R829 deterministic step: advance by exactly the injected
+            // `dt` through the shared fixed-timestep
+            // [`pinion_runtime::substep`] policy. `count` accumulates the
+            // per-sub-step node count (used only as a `> 0` presence flag
+            // below, so over-counting is harmless).
             let mut count = 0;
-            while remaining > 0.0 {
-                let step = remaining.min(FIXED_TIMESTEP_SUBSTEP_SECS);
+            pinion_runtime::substep(injected, |step| {
                 count += paint_scene.tick_immediate_mode(Duration::from_secs_f32(step));
-                remaining -= step;
-            }
+            });
             count
+        } else if paused {
+            // R830 §2 #4 §5.28 — paused with no pending step: the
+            // simulation clock is FROZEN. Tick by `Duration::ZERO` — a
+            // no-op *advance* (so an incidental repaint, e.g. a click
+            // forwarding `on_pointer_down`, a focus-ring redraw, a resize,
+            // does NOT fast-forward a long-paused game) that still returns
+            // the true immediate-node count, so the drain below still runs
+            // and harvests any §5.20 intent `on_pointer_down` queued
+            // (R830: the intent drain must not be coupled to whether the
+            // sim ADVANCED — `on_pointer_down` is an intent producer
+            // independent of ticking). Only `scene/tick` advances a paused
+            // window (the branch above).
+            paint_scene.tick_immediate_mode(Duration::ZERO)
         } else {
             let immediate_dt = Duration::from_secs_f32(dt.max(0.0));
             paint_scene.tick_immediate_mode(immediate_dt)
@@ -1940,7 +1998,7 @@ impl<V: WidgetView> ShellCore<V> {
             // paints uncapped). The single stepped paint was already
             // triggered by the `scene/tick` drain's redraw request; not
             // re-arming lets `about_to_wait` settle to `ControlFlow::Wait`.
-            if self.target_fps_for_window(window_key) != Some(0) {
+            if !paused {
                 self.redraw_requested = true;
                 self.request_redraw_for_window(window_key);
             }
@@ -1963,6 +2021,21 @@ impl<V: WidgetView> ShellCore<V> {
             walk_scene_and_drain_immediate(&mut paint_scene, &mut immediate_intents);
             for intent in immediate_intents.drain() {
                 let _ = self.core.route_intent_through_update(&intent);
+            }
+            // R830 §2 #7 — reactive catch-up redraw (the R705.1 dirty
+            // bridge, applied to the immediate→retained path). `V::view`
+            // ran BEFORE the routing above, so any retained `Signal` a
+            // routed intent just mutated is not yet rendered. Arming a
+            // redraw when the owner is dirty makes the next frame re-view
+            // with the updated state. This is REACTIVE (one-shot, settles
+            // when state stops changing), distinct from the CONTINUOUS
+            // game-loop re-arm gated on `!paused` above — so even a PAUSED
+            // window renders an immediate-intent's retained effect (e.g. a
+            // click on a paused game updating a score) on exactly one
+            // catch-up frame, then refreezes.
+            if self.core.root_owner().is_dirty() {
+                self.redraw_requested = true;
+                self.request_redraw_for_window(window_key);
             }
         }
         // R51.147 §5.28 — keep painting while any animation registered
