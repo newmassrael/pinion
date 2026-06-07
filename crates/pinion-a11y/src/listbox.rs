@@ -80,12 +80,10 @@ pub fn listbox_option_nodes(
         list = list.with_child(option.tag);
     }
     nodes.push(list);
-    let set_size = u32::try_from(options.len()).unwrap_or(u32::MAX);
     for (i, option) in options.iter().enumerate() {
         let mut node = AccessNode::new(option.tag, AriaRole::ListBoxOption)
             .with_selected(option.selected)
-            .with_position_in_set(u32::try_from(i + 1).unwrap_or(u32::MAX))
-            .with_size_of_set(set_size)
+            .with_set_position(i, options.len())
             .with_state(AccessState {
                 focused: option.focused,
                 ..AccessState::from_interaction(option.state, None)

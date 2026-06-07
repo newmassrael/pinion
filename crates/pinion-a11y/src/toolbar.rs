@@ -75,7 +75,6 @@ pub fn toolbar_button_nodes(
     }
     nodes.push(bar);
 
-    let setsize = u32::try_from(controls.len()).unwrap_or(u32::MAX);
     for (i, c) in controls.iter().enumerate() {
         let mut node = AccessNode::new(c.tag, AriaRole::Button)
             .with_state(AccessState {
@@ -83,8 +82,7 @@ pub fn toolbar_button_nodes(
                 checked: c.checked,
                 ..AccessState::default()
             })
-            .with_position_in_set(u32::try_from(i + 1).unwrap_or(u32::MAX))
-            .with_size_of_set(setsize);
+            .with_set_position(i, controls.len());
         if let Some(name) = c.name {
             node = node.with_name(name);
         }

@@ -363,6 +363,25 @@ impl AccessNode {
         self
     }
 
+    /// R818 §5.40 — set both `aria-posinset` and `aria-setsize` from a
+    /// zero-based `index` into a flat set of `len` items: `aria-posinset`
+    /// is the one-based `index + 1`, `aria-setsize` is `len`.
+    ///
+    /// SSOTs the "position in a flat slice" derivation every cell-slice
+    /// a11y builder shares (`listbox_option_nodes`, `tablist_tab_nodes`,
+    /// `menu_item_nodes`, `grid_table_nodes` data rows, `toolbar_button_nodes`)
+    /// — the one-based offset and the saturating `usize -> u32` conversion
+    /// live here once instead of being re-derived per builder. (Builders
+    /// whose position is *not* a flat slice index — `tree_view`'s
+    /// per-sibling-group `VisibleRow`, the window-offset virtual lists —
+    /// keep the individual setters.)
+    #[must_use]
+    pub fn with_set_position(mut self, index: usize, len: usize) -> Self {
+        self.position_in_set = Some(u32::try_from(index + 1).unwrap_or(u32::MAX));
+        self.size_of_set = Some(u32::try_from(len).unwrap_or(u32::MAX));
+        self
+    }
+
     /// R695 §5.40 — set the WAI-ARIA `aria-describedby` relation to the
     /// node tagged `tag`. See [`Self::described_by`] for the semantic
     /// axis (the tooltip-description pattern).
@@ -492,6 +511,18 @@ pub enum AccessValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn r818_with_set_position_is_one_based_posinset_plus_setsize() {
+        // SSOT for the cell-slice builders: 0-based index -> 1-based
+        // aria-posinset, plus aria-setsize = len.
+        let first = AccessNode::new("a", AriaRole::ListBoxOption).with_set_position(0, 3);
+        assert_eq!(first.position_in_set, Some(1));
+        assert_eq!(first.size_of_set, Some(3));
+        let last = AccessNode::new("c", AriaRole::ListBoxOption).with_set_position(2, 3);
+        assert_eq!(last.position_in_set, Some(3));
+        assert_eq!(last.size_of_set, Some(3));
+    }
 
     #[test]
     fn new_starts_empty() {

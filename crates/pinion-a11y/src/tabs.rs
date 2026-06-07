@@ -68,12 +68,10 @@ pub fn tablist_tab_nodes(
         tablist = tablist.with_child(tab.tag);
     }
     nodes.push(tablist);
-    let set_size = u32::try_from(tabs.len()).unwrap_or(u32::MAX);
     for (i, tab) in tabs.iter().enumerate() {
         let mut node = AccessNode::new(tab.tag, AriaRole::Tab)
             .with_selected(tab.selected)
-            .with_position_in_set(u32::try_from(i + 1).unwrap_or(u32::MAX))
-            .with_size_of_set(set_size)
+            .with_set_position(i, tabs.len())
             .with_state(AccessState {
                 focused: tab.focused,
                 ..AccessState::default()

@@ -77,7 +77,6 @@ pub fn menu_item_nodes(
         menu = menu.with_child(item.tag);
     }
     nodes.push(menu);
-    let set_size = u32::try_from(items.len()).unwrap_or(u32::MAX);
     for (i, item) in items.iter().enumerate() {
         let role = if item.checked.is_some() {
             AriaRole::MenuItemCheckbox
@@ -91,8 +90,7 @@ pub fn menu_item_nodes(
                 checked: item.checked,
                 ..AccessState::default()
             })
-            .with_position_in_set(u32::try_from(i + 1).unwrap_or(u32::MAX))
-            .with_size_of_set(set_size);
+            .with_set_position(i, items.len());
         if let Some(label) = item.label {
             node = node.with_name(label);
         }

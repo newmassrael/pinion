@@ -32777,6 +32777,48 @@
         "R818+ audit-first shifts off the builder-lift axis (AI-introspection coverage or other quality gaps)"
       ]
     },
+    "R818": {
+      "decision_summary": "R818 §5.40 — SSOT the WAI-ARIA posinset/setsize slice-index derivation into AccessNode::with_set_position; the cell-slice builders (toolbar/listbox/tabs/menu/grid) re-derived it in 5 copies, surfaced by the user cost-no-object SSOT audit of the R812-R817 a11y arc",
+      "changes_bullets": [
+        "Add AccessNode::with_set_position(index, len): 1-based aria-posinset + aria-setsize, saturating u32",
+        "Replace the 5-copy (set_size + i+1) slice arithmetic in toolbar/listbox/tabs/menu/grid with it",
+        "Behaviour-preserving: the builders' own posinset/setsize asserts pin byte-identical output",
+        "tree_view (pre-computed VisibleRow) + virtual lists (window offset) correctly keep the individual setters"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 195 pass (1 new with_set_position test; builder asserts unchanged)",
+        "cargo clippy pedantic -D clean; builder public signatures unchanged so zero consumer churn"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "audit prompted by user cost-no-object SSOT review of the R812-R817 a11y-builder arc",
+        "tablist_tab_nodes trailing panel_tag/panel_name (after the slice) = within the family's trailing-param variation (toolbar/toggle/tree also trail the slice), left as-is",
+        "grid owned-String cells (vs flat &str) = justified by computed per-cell names + 2-level nesting, not a smell",
+        "next direction should shift off the a11y axis toward northern-star progress (Phase C 0% / big Phase B structure)"
+      ],
+      "publishable_decision_summary": "R818 §5.40 — SSOT the WAI-ARIA posinset/setsize slice-index derivation into AccessNode::with_set_position; the cell-slice builders (toolbar/listbox/tabs/menu/grid) re-derived it in 5 copies, surfaced by the user cost-no-object SSOT audit of the R812-R817 a11y arc",
+      "publishable_changes_bullets": [
+        "Add AccessNode::with_set_position(index, len): 1-based aria-posinset + aria-setsize, saturating u32",
+        "Replace the 5-copy (set_size + i+1) slice arithmetic in toolbar/listbox/tabs/menu/grid with it",
+        "Behaviour-preserving: the builders' own posinset/setsize asserts pin byte-identical output",
+        "tree_view (pre-computed VisibleRow) + virtual lists (window offset) correctly keep the individual setters"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 195 pass (1 new with_set_position test; builder asserts unchanged)",
+        "cargo clippy pedantic -D clean; builder public signatures unchanged so zero consumer churn"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "audit prompted by user cost-no-object SSOT review of the R812-R817 a11y-builder arc",
+        "tablist_tab_nodes trailing panel_tag/panel_name (after the slice) = within the family's trailing-param variation (toolbar/toggle/tree also trail the slice), left as-is",
+        "grid owned-String cells (vs flat &str) = justified by computed per-cell names + 2-level nesting, not a smell",
+        "next direction should shift off the a11y axis toward northern-star progress (Phase C 0% / big Phase B structure)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

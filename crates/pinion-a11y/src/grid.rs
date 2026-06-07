@@ -131,12 +131,10 @@ pub fn grid_table_nodes(
     }
 
     // Data rows + their gridcells.
-    let set_size = u32::try_from(rows.len()).unwrap_or(u32::MAX);
     for (i, row) in rows.iter().enumerate() {
         let mut row_node = AccessNode::new(row.tag.as_str(), AriaRole::Row)
             .with_selected(row.selected)
-            .with_position_in_set(u32::try_from(i + 1).unwrap_or(u32::MAX))
-            .with_size_of_set(set_size);
+            .with_set_position(i, rows.len());
         for cell in &row.cells {
             row_node = row_node.with_child(cell.tag.as_str());
         }
