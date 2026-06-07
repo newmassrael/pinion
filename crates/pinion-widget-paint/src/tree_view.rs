@@ -58,6 +58,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::widgets::tree_nav::{flat_visible, VisibleRow};
 use pinion_core::{Color, Scene};
 
 /// R671 §5.16 §5.50 — Material 3 `TreeView` row dimensions. Mirrors
@@ -289,10 +290,20 @@ pub fn view_tree_focused(
     style: &TreeViewStyle,
     focus: &TreeViewFocus<'_>,
 ) -> Scene {
-    let mut rows: Vec<Scene> = Vec::new();
-    for item in items {
-        append_rows_focused(tag, item, 0, theme, style, focus, &mut rows);
-    }
+    // R811.1 §5.50 — paint the one [`flat_visible`] flattening the
+    // keyboard/nav and AT sides also read (the substrate lifted at R811
+    // now walks `TreeItem` directly), so the "which rows are visible, at
+    // what depth" logic lives in exactly one place. Before R811.1 this
+    // was a second hand-written `expanded`-gated preorder walk
+    // (`append_rows_focused`) that mirrored `walk_visible` by hand — the
+    // R809.1 "same visible sequence walked twice" smell.
+    let rows: Vec<Scene> = flat_visible(items)
+        .iter()
+        .map(|row| {
+            let is_focused = focus.focused_id == Some(row.id.as_str());
+            build_row(tag, row, theme, style, is_focused)
+        })
+        .collect();
     Scene::Container(
         ContainerNode::new(rows)
             .with_tag(tag)
@@ -310,46 +321,28 @@ pub fn view_tree_focused(
     )
 }
 
-/// R673 §5.16 §5.50 — focus-aware variant of `append_rows`. Each row
-/// receives the current focus state so the `build_row` helper can
-/// decide whether to paint the background highlight.
-fn append_rows_focused(
-    tree_tag: &'static str,
-    item: &TreeItem,
-    depth: u32,
-    theme: &Theme,
-    style: &TreeViewStyle,
-    focus: &TreeViewFocus<'_>,
-    out: &mut Vec<Scene>,
-) {
-    let is_focused = focus.focused_id == Some(item.id.as_str());
-    out.push(build_row(tree_tag, item, depth, theme, style, is_focused));
-    if item.expanded {
-        for child in &item.children {
-            append_rows_focused(tree_tag, child, depth + 1, theme, style, focus, out);
-        }
-    }
-}
-
-/// Compose one row: depth indent + expand glyph + label.
+/// Compose one row from its [`VisibleRow`] (the shared flattening): depth
+/// indent + expand glyph + label. R811.1 §5.50 — takes the flattened row
+/// rather than re-walking the `TreeItem` tree, so the glyph / indent /
+/// label / composite-tag all read the same `depth` / `has_children` /
+/// `expanded` the keyboard model and AT tree resolve against.
 fn build_row(
     tree_tag: &'static str,
-    item: &TreeItem,
-    depth: u32,
+    row: &VisibleRow,
     theme: &Theme,
     style: &TreeViewStyle,
     is_focused: bool,
 ) -> Scene {
-    let glyph = if item.children.is_empty() {
+    let glyph = if !row.has_children {
         GLYPH_LEAF
-    } else if item.expanded {
+    } else if row.expanded {
         GLYPH_EXPANDED
     } else {
         GLYPH_COLLAPSED
     };
     let label_color = theme.resolve(ColorRole::OnSurface);
     let glyph_color = theme.resolve(ColorRole::OnSurfaceMuted);
-    let indent_px = depth * style.indent_step;
+    let indent_px = row.depth * style.indent_step;
     let mut row_children: Vec<Scene> = Vec::new();
     if indent_px > 0 {
         // Empty container as a depth indent spacer. Width = depth ×
@@ -389,13 +382,13 @@ fn build_row(
         ),
     ));
     row_children.push(Scene::Text(TextNode::styled(
-        item.label.as_str(),
+        row.label.as_str(),
         Rect::default(),
         TextStyle::new()
             .with_size_px(style.font_size_px)
             .with_fg(label_color),
     )));
-    let row_tag = composite_row_tag(tree_tag, &item.id);
+    let row_tag = composite_row_tag(tree_tag, &row.id);
     // R673 §5.50 — focused row fills with the M3
     // `SurfaceContainerHighest` tier (the canonical Material 3
     // list-row focus state-layer). Non-focused rows stay transparent

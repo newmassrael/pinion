@@ -32437,6 +32437,52 @@
         "type-ahead Owner::cache glue stays per-consumer by typeahead.rs documented caller-owns-storage boundary (not a missed lift)"
       ]
     },
+    "R811.1": {
+      "decision_summary": "R811.1 §5.50 — unify the TreeView paint walk onto the lifted flat_visible SSOT (drop append_rows_focused); the visible-row flattening now lives only in tree_nav::walk_visible, read by paint + keyboard nav + AT. Clears the residual R809.1 'same sequence walked twice' smell that R811 surfaced and enabled fixing (user cost-no-object audit).",
+      "changes_bullets": [
+        "view_tree_focused now paints over flat_visible(items) (the R811 substrate), not a 2nd hand-written walk",
+        "build_row takes &VisibleRow (depth/has_children/expanded/label/id); append_rows_focused deleted",
+        "the expanded-gated preorder + depth flattening now lives only in tree_nav::walk_visible",
+        "R809.1 single-traversal invariant now extends across paint too (paint + keyboard nav + AT read one flatten)",
+        "enabled by R811: flat_visible walks TreeItem via the core trait, so the paint crate can consume it",
+        "tree_view paint tests now exercise flat_visible(TreeItem) directly (substrate coverage via the paint path)"
+      ],
+      "verification_bullets": [
+        "pinion-widget-paint 447 tests green (r671 paint output byte-identical)",
+        "cargo test --workspace green (exit 0); clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "r673 / r674 / r809 / r811 tree demos PASS (behaviour-preserving end-to-end)"
+      ],
+      "impact_refs": [
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "found by user cost-no-object audit: my R811 carry \"paint walk accepted (R809.1)\" was stale — R811 made flat_visible TreeItem-consumable, so the paint walk should consume it (carry-사유도 audit)",
+        "inspector tree (hello-dock-panels) emits no per-row AccessNodes — pre-existing broad dock-panels a11y gap, not R811-specific; additive",
+        "hello-multi-window inspector = future 3rd tree-nav consumer (carried from R811)"
+      ],
+      "publishable_decision_summary": "R811.1 §5.50 — unify the TreeView paint walk onto the lifted flat_visible SSOT (drop append_rows_focused); the visible-row flattening now lives only in tree_nav::walk_visible, read by paint + keyboard nav + AT. Clears the residual R809.1 'same sequence walked twice' smell that R811 surfaced and enabled fixing (user cost-no-object audit).",
+      "publishable_changes_bullets": [
+        "view_tree_focused now paints over flat_visible(items) (the R811 substrate), not a 2nd hand-written walk",
+        "build_row takes &VisibleRow (depth/has_children/expanded/label/id); append_rows_focused deleted",
+        "the expanded-gated preorder + depth flattening now lives only in tree_nav::walk_visible",
+        "R809.1 single-traversal invariant now extends across paint too (paint + keyboard nav + AT read one flatten)",
+        "enabled by R811: flat_visible walks TreeItem via the core trait, so the paint crate can consume it",
+        "tree_view paint tests now exercise flat_visible(TreeItem) directly (substrate coverage via the paint path)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-widget-paint 447 tests green (r671 paint output byte-identical)",
+        "cargo test --workspace green (exit 0); clippy --workspace --all-targets --features pinion-runtime/vello clean",
+        "r673 / r674 / r809 / r811 tree demos PASS (behaviour-preserving end-to-end)"
+      ],
+      "publishable_impact_refs": [
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "found by user cost-no-object audit: my R811 carry \"paint walk accepted (R809.1)\" was stale — R811 made flat_visible TreeItem-consumable, so the paint walk should consume it (carry-사유도 audit)",
+        "inspector tree (hello-dock-panels) emits no per-row AccessNodes — pre-existing broad dock-panels a11y gap, not R811-specific; additive",
+        "hello-multi-window inspector = future 3rd tree-nav consumer (carried from R811)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
