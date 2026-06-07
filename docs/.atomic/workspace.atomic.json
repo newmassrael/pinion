@@ -32685,6 +32685,52 @@
         "combobox / dialog trigger-class nodes stay bespoke (not a container+children list topology)"
       ]
     },
+    "R816": {
+      "decision_summary": "R816 §5.40 — lift grid_table_nodes (WAI-ARIA data grid AccessNode builder: grid + header row + columnheaders + data rows + gridcells) into pinion-a11y and adopt in hello-table + hello-table-multi",
+      "changes_bullets": [
+        "Add pinion_a11y::grid::grid_table_nodes + GridColumn/GridRow/GridCell (WAI-ARIA grid topology)",
+        "Owned cell structs (per-cell computed names + 2-level nesting) vs the flat &str builders",
+        "Builder auto-derives row aria-posinset/setsize from the slice (caller passes visual order)",
+        "aria-sort per active column header; aria-multiselectable on grid root; RadioState row interaction",
+        "Migrate hello-table (sorted single-select) + hello-table-multi (data order, multi-select)",
+        "Non-virtual grid builder distinct from windowed_grid_nodes (the virtualized one)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 188 pass (7 new grid builder tests)",
+        "hello-table + hello-table-multi: tests green (role asserts now exercise the lifted builder)",
+        "cargo clippy pedantic -D clean (reworded doc CamelCase; AriaRole gated cfg(test))",
+        "demos PASS: r707 table, r730 table sort, r735 multi-select table"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "menu (hello-menu + hello-contextmenu) = remaining 2-copy a11y family; diverges in nesting depth (menubar+dropdowns vs single context menu) so a shared builder covers only the inner Menu+MenuItem[+checkbox] unit; R817 candidate",
+        "dialog (hello-dialog/file-dialog/drawer) is Dialog+action-buttons but the buttons vary per binding (not a uniform list topology)"
+      ],
+      "publishable_decision_summary": "R816 §5.40 — lift grid_table_nodes (WAI-ARIA data grid AccessNode builder: grid + header row + columnheaders + data rows + gridcells) into pinion-a11y and adopt in hello-table + hello-table-multi",
+      "publishable_changes_bullets": [
+        "Add pinion_a11y::grid::grid_table_nodes + GridColumn/GridRow/GridCell (WAI-ARIA grid topology)",
+        "Owned cell structs (per-cell computed names + 2-level nesting) vs the flat &str builders",
+        "Builder auto-derives row aria-posinset/setsize from the slice (caller passes visual order)",
+        "aria-sort per active column header; aria-multiselectable on grid root; RadioState row interaction",
+        "Migrate hello-table (sorted single-select) + hello-table-multi (data order, multi-select)",
+        "Non-virtual grid builder distinct from windowed_grid_nodes (the virtualized one)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-a11y --features test-fixtures: 188 pass (7 new grid builder tests)",
+        "hello-table + hello-table-multi: tests green (role asserts now exercise the lifted builder)",
+        "cargo clippy pedantic -D clean (reworded doc CamelCase; AriaRole gated cfg(test))",
+        "demos PASS: r707 table, r730 table sort, r735 multi-select table"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "menu (hello-menu + hello-contextmenu) = remaining 2-copy a11y family; diverges in nesting depth (menubar+dropdowns vs single context menu) so a shared builder covers only the inner Menu+MenuItem[+checkbox] unit; R817 candidate",
+        "dialog (hello-dialog/file-dialog/drawer) is Dialog+action-buttons but the buttons vary per binding (not a uniform list topology)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

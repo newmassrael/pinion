@@ -60,8 +60,13 @@
 //! second consumer.
 
 use pinion_a11y::{
-    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, SortDirection, WidgetA11y,
+    grid_table_nodes, AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow,
+    SortDirection, WidgetA11y,
 };
+// R816 §5.40 — `AriaRole` is now only referenced by the test asserts (the
+// lifted `grid_table_nodes` builder owns role + state tagging in prod).
+#[cfg(test)]
+use pinion_a11y::AriaRole;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{
@@ -516,76 +521,54 @@ impl WidgetA11y for TableView {
     /// `aria-selected="true"`. The active descendant (when the grid owns
     /// focus) is the cell `aria-activedescendant` points to.
     fn access_node(state: &TableState, focused: Option<&str>) -> Vec<AccessNode> {
+        // R816 §5.40 — lifted `grid_table_nodes` builder (one of two
+        // consumers). Rows are passed in **visual** (sorted) order so the
+        // builder's slice-derived `aria-posinset` is the displayed row
+        // number; tags stay **data-indexed** so selection survives a sort.
+        // The active sort column carries `aria-sort`.
         let grid_focused = focused == Some(PRIMARY_TAG);
         let (active_row, active_col) = active_cell(state);
-
-        let mut nodes: Vec<AccessNode> =
-            Vec::with_capacity(NROWS * (NCOLS + 1) + NCOLS + 2);
-
-        // Grid root: children are the header row + each data row, in
-        // **visual** (sorted) order so AT announces rows top-to-bottom as
-        // displayed (R730).
-        let mut grid = AccessNode::new(PRIMARY_TAG, AriaRole::Grid)
-            .with_name("pinion widget catalog");
-        grid = grid.with_child(format!("{PRIMARY_TAG}_hrow"));
-        for &data in &state.order {
-            grid = grid.with_child(format!("{PRIMARY_TAG}_row{data}"));
-        }
-        nodes.push(grid);
-
-        // Header row + its columnheader cells. The active sort column
-        // carries `aria-sort` (R730 §5.40).
-        let mut header_row = AccessNode::new(format!("{PRIMARY_TAG}_hrow"), AriaRole::Row);
-        for col in 0..NCOLS {
-            header_row = header_row.with_child(format!("{PRIMARY_TAG}_ch{col}"));
-        }
-        nodes.push(header_row);
-        for (col, label) in HEADERS.iter().enumerate() {
-            let mut ch = AccessNode::new(format!("{PRIMARY_TAG}_ch{col}"), AriaRole::ColumnHeader)
-                .with_name(*label);
-            if let Some((sort_col, ascending)) = state.sort {
-                if sort_col == col {
-                    ch = ch.with_sort(if ascending {
+        let columns: Vec<GridColumn> = HEADERS
+            .iter()
+            .enumerate()
+            .map(|(col, label)| GridColumn {
+                tag: format!("{PRIMARY_TAG}_ch{col}"),
+                label: (*label).to_owned(),
+                sort: state.sort.and_then(|(sort_col, ascending)| {
+                    (sort_col == col).then_some(if ascending {
                         SortDirection::Ascending
                     } else {
                         SortDirection::Descending
-                    });
-                }
-            }
-            nodes.push(ch);
-        }
-
-        // Data rows + their gridcells, in **visual** order. Tags + state
-        // are **data-indexed** (so selection survives sort); `position_in_set`
-        // is the **visual** position (the displayed row number).
-        for (visual, &data) in state.order.iter().enumerate() {
-            let row_data = &ROWS[data];
-            let is_selected = state.selected_row == Some(data);
-            let interaction = state.row_state(data);
-            let mut row_node = AccessNode::new(format!("{PRIMARY_TAG}_row{data}"), AriaRole::Row)
-                .with_selected(is_selected)
-                .with_position_in_set(u32::try_from(visual + 1).unwrap_or(1))
-                .with_size_of_set(u32::try_from(NROWS).unwrap_or(1));
-            for col in 0..NCOLS {
-                row_node = row_node.with_child(format!("{PRIMARY_TAG}#{data}_{col}"));
-            }
-            nodes.push(row_node);
-
-            for (col, header) in HEADERS.iter().enumerate() {
-                let cell_tag = format!("{PRIMARY_TAG}#{data}_{col}");
-                let cell_focused = grid_focused && active_row == data && active_col == col;
-                let name = format!("{header}: {}", row_data[col]);
-                nodes.push(
-                    AccessNode::new(&cell_tag, AriaRole::GridCell)
-                        .with_name(name)
-                        .with_state(AccessState {
-                            focused: cell_focused,
-                            ..AccessState::from_interaction(interaction, None)
-                        }),
-                );
-            }
-        }
-        nodes
+                    })
+                }),
+            })
+            .collect();
+        let rows: Vec<GridRow> = state
+            .order
+            .iter()
+            .map(|&data| GridRow {
+                tag: format!("{PRIMARY_TAG}_row{data}"),
+                selected: state.selected_row == Some(data),
+                state: state.row_state(data),
+                cells: HEADERS
+                    .iter()
+                    .enumerate()
+                    .map(|(col, header)| GridCell {
+                        tag: format!("{PRIMARY_TAG}#{data}_{col}"),
+                        name: format!("{header}: {}", ROWS[data][col]),
+                        focused: grid_focused && active_row == data && active_col == col,
+                    })
+                    .collect(),
+            })
+            .collect();
+        grid_table_nodes(
+            PRIMARY_TAG,
+            "pinion widget catalog",
+            false,
+            &format!("{PRIMARY_TAG}_hrow"),
+            &columns,
+            &rows,
+        )
     }
 
     /// R707 §5.40 — composite focus model (mirror of `hello-datepicker`).

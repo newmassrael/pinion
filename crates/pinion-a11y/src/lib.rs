@@ -49,6 +49,7 @@
 pub mod action;
 pub mod described;
 pub mod focus;
+pub mod grid;
 pub mod listbox;
 pub mod navigation;
 pub mod node;
@@ -73,6 +74,7 @@ mod test_fixtures;
 pub use action::{translate_action, AccessAction, PinionAccessAction};
 pub use described::describedby_region;
 pub use focus::AccessFocus;
+pub use grid::{grid_table_nodes, GridCell, GridColumn, GridRow};
 pub use listbox::{listbox_option_nodes, ListOption};
 pub use navigation::{navigation_link_nodes, NavLink};
 pub use node::{AccessNode, AccessState, AccessValue};

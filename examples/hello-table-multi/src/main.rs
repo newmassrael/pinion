@@ -51,8 +51,13 @@
 //! selection is an app-logic refinement over it).
 
 use pinion_a11y::{
-    AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y,
+    grid_table_nodes, AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow,
+    WidgetA11y,
 };
+// R816 §5.40 — `AriaRole` is now only referenced by the test asserts (the
+// lifted `grid_table_nodes` builder owns role + state tagging in prod).
+#[cfg(test)]
+use pinion_a11y::AriaRole;
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{
@@ -452,65 +457,48 @@ impl WidgetA11y for TableMultiView {
     /// and one `gridcell` per cell. **Any subset** of data rows may report
     /// `aria-selected="true"` — the multi-select invariant.
     fn access_node(state: &TableMultiState, focused: Option<&str>) -> Vec<AccessNode> {
+        // R816 §5.40 — lifted `grid_table_nodes` builder. No sort axis; rows
+        // in data order (= visual order). The grid is `multiselectable` and
+        // each row reports its own `aria-selected` bit (multiple may be
+        // true). The builder derives `aria-posinset` / `aria-setsize` from
+        // the slice.
         let grid_focused = focused == Some(PRIMARY_TAG);
         let (active_row, active_col) = active_cell(state);
-
-        let mut nodes: Vec<AccessNode> =
-            Vec::with_capacity(NROWS * (NCOLS + 1) + NCOLS + 2);
-
-        // Grid root: `aria-multiselectable` + children (header row + each
-        // data row in data order).
-        let mut grid = AccessNode::new(PRIMARY_TAG, AriaRole::Grid)
-            .with_name("pinion widget catalog (multi-select)")
-            .with_multiselectable();
-        grid = grid.with_child(format!("{PRIMARY_TAG}_hrow"));
-        for data in 0..NROWS {
-            grid = grid.with_child(format!("{PRIMARY_TAG}_row{data}"));
-        }
-        nodes.push(grid);
-
-        // Header row + its columnheader cells (no sort axis here).
-        let mut header_row = AccessNode::new(format!("{PRIMARY_TAG}_hrow"), AriaRole::Row);
-        for col in 0..NCOLS {
-            header_row = header_row.with_child(format!("{PRIMARY_TAG}_ch{col}"));
-        }
-        nodes.push(header_row);
-        for (col, label) in HEADERS.iter().enumerate() {
-            nodes.push(
-                AccessNode::new(format!("{PRIMARY_TAG}_ch{col}"), AriaRole::ColumnHeader)
-                    .with_name(*label),
-            );
-        }
-
-        // Data rows + their gridcells, in data order. Each row reports its
-        // own `aria-selected` bit (multiple may be true).
-        for (data, row_data) in ROWS.iter().enumerate() {
-            let is_selected = state.row_selected[data];
-            let interaction = state.row_state(data);
-            let mut row_node = AccessNode::new(format!("{PRIMARY_TAG}_row{data}"), AriaRole::Row)
-                .with_selected(is_selected)
-                .with_position_in_set(u32::try_from(data + 1).unwrap_or(1))
-                .with_size_of_set(u32::try_from(NROWS).unwrap_or(1));
-            for col in 0..NCOLS {
-                row_node = row_node.with_child(format!("{PRIMARY_TAG}#{data}_{col}"));
-            }
-            nodes.push(row_node);
-
-            for (col, header) in HEADERS.iter().enumerate() {
-                let cell_tag = format!("{PRIMARY_TAG}#{data}_{col}");
-                let cell_focused = grid_focused && active_row == data && active_col == col;
-                let name = format!("{header}: {}", row_data[col]);
-                nodes.push(
-                    AccessNode::new(&cell_tag, AriaRole::GridCell)
-                        .with_name(name)
-                        .with_state(AccessState {
-                            focused: cell_focused,
-                            ..AccessState::from_interaction(interaction, None)
-                        }),
-                );
-            }
-        }
-        nodes
+        let columns: Vec<GridColumn> = HEADERS
+            .iter()
+            .enumerate()
+            .map(|(col, label)| GridColumn {
+                tag: format!("{PRIMARY_TAG}_ch{col}"),
+                label: (*label).to_owned(),
+                sort: None,
+            })
+            .collect();
+        let rows: Vec<GridRow> = ROWS
+            .iter()
+            .enumerate()
+            .map(|(data, row_data)| GridRow {
+                tag: format!("{PRIMARY_TAG}_row{data}"),
+                selected: state.row_selected[data],
+                state: state.row_state(data),
+                cells: HEADERS
+                    .iter()
+                    .enumerate()
+                    .map(|(col, header)| GridCell {
+                        tag: format!("{PRIMARY_TAG}#{data}_{col}"),
+                        name: format!("{header}: {}", row_data[col]),
+                        focused: grid_focused && active_row == data && active_col == col,
+                    })
+                    .collect(),
+            })
+            .collect();
+        grid_table_nodes(
+            PRIMARY_TAG,
+            "pinion widget catalog (multi-select)",
+            true,
+            &format!("{PRIMARY_TAG}_hrow"),
+            &columns,
+            &rows,
+        )
     }
 
     /// R735 §5.40 — composite focus model (mirror of `hello-table`). When
