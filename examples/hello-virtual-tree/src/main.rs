@@ -57,7 +57,8 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::tree_nav::{
-    apply_tree_key, flat_visible, toggle_expanded, TreeNode, VisibleRow,
+    apply_tree_key, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
+    VisibleRow,
 };
 use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
@@ -76,6 +77,12 @@ const THEME_TAG: &str = "app";
 /// Composite-tag prefix the windowed rows carry (`{TREE_TAG}#{id}`) and
 /// the [`TreeRowClickExternal`] anchor clicks route to.
 const TREE_TAG: &str = "vtree";
+/// R824 §5.50 §5.12 — query-only tree-state introspection External
+/// ([`tree_view_introspection_extra`]). For a *virtualized* tree this is
+/// the only way an AI reads the full structure: only a window of rows ever
+/// paints, so `scene/query` (`row_count` over the whole flattening +
+/// off-window `id_at` / `cursor`) sees what paint-scraping cannot.
+const TREE_STATE_TAG: &str = "vtree_state";
 /// Focusable tree-root External tag (the WAI-ARIA `tree` node + the
 /// `read_state` anchor). Kept distinct from [`TREE_TAG`] like
 /// `hello-tree-view` (root External vs row container).
@@ -349,12 +356,25 @@ impl WidgetCore for VirtualTreeView {
     /// → the §5.20 intent channel → [`VirtualTreeView::update`]) + the
     /// `ScrollBarExternal` sharing the tree's `Rc<ScrollState>`.
     fn create_extra_externals() -> Vec<ExtraExternal> {
+        // R824 — the query-only tree-state introspection sibling (2nd
+        // consumer of the R823 substrate). It reads the same `Owner::cache`d
+        // `TreeState` Signals the view windows over, so `scene/query` reports
+        // the *full* 496-row flattening + live cursor regardless of which
+        // window paints — the structure paint-scraping cannot reach.
+        let tree_state = use_tree_state();
+        let nodes = tree_state.nodes.clone();
+        let focused = tree_state.focused_id.clone();
         vec![
             ExtraExternal::new(
                 TREE_TAG,
                 Box::new(pinion_widget_paint::tree_view::TreeRowClickExternal::new()),
             ),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
+            tree_view_introspection_extra(
+                TREE_STATE_TAG,
+                move || flat_visible(&nodes.get()),
+                move || focused.get(),
+            ),
         ]
     }
 

@@ -33367,6 +33367,74 @@
         "no new external/upstream debt; no spec change"
       ]
     },
+    "R824": {
+      "decision_summary": "Wire tree_view_introspection_extra into hello-virtual-tree, the genuine 2nd consumer of the R823 tree-state introspection substrate. Demonstrates window-independent introspection: scene/query reports the full 496-row flattening + off-window id_at/cursor while only a ~dozen-row window paints — for a virtualized tree this is the only path to the full structure (paint-scraping sees only the window), a genuine AI-first capability not ergonomics. Pure 2nd-consumer wiring + r824 demo; no core code change.",
+      "changes_bullets": [
+        "wire `tree_view_introspection_extra` into hello-virtual-tree — the genuine",
+        "2nd consumer of the R823 tree-state introspection substrate (no new core code)",
+        "demonstrates **window-independent** introspection: `row_count` reports the full",
+        "496-row flattening + `id_at`/`label_at`/`level_at`/`expanded_at`/`cursor` resolve",
+        "for positions far outside the painted ~dozen-row window",
+        "for a virtualized tree this is a genuine capability, not ergonomics: only a window",
+        "is ever a scene node, so paint-scraping cannot reach the full structure — `scene/query`",
+        "is the only path ([[ai-first-rpc-introspection-obligation]])",
+        "r824 demo (~38 assertions): boot full-count vs small paint window, off-window rows",
+        "queryable-but-not-painted (s1/s2/s4/s99), child aria-level 2 + undefined aria-expanded,",
+        "key-driven collapse/expand tracked by row_count, cursor introspectable off-window (End)"
+      ],
+      "verification_bullets": [
+        "`cargo clippy -p hello-virtual-tree --all-targets -j2` clean; 11 example tests pass",
+        "`r824_virtual_tree_introspect.py` PASS (~38 assertions, realgpu release)",
+        "`r820_virtual_tree_keyboard.py` PASS (regression: RPC-only introspect External",
+        "paints nothing, windowed keyboard/scroll unaffected)",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green"
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "the dock-panels inspector tree (3rd tree consumer, collapse-set-overlay storage)",
+        "could expose the same surface via its own rows/cursor closures (R811",
+        "storage-is-caller-choice) — defer until a consumer needs it",
+        "R824 added no core/substrate code (pure 2nd-consumer wiring + demo); no crate",
+        "change, no spec change, no new external/upstream debt"
+      ],
+      "publishable_decision_summary": "Wire tree_view_introspection_extra into hello-virtual-tree, the genuine 2nd consumer of the R823 tree-state introspection substrate. Demonstrates window-independent introspection: scene/query reports the full 496-row flattening + off-window id_at/cursor while only a ~dozen-row window paints — for a virtualized tree this is the only path to the full structure (paint-scraping sees only the window), a genuine AI-first capability not ergonomics. Pure 2nd-consumer wiring + r824 demo; no core code change.",
+      "publishable_changes_bullets": [
+        "wire `tree_view_introspection_extra` into hello-virtual-tree — the genuine",
+        "2nd consumer of the R823 tree-state introspection substrate (no new core code)",
+        "demonstrates **window-independent** introspection: `row_count` reports the full",
+        "496-row flattening + `id_at`/`label_at`/`level_at`/`expanded_at`/`cursor` resolve",
+        "for positions far outside the painted ~dozen-row window",
+        "for a virtualized tree this is a genuine capability, not ergonomics: only a window",
+        "is ever a scene node, so paint-scraping cannot reach the full structure — `scene/query`",
+        "is the only path ([[ai-first-rpc-introspection-obligation]])",
+        "r824 demo (~38 assertions): boot full-count vs small paint window, off-window rows",
+        "queryable-but-not-painted (s1/s2/s4/s99), child aria-level 2 + undefined aria-expanded,",
+        "key-driven collapse/expand tracked by row_count, cursor introspectable off-window (End)"
+      ],
+      "publishable_verification_bullets": [
+        "`cargo clippy -p hello-virtual-tree --all-targets -j2` clean; 11 example tests pass",
+        "`r824_virtual_tree_introspect.py` PASS (~38 assertions, realgpu release)",
+        "`r820_virtual_tree_keyboard.py` PASS (regression: RPC-only introspect External",
+        "paints nothing, windowed keyboard/scroll unaffected)",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello -j2` clean",
+        "`cargo test --workspace -j2` green"
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the dock-panels inspector tree (3rd tree consumer, collapse-set-overlay storage)",
+        "could expose the same surface via its own rows/cursor closures (R811",
+        "storage-is-caller-choice) — defer until a consumer needs it",
+        "R824 added no core/substrate code (pure 2nd-consumer wiring + demo); no crate",
+        "change, no spec change, no new external/upstream debt"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
