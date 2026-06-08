@@ -36,7 +36,9 @@
 
 use std::rc::Rc;
 
-use pinion_a11y::{grouped_grid_access_nodes, AccessNode, GridColumn, GroupedGridSpec, WidgetA11y};
+use pinion_a11y::{
+    grouped_grid_access_nodes, AccessFocus, AccessNode, GridColumn, GroupedGridSpec, WidgetA11y,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -44,7 +46,9 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::group_order::{use_group_order, GroupOrderExternal, GroupOrderState, GroupRow};
+use pinion_core::widgets::group_order::{
+    group_nav_key, read_cursor, use_group_order, GroupOrderExternal, GroupOrderState, GroupRow,
+};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
@@ -105,6 +109,23 @@ fn cell_value(source: usize, col: usize) -> String {
 /// intercepting the row's selection click.
 fn cell_tag(source: usize, col: usize) -> String {
     format!("gcell_{source}_{col}")
+}
+
+/// R848 — the grid's projected state: the selected source row **and** the
+/// roving keyboard cursor's visual position. The cursor is *projected* (not
+/// only held in the reactive [`GroupOrderState`]) so a cursor-only move —
+/// arrowing between group headers with no selection change — repaints and the
+/// focus ring tracks it. This is the datepicker `focused_day` precedent: a
+/// roving cursor distinct from the selection must be projected state, because
+/// the shell repaints on a *visible-state* change, and the focus ring is shell-
+/// drawn from [`access_focus_target`](GroupedGridView::access_focus_target),
+/// not painted by the view.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+struct GridState {
+    /// The selected source row (the [`VirtualSelectExternal`] index), or `None`.
+    selected: Option<usize>,
+    /// The roving cursor's visual position into the flattened rows, or `None`.
+    cursor: Option<usize>,
 }
 
 /// The shared [`GroupOrderState`] grouping rows by asset type (source order).
@@ -273,7 +294,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
 struct GroupedGridView;
 
 impl WidgetCore for GroupedGridView {
-    type State = Option<usize>;
+    type State = GridState;
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
@@ -291,34 +312,68 @@ impl WidgetCore for GroupedGridView {
         GRID_TAG
     }
 
-    fn read_state(scene: &Scene) -> Option<usize> {
-        scene
+    fn read_state(scene: &Scene) -> GridState {
+        let selected = scene
             .find_external_with_tag(GRID_TAG)
             .and_then(|node| node.handle.introspect())
-            .and_then(read_selected)
+            .and_then(read_selected);
+        // The roving cursor lives on the extra GroupOrderExternal — the same
+        // find → introspect → read idiom as the selection above.
+        let cursor = scene
+            .find_external_with_tag(GROUP_TAG)
+            .and_then(|node| node.handle.introspect())
+            .and_then(read_cursor);
+        GridState { selected, cursor }
     }
 
-    fn view(state: Option<usize>, frame: &Frame) -> Scene {
-        view(state, frame)
+    fn view(state: GridState, frame: &Frame) -> Scene {
+        view(state.selected, frame)
     }
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
     }
 
+    /// R848 — the grid is a single keyboard tab stop (roving by visual row over
+    /// the flattened group rows).
     fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
+        vec![GRID_TAG]
+    }
+
+    /// R848 §5.27 — keyboard navigation over the grouped grid, delegated to the
+    /// shared [`group_nav_key`] controller (the same one `hello-grouped-list`
+    /// uses): Arrow / Home / End rove the cursor over headers + data rows,
+    /// Right / Left expand / collapse a group header (or climb a data row to its
+    /// header), Enter / Space toggle a header or re-affirm a data selection.
+    /// Landing on a data row selects its source (selection-follows-focus) and
+    /// scrolls it into view.
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        group_nav_key(
+            scene,
+            &use_scroll_state(SCROLL_KEY),
+            &use_grid_groups(),
+            GRID_TAG,
+            focused,
+            key,
+            ROW_PITCH,
+        )
     }
 
     fn title() -> &'static str {
-        "pinion hello-grouped-grid (R845 §5.27 §5.40 grouped data grid)"
+        "pinion hello-grouped-grid (R848 §5.27 §5.40 grouped data grid + keyboard nav)"
     }
 
-    fn fmt_state_log(state: &Option<usize>) -> String {
-        match state {
-            Some(i) => format!("selected=source {i}"),
-            None => "selected=none".to_string(),
-        }
+    fn fmt_state_log(state: &GridState) -> String {
+        format!(
+            "selected={} cursor={}",
+            state.selected.map_or_else(|| "none".to_string(), |i| format!("source {i}")),
+            state.cursor.map_or_else(|| "none".to_string(), |c| c.to_string()),
+        )
     }
 }
 
@@ -331,7 +386,7 @@ impl WidgetA11y for GroupedGridView {
     /// The columns are static (no `aria-sort`) — passed as a [`GridColumn`]
     /// slice with `sort: None`, the same slice a sortable grid
     /// (`hello-grouped-grid-sort`) fills with the active direction.
-    fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(state: &GridState, _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let groups = use_grid_groups();
         let rows = groups.rows();
@@ -354,7 +409,8 @@ impl WidgetA11y for GroupedGridView {
             columns: &columns,
             group_prefix: GROUP_TAG,
             data_prefix: GRID_TAG,
-            selected_source: *selected,
+            selected_source: state.selected,
+            focused_view_pos: state.cursor,
         };
         grouped_grid_access_nodes(
             &spec,
@@ -364,6 +420,25 @@ impl WidgetA11y for GroupedGridView {
             cell_tag,
             cell_value,
         )
+    }
+
+    /// R848 — single-tab-stop roving: shell focus stays on the grid container
+    /// ([`GRID_TAG`]) while the visible focus ring frames the cursor's row (the
+    /// `aria-activedescendant`). The cursor row maps to its composite tag — a
+    /// group header (`ggrp#<group>`) or a data row (`ggrid#<source>`) — so the
+    /// shell rings exactly the navigated row. No cursor → ring the container.
+    fn access_focus_target(state: &GridState, focused: Option<&str>) -> Option<AccessFocus> {
+        if focused != Some(GRID_TAG) {
+            return focused.map(AccessFocus::atomic);
+        }
+        let cursor_tag = state
+            .cursor
+            .and_then(|pos| use_grid_groups().row_at(pos))
+            .map(|row| row.composite_tag(GROUP_TAG, GRID_TAG));
+        Some(cursor_tag.map_or_else(
+            || AccessFocus::atomic(GRID_TAG),
+            |tag| AccessFocus::composite(GRID_TAG, tag),
+        ))
     }
 }
 
@@ -449,7 +524,10 @@ mod tests {
 
     #[test]
     fn a11y_grid_has_columnheaders_expandable_group_rows_and_gridcells() {
-        let nodes = Owner::new().run(|| GroupedGridView::access_node(&Some(0), None));
+        // Cursor on visual pos 1 (the first data row, source 0).
+        let nodes = Owner::new().run(|| {
+            GroupedGridView::access_node(&GridState { selected: Some(0), cursor: Some(1) }, None)
+        });
         // Grid root.
         assert_eq!(nodes[0].role, AriaRole::Grid);
         // Three column headers.
@@ -459,11 +537,39 @@ mod tests {
         let gh = nodes.iter().find(|n| n.tag == format!("{GROUP_TAG}#0")).expect("group header node");
         assert_eq!(gh.role, AriaRole::Row);
         assert_eq!(gh.expanded, Some(true), "expanded group header carries aria-expanded");
-        // The selected data row is a Row with aria-selected and three gridcells.
+        // The selected data row is a Row with aria-selected and three gridcells,
+        // and it is the cursor row (active descendant) → focused.
         let dr = nodes.iter().find(|n| n.tag == format!("{GRID_TAG}#0")).expect("data row node");
         assert_eq!(dr.role, AriaRole::Row);
         assert_eq!(dr.selected, Some(true), "selected row carries aria-selected");
+        assert!(dr.state.focused, "the cursor row is the active descendant");
         let cells = nodes.iter().filter(|n| n.role == AriaRole::GridCell).count();
         assert!(cells >= COLS.len(), "data rows expose gridcells");
+    }
+
+    #[test]
+    fn access_focus_target_rings_the_cursor_row() {
+        Owner::new().run(|| {
+            let _ = use_grid_groups(); // build the shared holder (all groups expanded)
+            // Cursor on visual pos 0 = the group-0 header.
+            let af = GroupedGridView::access_focus_target(
+                &GridState { selected: None, cursor: Some(0) },
+                Some(GRID_TAG),
+            )
+            .expect("grid focused returns Some");
+            assert_eq!(af.active_descendant.as_deref(), Some(&*format!("{GROUP_TAG}#0")));
+            // Cursor on visual pos 1 = the first Mesh data row (source 0).
+            let af1 = GroupedGridView::access_focus_target(
+                &GridState { selected: None, cursor: Some(1) },
+                Some(GRID_TAG),
+            )
+            .expect("grid focused returns Some");
+            assert_eq!(af1.active_descendant.as_deref(), Some(&*format!("{GRID_TAG}#0")));
+            // No cursor → ring the container (no active descendant).
+            let af_none =
+                GroupedGridView::access_focus_target(&GridState::default(), Some(GRID_TAG))
+                    .expect("grid focused returns Some");
+            assert_eq!(af_none.active_descendant, None);
+        });
     }
 }

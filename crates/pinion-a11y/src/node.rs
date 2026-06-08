@@ -318,6 +318,20 @@ impl AccessNode {
         self
     }
 
+    /// R848 §5.50 — set the WAI-ARIA roving-cursor `focused` state (the
+    /// `aria-activedescendant` target). `true` on the row a single-tab-stop
+    /// composite currently addresses with its keyboard cursor, `false`
+    /// otherwise — the same `state.focused` flag the listbox / radiogroup /
+    /// menu builders set on their active descendant. Orthogonal to
+    /// [`with_selected`](Self::with_selected): a grouped collection's cursor
+    /// can rest on a group header (no selection) while a data row stays
+    /// selected.
+    #[must_use]
+    pub fn with_focused(mut self, focused: bool) -> Self {
+        self.state.focused = focused;
+        self
+    }
+
     /// R51.98 §5.40 — declare this container exposes
     /// `aria-multiselectable="true"`. Only meaningful on `Listbox`,
     /// future `Grid` / `Tree` / `TabList` parents; atomic roles

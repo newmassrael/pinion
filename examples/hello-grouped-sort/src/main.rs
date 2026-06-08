@@ -364,6 +364,9 @@ impl WidgetA11y for GroupedSortView {
             header_prefix: GROUP_TAG,
             data_prefix: LIST_TAG,
             selected_source: *selected,
+            // No keyboard navigation in this sort-focused slice (R848 wires
+            // grouped-list / grouped-grid); the cursor axis is absent here.
+            focused_view_pos: None,
         };
         nodes.extend(grouped_tree_access_nodes(
             &spec,

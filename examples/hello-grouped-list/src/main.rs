@@ -36,7 +36,7 @@
 
 use std::rc::Rc;
 
-use pinion_a11y::{grouped_tree_access_nodes, AccessNode, GroupedTreeSpec, WidgetA11y};
+use pinion_a11y::{grouped_tree_access_nodes, AccessFocus, AccessNode, GroupedTreeSpec, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -44,7 +44,9 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::group_order::{use_group_order, GroupOrderExternal, GroupOrderState, GroupRow};
+use pinion_core::widgets::group_order::{
+    group_nav_key, read_cursor, use_group_order, GroupOrderExternal, GroupOrderState, GroupRow,
+};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
@@ -92,6 +94,23 @@ const CHEVRON_COLLAPSED: &str = "\u{25B6}";
 fn row_group(i: usize) -> usize {
     i % GROUPS.len()
 }
+
+/// R848 — the list's projected state: the selected source row **and** the
+/// roving keyboard cursor's visual position. The cursor is *projected* (not
+/// only held in the reactive [`GroupOrderState`]) so a cursor-only move —
+/// arrowing between group headers with no selection change — repaints and the
+/// focus ring tracks it (the datepicker `focused_day` precedent: a roving
+/// cursor distinct from the selection must be projected state, because the
+/// shell repaints on a *visible-state* change and the ring is shell-drawn from
+/// [`access_focus_target`](GroupedListView::access_focus_target)).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+struct ListState {
+    /// The selected source row (the [`VirtualSelectExternal`] index), or `None`.
+    selected: Option<usize>,
+    /// The roving cursor's visual position into the flattened rows, or `None`.
+    cursor: Option<usize>,
+}
+
 
 /// Display label of data row `i`: a stable, width-fixed asset name.
 fn row_label(i: usize) -> String {
@@ -246,7 +265,7 @@ impl WidgetCore for GroupedListView {
     /// axis held in the shared [`GroupOrderState`] — read in the view, not
     /// projected here (a collapse change repaints through its `Signal`, like
     /// scroll offset).
-    type State = Option<usize>;
+    type State = ListState;
     type Event = ();
 
     /// Primary = the index-held selection coordinator (R746), at [`LIST_TAG`].
@@ -273,37 +292,69 @@ impl WidgetCore for GroupedListView {
     /// selection change raises the §5.20 transition and repaints; grouping /
     /// scroll repaint via their own reactive `Signal` subscriptions the view
     /// opens.
-    fn read_state(scene: &Scene) -> Option<usize> {
-        scene
+    fn read_state(scene: &Scene) -> ListState {
+        let selected = scene
             .find_external_with_tag(LIST_TAG)
             .and_then(|node| node.handle.introspect())
-            .and_then(read_selected)
+            .and_then(read_selected);
+        // The roving cursor lives on the extra GroupOrderExternal — the same
+        // find → introspect → read idiom as the selection above.
+        let cursor = scene
+            .find_external_with_tag(GROUP_TAG)
+            .and_then(|node| node.handle.introspect())
+            .and_then(read_cursor);
+        ListState { selected, cursor }
     }
 
-    fn view(state: Option<usize>, frame: &Frame) -> Scene {
-        view(state, frame)
+    fn view(state: ListState, frame: &Frame) -> Scene {
+        view(state.selected, frame)
     }
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
     }
 
-    /// Pointer / RPC selection + collapse this slice; neither the rows nor the
-    /// headers are keyboard tab stops (windowed-list roving is a later axis,
-    /// as in `hello-virtual-sort`). Empty so Tab never lands.
+    /// R848 — the list is a single keyboard tab stop (roving by visual row over
+    /// the flattened group rows); the windowed-list roving axis `hello-grouped-
+    /// list` deferred at R843 lands here.
     fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
+        vec![LIST_TAG]
+    }
+
+    /// R848 §5.27 — keyboard navigation over the grouped list, delegated to the
+    /// shared [`group_nav_key`] controller (the same one `hello-grouped-grid`
+    /// uses): Arrow / Home / End rove the cursor over headers + data rows,
+    /// Right / Left expand / collapse a group header (or climb a data row to its
+    /// header), Enter / Space toggle a header or re-affirm a data selection.
+    /// Landing on a data row selects its source (selection-follows-focus) and
+    /// scrolls it into view.
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        group_nav_key(
+            scene,
+            &use_scroll_state(SCROLL_KEY),
+            &use_list_groups(),
+            LIST_TAG,
+            focused,
+            key,
+            ROW_PITCH,
+        )
     }
 
     fn title() -> &'static str {
-        "pinion hello-grouped-list (R843 §5.27 §5.40 group-by virtualization)"
+        "pinion hello-grouped-list (R848 §5.27 §5.40 group-by + keyboard nav)"
     }
 
-    fn fmt_state_log(state: &Option<usize>) -> String {
-        match state {
-            Some(i) => format!("selected=source {i}"),
-            None => "selected=none".to_string(),
-        }
+    fn fmt_state_log(state: &ListState) -> String {
+        format!(
+            "selected={} cursor={}",
+            state.selected.map_or_else(|| "none".to_string(), |i| format!("source {i}")),
+            state.cursor.map_or_else(|| "none".to_string(), |c| c.to_string()),
+        )
     }
 }
 
@@ -317,7 +368,7 @@ impl WidgetA11y for GroupedListView {
     /// `GroupOrderExternal` (`ggroup#`), data rows to the `VirtualSelectExternal`
     /// (`glist#`) — are the spec's `header_prefix` / `data_prefix`; only the
     /// labels differ per consumer.
-    fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(state: &ListState, _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let groups = use_list_groups();
         let rows = groups.rows();
@@ -328,7 +379,8 @@ impl WidgetA11y for GroupedListView {
             name: Some("Grouped asset list"),
             header_prefix: GROUP_TAG,
             data_prefix: LIST_TAG,
-            selected_source: *selected,
+            selected_source: state.selected,
+            focused_view_pos: state.cursor,
         };
         grouped_tree_access_nodes(
             &spec,
@@ -337,6 +389,25 @@ impl WidgetA11y for GroupedListView {
             |g| GROUPS[g % GROUPS.len()].to_string(),
             row_label,
         )
+    }
+
+    /// R848 — single-tab-stop roving: shell focus stays on the tree container
+    /// ([`LIST_TAG`]) while the focus ring frames the cursor's row (the
+    /// `aria-activedescendant`). The cursor row maps to its composite tag — a
+    /// group header (`ggroup#<group>`) or a data row (`glist#<source>`) — so the
+    /// shell rings exactly the navigated row. No cursor → ring the container.
+    fn access_focus_target(state: &ListState, focused: Option<&str>) -> Option<AccessFocus> {
+        if focused != Some(LIST_TAG) {
+            return focused.map(AccessFocus::atomic);
+        }
+        let cursor_tag = state
+            .cursor
+            .and_then(|pos| use_list_groups().row_at(pos))
+            .map(|row| row.composite_tag(GROUP_TAG, LIST_TAG));
+        Some(cursor_tag.map_or_else(
+            || AccessFocus::atomic(LIST_TAG),
+            |tag| AccessFocus::composite(LIST_TAG, tag),
+        ))
     }
 }
 
@@ -476,10 +547,15 @@ mod tests {
 
     #[test]
     fn a11y_marks_tree_with_expandable_headers_and_selected_data_rows() {
-        let nodes = Owner::new().run(|| GroupedListView::access_node(&Some(6), None));
+        // Selection on data source 6; cursor on visual pos 0 (the group-0
+        // header) — cursor ⊥ selection.
+        let nodes = Owner::new().run(|| {
+            GroupedListView::access_node(&ListState { selected: Some(6), cursor: Some(0) }, None)
+        });
         // nodes[0] = tree container.
         assert_eq!(nodes[0].role, AriaRole::Tree);
-        // The group 0 header is a level-1 expanded TreeItem.
+        // The group 0 header is a level-1 expanded TreeItem, and the cursor
+        // rests on it → focused (the active descendant).
         let header = nodes[1..]
             .iter()
             .find(|n| n.tag == format!("{GROUP_TAG}#0"))
@@ -487,12 +563,41 @@ mod tests {
         assert_eq!(header.role, AriaRole::TreeItem);
         assert_eq!(header.level, Some(1));
         assert_eq!(header.expanded, Some(true), "expanded group header carries aria-expanded");
-        // The selected data row (source 6) is a level-2 TreeItem with aria-selected.
+        assert!(header.state.focused, "the cursor rests on the header");
+        // The selected data row (source 6) is a level-2 TreeItem with
+        // aria-selected, and is *not* the cursor (cursor ⊥ selection).
         let item = nodes[1..]
             .iter()
             .find(|n| n.tag == format!("{LIST_TAG}#6"))
             .expect("rendered data row for source 6");
         assert_eq!(item.level, Some(2));
         assert_eq!(item.selected, Some(true), "selected data row carries aria-selected");
+        assert!(!item.state.focused, "the selected row is not the cursor here");
+    }
+
+    #[test]
+    fn access_focus_target_rings_the_cursor_row() {
+        Owner::new().run(|| {
+            let _ = use_list_groups(); // build the shared holder (all groups expanded)
+            // Cursor on visual pos 0 = the group-0 header.
+            let af = GroupedListView::access_focus_target(
+                &ListState { selected: None, cursor: Some(0) },
+                Some(LIST_TAG),
+            )
+            .expect("list focused returns Some");
+            assert_eq!(af.active_descendant.as_deref(), Some(&*format!("{GROUP_TAG}#0")));
+            // Cursor on visual pos 1 = the first Mesh data row (source 0).
+            let af1 = GroupedListView::access_focus_target(
+                &ListState { selected: None, cursor: Some(1) },
+                Some(LIST_TAG),
+            )
+            .expect("list focused returns Some");
+            assert_eq!(af1.active_descendant.as_deref(), Some(&*format!("{LIST_TAG}#0")));
+            // No cursor → ring the container (no active descendant).
+            let af_none =
+                GroupedListView::access_focus_target(&ListState::default(), Some(LIST_TAG))
+                    .expect("list focused returns Some");
+            assert_eq!(af_none.active_descendant, None);
+        });
     }
 }

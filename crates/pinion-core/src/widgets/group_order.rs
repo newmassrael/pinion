@@ -84,6 +84,8 @@ use crate::external::{
     IntrospectValue, InvokeError,
 };
 use crate::reactive::{Owner, Signal};
+use crate::scene::Scene;
+use crate::widgets::scroll::ScrollState;
 
 /// R843 §5.27 §5.40 — one row of the grouped-list flattening: a group header
 /// or a data row belonging to the most recent header's group.
@@ -132,6 +134,21 @@ impl GroupRow {
         match self {
             Self::Data { source } => Some(*source),
             Self::Header { .. } => None,
+        }
+    }
+
+    /// R848 §5.35 — this row's composite paint / a11y tag under the two
+    /// namespaces: a group header routes to `"{header_prefix}#{group}"` (the
+    /// collapse coordinator), a data row to `"{data_prefix}#{source}"` (the
+    /// selection coordinator). The one SSOT for the grouped row → tag mapping —
+    /// the a11y builders tag their nodes with it and a binding's
+    /// `access_focus_target` rings the cursor row with it, so the focus ring and
+    /// the AT tree address a row identically (no per-site divergence).
+    #[must_use]
+    pub fn composite_tag(&self, header_prefix: &str, data_prefix: &str) -> String {
+        match *self {
+            Self::Header { group, .. } => format!("{header_prefix}#{group}"),
+            Self::Data { source } => format!("{data_prefix}#{source}"),
         }
     }
 }
@@ -268,6 +285,11 @@ pub struct GroupOrderState {
     member_counts: Vec<usize>,
     /// Collapsed group ids. Empty = every group expanded.
     collapsed: Signal<BTreeSet<usize>>,
+    /// R848 — the roving keyboard cursor: a visual position into [`rows`], or
+    /// `None` before the first key. Orthogonal to the selection (cursor ⊥
+    /// selection); read inside a view-fn it subscribes, so a cursor move
+    /// repaints and the binding's focus ring tracks it.
+    cursor: Signal<Option<usize>>,
     /// Where the base visual→source order comes from: identity (group source
     /// order) or an upstream sort/filter proxy (group a sorted/filtered view).
     order_source: OrderSource,
@@ -300,6 +322,7 @@ impl GroupOrderState {
             group_labels,
             member_counts,
             collapsed: Signal::new(BTreeSet::new()),
+            cursor: Signal::new(None),
             order_source: OrderSource::Identity(identity),
             rows: RefCell::new(GroupRowsMemo { key: None, rows: Rc::new(Vec::new()) }),
         }
@@ -489,6 +512,29 @@ impl GroupOrderState {
             self.collapsed.set(BTreeSet::new());
         }
     }
+
+    /// R848 — the roving keyboard cursor: the visual position (into [`rows`])
+    /// the keyboard navigation currently addresses, or `None` before the first
+    /// key. Distinct from the **selection** (a data row's source index held by
+    /// the [`VirtualSelectExternal`](crate::widgets::virtual_select)): the
+    /// cursor can rest on a group header (which has no selection) while a data
+    /// row stays selected. Read inside a view-fn it subscribes, so a cursor
+    /// move repaints (the binding's `access_focus_target` rings the cursor row).
+    #[must_use]
+    pub fn cursor(&self) -> Option<usize> {
+        self.cursor.get()
+    }
+
+    /// Move the roving keyboard cursor to visual position `pos`, or clear it
+    /// with `None`. Equality-skipped (no repaint on a redundant write). An
+    /// out-of-range `pos` is stored as given — a later collapse can shrink the
+    /// flattening under a held cursor; [`group_nav`] clamps the cursor it reads
+    /// and the focus-ring mapping resolves an out-of-range cursor to no active
+    /// descendant. The AI-first wire mirror is the `GroupOrderExternal`'s
+    /// `cursor` query / intervene.
+    pub fn set_cursor(&self, pos: Option<usize>) {
+        self.cursor.set(pos);
+    }
 }
 
 /// R843 §5.27 §5.40 — resolve the shared [`GroupOrderState`] for `key`,
@@ -512,6 +558,176 @@ pub fn use_group_order(
             let (groups, labels) = data();
             GroupOrderState::with_tag(key, groups, labels)
         })
+}
+
+/// R848 §5.27 — read the roving keyboard cursor's visual position off a
+/// [`GroupOrderExternal`]'s introspect handle (the `cursor` query slot), the
+/// grouped peer of
+/// [`read_selected`](crate::widgets::virtual_select::read_selected). `None` when
+/// unset or non-Int. A binding reaches it through the standard
+/// `find_external_with_tag(group_tag) → introspect → read_cursor` idiom, the
+/// same shape as reading the selection off the primary coordinator.
+#[must_use]
+pub fn read_cursor(intro: &dyn ExternalIntrospect) -> Option<usize> {
+    match intro.query("cursor") {
+        Some(IntrospectValue::Int(v)) => usize::try_from(v).ok(),
+        _ => None,
+    }
+}
+
+/// R848 §5.27 — the outcome of one grouped keyboard-navigation key, the
+/// pure-policy result [`group_nav`] returns. Two arms because a grouped
+/// collapsible collection has exactly two keyboard effects: move the roving
+/// cursor (the WAI-ARIA tree/grid Arrow/Home/End roving, selection following
+/// onto a data row) or toggle a group's collapse (Right/Left/Enter on a
+/// header, the cursor staying put).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupNavOutcome {
+    /// Move the roving cursor to this visual position. When the row there is a
+    /// data row, the controller selects its source (selection-follows-focus).
+    MoveTo(usize),
+    /// Collapse / expand this group; the cursor stays on its header.
+    Toggle(usize),
+}
+
+/// R848 §5.27 — the **keyboard-navigation policy** for a grouped collapsible
+/// collection (the [`GroupRow`] flatten): map a key + the current cursor to a
+/// [`GroupNavOutcome`], or `None` for a key this widget does not handle (the
+/// caller falls through to the shell's unrecognised-key swallow).
+///
+/// The model is WAI-ARIA's tree / grouped-grid keyboard interaction over the
+/// flattened visible rows:
+///
+/// - **`ArrowDown` / `ArrowUp` / `Home` / `End` / `PageDown` / `PageUp`** —
+///   move the cursor over every visible row (headers *and* data), linear clamp
+///   (no wrap), reusing the list [`clamp_nav`](crate::widgets::virtual_select::clamp_nav)
+///   policy. From no cursor the first key lands on row 0.
+/// - **`ArrowRight`** — on a collapsed group header expands it (cursor stays);
+///   on an expanded header steps into its first child (the next row).
+/// - **`ArrowLeft`** — on an expanded group header collapses it (cursor stays);
+///   on a data row jumps up to its group header (the nearest header above).
+/// - **`Enter` / `Space`** — on a header toggles it; on a data row re-affirms
+///   the selection (a `MoveTo` to the cursor's own position).
+///
+/// Pure and total over `rows` (an empty flatten yields `None` for every key),
+/// so it unit-tests without a scene. The cursor it reads is clamped into range
+/// first, so a stale cursor (a collapse shrank the flatten under a held
+/// position) still navigates sanely.
+#[must_use]
+pub fn group_nav(
+    rows: &[GroupRow],
+    cursor: Option<usize>,
+    key: &str,
+    page: usize,
+) -> Option<GroupNavOutcome> {
+    let last = rows.len().checked_sub(1)?;
+    // Clamp a possibly-stale cursor into range before reading the row under it.
+    let cursor = cursor.map(|c| c.min(last));
+    let current = cursor.map(|c| (c, rows[c]));
+    match key {
+        "ArrowDown" | "ArrowUp" | "Home" | "End" | "PageDown" | "PageUp" => {
+            crate::widgets::virtual_select::clamp_nav(cursor, key, rows.len(), page)
+                .map(GroupNavOutcome::MoveTo)
+        }
+        "ArrowRight" => match current {
+            // Collapsed header → expand it (cursor stays on the header).
+            Some((_, GroupRow::Header { group, collapsed: true, .. })) => {
+                Some(GroupNavOutcome::Toggle(group))
+            }
+            // Expanded header → step into its first child (the next row).
+            Some((pos, GroupRow::Header { collapsed: false, .. })) => {
+                Some(GroupNavOutcome::MoveTo((pos + 1).min(last)))
+            }
+            // Data row (or no cursor) → no horizontal axis at row scope.
+            _ => None,
+        },
+        "ArrowLeft" => match current {
+            // Expanded header → collapse it (cursor stays on the header).
+            Some((_, GroupRow::Header { group, collapsed: false, .. })) => {
+                Some(GroupNavOutcome::Toggle(group))
+            }
+            // Data row → jump up to its group header (the nearest header above).
+            Some((pos, GroupRow::Data { .. })) => (0..pos)
+                .rev()
+                .find(|&i| matches!(rows[i], GroupRow::Header { .. }))
+                .map(GroupNavOutcome::MoveTo),
+            // Collapsed header (or no cursor) → nothing to the left.
+            _ => None,
+        },
+        "Enter" | " " | "Space" => match current {
+            Some((_, GroupRow::Header { group, .. })) => Some(GroupNavOutcome::Toggle(group)),
+            Some((pos, GroupRow::Data { .. })) => Some(GroupNavOutcome::MoveTo(pos)),
+            None => None,
+        },
+        _ => None,
+    }
+}
+
+/// R848 §5.27 — drive keyboard navigation over a grouped collapsible
+/// collection: the shared `WidgetCore::apply_key` body behind
+/// `hello-grouped-list` (a `tree`) and `hello-grouped-grid` (a `grid`). The
+/// wiring is byte-identical between them (only the tag, scroll state and row
+/// pitch differ), and a divergence — collapsing or revealing differently in one
+/// than the other — would be a bug, not a style choice, so it lifts here rather
+/// than living twice (the R758 self-grep mandate, the [`nav_select_key`]
+/// precedent).
+///
+/// `groups` is the shared [`GroupOrderState`] (the cursor + collapse SSOT,
+/// reached by the binding via `use_group_order`); `tag` is the focusable tab
+/// stop **and** the [`VirtualSelectExternal`] anchor (selection-follows-focus
+/// routes there). Keys only act when `focused == Some(tag)` (single tab stop).
+///
+/// On a handled key it applies the [`group_nav`] policy:
+/// [`MoveTo`](GroupNavOutcome::MoveTo) writes the cursor and, when the landed
+/// row is a data row, selects its source through the coordinator's AI-first
+/// `invoke("select", …)` funnel (the same wire a `scene/invoke` drives — keyboard
+/// and RPC selection are one funnel), then scrolls the cursor into view;
+/// [`Toggle`](GroupNavOutcome::Toggle) flips the group's collapse and keeps the
+/// header revealed. Returns `true` exactly when the key was handled.
+///
+/// [`nav_select_key`]: crate::widgets::virtual_select::nav_select_key
+pub fn group_nav_key(
+    scene: &mut Scene,
+    scroll: &ScrollState,
+    groups: &GroupOrderState,
+    tag: &str,
+    focused: Option<&str>,
+    key: &str,
+    row_pitch: u32,
+) -> bool {
+    if focused != Some(tag) {
+        return false;
+    }
+    let page = crate::widgets::virtual_list::page_rows(scroll, row_pitch);
+    let rows = groups.rows();
+    let Some(outcome) = group_nav(&rows, groups.cursor(), key, page) else {
+        return false;
+    };
+    match outcome {
+        GroupNavOutcome::MoveTo(pos) => {
+            groups.set_cursor(Some(pos));
+            // Selection-follows-focus: landing on a data row selects its source
+            // through the coordinator's `invoke` funnel.
+            if let Some(source) = rows.get(pos).and_then(GroupRow::source) {
+                if let (Some(node), Ok(s)) =
+                    (scene.find_external_with_tag_mut(tag), i64::try_from(source))
+                {
+                    if let Some(intro) = node.handle.introspect_mut() {
+                        let _ = intro.invoke("select", IntrospectValue::Int(s));
+                    }
+                }
+            }
+            crate::widgets::virtual_list::reveal_row(scroll, pos, row_pitch);
+        }
+        GroupNavOutcome::Toggle(group) => {
+            groups.toggle_group(group);
+            // The cursor stays on the toggled header; keep it in view.
+            if let Some(pos) = groups.cursor() {
+                crate::widgets::virtual_list::reveal_row(scroll, pos, row_pitch);
+            }
+        }
+    }
+    true
 }
 
 /// R843 §5.27 §5.40 — the group-by **proxy coordinator** External: a thin
@@ -594,6 +810,8 @@ impl ExternalIntrospect for GroupOrderExternal {
         // `member_count_at` — `member_count_at.<pos>` header's count, Null on data.
         // `collapsed_at`    — `collapsed_at.<pos>` header's collapse flag, Null on data.
         // `collapsed`       — `collapsed.<group>` per-group flag (query + intervene).
+        // `cursor`          — the roving keyboard cursor visual position
+        //                     (query + intervene; Null when unset). R848.
         // `toggle_group`/`collapse_all`/`expand_all`/`send` — invoke channels.
         IntrospectSchema::new(&[
             ("visible_len", "int"),
@@ -606,6 +824,7 @@ impl ExternalIntrospect for GroupOrderExternal {
             ("member_count_at", "int"),
             ("collapsed_at", "bool"),
             ("collapsed", "bool"),
+            ("cursor", "int"),
             ("toggle_group", "int"),
             ("collapse_all", "int"),
             ("expand_all", "int"),
@@ -671,6 +890,13 @@ impl ExternalIntrospect for GroupOrderExternal {
             "group_count" => {
                 Some(IntrospectValue::Int(i64::try_from(self.state.group_count()).unwrap_or(i64::MAX)))
             }
+            // The roving keyboard cursor's visual position, Null when unset.
+            "cursor" => Some(
+                self.state
+                    .cursor()
+                    .and_then(|c| i64::try_from(c).ok())
+                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
+            ),
             _ => None,
         }
     }
@@ -689,6 +915,26 @@ impl ExternalIntrospect for GroupOrderExternal {
             return match value {
                 IntrospectValue::Bool(b) => {
                     self.state.set_collapsed(group, b);
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            };
+        }
+        if path == "cursor" {
+            // The roving keyboard cursor is read/write (admin / RPC drive): an
+            // Int sets the visual position (out-of-range stored as given, the
+            // `set_cursor` contract), Null clears it. A negative Int or a
+            // non-Int/Null value is a type mismatch.
+            return match value {
+                IntrospectValue::Int(i) => match usize::try_from(i) {
+                    Ok(pos) => {
+                        self.state.set_cursor(Some(pos));
+                        Ok(())
+                    }
+                    Err(_) => Err(InterveneError::TypeMismatch),
+                },
+                IntrospectValue::Null => {
+                    self.state.set_cursor(None);
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -1014,5 +1260,116 @@ mod tests {
         assert_eq!(s.visible_len(), 5, "one header + 4 members; emptied groups vanish");
         // The dataset-total member_count is order-source-independent.
         assert_eq!(s.total_member_count(0), 4, "member_count is the dataset total, not the filtered count");
+    }
+
+    // ── R848: roving keyboard cursor + grouped navigation policy ──
+
+    /// The 15-row flatten of the 12-row / 3-group dataset, nothing collapsed:
+    /// pos 0 = group-0 header, pos 1–4 its data; pos 5 = group-1 header, 6–9
+    /// its data; pos 10 = group-2 header, 11–14 its data.
+    fn flat() -> Vec<GroupRow> {
+        group_rows(&(0..12).collect::<Vec<_>>(), |s| s % 3, |_| false)
+    }
+
+    #[test]
+    fn nav_arrows_home_end_rove_over_every_visible_row() {
+        let rows = flat();
+        // From no cursor the first key lands on row 0 (a header).
+        assert_eq!(group_nav(&rows, None, "ArrowDown", 5), Some(GroupNavOutcome::MoveTo(0)));
+        // Step down through header → data; clamp at the ends.
+        assert_eq!(group_nav(&rows, Some(0), "ArrowDown", 5), Some(GroupNavOutcome::MoveTo(1)));
+        assert_eq!(group_nav(&rows, Some(1), "ArrowUp", 5), Some(GroupNavOutcome::MoveTo(0)));
+        assert_eq!(group_nav(&rows, Some(0), "ArrowUp", 5), Some(GroupNavOutcome::MoveTo(0)), "clamp at top");
+        assert_eq!(group_nav(&rows, Some(14), "ArrowDown", 5), Some(GroupNavOutcome::MoveTo(14)), "clamp at bottom");
+        assert_eq!(group_nav(&rows, Some(7), "Home", 5), Some(GroupNavOutcome::MoveTo(0)));
+        assert_eq!(group_nav(&rows, Some(0), "End", 5), Some(GroupNavOutcome::MoveTo(14)));
+        // PageDown advances by the page size, clamped.
+        assert_eq!(group_nav(&rows, Some(1), "PageDown", 5), Some(GroupNavOutcome::MoveTo(6)));
+        assert_eq!(group_nav(&rows, Some(12), "PageDown", 5), Some(GroupNavOutcome::MoveTo(14)));
+    }
+
+    #[test]
+    fn nav_right_expands_or_enters_a_header_left_collapses_or_climbs() {
+        let rows = flat();
+        // Right on an expanded header steps into its first child (next row).
+        assert_eq!(group_nav(&rows, Some(0), "ArrowRight", 5), Some(GroupNavOutcome::MoveTo(1)));
+        // Left on an expanded header collapses it (cursor stays).
+        assert_eq!(group_nav(&rows, Some(0), "ArrowLeft", 5), Some(GroupNavOutcome::Toggle(0)));
+        // Left on a data row climbs to its group header.
+        assert_eq!(group_nav(&rows, Some(3), "ArrowLeft", 5), Some(GroupNavOutcome::MoveTo(0)), "data climbs to header");
+        assert_eq!(group_nav(&rows, Some(8), "ArrowLeft", 5), Some(GroupNavOutcome::MoveTo(5)), "group-1 data climbs to group-1 header");
+        // Right on a data row has no row-scope horizontal axis.
+        assert_eq!(group_nav(&rows, Some(3), "ArrowRight", 5), None);
+    }
+
+    #[test]
+    fn nav_right_expands_a_collapsed_header_left_on_it_is_inert() {
+        // Group 0 collapsed: pos 0 = collapsed header, pos 1 = group-1 header, …
+        let rows = group_rows(&(0..12).collect::<Vec<_>>(), |s| s % 3, |g| g == 0);
+        assert!(matches!(rows[0], GroupRow::Header { group: 0, collapsed: true, .. }));
+        assert_eq!(group_nav(&rows, Some(0), "ArrowRight", 5), Some(GroupNavOutcome::Toggle(0)), "right expands a collapsed header");
+        assert_eq!(group_nav(&rows, Some(0), "ArrowLeft", 5), None, "left on a collapsed header is inert");
+    }
+
+    #[test]
+    fn nav_enter_space_toggle_headers_and_reaffirm_data() {
+        let rows = flat();
+        assert_eq!(group_nav(&rows, Some(0), "Enter", 5), Some(GroupNavOutcome::Toggle(0)));
+        assert_eq!(group_nav(&rows, Some(5), " ", 5), Some(GroupNavOutcome::Toggle(1)), "Space toggles a header");
+        assert_eq!(group_nav(&rows, Some(2), "Enter", 5), Some(GroupNavOutcome::MoveTo(2)), "Enter on data re-affirms");
+    }
+
+    #[test]
+    fn nav_clamps_a_stale_cursor_and_ignores_unknown_keys_and_empty_rows() {
+        let rows = flat();
+        // A cursor left past the end by an external collapse still navigates
+        // sanely: clamp into range (14), then up → 13.
+        assert_eq!(group_nav(&rows, Some(99), "ArrowUp", 5), Some(GroupNavOutcome::MoveTo(13)));
+        // An unhandled key falls through.
+        assert_eq!(group_nav(&rows, Some(0), "Tab", 5), None);
+        // Empty flatten yields None for every key.
+        assert_eq!(group_nav(&[], None, "ArrowDown", 5), None);
+        assert_eq!(group_nav(&[], Some(0), "Enter", 5), None);
+    }
+
+    #[test]
+    fn cursor_defaults_none_and_round_trips() {
+        let s = state();
+        assert_eq!(s.cursor(), None);
+        s.set_cursor(Some(3));
+        assert_eq!(s.cursor(), Some(3));
+        s.set_cursor(None);
+        assert_eq!(s.cursor(), None);
+    }
+
+    #[test]
+    fn external_cursor_query_and_intervene_round_trip() {
+        let mut e = ext();
+        assert_eq!(e.query("cursor"), Some(IntrospectValue::Null), "cursor unset at boot");
+        e.intervene("cursor", IntrospectValue::Int(4)).expect("set cursor");
+        assert_eq!(e.query("cursor"), Some(IntrospectValue::Int(4)));
+        assert_eq!(e.state().cursor(), Some(4), "external + view share the cursor");
+        e.intervene("cursor", IntrospectValue::Null).expect("clear cursor");
+        assert_eq!(e.query("cursor"), Some(IntrospectValue::Null));
+        // A negative Int or a non-Int/Null value is a type mismatch, not a clear.
+        assert_eq!(e.intervene("cursor", IntrospectValue::Int(-1)), Err(InterveneError::TypeMismatch));
+        assert_eq!(e.intervene("cursor", IntrospectValue::Bool(true)), Err(InterveneError::TypeMismatch));
+    }
+
+    #[test]
+    fn composite_tag_maps_header_and_data_rows() {
+        let rows = flat();
+        // The SSOT row → tag mapping the a11y builders + access_focus_target share.
+        assert_eq!(rows[0].composite_tag("grp", "row"), "grp#0", "header → {{header}}#{{group}}");
+        assert_eq!(rows[1].composite_tag("grp", "row"), "row#0", "data → {{data}}#{{source}}");
+        assert_eq!(rows[5].composite_tag("grp", "row"), "grp#1", "group-1 header");
+    }
+
+    #[test]
+    fn read_cursor_reads_the_external_cursor_slot() {
+        let mut e = ext();
+        assert_eq!(read_cursor(&e), None, "unset cursor reads None");
+        e.intervene("cursor", IntrospectValue::Int(5)).expect("set cursor");
+        assert_eq!(read_cursor(&e), Some(5), "read_cursor mirrors the cursor query slot");
     }
 }

@@ -53,6 +53,12 @@ pub struct GroupedTreeSpec<'a> {
     /// The selected **source** index, or `None`. The matching data row carries
     /// `aria-selected`.
     pub selected_source: Option<usize>,
+    /// R848 — the roving keyboard cursor's **visual position** (into `rows`),
+    /// or `None`. The windowed row at that position carries the `focused`
+    /// state (`aria-activedescendant`); orthogonal to `selected_source` (the
+    /// cursor can rest on a group header). A grouped collection with no
+    /// keyboard navigation passes `None`.
+    pub focused_view_pos: Option<usize>,
 }
 
 /// R847 §5.50 — build the grouped-**list** `tree` a11y nodes over the visible
@@ -78,10 +84,7 @@ pub fn grouped_tree_access_nodes(
     data_label: impl Fn(usize) -> String,
 ) -> Vec<AccessNode> {
     let total = u32::try_from(rows.len()).unwrap_or(u32::MAX);
-    let row_tag = |row: &GroupRow| match *row {
-        GroupRow::Header { group, .. } => format!("{}#{group}", spec.header_prefix),
-        GroupRow::Data { source } => format!("{}#{source}", spec.data_prefix),
-    };
+    let row_tag = |row: &GroupRow| row.composite_tag(spec.header_prefix, spec.data_prefix);
 
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count + 1);
     let mut tree = AccessNode::new(spec.tree_tag, AriaRole::Tree).with_size_of_set(total);
@@ -114,7 +117,8 @@ pub fn grouped_tree_access_nodes(
                 .with_size_of_set(total)
                 .with_selected(spec.selected_source == Some(source)),
         };
-        nodes.push(node);
+        // The roving cursor's row carries the active-descendant `focused` state.
+        nodes.push(node.with_focused(spec.focused_view_pos == Some(view_pos)));
     }
     nodes
 }
@@ -138,6 +142,11 @@ pub struct GroupedGridSpec<'a> {
     pub data_prefix: &'a str,
     /// The selected **source** index, or `None`.
     pub selected_source: Option<usize>,
+    /// R848 — the roving keyboard cursor's **visual position** (into `rows`),
+    /// or `None`. The windowed `role=row` at that position (group header or
+    /// data row) carries the `focused` state (`aria-activedescendant`). A
+    /// grid with no keyboard navigation passes `None`.
+    pub focused_view_pos: Option<usize>,
 }
 
 /// R847 §5.50 — build the grouped-**grid** `grid` a11y nodes over the visible
@@ -165,10 +174,7 @@ pub fn grouped_grid_access_nodes(
     cell_value: impl Fn(usize, usize) -> String,
 ) -> Vec<AccessNode> {
     let total = u32::try_from(rows.len()).unwrap_or(u32::MAX);
-    let row_tag = |row: &GroupRow| match *row {
-        GroupRow::Header { group, .. } => format!("{}#{group}", spec.group_prefix),
-        GroupRow::Data { source } => format!("{}#{source}", spec.data_prefix),
-    };
+    let row_tag = |row: &GroupRow| row.composite_tag(spec.group_prefix, spec.data_prefix);
 
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (spec.columns.len() + 1) + 2);
 
@@ -203,6 +209,9 @@ pub fn grouped_grid_access_nodes(
     for view_pos in window.indices() {
         let Some(row) = rows.get(view_pos) else { continue };
         let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
+        // The roving cursor's row (header or data) carries the active-descendant
+        // `focused` state; the gridcells under a data row do not.
+        let focused = spec.focused_view_pos == Some(view_pos);
         match *row {
             GroupRow::Header { group, member_count, collapsed } => {
                 nodes.push(
@@ -210,14 +219,16 @@ pub fn grouped_grid_access_nodes(
                         .with_name(format!("{} ({member_count})", group_label(group)))
                         .with_position_in_set(posinset)
                         .with_size_of_set(total)
-                        .with_expanded(!collapsed),
+                        .with_expanded(!collapsed)
+                        .with_focused(focused),
                 );
             }
             GroupRow::Data { source } => {
                 let mut data_row = AccessNode::new(row_tag(row), AriaRole::Row)
                     .with_position_in_set(posinset)
                     .with_size_of_set(total)
-                    .with_selected(spec.selected_source == Some(source));
+                    .with_selected(spec.selected_source == Some(source))
+                    .with_focused(focused);
                 for c in 0..spec.columns.len() {
                     data_row = data_row.with_child(cell_tag(source, c));
                 }
@@ -259,12 +270,14 @@ mod tests {
     fn grouped_tree_emits_tree_expandable_headers_and_selected_data() {
         let rows = sample();
         let win = full_window(&rows);
+        // Cursor on visual pos 1 (the first data row, source 0).
         let spec = GroupedTreeSpec {
             tree_tag: "list",
             name: Some("Grouped"),
             header_prefix: "grp",
             data_prefix: "row",
             selected_source: Some(2),
+            focused_view_pos: Some(1),
         };
         let nodes = grouped_tree_access_nodes(
             &spec,
@@ -291,6 +304,12 @@ mod tests {
         // A non-selected data row carries selected = Some(false).
         let d0 = nodes.iter().find(|n| n.tag == "row#0").expect("data row 0");
         assert_eq!(d0.selected, Some(false));
+        // The cursor (visual pos 1 = data row 0) carries the focused state;
+        // a non-cursor row does not. Cursor ⊥ selection (focused on source 0,
+        // selected on source 2).
+        assert!(d0.state.focused, "the cursor row is the active descendant");
+        assert!(!d2.state.focused, "a non-cursor row is not focused");
+        assert!(!h0.state.focused, "the header is not the cursor here");
     }
 
     #[test]
@@ -301,6 +320,7 @@ mod tests {
             GridColumn { tag: "c0".into(), label: "Name".into(), sort: Some(SortDirection::Ascending) },
             GridColumn { tag: "c1".into(), label: "Size".into(), sort: None },
         ];
+        // Cursor on visual pos 0 (the group-0 header).
         let spec = GroupedGridSpec {
             grid_tag: "grid",
             name: Some("Grouped grid"),
@@ -309,6 +329,7 @@ mod tests {
             group_prefix: "grp",
             data_prefix: "row",
             selected_source: Some(0),
+            focused_view_pos: Some(0),
         };
         let nodes = grouped_grid_access_nodes(
             &spec,
@@ -325,14 +346,17 @@ mod tests {
         assert_eq!(c0.sort, Some(SortDirection::Ascending));
         let c1 = nodes.iter().find(|n| n.tag == "c1").expect("column 1");
         assert_eq!(c1.sort, None);
-        // Group 0 header is an expandable Row.
+        // Group 0 header is an expandable Row, and the cursor (visual pos 0)
+        // rests on it → focused (active descendant); a data row is not.
         let h0 = nodes.iter().find(|n| n.tag == "grp#0").expect("group 0 header");
         assert_eq!(h0.role, AriaRole::Row);
         assert_eq!(h0.expanded, Some(true));
+        assert!(h0.state.focused, "the cursor rests on the group-0 header");
         // Data row source 0: Row, selected, with two gridcells named "Col: value".
         let d0 = nodes.iter().find(|n| n.tag == "row#0").expect("data row 0");
         assert_eq!(d0.role, AriaRole::Row);
         assert_eq!(d0.selected, Some(true));
+        assert!(!d0.state.focused, "a data row is not the cursor here");
         let cell00 = nodes.iter().find(|n| n.tag == "cell_0_0").expect("cell 0,0");
         assert_eq!(cell00.role, AriaRole::GridCell);
         assert_eq!(cell00.name.as_deref(), Some("Name: v00"));

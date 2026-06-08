@@ -34853,6 +34853,60 @@
         "frozen/pinned first column (CLAUDE.md item-1 'frozen panes') = future round (R784 h-axis peer)"
       ]
     },
+    "R848": {
+      "decision_summary": "R848 grouped-collection keyboard navigation: one group_nav_key SSOT controller (Arrow/Home/End roving + Left/Right collapse-expand + selection-follows-focus + scroll-into-view) shared by hello-grouped-list (tree) and hello-grouped-grid (grid), clearing the windowed-roving carry deferred R843-R846. The cursor is a GroupOrderState Signal projected into widget State (the datepicker focused_day precedent) so a cursor-only move repaints; access_focus_target rings the cursor row (cursor perp selection). Self-grep lifted GroupRow::composite_tag (4 sites) and read_cursor (2 copies, peer of read_selected).",
+      "changes_bullets": [
+        "group_order: GroupOrderState.cursor Signal + cursor()/set_cursor() + External cursor query/intervene",
+        "group_nav() pure policy (Arrow/Home/End rove + Right/Left collapse-expand + Enter/Space) + group_nav_key() controller",
+        "GroupRow::composite_tag SSOT (row->tag, 4 sites) + read_cursor() free-fn peer of read_selected (2-copy lift)",
+        "pinion-a11y grouped: GroupedTree/GridSpec.focused_view_pos + AccessNode::with_focused (cursor = active descendant)",
+        "hello-grouped-list + hello-grouped-grid: focusable_tags + apply_key->group_nav_key + access_focus_target ring",
+        "State projects {selected, cursor} (datepicker focused_day precedent) so a cursor-only move repaints",
+        "grouped-sort + grouped-grid-sort pass focused_view_pos: None (behaviour-identical, no keyboard nav)"
+      ],
+      "verification_bullets": [
+        "pinion-core group_order 25 unit (group_nav policy exhaustive + cursor round-trip + composite_tag + read_cursor)",
+        "pinion-a11y grouped 2 unit (focused active-descendant) + hello-grouped-grid 4 + hello-grouped-list 5 unit",
+        "tools/demos/r848_grouped_nav.py 48 checks (roving / cursor-perp-selection / collapse-expand / scroll-reveal / focus-ring)",
+        "cargo test --workspace -j2 = 148 ok 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello clean"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "per-cell column cursor within a data row (2-D grid roving family) = future axis, single-consumer now",
+        "typeahead jump-to-group (first-letter) = additive; PageUp/PageDown covered, typeahead deferred",
+        "frozen/pinned first column + per-group aggregate footer (R846 carries) still open"
+      ],
+      "publishable_decision_summary": "R848 grouped-collection keyboard navigation: one group_nav_key SSOT controller (Arrow/Home/End roving + Left/Right collapse-expand + selection-follows-focus + scroll-into-view) shared by hello-grouped-list (tree) and hello-grouped-grid (grid), clearing the windowed-roving carry deferred R843-R846. The cursor is a GroupOrderState Signal projected into widget State (the datepicker focused_day precedent) so a cursor-only move repaints; access_focus_target rings the cursor row (cursor perp selection). Self-grep lifted GroupRow::composite_tag (4 sites) and read_cursor (2 copies, peer of read_selected).",
+      "publishable_changes_bullets": [
+        "group_order: GroupOrderState.cursor Signal + cursor()/set_cursor() + External cursor query/intervene",
+        "group_nav() pure policy (Arrow/Home/End rove + Right/Left collapse-expand + Enter/Space) + group_nav_key() controller",
+        "GroupRow::composite_tag SSOT (row->tag, 4 sites) + read_cursor() free-fn peer of read_selected (2-copy lift)",
+        "pinion-a11y grouped: GroupedTree/GridSpec.focused_view_pos + AccessNode::with_focused (cursor = active descendant)",
+        "hello-grouped-list + hello-grouped-grid: focusable_tags + apply_key->group_nav_key + access_focus_target ring",
+        "State projects {selected, cursor} (datepicker focused_day precedent) so a cursor-only move repaints",
+        "grouped-sort + grouped-grid-sort pass focused_view_pos: None (behaviour-identical, no keyboard nav)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core group_order 25 unit (group_nav policy exhaustive + cursor round-trip + composite_tag + read_cursor)",
+        "pinion-a11y grouped 2 unit (focused active-descendant) + hello-grouped-grid 4 + hello-grouped-list 5 unit",
+        "tools/demos/r848_grouped_nav.py 48 checks (roving / cursor-perp-selection / collapse-expand / scroll-reveal / focus-ring)",
+        "cargo test --workspace -j2 = 148 ok 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello clean"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "per-cell column cursor within a data row (2-D grid roving family) = future axis, single-consumer now",
+        "typeahead jump-to-group (first-letter) = additive; PageUp/PageDown covered, typeahead deferred",
+        "frozen/pinned first column + per-group aggregate footer (R846 carries) still open"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
