@@ -43,6 +43,7 @@ members = [
     "examples/hello-virtual-sort",
     "examples/hello-grouped-list",
     "examples/hello-grouped-sort",
+    "examples/hello-grouped-grid",
     "examples/hello-undo",
     "examples/hello-gradient",
     "examples/hello-path",

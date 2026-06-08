@@ -34671,6 +34671,64 @@
         "member_count(group) is dataset-total; a filter-aware total accessor waits for a consumer"
       ]
     },
+    "R845": {
+      "decision_summary": "R845 grouped multi-column data grid: the R843 group_rows flatten's second STRUCTURAL consumer (list -> grid). hello-grouped-grid renders the same GroupOrderState flattening as a 3-column grid (Name/Size/Modified) grouped by asset type, with collapsible group-header rows spanning the columns between cell rows; pure composition over view_virtual_list + GroupOrderExternal + VirtualSelectExternal (no pinion-core change). Data rows are the click target with pointer_transparent cells (a row-click selects); a11y is a hand-rolled WAI-ARIA Grid (ColumnHeaders + group Rows with aria-expanded + data Rows with GridCells), distinct from the grouped-list's tree/treeitem (no treegrid role), so the two do not share a builder. Validates the R843 proxy is not list-specific.",
+      "changes_bullets": [
+        "hello-grouped-grid: 3-col grid (Name/Size/Modified) grouped by type, collapsible spanning headers",
+        "2nd structural consumer of R843 group_rows flatten (list -> grid); pure composition, no core dep",
+        "data rows render cells across columns; group-header rows span; row-select by source index",
+        "cells pointer_transparent so a row-click selects (cell carries an a11y bound, not a click target)",
+        "hand-rolled WAI-ARIA grid a11y (Grid + ColumnHeader + group Rows + data Rows + GridCells)"
+      ],
+      "verification_bullets": [
+        "hello-grouped-grid 3 view+a11y tests green (columns+cells / collapse hides cells / grid a11y)",
+        "tools/demos/r845_grouped_grid.py 35 assertions PASS (hidden window, real render)",
+        "cargo test --workspace -j2 green; clippy workspace all-targets +vello clean (-D pedantic)",
+        "witness: visible_len 10006; toggle Mesh -> 8339; collapse_all -> 6 headers no cell rows",
+        "witness: row selection (source 0) survives collapse + expand; cells re-materialize"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "column sort within groups = R846 (with_order_source(|| grid_sort.order()), R844 mechanism)",
+        "per-cell keyboard nav / cell roving deferred (windowed-grid roving is a family-wide axis)",
+        "grouped-grid a11y (Grid/Row/GridCell + group Rows) is 1st consumer, distinct from grouped-tree",
+        "grid_table_nodes has no group-header-row concept; a grouped-grid builder waits for a 2nd consumer",
+        "per-group aggregate footers (sum/min/max) deferred: no consumer yet"
+      ],
+      "publishable_decision_summary": "R845 grouped multi-column data grid: the R843 group_rows flatten's second STRUCTURAL consumer (list -> grid). hello-grouped-grid renders the same GroupOrderState flattening as a 3-column grid (Name/Size/Modified) grouped by asset type, with collapsible group-header rows spanning the columns between cell rows; pure composition over view_virtual_list + GroupOrderExternal + VirtualSelectExternal (no pinion-core change). Data rows are the click target with pointer_transparent cells (a row-click selects); a11y is a hand-rolled WAI-ARIA Grid (ColumnHeaders + group Rows with aria-expanded + data Rows with GridCells), distinct from the grouped-list's tree/treeitem (no treegrid role), so the two do not share a builder. Validates the R843 proxy is not list-specific.",
+      "publishable_changes_bullets": [
+        "hello-grouped-grid: 3-col grid (Name/Size/Modified) grouped by type, collapsible spanning headers",
+        "2nd structural consumer of R843 group_rows flatten (list -> grid); pure composition, no core dep",
+        "data rows render cells across columns; group-header rows span; row-select by source index",
+        "cells pointer_transparent so a row-click selects (cell carries an a11y bound, not a click target)",
+        "hand-rolled WAI-ARIA grid a11y (Grid + ColumnHeader + group Rows + data Rows + GridCells)"
+      ],
+      "publishable_verification_bullets": [
+        "hello-grouped-grid 3 view+a11y tests green (columns+cells / collapse hides cells / grid a11y)",
+        "tools/demos/r845_grouped_grid.py 35 assertions PASS (hidden window, real render)",
+        "cargo test --workspace -j2 green; clippy workspace all-targets +vello clean (-D pedantic)",
+        "witness: visible_len 10006; toggle Mesh -> 8339; collapse_all -> 6 headers no cell rows",
+        "witness: row selection (source 0) survives collapse + expand; cells re-materialize"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "column sort within groups = R846 (with_order_source(|| grid_sort.order()), R844 mechanism)",
+        "per-cell keyboard nav / cell roving deferred (windowed-grid roving is a family-wide axis)",
+        "grouped-grid a11y (Grid/Row/GridCell + group Rows) is 1st consumer, distinct from grouped-tree",
+        "grid_table_nodes has no group-header-row concept; a grouped-grid builder waits for a 2nd consumer",
+        "per-group aggregate footers (sum/min/max) deferred: no consumer yet"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
