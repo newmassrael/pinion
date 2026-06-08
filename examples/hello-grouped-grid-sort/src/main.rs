@@ -130,24 +130,33 @@ fn row_size(source: usize) -> u64 {
 /// [`QueryOnlyIntrospect`] surfaces them as data). A real asset browser shows
 /// exactly this ("Textures: 1,234 items, 5.6 MB"); the aggregate stays visible
 /// when a group is collapsed because it rides the always-shown header.
-#[derive(Debug)]
 struct GroupAggregates {
-    /// `count[g]` / `total_size[g]` — the member count + Size sum of group `g`.
-    count: Vec<usize>,
+    /// R856 — the group membership SSOT: per-group **count** is read from here
+    /// (`total_member_count`), never re-tallied. (R854 originally recomputed the
+    /// count in a parallel loop — the audit found it duplicated
+    /// `GroupOrderState.member_counts`; the *size* sum below is the only
+    /// genuinely-new aggregate, since the group proxy does not sum cell values.)
+    groups: Rc<GroupOrderState>,
+    /// `total_size[g]` — the Size sum per group (a pure fn of the row index, so
+    /// computed once).
     total_size: Vec<u64>,
 }
 
+impl core::fmt::Debug for GroupAggregates {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("GroupAggregates").field("total_size", &self.total_size).finish_non_exhaustive()
+    }
+}
+
 impl GroupAggregates {
-    /// Tally every row into its group once.
-    fn compute() -> Self {
-        let mut count = vec![0usize; GROUPS.len()];
+    /// Sum the Size column per group once. Counts are NOT tallied here — they
+    /// live in the [`GroupOrderState`] SSOT (R856 audit fix).
+    fn new(groups: Rc<GroupOrderState>) -> Self {
         let mut total_size = vec![0u64; GROUPS.len()];
         for i in 0..N {
-            let g = row_group(i);
-            count[g] += 1;
-            total_size[g] += row_size(i);
+            total_size[row_group(i)] += row_size(i);
         }
-        Self { count, total_size }
+        Self { groups, total_size }
     }
 }
 
@@ -164,8 +173,8 @@ impl QuerySource for GroupAggregates {
 
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "group_count" => Some(IntrospectValue::Int(int_of(self.count.len()))),
-            "total_count" => Some(IntrospectValue::Int(int_of(self.count.iter().sum()))),
+            "group_count" => Some(IntrospectValue::Int(int_of(self.groups.group_count()))),
+            "total_count" => Some(IntrospectValue::Int(int_of(self.groups.count()))),
             "total_size" => Some(IntrospectValue::Int(
                 i64::try_from(self.total_size.iter().sum::<u64>()).unwrap_or(i64::MAX),
             )),
@@ -173,7 +182,11 @@ impl QuerySource for GroupAggregates {
                 let (g_str, field) = path.strip_prefix("group.")?.split_once('.')?;
                 let g: usize = g_str.parse().ok()?;
                 match field {
-                    "count" => self.count.get(g).map(|&c| IntrospectValue::Int(int_of(c))),
+                    // Count from the membership SSOT. `total_member_count` returns
+                    // 0 for an out-of-range id, so gate on `group_count` to keep
+                    // the out-of-range path a None (an RPC UnknownPath error).
+                    "count" => (g < self.groups.group_count())
+                        .then(|| IntrospectValue::Int(int_of(self.groups.total_member_count(g)))),
                     "size" => self
                         .total_size
                         .get(g)
@@ -186,11 +199,13 @@ impl QuerySource for GroupAggregates {
 }
 
 /// R854 — the shared aggregate cache (the headers + the [`QueryOnlyIntrospect`]
-/// read the same instance). The data is static, so this is computed once.
+/// read the same instance). The group proxy is pre-resolved (it is itself
+/// `Owner::cache`'d) BEFORE this factory, never inside it (R666 no-nested-cache).
 fn use_group_aggregates() -> Rc<GroupAggregates> {
+    let groups = use_grid_groups();
     Owner::current()
         .expect("use_group_aggregates requires an active Owner scope")
-        .cache(AGG_KEY, GroupAggregates::compute)
+        .cache(AGG_KEY, move || GroupAggregates::new(groups))
 }
 
 /// The shared column-sort proxy over the materialized cell grid.
@@ -624,41 +639,50 @@ mod tests {
 
     #[test]
     fn r854_group_aggregates_tally_every_row_once() {
-        let agg = GroupAggregates::compute();
-        assert_eq!(agg.count.len(), GROUPS.len(), "one tally per group");
-        assert_eq!(agg.count.iter().sum::<usize>(), N, "every row counted exactly once");
-        // Independent recomputation of the per-group Size sums.
-        let mut expected = vec![0u64; GROUPS.len()];
-        for i in 0..N {
-            expected[row_group(i)] += row_size(i);
-        }
-        assert_eq!(agg.total_size, expected, "per-group Size sums match a fresh tally");
-        assert_eq!(agg.count[0], (0..N).filter(|&i| row_group(i) == 0).count(), "group 0 count");
+        Owner::new().run(|| {
+            let agg = use_group_aggregates();
+            // Independent recomputation of the per-group Size sums.
+            let mut expected = vec![0u64; GROUPS.len()];
+            for i in 0..N {
+                expected[row_group(i)] += row_size(i);
+            }
+            assert_eq!(agg.total_size, expected, "per-group Size sums match a fresh tally");
+            // R856 — counts come from the GroupOrderState membership SSOT, not a
+            // 2nd tally in GroupAggregates.
+            assert_eq!(agg.groups.group_count(), GROUPS.len(), "one entry per group");
+            assert_eq!(agg.groups.count(), N, "every row counted once");
+            assert_eq!(
+                agg.groups.total_member_count(0),
+                (0..N).filter(|&i| row_group(i) == 0).count(),
+                "group 0 count via the membership SSOT",
+            );
+        });
     }
 
     #[test]
     fn r854_aggregate_query_source_paths() {
-        let agg = GroupAggregates::compute();
-        assert_eq!(
-            agg.introspect_query("group_count"),
-            Some(IntrospectValue::Int(int_of(GROUPS.len()))),
-        );
-        assert_eq!(agg.introspect_query("total_count"), Some(IntrospectValue::Int(int_of(N))));
-        let total: u64 = agg.total_size.iter().sum();
-        assert_eq!(
-            agg.introspect_query("total_size"),
-            Some(IntrospectValue::Int(i64::try_from(total).unwrap())),
-        );
-        assert_eq!(
-            agg.introspect_query("group.0.count"),
-            Some(IntrospectValue::Int(int_of(agg.count[0]))),
-        );
-        assert_eq!(
-            agg.introspect_query("group.0.size"),
-            Some(IntrospectValue::Int(i64::try_from(agg.total_size[0]).unwrap())),
-        );
-        assert_eq!(agg.introspect_query("group.99.count"), None, "out-of-range group is None");
-        assert_eq!(agg.introspect_query("bogus"), None, "unknown path is None");
+        Owner::new().run(|| {
+            let agg = use_group_aggregates();
+            assert_eq!(
+                agg.introspect_query("group_count"),
+                Some(IntrospectValue::Int(int_of(GROUPS.len()))),
+            );
+            assert_eq!(agg.introspect_query("total_count"), Some(IntrospectValue::Int(int_of(N))));
+            let total: u64 = agg.total_size.iter().sum();
+            assert_eq!(
+                agg.introspect_query("total_size"),
+                Some(IntrospectValue::Int(i64::try_from(total).unwrap())),
+            );
+            // group count delegates to the membership SSOT (R856).
+            let g0 = agg.groups.total_member_count(0);
+            assert_eq!(agg.introspect_query("group.0.count"), Some(IntrospectValue::Int(int_of(g0))));
+            assert_eq!(
+                agg.introspect_query("group.0.size"),
+                Some(IntrospectValue::Int(i64::try_from(agg.total_size[0]).unwrap())),
+            );
+            assert_eq!(agg.introspect_query("group.99.count"), None, "out-of-range group is None");
+            assert_eq!(agg.introspect_query("bogus"), None, "unknown path is None");
+        });
     }
 
     #[test]
@@ -681,10 +705,12 @@ mod tests {
 
     #[test]
     fn r854_group_header_displays_the_aggregate() {
-        // The leading group's header text carries its count + total Size, and it
-        // survives a collapse (the aggregate rides the always-shown header).
-        let agg = Owner::new().run(GroupAggregates::compute);
-        let want = format!("({}, {} B)", agg.count[0], agg.total_size[0]);
+        // The leading group's header text carries its member count + total Size.
+        // Independent expected aggregate for group 0 (no filter at boot, so the
+        // header's member_count equals the dataset-total).
+        let count0 = (0..N).filter(|&i| row_group(i) == 0).count();
+        let size0: u64 = (0..N).filter(|&i| row_group(i) == 0).map(row_size).sum();
+        let want = format!("({count0}, {size0} B)");
         let scene = render(None, None);
         let texts = all_texts(&scene);
         assert!(

@@ -35271,6 +35271,54 @@
         "next Phase B item-2: frozen left column (touches shared view_virtual_table) or a unified large-data layer (both larger rounds, fresh budget)"
       ]
     },
+    "R856": {
+      "decision_summary": "R856 audit-remediation of R851-R855: fix apply_snapshot mid-drag spurious move + merge contiguity guard + grouped count SSOT; storage 3-copy lift recorded for R857",
+      "changes_bullets": [
+        "audit-remediation of R851-R855 (2 adversarial reviewers + my re-verification): 3 real findings fixed, 1 rejected as convention, 1 (storage lift) recorded now-due",
+        "node-editor apply_snapshot bug: a load / set_graph issued mid-drag journaled a spurious MoveNodeCmd onto the just-cleared undo stack -> a non-recording reset_gesture replaces the end_gesture call",
+        "MoveNodeCmd::merge gains the contiguity guard (self.after == next.before), matching the substrate's canonical AddCmd::merge",
+        "grouped-grid count SSOT: GroupAggregates reads per-group count from GroupOrderState.total_member_count (no 2nd tally); only the Size sum stays local",
+        "rejected: TreeSortExternal's hand-rolled External skeleton is the 8-example convention (query_proxy_external_impl! is pub(crate)); storage build-fallback is a verified 3-copy = R857 lift due"
+      ],
+      "verification_bullets": [
+        "hello-node-editor 53 unit (2 new R856: load-mid-drag journals no spurious move; non-contiguous moves do not coalesce); hello-grouped-grid-sort 8 unit (3 updated to read count from the SSOT)",
+        "r852 / r853 / r854 demos PASS (behaviour-identical: the fixes target untested edge cases + de-duplicate one computation); cargo test --workspace -j2 green (148 suites); clippy (vello, -D pedantic) green",
+        "verify-subagent: count-duplication + storage-3-copy findings confirmed by grep; TreeSortExternal finding rejected against the 8-example hand-roll convention (R850 over-reach lesson); both correctness findings confirmed by re-reading apply_snapshot + merge"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "R857 storage lift (NOW DUE, verified 3-copy: todomvc + settings-panel + node-editor): lift use_app_storage(key, app) + CachedStorage into pinion-platform-storage, retrofit all three (the use_app_clipboard R790 precedent)",
+        "query_proxy_external_impl! is pub(crate); a pub-export would let examples drop the hand-rolled External skeleton (optional, low priority)",
+        "the deferred begin_macro/group-transaction undo still has no consumer",
+        "next Phase B item-2: frozen left column / unified large-data layer (shared view_virtual_table, larger rounds, fresh budget)"
+      ],
+      "publishable_decision_summary": "R856 audit-remediation of R851-R855: fix apply_snapshot mid-drag spurious move + merge contiguity guard + grouped count SSOT; storage 3-copy lift recorded for R857",
+      "publishable_changes_bullets": [
+        "audit-remediation of R851-R855 (2 adversarial reviewers + my re-verification): 3 real findings fixed, 1 rejected as convention, 1 (storage lift) recorded now-due",
+        "node-editor apply_snapshot bug: a load / set_graph issued mid-drag journaled a spurious MoveNodeCmd onto the just-cleared undo stack -> a non-recording reset_gesture replaces the end_gesture call",
+        "MoveNodeCmd::merge gains the contiguity guard (self.after == next.before), matching the substrate's canonical AddCmd::merge",
+        "grouped-grid count SSOT: GroupAggregates reads per-group count from GroupOrderState.total_member_count (no 2nd tally); only the Size sum stays local",
+        "rejected: TreeSortExternal's hand-rolled External skeleton is the 8-example convention (query_proxy_external_impl! is pub(crate)); storage build-fallback is a verified 3-copy = R857 lift due"
+      ],
+      "publishable_verification_bullets": [
+        "hello-node-editor 53 unit (2 new R856: load-mid-drag journals no spurious move; non-contiguous moves do not coalesce); hello-grouped-grid-sort 8 unit (3 updated to read count from the SSOT)",
+        "r852 / r853 / r854 demos PASS (behaviour-identical: the fixes target untested edge cases + de-duplicate one computation); cargo test --workspace -j2 green (148 suites); clippy (vello, -D pedantic) green",
+        "verify-subagent: count-duplication + storage-3-copy findings confirmed by grep; TreeSortExternal finding rejected against the 8-example hand-roll convention (R850 over-reach lesson); both correctness findings confirmed by re-reading apply_snapshot + merge"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R857 storage lift (NOW DUE, verified 3-copy: todomvc + settings-panel + node-editor): lift use_app_storage(key, app) + CachedStorage into pinion-platform-storage, retrofit all three (the use_app_clipboard R790 precedent)",
+        "query_proxy_external_impl! is pub(crate); a pub-export would let examples drop the hand-rolled External skeleton (optional, low priority)",
+        "the deferred begin_macro/group-transaction undo still has no consumer",
+        "next Phase B item-2: frozen left column / unified large-data layer (shared view_virtual_table, larger rounds, fresh budget)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

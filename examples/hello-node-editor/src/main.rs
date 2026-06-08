@@ -839,7 +839,12 @@ impl UndoCommand for MoveNodeCmd {
         let Some(next) = next.as_any().and_then(|a| a.downcast_ref::<MoveNodeCmd>()) else {
             return false;
         };
-        if self.coalescable && next.coalescable && self.id == next.id {
+        // R856 — require contiguity (`self.after == next.before`) like the
+        // substrate's canonical `AddCmd::merge`: every current caller captures
+        // `before` from live state, so the run is contiguous by construction, but
+        // the guard keeps a future stale-`before` caller from folding a
+        // non-contiguous run and losing the intermediate position on undo.
+        if self.coalescable && next.coalescable && self.id == next.id && self.after == next.before {
             self.after = next.after;
             true
         } else {
@@ -1000,7 +1005,10 @@ impl NodeGraphExternal {
         self.selection.set(Selection::None);
         self.preview.set(None);
         self.undo.clear();
-        self.end_gesture();
+        // R856 — reset the gesture latches WITHOUT recording: a document
+        // replacement is not a drag commit, so `end_gesture` (which would journal
+        // a stale MoveNodeCmd onto the just-cleared stack) must not run here.
+        self.reset_gesture();
     }
 
     /// R852 — parse + apply a JSON snapshot (the AI-first `set_graph` write, the
@@ -1323,6 +1331,15 @@ impl NodeGraphExternal {
                 self.record_move(id, (start.x_at_press, start.y_at_press), (node.x, node.y), false);
             }
         }
+        self.reset_gesture();
+    }
+
+    /// R856 — drop the in-flight gesture latches **without** journaling a move.
+    /// `end_gesture` records a completed drag before calling this; a whole-graph
+    /// replacement ([`apply_snapshot`](Self::apply_snapshot)) calls it directly,
+    /// so a `load` / `set_graph` issued mid-drag cannot record a stale move onto
+    /// the freshly-cleared undo history (the "load clears undo" contract).
+    fn reset_gesture(&self) {
         self.grabbed_node.set(None);
         self.node_drag.set(None);
         self.pending_press.set(PendingPress::None);
@@ -3256,6 +3273,56 @@ mod tests {
             let pos = pos_of(&coord, id);
             synth_drag(&coord, id, pos, 40, 0); // a non-coalescable drag
             assert_eq!(stack.len(), 2, "the drag is a fresh step, not folded into the nudge");
+        });
+    }
+
+    #[test]
+    fn r856_load_mid_drag_does_not_journal_a_spurious_move() {
+        // R856 audit fix: a load / set_graph issued while a node drag is in
+        // flight must clear the undo history AND not record the in-flight move
+        // (apply_snapshot resets the gesture latches without journaling).
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let snap = coord.serialized_json();
+            let id = NodeId(0);
+            let before = pos_of(&coord, id);
+            // Arm an in-flight drag (grab + a live move), no release.
+            coord.grabbed_node.set(Some(id));
+            coord.node_drag.set(Some(NodeDragStart {
+                press_x_rel: 0.0,
+                press_y_rel: 0.0,
+                x_at_press: before.0,
+                y_at_press: before.1,
+            }));
+            coord.set_node_pos(id, before.0 + 40, before.1);
+            assert!(coord.load_json(&snap), "load the snapshot mid-drag");
+            assert!(!stack.can_undo(), "the opened document has a clean undo history");
+            assert_eq!(stack.len(), 0, "no spurious MoveNodeCmd was journaled across the load");
+        });
+    }
+
+    #[test]
+    fn r856_non_contiguous_moves_do_not_coalesce() {
+        // R856 audit fix: the merge contiguity guard. Two coalescable moves of
+        // the same node whose positions do not chain (m1.after != m2.before)
+        // stay two undo steps.
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let stack = use_undo();
+            let nodes = use_nodes();
+            let id = NodeId(0);
+            let cmd = |before, after| MoveNodeCmd {
+                nodes: std::rc::Rc::clone(&nodes),
+                id,
+                before,
+                after,
+                coalescable: true,
+            };
+            stack.push_applied(cmd((0, 0), (100, 0)));
+            stack.push_applied(cmd((200, 0), (300, 0))); // before != prior after
+            assert_eq!(stack.len(), 2, "non-contiguous moves do not coalesce");
         });
     }
 
