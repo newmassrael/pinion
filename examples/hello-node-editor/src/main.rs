@@ -79,15 +79,16 @@
 //!   recorded as one move at gesture end; a keyboard nudge **burst** coalesces
 //!   to one undo step (the `UndoCommand::merge` hook). `Ctrl+Z` /
 //!   `Ctrl+Shift+Z` (`Ctrl+Y`) and the AI-first [`UndoStackExternal`] drive it.
-//! - **Persistence** (R852): the graph saves / loads through the §3 §5.15
+//! - **Persistence** (R852, R857): the graph saves / loads through the §3 §5.15
 //!   [`Storage`] substrate — `save` / `load` write and restore a
 //!   [`SerializedGraph`] JSON blob (nodes + edges + the monotonic id counters)
-//!   via [`build_graph_storage`] (a `FileStorage` when the platform offers a
-//!   data dir, the in-memory fallback otherwise — the todomvc runtime-selection
-//!   idiom, so the binding really reaches the file backend). The same snapshot
-//!   is the AI-first `query serialized` / `invoke set_graph` read-write pair,
-//!   and `Ctrl+S` / `Ctrl+O` drive save / open. Loading a graph clears the undo
-//!   history (the opened document is a fresh baseline — the `QUndoStack` model).
+//!   via [`pinion_platform_storage::use_app_storage`] (a `FileStorage` when the
+//!   platform offers a data dir, the in-memory fallback otherwise — R857 lifted
+//!   this runtime-selection hook out of the per-example copies, so the binding
+//!   really reaches the file backend). The same snapshot is the AI-first
+//!   `query serialized` / `invoke set_graph` read-write pair, and `Ctrl+S` /
+//!   `Ctrl+O` drive save / open. Loading a graph clears the undo history (the
+//!   opened document is a fresh baseline — the `QUndoStack` model).
 //! - **`add_node` over RPC**: the graph can be mutated / connected / deleted but
 //!   not grown (no node-creation verb); edge-id minting is in place for it.
 //! - **Crate extraction**: the model + pure bezier geometry are example-local;
