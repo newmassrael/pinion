@@ -35435,6 +35435,58 @@
         "R851-R858 textbook-clean + pushed; this clears the last residual (a doc-sync miss in R857)"
       ]
     },
+    "R859": {
+      "decision_summary": "R859 frozen-left-column data-grid: a linked-scroll follower ScrollNode lets view_virtual_table pin leading columns against horizontal scroll while sharing the vertical body scroll (Phase B Model/View at scale)",
+      "changes_bullets": [
+        "ScrollNode.follower + as_follower(): linked-scroll passive node (shares offset Signal, skips bounds publish)",
+        "layout update_scroll_state_bounds skips follower publish (kills shared-state measured_viewport oscillation)",
+        "view_virtual_table frozen_cols: 0 = byte-identical R784 grid; >0 = frozen-left pane + scrolling pane split",
+        "two panes share vertical body scroll (scrolled=primary, frozen=follower) for vertical lockstep, no oscillation",
+        "SSOT lifts: GridRender ctx, row_inputs, h_scrolled_column, RowPane/ColumnLayout col_base + per-pane tags",
+        "new example hello-grid-frozen-col + tools/demos/r859_frozen_col.py; retrofit 6 grid examples + 4 tests"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (149 ok groups, 0 fail); 8 new unit tests (3 substrate layout/scene, 5 table)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "negative-control test proves two primaries oscillate dirty=true; one follower settles dirty=false",
+        "r859_frozen_col.py PASS (51 assert): frozen cols x-fixed under h-scroll, scrolled cols shift -offset_x, v-lockstep"
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "split-pane a11y: row/header container node = scrolled pane only; span-aware lift at 2nd frozen-grid consumer",
+        "frozen columns non-resizable; runtime-adjustable frozen_cols (Excel-style freeze menu) = additive",
+        "build_cells invoked once per visible row PER pane (small window) in the frozen path",
+        "next Phase B item-2: unified large-data Model layer (premature now per view_order.rs doc; needs 4th consumer)"
+      ],
+      "publishable_decision_summary": "R859 frozen-left-column data-grid: a linked-scroll follower ScrollNode lets view_virtual_table pin leading columns against horizontal scroll while sharing the vertical body scroll (Phase B Model/View at scale)",
+      "publishable_changes_bullets": [
+        "ScrollNode.follower + as_follower(): linked-scroll passive node (shares offset Signal, skips bounds publish)",
+        "layout update_scroll_state_bounds skips follower publish (kills shared-state measured_viewport oscillation)",
+        "view_virtual_table frozen_cols: 0 = byte-identical R784 grid; >0 = frozen-left pane + scrolling pane split",
+        "two panes share vertical body scroll (scrolled=primary, frozen=follower) for vertical lockstep, no oscillation",
+        "SSOT lifts: GridRender ctx, row_inputs, h_scrolled_column, RowPane/ColumnLayout col_base + per-pane tags",
+        "new example hello-grid-frozen-col + tools/demos/r859_frozen_col.py; retrofit 6 grid examples + 4 tests"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (149 ok groups, 0 fail); 8 new unit tests (3 substrate layout/scene, 5 table)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "negative-control test proves two primaries oscillate dirty=true; one follower settles dirty=false",
+        "r859_frozen_col.py PASS (51 assert): frozen cols x-fixed under h-scroll, scrolled cols shift -offset_x, v-lockstep"
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "split-pane a11y: row/header container node = scrolled pane only; span-aware lift at 2nd frozen-grid consumer",
+        "frozen columns non-resizable; runtime-adjustable frozen_cols (Excel-style freeze menu) = additive",
+        "build_cells invoked once per visible row PER pane (small window) in the frozen path",
+        "next Phase B item-2: unified large-data Model layer (premature now per view_order.rs doc; needs 4th consumer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

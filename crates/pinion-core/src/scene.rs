@@ -2143,6 +2143,30 @@ pub struct ScrollNode {
     /// Defaults to [`ScrollAxis::Vertical`] (the only mode before
     /// R784), so every existing consumer is byte-unchanged.
     pub axis: ScrollAxis,
+    /// (R859 §5.45) Linked-scroll **follower**. A follower shares its
+    /// [`state`](Self::state) (hence its `offset_*`) with a *primary*
+    /// scroll node so the two slide in lockstep, but the layout pass
+    /// (`pinion_runtime::layout::update_scroll_state_bounds`) does
+    /// **not** publish this node's measured viewport / max bounds back
+    /// into the shared state. Only the primary owns that write.
+    ///
+    /// This is the substrate behind the frozen-column data-grid (the
+    /// Qt `QTableView` / AG-Grid / Excel "linked scrollbar" pattern):
+    /// the frozen-pane header and the scrolling body both reference one
+    /// horizontal [`ScrollState`], but they sit in different vertical
+    /// bands with different cross-axis viewport heights. If both
+    /// published, `set_measured_viewport` would flip-flop the shared
+    /// `measured_h` every frame (header height vs body height) and spin
+    /// a perpetual scroll-dirty re-pass. Marking the header node a
+    /// follower makes it a passive slider: it still lays out its
+    /// content unbounded along its axis (so the overflow clips and the
+    /// `offset_*` slide applies), it just never feeds the bounds back.
+    ///
+    /// Defaults to `false` (a primary, the only mode before R859), so
+    /// every existing consumer is byte-unchanged. A follower must be
+    /// paired with a primary sharing the same `state`; a lone follower
+    /// never has its `max` written, so it cannot clamp input.
+    pub follower: bool,
     /// Visible clip window in logical pixels (Vello) or cells (TUI).
     /// The runtime hit-tester and paint adapter treat this rect as
     /// the geometry of the entire primitive at the parent level —
@@ -2215,6 +2239,7 @@ impl ScrollNode {
             viewport,
             content: Box::new(content),
             axis: ScrollAxis::Vertical,
+            follower: false,
             offset_x: 0,
             offset_y: 0,
             tag: None,
@@ -2255,6 +2280,20 @@ impl ScrollNode {
     #[must_use]
     pub const fn with_axis(mut self, axis: ScrollAxis) -> Self {
         self.axis = axis;
+        self
+    }
+
+    /// (R859 §5.45) Mark this node a linked-scroll **follower** (see
+    /// [`Self::follower`]). The node keeps its shared [`ScrollState`],
+    /// so it slides in lockstep with the primary, but the layout pass
+    /// skips publishing its measured viewport / max bounds — the
+    /// primary node (sharing the same state) owns that write. Use for
+    /// the frozen-column grid's header strip, which tracks the body's
+    /// horizontal offset without contributing a (mismatched-height)
+    /// measured viewport that would spin a perpetual re-pass.
+    #[must_use]
+    pub const fn as_follower(mut self) -> Self {
+        self.follower = true;
         self
     }
 
@@ -5302,6 +5341,25 @@ mod tests {
         // And cacheable when the inner is cacheable.
         let scroll_pure = Scene::Scroll(ScrollNode::new(rect_a(), box_a()));
         assert!(scroll_pure.is_cacheable_for_paint());
+    }
+
+    #[test]
+    fn r859_as_follower_flag_defaults_false_and_sets() {
+        // R859 §5.45 — the linked-scroll follower flag defaults off
+        // (every pre-R859 node is a primary) and `as_follower()` flips
+        // it without touching the offset / axis / state plumbing.
+        let primary = ScrollNode::new(rect_a(), box_a());
+        assert!(!primary.follower, "default node is a primary");
+
+        let follower = ScrollNode::new(rect_a(), box_a())
+            .with_axis(ScrollAxis::Horizontal)
+            .as_follower();
+        assert!(follower.follower, "as_follower() marks the node a follower");
+        assert_eq!(
+            follower.axis,
+            ScrollAxis::Horizontal,
+            "follower flag is orthogonal to axis selection",
+        );
     }
 
     #[test]

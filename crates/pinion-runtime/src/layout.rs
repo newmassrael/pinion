@@ -338,7 +338,17 @@ fn update_scroll_state_bounds(scene: &Scene) -> bool {
         }
         Scene::Scroll(s) => {
             let mut dirty = false;
-            if let Some(state) = s.state.as_ref() {
+            // R859 §5.45 — a linked-scroll *follower* shares its state
+            // with a primary node that owns the bounds write; the
+            // follower never publishes. Publishing from both would
+            // flip-flop the shared `measured_h` (the two nodes sit in
+            // different bands with different cross-axis viewport
+            // heights) and spin a perpetual scroll-dirty re-pass. The
+            // follower still lays out its content unbounded along its
+            // axis in `lay_out_scroll_contents` (which is follower-
+            // agnostic), so the overflow clip + offset slide still
+            // apply — only the feedback is suppressed here.
+            if let Some(state) = s.state.as_ref().filter(|_| !s.follower) {
                 let content_rect = s.content.rect();
                 // Content rect is scroll-local (origin at (0, 0)),
                 // so `rect.w/h` already encode the intrinsic content
@@ -1091,6 +1101,101 @@ mod tests {
                 state.max().0,
                 0,
                 "default vertical scroll clamps width to the viewport (pre-R784 behaviour)",
+            );
+        }
+
+        #[test]
+        fn r859_follower_scroll_skips_publish_so_settles_dirty_false() {
+            // R859 §5.45 — a linked-scroll *follower* sharing one state
+            // with a primary (the frozen-column grid's header strip vs
+            // its body) must NOT publish its measured viewport: the two
+            // sit in different bands with different cross-axis heights,
+            // so if both published, `set_measured_viewport` would
+            // flip-flop the shared `measured_h` and report dirty=true on
+            // every pass forever. The follower flag suppresses the
+            // header's write, so the pair settles and a second pass
+            // reports dirty=false (steady state). The primary still
+            // owns `max_x` and the published measured viewport.
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            fn h_strip(h: u32) -> Scene {
+                let cells: Vec<Scene> = (0..6).map(|_| fixed_row_w(120, h)).collect();
+                Scene::Container(
+                    ContainerNode::new(cells).with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+                )
+            }
+
+            let state = Rc::new(ScrollState::new());
+            // Primary: the 40-tall body strip owns the bounds write.
+            let primary = ScrollNode::new(Rect::new(0, 0, 300, 40), h_strip(40))
+                .with_axis(ScrollAxis::Horizontal)
+                .with_state(Rc::clone(&state));
+            // Follower: the 28-tall header strip slides with the same
+            // state but never publishes (different cross-axis height).
+            let follower = ScrollNode::new(Rect::new(0, 0, 300, 28), h_strip(28))
+                .with_axis(ScrollAxis::Horizontal)
+                .with_state(Rc::clone(&state))
+                .as_follower();
+            let mut scene = Scene::Container(ContainerNode::new(vec![
+                Scene::Scroll(follower),
+                Scene::Scroll(primary),
+            ]));
+
+            let dirty_first =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            assert!(dirty_first, "prime pass writes the primary's bounds");
+            let dirty_second =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            assert!(
+                !dirty_second,
+                "follower suppresses its publish, so the pair settles (no perpetual re-pass)",
+            );
+            // 720 content − 300 viewport = 420 overflow, written by the
+            // primary; the follower never touched it.
+            assert_eq!(state.max(), (420, 0), "primary owns max_x; height clamped");
+            assert_eq!(
+                state.measured_viewport(),
+                (300, 40),
+                "published measured viewport is the PRIMARY's (300×40), not the follower's 28-tall band",
+            );
+        }
+
+        #[test]
+        fn r859_two_primaries_sharing_state_oscillate_negative_control() {
+            // R859 negative control — proves the bug the follower flag
+            // cures. Two *primary* horizontal scrolls sharing one state
+            // with different cross-axis viewport heights both publish
+            // `set_measured_viewport`, so the shared `measured_h`
+            // flip-flops (40 ⇄ 28) every pass and the dirty bit never
+            // settles. This is exactly the perpetual re-pass that
+            // marking the header a follower eliminates above.
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            fn h_strip(h: u32) -> Scene {
+                let cells: Vec<Scene> = (0..6).map(|_| fixed_row_w(120, h)).collect();
+                Scene::Container(
+                    ContainerNode::new(cells).with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+                )
+            }
+
+            let state = Rc::new(ScrollState::new());
+            let a = ScrollNode::new(Rect::new(0, 0, 300, 40), h_strip(40))
+                .with_axis(ScrollAxis::Horizontal)
+                .with_state(Rc::clone(&state));
+            let b = ScrollNode::new(Rect::new(0, 0, 300, 28), h_strip(28))
+                .with_axis(ScrollAxis::Horizontal)
+                .with_state(Rc::clone(&state));
+            let mut scene =
+                Scene::Container(ContainerNode::new(vec![Scene::Scroll(a), Scene::Scroll(b)]));
+
+            let _ = compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            let dirty_second =
+                compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
+            assert!(
+                dirty_second,
+                "two primaries with mismatched heights oscillate measured_h → never settles",
             );
         }
 

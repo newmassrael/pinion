@@ -38,7 +38,7 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
-use pinion_core::widgets::virtual_list::{compute_visible_range, content_height};
+use pinion_core::widgets::virtual_list::{compute_visible_range, content_height, VisibleWindow};
 use pinion_core::Scene;
 
 use crate::virtual_list::{assemble_windowed_flex, uniform_slots};
@@ -343,6 +343,34 @@ fn header_cell(
 struct ColumnLayout<'a> {
     widths: &'a [u32],
     resizable: bool,
+    /// R859 — absolute table-column index of `widths[0]`. `0` for an
+    /// unsplit grid (and the frozen pane); `frozen_cols` for the scrolled
+    /// pane, so its header cells keep their original `"{tag}_ch{col}"`
+    /// tags even though the slice starts mid-table.
+    col_base: usize,
+    /// R859 — the header-row container tag. `"{tag}_hrow"` for the
+    /// unsplit / scrolled header; `"{tag}_fhrow"` for the frozen pane, so
+    /// the two split panes never emit a duplicate container tag into the
+    /// paint scene (hit-routing / introspection stay tag-unique).
+    container_tag: &'a str,
+}
+
+/// R859 §5.27 — the per-pane column descriptor a [`data_row`] needs when a
+/// frozen-column grid splits each row into a frozen-left and a scrolling
+/// pane. Bundles the container tag + the absolute column base + the pane's
+/// width slice so `data_row` stays under the argument budget (the
+/// [`ColumnLayout`] precedent).
+#[derive(Clone, Copy)]
+struct RowPane<'a> {
+    /// The data-row strip container tag: `"{tag}_row{id}"` for the
+    /// unsplit / scrolled pane, `"{tag}_frow{id}"` for the frozen pane.
+    container_tag: &'a str,
+    /// Absolute table-column index of `widths[0]` (`0` for the frozen /
+    /// unsplit pane, `frozen_cols` for the scrolled pane), so each cell
+    /// keeps its original `GridSendKey::Cell { col }` send-wire tag.
+    col_base: usize,
+    /// This pane's per-column widths (the frozen or scrolled slice).
+    widths: &'a [u32],
 }
 
 /// The header band: one clickable `columnheader` cell per column ([
@@ -361,8 +389,12 @@ fn header_row(
     let cells: Vec<Scene> = headers
         .iter()
         .enumerate()
-        .map(|(col, label)| {
-            let width = layout.widths.get(col).copied().unwrap_or(style.col_width);
+        .map(|(i, label)| {
+            // R859 — `widths` / `headers` are this pane's slice; the
+            // absolute table column is `col_base + i` so the `_ch{col}`
+            // tag + sort-glyph match stay anchored to the original index.
+            let col = layout.col_base + i;
+            let width = layout.widths.get(i).copied().unwrap_or(style.col_width);
             header_cell(
                 tag,
                 click_tag,
@@ -376,10 +408,11 @@ fn header_row(
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
-            // Tagged `"<tag>_hrow"` so the binding's `access_node` walker
-            // can attach the header `row` node (and resolve its bounds);
-            // not a composite `'#'` tag, so it is inert to hit routing.
-            .with_tag(format!("{tag}_hrow"))
+            // Tagged `"<tag>_hrow"` (or `"<tag>_fhrow"` for the R859
+            // frozen pane) so the binding's `access_node` walker can
+            // attach the header `row` node (and resolve its bounds); not a
+            // composite `'#'` tag, so it is inert to hit routing.
+            .with_tag(layout.container_tag.to_string())
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     )
@@ -396,18 +429,22 @@ fn data_row(
     cells_text: &[&str],
     fill: Color,
     fg: Color,
-    widths: &[u32],
+    pane: RowPane<'_>,
     style: &TableStyle,
 ) -> Scene {
-    let cols = widths.len();
+    let cols = pane.widths.len();
     // R730 §5.40 — cells / strip are tagged by **data-row id** (not the
     // visual position), so a click on a sorted row routes to the right
     // data row's `"<data_id>_<col>"` send wire and the table's
     // data-indexed selection stays correct without a remap. When unsorted
     // (`data_id == visual`) the tags are identical to the R707 scheme.
+    // R859 — `cells_text` / `pane.widths` are this pane's slice; the
+    // absolute table column is `pane.col_base + j` so each cell keeps its
+    // original `GridSendKey::Cell { col }` send-wire tag across the split.
     let cells: Vec<Scene> = (0..cols)
-        .map(|col| {
-            let text = cells_text.get(col).copied().unwrap_or("");
+        .map(|j| {
+            let col = pane.col_base + j;
+            let text = cells_text.get(j).copied().unwrap_or("");
             cell(
                 // R777.1 — the cell sub-key via the GridSendKey SSOT.
                 &format!("{tag}#{}", GridSendKey::Cell { row: data_id, col }.encode()),
@@ -415,14 +452,14 @@ fn data_row(
                 fg,
                 style.label_size_px,
                 style,
-                widths.get(col).copied().unwrap_or(style.col_width),
+                pane.widths.get(j).copied().unwrap_or(style.col_width),
                 style.row_height,
             )
         })
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
-            .with_tag(format!("{tag}_row{data_id}"))
+            .with_tag(pane.container_tag.to_string())
             .with_style(BoxStyle::filled(fill))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     )
@@ -492,12 +529,13 @@ pub fn view_table(
     let widths = resolve_widths(cols, None, style);
     // The eager table is uniform-width and not user-resizable (no width model);
     // the header keeps its full-width R707 layout.
+    let hrow_tag = format!("{tag}_hrow");
     let header = header_row(
         tag,
         tag,
         data.headers,
         sort,
-        ColumnLayout { widths: &widths, resizable: false },
+        ColumnLayout { widths: &widths, resizable: false, col_base: 0, container_tag: &hrow_tag },
         theme,
         style,
     );
@@ -512,7 +550,16 @@ pub fn view_table(
         // across re-sorts; selection / state are **data-indexed**.
         let fill = row_fill(theme, state, selected, visual);
         let fg = row_fg(theme, state);
-        children.push(data_row(tag, data_id, cells_text, fill, fg, &widths, style));
+        let row_tag = format!("{tag}_row{data_id}");
+        children.push(data_row(
+            tag,
+            data_id,
+            cells_text,
+            fill,
+            fg,
+            RowPane { container_tag: &row_tag, col_base: 0, widths: &widths },
+            style,
+        ));
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -583,6 +630,22 @@ pub struct VirtualTableData<'a> {
     /// dragging a border widens the column, growing the R784 horizontal scroll.
     /// `false` keeps the full-width R785 header (no grabber, no width reserved).
     pub resizable: bool,
+    /// R859 §5.27 — number of leading columns to **freeze** (pin) against
+    /// the R784 horizontal scroll, the spreadsheet "frozen row-headers"
+    /// pattern a DCC asset-browser / scene-outliner needs (the name column
+    /// stays visible while metadata columns scroll sideways).
+    ///
+    /// `0` (the only mode before R859) renders the single-scroll R784 grid
+    /// **byte-identically** — every pre-R859 caller is unchanged. A value
+    /// `1..cols` splits the grid into a frozen-left pane (columns
+    /// `0..frozen_cols`, pinned) and a scrolling pane (columns
+    /// `frozen_cols..`, sliding under the shared `h_scroll`); the two share
+    /// the vertical `body` scroll via a linked-scroll
+    /// [follower](pinion_core::scene::ScrollNode::follower) so they stay in
+    /// vertical lockstep. A value `>= cols` is clamped to `cols - 1` (at
+    /// least one column must remain scrollable for the freeze to mean
+    /// anything).
+    pub frozen_cols: usize,
 }
 
 /// R784 §5.45 — the two single-axis [`ScrollState`]s a virtualized
@@ -668,14 +731,13 @@ pub fn view_virtual_table(
     theme: &Theme,
     style: &TableStyle,
     is_selected: impl Fn(usize) -> bool,
-    mut build_cells: impl FnMut(usize) -> Vec<String>,
+    build_cells: impl FnMut(usize) -> Vec<String>,
 ) -> Scene {
     let cols = data.headers.len();
     // R785 — resolve the per-column widths once (uniform `style.col_width`
     // fallback when no width model is wired). Content width is their sum, so
     // widening a column grows the horizontal scroll extent (R784).
     let widths = resolve_widths(cols, data.col_widths, style);
-    let total_w: u32 = widths.iter().copied().sum();
     // R778 — window over the *view* length: the sort permutation's
     // `order.len()` when sorted, else the raw `item_count` (identity). Each
     // visual position resolves to its source row through `order` (the 1-D
@@ -694,72 +756,41 @@ pub fn view_virtual_table(
     );
     let total_h = content_height(view_len, style.row_height);
 
-    // The uniform-pitch slot geometry (`top = view_pos · row_height`, framed
-    // `total_w × row_height`) is the same windowed-sizer shape the list
-    // bodies use — built via the shared `uniform_slots` (R775.1) so the
-    // grid and the lists cannot disagree on slot placement. Only the row
-    // *content* diverges (a multi-cell `data_row`).
-    let slots = uniform_slots(&window, total_w, style.row_height, |view_pos| {
-        // R778 — visual position → source data row (identity when unsorted).
-        let source = data.order.map_or(view_pos, |o| o.get(view_pos).copied().unwrap_or(view_pos));
-        let cells_text = build_cells(source);
-        let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
-        // Rows are idle (no per-row hover/press at the grid level); a
-        // selected row gets the accent tint — selection is **data-indexed**
-        // (`is_selected(source)`), so it survives a re-sort, and several
-        // rows may be selected at once in multi-select. Zebra parity is
-        // **visual** (`view_pos`), so the stripe pattern stays stable across
-        // re-sorts (the eager `view_table` convention); cells / strip tag by
-        // **source** id so a click on a sorted row routes to the right data
-        // row.
-        let fill = row_fill(theme, RadioState::Idle, is_selected(source), view_pos);
-        let fg = row_fg(theme, RadioState::Idle);
-        data_row(tag, source, &cell_refs, fill, fg, &widths, style)
-    });
-    let body = assemble_windowed_flex(scroll.body, total_w, total_h, slots);
-    // R778 — clickable headers route to the sort anchor (`sort_tag`) when a
-    // sort coordinator is wired, else stay on `tag` (R777 default).
-    let header = header_row(
+    let render = GridRender {
         tag,
-        data.sort_tag.unwrap_or(tag),
-        data.headers,
-        data.sort,
-        ColumnLayout { widths: &widths, resizable: data.resizable },
+        // R778 — clickable headers route to the sort anchor (`sort_tag`)
+        // when a sort coordinator is wired, else stay on `tag` (R777).
+        click_tag: data.sort_tag.unwrap_or(tag),
+        data: &data,
         theme,
         style,
-    );
+        widths: &widths,
+        window: &window,
+        total_h,
+    };
 
-    // R784 — the scrolled column: the frozen header above the inner
-    // vertical body scroll. This whole `total_w`-wide column is what the
-    // outer horizontal scroll slides; the header is *between* the two
-    // scrolls, so it moves horizontally with the body but never
-    // vertically. No surface fill / padding here — the frame below owns
-    // those so the rounded block stays put while the content scrolls.
-    let column = Scene::Container(
-        ContainerNode::new(vec![header, body])
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
-    );
-    // R784 — the outer horizontal scroll. `from_state` derives its tag /
-    // offset from `h_scroll`; `with_axis(Horizontal)` makes the layout
-    // pass unbound the width so the `total_w` column overflows when it
-    // exceeds the viewport, and `flex_grow` claims the frame's interior.
-    let h_scrolled = Scene::Scroll(
-        ScrollNode::from_state(Rc::clone(scroll.horizontal), Rect::default(), column)
-            .with_axis(ScrollAxis::Horizontal)
-            .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
-    );
+    // R859 — clamp the freeze to `[0, cols - 1]`: at least one column must
+    // stay scrollable for the freeze to mean anything. `0` (every pre-R859
+    // caller) renders the single-scroll R784 grid byte-identically.
+    let frozen_cols = data.frozen_cols.min(cols.saturating_sub(1));
+    // `build_cells` / `is_selected` are consumed by exactly one branch (an
+    // `if`/`else`), so each helper takes them by value without a re-move.
+    let content = if frozen_cols == 0 {
+        render.render_unsplit(scroll, &is_selected, build_cells)
+    } else {
+        render.render_frozen(scroll, frozen_cols, &is_selected, build_cells)
+    };
 
     Scene::Container(
-        ContainerNode::new(vec![h_scrolled])
+        ContainerNode::new(vec![content])
             .with_tag(tag.to_string())
             .with_style(
                 BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow))
                     .with_corner_radius(style.corner_radius),
             )
             // flex_grow so the grid fills its parent (the AutoSizer
-            // contract); the outer horizontal ScrollNode then claims the
-            // framed interior and the body scroll claims the height left
-            // after the fixed header band.
+            // contract); the inner pane(s) then claim the framed interior
+            // and the body scroll claims the height left after the header.
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -772,6 +803,236 @@ pub fn view_virtual_table(
                     )),
             ),
     )
+}
+
+/// R859 §5.27 — the shared "what + how to render" context for the two
+/// [`view_virtual_table`] body assemblies (the unsplit R784 grid and the
+/// frozen-column split). Bundling the borrowed inputs keeps each assembly
+/// method under the argument + line budgets while sharing the window /
+/// widths / theme exactly (a divergence between the two would be a paint
+/// bug, not a style choice).
+struct GridRender<'a> {
+    tag: &'a str,
+    click_tag: &'a str,
+    data: &'a VirtualTableData<'a>,
+    theme: &'a Theme,
+    style: &'a TableStyle,
+    widths: &'a [u32],
+    window: &'a VisibleWindow,
+    total_h: u32,
+}
+
+/// R784 / R859 §5.45 — wrap a `[header, body]` column in the outer
+/// horizontal scroll the data-grid uses: the header tracks `horizontal`'s
+/// offset while staying vertically pinned above the inner vertical body
+/// scroll, and the column flex-grows to claim its parent's interior. Shared
+/// by the unsplit grid and the frozen grid's scrolling pane so the R784
+/// horizontal-scroll wrapping cannot diverge between them (a divergence
+/// would mis-scroll one of the two paths — R758 "divergence-is-a-bug").
+fn h_scrolled_column(horizontal: &Rc<ScrollState>, header: Scene, body: Scene) -> Scene {
+    let column = Scene::Container(
+        ContainerNode::new(vec![header, body])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+    );
+    Scene::Scroll(
+        ScrollNode::from_state(Rc::clone(horizontal), Rect::default(), column)
+            .with_axis(ScrollAxis::Horizontal)
+            .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
+    )
+}
+
+impl GridRender<'_> {
+    /// Visual position -> source data row (identity when unsorted) — the
+    /// R778 sort-permutation resolution shared by both bodies.
+    fn source_of(&self, view_pos: usize) -> usize {
+        self.data
+            .order
+            .map_or(view_pos, |o| o.get(view_pos).copied().unwrap_or(view_pos))
+    }
+
+    /// R859 — the per-row visual inputs shared by every slot closure (the
+    /// unsplit body and both frozen split panes): the source data row, the
+    /// strip `fill`, and the cell `fg`. Selection / state are **data-indexed**
+    /// (`is_selected(source)`, so they survive a re-sort); zebra parity is
+    /// **visual** (`view_pos`, so the stripe pattern is stable across
+    /// re-sorts — the eager `view_table` convention). Lifted here so the
+    /// three slot closures cannot disagree on the fill / fg derivation.
+    fn row_inputs(&self, view_pos: usize, is_selected: &impl Fn(usize) -> bool) -> (usize, Color, Color) {
+        let source = self.source_of(view_pos);
+        let fill = row_fill(self.theme, RadioState::Idle, is_selected(source), view_pos);
+        let fg = row_fg(self.theme, RadioState::Idle);
+        (source, fill, fg)
+    }
+
+    /// R784 single-scroll grid (the only mode before R859): one
+    /// `total_w`-wide `[header, body]` column inside an outer horizontal
+    /// scroll. Byte-identical to the pre-R859 assembly.
+    fn render_unsplit(
+        &self,
+        scroll: GridScroll<'_>,
+        is_selected: &impl Fn(usize) -> bool,
+        mut build_cells: impl FnMut(usize) -> Vec<String>,
+    ) -> Scene {
+        let total_w: u32 = self.widths.iter().copied().sum();
+        // The uniform-pitch slot geometry (`top = view_pos · row_height`)
+        // is the shared `uniform_slots` (R775.1) source of truth; only the
+        // row *content* (a multi-cell `data_row`) diverges.
+        let slots = uniform_slots(self.window, total_w, self.style.row_height, |view_pos| {
+            let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
+            let cells_text = build_cells(source);
+            let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
+            let row_tag = format!("{}_row{source}", self.tag);
+            data_row(
+                self.tag,
+                source,
+                &cell_refs,
+                fill,
+                fg,
+                RowPane { container_tag: &row_tag, col_base: 0, widths: self.widths },
+                self.style,
+            )
+        });
+        let body = assemble_windowed_flex(scroll.body, total_w, self.total_h, slots, false);
+        let hrow_tag = format!("{}_hrow", self.tag);
+        let header = header_row(
+            self.tag,
+            self.click_tag,
+            self.data.headers,
+            self.data.sort,
+            ColumnLayout {
+                widths: self.widths,
+                resizable: self.data.resizable,
+                col_base: 0,
+                container_tag: &hrow_tag,
+            },
+            self.theme,
+            self.style,
+        );
+        // R784 — the frozen header above the inner vertical body scroll, the
+        // whole `total_w`-wide column slid by the outer horizontal scroll. No
+        // surface fill here — the frame in `view_virtual_table` owns it so the
+        // rounded block stays put while the content scrolls.
+        h_scrolled_column(scroll.horizontal, header, body)
+    }
+
+    /// R859 frozen-left-column grid: a fixed-width frozen pane (columns
+    /// `0..frozen_cols`, pinned) beside a flex-grow scrolling pane (columns
+    /// `frozen_cols..`, an R784 grid). The two share the vertical `body`
+    /// scroll — the scrolling pane's inner V scroll is the primary, the
+    /// frozen pane's a follower — so they scroll in vertical lockstep
+    /// without the shared-state oscillation a second publisher would cause.
+    ///
+    /// `build_cells` is invoked once per visible row **per pane** (the
+    /// small overscanned window only): two `uniform_slots` passes keep the
+    /// slot-top geometry on its R775.1 SSOT instead of hand-rolling a loop.
+    fn render_frozen(
+        &self,
+        scroll: GridScroll<'_>,
+        frozen_cols: usize,
+        is_selected: &impl Fn(usize) -> bool,
+        mut build_cells: impl FnMut(usize) -> Vec<String>,
+    ) -> Scene {
+        let frozen_w: u32 = self.widths[..frozen_cols].iter().copied().sum();
+        let scroll_w: u32 = self.widths[frozen_cols..].iter().copied().sum();
+        let row_pitch = self.style.row_height;
+
+        let frozen_slots = uniform_slots(self.window, frozen_w, row_pitch, |view_pos| {
+            let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
+            let cells_text = build_cells(source);
+            let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
+            let split = frozen_cols.min(cell_refs.len());
+            // R859 — distinct `_frow{id}` container tag so the split panes
+            // never emit a duplicate strip tag (per-cell `_{col}` tags stay
+            // unique by absolute column).
+            let frow_tag = format!("{}_frow{source}", self.tag);
+            data_row(
+                self.tag,
+                source,
+                &cell_refs[..split],
+                fill,
+                fg,
+                RowPane { container_tag: &frow_tag, col_base: 0, widths: &self.widths[..frozen_cols] },
+                self.style,
+            )
+        });
+        let scroll_slots = uniform_slots(self.window, scroll_w, row_pitch, |view_pos| {
+            let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
+            let cells_text = build_cells(source);
+            let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
+            let split = frozen_cols.min(cell_refs.len());
+            let row_tag = format!("{}_row{source}", self.tag);
+            data_row(
+                self.tag,
+                source,
+                &cell_refs[split..],
+                fill,
+                fg,
+                RowPane {
+                    container_tag: &row_tag,
+                    col_base: frozen_cols,
+                    widths: &self.widths[frozen_cols..],
+                },
+                self.style,
+            )
+        });
+
+        // Frozen pane (left): header + follower V-body, pinned at `frozen_w`
+        // (width fixed, height stretches via the Row's `AlignItems::Stretch`).
+        // The follower shares `body` so it scrolls vertically in lockstep
+        // with the scrolling pane but never publishes its bounds (R859).
+        let fhrow_tag = format!("{}_fhrow", self.tag);
+        let frozen_header = header_row(
+            self.tag,
+            self.click_tag,
+            &self.data.headers[..frozen_cols],
+            self.data.sort,
+            ColumnLayout {
+                widths: &self.widths[..frozen_cols],
+                // Frozen columns do not horizontally scroll, so a resize
+                // grabber (which grows the horizontal extent) is moot here.
+                resizable: false,
+                col_base: 0,
+                container_tag: &fhrow_tag,
+            },
+            self.theme,
+            self.style,
+        );
+        let frozen_body = assemble_windowed_flex(scroll.body, frozen_w, self.total_h, frozen_slots, true);
+        let frozen_pane = Scene::Container(
+            ContainerNode::new(vec![frozen_header, frozen_body]).with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_size(Size::width_px(frozen_w)),
+            ),
+        );
+
+        // Scrolling pane (right): an R784 grid over columns `frozen_cols..`,
+        // flex-growing into the width left of the frozen pane. Its header
+        // tracks `h_scroll`; its inner V body is the body PRIMARY.
+        let hrow_tag = format!("{}_hrow", self.tag);
+        let scroll_header = header_row(
+            self.tag,
+            self.click_tag,
+            &self.data.headers[frozen_cols..],
+            self.data.sort,
+            ColumnLayout {
+                widths: &self.widths[frozen_cols..],
+                resizable: self.data.resizable,
+                col_base: frozen_cols,
+                container_tag: &hrow_tag,
+            },
+            self.theme,
+            self.style,
+        );
+        let scroll_body = assemble_windowed_flex(scroll.body, scroll_w, self.total_h, scroll_slots, false);
+        let scroll_pane = h_scrolled_column(scroll.horizontal, scroll_header, scroll_body);
+
+        Scene::Container(
+            ContainerNode::new(vec![frozen_pane, scroll_pane]).with_layout(
+                LayoutStyle::new().flex(FlexDirection::Row).with_flex_grow(1.0),
+            ),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -1002,6 +1263,7 @@ mod tests {
                     order: None,
                     col_widths: None,
                     resizable: false,
+                    frozen_cols: 0,
                 },
                 &theme,
                 &style,
@@ -1052,6 +1314,129 @@ mod tests {
             Scene::Container(c) => c.children.iter().find_map(find_vt_hscroll),
             _ => None,
         }
+    }
+
+    /// R859 — render the virtual table with `frozen_cols` leading columns
+    /// pinned (and a non-zero horizontal offset so the split is exercised).
+    fn run_vtable_frozen(measured_h: u32, offset_x: i32, frozen_cols: usize) -> Scene {
+        let state = Rc::new(ScrollState::new());
+        state.set_measured_viewport(360, measured_h);
+        let pitch = i32::try_from(TableStyle::m3().row_height).unwrap();
+        state.set_max(0, i32::try_from(VT_N).unwrap() * pitch);
+        let h_state = Rc::new(ScrollState::with_tag("vtbl_h"));
+        h_state.set_max(1000, 0);
+        h_state.scroll_to(offset_x, 0);
+        let theme = light();
+        let style = TableStyle::m3();
+        Owner::new().run(|| {
+            view_virtual_table(
+                "vtbl",
+                GridScroll { body: &state, horizontal: &h_state },
+                VirtualTableData {
+                    headers: &VT_HEADERS,
+                    item_count: VT_N,
+                    overscan: 2,
+                    sort: None,
+                    sort_tag: None,
+                    order: None,
+                    col_widths: None,
+                    resizable: false,
+                    frozen_cols,
+                },
+                &theme,
+                &style,
+                |_| false,
+                |id| vec![format!("{id}"), format!("Row {id}"), format!("v{id}")],
+            )
+        })
+    }
+
+    /// Collect the `follower` flag of every vertical [`ScrollNode`] in
+    /// document order (frozen pane first, scrolled pane second).
+    fn collect_vertical_followers(scene: &Scene, out: &mut Vec<bool>) {
+        match scene {
+            Scene::Scroll(s) => {
+                if s.axis == ScrollAxis::Vertical {
+                    out.push(s.follower);
+                }
+                collect_vertical_followers(s.content.as_ref(), out);
+            }
+            Scene::Container(c) => {
+                for ch in &c.children {
+                    collect_vertical_followers(ch, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn r859_frozen_grid_splits_into_frozen_and_scrolling_headers() {
+        // frozen_cols = 1 → column 0 ("Index") pinned, columns 1..3 scroll.
+        let scene = run_vtable_frozen(360, 200, 1);
+        // Two distinct header-row containers, never a duplicate tag.
+        assert!(scene.contains_tag("vtbl_fhrow"), "frozen header band present");
+        assert!(scene.contains_tag("vtbl_hrow"), "scrolled header band present");
+        // Frozen header owns column 0; scrolled header owns columns 1 + 2.
+        assert!(scene.contains_tag("vtbl_ch0"), "frozen pane carries col 0 header");
+        assert!(scene.contains_tag("vtbl_ch1"), "scrolled pane carries col 1 header");
+        assert!(scene.contains_tag("vtbl_ch2"), "scrolled pane carries col 2 header");
+    }
+
+    #[test]
+    fn r859_frozen_cells_keep_absolute_column_send_tags() {
+        // The split must not renumber columns: the frozen pane's cell keeps
+        // col 0, the scrolled pane's keep cols 1 + 2 (absolute), so a click
+        // routes to the right data column across the freeze boundary.
+        let scene = run_vtable_frozen(360, 200, 1);
+        for col in 0..3 {
+            let tag = format!("vtbl#{}", GridSendKey::Cell { row: 0, col }.encode());
+            assert!(scene.contains_tag(&tag), "cell {tag} present across the split");
+        }
+        // Frozen + scrolled data-row strips use distinct container tags.
+        assert!(scene.contains_tag("vtbl_frow0"), "frozen pane row strip");
+        assert!(scene.contains_tag("vtbl_row0"), "scrolled pane row strip");
+    }
+
+    #[test]
+    fn r859_frozen_pane_body_is_follower_scrolled_pane_is_primary() {
+        // The two panes share the vertical body scroll: exactly one is the
+        // primary (publishes bounds) and one is the follower (R859) — the
+        // linked-scroll invariant that avoids the measured-viewport
+        // oscillation. Document order is [frozen (follower), scrolled].
+        let scene = run_vtable_frozen(360, 0, 1);
+        let mut followers = Vec::new();
+        collect_vertical_followers(&scene, &mut followers);
+        assert_eq!(followers.len(), 2, "two vertical scrolls (one per pane)");
+        assert_eq!(
+            followers.iter().filter(|&&f| f).count(),
+            1,
+            "exactly one follower; the other is the primary that owns bounds",
+        );
+        assert_eq!(followers, vec![true, false], "frozen pane follows, scrolled pane leads");
+    }
+
+    #[test]
+    fn r859_frozen_cols_zero_stays_unsplit_r784_grid() {
+        // The default (every pre-R859 caller) renders no frozen pane.
+        let scene = run_vtable_frozen(360, 0, 0);
+        assert!(scene.contains_tag("vtbl_hrow"), "single header band");
+        assert!(!scene.contains_tag("vtbl_fhrow"), "no frozen header band when unsplit");
+        let mut followers = Vec::new();
+        collect_vertical_followers(&scene, &mut followers);
+        assert_eq!(followers, vec![false], "one primary vertical scroll, no follower");
+    }
+
+    #[test]
+    fn r859_frozen_cols_clamped_to_keep_one_scrollable_column() {
+        // frozen_cols >= cols is clamped to cols - 1 (= 2 here): columns 0
+        // and 1 freeze, column 2 stays scrollable. Must not panic on the
+        // over-range request, and the scrolled pane keeps column 2.
+        let scene = run_vtable_frozen(360, 200, 99);
+        assert!(scene.contains_tag("vtbl_fhrow"), "frozen pane exists (clamped, not unsplit)");
+        assert!(scene.contains_tag("vtbl_ch0"), "col 0 frozen");
+        assert!(scene.contains_tag("vtbl_ch1"), "col 1 frozen");
+        assert!(scene.contains_tag("vtbl_ch2"), "col 2 stays scrollable");
     }
 
     #[test]
@@ -1157,6 +1542,7 @@ mod tests {
                     order: None,
                     col_widths: Some(&widths),
                     resizable: false,
+                    frozen_cols: 0,
                 },
                 &light(),
                 &TableStyle::m3(),
@@ -1196,6 +1582,7 @@ mod tests {
                     order: None,
                     col_widths: Some(widths),
                     resizable,
+                    frozen_cols: 0,
                 },
                 &light(),
                 &TableStyle::m3(),
@@ -1317,6 +1704,7 @@ mod tests {
                     order: Some(order),
                     col_widths: None,
                     resizable: false,
+                    frozen_cols: 0,
                 },
                 &theme,
                 &style,

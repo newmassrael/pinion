@@ -203,7 +203,7 @@ pub fn view_flex_virtual_list(
         compute_visible_range(scroll.offset_y(), measured_h, item_count, row_pitch, overscan);
     let total_h = content_height(item_count, row_pitch);
     let slots = uniform_slots(&window, measured_w, row_pitch, build_row);
-    assemble_windowed_flex(scroll, measured_w, total_h, slots)
+    assemble_windowed_flex(scroll, measured_w, total_h, slots, false)
 }
 
 /// Wrap windowed `slots` in the sizer + content-root shape, then in a
@@ -226,12 +226,18 @@ pub(crate) fn assemble_windowed_flex(
     width: u32,
     total_h: u32,
     slots: Vec<Scene>,
+    follower: bool,
 ) -> Scene {
     let content = windowed_content(width, total_h, slots);
-    Scene::Scroll(
-        ScrollNode::from_state(Rc::clone(scroll), Rect::default(), content)
-            .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
-    )
+    let node = ScrollNode::from_state(Rc::clone(scroll), Rect::default(), content)
+        .with_layout(LayoutStyle::new().with_flex_grow(1.0));
+    // R859 §5.45 — the frozen-column grid's frozen pane is a follower:
+    // it shares the body `ScrollState` (so it scrolls vertically in
+    // lockstep with the scrolling pane) but must not publish its own
+    // measured viewport, or the two panes' mismatched widths would
+    // flip-flop the shared bounds every frame. Every other consumer is a
+    // primary (`false`), byte-unchanged.
+    Scene::Scroll(if follower { node.as_follower() } else { node })
 }
 
 /// (R775 `pub(crate)` — shared with the flex-virtual table body) Lift a

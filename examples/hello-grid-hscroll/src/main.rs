@@ -151,6 +151,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             // R784 horizontal scroll. Driven by the per-column
             // `ColumnResizeExternal`s registered in `create_extra_externals`.
             resizable: true,
+            // R859 — no frozen columns here (this is the live h-scroll demo).
+            frozen_cols: 0,
         },
         &theme,
         &style,

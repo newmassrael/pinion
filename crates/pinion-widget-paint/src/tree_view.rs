@@ -402,7 +402,7 @@ pub fn view_virtual_tree(
         let is_focused = focus.focused_id == Some(row.id.as_str());
         build_row(tag, row, theme, style, is_focused)
     });
-    assemble_windowed_flex(scroll, measured_w, total_h, slots)
+    assemble_windowed_flex(scroll, measured_w, total_h, slots, false)
 }
 
 /// Compose one row from its [`VisibleRow`] (the shared flattening): depth

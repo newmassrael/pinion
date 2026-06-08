@@ -208,6 +208,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
             order: Some(order.as_slice()),
             col_widths: None,
             resizable: false,
+            frozen_cols: 0,
         },
         &theme,
         &style,
