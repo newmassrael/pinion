@@ -469,10 +469,18 @@ mod tests {
         let (m1, gx) = byte_offset_for_line_move(layout, start, 1, None);
         let (m2, _) = byte_offset_for_line_move(layout, m1, 1, Some(gx));
         let final_x = caret_rect_for_byte_offset(layout, m2, 1.0).x;
+        // R835 — assert the goal-column property by restored COLUMN index
+        // (font-independent byte arithmetic), not exact pixels: a hard-coded
+        // px tolerance is tuned to one machine's default font and breaks
+        // under a different system font (CI). The goal must ride along and
+        // restore the caret to ~column 5 of the long third line, NOT leave
+        // it clamped at the short line's column 2.
+        let line2_start = text.rfind('\n').map_or(0, |i| i + 1);
+        let restored_col = m2 - line2_start;
         assert!(
-            (final_x - orig_x).abs() < 2.0,
-            "goal column restores the original x after the short line \
-             (orig {orig_x}, final {final_x}, gx {gx})",
+            (4..=6).contains(&restored_col),
+            "goal column rides along and restores to ~5 (got col {restored_col}, \
+             not the short-line clamp at 2); orig_x {orig_x} final_x {final_x} gx {gx}",
         );
     }
 
