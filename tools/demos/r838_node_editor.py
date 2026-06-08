@@ -23,8 +23,13 @@ Coordinator slots (`node_graph`, the primary external):
   /external/delete_selected        -> invoke (null)
   /external/nudge                  -> invoke "dx,dy" (string)
 
+R839 adds edge selection: click a wire (point-to-bezier hit-test via the
+R51.34 capture-seed click coords) to select it, Delete to remove it; node and
+edge selection are mutually exclusive.
+
 Verified (>= 30 assertions):
   (A) boot taxonomy — 4 nodes / 3 edges, titles, port arity, seed wiring
+  (A2) click-select a wire (R839 bezier hit-test) + delete_selected + restore
   (B) RPC node move — intervene node.<i>.{x,y}; off-canvas clamps
   (C) selection — click selects; empty-canvas click + intervene clear it
   (D) RPC edge edit — add_edge validates (self-loop / range / input dedup),
@@ -76,6 +81,7 @@ def body() -> None:
         assert_eq(tf.query("/external/node_count"), 4, "4 nodes")
         assert_eq(tf.query("/external/edge_count"), 3, "3 edges")
         assert_eq(tf.query("/external/selected"), None, "nothing selected")
+        assert_eq(tf.query("/external/selected_edge"), None, "no edge selected")
         assert_eq(tf.query("/external/node.0.title"), "Texture", "node 0 title")
         assert_eq(tf.query("/external/node.2.title"), "Multiply", "node 2 title")
         assert_eq(tf.query("/external/node.2.inputs"), 2, "Multiply has 2 inputs")
@@ -84,6 +90,28 @@ def body() -> None:
         assert_eq(tf.query("/external/edge.0"), "0:0->2:0", "Texture -> Multiply.in0")
         assert_eq(tf.query("/external/edge.1"), "1:0->2:1", "Color -> Multiply.in1")
         assert_eq(tf.query("/external/edge.2"), "2:0->3:0", "Multiply -> Output.in0")
+
+        # ── (A2) click-select a wire (R839 bezier hit-test) + delete ─
+        # Edge 0 (Texture.out0 -> Multiply.in0) bows through ~(210, 134),
+        # open space between the two cards. Clicking there selects the wire.
+        tf.click(at=(210.0, 134.0))
+        wait_until(lambda: tf.query("/external/selected_edge") == 0, timeout=4.0,
+                   interval=0.03, desc="clicking the wire selects edge 0")
+        assert_eq(tf.query("/external/selected"), None, "node selection cleared (mutual exclusion)")
+        # delete_selected removes the selected edge (the Delete-key path).
+        assert_eq(tf.invoke("/external/delete_selected", None), True, "delete selected edge")
+        wait_until(lambda: tf.query("/external/edge_count") == 2, timeout=4.0,
+                   interval=0.03, desc="wire removed")
+        assert_eq(tf.query("/external/selected_edge"), None, "edge selection cleared")
+        # Restore the wire so later sections see the seed topology.
+        assert_eq(tf.invoke("/external/add_edge", "0,0,2,0"), True, "re-add the wire")
+        wait_until(lambda: tf.query("/external/edge_count") == 3, timeout=4.0,
+                   interval=0.03, desc="3 edges again")
+        # A click on empty canvas clears any selection.
+        tf.click(at=(615.0, 400.0))
+        wait_until(lambda: tf.query("/external/selected_edge") is None
+                   and tf.query("/external/selected") is None, timeout=4.0,
+                   interval=0.03, desc="empty-canvas click clears selection")
 
         # ── (B) RPC node move (the AI-first path) + clamp ────────────
         tf.intervene("/external/node.0.x", 180)

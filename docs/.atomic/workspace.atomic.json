@@ -34339,6 +34339,54 @@
         "edge click-select/delete, node rename, canvas pan/zoom, stable node ids = additive follow-ups"
       ]
     },
+    "R839": {
+      "decision_summary": "R839 §5.38 §5.51 node-graph edge selection: click-a-wire point-to-bezier hit-test + Delete; node/edge selection mutually exclusive; reuses the R51.35 capture-seed click coords",
+      "changes_bullets": [
+        "click a wire to select it: point-to-cubic-bezier hit-test via R51.35 capture-seed click coords",
+        "edge_curve SSOT shared by edge paint + hit-test (the drawn curve == the clickable curve)",
+        "selected_edge state, mutually exclusive with node selection; the selected edge paints thicker",
+        "Delete / delete_selected removes the selected edge; remove_edge / delete_node keep it valid",
+        "RPC: query + intervene selected_edge; PendingPress::InputPort disambiguates port vs background"
+      ],
+      "verification_bullets": [
+        "6 new R839 unit tests (hit-test, mutual exclusion, shift, delete, capture-seed probe)",
+        "cargo test --workspace -j2 green; clippy --workspace --all-targets --features pinion-runtime/vello green",
+        "tools/demos/r838_node_editor.py PASS (52 assertions; +A2 click-select wire + delete + restore)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.51",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "point-to-bezier hit-test (cubic_at/point_seg_dist2/point_near_edge) example-local; lift at 2nd consumer",
+        "edge a11y: wires not in the AT node list (nodes only); selected-edge AT exposure = follow-up",
+        "marquee multi-select, edge re-route (drag an existing wire end), canvas pan/zoom = additive follow-ups"
+      ],
+      "publishable_decision_summary": "R839 §5.38 §5.51 node-graph edge selection: click-a-wire point-to-bezier hit-test + Delete; node/edge selection mutually exclusive; reuses the R51.35 capture-seed click coords",
+      "publishable_changes_bullets": [
+        "click a wire to select it: point-to-cubic-bezier hit-test via R51.35 capture-seed click coords",
+        "edge_curve SSOT shared by edge paint + hit-test (the drawn curve == the clickable curve)",
+        "selected_edge state, mutually exclusive with node selection; the selected edge paints thicker",
+        "Delete / delete_selected removes the selected edge; remove_edge / delete_node keep it valid",
+        "RPC: query + intervene selected_edge; PendingPress::InputPort disambiguates port vs background"
+      ],
+      "publishable_verification_bullets": [
+        "6 new R839 unit tests (hit-test, mutual exclusion, shift, delete, capture-seed probe)",
+        "cargo test --workspace -j2 green; clippy --workspace --all-targets --features pinion-runtime/vello green",
+        "tools/demos/r838_node_editor.py PASS (52 assertions; +A2 click-select wire + delete + restore)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.51",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "point-to-bezier hit-test (cubic_at/point_seg_dist2/point_near_edge) example-local; lift at 2nd consumer",
+        "edge a11y: wires not in the AT node list (nodes only); selected-edge AT exposure = follow-up",
+        "marquee multi-select, edge re-route (drag an existing wire end), canvas pan/zoom = additive follow-ups"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

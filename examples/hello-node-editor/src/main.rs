@@ -114,8 +114,13 @@ const BODY_PAD: i32 = 10;
 const MIN_NODE_Y: i32 = 44;
 
 const EDGE_W: u32 = 3;
+const SELECTED_EDGE_W: u32 = 5;
 const PREVIEW_W: u32 = 2;
 const NUDGE_STEP: i32 = 12;
+
+/// Click-to-select tolerance for a wire (window px) + the bezier sample count.
+const EDGE_HIT_THRESHOLD: i32 = 8;
+const EDGE_SAMPLES: i32 = 18;
 
 // ─── numeric conversion helpers (centralise the few unavoidable casts) ──
 
@@ -231,6 +236,70 @@ fn output_port_center(node: &GraphNode, j: usize) -> (i32, i32) {
     (node.x + NODE_W - PORT_SIZE / 2, node.y + port_row_top(j) + PORT_SIZE / 2)
 }
 
+/// Cubic-bezier control points for a wire from output `from` to input `to`.
+/// The single SSOT both the edge paint ([`view_edge`]) and the edge
+/// hit-test ([`point_near_edge`]) read, so the drawn curve and the clickable
+/// curve can never diverge ([[two-text-layouts-paint-vs-geometry]] analogue).
+fn edge_curve(from: (i32, i32), to: (i32, i32)) -> ((i32, i32), (i32, i32)) {
+    let ctrl = (to.0 - from.0).abs().max(60) / 2;
+    ((from.0 + ctrl, from.1), (to.0 - ctrl, to.1))
+}
+
+/// A point on the cubic bezier at parameter `t` (Bernstein form). `f64::from`
+/// is lossless for the small integer coordinates, so no precision cast.
+fn cubic_at(
+    p0: (f64, f64),
+    p1: (f64, f64),
+    p2: (f64, f64),
+    p3: (f64, f64),
+    t: f64,
+) -> (f64, f64) {
+    let mt = 1.0 - t;
+    let w0 = mt * mt * mt;
+    let w1 = 3.0 * mt * mt * t;
+    let w2 = 3.0 * mt * t * t;
+    let w3 = t * t * t;
+    (
+        w0 * p0.0 + w1 * p1.0 + w2 * p2.0 + w3 * p3.0,
+        w0 * p0.1 + w1 * p1.1 + w2 * p2.1 + w3 * p3.1,
+    )
+}
+
+/// Squared distance from `point` to segment `seg_a`–`seg_b`.
+fn point_seg_dist2(point: (f64, f64), seg_a: (f64, f64), seg_b: (f64, f64)) -> f64 {
+    let (vx, vy) = (seg_b.0 - seg_a.0, seg_b.1 - seg_a.1);
+    let (wx, wy) = (point.0 - seg_a.0, point.1 - seg_a.1);
+    let len2 = vx * vx + vy * vy;
+    let t = if len2 <= 0.0 { 0.0 } else { ((wx * vx + wy * vy) / len2).clamp(0.0, 1.0) };
+    let (cx, cy) = (seg_a.0 + t * vx, seg_a.1 + t * vy);
+    let (dx, dy) = (point.0 - cx, point.1 - cy);
+    dx * dx + dy * dy
+}
+
+/// Whether `(px, py)` (window px) lands within [`EDGE_HIT_THRESHOLD`] of the
+/// wire from `from` to `to` — the click-to-select-an-edge predicate. The
+/// curve is sampled into [`EDGE_SAMPLES`] segments and the click tested
+/// against each (a thin wire needs no analytic root-finding).
+fn point_near_edge(px: i32, py: i32, from: (i32, i32), to: (i32, i32)) -> bool {
+    let (c1, c2) = edge_curve(from, to);
+    let click = (f64::from(px), f64::from(py));
+    let p0 = (f64::from(from.0), f64::from(from.1));
+    let p1 = (f64::from(c1.0), f64::from(c1.1));
+    let p2 = (f64::from(c2.0), f64::from(c2.1));
+    let p3 = (f64::from(to.0), f64::from(to.1));
+    let thr2 = f64::from(EDGE_HIT_THRESHOLD) * f64::from(EDGE_HIT_THRESHOLD);
+    let mut prev = p0;
+    for step in 1..=EDGE_SAMPLES {
+        let t = f64::from(step) / f64::from(EDGE_SAMPLES);
+        let cur = cubic_at(p0, p1, p2, p3, t);
+        if point_seg_dist2(click, prev, cur) <= thr2 {
+            return true;
+        }
+        prev = cur;
+    }
+    false
+}
+
 fn clamp_node_x(x: i32) -> i32 {
     let max = i32::try_from(WIN_W).unwrap_or(i32::MAX) - NODE_W;
     x.clamp(0, max.max(0))
@@ -259,6 +328,12 @@ fn use_edges() -> Rc<Signal<Vec<Edge>>> {
 fn use_selected() -> Rc<Signal<Option<usize>>> {
     let owner = Owner::current().expect("use_selected requires an active Owner scope");
     owner.cache("node_graph.selected", || Signal::new(None))
+}
+
+#[must_use]
+fn use_selected_edge() -> Rc<Signal<Option<usize>>> {
+    let owner = Owner::current().expect("use_selected_edge requires an active Owner scope");
+    owner.cache("node_graph.selected_edge", || Signal::new(None))
 }
 
 #[must_use]
@@ -324,9 +399,13 @@ struct NodeDragStart {
 /// arms a move).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PendingPress {
+    /// No press in flight, or a press on the bare canvas background (the
+    /// edge-click-select probe path — distinct from `InputPort` so an input
+    /// port press is not mistaken for an empty-canvas click).
     None,
     NodeBody,
     OutputPort(usize, usize),
+    InputPort,
 }
 
 // ─── coordinator External ──────────────────────────────────────────
@@ -336,12 +415,18 @@ enum PendingPress {
 struct NodeGraphExternal {
     nodes: Rc<Signal<Vec<GraphNode>>>,
     edges: Rc<Signal<Vec<Edge>>>,
+    /// Selected node index (mutually exclusive with `selected_edge`).
     selected: Rc<Signal<Option<usize>>>,
+    /// Selected edge index (mutually exclusive with `selected`).
+    selected_edge: Rc<Signal<Option<usize>>>,
     preview: Rc<Signal<Option<Preview>>>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<usize>>,
     node_drag: Cell<Option<NodeDragStart>>,
     pending_press: Cell<PendingPress>,
+    /// Edge under the most recent background press (the capture-seed
+    /// `pointer_move` records it; a background `PointerUp` consumes it).
+    pending_edge_hit: Cell<Option<usize>>,
 }
 
 impl NodeGraphExternal {
@@ -349,16 +434,19 @@ impl NodeGraphExternal {
         nodes: Rc<Signal<Vec<GraphNode>>>,
         edges: Rc<Signal<Vec<Edge>>>,
         selected: Rc<Signal<Option<usize>>>,
+        selected_edge: Rc<Signal<Option<usize>>>,
         preview: Rc<Signal<Option<Preview>>>,
     ) -> Self {
         Self {
             nodes,
             edges,
             selected,
+            selected_edge,
             preview,
             grabbed_node: Cell::new(None),
             node_drag: Cell::new(None),
             pending_press: Cell::new(PendingPress::None),
+            pending_edge_hit: Cell::new(None),
         }
     }
 
@@ -407,7 +495,11 @@ impl NodeGraphExternal {
         }
         edges.retain(|e| !(e.to_node == to_node && e.to_port == to_port));
         edges.push(edge);
-        self.edges.set(edges);
+        // The dedup-retain may shift indices — drop a now-ambiguous selection.
+        batch(|| {
+            self.edges.set(edges);
+            self.selected_edge.set(None);
+        });
         true
     }
 
@@ -417,7 +509,15 @@ impl NodeGraphExternal {
             return false;
         }
         edges.remove(index);
-        self.edges.set(edges);
+        batch(|| {
+            self.edges.set(edges);
+            // Drop / shift the edge selection to track the removal.
+            self.selected_edge.set(match self.selected_edge.get() {
+                Some(s) if s == index => None,
+                Some(s) if s > index => Some(s - 1),
+                other => other,
+            });
+        });
         true
     }
 
@@ -451,17 +551,38 @@ impl NodeGraphExternal {
                 Some(s) if s > k => Some(s - 1),
                 other => other,
             });
+            // Incident edges dropped + indices shifted — clear edge selection.
+            self.selected_edge.set(None);
         });
         self.grabbed_node.set(None);
         self.node_drag.set(None);
         true
     }
 
+    /// Delete whatever is selected — a selected edge takes priority over a
+    /// selected node (the two are mutually exclusive anyway). The `Delete` key
+    /// + the RPC `delete_selected` share this.
     fn delete_selected(&self) -> bool {
+        if let Some(e) = self.selected_edge.get() {
+            return self.remove_edge(e);
+        }
         match self.selected.get() {
             Some(k) => self.delete_node(k),
             None => false,
         }
+    }
+
+    /// Hit-test a window-px click against every wire; the first within
+    /// tolerance is the selection candidate.
+    fn hit_test_edge(&self, px: i32, py: i32) -> Option<usize> {
+        let nodes = self.nodes.get();
+        let edges = self.edges.get();
+        edges.iter().position(|e| {
+            let (Some(src), Some(dst)) = (nodes.get(e.from_node), nodes.get(e.to_node)) else {
+                return false;
+            };
+            point_near_edge(px, py, output_port_center(src, e.from_port), input_port_center(dst, e.to_port))
+        })
     }
 
     /// Nudge the selected node by `(dx, dy)` (the arrow-key path).
@@ -476,10 +597,23 @@ impl NodeGraphExternal {
         self.set_node_pos(k, node.x + dx, node.y + dy)
     }
 
-    /// Set / clear the selection, clamping an in-range index.
+    /// Select a node (clamped, in-range), clearing any edge selection — node
+    /// and edge selection are mutually exclusive.
     fn set_selected(&self, value: Option<usize>) {
         let clamped = value.filter(|&i| i < self.node_count());
-        self.selected.set(clamped);
+        batch(|| {
+            self.selected.set(clamped);
+            self.selected_edge.set(None);
+        });
+    }
+
+    /// Select an edge (clamped, in-range), clearing any node selection.
+    fn set_selected_edge(&self, value: Option<usize>) {
+        let clamped = value.filter(|&i| i < self.edges.get().len());
+        batch(|| {
+            self.selected_edge.set(clamped);
+            self.selected.set(None);
+        });
     }
 
     /// Pointer `send` wire (the same channel the router and RPC share).
@@ -499,7 +633,9 @@ impl NodeGraphExternal {
                 } else if let Some((n, j)) = parse_oport_sub(s) {
                     self.pending_press.set(PendingPress::OutputPort(n, j));
                 } else {
-                    self.pending_press.set(PendingPress::None);
+                    // An input-port press — distinct from a background press so
+                    // it never triggers the edge-click probe.
+                    self.pending_press.set(PendingPress::InputPort);
                 }
             }
             (Some(s), "PointerUp") => {
@@ -509,15 +645,20 @@ impl NodeGraphExternal {
                 self.end_gesture();
             }
             (None, "PointerUp") => {
-                // Background release — deselect (only when no drag was armed).
-                if self.pending_press.get() == PendingPress::None && self.grabbed_node.get().is_none()
-                {
-                    self.selected.set(None);
+                // Background release: select the edge the capture-seed press
+                // probe landed on, else deselect everything. Only when no node
+                // drag was armed.
+                if self.grabbed_node.get().is_none() {
+                    match self.pending_edge_hit.get() {
+                        Some(e) => self.set_selected_edge(Some(e)),
+                        None => self.set_selected(None),
+                    }
                 }
                 self.end_gesture();
             }
             (None, "PointerDown") => {
                 self.pending_press.set(PendingPress::None);
+                self.pending_edge_hit.set(None);
             }
             _ => {}
         }
@@ -528,6 +669,7 @@ impl NodeGraphExternal {
         self.grabbed_node.set(None);
         self.node_drag.set(None);
         self.pending_press.set(PendingPress::None);
+        self.pending_edge_hit.set(None);
     }
 }
 
@@ -572,6 +714,15 @@ impl External for NodeGraphExternal {
     /// applies `pos_at_press + (rel − press_rel) · canvas_extent`.
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         let Some(node) = self.grabbed_node.get() else {
+            // Not dragging a node. A background press (the R51.35 capture seed
+            // forwards the press cursor here) probes for an edge under the
+            // click so a background `PointerUp` can select it. An input-port
+            // press is excluded via `PendingPress::InputPort`.
+            if self.pending_press.get() == PendingPress::None {
+                let px = round_i32(f64::from(x_rel) * f64::from(WIN_W));
+                let py = round_i32(f64::from(y_rel) * f64::from(WIN_H));
+                self.pending_edge_hit.set(self.hit_test_edge(px, py));
+            }
             return;
         };
         match self.node_drag.get() {
@@ -645,6 +796,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node_count", "int"),
             ("edge_count", "int"),
             ("selected", "int"),
+            ("selected_edge", "int"),
             ("node.<i>.title", "string"),
             ("node.<i>.x", "int"),
             ("node.<i>.y", "int"),
@@ -665,6 +817,10 @@ impl ExternalIntrospect for NodeGraphExternal {
             "node_count" => Some(IntrospectValue::Int(int_of(self.node_count()))),
             "edge_count" => Some(IntrospectValue::Int(int_of(self.edges.get().len()))),
             "selected" => Some(match self.selected.get() {
+                Some(i) => IntrospectValue::Int(int_of(i)),
+                None => IntrospectValue::Null,
+            }),
+            "selected_edge" => Some(match self.selected_edge.get() {
                 Some(i) => IntrospectValue::Int(int_of(i)),
                 None => IntrospectValue::Null,
             }),
@@ -707,6 +863,20 @@ impl ExternalIntrospect for NodeGraphExternal {
                 IntrospectValue::Int(i) => {
                     let idx = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
                     self.set_selected(Some(idx));
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            };
+        }
+        if path == "selected_edge" {
+            return match value {
+                IntrospectValue::Null => {
+                    self.set_selected_edge(None);
+                    Ok(())
+                }
+                IntrospectValue::Int(i) => {
+                    let idx = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
+                    self.set_selected_edge(Some(idx));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -821,14 +991,10 @@ fn apply_key_graph(scene: &mut Scene, key: &str) -> bool {
 /// S-curve: control points offset horizontally so wires leave / enter ports
 /// level (the canonical node-graph wire shape).
 fn view_edge(tag: String, from: (i32, i32), to: (i32, i32), color: Color, width: u32) -> Scene {
-    let ctrl = (to.0 - from.0).abs().max(60) / 2;
+    let (c1, c2) = edge_curve(from, to);
     let commands = vec![
         PathCommand::MoveTo(ppt(from.0, from.1)),
-        PathCommand::CurveTo {
-            c1: ppt(from.0 + ctrl, from.1),
-            c2: ppt(to.0 - ctrl, to.1),
-            end: ppt(to.0, to.1),
-        },
+        PathCommand::CurveTo { c1: ppt(c1.0, c1.1), c2: ppt(c2.0, c2.1), end: ppt(to.0, to.1) },
     ];
     // Tight bounding box at the wire's extent — and `pointer_transparent`
     // so the (decorative) edge never intercepts a click meant for the
@@ -852,16 +1018,22 @@ fn view_edge(tag: String, from: (i32, i32), to: (i32, i32), color: Color, width:
 }
 
 /// All committed edges, resolved to their port centres. Painted behind the
-/// node cards.
-fn view_edges(nodes: &[GraphNode], edges: &[Edge], theme: &Theme) -> Vec<Scene> {
+/// node cards; the selected edge paints thicker in the highlight colour.
+fn view_edges(nodes: &[GraphNode], edges: &[Edge], selected_edge: Option<usize>, theme: &Theme) -> Vec<Scene> {
     let color = theme.resolve(ColorRole::Accent);
+    let hot = theme.resolve(ColorRole::OnSurface);
     edges
         .iter()
         .enumerate()
         .filter_map(|(i, e)| {
             let from = output_port_center(nodes.get(e.from_node)?, e.from_port);
             let to = input_port_center(nodes.get(e.to_node)?, e.to_port);
-            Some(view_edge(format!("{GRAPH_TAG}#edge_{i}"), from, to, color, EDGE_W))
+            let (c, w) = if selected_edge == Some(i) {
+                (hot, SELECTED_EDGE_W)
+            } else {
+                (color, EDGE_W)
+            };
+            Some(view_edge(format!("{GRAPH_TAG}#edge_{i}"), from, to, c, w))
         })
         .collect()
 }
@@ -945,12 +1117,13 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let nodes = use_nodes().get();
     let edges = use_edges().get();
     let selected = use_selected().get();
+    let selected_edge = use_selected_edge().get();
     let preview = use_preview().get();
 
     let mut children: Vec<Scene> = Vec::new();
 
     // Edges (behind) → preview wire → node cards (on top) → chrome.
-    children.extend(view_edges(&nodes, &edges, &theme));
+    children.extend(view_edges(&nodes, &edges, selected_edge, &theme));
 
     if let Some(p) = preview {
         if let Some(from_node) = nodes.get(p.from_node) {
@@ -982,15 +1155,14 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(16, 12)),
     ));
 
-    let status = match selected {
-        Some(i) => format!(
-            "{} nodes · {} edges · selected: {}",
-            nodes.len(),
-            edges.len(),
-            nodes.get(i).map_or("—", |n| n.title.as_str())
-        ),
-        None => format!("{} nodes · {} edges · none selected", nodes.len(), edges.len()),
+    let sel_label = if let Some(i) = selected {
+        format!("node {}", nodes.get(i).map_or("—", |n| n.title.as_str()))
+    } else if let Some(e) = selected_edge {
+        format!("edge {e}")
+    } else {
+        "none".to_owned()
     };
+    let status = format!("{} nodes · {} edges · selected: {sel_label}", nodes.len(), edges.len());
     children.push(Scene::Text(
         TextNode::styled(
             status,
@@ -1020,7 +1192,13 @@ impl WidgetCore for NodeEditorView {
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
-        Box::new(NodeGraphExternal::new(use_nodes(), use_edges(), use_selected(), use_preview()))
+        Box::new(NodeGraphExternal::new(
+            use_nodes(),
+            use_edges(),
+            use_selected(),
+            use_selected_edge(),
+            use_preview(),
+        ))
     }
 
     fn tag() -> &'static str {
@@ -1355,6 +1533,121 @@ mod tests {
             let m = Modifiers::empty();
             assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "Escape", m));
             assert_eq!(graph_intro(&scene).query("selected"), Some(IntrospectValue::Null));
+        });
+    }
+
+    /// A fresh coordinator over the shared Owner::cache holders (mutations
+    /// persist across instances within one Owner scope).
+    fn coordinator() -> NodeGraphExternal {
+        NodeGraphExternal::new(
+            use_nodes(),
+            use_edges(),
+            use_selected(),
+            use_selected_edge(),
+            use_preview(),
+        )
+    }
+
+    #[test]
+    fn r839_point_near_edge_is_curve_distance() {
+        let from = (164, 114);
+        let to = (256, 154);
+        // The endpoints lie exactly on the curve.
+        assert!(point_near_edge(from.0, from.1, from, to), "start on curve");
+        assert!(point_near_edge(to.0, to.1, from, to), "end on curve");
+        // A point far above the wire is not near it.
+        assert!(!point_near_edge(210, 30, from, to), "far point misses");
+    }
+
+    #[test]
+    fn r839_hit_test_edge_finds_the_wire_under_a_click() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let nodes = default_nodes();
+            // Midpoint of edge 0 (Texture.out0 -> Multiply.in0) sits in open space.
+            let from = output_port_center(&nodes[0], 0);
+            let to = input_port_center(&nodes[2], 0);
+            let mid = cubic_at(
+                (f64::from(from.0), f64::from(from.1)),
+                {
+                    let (c1, _) = edge_curve(from, to);
+                    (f64::from(c1.0), f64::from(c1.1))
+                },
+                {
+                    let (_, c2) = edge_curve(from, to);
+                    (f64::from(c2.0), f64::from(c2.1))
+                },
+                (f64::from(to.0), f64::from(to.1)),
+                0.5,
+            );
+            let coord = coordinator();
+            assert_eq!(coord.hit_test_edge(round_i32(mid.0), round_i32(mid.1)), Some(0));
+            assert_eq!(coord.hit_test_edge(10, 10), None, "empty corner hits nothing");
+        });
+    }
+
+    #[test]
+    fn r839_node_and_edge_selection_are_mutually_exclusive() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            coord.set_selected(Some(2));
+            assert_eq!(use_selected().get(), Some(2));
+            assert_eq!(use_selected_edge().get(), None);
+            coord.set_selected_edge(Some(1));
+            assert_eq!(use_selected_edge().get(), Some(1));
+            assert_eq!(use_selected().get(), None, "selecting an edge clears the node");
+        });
+    }
+
+    #[test]
+    fn r839_remove_edge_shifts_the_edge_selection() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            coord.set_selected_edge(Some(2));
+            assert!(coord.remove_edge(0), "remove edge 0");
+            assert_eq!(use_selected_edge().get(), Some(1), "selection 2 shifts to 1");
+            coord.set_selected_edge(Some(1));
+            assert!(coord.remove_edge(1), "remove the selected edge");
+            assert_eq!(use_selected_edge().get(), None, "removing the selected edge clears it");
+        });
+    }
+
+    #[test]
+    fn r839_delete_selected_prefers_the_selected_edge() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            coord.set_selected_edge(Some(0));
+            assert!(coord.delete_selected(), "delete the selected edge");
+            assert_eq!(use_edges().get().len(), 2, "one edge removed");
+            assert_eq!(use_selected_edge().get(), None);
+        });
+    }
+
+    #[test]
+    fn r839_background_press_probe_selects_a_wire() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // A bare background press, a capture-seed move onto edge 0's
+            // midpoint, then a bare release selects that wire.
+            send(&mut scene, "PointerDown");
+            {
+                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                node.handle.pointer_move(0.328_125, 0.319); // ~ (210, 134) = edge 0 midpoint
+            }
+            send(&mut scene, "PointerUp");
+            assert_eq!(query_int(&scene, "selected_edge"), 0, "wire selected");
+            assert_eq!(graph_intro(&scene).query("selected"), Some(IntrospectValue::Null));
+            // A bare press on empty space deselects.
+            send(&mut scene, "PointerDown");
+            {
+                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                node.handle.pointer_move(0.95, 0.95); // empty corner
+            }
+            send(&mut scene, "PointerUp");
+            assert_eq!(graph_intro(&scene).query("selected_edge"), Some(IntrospectValue::Null));
         });
     }
 
