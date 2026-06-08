@@ -2746,6 +2746,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-tree-grid"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde",
+ "vello",
+]
+
+[[package]]
 name = "hello-tree-view"
 version = "0.0.1"
 dependencies = [

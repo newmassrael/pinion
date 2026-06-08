@@ -35487,6 +35487,60 @@
         "next Phase B item-2: unified large-data Model layer (premature now per view_order.rs doc; needs 4th consumer)"
       ]
     },
+    "R860": {
+      "decision_summary": "R860 tree-grid (scene-outliner): view_virtual_treegrid composes the R819 tree virtualization with the R859 frozen-split substrate so a hierarchical name column is pinned while metadata columns scroll in vertical lockstep (Phase B Model/View, the editor outliner)",
+      "changes_bullets": [
+        "view_virtual_treegrid (tree_view): hierarchical outliner = frozen tree name column + scrolling metadata cols",
+        "frozen_split_panes + SplitPane lifted from render_frozen (table) = SSOT frozen-split for grid + treegrid",
+        "tree_cell_content extracted from build_row = shared tree-cell (indent+glyph+label) for tree + treegrid",
+        "both panes share body scroll via R859 follower -> vertical lockstep; tree column pinned under h-scroll",
+        "new hello-tree-grid example (scene-outliner) + tools/demos/r860_tree_grid.py; click folder = expand/collapse",
+        "AI-first: tree_view_introspection_extra reports full row_count + id/level/expanded for off-window rows"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (150 ok groups, 0 fail); 4 treegrid unit + 3 example tests new",
+        "clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "render_frozen + build_row refactors behaviour-identical (R859 5 tests + tree 56 tests unchanged)",
+        "r860_tree_grid.py PASS (30 assert): frozen freeze under h-scroll, vertical lockstep, expand/collapse, introspect"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.50",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "split-pane treegrid a11y: name cells = treeitems (tree_access_nodes); gridcell columns lift at 2nd consumer",
+        "keyboard roving + scrollbar deferred (hello-virtual-tree windowed-widget precedent); additive",
+        "treegrid uses TreeViewStyle for cells (distinct from TableStyle grid cells); unify at a 2nd treegrid consumer",
+        "next Phase B: enum/choice cell editor (deferred, 2nd property-grid consumer) or pro-tool perf at scale"
+      ],
+      "publishable_decision_summary": "R860 tree-grid (scene-outliner): view_virtual_treegrid composes the R819 tree virtualization with the R859 frozen-split substrate so a hierarchical name column is pinned while metadata columns scroll in vertical lockstep (Phase B Model/View, the editor outliner)",
+      "publishable_changes_bullets": [
+        "view_virtual_treegrid (tree_view): hierarchical outliner = frozen tree name column + scrolling metadata cols",
+        "frozen_split_panes + SplitPane lifted from render_frozen (table) = SSOT frozen-split for grid + treegrid",
+        "tree_cell_content extracted from build_row = shared tree-cell (indent+glyph+label) for tree + treegrid",
+        "both panes share body scroll via R859 follower -> vertical lockstep; tree column pinned under h-scroll",
+        "new hello-tree-grid example (scene-outliner) + tools/demos/r860_tree_grid.py; click folder = expand/collapse",
+        "AI-first: tree_view_introspection_extra reports full row_count + id/level/expanded for off-window rows"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (150 ok groups, 0 fail); 4 treegrid unit + 3 example tests new",
+        "clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "render_frozen + build_row refactors behaviour-identical (R859 5 tests + tree 56 tests unchanged)",
+        "r860_tree_grid.py PASS (30 assert): frozen freeze under h-scroll, vertical lockstep, expand/collapse, introspect"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.50",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "split-pane treegrid a11y: name cells = treeitems (tree_access_nodes); gridcell columns lift at 2nd consumer",
+        "keyboard roving + scrollbar deferred (hello-virtual-tree windowed-widget precedent); additive",
+        "treegrid uses TreeViewStyle for cells (distinct from TableStyle grid cells); unify at a 2nd treegrid consumer",
+        "next Phase B: enum/choice cell editor (deferred, 2nd property-grid consumer) or pro-tool perf at scale"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

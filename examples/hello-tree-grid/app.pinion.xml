@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R860 §5.27 §5.50 tree-grid (scene-outliner): pinion-forge renderer
+  manifest for hello-tree-grid. Same single-source-of-truth template as
+  the other hello-* renderers; only the struct name diverges.
+  backend=vello + default Area antialiasing (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloTreeGridRenderer"
+        backend="vello"/>

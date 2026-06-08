@@ -841,6 +841,60 @@ fn h_scrolled_column(horizontal: &Rc<ScrollState>, header: Scene, body: Scene) -
     )
 }
 
+/// R860 §5.27 — one pane of a frozen split: its header band, its width, and
+/// its windowed body slots (already built by the caller for that pane's
+/// column subset). Bundled so [`frozen_split_panes`] stays under the
+/// argument budget. `pub(crate)` so the tree-grid (`tree_view`) reuses the
+/// same frozen-split assembler as the data-grid.
+pub(crate) struct SplitPane {
+    pub header: Scene,
+    pub width: u32,
+    pub slots: Vec<Scene>,
+}
+
+/// R859 / R860 §5.45 — assemble a **frozen split** data surface: a
+/// fixed-width frozen pane (header + follower vertical body) beside a
+/// flex-grow scrolling pane (header + primary vertical body inside the
+/// outer horizontal scroll). The two panes share the vertical `body`
+/// `ScrollState` — the scrolling pane's inner scroll is the primary that
+/// publishes bounds, the frozen pane's is a
+/// [follower](pinion_core::scene::ScrollNode::as_follower) — so they scroll
+/// in vertical lockstep without the measured-viewport oscillation a second
+/// publisher would cause.
+///
+/// Shared by the frozen-column **data-grid** ([`GridRender::render_frozen`],
+/// R859) and the **tree-grid** ([`view_virtual_treegrid`], R860): both feed
+/// pre-built slots (data rows vs tree-cell rows), so the linked-scroll
+/// follower wiring + the fixed-width/flex-grow pane geometry are one source
+/// of truth (a divergence would mis-scroll one of the two — R758
+/// "divergence-is-a-bug").
+pub(crate) fn frozen_split_panes(
+    scroll: GridScroll<'_>,
+    total_h: u32,
+    frozen: SplitPane,
+    scrolled: SplitPane,
+) -> Scene {
+    // Frozen pane: header + follower V-body, pinned at `frozen.width` (width
+    // fixed, height stretches via the Row's `AlignItems::Stretch`).
+    let frozen_body = assemble_windowed_flex(scroll.body, frozen.width, total_h, frozen.slots, true);
+    let frozen_pane = Scene::Container(
+        ContainerNode::new(vec![frozen.header, frozen_body]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_size(Size::width_px(frozen.width)),
+        ),
+    );
+    // Scrolling pane: an R784 horizontally-scrolled `[header, body]` column,
+    // flex-growing into the width left of the frozen pane; its inner V body
+    // is the body PRIMARY.
+    let scroll_body = assemble_windowed_flex(scroll.body, scrolled.width, total_h, scrolled.slots, false);
+    let scroll_pane = h_scrolled_column(scroll.horizontal, scrolled.header, scroll_body);
+    Scene::Container(
+        ContainerNode::new(vec![frozen_pane, scroll_pane])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_flex_grow(1.0)),
+    )
+}
+
 impl GridRender<'_> {
     /// Visual position -> source data row (identity when unsorted) — the
     /// R778 sort-permutation resolution shared by both bodies.
@@ -976,10 +1030,9 @@ impl GridRender<'_> {
             )
         });
 
-        // Frozen pane (left): header + follower V-body, pinned at `frozen_w`
-        // (width fixed, height stretches via the Row's `AlignItems::Stretch`).
-        // The follower shares `body` so it scrolls vertically in lockstep
-        // with the scrolling pane but never publishes its bounds (R859).
+        // Frozen pane header (left, columns `0..frozen_cols`). Frozen
+        // columns do not horizontally scroll, so a resize grabber (which
+        // grows the horizontal extent) is moot — `resizable: false`.
         let fhrow_tag = format!("{}_fhrow", self.tag);
         let frozen_header = header_row(
             self.tag,
@@ -988,8 +1041,6 @@ impl GridRender<'_> {
             self.data.sort,
             ColumnLayout {
                 widths: &self.widths[..frozen_cols],
-                // Frozen columns do not horizontally scroll, so a resize
-                // grabber (which grows the horizontal extent) is moot here.
                 resizable: false,
                 col_base: 0,
                 container_tag: &fhrow_tag,
@@ -997,18 +1048,7 @@ impl GridRender<'_> {
             self.theme,
             self.style,
         );
-        let frozen_body = assemble_windowed_flex(scroll.body, frozen_w, self.total_h, frozen_slots, true);
-        let frozen_pane = Scene::Container(
-            ContainerNode::new(vec![frozen_header, frozen_body]).with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_size(Size::width_px(frozen_w)),
-            ),
-        );
-
-        // Scrolling pane (right): an R784 grid over columns `frozen_cols..`,
-        // flex-growing into the width left of the frozen pane. Its header
-        // tracks `h_scroll`; its inner V body is the body PRIMARY.
+        // Scrolling pane header (right, columns `frozen_cols..`).
         let hrow_tag = format!("{}_hrow", self.tag);
         let scroll_header = header_row(
             self.tag,
@@ -1024,13 +1064,14 @@ impl GridRender<'_> {
             self.theme,
             self.style,
         );
-        let scroll_body = assemble_windowed_flex(scroll.body, scroll_w, self.total_h, scroll_slots, false);
-        let scroll_pane = h_scrolled_column(scroll.horizontal, scroll_header, scroll_body);
-
-        Scene::Container(
-            ContainerNode::new(vec![frozen_pane, scroll_pane]).with_layout(
-                LayoutStyle::new().flex(FlexDirection::Row).with_flex_grow(1.0),
-            ),
+        // R859 — the shared frozen-split assembler (also the tree-grid's,
+        // R860): frozen pane (follower V-body) beside the scrolling pane
+        // (primary V-body in the outer horizontal scroll), vertical lockstep.
+        frozen_split_panes(
+            scroll,
+            self.total_h,
+            SplitPane { header: frozen_header, width: frozen_w, slots: frozen_slots },
+            SplitPane { header: scroll_header, width: scroll_w, slots: scroll_slots },
         )
     }
 }

@@ -69,6 +69,7 @@ use pinion_core::widgets::virtual_list::{compute_visible_range, content_height};
 use pinion_core::{Color, Scene};
 use std::rc::Rc;
 
+use crate::table::{frozen_split_panes, GridScroll, SplitPane};
 use crate::virtual_list::{assemble_windowed_flex, uniform_slots};
 
 /// R671 §5.16 §5.50 — Material 3 `TreeView` row dimensions. Mirrors
@@ -405,18 +406,14 @@ pub fn view_virtual_tree(
     assemble_windowed_flex(scroll, measured_w, total_h, slots, false)
 }
 
-/// Compose one row from its [`VisibleRow`] (the shared flattening): depth
-/// indent + expand glyph + label. R811.1 §5.50 — takes the flattened row
-/// rather than re-walking the `TreeItem` tree, so the glyph / indent /
-/// label / composite-tag all read the same `depth` / `has_children` /
-/// `expanded` the keyboard model and AT tree resolve against.
-fn build_row(
-    tree_tag: &'static str,
-    row: &VisibleRow,
-    theme: &Theme,
-    style: &TreeViewStyle,
-    is_focused: bool,
-) -> Scene {
+/// (R860 §5.50) The tree cell's inner children — depth indent spacer +
+/// fixed-width expand glyph + label — shared by the plain tree row
+/// ([`build_row`]) and the tree-grid's frozen name column
+/// ([`view_virtual_treegrid`]) so the indent / glyph / label rendering is
+/// one source of truth (a divergence would misalign the two tree surfaces).
+/// The caller wraps these in the row (full width) or the frozen cell (fixed
+/// width) container.
+fn tree_cell_content(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> Vec<Scene> {
     let glyph = if !row.has_children {
         GLYPH_LEAF
     } else if row.expanded {
@@ -472,6 +469,22 @@ fn build_row(
             .with_size_px(style.font_size_px)
             .with_fg(label_color),
     )));
+    row_children
+}
+
+/// Compose one row from its [`VisibleRow`] (the shared flattening): depth
+/// indent + expand glyph + label. R811.1 §5.50 — takes the flattened row
+/// rather than re-walking the `TreeItem` tree, so the glyph / indent /
+/// label / composite-tag all read the same `depth` / `has_children` /
+/// `expanded` the keyboard model and AT tree resolve against.
+fn build_row(
+    tree_tag: &'static str,
+    row: &VisibleRow,
+    theme: &Theme,
+    style: &TreeViewStyle,
+    is_focused: bool,
+) -> Scene {
+    let row_children = tree_cell_content(row, theme, style);
     let row_tag = composite_row_tag(tree_tag, &row.id);
     // R673 §5.50 — focused row fills with the M3
     // `SurfaceContainerHighest` tier (the canonical Material 3
@@ -513,6 +526,217 @@ fn build_row(
                     )),
             )
             .with_style(BoxStyle::filled(row_bg)),
+    )
+}
+
+// ─── R860 §5.27 §5.50 tree-grid (hierarchical outliner + columns) ─────────
+
+/// R860 §5.27 — the "what to render" inputs for a [`view_virtual_treegrid`]:
+/// the flattened tree rows + the frozen tree (name) column header + the
+/// scrolling data column headers + their widths. Parallels
+/// `pinion_widget_paint::table::VirtualTableData` for the data-grid.
+pub struct TreeGridData<'a> {
+    /// The flattened visible tree rows (from
+    /// [`flat_visible`](pinion_core::widgets::tree_nav::flat_visible)); the
+    /// binding owns the tree + expand state, so collapsing a branch shortens
+    /// this slice and the grid re-windows.
+    pub rows: &'a [VisibleRow],
+    /// Header label for the frozen tree (name) column.
+    pub tree_header: &'a str,
+    /// Header labels for the scrolling metadata columns.
+    pub data_headers: &'a [&'a str],
+    /// Width (logical px) of the frozen tree column.
+    pub tree_col_width: u32,
+    /// Width (logical px) of each scrolling metadata column.
+    pub data_col_width: u32,
+    /// Rows built beyond the strict visible window on each side.
+    pub overscan: usize,
+}
+
+/// Focus-highlight fill for a tree-grid row (shared by the name cell + the
+/// metadata strip so the focused row highlights across both panes).
+fn row_focus_bg(theme: &Theme, is_focused: bool) -> Color {
+    if is_focused {
+        theme.resolve(ColorRole::SurfaceContainerHighest)
+    } else {
+        Color::TRANSPARENT
+    }
+}
+
+/// R860 — a fixed-size strip carrying `children`, framed `width × row_height`
+/// with the M3 cell padding (the geometry shared by the tree name cell, the
+/// metadata cell, and the header cells).
+fn treegrid_strip(children: Vec<Scene>, width: u32, style: &TreeViewStyle) -> ContainerNode {
+    ContainerNode::new(children).with_layout(
+        LayoutStyle::new()
+            .flex(FlexDirection::Row)
+            .with_align_items(AlignItems::Center)
+            .with_justify(JustifyContent::Start)
+            .with_gap(style.glyph_label_gap)
+            .with_size(Size::px(width, style.row_height))
+            .with_padding(Rect::new(style.row_padding, 0, style.row_padding, 0)),
+    )
+}
+
+/// R860 — the frozen tree name cell: the shared [`tree_cell_content`]
+/// (indent + glyph + label) in a fixed-width strip tagged `"{tag}#{id}"`, so
+/// a click routes to the binding's tree coordinator (toggle / select),
+/// exactly as [`view_virtual_tree`]'s rows do.
+fn treegrid_name_cell(
+    tag: &str,
+    row: &VisibleRow,
+    width: u32,
+    is_focused: bool,
+    theme: &Theme,
+    style: &TreeViewStyle,
+) -> Scene {
+    Scene::Container(
+        treegrid_strip(tree_cell_content(row, theme, style), width, style)
+            .with_tag(composite_row_tag(tag, &row.id))
+            .with_style(BoxStyle::filled(row_focus_bg(theme, is_focused))),
+    )
+}
+
+/// R860 — a display text cell for one metadata column (fixed width × row
+/// height). Display-only: no tag, so a click falls through to the row.
+fn treegrid_text_cell(text: &str, width: u32, theme: &Theme, style: &TreeViewStyle) -> Scene {
+    let label = Scene::Text(TextNode::styled(
+        text.to_string(),
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(style.font_size_px)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
+    ));
+    Scene::Container(treegrid_strip(vec![label], width, style))
+}
+
+/// R860 — one metadata-row strip (the scrolling pane's row): one display
+/// cell per data column, tagged `"{tag}_drow{id}"`.
+fn treegrid_data_row(
+    tag: &str,
+    row: &VisibleRow,
+    data: &TreeGridData<'_>,
+    is_focused: bool,
+    theme: &Theme,
+    style: &TreeViewStyle,
+    cell_data: &impl Fn(&str, usize) -> String,
+) -> Scene {
+    let cells: Vec<Scene> = (0..data.data_headers.len())
+        .map(|col| treegrid_text_cell(&cell_data(&row.id, col), data.data_col_width, theme, style))
+        .collect();
+    Scene::Container(
+        ContainerNode::new(cells)
+            .with_tag(format!("{tag}_drow{}", row.id))
+            .with_style(BoxStyle::filled(row_focus_bg(theme, is_focused)))
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_size({
+                let mut s = Size::default();
+                s.height = SizeValue::Px(style.row_height);
+                s
+            })),
+    )
+}
+
+/// R860 — a header label cell (no fill — the header *band* container owns
+/// the raised [`ColorRole::SurfaceContainerHigh`] surface).
+fn treegrid_header_cell(label: &str, width: u32, theme: &Theme, style: &TreeViewStyle) -> Scene {
+    let text = Scene::Text(TextNode::styled(
+        label.to_string(),
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(style.font_size_px)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
+    ));
+    Scene::Container(treegrid_strip(vec![text], width, style))
+}
+
+/// R860 — the scrolling pane's header band (`"{tag}_hrow"`): one header cell
+/// per metadata column on the raised surface.
+fn treegrid_data_header(
+    tag: &str,
+    headers: &[&str],
+    col_width: u32,
+    theme: &Theme,
+    style: &TreeViewStyle,
+) -> Scene {
+    let cells: Vec<Scene> = headers
+        .iter()
+        .map(|label| treegrid_header_cell(label, col_width, theme, style))
+        .collect();
+    Scene::Container(
+        ContainerNode::new(cells)
+            .with_tag(format!("{tag}_hrow"))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+    )
+}
+
+/// R860 §5.27 §5.50 — a **virtualized tree-grid** (hierarchical outliner with
+/// metadata columns): the editor's scene-outliner shape. The frozen tree
+/// column (indent + expand glyph + name) is pinned via the R859 frozen-split
+/// substrate while the metadata columns scroll horizontally; both panes share
+/// the vertical body scroll (the R859 linked-scroll follower) so they scroll
+/// in vertical lockstep.
+///
+/// Pure paint over a pre-flattened `&[VisibleRow]` (like [`view_virtual_tree`]):
+/// the binding owns the tree nodes + expand state + the `cell_data` metadata
+/// lookup + the row-click → toggle wiring. The frozen name cell is tagged
+/// `composite_row_tag(tag, id)` (`"{tag}#{id}"`) so a click routes to the
+/// binding's tree coordinator, exactly as [`view_virtual_tree`]'s rows do.
+///
+/// Tags: tree name cells `"{tag}#{id}"`, metadata-row strips `"{tag}_drow{id}"`,
+/// headers `"{tag}_fhrow"` (tree) / `"{tag}_hrow"` (data). a11y: the binding
+/// supplies the WAI-ARIA `tree`/`treeitem` structure as for a plain tree; a
+/// span-aware `treegrid` role with `gridcell` columns is a documented R860
+/// carry (the 2nd tree-grid consumer lifts it).
+#[must_use]
+pub fn view_virtual_treegrid(
+    tag: &'static str,
+    scroll: GridScroll<'_>,
+    data: &TreeGridData<'_>,
+    focused: Option<&str>,
+    theme: &Theme,
+    style: &TreeViewStyle,
+    cell_data: impl Fn(&str, usize) -> String,
+) -> Scene {
+    let row_pitch = style.row_height;
+    let rows = data.rows;
+    let view_len = rows.len();
+    let (_, measured_h) = scroll.body.measured_viewport();
+    let window =
+        compute_visible_range(scroll.body.offset_y(), measured_h, view_len, row_pitch, data.overscan);
+    let total_h = content_height(view_len, row_pitch);
+
+    let frozen_w = data.tree_col_width;
+    let ncols = u32::try_from(data.data_headers.len()).unwrap_or(u32::MAX);
+    let scroll_w = data.data_col_width.saturating_mul(ncols);
+
+    // Frozen pane: the tree name column, one cell per visible row.
+    let frozen_slots = uniform_slots(&window, frozen_w, row_pitch, |index| {
+        let row = &rows[index];
+        let is_focused = focused == Some(row.id.as_str());
+        treegrid_name_cell(tag, row, frozen_w, is_focused, theme, style)
+    });
+    // Scrolling pane: the metadata columns, one strip per visible row.
+    let scroll_slots = uniform_slots(&window, scroll_w, row_pitch, |index| {
+        let row = &rows[index];
+        let is_focused = focused == Some(row.id.as_str());
+        treegrid_data_row(tag, row, data, is_focused, theme, style, &cell_data)
+    });
+
+    // Frozen header band: the single tree-column header on the raised surface.
+    let frozen_header = Scene::Container(
+        ContainerNode::new(vec![treegrid_header_cell(data.tree_header, frozen_w, theme, style)])
+            .with_tag(format!("{tag}_fhrow"))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+    );
+    let scroll_header = treegrid_data_header(tag, data.data_headers, data.data_col_width, theme, style);
+
+    frozen_split_panes(
+        scroll,
+        total_h,
+        SplitPane { header: frozen_header, width: frozen_w, slots: frozen_slots },
+        SplitPane { header: scroll_header, width: scroll_w, slots: scroll_slots },
     )
 }
 
@@ -1997,5 +2221,149 @@ mod r819_virtual_tree_tests {
             Some(focus_bg),
             "unfocused window row stays transparent"
         );
+    }
+}
+
+#[cfg(test)]
+mod r860_treegrid_tests {
+    //! R860 §5.27 §5.50 — [`view_virtual_treegrid`] composes the flattened
+    //! tree (frozen name column) with metadata columns over the R859
+    //! frozen-split substrate: the tree column is pinned (follower V-body)
+    //! while the metadata columns scroll, in vertical lockstep.
+    use super::{view_virtual_treegrid, Color, ColorRole, GridScroll, Scene, Theme, TreeGridData, TreeItem, TreeViewStyle};
+    use pinion_core::scene::ScrollAxis;
+    use pinion_core::widgets::scroll::ScrollState;
+    use pinion_core::widgets::tree_nav::{flat_visible, VisibleRow};
+    use pinion_core::Owner;
+    use std::rc::Rc;
+
+    const TAG: &str = "tg";
+    const DATA_HEADERS: [&str; 2] = ["Type", "Vis"];
+
+    /// A small outliner: a group with two children, then a sibling leaf.
+    /// `flat_visible` = [grp, a, b, c] expanded, [grp, c] collapsed.
+    fn outliner(group_expanded: bool) -> Vec<TreeItem> {
+        vec![
+            TreeItem::branch(
+                "grp",
+                "Group",
+                group_expanded,
+                vec![TreeItem::leaf("a", "Alpha"), TreeItem::leaf("b", "Bravo")],
+            ),
+            TreeItem::leaf("c", "Charlie"),
+        ]
+    }
+
+    fn run(rows: &[VisibleRow], focused: Option<&str>) -> Scene {
+        let body = Rc::new(ScrollState::new());
+        let pitch = i32::try_from(TreeViewStyle::m3_default().row_height).unwrap();
+        body.set_max(0, i32::try_from(rows.len()).unwrap() * pitch);
+        body.set_measured_viewport(400, 20 * u32::try_from(pitch).unwrap());
+        let h = Rc::new(ScrollState::with_tag("tg_h"));
+        let theme = Theme::light();
+        let style = TreeViewStyle::m3_default();
+        Owner::new().run(|| {
+            view_virtual_treegrid(
+                TAG,
+                GridScroll { body: &body, horizontal: &h },
+                &TreeGridData {
+                    rows,
+                    tree_header: "Name",
+                    data_headers: &DATA_HEADERS,
+                    tree_col_width: 200,
+                    data_col_width: 100,
+                    overscan: 2,
+                },
+                focused,
+                &theme,
+                &style,
+                |id, col| format!("{id}#{col}"),
+            )
+        })
+    }
+
+    fn has_tag(scene: &Scene, tag: &str) -> bool {
+        match scene {
+            Scene::Scroll(s) => has_tag(s.content.as_ref(), tag),
+            Scene::Container(c) => {
+                c.tag.as_deref() == Some(tag) || c.children.iter().any(|ch| has_tag(ch, tag))
+            }
+            _ => false,
+        }
+    }
+
+    fn vfollowers(scene: &Scene, out: &mut Vec<bool>) {
+        match scene {
+            Scene::Scroll(s) => {
+                if s.axis == ScrollAxis::Vertical {
+                    out.push(s.follower);
+                }
+                vfollowers(s.content.as_ref(), out);
+            }
+            Scene::Container(c) => {
+                for ch in &c.children {
+                    vfollowers(ch, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn fill_of(scene: &Scene, tag: &str) -> Option<Color> {
+        match scene {
+            Scene::Scroll(s) => fill_of(s.content.as_ref(), tag),
+            Scene::Container(c) => {
+                if c.tag.as_deref() == Some(tag) {
+                    return Some(c.style.fill);
+                }
+                c.children.iter().find_map(|ch| fill_of(ch, tag))
+            }
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn renders_frozen_tree_and_scrolling_metadata() {
+        let scene = run(&flat_visible(&outliner(true)), None);
+        assert!(has_tag(&scene, "tg_fhrow"), "frozen tree header band present");
+        assert!(has_tag(&scene, "tg_hrow"), "scrolling metadata header band present");
+        for id in ["grp", "a", "b", "c"] {
+            assert!(has_tag(&scene, &format!("tg#{id}")), "tree name cell tg#{id}");
+            assert!(has_tag(&scene, &format!("tg_drow{id}")), "metadata strip tg_drow{id}");
+        }
+    }
+
+    #[test]
+    fn frozen_tree_pane_is_follower_metadata_pane_is_primary() {
+        let scene = run(&flat_visible(&outliner(true)), None);
+        let mut followers = Vec::new();
+        vfollowers(&scene, &mut followers);
+        assert_eq!(
+            followers,
+            vec![true, false],
+            "frozen tree pane follows the shared body scroll, metadata pane leads",
+        );
+    }
+
+    #[test]
+    fn collapsing_a_branch_drops_its_children() {
+        let expanded = flat_visible(&outliner(true));
+        let collapsed = flat_visible(&outliner(false));
+        assert_eq!(expanded.len(), 4, "grp expanded -> grp+a+b+c");
+        assert_eq!(collapsed.len(), 2, "grp collapsed -> grp+c only");
+        let scene = run(&collapsed, None);
+        assert!(has_tag(&scene, "tg#grp"), "group row rendered when collapsed");
+        assert!(!has_tag(&scene, "tg#a"), "collapsed child a not rendered");
+        assert!(!has_tag(&scene, "tg#b"), "collapsed child b not rendered");
+        assert!(has_tag(&scene, "tg#c"), "sibling leaf c still rendered");
+    }
+
+    #[test]
+    fn focused_row_highlights_both_panes() {
+        let scene = run(&flat_visible(&outliner(true)), Some("b"));
+        let focus_bg = Theme::light().resolve(ColorRole::SurfaceContainerHighest);
+        assert_eq!(fill_of(&scene, "tg#b"), Some(focus_bg), "focused tree name cell highlighted");
+        assert_eq!(fill_of(&scene, "tg_drowb"), Some(focus_bg), "focused metadata strip highlighted");
+        assert_ne!(fill_of(&scene, "tg#a"), Some(focus_bg), "unfocused row stays transparent");
     }
 }

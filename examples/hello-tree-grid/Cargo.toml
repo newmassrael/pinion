@@ -1,0 +1,30 @@
+[package]
+name = "hello-tree-grid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R860 §5.27 §5.50 tree-grid (scene-outliner): a hierarchical tree whose frozen name column (indent + expand glyph + label) is pinned via the R859 frozen-split substrate while metadata columns (Type / Visible / Layer) scroll horizontally. Both panes share the vertical body scroll via the R859 linked-scroll follower, so the tree and its metadata scroll in vertical lockstep; clicking a folder expands / collapses it (re-windowing the grid). The self-hosted editor's outliner shape."
+publish = false
+
+[[bin]]
+name = "hello-tree-grid"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R860 §5.27 — `view_virtual_treegrid` + the tree-row click external.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+# R860 — the retained tree nodes are a `Signal<Vec<OutlinerNode>>`; the
+# §5.22 introspect bound requires the payload to derive serde.
+serde = { workspace = true, features = ["derive"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
