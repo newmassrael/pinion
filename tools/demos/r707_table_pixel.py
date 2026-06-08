@@ -136,7 +136,7 @@ def _panel_left(png_path: str, ring_left: int, row_y: int):
 
 def body() -> int:
     with isolated_storage_dir("r707-table-pixel"):
-        with RpcSubprocess("hello-table") as d:
+        with RpcSubprocess("hello-table", visible_window=True) as d:
             time.sleep(0.6)
             # Single Tab stop + 2-D roving: focus the grid, enter at (0, 0).
             d.request("focus/set", {"tag": T})

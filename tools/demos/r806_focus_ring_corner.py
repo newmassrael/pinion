@@ -217,7 +217,7 @@ def _pixel_check_file_ring() -> bool:
 
 def body() -> None:
     with isolated_storage_dir("r806-focus-ring-corner"):
-        with RpcSubprocess("hello-menu", boot_grace=1.0) as app:
+        with RpcSubprocess("hello-menu", boot_grace=1.0, visible_window=True) as app:
             # Focus the menubar: closed + focused -> ring on the bar_focus
             # title (File, the top-LEFT-flush corner case).
             app.request("focus/set", {"tag": BAR})

@@ -1288,6 +1288,17 @@ impl<V: WidgetView> AppShell<V> {
             let mut attrs = Window::default_attributes()
                 .with_title(spec.title.clone())
                 .with_inner_size(LogicalSize::new(f64::from(init_w), f64::from(init_h)));
+            // R835 §5.16 — windowless test mode. `PINION_HIDDEN_WINDOW`
+            // creates the shell window UNMAPPED (`visible = false`): Vello
+            // still renders to the GPU surface and `scene/snapshot` /
+            // `scene/query` work unchanged, but no window flashes on the
+            // developer's real display. Headless RPC demos set this so a
+            // local verification run does not seize focus / flicker.
+            // Unset (the default) keeps the window visible for interactive
+            // `run` / `verify` sessions.
+            if hidden_window_requested() {
+                attrs = attrs.with_visible(false);
+            }
             // R668 §5.16 — anchor the user-driven OS-resize floor at
             // `min` so dragging the resize chrome smaller than the
             // intrinsic floor stops at `min`. winit clamps the floor
@@ -2328,6 +2339,17 @@ pub fn run_with_handlers<V: WidgetView>(registry: HandlerRegistry) {
     if let Err(e) = event_loop.run_app(&mut app) {
         eprintln!("shell: event loop error: {e}");
     }
+}
+
+/// R835 §5.16 — `true` when `PINION_HIDDEN_WINDOW` requests the
+/// offscreen (unmapped) window mode for headless local verification (any
+/// value except empty / `0`). The window still renders to its GPU
+/// surface; only the OS map is suppressed, so no window flashes on the
+/// developer's display while RPC demos drive the binary.
+fn hidden_window_requested() -> bool {
+    std::env::var("PINION_HIDDEN_WINDOW")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
 }
 
 /// R637 §5.16 §5.7 — env-hook plumbing for [`run`] / [`run_with_handlers`].

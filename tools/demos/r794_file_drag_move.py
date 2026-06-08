@@ -107,7 +107,7 @@ def drag_row_onto(tf, src_name: str, dst_tag: str) -> None:
 
 
 def body() -> None:
-    with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+    with RpcSubprocess(EXAMPLE, boot_grace=1.5, visible_window=True) as tf:
         # ── (A) boot ────────────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, DIR) is not None, "the file list paints"
@@ -251,7 +251,7 @@ def native_live_pixel_guard() -> None:
             print(f"  PHASE 2 SKIP: XTest helper did not compile:\n{cc_res.stderr.strip()}")
             return
 
-        with RpcSubprocess(EXAMPLE, boot_grace=1.8) as tf:
+        with RpcSubprocess(EXAMPLE, boot_grace=1.8, visible_window=True) as tf:
             win = _find_window_geom(xwininfo)
             if win is None:
                 print("  PHASE 2 SKIP: could not locate the live window geometry")

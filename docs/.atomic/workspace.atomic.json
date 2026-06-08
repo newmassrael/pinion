@@ -34035,6 +34035,50 @@
         "f64 / fixed-point FixedTimestep for cross-machine bit-determinism = future axis (no consumer yet)"
       ]
     },
+    "R835": {
+      "decision_summary": "R835: windowless local test mode + CI-only full sweep (user directive — the windowed local sweep flickered windows and blocked their work). PINION_HIDDEN_WINDOW creates the shell window UNMAPPED (with_visible(false)) so the full real render pipeline (winit + GPU + Vello + present) still runs for genuine render coverage but never flashes a window or steals focus — strictly more coverage than a render-free headless mode, zero screen disturbance. RpcSubprocess defaults it on; the 5 x11grab live-capture demos opt back to visible (they screen-grab the mapped window) and move to CI. New .github/workflows/ci.yml: clippy + workspace tests (windowless) + the full demo sweep (Xvfb + lavapipe + hidden). Round obligation updated: local gate = test + clippy + affected hidden demos; full sweep = CI; no local full sweep without explicit request.",
+      "changes_bullets": [
+        "pinion-shell: PINION_HIDDEN_WINDOW env -> with_visible(false); window created UNMAPPED, full render pipeline still runs, no display flicker",
+        "rpc_verify.RpcSubprocess defaults PINION_HIDDEN_WINDOW=1 (windowless local verification) with visible_window=True opt-out",
+        "5 x11grab/ffmpeg live-capture demos (r706/707/786/794/806) pass visible_window=True (they screen-grab the mapped window)",
+        ".github/workflows/ci.yml: lint-and-test (clippy + workspace test, windowless) + demo-sweep (Xvfb + lavapipe + hidden, full sweep)",
+        "sweep_headless.sh header + SEED round-obligation: full sweep is CI-primary, local only on explicit request"
+      ],
+      "verification_bullets": [
+        "pinion-shell clippy clean; r832 + r833 pass hidden-by-default with NO mapped window (xwininfo shows none)",
+        "all touched python files parse; ci.yml is valid YAML",
+        "hidden-window runs the real winit+GPU+Vello+present path (more coverage than a render-free headless mode), just unmapped"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "CI demo-sweep job is best-effort: the lavapipe (software Vulkan) + Xvfb + hidden-window render path is unverified on GitHub GPU-less runners (VELLO-002 broke the old Xvfb GL path; lavapipe+visible historically OOM'd, hidden may avoid it) -> tune on first CI run",
+        "a true render-free headless RPC mode (no GPU/X, scene-as-data only) remains a faster CI fallback for the non-pixel demos if lavapipe proves flaky",
+        "the 5 x11grab live-capture demos need a real mapped window + display+GPU -> only the CI sweep (or explicit local visible run) covers them"
+      ],
+      "publishable_decision_summary": "R835: windowless local test mode + CI-only full sweep (user directive — the windowed local sweep flickered windows and blocked their work). PINION_HIDDEN_WINDOW creates the shell window UNMAPPED (with_visible(false)) so the full real render pipeline (winit + GPU + Vello + present) still runs for genuine render coverage but never flashes a window or steals focus — strictly more coverage than a render-free headless mode, zero screen disturbance. RpcSubprocess defaults it on; the 5 x11grab live-capture demos opt back to visible (they screen-grab the mapped window) and move to CI. New .github/workflows/ci.yml: clippy + workspace tests (windowless) + the full demo sweep (Xvfb + lavapipe + hidden). Round obligation updated: local gate = test + clippy + affected hidden demos; full sweep = CI; no local full sweep without explicit request.",
+      "publishable_changes_bullets": [
+        "pinion-shell: PINION_HIDDEN_WINDOW env -> with_visible(false); window created UNMAPPED, full render pipeline still runs, no display flicker",
+        "rpc_verify.RpcSubprocess defaults PINION_HIDDEN_WINDOW=1 (windowless local verification) with visible_window=True opt-out",
+        "5 x11grab/ffmpeg live-capture demos (r706/707/786/794/806) pass visible_window=True (they screen-grab the mapped window)",
+        ".github/workflows/ci.yml: lint-and-test (clippy + workspace test, windowless) + demo-sweep (Xvfb + lavapipe + hidden, full sweep)",
+        "sweep_headless.sh header + SEED round-obligation: full sweep is CI-primary, local only on explicit request"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-shell clippy clean; r832 + r833 pass hidden-by-default with NO mapped window (xwininfo shows none)",
+        "all touched python files parse; ci.yml is valid YAML",
+        "hidden-window runs the real winit+GPU+Vello+present path (more coverage than a render-free headless mode), just unmapped"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "CI demo-sweep job is best-effort: the lavapipe (software Vulkan) + Xvfb + hidden-window render path is unverified on GitHub GPU-less runners (VELLO-002 broke the old Xvfb GL path; lavapipe+visible historically OOM'd, hidden may avoid it) -> tune on first CI run",
+        "a true render-free headless RPC mode (no GPU/X, scene-as-data only) remains a faster CI fallback for the non-pixel demos if lavapipe proves flaky",
+        "the 5 x11grab live-capture demos need a real mapped window + display+GPU -> only the CI sweep (or explicit local visible run) covers them"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

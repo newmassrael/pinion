@@ -1,0 +1,71 @@
+name: CI
+
+# R835 §5.16 — the full verification gate runs HERE, not on the
+# developer's machine. Local round work uses windowless `cargo test` +
+# `clippy` (+ a few affected demos run hidden via PINION_HIDDEN_WINDOW);
+# the full RPC demo sweep — especially the live-pixel / x11grab guards —
+# runs only in CI so it never flashes windows on the developer's display.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint-and-test:
+    name: clippy + workspace tests (windowless)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: |
+          rustup show
+          rustup component add clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: clippy (-D pedantic via workspace.lints)
+        run: cargo clippy --workspace --all-targets --features pinion-runtime/vello
+      - name: workspace tests
+        run: cargo test --workspace
+
+  demo-sweep:
+    name: full RPC demo sweep (Xvfb + lavapipe, hidden windows)
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    env:
+      # Software Vulkan (lavapipe) on a throwaway virtual X display.
+      # Windows are created UNMAPPED (PINION_HIDDEN_WINDOW) so no real
+      # display is required; the full winit + wgpu + Vello render path
+      # still runs (the meaningful render-pipeline coverage), it just
+      # never maps a window. Best-effort: lavapipe + Xvfb is the only
+      # render path available on a GPU-less runner; tune the screen
+      # geometry / driver here if a demo OOMs or fails to find an adapter.
+      PINION_HIDDEN_WINDOW: "1"
+      PINION_SWEEP_DISPLAY: ":99"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Rust toolchain (rust-toolchain.toml)
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: System deps (Xvfb, lavapipe, ffmpeg, XTEST, x11-utils)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb mesa-vulkan-drivers vulkan-tools libvulkan1 \
+            ffmpeg x11-utils gcc libxtst-dev libx11-dev python3
+      - name: Build workspace (release — sweep runs release binaries)
+        run: cargo build --release --workspace
+      - name: Run full demo sweep under Xvfb
+        run: |
+          Xvfb :99 -screen 0 1600x1200x24 >/tmp/xvfb.log 2>&1 &
+          sleep 3
+          export DISPLAY=:99
+          vulkaninfo --summary 2>/dev/null | head -30 || true
+          bash tools/sweep_headless.sh

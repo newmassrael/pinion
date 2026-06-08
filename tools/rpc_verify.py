@@ -105,11 +105,19 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         release: bool = True,
         boot_grace: float = 0.8,
         request_timeout: float = 5.0,
+        visible_window: bool = False,
     ) -> None:
         self.example = example
         self.release = release
         self.boot_grace = boot_grace
         self.request_timeout = request_timeout
+        # R835 §5.16 — by default the shell window is created UNMAPPED
+        # (`PINION_HIDDEN_WINDOW`) so a local verification run renders the
+        # full real pipeline (winit + GPU + Vello + present) WITHOUT a
+        # window flashing on the developer's display / stealing focus.
+        # Demos that screen-capture the real window (ffmpeg x11grab) pass
+        # `visible_window=True` so the window is mapped for the grab.
+        self.visible_window = visible_window
 
         self._proc: Optional[subprocess.Popen] = None
         self._inbox: "queue.Queue[str]" = queue.Queue()
@@ -121,6 +129,14 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     def __enter__(self) -> "RpcSubprocess":
         binary = self._resolve_binary()
         cmd = [str(binary)] if binary else self._cargo_run_cmd()
+        # R835 §5.16 — windowless-by-default env. Hidden unless the demo
+        # asked for a visible window (x11grab screen capture) or the caller
+        # set PINION_HIDDEN_WINDOW explicitly.
+        env = dict(os.environ)
+        if self.visible_window:
+            env.pop("PINION_HIDDEN_WINDOW", None)
+        elif "PINION_HIDDEN_WINDOW" not in env:
+            env["PINION_HIDDEN_WINDOW"] = "1"
         self._proc = subprocess.Popen(
             cmd,
             cwd=WORKSPACE_ROOT,
@@ -130,6 +146,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             text=True,
             encoding="utf-8",
             bufsize=1,
+            env=env,
         )
         self._stdout_thread = threading.Thread(
             target=self._pump_stdout, daemon=True

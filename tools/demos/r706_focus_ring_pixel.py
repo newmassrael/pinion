@@ -125,7 +125,7 @@ def _ring_and_panel(png_path: str):
 
 def body() -> None:
     with isolated_storage_dir("r706-focus-ring-pixel"):
-        with RpcSubprocess("hello-datepicker") as d:
+        with RpcSubprocess("hello-datepicker", visible_window=True) as d:
             time.sleep(0.6)
             # Single Tab stop + roving active descendant: focus the grid
             # root, then drive the cursor to day 3 (Home -> day 1, then two

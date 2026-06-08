@@ -122,7 +122,7 @@ def drag_grabber(tf, col: int, dx: int) -> None:
 
 
 def body() -> None:
-    with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
+    with RpcSubprocess(EXAMPLE, boot_grace=1.5, visible_window=True) as tf:
         # ── (A) boot: grabbers + width model + rendered cells ───────
         snap = tf.snapshot(source="paint", viewport=WIN)
         # A grabber is painted at every column's trailing edge.
@@ -274,7 +274,7 @@ def native_live_pixel_guard() -> None:
             print(f"  PHASE 2 SKIP: XTest helper did not compile:\n{cc_res.stderr.strip()}")
             return
 
-        with RpcSubprocess(EXAMPLE, boot_grace=1.8) as tf:
+        with RpcSubprocess(EXAMPLE, boot_grace=1.8, visible_window=True) as tf:
             win = _find_window_geom(xwininfo)
             if win is None:
                 print("  PHASE 2 SKIP: could not locate the live window geometry")
