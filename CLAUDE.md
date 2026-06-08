@@ -27,15 +27,26 @@ pinion synthesizes interactive UIs **and games** from:
 | Phase | Target | Current |
 |---|---|---:|
 | **A. Foundation** (§1-§4 spec + first composed multi-widget apps) | "Hello-world apps possible" — todomvc + settings panel | **~97%** (R666 todomvc + R667 settings-panel + R668 close = finalised) |
-| **B. Professional GUI** (Qt / Flutter / Compose / React-class) | Multi-window + DCC/IDE/CAD-grade widget catalog + pro-tool performance | **~27%** (multi-window / DevTools / dock-editor + ~35 Tier-1 widgets done; OS-native integration + Model/View-at-scale + API stabilisation remain) |
-| **C. Game engine substrate** (§2 #4 entry) | Immediate-mode game loop ↔ retained widget tree dual; 3D scene graph; asset pipeline; physics; audio; gamepad; PBR | **0%** |
+| **B. Professional GUI** (Qt / Flutter / Compose / React-class) | Multi-window + DCC/IDE/CAD-grade widget catalog + pro-tool performance | **~32%** (R835 re-tally; ~40 common widget families + multi-window + DevTools + dock-editor + tree virtualization + a11y catalog + menu-bar + print done. Hard long-tail remains: advanced DCC widgets [property-grid / node-editor / advanced data-grid] ~10%, Model/View-at-scale framework ~35%, OS-native maturity ~30%, rich-text editing ~30%, §7 API stabilisation ~12%) |
+| **C. Game engine substrate** (§2 #4 entry) | Immediate-mode game loop ↔ retained widget tree dual; 3D scene graph; asset pipeline; physics; audio; gamepad; PBR | **~5%** (§2 #4 immediate-mode game loop I/O surface + fixed-timestep done R681/R827-R831; 3D / asset / physics / audio / gamepad / PBR all 0%) |
 | **D. AAA game maker** | Unreal-class editor **self-hosted in pinion**; visual scripting; Nanite/Lumen-class rendering; multiplayer netcode | **0%** |
 
 **True north**: AAA game shippable + Unreal-class editor self-hosted in pinion itself, with AI-introspection 1st-class through every phase.
 
-Current weighted progress against true north: **~11.6%** (Phase A 97% × 5% phase-weight + Phase B 27% × 25% + Phase C 0% × 35% + Phase D 0% × 35%), as of R752. Figures are soft self-estimates, not a measured metric.
+Current weighted progress against true north: **~14.5%** (Phase A 97% × 5% phase-weight + Phase B 32% × 25% + Phase C 5% × 35% + Phase D 0% × 35%), R835 re-tally. Figures are soft self-estimates with a per-axis breakdown (do not over-read precision; ±5%); the Phase B figure was re-tallied bottom-up at R835 (axes × weights × evidence-grounded completion).
 
 R655-R666 todomvc + R667 settings-panel = Phase A finalisation. R700+ = Phase B entry (multi-window first). R1000+ = Phase C entry (ImmediateModeNode + game loop). R2500+ = Phase D entry (editor self-hosted dogfood).
+
+**Phase B value order (R835 directive — do the highest-value-for-the-northern-star first).** The true north is the Unreal-class editor self-hosted in pinion; Phase B is the substrate that editor is built on, so "high value" = what the self-hosted editor most needs and what is high-weight × low-completion. Work this order (audit-first within each):
+
+1. **Advanced DCC/IDE widgets** — property-grid / inspector panel (typed editable rows), advanced data-grid (cell editors / grouping / frozen panes), node-graph editor substrate (visual scripting / material graph). ~10% done; the editor's detail + outliner + blueprint panels. Highest leverage.
+2. **Model/View at scale** — the large-data backbone (asset browser / scene outliner: 10k+ rows, unified sort/filter/group). ~35% done (virtualization + proxies exist; no unified data layer).
+3. **Pro-tool performance** — 60fps with large scenes; profiling. ~25%.
+4. **OS-native maturity** — finish file-dialog / print (PDF render) / drag-drop / tray. ~30% (MVPs exist).
+5. **API stabilisation (§7)** — LATER: freeze a *mature* surface, not a churning one. ~12%.
+6. **rich-text editing/selection** — code-editor-grade text. ~30%.
+
+NOT catalog regression (R760 PIVOT): a property grid / node editor / advanced data-grid are NEW high-value editor widgets, not re-doing finished basic widgets.
 
 ## Hard invariants (never violate)
 
