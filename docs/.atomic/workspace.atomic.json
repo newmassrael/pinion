@@ -34729,6 +34729,64 @@
         "per-group aggregate footers (sum/min/max) deferred: no consumer yet"
       ]
     },
+    "R846": {
+      "decision_summary": "R846 sortable grouped data grid (the asset table): clickable column headers sort 10k rows through a GridSortState (R778), whose live order() feeds GroupOrderState::with_order_source -- the 2nd consumer of the R844 order-source (a grid sort proxy where R844 used a 1-D list proxy), proving the order-source is not ViewOrderState-specific. Rows sort WITHIN their asset-type groups; three click semantics coexist over one grid (column header cycles sort, group header collapses, data row selects), all data-indexed. aria-sort on the active column; cell_cmp is numeric-with-lexicographic-fallback so Name sorts lexically and Size numerically. Pure composition (GridSortState + with_order_source + group_rows + grid), no pinion-core change.",
+      "changes_bullets": [
+        "hello-grouped-grid-sort: clickable column headers sort 10k rows via GridSortState (R778)",
+        "sorted order feeds GroupOrderState::with_order_source = 2nd consumer (grid proxy vs R844 list)",
+        "rows sort WITHIN asset-type groups; 3 click semantics coexist (sort header / group / row)",
+        "aria-sort on the active column; cell_cmp numeric+lexicographic (Name lexical, Size numeric)",
+        "no pinion-core change: composition over GridSortState + with_order_source + group_rows + grid"
+      ],
+      "verification_bullets": [
+        "hello-grouped-grid-sort 4 view+a11y tests green (headers / desc within-group / aria-sort / select)",
+        "tools/demos/r846_grouped_grid_sort.py 34 assertions PASS (hidden window, real render)",
+        "cargo test --workspace -j2 green; clippy workspace all-targets +vello clean (-D pedantic)",
+        "witness: Name-desc -> group 3 leads + source 9999 first (grid sort feeds the grouping)",
+        "witness: selection 9999 survives collapse; unsort restores source-order grouping"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "frozen/pinned first column (CLAUDE.md item-1 'frozen panes') = future round (R784 h-axis peer)",
+        "per-cell keyboard nav / cell roving deferred (windowed-grid roving is a family-wide axis)",
+        "grouped-grid a11y now 2-copy (R845+R846); NOT lifted yet: shape evolving (R846 added aria-sort)",
+        "full grouped-grid builder ~8 consumer-args (R735.1); next grouped-a11y consumer MUST lift it",
+        "per-group aggregate footers (sum/min/max) deferred: no consumer yet"
+      ],
+      "publishable_decision_summary": "R846 sortable grouped data grid (the asset table): clickable column headers sort 10k rows through a GridSortState (R778), whose live order() feeds GroupOrderState::with_order_source -- the 2nd consumer of the R844 order-source (a grid sort proxy where R844 used a 1-D list proxy), proving the order-source is not ViewOrderState-specific. Rows sort WITHIN their asset-type groups; three click semantics coexist over one grid (column header cycles sort, group header collapses, data row selects), all data-indexed. aria-sort on the active column; cell_cmp is numeric-with-lexicographic-fallback so Name sorts lexically and Size numerically. Pure composition (GridSortState + with_order_source + group_rows + grid), no pinion-core change.",
+      "publishable_changes_bullets": [
+        "hello-grouped-grid-sort: clickable column headers sort 10k rows via GridSortState (R778)",
+        "sorted order feeds GroupOrderState::with_order_source = 2nd consumer (grid proxy vs R844 list)",
+        "rows sort WITHIN asset-type groups; 3 click semantics coexist (sort header / group / row)",
+        "aria-sort on the active column; cell_cmp numeric+lexicographic (Name lexical, Size numeric)",
+        "no pinion-core change: composition over GridSortState + with_order_source + group_rows + grid"
+      ],
+      "publishable_verification_bullets": [
+        "hello-grouped-grid-sort 4 view+a11y tests green (headers / desc within-group / aria-sort / select)",
+        "tools/demos/r846_grouped_grid_sort.py 34 assertions PASS (hidden window, real render)",
+        "cargo test --workspace -j2 green; clippy workspace all-targets +vello clean (-D pedantic)",
+        "witness: Name-desc -> group 3 leads + source 9999 first (grid sort feeds the grouping)",
+        "witness: selection 9999 survives collapse; unsort restores source-order grouping"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "frozen/pinned first column (CLAUDE.md item-1 'frozen panes') = future round (R784 h-axis peer)",
+        "per-cell keyboard nav / cell roving deferred (windowed-grid roving is a family-wide axis)",
+        "grouped-grid a11y now 2-copy (R845+R846); NOT lifted yet: shape evolving (R846 added aria-sort)",
+        "full grouped-grid builder ~8 consumer-args (R735.1); next grouped-a11y consumer MUST lift it",
+        "per-group aggregate footers (sum/min/max) deferred: no consumer yet"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
