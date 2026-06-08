@@ -35221,6 +35221,56 @@
         "next Phase B item-2 candidates: tree+filter+sort outliner / frozen left column (both touch shared substrate)"
       ]
     },
+    "R855": {
+      "decision_summary": "R855 scene-outliner sibling sort composed atop the R821 filter (sort->filter->flatten proxy stack, pure example-level); AI-first TreeSortExternal",
+      "changes_bullets": [
+        "add a scene-outliner sibling SORT composed atop the R821 filter: the proxy stack sort -> filter -> flatten",
+        "sorted_tree reorders each level's children Vec (Source = identity); the existing flatten walks Vec order, so the render + filter come out sorted with ZERO substrate change",
+        "a TreeSort Signal on TreeState read inside the filter recompute closure, so a sort change re-derives the filtered view",
+        "TreeSortExternal (AI-first /sgtree_sort/external): query sort, invoke cycle_sort / set_sort, intervene sort",
+        "the header shows the active sort; TreeSort derives serde (the Signal<T> scene-as-data snapshot trap)"
+      ],
+      "verification_bullets": [
+        "hello-tree-filter 16 unit (4 new R855: sorted_tree recursive order, sort re-derives the filtered view, sort external cycle/set/intervene/guards, sort+filter compose)",
+        "tools/demos/r855_tree_outliner_sort.py PASS (~32 assert: cycle, set/intervene + guards, sort+filter compose [Group11 + Node11_19 desc], sort survives a filter clear); r821 regression PASS",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: pure example composition (TreeFilterState/flat_visible/view_virtual_tree reused); zero shared-substrate change; TreeSortExternal example-local (per-widget External pattern)"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "TreeSort + TreeSortExternal are example-local; a 2nd tree-sort consumer lifts a tree sibling-sort proxy into the substrate",
+        "sort key is label-only; a typed / multi-key tree sort + per-column direction are additive",
+        "node-editor undo/persist arc complete (R851-R853); per-group aggregates (R854); use_app_storage lift at the 3rd storage consumer",
+        "next Phase B item-2: frozen left column (touches shared view_virtual_table) or a unified large-data layer (both larger rounds, fresh budget)"
+      ],
+      "publishable_decision_summary": "R855 scene-outliner sibling sort composed atop the R821 filter (sort->filter->flatten proxy stack, pure example-level); AI-first TreeSortExternal",
+      "publishable_changes_bullets": [
+        "add a scene-outliner sibling SORT composed atop the R821 filter: the proxy stack sort -> filter -> flatten",
+        "sorted_tree reorders each level's children Vec (Source = identity); the existing flatten walks Vec order, so the render + filter come out sorted with ZERO substrate change",
+        "a TreeSort Signal on TreeState read inside the filter recompute closure, so a sort change re-derives the filtered view",
+        "TreeSortExternal (AI-first /sgtree_sort/external): query sort, invoke cycle_sort / set_sort, intervene sort",
+        "the header shows the active sort; TreeSort derives serde (the Signal<T> scene-as-data snapshot trap)"
+      ],
+      "publishable_verification_bullets": [
+        "hello-tree-filter 16 unit (4 new R855: sorted_tree recursive order, sort re-derives the filtered view, sort external cycle/set/intervene/guards, sort+filter compose)",
+        "tools/demos/r855_tree_outliner_sort.py PASS (~32 assert: cycle, set/intervene + guards, sort+filter compose [Group11 + Node11_19 desc], sort survives a filter clear); r821 regression PASS",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: pure example composition (TreeFilterState/flat_visible/view_virtual_tree reused); zero shared-substrate change; TreeSortExternal example-local (per-widget External pattern)"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TreeSort + TreeSortExternal are example-local; a 2nd tree-sort consumer lifts a tree sibling-sort proxy into the substrate",
+        "sort key is label-only; a typed / multi-key tree sort + per-column direction are additive",
+        "node-editor undo/persist arc complete (R851-R853); per-group aggregates (R854); use_app_storage lift at the 3rd storage consumer",
+        "next Phase B item-2: frozen left column (touches shared view_virtual_table) or a unified large-data layer (both larger rounds, fresh budget)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

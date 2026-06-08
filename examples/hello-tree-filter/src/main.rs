@@ -47,7 +47,10 @@
 //! `hello-virtual-select` / `hello-virtual-nav` use).
 
 use pinion_a11y::{tree_access_nodes, AccessNode, WidgetA11y};
-use pinion_core::external::{External, IntrospectValue};
+use pinion_core::external::{
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -191,8 +194,78 @@ fn initial_nodes() -> Vec<TreeRow> {
 /// The tree never mutates in this demo — the filter is the only structural
 /// control — so the proxy can memoize its filtered flattening on the query
 /// string alone.
+/// R855 — the sibling-sort coordinator anchor (`/sgtree_sort/external`). A tree
+/// sibling-sort is not the list/grid `Ord`-proxy shape, so it is an example-local
+/// holder (a 2nd tree-sort consumer lifts it).
+const SORT_TAG: &str = "sgtree_sort";
+
+/// R855 — the scene-outliner sibling sort, composed *atop* the R821 filter:
+/// source order, or ascending / descending by label. Cycles
+/// `Source → Asc → Desc → Source`.
+// `Signal<TreeSort>` requires its payload to be (de)serializable for the §2 #7
+// scene-as-data snapshot path (the R838 `Signal<T>` serde trap).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum TreeSort {
+    Source,
+    Asc,
+    Desc,
+}
+
+impl TreeSort {
+    fn cycle(self) -> Self {
+        match self {
+            Self::Source => Self::Asc,
+            Self::Asc => Self::Desc,
+            Self::Desc => Self::Source,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Asc => "asc",
+            Self::Desc => "desc",
+        }
+    }
+
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "source" => Some(Self::Source),
+            "asc" => Some(Self::Asc),
+            "desc" => Some(Self::Desc),
+            _ => None,
+        }
+    }
+}
+
+/// R855 — `nodes` with every level's siblings reordered by `sort` (a clone;
+/// `Source` is the identity). The flatten walks children in Vec order, so
+/// reordering the children Vecs here sorts the rendered + filtered output with
+/// **no substrate change** — sort → filter → flatten compose as a proxy stack.
+fn sorted_tree(nodes: &[TreeRow], sort: TreeSort) -> Vec<TreeRow> {
+    let mut out = nodes.to_vec();
+    if sort != TreeSort::Source {
+        sort_siblings(&mut out, sort);
+    }
+    out
+}
+
+fn sort_siblings(nodes: &mut [TreeRow], sort: TreeSort) {
+    match sort {
+        TreeSort::Asc => nodes.sort_by(|a, b| a.label.cmp(&b.label)),
+        TreeSort::Desc => nodes.sort_by(|a, b| b.label.cmp(&a.label)),
+        TreeSort::Source => {}
+    }
+    for node in nodes.iter_mut() {
+        sort_siblings(&mut node.children, sort);
+    }
+}
+
 struct TreeState {
     nodes: Signal<Vec<TreeRow>>,
+    /// R855 — the active sibling sort (shared with the [`TreeSortExternal`] and
+    /// read inside the filter recompute closure, so a sort change re-filters).
+    sort: Signal<TreeSort>,
     /// The keyboard cursor's row id (WAI-ARIA `aria-activedescendant` / the
     /// painted focus row). `None` until the first key / click lands.
     focused_id: Signal<Option<String>>,
@@ -203,6 +276,7 @@ fn use_tree_state() -> Rc<TreeState> {
         Owner::current().expect("use_tree_state must run inside a CoreShell view / reducer wrap");
     owner.cache("hello_tree_filter::state", || TreeState {
         nodes: Signal::new(initial_nodes()),
+        sort: Signal::new(TreeSort::Source),
         focused_id: Signal::new(None),
     })
 }
@@ -216,7 +290,10 @@ fn use_filter() -> Rc<TreeFilterState> {
     let tree = use_tree_state();
     use_tree_filter(FILTER_KEY, move || {
         Box::new(move |query: &str| {
-            let nodes = tree.nodes.get();
+            // R855 — sort the siblings first (reads the sort Signal, so the
+            // filter's Computed re-runs on a sort change), then filter + flatten
+            // the sorted tree. The proxy stack: sort → filter → flatten.
+            let nodes = sorted_tree(&tree.nodes.get(), tree.sort.get());
             if query.is_empty() {
                 flat_visible(&nodes)
             } else {
@@ -225,6 +302,91 @@ fn use_filter() -> Rc<TreeFilterState> {
             }
         })
     })
+}
+
+/// R855 §5.27 §5.12 — the AI-first sibling-sort coordinator: a tiny config
+/// holder over the shared [`TreeState::sort`] `Signal`, surfaced to RPC. `query
+/// sort` reads the current mode; `invoke cycle_sort` advances it; `invoke
+/// set_sort` jumps to a named mode (`intervene sort` mirrors `set_sort`). It
+/// emits no §5.20 intent — the `Signal::set` already repaints the subscribed
+/// view (the `ViewSortFilterExternal` display-config pattern).
+#[derive(Clone)]
+struct TreeSortExternal {
+    state: Rc<TreeState>,
+}
+
+impl TreeSortExternal {
+    fn new(state: Rc<TreeState>) -> Self {
+        Self { state }
+    }
+
+    fn set(&mut self, mode: TreeSort) -> IntrospectValue {
+        self.state.sort.set(mode);
+        IntrospectValue::Text(mode.label().to_owned())
+    }
+}
+
+impl core::fmt::Debug for TreeSortExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TreeSortExternal").field("sort", &self.state.sort.get().label()).finish()
+    }
+}
+
+impl External for TreeSortExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for TreeSortExternal {
+    fn schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[("sort", "string"), ("cycle_sort", "string"), ("set_sort", "string")])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "sort" => Some(IntrospectValue::Text(self.state.sort.get().label().to_owned())),
+            _ => None,
+        }
+    }
+
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        if path != "sort" {
+            return Err(InterveneError::UnknownPath);
+        }
+        let IntrospectValue::Text(s) = value else {
+            return Err(InterveneError::TypeMismatch);
+        };
+        let mode = TreeSort::parse(&s).ok_or(InterveneError::TypeMismatch)?;
+        self.set(mode);
+        Ok(())
+    }
+
+    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "cycle_sort" => Ok(self.set(self.state.sort.get().cycle())),
+            "set_sort" => match args {
+                IntrospectValue::Text(s) => {
+                    let mode = TreeSort::parse(&s).ok_or(InvokeError::Rejected)?;
+                    Ok(self.set(mode))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
 }
 
 /// Scroll the keyboard cursor's row into the window
@@ -321,10 +483,13 @@ fn search_box(query: &str, theme: &Theme) -> Scene {
 /// Header status line: the dataset size + the current filtered-row count.
 fn header(query: &str, visible: usize, theme: &Theme) -> Scene {
     let muted = theme.resolve(ColorRole::OnSurfaceMuted);
+    // R855 — reading the sort here subscribes the header to it, so it repaints
+    // (and the summary updates) when the sort cycles.
+    let sort = use_tree_state().sort.get().label();
     let summary = if query.is_empty() {
-        format!("{TOTAL_NODES} nodes \u{00B7} {visible} rows visible \u{00B7} windowed render")
+        format!("{TOTAL_NODES} nodes \u{00B7} {visible} rows visible \u{00B7} sort: {sort}")
     } else {
-        format!("{TOTAL_NODES} nodes \u{00B7} filter \u{2192} {visible} match rows")
+        format!("{TOTAL_NODES} nodes \u{00B7} filter \u{2192} {visible} match rows \u{00B7} sort: {sort}")
     };
     Scene::Text(TextNode::styled(
         summary,
@@ -427,6 +592,8 @@ impl WidgetCore for SceneGraphFilter {
         vec![
             ExtraExternal::new(TREE_TAG, Box::new(TreeRowClickExternal::new())),
             ExtraExternal::new(FILTER_TAG, Box::new(TreeFilterExternal::new(Rc::clone(&filter)))),
+            // R855 — the AI-first sibling-sort surface (`/sgtree_sort/external`).
+            ExtraExternal::new(SORT_TAG, Box::new(TreeSortExternal::new(use_tree_state()))),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
         ]
     }
@@ -536,11 +703,16 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_key_impl, initial_nodes, use_filter, use_tree_state, view, SceneGraphFilter, TreeRow,
-        CHILDREN_PER, CLICK_INTENT_TAG, EXPANDED_AT_BOOT, GROUPS, ROW_PITCH, SCROLL_KEY,
-        TOTAL_NODES, TREE_TAG,
+        apply_key_impl, initial_nodes, sorted_tree, use_filter, use_tree_state, view,
+        SceneGraphFilter, TreeRow, TreeSort, TreeSortExternal, CHILDREN_PER, CLICK_INTENT_TAG,
+        EXPANDED_AT_BOOT, GROUPS, ROW_PITCH, SCROLL_KEY, TOTAL_NODES, TREE_TAG,
     };
+    use std::rc::Rc;
+
     use pinion_a11y::{AriaRole, WidgetA11y};
+    use pinion_core::external::{
+        ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
+    };
     use pinion_core::widgets::button::ButtonState;
     use pinion_core::widgets::scroll::use_scroll_state;
     use pinion_core::{Frame, Owner, Scene};
@@ -780,6 +952,98 @@ mod tests {
                 filter.visible_count(),
                 before + 1,
                 "a live tree edit updates the filtered view (Computed tracks the tree, not just the query)",
+            );
+        });
+    }
+
+    // ── R855 sibling sort (composed atop the filter) ───────────────
+
+    #[test]
+    fn r855_sorted_tree_orders_siblings_recursively() {
+        let nodes = initial_nodes();
+        assert_eq!(sorted_tree(&nodes, TreeSort::Source), nodes, "Source is the identity");
+        let asc = sorted_tree(&nodes, TreeSort::Asc);
+        let desc = sorted_tree(&nodes, TreeSort::Desc);
+        let asc_l: Vec<&str> = asc.iter().map(|n| n.label.as_str()).collect();
+        let desc_l: Vec<&str> = desc.iter().map(|n| n.label.as_str()).collect();
+        assert!(asc_l.windows(2).all(|w| w[0] <= w[1]), "top-level siblings ascending: {asc_l:?}");
+        assert!(desc_l.windows(2).all(|w| w[0] >= w[1]), "top-level siblings descending: {desc_l:?}");
+        assert_ne!(asc_l, desc_l, "asc and desc differ (the sort actually reorders)");
+        // Recursive: a group's children are ordered too.
+        let ch: Vec<&str> = asc[0].children.iter().map(|n| n.label.as_str()).collect();
+        assert!(ch.windows(2).all(|w| w[0] <= w[1]), "children sorted ascending (recursive): {ch:?}");
+    }
+
+    #[test]
+    fn r855_sort_change_re_derives_the_filtered_view() {
+        Owner::new().run(|| {
+            let filter = use_filter();
+            let state = use_tree_state();
+            let source_first = filter.visible_rows().first().map(|r| r.label.clone());
+            state.sort.set(TreeSort::Desc);
+            let desc_first = filter.visible_rows().first().map(|r| r.label.clone());
+            assert_ne!(source_first, desc_first, "a sort change re-derives the visible order");
+            // The leading visible group is the largest label under descending sort.
+            let groups: Vec<String> =
+                filter.visible_rows().iter().filter(|r| r.depth == 0).map(|r| r.label.clone()).collect();
+            assert!(groups.windows(2).all(|w| w[0] >= w[1]), "visible groups sorted descending: {groups:?}");
+        });
+    }
+
+    #[test]
+    fn r855_sort_external_query_cycle_set_intervene_and_guards() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            let mut ext = TreeSortExternal::new(Rc::clone(&state));
+            let text = |s: &str| Some(IntrospectValue::Text(s.to_owned()));
+            assert_eq!(ext.query("sort"), text("source"), "boots in source order");
+            // cycle: source -> asc -> desc -> source
+            assert_eq!(ext.invoke("cycle_sort", IntrospectValue::Null), Ok(IntrospectValue::Text("asc".to_owned())));
+            assert_eq!(ext.query("sort"), text("asc"));
+            assert_eq!(ext.invoke("cycle_sort", IntrospectValue::Null), Ok(IntrospectValue::Text("desc".to_owned())));
+            assert_eq!(ext.invoke("cycle_sort", IntrospectValue::Null), Ok(IntrospectValue::Text("source".to_owned())));
+            // set_sort jumps to a named mode; an unknown name is Rejected.
+            assert_eq!(
+                ext.invoke("set_sort", IntrospectValue::Text("desc".to_owned())),
+                Ok(IntrospectValue::Text("desc".to_owned())),
+            );
+            assert_eq!(state.sort.get(), TreeSort::Desc, "set_sort wrote the shared signal");
+            assert_eq!(ext.invoke("set_sort", IntrospectValue::Text("bogus".to_owned())), Err(InvokeError::Rejected));
+            // intervene mirrors set_sort; a bad value is a TypeMismatch.
+            ext.intervene("sort", IntrospectValue::Text("asc".to_owned())).expect("intervene asc");
+            assert_eq!(state.sort.get(), TreeSort::Asc);
+            assert_eq!(ext.intervene("sort", IntrospectValue::Text("nope".to_owned())), Err(InterveneError::TypeMismatch));
+            // guards
+            assert_eq!(ext.query("bogus"), None);
+            assert_eq!(ext.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+        });
+    }
+
+    #[test]
+    fn r855_sort_and_filter_compose() {
+        Owner::new().run(|| {
+            let filter = use_filter();
+            let state = use_tree_state();
+            filter.set_query("Node"); // reveal groups + their matching leaves
+            state.sort.set(TreeSort::Desc);
+            assert!(filter.visible_count() > 0, "the filter matched");
+            let rows = filter.visible_rows();
+            // The filtered view is still sorted: depth-0 groups descend, and a
+            // group's revealed leaves descend within it.
+            let groups: Vec<String> = rows.iter().filter(|r| r.depth == 0).map(|r| r.label.clone()).collect();
+            assert!(groups.windows(2).all(|w| w[0] >= w[1]), "filtered groups descend: {groups:?}");
+            // The revealed leaves under the first group (consecutive depth >= 1
+            // rows after the leading header) descend too.
+            let first_leaves: Vec<String> = rows
+                .iter()
+                .skip_while(|r| r.depth != 0)
+                .skip(1)
+                .take_while(|r| r.depth >= 1)
+                .map(|r| r.label.clone())
+                .collect();
+            assert!(
+                first_leaves.windows(2).all(|w| w[0] >= w[1]),
+                "filtered leaves descend within a group: {first_leaves:?}",
             );
         });
     }
