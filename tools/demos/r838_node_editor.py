@@ -9,17 +9,20 @@ lock (node drag-to-move), the R742 drag substrate (port drag-to-connect), the
 R721 vector-path nodes (bezier edges), `absolute_position` (free placement),
 and `Owner::cache` Signals (the shared model).
 
-Coordinator slots (`node_graph`, the primary external):
+Coordinator slots (`node_graph`, the primary external) — addressed by stable id:
   /external/node_count             -> 4
   /external/edge_count             -> 3
-  /external/selected               -> null | int
-  /external/node.<i>.title         -> node title
-  /external/node.<i>.{x,y}         -> canvas position (intervene moves it)
-  /external/node.<i>.{inputs,outputs} -> port arity (read-only)
-  /external/edge.<i>               -> "from_node:from_port->to_node:to_port"
-  /external/add_edge               -> invoke "fn,fp,tn,tp" (string)
-  /external/remove_edge            -> invoke <edge index> (int)
-  /external/delete_node            -> invoke <node index> (int)
+  /external/node_ids               -> "0,1,2,3" (stable ids, sparse after delete)
+  /external/edge_ids               -> "0,1,2"
+  /external/selected               -> null | node id
+  /external/selected_edge          -> null | edge id
+  /external/node.<id>.title        -> node title
+  /external/node.<id>.{x,y}        -> canvas position (intervene moves it)
+  /external/node.<id>.{inputs,outputs} -> port arity (read-only)
+  /external/edge.<id>              -> "from_node:from_port->to_node:to_port"
+  /external/add_edge               -> invoke "fn,fp,tn,tp" (node ids; string)
+  /external/remove_edge            -> invoke <edge id> (int)
+  /external/delete_node            -> invoke <node id> (int)
   /external/delete_selected        -> invoke (null)
   /external/nudge                  -> invoke "dx,dy" (string)
 
@@ -35,15 +38,15 @@ reindex), so an edge / selection reference survives an unrelated delete.
 Verified (>= 30 assertions):
   (A) boot taxonomy — 4 nodes / 3 edges, titles, port arity, seed wiring
   (A2) click-select a wire (R839 bezier hit-test) + delete_selected + restore
-  (B) RPC node move — intervene node.<i>.{x,y}; off-canvas clamps
+  (B) RPC node move — intervene node.<id>.{x,y}; off-canvas clamps
   (C) selection — click selects; empty-canvas click + intervene clear it
-  (D) RPC edge edit — add_edge validates (self-loop / range / input dedup),
-      remove_edge by index
+  (D) RPC edge edit — add_edge validates (self-loop / range / input dedup);
+      the new edge mints a fresh id; remove_edge by stable id
   (E) live node drag — scene/drag a node body moves it (R51.34 capture)
   (F) live edge connect — scene/drag an output port onto an input port adds
       an edge (R742 drag substrate)
   (G) keyboard — arrows nudge the selected node, Delete removes it
-  (H) delete_node — incident edges drop, survivors reindex
+  (H) delete_node by stable id — incident edges drop, survivors keep their ids
   (I) paint — nodes, ports, and bezier edges all render
 """
 

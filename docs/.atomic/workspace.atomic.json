@@ -34481,6 +34481,54 @@
         "\"click coords to External\" framework primitive (capture-seed workaround stands)"
       ]
     },
+    "R842": {
+      "decision_summary": "R842 2nd cost-no-object audit remediation: derive edge-id mint seed from default_edges (kill FIRST_DYNAMIC_EDGE_ID hand-sync) + honest module/demo docs (stale type+feature claims); verified-reject a repeat 'dead serde' subagent claim",
+      "changes_bullets": [
+        "first_dynamic_edge_id() derived from default_edges max+1; FIRST_DYNAMIC_EDGE_ID const removed",
+        "module doc corrected: Signal<Selection> not Option<usize>; node.<id> + node_ids/edge_ids; group not list",
+        "Known-gaps doc made honest: O(n)/slotmap scale, typed ports, persistence/undo, add_node, crate extraction",
+        "demo docstring + slot list id-addressed (was \"by index\"); \"(H) survivors reindex\" -> keep ids",
+        "guard test: a freshly minted edge id never collides with a default edge id"
+      ],
+      "verification_bullets": [
+        "23 unit tests (r842 seed-derive collision guard added); workspace test + clippy green",
+        "tools/demos/r838_node_editor.py PASS (57 assertions, behaviour-identical)",
+        "2 adversarial subagents + my grep; rejected a repeat 'dead serde derives' claim (Signal<T> requires it)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.12",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "deferred + now documented: typed ports / O(1) slotmap at scale / persistence+undo / add_node verb",
+        "pinion-a11y graphics-document role + multi-target flowto relation (graph connectivity for AT)",
+        "'click coords to External' framework primitive; crate extraction of model+geometry at 2nd consumer"
+      ],
+      "publishable_decision_summary": "R842 2nd cost-no-object audit remediation: derive edge-id mint seed from default_edges (kill FIRST_DYNAMIC_EDGE_ID hand-sync) + honest module/demo docs (stale type+feature claims); verified-reject a repeat 'dead serde' subagent claim",
+      "publishable_changes_bullets": [
+        "first_dynamic_edge_id() derived from default_edges max+1; FIRST_DYNAMIC_EDGE_ID const removed",
+        "module doc corrected: Signal<Selection> not Option<usize>; node.<id> + node_ids/edge_ids; group not list",
+        "Known-gaps doc made honest: O(n)/slotmap scale, typed ports, persistence/undo, add_node, crate extraction",
+        "demo docstring + slot list id-addressed (was \"by index\"); \"(H) survivors reindex\" -> keep ids",
+        "guard test: a freshly minted edge id never collides with a default edge id"
+      ],
+      "publishable_verification_bullets": [
+        "23 unit tests (r842 seed-derive collision guard added); workspace test + clippy green",
+        "tools/demos/r838_node_editor.py PASS (57 assertions, behaviour-identical)",
+        "2 adversarial subagents + my grep; rejected a repeat 'dead serde derives' claim (Signal<T> requires it)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.12",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "deferred + now documented: typed ports / O(1) slotmap at scale / persistence+undo / add_node verb",
+        "pinion-a11y graphics-document role + multi-target flowto relation (graph connectivity for AT)",
+        "'click coords to External' framework primitive; crate extraction of model+geometry at 2nd consumer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

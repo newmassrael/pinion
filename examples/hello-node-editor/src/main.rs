@@ -37,34 +37,50 @@
 //!
 //! [`NodeGraphExternal`] (`node_graph`, the primary + the single keyboard Tab
 //! stop) owns the whole graph: the `Signal<Vec<GraphNode>>` node model, the
-//! `Signal<Vec<Edge>>` connection list, the `Signal<Option<usize>>` selection,
-//! and a live-drag preview. It exposes the graph for AI-first introspection:
-//! `query node_count` / `edge_count` / `node.<i>.{title,x,y,inputs,outputs}` /
-//! `edge.<i>` / `selected`; `intervene node.<i>.x` / `node.<i>.y` / `selected`;
-//! `invoke add_edge` / `remove_edge` / `delete_node` / `delete_selected` /
-//! `nudge` / the pointer `send` wire.
+//! `Signal<Vec<Edge>>` connection list, a single [`Selection`] sum type (node |
+//! edge | none — `Signal<Selection>`), and a live-drag preview. Nodes and edges
+//! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
+//! deleting one entity never renumbers the survivors. It exposes the graph for
+//! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
+//! `edge_ids` / `node.<id>.{title,x,y,inputs,outputs}` / `edge.<id>` /
+//! `selected` / `selected_edge`; `intervene node.<id>.x` / `node.<id>.y` /
+//! `selected` / `selected_edge`; `invoke add_edge` / `remove_edge` /
+//! `delete_node` / `delete_selected` / `nudge` / the pointer `send` wire.
 //!
 //! ## Keyboard (single Tab stop, the graph)
 //!
-//! Arrow keys nudge the selected node; `Delete` / `Backspace` removes it (and
-//! its incident edges); `Escape` clears the selection.
+//! Arrow keys nudge the selected node; `Delete` / `Backspace` removes the
+//! selection (node + its incident edges, or an edge); `Escape` clears it.
 //!
-//! ## a11y (R838 §5.40)
+//! ## a11y (R838 §5.40, R840 fix)
 //!
-//! The graph lowers to a WAI-ARIA `list` of `listitem`s — one per node, named
-//! `"<title> (<n> in, <m> out)"`, the selected node flagged. A true
-//! diagram / `graphics-document` role tree (per-port, per-edge nodes) is a
-//! follow-up once a 2nd consumer fixes the shape ([[abstraction-needs-second-consumer]]).
+//! The graph lowers to a WAI-ARIA `group` of `generic` children — one per node,
+//! named `"<title> (<n> in, <m> out)"`, the selected node flagged. It is NOT a
+//! `list` (a graph is not an ordered set — that would assert a false
+//! `aria-posinset`). A true diagram / `graphics-document` role with a
+//! multi-target `flowto` relation (so edges/connectivity are perceivable to AT)
+//! needs a `pinion-a11y` role that does not exist yet — the topology stays
+//! reachable on the RPC axis ([[ai-first-rpc-introspection-obligation]]).
 //!
-//! ## Known gaps (honest carry)
+//! ## Known gaps (honest carry — what this seed deliberately does NOT do yet)
 //!
-//! - Edge geometry lift: the bezier-between-ports helper is example-local; the
-//!   2nd consumer (a self-hosted material graph) lifts it to
-//!   `pinion_widget_paint` (the chip / stepper inline-first precedent).
-//! - Edge selection / click-to-delete: edges are created by port drag + RPC
-//!   and removed by index — bezier hit-test is a follow-up.
-//! - Node rename (inline editor), canvas pan / zoom, multi-select marquee,
-//!   stable node ids (delete reindexes) — all additive follow-ups.
+//! - **Scale**: the model is a `Vec` with O(n) id lookups + a clone per
+//!   `Signal::get()`. Fine for this demo; a real editor graph lifts to a
+//!   `SlotMap`/`HashMap`-by-id store (stable ids make that swap interface-
+//!   transparent — R841 was the prerequisite).
+//! - **Typed ports**: ports are input/output *counts*, not typed sockets, so
+//!   `add_edge` validates arity but not type (a Float output can wire to any
+//!   input). The type lattice differs per graph kind (material vs blueprint),
+//!   so it is deferred until that consumer settles it ([[abstraction-needs-second-consumer]]).
+//! - **Persistence / undo**: the serde derives are load-bearing for `Signal`
+//!   storage, but no save/load or undo command-history is wired yet.
+//! - **`add_node` over RPC**: the graph can be mutated / connected / deleted but
+//!   not grown (no node-creation verb); edge-id minting is in place for it.
+//! - **Crate extraction**: the model + pure bezier geometry are example-local;
+//!   the 2nd consumer (a self-hosted material graph) lifts them to a crate
+//!   (the chip / stepper inline-first precedent) — extract, not extend.
+//! - Node rename (inline editor), canvas pan / zoom, multi-select marquee — all
+//!   additive follow-ups.
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -271,8 +287,12 @@ impl Selection {
     }
 }
 
-/// New edges mint ids from here upward (after the [`default_edges`] ids 0..=2).
-const FIRST_DYNAMIC_EDGE_ID: u32 = 3;
+/// The id new edges mint from: one past the highest [`default_edges`] id.
+/// Derived (not a hand-maintained const) so it can never drift out of sync
+/// with the defaults — adding a seed edge cannot silently collide a minted id.
+fn first_dynamic_edge_id() -> u32 {
+    default_edges().iter().map(|e| e.id.raw()).max().map_or(0, |m| m + 1)
+}
 
 /// First-paint graph — a tiny material graph (`Texture` × `Color` →
 /// `Multiply` → `Output`). Node ids 0..=3, edge ids 0..=2.
@@ -416,7 +436,7 @@ fn use_preview() -> Rc<Signal<Option<Preview>>> {
 #[must_use]
 fn use_next_edge_id() -> Rc<Cell<u32>> {
     let owner = Owner::current().expect("use_next_edge_id requires an active Owner scope");
-    owner.cache("node_graph.next_edge_id", || Cell::new(FIRST_DYNAMIC_EDGE_ID))
+    owner.cache("node_graph.next_edge_id", || Cell::new(first_dynamic_edge_id()))
 }
 
 // ─── sub-tag grammar (composite paint tags route to the coordinator) ──
@@ -1771,6 +1791,34 @@ mod tests {
             // The selection (Output id 3) is untouched — it did not shift.
             assert_eq!(use_selection().get(), Selection::Node(NodeId(3)));
         });
+    }
+
+    #[test]
+    fn r842_dynamic_edge_id_seed_is_derived_from_defaults() {
+        // The mint seed must be one past the highest default edge id, derived
+        // (not a hand-maintained const) so adding a seed edge can never collide.
+        let max_default = default_edges().iter().map(|e| e.id.raw()).max().unwrap();
+        assert_eq!(first_dynamic_edge_id(), max_default + 1);
+        // A freshly minted edge id is distinct from every default edge id.
+        Owner::new().run(|| {
+            let coord = coordinator();
+            assert!(coord.add_edge(NodeId(0), 0, NodeId(3), 0), "add a new edge");
+            let default_ids: Vec<u32> = default_edges().iter().map(|e| e.id.raw()).collect();
+            let live_ids = live_edge_ids(&coord);
+            let minted: Vec<u32> = live_ids.iter().copied().filter(|id| !default_ids.contains(id)).collect();
+            assert_eq!(minted.len(), 1, "exactly one minted id");
+            assert!(minted[0] > max_default, "minted id is above all default ids");
+        });
+    }
+
+    /// Test helper — the live edge id set via the RPC enumeration.
+    fn live_edge_ids(coord: &NodeGraphExternal) -> Vec<u32> {
+        match coord.query("edge_ids") {
+            Some(IntrospectValue::Text(s)) if !s.is_empty() => {
+                s.split(',').map(|x| x.parse().unwrap()).collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
     #[test]
