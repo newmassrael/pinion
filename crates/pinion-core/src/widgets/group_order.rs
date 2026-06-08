@@ -80,8 +80,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::external::{
-    at_index, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    at_index, query_proxy_external_impl, ExternalIntrospect, InterveneError, IntrospectSchema,
+    IntrospectValue, InvokeError,
 };
 use crate::reactive::{Owner, Signal};
 
@@ -195,24 +195,25 @@ pub fn group_rows(
     rows
 }
 
-/// A single-entry memo of the [`group_rows`] flattening keyed on the collapse
-/// snapshot. The grouped-list peer of
-/// [`OrderMemo`](crate::widgets::order_memo): the source group keys are
-/// immutable, so the only input that varies is the collapse set — recompute
-/// only when it changes. Distinct from `OrderMemo` (which memoizes a
-/// `Vec<usize>` permutation keyed on a `(sort, filter)` config); this memoizes
-/// a `Vec<GroupRow>` keyed on a `BTreeSet`, a genuinely different value + key
-/// (R831 distinct ≠ redundant), so it lives here rather than widening the
-/// shared permutation memo.
+/// A single-entry memo of the [`group_rows`] flattening keyed on the upstream
+/// order + the collapse snapshot. The grouped-list peer of
+/// [`OrderMemo`](crate::widgets::order_memo); distinct from it (which memoizes
+/// a `Vec<usize>` permutation keyed on a `PartialEq` `(sort, filter)` config),
+/// because this memoizes a `Vec<GroupRow>` keyed on a *held* `Rc` (compared by
+/// identity) — a genuinely different value + key class (R831 distinct ≠
+/// redundant), so it lives here rather than widening the shared config memo.
 struct GroupRowsMemo {
-    /// `(upstream-order Rc pointer, collapse snapshot)`. The flattening can
-    /// change only when the upstream `order` is recomputed (the sort/filter
-    /// proxy mints a fresh `Rc`, R843.1) or a group toggles, so keying on the
-    /// order's *identity* + the collapse set is sound even over a **mutable**
-    /// upstream — the reactive-tracking the `OrderMemo` doc flags a config-keyed
-    /// memo can't do for a live source, achieved here by tracking the upstream's
-    /// memoized output `Rc` rather than its config.
-    key: Option<(usize, BTreeSet<usize>)>,
+    /// `(upstream-order Rc, collapse snapshot)`. The flattening changes only
+    /// when the upstream `order` is recomputed (a sort/filter proxy mints a
+    /// fresh `Rc`, R843.1) or a group toggles. The order `Rc` is **held** here
+    /// (not a bare pointer), so while it is the key its allocation cannot be
+    /// freed-and-reused: [`Rc::ptr_eq`] is a true identity test, sound *by
+    /// construction* over a mutable upstream (R847 — the earlier bare-`as_ptr`
+    /// key was sound only by leaning on the upstream's allocate-before-drop
+    /// discipline, an uncited cross-module invariant; holding the `Rc` removes
+    /// that dependence). This is the reactive-source tracking the `OrderMemo`
+    /// doc notes a config-keyed memo cannot do for a live source.
+    key: Option<(Rc<Vec<usize>>, BTreeSet<usize>)>,
     rows: Rc<Vec<GroupRow>>,
 }
 
@@ -318,6 +319,14 @@ impl GroupOrderState {
     ///
     /// The selection (held by source index) is orthogonal to all three stages —
     /// it survives filter, sort and collapse alike.
+    ///
+    /// # Contract
+    ///
+    /// `source` must yield source indices `< count()` (it is a permutation /
+    /// filtered subset of `0..count`, which every shipped proxy's `order()`
+    /// guarantees). [`rows`](Self::rows) indexes the group table by these, so an
+    /// out-of-range index fails fast (a `debug_assert` in debug, the slice index
+    /// in release).
     #[must_use]
     pub fn with_order_source(mut self, source: impl Fn() -> Rc<Vec<usize>> + 'static) -> Self {
         self.order_source = OrderSource::External(Box::new(source));
@@ -359,10 +368,11 @@ impl GroupOrderState {
     /// The **dataset-total** data-row count of group `g`, or `0` for an
     /// out-of-range id. Collapse- *and* order-source-independent: it counts
     /// every source row in group `g`, not the rows surviving an upstream
-    /// filter. The *currently visible* member count (filter-respecting) is the
-    /// [`GroupRow::Header::member_count`] the flattening reports.
+    /// filter. Named `total_` to disambiguate from the *currently visible*
+    /// (filter-respecting) [`GroupRow::Header::member_count`] the flattening
+    /// reports — two genuinely different quantities, one per call site.
     #[must_use]
-    pub fn member_count(&self, group: usize) -> usize {
+    pub fn total_member_count(&self, group: usize) -> usize {
         self.member_counts.get(group).copied().unwrap_or(0)
     }
 
@@ -372,21 +382,35 @@ impl GroupOrderState {
     /// order source) the upstream proxy's `Signal`s, so a view that calls this
     /// repaints on a sort/filter/collapse change. Cheap `Rc` clone on a cache
     /// hit.
+    ///
+    /// # Panics
+    ///
+    /// Debug-only: panics if the order source yields a source index `>= count()`
+    /// (a malformed [`with_order_source`](Self::with_order_source) closure — the
+    /// shipped proxies always yield in-range source indices). In release this is
+    /// the natural slice index, so a malformed closure still fails fast.
     #[must_use]
     pub fn rows(&self) -> Rc<Vec<GroupRow>> {
         let order = self.order_source.order();
         let collapsed = self.collapsed.get();
-        // Key on the upstream order's identity (pointer): it is re-minted iff
-        // the sort/filter recomputed, so a changed pointer means the flattening
-        // must recompute even though `collapsed` is unchanged. `Rc::as_ptr`
-        // never dereferences, so a stale-but-equal pointer cannot occur (the
-        // live `Rc` is held in `order` for the whole borrow).
-        let order_id = Rc::as_ptr(&order) as usize;
+        debug_assert!(
+            order.iter().all(|&s| s < self.groups.len()),
+            "order source yielded a source index out of range (>= count)",
+        );
+        // Key on the *held* upstream-order `Rc` (identity via `Rc::ptr_eq`): the
+        // order is re-minted iff the sort/filter recomputed, so a different `Rc`
+        // means recompute even when `collapsed` is unchanged. Holding the `Rc`
+        // (not a bare pointer) keeps its allocation alive while keyed, so the
+        // identity test is sound by construction over a mutable upstream (R847).
         let mut memo = self.rows.borrow_mut();
-        if memo.key.as_ref().is_none_or(|(id, set)| *id != order_id || *set != collapsed) {
+        let hit = memo
+            .key
+            .as_ref()
+            .is_some_and(|(o, set)| Rc::ptr_eq(o, &order) && *set == collapsed);
+        if !hit {
             let rows = group_rows(&order, |s| self.groups[s], |g| collapsed.contains(&g));
             memo.rows = Rc::new(rows);
-            memo.key = Some((order_id, collapsed));
+            memo.key = Some((order, collapsed));
         }
         Rc::clone(&memo.rows)
     }
@@ -535,10 +559,11 @@ impl GroupOrderExternal {
         IntrospectValue::Int(i64::try_from(self.state.visible_len()).unwrap_or(i64::MAX))
     }
 
-    /// Drive the composite pointer channel: a clicked group header
-    /// (`<group>#<region>` → routed here) toggles that group on the activation
-    /// edge (`PointerUp` / `KeyboardActivate`). The region segment is the group
-    /// id; every other arc event is a harmless no-op.
+    /// Drive the composite pointer channel: a clicked group header, tagged
+    /// `{anchor}#{group}`, has its `{group}` sub-tag routed here by the R51.42
+    /// router as the `send` payload `"{group}:{EventName}[:{mods}]"`. The first
+    /// segment (the group id) toggles that group on the activation edge
+    /// (`PointerUp` / `KeyboardActivate`); every other arc event is a no-op.
     fn handle_send(&self, payload: &str) {
         let Some((group, event_name, _modifiers)) =
             crate::composite_tag::parse_send_payload::<usize>(payload)
@@ -551,31 +576,10 @@ impl GroupOrderExternal {
     }
 }
 
-impl External for GroupOrderExternal {
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
-    }
-
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    // A display-config holder emits no §5.20 intent (see the type doc); the
-    // collapse `Signal` write already repaints every subscribed view, so the
-    // widget is never independently dirty.
-}
+// The shared display-config-proxy `External` skeleton (R847 SSOT): no §5.20
+// intent — the collapse `Signal` write already repaints every subscribed view,
+// so the widget is never independently dirty.
+query_proxy_external_impl!(GroupOrderExternal);
 
 impl ExternalIntrospect for GroupOrderExternal {
     fn schema(&self) -> IntrospectSchema {
@@ -673,9 +677,13 @@ impl ExternalIntrospect for GroupOrderExternal {
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         if let Some(rest) = path.strip_prefix("collapsed.") {
-            // Admin / restore: set a group's collapse flag directly.
-            let Some(group) = rest.parse::<usize>().ok().filter(|&g| g < self.state.group_count())
-            else {
+            // Admin / restore: set a group's collapse flag directly. A numeric
+            // group id is accepted; an out-of-range one is a graceful no-op
+            // (`set_collapsed` guards it) — symmetric with the `query`'s
+            // present-but-empty `Null` and the `toggle_group` invoke no-op
+            // ([[wire-form-read-write-symmetry]]). Only a *non-numeric* suffix
+            // is a malformed (unknown) path.
+            let Some(group) = rest.parse::<usize>().ok() else {
                 return Err(InterveneError::UnknownPath);
             };
             return match value {
@@ -813,8 +821,8 @@ mod tests {
         let s = state();
         assert_eq!(s.count(), 12);
         assert_eq!(s.group_count(), 3);
-        assert_eq!(s.member_count(0), 4);
-        assert_eq!(s.member_count(99), 0, "out-of-range group has no members");
+        assert_eq!(s.total_member_count(0), 4);
+        assert_eq!(s.total_member_count(99), 0, "out-of-range group has no members");
         assert_eq!(s.group_label(1), Some("Bravo"));
         assert_eq!(s.group_label(99), None);
         // 3 headers + 12 data rows.
@@ -937,10 +945,16 @@ mod tests {
             e.intervene("collapsed.2", IntrospectValue::Int(1)),
             Err(InterveneError::TypeMismatch),
         );
+        // R847 wire-symmetry: an out-of-range *numeric* group is a graceful
+        // no-op (mirrors query -> Null and toggle_group invoke no-op), not an
+        // UnknownPath — only a non-numeric suffix is a malformed path.
+        e.intervene("collapsed.99", IntrospectValue::Bool(true))
+            .expect("out-of-range group is a graceful no-op");
+        assert_eq!(e.state().visible_len(), 15, "out-of-range collapse changed nothing");
         assert_eq!(
-            e.intervene("collapsed.99", IntrospectValue::Bool(true)),
+            e.intervene("collapsed.notanumber", IntrospectValue::Bool(true)),
             Err(InterveneError::UnknownPath),
-            "out-of-range group id is an unknown path",
+            "a non-numeric group suffix is a malformed path",
         );
         assert_eq!(e.intervene("visible_len", IntrospectValue::Int(1)), Err(InterveneError::ReadOnly));
         assert_eq!(e.intervene("source_at", IntrospectValue::Null), Err(InterveneError::ReadOnly));
@@ -999,6 +1013,6 @@ mod tests {
         assert_eq!(rows[0], GroupRow::Header { group: 1, member_count: 4, collapsed: false });
         assert_eq!(s.visible_len(), 5, "one header + 4 members; emptied groups vanish");
         // The dataset-total member_count is order-source-independent.
-        assert_eq!(s.member_count(0), 4, "member_count is the dataset total, not the filtered count");
+        assert_eq!(s.total_member_count(0), 4, "member_count is the dataset total, not the filtered count");
     }
 }

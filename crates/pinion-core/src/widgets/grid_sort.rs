@@ -60,8 +60,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    query_proxy_external_impl, ExternalIntrospect, InterveneError, IntrospectSchema,
+    IntrospectValue, InvokeError,
 };
 use crate::reactive::{Owner, Signal};
 use crate::undo::{UndoCommand, UndoStack};
@@ -496,31 +496,10 @@ impl GridSortExternal {
     }
 }
 
-impl External for GridSortExternal {
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
-    }
-
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    // A config holder emits no §5.20 intent (see
-    // `ViewSortFilterExternal`): the sort `Signal` write already repaints
-    // every subscribed view, so the widget is never independently dirty.
-}
+// The shared display-config-proxy `External` skeleton (R847 SSOT): no §5.20
+// intent — the sort `Signal` write already repaints every subscribed view, so
+// the widget is never independently dirty.
+query_proxy_external_impl!(GridSortExternal);
 
 impl ExternalIntrospect for GridSortExternal {
     fn schema(&self) -> IntrospectSchema {

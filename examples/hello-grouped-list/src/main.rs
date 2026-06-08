@@ -36,7 +36,7 @@
 
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{grouped_tree_access_nodes, AccessNode, GroupedTreeSpec, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -309,71 +309,34 @@ impl WidgetCore for GroupedListView {
 
 impl WidgetA11y for GroupedListView {
     /// WAI-ARIA `tree` over the *flattened* grouped view (a grouped collapsible
-    /// list is a one-level tree to AT): one [`AriaRole::Tree`] over the rendered
-    /// window; each visible group header is an [`AriaRole::TreeItem`] at
-    /// `aria-level = 1` carrying `aria-expanded`, and each visible data row is a
-    /// `TreeItem` at `aria-level = 2` carrying `aria-selected = (source ==
-    /// selected)`. `aria-posinset` / `aria-setsize` follow the windowed-list
-    /// convention (visual position over the flattened length), as in
-    /// `hello-virtual-sort`.
-    ///
-    /// Hand-rolled rather than reusing
-    /// [`pinion_a11y::tree_access_nodes`](pinion_a11y::tree_access_nodes) (the
-    /// 5-consumer tree-a11y SSOT): that builder applies one `row_prefix` to
-    /// every row (`{row_prefix}#{id}`), but a grouped list carries **two**
-    /// composite namespaces — headers route to the `GroupOrderExternal`
-    /// (`ggroup#<group>`) and data rows to the `VirtualSelectExternal`
-    /// (`glist#<source>`), each tag load-bearing for AT activation routing — so
-    /// the single-namespace builder cannot emit these tags. A per-row-tag
-    /// generalization of `tree_access_nodes` waits for a second two-coordinator
-    /// tree consumer (abstraction-needs-second-consumer; premature for one).
+    /// list is a one-level tree to AT), via the
+    /// [`grouped_tree_access_nodes`](pinion_a11y::grouped_tree_access_nodes) SSOT
+    /// builder (R847): group headers are `treeitem`s at `aria-level = 1` with
+    /// `aria-expanded`, data rows are `treeitem`s at `aria-level = 2` with
+    /// `aria-selected`. The two composite namespaces — group headers route to the
+    /// `GroupOrderExternal` (`ggroup#`), data rows to the `VirtualSelectExternal`
+    /// (`glist#`) — are the spec's `header_prefix` / `data_prefix`; only the
+    /// labels differ per consumer.
     fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
-        let selected = *selected;
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let groups = use_list_groups();
         let rows = groups.rows();
-        let visible_len = rows.len();
         let window =
-            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, visible_len, ROW_PITCH, OVERSCAN);
-
-        let total = u32::try_from(visible_len).unwrap_or(u32::MAX);
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count + 1);
-
-        let mut tree = AccessNode::new(LIST_TAG, AriaRole::Tree)
-            .with_name("Grouped asset list")
-            .with_size_of_set(total);
-        for view_pos in window.indices() {
-            let tag = match rows[view_pos] {
-                GroupRow::Header { group, .. } => format!("{GROUP_TAG}#{group}"),
-                GroupRow::Data { source } => format!("{LIST_TAG}#{source}"),
-            };
-            tree = tree.with_child(tag);
-        }
-        nodes.push(tree);
-
-        for view_pos in window.indices() {
-            let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
-            let node = match rows[view_pos] {
-                GroupRow::Header { group, member_count, collapsed } => {
-                    AccessNode::new(format!("{GROUP_TAG}#{group}"), AriaRole::TreeItem)
-                        .with_name(format!("{} ({member_count})", GROUPS[group % GROUPS.len()]))
-                        .with_level(1)
-                        .with_position_in_set(posinset)
-                        .with_size_of_set(total)
-                        .with_expanded(!collapsed)
-                }
-                GroupRow::Data { source } => {
-                    AccessNode::new(format!("{LIST_TAG}#{source}"), AriaRole::TreeItem)
-                        .with_name(row_label(source))
-                        .with_level(2)
-                        .with_position_in_set(posinset)
-                        .with_size_of_set(total)
-                        .with_selected(selected == Some(source))
-                }
-            };
-            nodes.push(node);
-        }
-        nodes
+            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, rows.len(), ROW_PITCH, OVERSCAN);
+        let spec = GroupedTreeSpec {
+            tree_tag: LIST_TAG,
+            name: Some("Grouped asset list"),
+            header_prefix: GROUP_TAG,
+            data_prefix: LIST_TAG,
+            selected_source: *selected,
+        };
+        grouped_tree_access_nodes(
+            &spec,
+            &rows,
+            window,
+            |g| GROUPS[g % GROUPS.len()].to_string(),
+            row_label,
+        )
     }
 }
 
@@ -392,6 +355,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_a11y::AriaRole;
     use pinion_core::Owner;
 
     /// Render the view with the shared [`GroupOrderState`] pre-set to a

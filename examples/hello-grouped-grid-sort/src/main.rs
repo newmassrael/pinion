@@ -28,15 +28,16 @@
 //!
 //! ## a11y
 //!
-//! A hand-rolled WAI-ARIA [`AriaRole::Grid`] (as in `hello-grouped-grid`): the
-//! header row's [`AriaRole::ColumnHeader`]s carry `aria-sort` on the active
-//! sort column; group headers are spanning [`AriaRole::Row`]s with
-//! `aria-expanded`; data rows are [`AriaRole::Row`]s (`aria-selected`) with
-//! [`AriaRole::GridCell`] children.
+//! WAI-ARIA `grid` via the
+//! [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes) SSOT
+//! builder (R847): the header row's `columnheader`s carry `aria-sort` on the
+//! active sort column (passed in the [`GridColumn`] slice), group headers are
+//! spanning `row`s with `aria-expanded`, and data rows are `row`s
+//! (`aria-selected`) with `gridcell` children.
 
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, AriaRole, SortDirection, WidgetA11y};
+use pinion_a11y::{grouped_grid_access_nodes, AccessNode, GridColumn, GroupedGridSpec, SortDirection, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -69,7 +70,7 @@ const OVERSCAN: usize = 3;
 const COLS: [&str; 3] = ["Name", "Size", "Modified"];
 const COL_W: [u32; 3] = [150, 90, 80];
 const NCOLS: usize = 3;
-const GRID_W: u32 = 320;
+const GRID_W: u32 = COL_W[0] + COL_W[1] + COL_W[2]; // derived, can't desync from COL_W
 const VIEWPORT_H: u32 = 13 * ROW_PITCH;
 
 /// Paint-root + a11y `grid` + primary [`VirtualSelectExternal`] tag.
@@ -341,82 +342,47 @@ impl WidgetCore for GroupedGridSortView {
 }
 
 impl WidgetA11y for GroupedGridSortView {
-    /// WAI-ARIA `grid` (see `hello-grouped-grid`): the header row's
-    /// [`AriaRole::ColumnHeader`]s carry `aria-sort` on the active sort column;
-    /// group headers are spanning expandable [`AriaRole::Row`]s; data rows are
-    /// [`AriaRole::Row`]s with [`AriaRole::GridCell`] children.
+    /// WAI-ARIA `grid` via [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes):
+    /// the active sort column's `aria-sort` is the one datum that differs from
+    /// the static `hello-grouped-grid`, carried in the [`GridColumn`] slice.
     fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
-        let selected = *selected;
         let scroll_state = use_scroll_state(SCROLL_KEY);
-        let grid = use_grid_data();
-        let sort = grid.sort();
+        let sort = use_grid_data().sort();
         let groups = use_grid_groups();
         let rows = groups.rows();
-        let visible_len = rows.len();
         let window =
-            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, visible_len, ROW_PITCH, OVERSCAN);
-        let total = u32::try_from(visible_len).unwrap_or(u32::MAX);
-
-        let mut nodes: Vec<AccessNode> = Vec::new();
-
-        let mut g = AccessNode::new(GRID_TAG, AriaRole::Grid).with_name("Sortable grouped asset grid");
-        g = g.with_child(format!("{SORT_TAG}#hrow"));
-        for view_pos in window.indices() {
-            let tag = match rows[view_pos] {
-                GroupRow::Header { group, .. } => format!("{GROUP_TAG}#{group}"),
-                GroupRow::Data { source } => format!("{GRID_TAG}#{source}"),
-            };
-            g = g.with_child(tag);
-        }
-        nodes.push(g);
-
-        // Header row + its (sortable) column headers.
-        let mut header_row = AccessNode::new(format!("{SORT_TAG}#hrow"), AriaRole::Row);
-        for c in 0..NCOLS {
-            header_row = header_row.with_child(format!("{SORT_TAG}#h{c}"));
-        }
-        nodes.push(header_row);
-        for (c, &name) in COLS.iter().enumerate() {
-            let mut col = AccessNode::new(format!("{SORT_TAG}#h{c}"), AriaRole::ColumnHeader).with_name(name);
-            col = match col_sort_dir(sort, c) {
-                Some(true) => col.with_sort(SortDirection::Ascending),
-                Some(false) => col.with_sort(SortDirection::Descending),
-                None => col,
-            };
-            nodes.push(col);
-        }
-
-        for view_pos in window.indices() {
-            let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
-            match rows[view_pos] {
-                GroupRow::Header { group, member_count, collapsed } => {
-                    nodes.push(
-                        AccessNode::new(format!("{GROUP_TAG}#{group}"), AriaRole::Row)
-                            .with_name(format!("{} ({member_count})", GROUPS[group % GROUPS.len()]))
-                            .with_position_in_set(posinset)
-                            .with_size_of_set(total)
-                            .with_expanded(!collapsed),
-                    );
-                }
-                GroupRow::Data { source } => {
-                    let mut row = AccessNode::new(format!("{GRID_TAG}#{source}"), AriaRole::Row)
-                        .with_position_in_set(posinset)
-                        .with_size_of_set(total)
-                        .with_selected(selected == Some(source));
-                    for c in 0..NCOLS {
-                        row = row.with_child(cell_tag(source, c));
-                    }
-                    nodes.push(row);
-                    for (c, &name) in COLS.iter().enumerate() {
-                        nodes.push(
-                            AccessNode::new(cell_tag(source, c), AriaRole::GridCell)
-                                .with_name(format!("{name}: {}", cell_value(source, c))),
-                        );
-                    }
-                }
-            }
-        }
-        nodes
+            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, rows.len(), ROW_PITCH, OVERSCAN);
+        // Sortable columns: the active column carries its `aria-sort` in the
+        // GridColumn slice (the one datum that differs from the static grid).
+        let columns: Vec<GridColumn> = COLS
+            .iter()
+            .enumerate()
+            .map(|(c, &name)| GridColumn {
+                tag: format!("{SORT_TAG}#h{c}"),
+                label: name.to_string(),
+                sort: col_sort_dir(sort, c).map(|asc| {
+                    if asc { SortDirection::Ascending } else { SortDirection::Descending }
+                }),
+            })
+            .collect();
+        let header_row_tag = format!("{SORT_TAG}#hrow");
+        let spec = GroupedGridSpec {
+            grid_tag: GRID_TAG,
+            name: Some("Sortable grouped asset grid"),
+            header_row_tag: &header_row_tag,
+            columns: &columns,
+            group_prefix: GROUP_TAG,
+            data_prefix: GRID_TAG,
+            selected_source: *selected,
+        };
+        grouped_grid_access_nodes(
+            &spec,
+            &rows,
+            window,
+            |g| GROUPS[g % GROUPS.len()].to_string(),
+            cell_tag,
+            cell_value,
+        )
     }
 }
 

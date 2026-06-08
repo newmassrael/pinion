@@ -50,6 +50,7 @@ pub mod action;
 pub mod described;
 pub mod focus;
 pub mod grid;
+pub mod grouped;
 pub mod listbox;
 pub mod menu;
 pub mod navigation;
@@ -76,6 +77,9 @@ pub use action::{translate_action, AccessAction, PinionAccessAction};
 pub use described::describedby_region;
 pub use focus::AccessFocus;
 pub use grid::{grid_table_nodes, GridCell, GridColumn, GridRow};
+pub use grouped::{
+    grouped_grid_access_nodes, grouped_tree_access_nodes, GroupedGridSpec, GroupedTreeSpec,
+};
 pub use listbox::{listbox_option_nodes, ListOption};
 pub use menu::{menu_item_nodes, MenuItemCell};
 pub use navigation::{navigation_link_nodes, NavLink};

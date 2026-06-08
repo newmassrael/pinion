@@ -24,22 +24,19 @@
 //!
 //! ## a11y (WAI-ARIA `grid`)
 //!
-//! Hand-rolled rather than reusing
-//! [`pinion_a11y::grid_table_nodes`](pinion_a11y::grid_table_nodes): that
-//! builder models a *flat* grid (header row + uniform data rows) with no
-//! collapsible group-header-row concept, and pinion's a11y has no `treegrid`
-//! role. So this emits an [`AriaRole::Grid`] with an
-//! [`AriaRole::ColumnHeader`] header row, a spanning [`AriaRole::Row`] +
-//! `aria-expanded` per group header, and an [`AriaRole::Row`] +
-//! [`AriaRole::GridCell`] children per data row (`aria-selected` on the row).
-//! The grouped-grid a11y shape (group-header rows interleaved with cell rows)
-//! is distinct from the grouped-*list*'s `tree`/`treeitem`
-//! (`hello-grouped-list`/`hello-grouped-sort`), so the two do not share a
-//! builder.
+//! Built by the
+//! [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes) SSOT
+//! (R847) — a `grid` root, a `columnheader` per column, a spanning `row` +
+//! `aria-expanded` per group header, and a `row` (`aria-selected`) + `gridcell`
+//! children per data row. This grouped-grid shape (group-header rows
+//! interleaved with cell rows; `grid`/`row`/`gridcell`, since pinion has no
+//! `treegrid` role) is distinct from the grouped-*list*'s `tree`/`treeitem`
+//! ([`grouped_tree_access_nodes`](pinion_a11y::grouped_tree_access_nodes)) — two
+//! builders, one per shape, each shared by its two consumers.
 
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{grouped_grid_access_nodes, AccessNode, GridColumn, GroupedGridSpec, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -70,7 +67,7 @@ const OVERSCAN: usize = 3;
 /// Three columns: Name / Size / Modified. Their widths sum to the grid width.
 const COLS: [&str; 3] = ["Name", "Size", "Modified"];
 const COL_W: [u32; 3] = [150, 90, 80];
-const GRID_W: u32 = 320; // COL_W sum
+const GRID_W: u32 = COL_W[0] + COL_W[1] + COL_W[2]; // derived, can't desync from COL_W
 const VIEWPORT_H: u32 = 13 * ROW_PITCH;
 
 /// Paint-root + a11y `grid` container + primary [`VirtualSelectExternal`] tag.
@@ -326,80 +323,47 @@ impl WidgetCore for GroupedGridView {
 }
 
 impl WidgetA11y for GroupedGridView {
-    /// WAI-ARIA `grid`: the [`AriaRole::Grid`] root references the header row +
-    /// the windowed rows; the header row carries the three
-    /// [`AriaRole::ColumnHeader`]s; each visible group header is a spanning
-    /// [`AriaRole::Row`] + `aria-expanded`, and each data row an
-    /// [`AriaRole::Row`] (`aria-selected`) with three [`AriaRole::GridCell`]
-    /// children named `"Column: value"`. See the module note on why this is
-    /// hand-rolled rather than reusing `grid_table_nodes`.
+    /// WAI-ARIA `grid` via the
+    /// [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes) SSOT
+    /// builder (R847): a `grid` root over the header row + windowed rows, a
+    /// `columnheader` per column, a spanning `row` + `aria-expanded` per group
+    /// header, and a `row` (`aria-selected`) + `gridcell` children per data row.
+    /// The columns are static (no `aria-sort`) — passed as a [`GridColumn`]
+    /// slice with `sort: None`, the same slice a sortable grid
+    /// (`hello-grouped-grid-sort`) fills with the active direction.
     fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
-        let selected = *selected;
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let groups = use_grid_groups();
         let rows = groups.rows();
-        let visible_len = rows.len();
         let window =
-            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, visible_len, ROW_PITCH, OVERSCAN);
-        let total = u32::try_from(visible_len).unwrap_or(u32::MAX);
-
-        let mut nodes: Vec<AccessNode> = Vec::new();
-
-        // Grid root: header row then the windowed rows.
-        let mut grid = AccessNode::new(GRID_TAG, AriaRole::Grid).with_name("Grouped asset grid");
-        grid = grid.with_child(HEAD_ROW_TAG);
-        for view_pos in window.indices() {
-            let tag = match rows[view_pos] {
-                GroupRow::Header { group, .. } => format!("{GROUP_TAG}#{group}"),
-                GroupRow::Data { source } => format!("{GRID_TAG}#{source}"),
-            };
-            grid = grid.with_child(tag);
-        }
-        nodes.push(grid);
-
-        // Header row + its column headers.
-        let mut header_row = AccessNode::new(HEAD_ROW_TAG, AriaRole::Row);
-        for c in 0..COLS.len() {
-            header_row = header_row.with_child(format!("{GRID_TAG}_col{c}"));
-        }
-        nodes.push(header_row);
-        for (c, &name) in COLS.iter().enumerate() {
-            nodes.push(AccessNode::new(format!("{GRID_TAG}_col{c}"), AriaRole::ColumnHeader).with_name(name));
-        }
-
-        // Windowed rows: spanning group headers + cell data rows.
-        for view_pos in window.indices() {
-            let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
-            match rows[view_pos] {
-                GroupRow::Header { group, member_count, collapsed } => {
-                    nodes.push(
-                        AccessNode::new(format!("{GROUP_TAG}#{group}"), AriaRole::Row)
-                            .with_name(format!("{} ({member_count})", GROUPS[group % GROUPS.len()]))
-                            .with_position_in_set(posinset)
-                            .with_size_of_set(total)
-                            .with_expanded(!collapsed),
-                    );
-                }
-                GroupRow::Data { source } => {
-                    let row_tag = format!("{GRID_TAG}#{source}");
-                    let mut row = AccessNode::new(row_tag.clone(), AriaRole::Row)
-                        .with_position_in_set(posinset)
-                        .with_size_of_set(total)
-                        .with_selected(selected == Some(source));
-                    for c in 0..COLS.len() {
-                        row = row.with_child(cell_tag(source, c));
-                    }
-                    nodes.push(row);
-                    for (c, &name) in COLS.iter().enumerate() {
-                        nodes.push(
-                            AccessNode::new(cell_tag(source, c), AriaRole::GridCell)
-                                .with_name(format!("{name}: {}", cell_value(source, c))),
-                        );
-                    }
-                }
-            }
-        }
-        nodes
+            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, rows.len(), ROW_PITCH, OVERSCAN);
+        // Static (non-sortable) columns: tag + label, no aria-sort.
+        let columns: Vec<GridColumn> = COLS
+            .iter()
+            .enumerate()
+            .map(|(c, &name)| GridColumn {
+                tag: format!("{GRID_TAG}_col{c}"),
+                label: name.to_string(),
+                sort: None,
+            })
+            .collect();
+        let spec = GroupedGridSpec {
+            grid_tag: GRID_TAG,
+            name: Some("Grouped asset grid"),
+            header_row_tag: HEAD_ROW_TAG,
+            columns: &columns,
+            group_prefix: GROUP_TAG,
+            data_prefix: GRID_TAG,
+            selected_source: *selected,
+        };
+        grouped_grid_access_nodes(
+            &spec,
+            &rows,
+            window,
+            |g| GROUPS[g % GROUPS.len()].to_string(),
+            cell_tag,
+            cell_value,
+        )
     }
 }
 
@@ -418,6 +382,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_a11y::AriaRole;
     use pinion_core::reactive::Owner;
 
     fn render(selected: Option<usize>, collapse: impl FnOnce(&GroupOrderState)) -> Scene {

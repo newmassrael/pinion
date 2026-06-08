@@ -688,6 +688,50 @@ pub trait QuerySource {
     fn introspect_query(&self, path: &str) -> Option<IntrospectValue>;
 }
 
+/// R847 §5.15 §5.40 — emit the [`External`] skeleton shared by every
+/// **display-config proxy coordinator** (the sort/filter proxy
+/// [`ViewSortFilterExternal`](crate::widgets::view_order::ViewSortFilterExternal),
+/// the grid-sort proxy
+/// [`GridSortExternal`](crate::widgets::grid_sort::GridSortExternal), the
+/// group-by proxy
+/// [`GroupOrderExternal`](crate::widgets::group_order::GroupOrderExternal)): a
+/// `Gui`+`Rpc` backend, framework-owned repaint, UI-thread external that emits
+/// **no §5.20 intent** (its state is a shared reactive holder whose `Signal`
+/// writes already repaint every subscriber, so it is never independently dirty)
+/// and surfaces that state through [`ExternalIntrospect`] only.
+///
+/// These five methods were byte-identical across all three proxies (the R847
+/// audit's Rule-of-Three); this macro is their SSOT, so a change to (say)
+/// [`thread_ownership`](External::thread_ownership) cannot silently diverge
+/// between them. The type must implement [`ExternalIntrospect`] (the macro's
+/// `introspect` / `introspect_mut` return `Some(self)`); each proxy keeps its
+/// own `ExternalIntrospect` impl (the part that genuinely differs).
+macro_rules! query_proxy_external_impl {
+    ($t:ty) => {
+        impl $crate::external::External for $t {
+            fn backends(&self) -> $crate::external::BackendSupport {
+                $crate::external::BackendSupport::new(
+                    &[$crate::external::Backend::Gui, $crate::external::Backend::Rpc],
+                    $crate::external::BackendFallback::Skip,
+                )
+            }
+            fn repaint_ownership(&self) -> $crate::external::RepaintOwner {
+                $crate::external::RepaintOwner::Framework
+            }
+            fn thread_ownership(&self) -> $crate::external::ThreadOwnership {
+                $crate::external::ThreadOwnership::UiThreadSync
+            }
+            fn introspect(&self) -> Option<&dyn $crate::external::ExternalIntrospect> {
+                Some(self)
+            }
+            fn introspect_mut(&mut self) -> Option<&mut dyn $crate::external::ExternalIntrospect> {
+                Some(self)
+            }
+        }
+    };
+}
+pub(crate) use query_proxy_external_impl;
+
 /// R810.1 §5.38 §5.12 — the generic **query-only** introspection
 /// `External`: a node that paints nothing (RPC backend only), handles no
 /// events, and forwards `schema` / `query` to its [`QuerySource`] while

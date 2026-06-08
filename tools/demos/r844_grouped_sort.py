@@ -155,11 +155,12 @@ def body() -> None:
         assert_eq(selected(tf), 0, "still selected after the whole stack unwinds")
 
         # ── (H) clicked sort header cycles like the RPC path ─────────────
-        before = gs(tf, "sort_dir")
+        # The sort is unsorted here (none of E/F/G touch it), so a real click on
+        # the header must cycle it to exactly ascending (not merely "change it").
+        assert_eq(gs(tf, "sort_dir"), "none", "sort is unsorted before the clicked-header step")
         tf.click(path=f"{SORT_TAG}#cycle")
         time.sleep(PAUSE)
-        after = gs(tf, "sort_dir")
-        assert before != after, f"clicked sort header changed the sort ({before} -> {after})"
+        assert_eq(gs(tf, "sort_dir"), "ascending", "clicked header cycled none -> ascending")
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@
 
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{grouped_tree_access_nodes, AccessNode, AriaRole, GroupedTreeSpec, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -346,56 +346,32 @@ impl WidgetA11y for GroupedSortView {
     /// (`ggroup#` headers route to collapse, `glist#` data rows to selection),
     /// both load-bearing for AT activation routing.
     fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
-        let selected = *selected;
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let sort = use_sort();
         let groups = use_groups();
         let rows = groups.rows();
-        let visible_len = rows.len();
         let window =
-            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, visible_len, ROW_PITCH, OVERSCAN);
-        let total = u32::try_from(visible_len).unwrap_or(u32::MAX);
+            compute_visible_range(scroll_state.offset_y(), VIEWPORT_H, rows.len(), ROW_PITCH, OVERSCAN);
 
-        let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count + 2);
-        nodes.push(
+        // The sort control is a standalone Button sibling of the grouped tree.
+        let mut nodes = vec![
             AccessNode::new(format!("{SORT_TAG}#{SORT_REGION}"), AriaRole::Button)
                 .with_name(format!("Sort: {}", sort_dir_str(sort.sort()))),
-        );
-
-        let mut tree = AccessNode::new(LIST_TAG, AriaRole::Tree)
-            .with_name("Grouped sorted asset list")
-            .with_size_of_set(total);
-        for view_pos in window.indices() {
-            let tag = match rows[view_pos] {
-                GroupRow::Header { group, .. } => format!("{GROUP_TAG}#{group}"),
-                GroupRow::Data { source } => format!("{LIST_TAG}#{source}"),
-            };
-            tree = tree.with_child(tag);
-        }
-        nodes.push(tree);
-
-        for view_pos in window.indices() {
-            let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
-            let node = match rows[view_pos] {
-                GroupRow::Header { group, member_count, collapsed } => {
-                    AccessNode::new(format!("{GROUP_TAG}#{group}"), AriaRole::TreeItem)
-                        .with_name(format!("{} ({member_count})", GROUPS[group % GROUPS.len()]))
-                        .with_level(1)
-                        .with_position_in_set(posinset)
-                        .with_size_of_set(total)
-                        .with_expanded(!collapsed)
-                }
-                GroupRow::Data { source } => {
-                    AccessNode::new(format!("{LIST_TAG}#{source}"), AriaRole::TreeItem)
-                        .with_name(row_name(source))
-                        .with_level(2)
-                        .with_position_in_set(posinset)
-                        .with_size_of_set(total)
-                        .with_selected(selected == Some(source))
-                }
-            };
-            nodes.push(node);
-        }
+        ];
+        let spec = GroupedTreeSpec {
+            tree_tag: LIST_TAG,
+            name: Some("Grouped sorted asset list"),
+            header_prefix: GROUP_TAG,
+            data_prefix: LIST_TAG,
+            selected_source: *selected,
+        };
+        nodes.extend(grouped_tree_access_nodes(
+            &spec,
+            &rows,
+            window,
+            |g| GROUPS[g % GROUPS.len()].to_string(),
+            row_name,
+        ));
         nodes
     }
 }

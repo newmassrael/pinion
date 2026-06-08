@@ -144,6 +144,7 @@ def body() -> None:
         # The Texture header now follows the Mesh header directly (pos 1).
         assert_eq(g(tf, "kind_at.1"), "header", "collapsed: pos 1 is now a header")
         assert_eq(g(tf, "group_at.1"), 1, "pos 1 is group 1 (Texture) after collapse")
+        time.sleep(PAUSE)  # settle: let the collapse repaint before reading the paint scene
         snap = tf.snapshot(source="paint", viewport=WIN)
         assert 6 not in present_sources(snap), "collapsed Mesh hides source 6's row"
         assert 0 in present_headers(snap) and 1 in present_headers(snap), "headers adjacent now"

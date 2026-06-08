@@ -34787,6 +34787,72 @@
         "per-group aggregate footers (sum/min/max) deferred: no consumer yet"
       ]
     },
+    "R847": {
+      "decision_summary": "R847 cost-no-object audit remediation of the R843-R846 group-by arc (2 adversarial reviewers + my grep re-verification). Clears the SSOT BLOCKER: lifts grouped_tree_access_nodes + grouped_grid_access_nodes into pinion-a11y (the project's own R758 divergence-is-a-bug / lift-at-2nd-consumer doctrine; the grid pair had already diverged by hand) and retrofits all 4 examples behaviour-identically, the per-column tag/label/aria-sort now data (a GridColumn slice) not divergent code. Hardens the group-by memo to hold the upstream-order Rc and compare by Rc::ptr_eq (sound by construction over a mutable upstream; the bare as_ptr key was sound only via an uncited cross-module allocate-before-drop invariant, and its doc overclaimed it). Restores wire read/write symmetry on collapsed.<group> (out-of-range intervene -> Ok no-op, only non-numeric -> UnknownPath). Lifts the 3 byte-identical proxy External skeletons (View/Grid/Group sort proxies) into a query_proxy_external_impl! macro SSOT. Plus member_count->total_member_count, with_order_source contract doc + debug_assert, GRID_W derived from COL_W, and demo rigor (exact clicked-header assertion + settle before paint snapshot).",
+      "changes_bullets": [
+        "pinion-a11y: grouped_tree_access_nodes + grouped_grid_access_nodes SSOT builders (R758 2nd-lift)",
+        "4 examples retrofit hand-rolled a11y onto the builders (behaviour-identical); grid divergence now",
+        "data (a GridColumn slice incl aria-sort), not divergent code",
+        "group_order memo holds the upstream-order Rc (Rc::ptr_eq) = sound by construction over a",
+        "upstream (was bare as_ptr, sound only via an uncited cross-module allocate-before-drop invariant)",
+        "collapsed.<group> intervene out-of-range -> Ok no-op (was UnknownPath); non-numeric -> UnknownPath",
+        "query_proxy_external_impl! macro = SSOT for the 3 byte-identical proxy External skeletons",
+        "member_count -> total_member_count; with_order_source closure invariant doc + debug_assert",
+        "GRID_W derived from COL_W; r844 clicked-header asserts exact value; r843 settle before snapshot"
+      ],
+      "verification_bullets": [
+        "pinion-a11y grouped 2 builder tests; group_order 16 + view_order 14 + grid_sort 19 unit green",
+        "4 example a11y/view tests green (retrofit behaviour-identical); r843-r846 demos all PASS (hidden)",
+        "cargo test --workspace -j2 green; clippy --features vello clean (-D pedantic)",
+        "adversarial 2-agent review + my grep re-verify; agents disagreed on memo (sound today, doc",
+        "overclaimed) -> hardened; the ABA-crash claim was refuted for every shipped consumer"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50",
+        "5.12",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "prior grouped-a11y-lift carry CLEARED by this round (both builders lifted at the 2nd consumer)",
+        "per-group aggregate footers (sum/min/max) deferred: no consumer yet",
+        "per-cell keyboard nav / cell roving deferred (windowed-grid roving is a family-wide axis)",
+        "frozen/pinned first column (CLAUDE.md item-1 'frozen panes') = future round (R784 h-axis peer)"
+      ],
+      "publishable_decision_summary": "R847 cost-no-object audit remediation of the R843-R846 group-by arc (2 adversarial reviewers + my grep re-verification). Clears the SSOT BLOCKER: lifts grouped_tree_access_nodes + grouped_grid_access_nodes into pinion-a11y (the project's own R758 divergence-is-a-bug / lift-at-2nd-consumer doctrine; the grid pair had already diverged by hand) and retrofits all 4 examples behaviour-identically, the per-column tag/label/aria-sort now data (a GridColumn slice) not divergent code. Hardens the group-by memo to hold the upstream-order Rc and compare by Rc::ptr_eq (sound by construction over a mutable upstream; the bare as_ptr key was sound only via an uncited cross-module allocate-before-drop invariant, and its doc overclaimed it). Restores wire read/write symmetry on collapsed.<group> (out-of-range intervene -> Ok no-op, only non-numeric -> UnknownPath). Lifts the 3 byte-identical proxy External skeletons (View/Grid/Group sort proxies) into a query_proxy_external_impl! macro SSOT. Plus member_count->total_member_count, with_order_source contract doc + debug_assert, GRID_W derived from COL_W, and demo rigor (exact clicked-header assertion + settle before paint snapshot).",
+      "publishable_changes_bullets": [
+        "pinion-a11y: grouped_tree_access_nodes + grouped_grid_access_nodes SSOT builders (R758 2nd-lift)",
+        "4 examples retrofit hand-rolled a11y onto the builders (behaviour-identical); grid divergence now",
+        "data (a GridColumn slice incl aria-sort), not divergent code",
+        "group_order memo holds the upstream-order Rc (Rc::ptr_eq) = sound by construction over a",
+        "upstream (was bare as_ptr, sound only via an uncited cross-module allocate-before-drop invariant)",
+        "collapsed.<group> intervene out-of-range -> Ok no-op (was UnknownPath); non-numeric -> UnknownPath",
+        "query_proxy_external_impl! macro = SSOT for the 3 byte-identical proxy External skeletons",
+        "member_count -> total_member_count; with_order_source closure invariant doc + debug_assert",
+        "GRID_W derived from COL_W; r844 clicked-header asserts exact value; r843 settle before snapshot"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-a11y grouped 2 builder tests; group_order 16 + view_order 14 + grid_sort 19 unit green",
+        "4 example a11y/view tests green (retrofit behaviour-identical); r843-r846 demos all PASS (hidden)",
+        "cargo test --workspace -j2 green; clippy --features vello clean (-D pedantic)",
+        "adversarial 2-agent review + my grep re-verify; agents disagreed on memo (sound today, doc",
+        "overclaimed) -> hardened; the ABA-crash claim was refuted for every shipped consumer"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50",
+        "5.12",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "prior grouped-a11y-lift carry CLEARED by this round (both builders lifted at the 2nd consumer)",
+        "per-group aggregate footers (sum/min/max) deferred: no consumer yet",
+        "per-cell keyboard nav / cell roving deferred (windowed-grid roving is a family-wide axis)",
+        "frozen/pinned first column (CLAUDE.md item-1 'frozen panes') = future round (R784 h-axis peer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
