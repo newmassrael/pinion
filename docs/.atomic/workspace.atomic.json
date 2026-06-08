@@ -34955,6 +34955,54 @@
         "graph serialization (serde-derive ready) + undo of add/delete still open (R841/R842 carry)"
       ]
     },
+    "R850": {
+      "decision_summary": "R850 = R848/R849 audit-remediation (user cost-no-object review -> 3 adversarial subagents + my grep re-verification). 4 real findings cleared, 1 subagent over-reach rejected. (1) access_focus_target was a byte-identical 2-copy across the two grouped bindings - R848 lifted the leaves (composite_tag, read_cursor) but left this ring-policy wrapper duplicated -> lifted grouped_focus_target into pinion-a11y, both bindings delegate (the group_nav_key access-focus peer). (2) R849 palette press reused PendingPress::InputPort (wrong-semantic, relied on the incidental !=None edge-probe suppression) -> explicit PendingPress::Palette. (3) R849 palette a11y hand-rolled a toolbar -> toolbar_button_nodes SSOT (gains aria-posinset/setsize); palette keyboard-roving documented as a carry (was a silent role=Button-unfocusable gap; hello-textarea NoFocus-toolbar precedent). (4) composite_tag doc softened the no-per-site-divergence overclaim (paint producers use the R803 trivial encode idiom). REJECTED: Agent-A claim to also lift read_state/State/fmt_state_log - verified inconsistent with the virtual-nav family convention (per-binding State+read_state is glue, not liftable logic).",
+      "changes_bullets": [
+        "pinion-a11y grouped_focus_target SSOT (ring policy for the grouped roving cursor); both bindings delegate access_focus_target",
+        "node-editor PendingPress::Palette explicit variant (was reusing InputPort via incidental !=None edge-probe suppression)",
+        "node-editor palette a11y via toolbar_button_nodes SSOT (aria-posinset/setsize); keyboard-roving carry documented in focusable_tags",
+        "composite_tag doc: softened no-divergence overclaim to GroupRow-holder consumers (paint = R803 trivial encode idiom)",
+        "REJECTED Agent-A claim to lift read_state/State/fmt (virtual-nav convention = per-binding glue, not liftable logic); trivial double-blank cleanup"
+      ],
+      "verification_bullets": [
+        "pinion-a11y grouped 3 unit (new grouped_focus_target: cursor row / container / unfocused / out-of-range) + hello-grouped-grid 4 + hello-grouped-list 5",
+        "hello-node-editor 28 unit (palette posinset/setsize assertion added) + r848 demo 48-check PASS + r849 demo 31-check PASS (behaviour unchanged)",
+        "cargo test --workspace -j2 = 148 ok 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello clean"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.38",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "node-editor palette keyboard roving (2nd tab stop + arrow/Enter + focused_control) = additive a11y axis, now documented not silent",
+        "grouped read_state/State/fmt are per-binding glue by framework convention (virtual-nav peer) - intentionally NOT lifted",
+        "node/edge id mint uses raw+1 (theoretical u32::MAX overflow at ~4B creations) - matches existing edge code, low priority"
+      ],
+      "publishable_decision_summary": "R850 = R848/R849 audit-remediation (user cost-no-object review -> 3 adversarial subagents + my grep re-verification). 4 real findings cleared, 1 subagent over-reach rejected. (1) access_focus_target was a byte-identical 2-copy across the two grouped bindings - R848 lifted the leaves (composite_tag, read_cursor) but left this ring-policy wrapper duplicated -> lifted grouped_focus_target into pinion-a11y, both bindings delegate (the group_nav_key access-focus peer). (2) R849 palette press reused PendingPress::InputPort (wrong-semantic, relied on the incidental !=None edge-probe suppression) -> explicit PendingPress::Palette. (3) R849 palette a11y hand-rolled a toolbar -> toolbar_button_nodes SSOT (gains aria-posinset/setsize); palette keyboard-roving documented as a carry (was a silent role=Button-unfocusable gap; hello-textarea NoFocus-toolbar precedent). (4) composite_tag doc softened the no-per-site-divergence overclaim (paint producers use the R803 trivial encode idiom). REJECTED: Agent-A claim to also lift read_state/State/fmt_state_log - verified inconsistent with the virtual-nav family convention (per-binding State+read_state is glue, not liftable logic).",
+      "publishable_changes_bullets": [
+        "pinion-a11y grouped_focus_target SSOT (ring policy for the grouped roving cursor); both bindings delegate access_focus_target",
+        "node-editor PendingPress::Palette explicit variant (was reusing InputPort via incidental !=None edge-probe suppression)",
+        "node-editor palette a11y via toolbar_button_nodes SSOT (aria-posinset/setsize); keyboard-roving carry documented in focusable_tags",
+        "composite_tag doc: softened no-divergence overclaim to GroupRow-holder consumers (paint = R803 trivial encode idiom)",
+        "REJECTED Agent-A claim to lift read_state/State/fmt (virtual-nav convention = per-binding glue, not liftable logic); trivial double-blank cleanup"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-a11y grouped 3 unit (new grouped_focus_target: cursor row / container / unfocused / out-of-range) + hello-grouped-grid 4 + hello-grouped-list 5",
+        "hello-node-editor 28 unit (palette posinset/setsize assertion added) + r848 demo 48-check PASS + r849 demo 31-check PASS (behaviour unchanged)",
+        "cargo test --workspace -j2 = 148 ok 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello clean"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.38",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "node-editor palette keyboard roving (2nd tab stop + arrow/Enter + focused_control) = additive a11y axis, now documented not silent",
+        "grouped read_state/State/fmt are per-binding glue by framework convention (virtual-nav peer) - intentionally NOT lifted",
+        "node/edge id mint uses raw+1 (theoretical u32::MAX overflow at ~4B creations) - matches existing edge code, low priority"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

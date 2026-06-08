@@ -140,10 +140,14 @@ impl GroupRow {
     /// R848 §5.35 — this row's composite paint / a11y tag under the two
     /// namespaces: a group header routes to `"{header_prefix}#{group}"` (the
     /// collapse coordinator), a data row to `"{data_prefix}#{source}"` (the
-    /// selection coordinator). The one SSOT for the grouped row → tag mapping —
-    /// the a11y builders tag their nodes with it and a binding's
-    /// `access_focus_target` rings the cursor row with it, so the focus ring and
-    /// the AT tree address a row identically (no per-site divergence).
+    /// selection coordinator). The SSOT for the **`GroupRow` → tag** mapping the
+    /// consumers that hold a `GroupRow` share — the a11y builders tag their nodes
+    /// with it and a binding's `access_focus_target` rings the cursor row with
+    /// it, so the focus ring and the AT tree address a row identically. (The
+    /// paint producers build the same tag from a raw `group` / `source` via the
+    /// trivial `format!("{prefix}#{id}")` composite-encode idiom — R803 settled
+    /// that encode is an idiom, not a missed abstraction; only a holder of a
+    /// `GroupRow` routes through here.)
     #[must_use]
     pub fn composite_tag(&self, header_prefix: &str, data_prefix: &str) -> String {
         match *self {

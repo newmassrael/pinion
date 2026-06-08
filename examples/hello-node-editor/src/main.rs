@@ -86,7 +86,9 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    toolbar_button_nodes, AccessNode, AccessState, AriaRole, ToolbarControl, WidgetA11y,
+};
 use pinion_core::composite_tag::{split_send_payload, split_subindex};
 use pinion_core::external::{
     int_of, Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint,
@@ -558,6 +560,12 @@ enum PendingPress {
     NodeBody,
     OutputPort(NodeId, usize),
     InputPort,
+    /// R850 — a press on an add-node palette card. Like [`InputPort`](Self::InputPort)
+    /// it is a non-drag press that must suppress the background edge-probe, but
+    /// it is recorded as its own variant rather than borrowing `InputPort`'s
+    /// name so a future input-port-specific branch can never misread a palette
+    /// press as a real input-port press.
+    Palette,
 }
 
 // ─── coordinator External ──────────────────────────────────────────
@@ -820,6 +828,12 @@ impl NodeGraphExternal {
                     self.pending_press.set(PendingPress::NodeBody);
                 } else if let Some((n, j)) = parse_oport_sub(s) {
                     self.pending_press.set(PendingPress::OutputPort(n, j));
+                } else if parse_palette_sub(s).is_some() {
+                    // R850 — a palette card press: not a drag, not an input
+                    // port. Recorded as its own variant so the background
+                    // edge-probe is suppressed without lying about what was
+                    // pressed (the activation runs on the matching PointerUp).
+                    self.pending_press.set(PendingPress::Palette);
                 } else {
                     // An input-port press — distinct from a background press so
                     // it never triggers the edge-click probe.
@@ -828,9 +842,9 @@ impl NodeGraphExternal {
             }
             (Some(s), "PointerUp") => {
                 // R849 — a palette card's release creates a node (the activation
-                // edge); a node card's release selects it. (A palette press
-                // landed in the input-port arm above, which only suppresses the
-                // background edge-probe — harmless, reset by `end_gesture`.)
+                // edge); a node card's release selects it. (A palette press set
+                // PendingPress::Palette above, suppressing the edge-probe; the
+                // gesture is reset by `end_gesture` after this branch.)
                 if let Some(kind) = parse_palette_sub(s) {
                     self.add_node(kind);
                 } else if let Some(n) = parse_node_sub(s) {
@@ -1517,6 +1531,12 @@ impl WidgetCore for NodeEditorView {
         None
     }
 
+    /// The canvas is the single keyboard tab stop. R850 — the add-node palette
+    /// is **not** yet a tab stop: it is mouse/RPC-driven (the `add_node` verb
+    /// and `scene/click` reach it), and its a11y `toolbar` is emitted with
+    /// `focused_control: None` (the `hello-textarea` NoFocus-toolbar shape).
+    /// Keyboard roving over the palette (a second tab stop with arrow/Enter) is
+    /// a documented carry, not a silent gap.
     fn focusable_tags() -> Vec<&'static str> {
         vec![GRAPH_TAG]
     }
@@ -1554,24 +1574,29 @@ impl WidgetA11y for NodeEditorView {
     fn access_node(_state: &(), focused: Option<&str>) -> Vec<AccessNode> {
         let nodes = use_nodes().get();
         let selected = use_selection().get().node();
-        // R849 — the editor lowers to a root with two regions: the add-node
+        // R849/R850 — the editor lowers to a root with two regions: the add-node
         // palette (a `toolbar` of `button`s that create nodes) and the graph
         // canvas (the R840 unordered `group` of node `generic`s).
         let root = AccessNode::new(ROOT_TAG, AriaRole::Group)
             .with_name("Node editor")
             .with_child(PALETTE_TAG)
             .with_child(GRAPH_TAG);
-        let mut palette = AccessNode::new(PALETTE_TAG, AriaRole::Toolbar).with_name("Add node");
-        for idx in 0..PALETTE.len() {
-            palette = palette.with_child(format!("{GRAPH_TAG}#palette_{idx}"));
-        }
-        let mut out = vec![root, palette];
-        for (idx, &(title, _, _)) in PALETTE.iter().enumerate() {
-            out.push(
-                AccessNode::new(format!("{GRAPH_TAG}#palette_{idx}"), AriaRole::Button)
-                    .with_name(format!("Add {title}")),
-            );
-        }
+        // R850 — the palette `toolbar` + `button`s come from the
+        // `toolbar_button_nodes` SSOT (gaining aria-posinset/setsize), not a
+        // hand-rolled equivalent. `focused_control: None` because the palette is
+        // not yet a keyboard tab stop (`focusable_tags` is canvas-only) — a
+        // mouse/RPC-driven toolbar, the `hello-textarea` NoFocus-toolbar
+        // precedent. Keyboard roving over the palette is a documented carry.
+        let palette_tags: Vec<String> =
+            (0..PALETTE.len()).map(|i| format!("{GRAPH_TAG}#palette_{i}")).collect();
+        let palette_names: Vec<String> = PALETTE.iter().map(|&(t, _, _)| format!("Add {t}")).collect();
+        let controls: Vec<ToolbarControl> = palette_tags
+            .iter()
+            .zip(&palette_names)
+            .map(|(tag, name)| ToolbarControl { tag: tag.as_str(), name: Some(name.as_str()), checked: None })
+            .collect();
+        let mut out = vec![root];
+        out.extend(toolbar_button_nodes(PALETTE_TAG, "Add node", &controls, None));
         let mut group = AccessNode::new(GRAPH_TAG, AriaRole::Group)
             .with_name("Node graph")
             .with_state(AccessState { focused: focused == Some(GRAPH_TAG), ..AccessState::default() });
@@ -2165,6 +2190,14 @@ mod tests {
                 .expect("Texture palette button present");
             assert_eq!(add_texture.role, AriaRole::Button);
             assert_eq!(add_texture.name.as_deref(), Some("Add Texture"));
+            // R850 — via the toolbar_button_nodes SSOT, palette buttons carry
+            // roving-set metadata the hand-rolled version lacked.
+            assert_eq!(add_texture.position_in_set, Some(1), "1-based posinset");
+            assert_eq!(
+                add_texture.size_of_set,
+                Some(u32::try_from(PALETTE.len()).unwrap()),
+                "setsize = palette length",
+            );
             let graph = nodes.iter().find(|n| n.tag == GRAPH_TAG).expect("graph group present");
             // R840 audit fix: a graph is an unordered set, so Group/Generic —
             // never List/ListItem with a false aria-posinset.

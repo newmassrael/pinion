@@ -37,7 +37,8 @@
 use std::rc::Rc;
 
 use pinion_a11y::{
-    grouped_grid_access_nodes, AccessFocus, AccessNode, GridColumn, GroupedGridSpec, WidgetA11y,
+    grouped_focus_target, grouped_grid_access_nodes, AccessFocus, AccessNode, GridColumn,
+    GroupedGridSpec, WidgetA11y,
 };
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -422,23 +423,12 @@ impl WidgetA11y for GroupedGridView {
         )
     }
 
-    /// R848 — single-tab-stop roving: shell focus stays on the grid container
-    /// ([`GRID_TAG`]) while the visible focus ring frames the cursor's row (the
-    /// `aria-activedescendant`). The cursor row maps to its composite tag — a
-    /// group header (`ggrp#<group>`) or a data row (`ggrid#<source>`) — so the
-    /// shell rings exactly the navigated row. No cursor → ring the container.
+    /// R848 / R850 — single-tab-stop roving: shell focus stays on the grid
+    /// container while the ring frames the cursor's row. Delegated to the
+    /// [`grouped_focus_target`] SSOT (shared with `hello-grouped-list`) so the
+    /// ring policy is one source of truth across both grouped presentations.
     fn access_focus_target(state: &GridState, focused: Option<&str>) -> Option<AccessFocus> {
-        if focused != Some(GRID_TAG) {
-            return focused.map(AccessFocus::atomic);
-        }
-        let cursor_tag = state
-            .cursor
-            .and_then(|pos| use_grid_groups().row_at(pos))
-            .map(|row| row.composite_tag(GROUP_TAG, GRID_TAG));
-        Some(cursor_tag.map_or_else(
-            || AccessFocus::atomic(GRID_TAG),
-            |tag| AccessFocus::composite(GRID_TAG, tag),
-        ))
+        grouped_focus_target(&use_grid_groups(), GRID_TAG, GROUP_TAG, state.cursor, focused)
     }
 }
 

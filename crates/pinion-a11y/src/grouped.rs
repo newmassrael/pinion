@@ -30,11 +30,42 @@
 //! to different coordinators) and the display **labels**, supplied as a small
 //! spec + label closures.
 
+use crate::focus::AccessFocus;
 use crate::grid::GridColumn;
 use crate::node::AccessNode;
 use crate::role::AriaRole;
-use pinion_core::widgets::group_order::GroupRow;
+use pinion_core::widgets::group_order::{GroupOrderState, GroupRow};
 use pinion_core::widgets::virtual_list::VisibleWindow;
+
+/// R850 §5.50 — the focus-ring target for a grouped collapsible collection's
+/// roving keyboard cursor: rings the cursor's row (the `aria-activedescendant`)
+/// when the container owns shell focus, else the container itself. The one SSOT
+/// both grouped bindings (`hello-grouped-list` tree, `hello-grouped-grid` grid)
+/// delegate their `access_focus_target` to — the access-focus peer of
+/// [`group_nav_key`](pinion_core::widgets::group_order::group_nav_key) (R848
+/// lifted the nav controller but left this ring-policy wrapper duplicated across
+/// the two presentations; R850 closes that gap so the policy cannot diverge).
+///
+/// `tag` is the focusable container **and** the data-row composite prefix;
+/// `group_prefix` is the group-header composite prefix. The `cursor` (a visual
+/// position into the live `groups.rows()`) maps to its row's composite tag via
+/// [`GroupRow::composite_tag`]; an unset / out-of-range cursor rings the
+/// container.
+#[must_use]
+pub fn grouped_focus_target(
+    groups: &GroupOrderState,
+    tag: &str,
+    group_prefix: &str,
+    cursor: Option<usize>,
+    focused: Option<&str>,
+) -> Option<AccessFocus> {
+    if focused != Some(tag) {
+        return focused.map(AccessFocus::atomic);
+    }
+    let cursor_tag =
+        cursor.and_then(|pos| groups.row_at(pos)).map(|row| row.composite_tag(group_prefix, tag));
+    Some(cursor_tag.map_or_else(|| AccessFocus::atomic(tag), |t| AccessFocus::composite(tag, t)))
+}
 
 /// The addressing config of a grouped **list** (`tree`) a11y tree. The labels
 /// are supplied as closures to [`grouped_tree_access_nodes`]; this carries the
@@ -248,7 +279,8 @@ pub fn grouped_grid_access_nodes(
 #[cfg(test)]
 mod tests {
     use super::{
-        grouped_grid_access_nodes, grouped_tree_access_nodes, GroupedGridSpec, GroupedTreeSpec,
+        grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes, GroupedGridSpec,
+        GroupedTreeSpec,
     };
     use crate::grid::GridColumn;
     use crate::role::{AriaRole, SortDirection};
@@ -362,5 +394,28 @@ mod tests {
         assert_eq!(cell00.name.as_deref(), Some("Name: v00"));
         let cell01 = nodes.iter().find(|n| n.tag == "cell_0_1").expect("cell 0,1");
         assert_eq!(cell01.name.as_deref(), Some("Size: v01"));
+    }
+
+    #[test]
+    fn grouped_focus_target_rings_cursor_row_or_container() {
+        use pinion_core::widgets::group_order::GroupOrderState;
+        // 3 sources over 2 groups (0,1,0): rows = [Header0, Data0, Data2, Header1, Data1].
+        let s = GroupOrderState::new(vec![0, 1, 0], vec!["A".into(), "B".into()]);
+        // Unfocused → the focused tag passes through atomic (no active descendant).
+        let other = grouped_focus_target(&s, "list", "grp", Some(0), Some("other")).expect("atomic");
+        assert_eq!(other.focus_tag, "other");
+        assert_eq!(other.active_descendant, None);
+        // Focused, cursor on pos 0 (group-0 header) → composite(list, grp#0).
+        let h = grouped_focus_target(&s, "list", "grp", Some(0), Some("list")).expect("composite");
+        assert_eq!(h.focus_tag, "list");
+        assert_eq!(h.active_descendant.as_deref(), Some("grp#0"));
+        // Cursor on pos 1 (data source 0) → composite(list, list#0).
+        let d = grouped_focus_target(&s, "list", "grp", Some(1), Some("list")).expect("composite");
+        assert_eq!(d.active_descendant.as_deref(), Some("list#0"));
+        // No cursor (or out-of-range) → ring the container, no active descendant.
+        let none = grouped_focus_target(&s, "list", "grp", None, Some("list")).expect("container");
+        assert_eq!(none.active_descendant, None);
+        let stale = grouped_focus_target(&s, "list", "grp", Some(999), Some("list")).expect("container");
+        assert_eq!(stale.active_descendant, None, "out-of-range cursor rings the container");
     }
 }

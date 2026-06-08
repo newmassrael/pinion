@@ -36,7 +36,10 @@
 
 use std::rc::Rc;
 
-use pinion_a11y::{grouped_tree_access_nodes, AccessFocus, AccessNode, GroupedTreeSpec, WidgetA11y};
+use pinion_a11y::{
+    grouped_focus_target, grouped_tree_access_nodes, AccessFocus, AccessNode, GroupedTreeSpec,
+    WidgetA11y,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -110,7 +113,6 @@ struct ListState {
     /// The roving cursor's visual position into the flattened rows, or `None`.
     cursor: Option<usize>,
 }
-
 
 /// Display label of data row `i`: a stable, width-fixed asset name.
 fn row_label(i: usize) -> String {
@@ -391,23 +393,12 @@ impl WidgetA11y for GroupedListView {
         )
     }
 
-    /// R848 — single-tab-stop roving: shell focus stays on the tree container
-    /// ([`LIST_TAG`]) while the focus ring frames the cursor's row (the
-    /// `aria-activedescendant`). The cursor row maps to its composite tag — a
-    /// group header (`ggroup#<group>`) or a data row (`glist#<source>`) — so the
-    /// shell rings exactly the navigated row. No cursor → ring the container.
+    /// R848 / R850 — single-tab-stop roving: shell focus stays on the tree
+    /// container while the ring frames the cursor's row. Delegated to the
+    /// [`grouped_focus_target`] SSOT (shared with `hello-grouped-grid`) so the
+    /// ring policy is one source of truth across both grouped presentations.
     fn access_focus_target(state: &ListState, focused: Option<&str>) -> Option<AccessFocus> {
-        if focused != Some(LIST_TAG) {
-            return focused.map(AccessFocus::atomic);
-        }
-        let cursor_tag = state
-            .cursor
-            .and_then(|pos| use_list_groups().row_at(pos))
-            .map(|row| row.composite_tag(GROUP_TAG, LIST_TAG));
-        Some(cursor_tag.map_or_else(
-            || AccessFocus::atomic(LIST_TAG),
-            |tag| AccessFocus::composite(LIST_TAG, tag),
-        ))
+        grouped_focus_target(&use_list_groups(), LIST_TAG, GROUP_TAG, state.cursor, focused)
     }
 }
 
