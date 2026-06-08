@@ -31,9 +31,9 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use pinion_core::storage::{InMemoryStorage, Storage};
+use pinion_core::storage::Storage;
 use pinion_platform_clipboard::use_app_clipboard;
-use pinion_platform_storage::{open_app_storage, FileStorage};
+use pinion_platform_storage::{use_app_storage, AppStorage};
 // R659 §5.16 §5.35 — lifted composite-tag parser shared by every
 // `<key>:<EventName>` send-payload consumer
 // (TodoDeleteExternal / TodoToggleExternal / TodoFilterExternal —
@@ -268,13 +268,6 @@ const STORAGE_APP_NAME: &str = "pinion-todomvc";
 /// `todos` survived but `next_id` got reset would re-allocate
 /// retired ids, breaking the R656 stable-id contract.
 const STORAGE_STATE_KEY: &str = "todomvc.state";
-
-/// (R665 §3 §5.15) Env var override for the persistence root
-/// directory. When set, [`build_app_storage`] uses the value as-is
-/// (creating intermediate directories) instead of consulting
-/// `dirs::data_dir()`. Used by the R665 RPC verify demo so the
-/// host's real data dir stays out of the test cycle.
-const STORAGE_DIR_ENV: &str = "PINION_STORAGE_DIR";
 
 /// (R682.B §5.16) Env var that, when present + parseable as a
 /// non-negative integer ≤ [`SEED_N_MAX`], seeds the freshly-booted
@@ -891,68 +884,14 @@ const ROW_GAP: u32 = 16;
 // text-field binding (the lifted wrapper also forwards the
 // selection-aware `copy_to` / `paste_from`, fixing the PRIMARY swallow).
 
-/// (R665 §3 §5.15) Sized newtype around `Box<dyn Storage>` — the
-/// `Owner::cache<V>` slot requires a single concrete `V`, so the
-/// runtime impl choice (`FileStorage` / [`InMemoryStorage`]) hides inside
-/// the box. Mirror of [`AppClipboard`] (R56.1.e §5.22 / R56.2.b §5.22)
-/// — the boxed-dyn newtype pattern is the canonical
-/// [[owner-cache-typed-key]] shape for platform substrate hooks.
-struct AppStorage(Box<dyn Storage>);
-
-impl Storage for AppStorage {
-    fn load(&self, key: &str) -> Option<Vec<u8>> {
-        self.0.load(key)
-    }
-    fn save(&self, key: &str, bytes: &[u8]) {
-        self.0.save(key, bytes);
-    }
-    fn remove(&self, key: &str) {
-        self.0.remove(key);
-    }
-}
-
-/// (R665 §3 §5.15) Build the platform storage handle once per
-/// process. Priority:
-///
-/// 1. [`STORAGE_DIR_ENV`] env var, if set — points at a custom root
-///    (used by the R665 RPC verify demo's tempdir). Creates the dir
-///    via [`FileStorage::try_new`] (idempotent).
-/// 2. [`pinion_platform_storage::open_app_storage`] under
-///    [`STORAGE_APP_NAME`] — the canonical per-OS data dir.
-/// 3. [`InMemoryStorage`] fall-back so headless CI / sandboxed
-///    containers still wire up (persistence becomes session-local,
-///    every other code path is unchanged).
-fn build_app_storage() -> Box<dyn Storage> {
-    if let Ok(custom_dir) = std::env::var(STORAGE_DIR_ENV) {
-        match FileStorage::try_new(std::path::PathBuf::from(&custom_dir)) {
-            Ok(file) => return Box::new(file) as Box<dyn Storage>,
-            Err(e) => eprintln!(
-                "todomvc: FileStorage init at {custom_dir:?} via {STORAGE_DIR_ENV} failed \
-                 ({e}); falling back to default app data dir",
-            ),
-        }
-    }
-    match open_app_storage(STORAGE_APP_NAME) {
-        Ok(file) => Box::new(file) as Box<dyn Storage>,
-        Err(e) => {
-            eprintln!(
-                "todomvc: open_app_storage({STORAGE_APP_NAME:?}) failed ({e}); \
-                 persistence will be in-memory only (state lost on exit)",
-            );
-            Box::new(InMemoryStorage::new()) as Box<dyn Storage>
-        }
-    }
-}
-
-/// (R665 §3 §5.15) `Owner::cache`-keyed storage hook. First call
-/// allocates the platform handle via [`build_app_storage`]; every
-/// subsequent call returns the same `Rc<AppStorage>` so the entire
-/// binding shares one storage instance (atomic-write contract holds
-/// across consumers).
+/// (R665 §3 §5.15 / R857) `Owner::cache`-keyed storage hook — a thin call into the
+/// lifted [`pinion_platform_storage::use_app_storage`] SSOT. R857 moved the
+/// boxed-dyn newtype, the env-override, and the in-memory fallback that todomvc,
+/// settings-panel, and the node editor each hand-rolled into that one hook (the
+/// `use_app_clipboard` R790 precedent). Returns one shared `Rc<AppStorage>` per
+/// process (the atomic-write contract holds across consumers).
 fn use_storage() -> Rc<AppStorage> {
-    Owner::current()
-        .expect("use_storage requires an active Owner scope")
-        .cache("todomvc.storage", || AppStorage(build_app_storage()))
+    use_app_storage("todomvc.storage", STORAGE_APP_NAME)
 }
 
 /// (R665 §3 §5.15) Dehydrated todomvc state. Single blob written to

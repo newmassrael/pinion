@@ -120,7 +120,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
-use pinion_platform_storage::{open_app_storage, FileStorage};
+use pinion_platform_storage::{use_app_storage, AppStorage};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use serde::{Deserialize, Serialize};
 
@@ -177,10 +177,6 @@ const STORAGE_CACHE_KEY: &str = "node_graph.storage";
 /// R852 — the single [`Storage`] key the whole graph snapshot is written under
 /// (one blob, so `FileStorage`'s tempfile + rename covers the whole save).
 const STORAGE_KEY: &str = "node_graph.state";
-/// R852 — env override pointing at a custom storage root (the demo's tempdir,
-/// shared by the todomvc persistence demos so launches do not contaminate the
-/// developer's real data dir).
-const STORAGE_DIR_ENV: &str = "PINION_STORAGE_DIR";
 /// R852 — bump on an incompatible [`SerializedGraph`] layout change; a load of a
 /// mismatched version starts fresh (silent fall-through, the todomvc precedent).
 const PERSISTED_SCHEMA_VERSION: u32 = 1;
@@ -550,67 +546,14 @@ fn use_undo() -> Rc<UndoStack> {
     use_undo_stack(UNDO_KEY)
 }
 
-/// R852 — sized newtype around `Box<dyn Storage>` so the `Owner::cache` slot
-/// holds one concrete type while the runtime impl (`FileStorage` /
-/// [`InMemoryStorage`](pinion_core::storage::InMemoryStorage)) hides in the box
-/// (the todomvc `AppStorage` shape, [[owner-cache-typed-key]]).
-struct GraphStorage(Box<dyn Storage>);
-
-impl Storage for GraphStorage {
-    fn load(&self, key: &str) -> Option<Vec<u8>> {
-        self.0.load(key)
-    }
-    fn save(&self, key: &str, bytes: &[u8]) {
-        self.0.save(key, bytes);
-    }
-    fn remove(&self, key: &str) {
-        self.0.remove(key);
-    }
-}
-
-/// R852 — build the platform storage once. Priority: the [`STORAGE_DIR_ENV`]
-/// override (the demo's tempdir) → the per-OS data dir ([`open_app_storage`]) →
-/// the in-memory fallback (headless / sandboxed). The runtime selection is what
-/// makes `save` / `load` actually reach the file backend rather than a hardcoded
-/// in-memory stub (the R834 "binding must reach the real backend" lesson).
-fn build_graph_storage() -> Box<dyn Storage> {
-    if let Ok(custom_dir) = std::env::var(STORAGE_DIR_ENV) {
-        match FileStorage::try_new(std::path::PathBuf::from(&custom_dir)) {
-            Ok(file) => return Box::new(file) as Box<dyn Storage>,
-            Err(e) => eprintln!(
-                "hello-node-editor: FileStorage at {custom_dir:?} via {STORAGE_DIR_ENV} failed ({e}); \
-                 falling back to the default data dir",
-            ),
-        }
-    }
-    match open_app_storage(STORAGE_APP_NAME) {
-        Ok(file) => Box::new(file) as Box<dyn Storage>,
-        Err(e) => {
-            eprintln!(
-                "hello-node-editor: open_app_storage({STORAGE_APP_NAME:?}) failed ({e}); \
-                 persistence will be in-memory only (lost on exit)",
-            );
-            Box::new(pinion_core::storage::InMemoryStorage::new()) as Box<dyn Storage>
-        }
-    }
-}
-
-/// R852 — the shared graph store. The coordinator (which `save`s / `load`s) is
-/// the only consumer today; the hook keeps the platform handle a process
-/// singleton so a future status / autosave consumer reaches the same instance.
-///
-/// `GraphStorage` + [`build_graph_storage`] mirror todomvc's `AppStorage` +
-/// `build_app_storage` — this is the **2nd** inline copy of the boxed-dyn +
-/// env-override + in-memory-fallback pattern. The convention (clipboard's
-/// `pinion_platform_clipboard::use_app_clipboard`, lifted at R790 once the
-/// copies multiplied) is to lift a `use_app_storage(key, app)` into
-/// `pinion-platform-storage` at the **3rd** consumer; the fallback chain is
-/// mechanical wiring (a policy, not a correctness invariant), so 2 copies stay
-/// inline per the Rule of Three (documented carry, not silent debt).
-fn use_graph_storage() -> Rc<GraphStorage> {
-    Owner::current()
-        .expect("use_graph_storage requires an active Owner scope")
-        .cache(STORAGE_CACHE_KEY, || GraphStorage(build_graph_storage()))
+/// R852/R857 — the shared graph store. The coordinator (which `save`s / `load`s)
+/// is the only consumer today. R857: the boxed-dyn + env-override + in-memory-
+/// fallback cluster this once hand-rolled was lifted to
+/// [`pinion_platform_storage::use_app_storage`] (a verified 3-copy across
+/// todomvc / settings-panel / this example — the `use_app_clipboard` R790
+/// precedent); this is now a thin call into that SSOT.
+fn use_graph_storage() -> Rc<AppStorage> {
+    use_app_storage(STORAGE_CACHE_KEY, STORAGE_APP_NAME)
 }
 
 // ─── sub-tag grammar (composite paint tags route to the coordinator) ──
@@ -875,7 +818,7 @@ fn validate_after(sel: Selection, removed_nodes: &[NodeId], removed_edges: &[Edg
 /// budget while the model holders remain explicit.
 struct GraphServices {
     undo: Rc<UndoStack>,
-    storage: Rc<GraphStorage>,
+    storage: Rc<AppStorage>,
 }
 
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
@@ -897,7 +840,7 @@ struct NodeGraphExternal {
     /// (the same `Rc` the [`UndoStackExternal`] and the keyboard path reach).
     undo: Rc<UndoStack>,
     /// R852 — the platform graph store behind `save` / `load`.
-    storage: Rc<GraphStorage>,
+    storage: Rc<AppStorage>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<NodeId>>,
     node_drag: Cell<Option<NodeDragStart>>,
@@ -2449,16 +2392,16 @@ mod tests {
 
     /// A fresh coordinator over the shared Owner::cache holders (mutations
     /// persist across instances within one Owner scope).
-    /// R852 — an in-memory `GraphStorage` cached under [`STORAGE_CACHE_KEY`], so
-    /// tests exercise `save` / `load` without touching the filesystem (the real
+    /// R852/R857 — an in-memory [`AppStorage`] cached under [`STORAGE_CACHE_KEY`],
+    /// so tests exercise `save` / `load` without touching the filesystem (the real
     /// `FileStorage` path is covered by `tools/demos/r852_node_persist.py` via
-    /// `isolated_storage_dir`). Shared within the Owner scope, mirroring how
-    /// `use_graph_storage` makes the platform handle a process singleton.
-    fn mem_storage() -> Rc<GraphStorage> {
+    /// `isolated_storage_dir`). Injects `InMemoryStorage` directly rather than
+    /// going through `use_app_storage` (which would hit the OS data dir).
+    fn mem_storage() -> Rc<AppStorage> {
         Owner::current()
             .expect("mem_storage requires an active Owner scope")
             .cache(STORAGE_CACHE_KEY, || {
-                GraphStorage(Box::new(pinion_core::storage::InMemoryStorage::new()))
+                AppStorage::new(Box::new(pinion_core::storage::InMemoryStorage::new()))
             })
     }
 

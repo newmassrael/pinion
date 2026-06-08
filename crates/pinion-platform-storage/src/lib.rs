@@ -42,7 +42,10 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
+use pinion_core::reactive::Owner;
+use pinion_core::storage::InMemoryStorage;
 use pinion_core::{DirEntry, Directory, Storage};
 
 /// R665 §3 §5.15 — filesystem-backed [`Storage`] impl. Owns a root
@@ -398,6 +401,87 @@ impl Directory for FsDirectory {
     }
 }
 
+// ─── application storage hook (R857 SSOT lift) ─────────────────────
+
+/// R857 §3 §5.15 — env override pointing at a custom storage root. Set by the
+/// RPC-verify demos (a per-test tempdir, via `rpc_verify.isolated_storage_dir`)
+/// so example launches never contaminate the developer's real per-OS data dir.
+pub const STORAGE_DIR_ENV: &str = "PINION_STORAGE_DIR";
+
+/// R857 §3 §5.15 — sized newtype around `Box<dyn Storage>` so an `Owner::cache`
+/// slot can park either a [`FileStorage`] (the common case) or an
+/// [`InMemoryStorage`] (the headless / sandboxed fallback) under one concrete
+/// type, forwarding the whole [`Storage`] surface. The boxed-dyn wrapper peer of
+/// `pinion_platform_clipboard::AppClipboard` ([[owner-cache-typed-key]]).
+pub struct AppStorage(Box<dyn Storage>);
+
+impl AppStorage {
+    /// Wrap an explicit backend. Production uses [`build_app_storage`]; a test
+    /// injects an [`InMemoryStorage`] to stay off the filesystem.
+    #[must_use]
+    pub fn new(inner: Box<dyn Storage>) -> Self {
+        Self(inner)
+    }
+}
+
+impl Storage for AppStorage {
+    fn load(&self, key: &str) -> Option<Vec<u8>> {
+        self.0.load(key)
+    }
+    fn save(&self, key: &str, bytes: &[u8]) {
+        self.0.save(key, bytes);
+    }
+    fn remove(&self, key: &str) {
+        self.0.remove(key);
+    }
+}
+
+/// R857 §3 §5.15 — build the platform storage backend for `app` once. Priority:
+/// the [`STORAGE_DIR_ENV`] override (the demos' tempdir) → the per-OS data dir
+/// ([`open_app_storage`]) → an [`InMemoryStorage`] fallback (headless / sandboxed;
+/// persistence becomes session-local, every other path unchanged). The runtime
+/// selection is what makes a binding genuinely reach the file backend rather
+/// than a hardcoded in-memory stub (the R834 "no hollow feature" lesson).
+#[must_use]
+pub fn build_app_storage(app: &str) -> Box<dyn Storage> {
+    if let Ok(custom_dir) = std::env::var(STORAGE_DIR_ENV) {
+        match FileStorage::try_new(PathBuf::from(&custom_dir)) {
+            Ok(file) => return Box::new(file) as Box<dyn Storage>,
+            Err(e) => eprintln!(
+                "{app}: FileStorage at {custom_dir:?} via {STORAGE_DIR_ENV} failed ({e}); \
+                 falling back to the default data dir",
+            ),
+        }
+    }
+    match open_app_storage(app) {
+        Ok(file) => Box::new(file) as Box<dyn Storage>,
+        Err(e) => {
+            eprintln!(
+                "{app}: open_app_storage({app:?}) failed ({e}); persistence will be \
+                 in-memory only (lost on exit)",
+            );
+            Box::new(InMemoryStorage::new()) as Box<dyn Storage>
+        }
+    }
+}
+
+/// R857 §3 §5.15 — the `Owner::cache`-keyed storage hook: one [`AppStorage`] per
+/// process, shared by every consumer resolving `cache_key`. The SSOT lift of the
+/// byte-near-identical `AppStorage` + `build_*_storage` + `use_*storage` cluster
+/// that todomvc, settings-panel, and the node editor each hand-rolled — the
+/// `pinion_platform_clipboard::use_app_clipboard` (R790) precedent applied to
+/// storage now that the pattern is a verified 3-copy.
+///
+/// # Panics
+/// Panics outside an active [`Owner`] scope (call from a view / reducer /
+/// `create_external` hook — all run inside `root_owner.run`).
+#[must_use]
+pub fn use_app_storage(cache_key: &'static str, app: &'static str) -> Rc<AppStorage> {
+    Owner::current()
+        .expect("use_app_storage requires an active Owner scope")
+        .cache(cache_key, || AppStorage::new(build_app_storage(app)))
+}
+
 #[cfg(test)]
 mod tests {
     //! R665 §3 §5.15 — `FileStorage` regression battery covering
@@ -407,7 +491,7 @@ mod tests {
 
     use super::{
         default_app_dir, is_valid_key, key_path, list_keys_for_test, open_app_storage,
-        storage_root, temp_key_path, FileStorage, Storage,
+        storage_root, temp_key_path, AppStorage, FileStorage, InMemoryStorage, Storage,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -438,6 +522,19 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn r857_app_storage_forwards_to_its_backend() {
+        // The Owner::cache wrapper forwards the whole Storage surface to its
+        // boxed backend (the file-/in-memory-selection runtime path is exercised
+        // cross-process by the example demos via PINION_STORAGE_DIR).
+        let app = AppStorage::new(Box::new(InMemoryStorage::new()));
+        assert_eq!(app.load("k"), None, "empty backend loads None");
+        app.save("k", b"v");
+        assert_eq!(app.load("k"), Some(b"v".to_vec()), "save then load forwards");
+        app.remove("k");
+        assert_eq!(app.load("k"), None, "remove forwards");
     }
 
     #[test]

@@ -43,7 +43,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{batch, Effect, Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
-use pinion_core::storage::{InMemoryStorage, Storage};
+use pinion_core::storage::Storage;
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
@@ -63,7 +63,7 @@ use pinion_core::{
     WidgetStateName,
 };
 use pinion_platform_clipboard::use_app_clipboard;
-use pinion_platform_storage::open_app_storage;
+use pinion_platform_storage::{use_app_storage, AppStorage};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::checkbox::{view_checkbox, CheckboxStyle};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
@@ -326,49 +326,14 @@ struct PersistenceBootMarker {
     _save_effect: Effect,
 }
 
-/// Sized newtype around `Box<dyn Storage>` so `Owner::cache<V>` can
-/// store a single concrete `V`. Mirrors todomvc's `AppStorage` /
-/// `AppClipboard` shape per [[owner-cache-typed-key]].
-struct AppStorage(Box<dyn Storage>);
-
-impl Storage for AppStorage {
-    fn load(&self, key: &str) -> Option<Vec<u8>> {
-        self.0.load(key)
-    }
-    fn save(&self, key: &str, bytes: &[u8]) {
-        self.0.save(key, bytes);
-    }
-    fn remove(&self, key: &str) {
-        self.0.remove(key);
-    }
-}
-
-fn build_storage() -> Box<dyn Storage> {
-    if let Ok(custom_dir) = std::env::var("PINION_STORAGE_DIR") {
-        match pinion_platform_storage::FileStorage::try_new(std::path::PathBuf::from(&custom_dir)) {
-            Ok(file) => return Box::new(file) as Box<dyn Storage>,
-            Err(e) => eprintln!(
-                "settings-panel: FileStorage init at {custom_dir:?} via PINION_STORAGE_DIR \
-                 failed ({e}); falling back to default app data dir",
-            ),
-        }
-    }
-    match open_app_storage(STORAGE_APP_NAME) {
-        Ok(file) => Box::new(file) as Box<dyn Storage>,
-        Err(e) => {
-            eprintln!(
-                "settings-panel: open_app_storage({STORAGE_APP_NAME:?}) failed ({e}); \
-                 persistence will be in-memory only (state lost on exit)",
-            );
-            Box::new(InMemoryStorage::new()) as Box<dyn Storage>
-        }
-    }
-}
-
+/// (R665 §3 §5.15 / R857) `Owner::cache`-keyed storage hook — a thin call into the
+/// lifted [`pinion_platform_storage::use_app_storage`] SSOT. R857 moved the
+/// boxed-dyn newtype, the env-override, and the in-memory fallback that todomvc,
+/// settings-panel, and the node editor each hand-rolled into that one hook (the
+/// `use_app_clipboard` R790 precedent).
 #[must_use]
 fn use_storage() -> Rc<AppStorage> {
-    let owner = Owner::current().expect("use_storage requires an active Owner scope");
-    owner.cache("settings_panel.storage", || AppStorage(build_storage()))
+    use_app_storage("settings_panel.storage", STORAGE_APP_NAME)
 }
 
 // R790 §5.22 — the `Owner::cache`-keyed clipboard hook (`AppClipboard`

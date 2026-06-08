@@ -35319,6 +35319,50 @@
         "next Phase B item-2: frozen left column / unified large-data layer (shared view_virtual_table, larger rounds, fresh budget)"
       ]
     },
+    "R857": {
+      "decision_summary": "R857 lift use_app_storage SSOT to pinion-platform-storage (verified 3-copy: todomvc/settings-panel/node-editor) - clears the cost-no-object-deferred storage lift",
+      "changes_bullets": [
+        "session-review remediation (user cost-no-object audit): clear the verified-but-deferred storage SSOT lift NOW (budget is not a valid reason to reserve a met-threshold lift)",
+        "pinion-platform-storage: new AppStorage newtype + build_app_storage(app) + use_app_storage(cache_key, app) + STORAGE_DIR_ENV (the use_app_clipboard R790 precedent applied to storage)",
+        "retrofit all 3 consumers (todomvc / settings-panel / hello-node-editor): each use_storage is now a thin call into the SSOT; the 3 hand-rolled newtype + build + hook copies are deleted",
+        "AppStorage::new injects an explicit backend so unit tests stay off the filesystem; the real FileStorage path stays demo-covered cross-process via PINION_STORAGE_DIR"
+      ],
+      "verification_bullets": [
+        "pinion-platform-storage 19 unit (1 new: AppStorage forwards load/save/remove to its backend); node-editor 53 + grouped-grid 8 + todomvc 92 unit green",
+        "todomvc_r665 (cross-launch persistence) + settings_panel_r669 + r852_node_persist (cross-launch FileStorage) demos PASS (behaviour-identical); cargo test --workspace -j2 green (148 suites); clippy (vello, -D pedantic) green",
+        "the lift is mechanical: the 3 copies differed only in an eprintln prefix + a cache-key literal, so behaviour is preserved across every consumer (the audit's must-fix-now finding, cleared)"
+      ],
+      "impact_refs": [
+        "3",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "R858 (smaller, optional): export query_proxy_external_impl! (pub, parameterized on the backend list) so examples drop the hand-rolled proxy External skeleton (the audit's secondary finding; TreeSortExternal is the immediate consumer)",
+        "the fresh audit confirmed R851-R856 otherwise textbook-clean: abstraction boundaries all correct, no premature/missing lifts beyond storage + the macro wall",
+        "next Phase B item-2 feature: frozen left column / unified large-data layer (both touch the shared view_virtual_table)"
+      ],
+      "publishable_decision_summary": "R857 lift use_app_storage SSOT to pinion-platform-storage (verified 3-copy: todomvc/settings-panel/node-editor) - clears the cost-no-object-deferred storage lift",
+      "publishable_changes_bullets": [
+        "session-review remediation (user cost-no-object audit): clear the verified-but-deferred storage SSOT lift NOW (budget is not a valid reason to reserve a met-threshold lift)",
+        "pinion-platform-storage: new AppStorage newtype + build_app_storage(app) + use_app_storage(cache_key, app) + STORAGE_DIR_ENV (the use_app_clipboard R790 precedent applied to storage)",
+        "retrofit all 3 consumers (todomvc / settings-panel / hello-node-editor): each use_storage is now a thin call into the SSOT; the 3 hand-rolled newtype + build + hook copies are deleted",
+        "AppStorage::new injects an explicit backend so unit tests stay off the filesystem; the real FileStorage path stays demo-covered cross-process via PINION_STORAGE_DIR"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-platform-storage 19 unit (1 new: AppStorage forwards load/save/remove to its backend); node-editor 53 + grouped-grid 8 + todomvc 92 unit green",
+        "todomvc_r665 (cross-launch persistence) + settings_panel_r669 + r852_node_persist (cross-launch FileStorage) demos PASS (behaviour-identical); cargo test --workspace -j2 green (148 suites); clippy (vello, -D pedantic) green",
+        "the lift is mechanical: the 3 copies differed only in an eprintln prefix + a cache-key literal, so behaviour is preserved across every consumer (the audit's must-fix-now finding, cleared)"
+      ],
+      "publishable_impact_refs": [
+        "3",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R858 (smaller, optional): export query_proxy_external_impl! (pub, parameterized on the backend list) so examples drop the hand-rolled proxy External skeleton (the audit's secondary finding; TreeSortExternal is the immediate consumer)",
+        "the fresh audit confirmed R851-R856 otherwise textbook-clean: abstraction boundaries all correct, no premature/missing lifts beyond storage + the macro wall",
+        "next Phase B item-2 feature: frozen left column / unified large-data layer (both touch the shared view_virtual_table)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
