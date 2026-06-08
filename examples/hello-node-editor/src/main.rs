@@ -71,6 +71,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_core::composite_tag::{split_send_payload, split_subindex};
 use pinion_core::external::{
     int_of, Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint,
     External, ExternalIntrospect, IntrospectSchema, IntrospectValue, InterveneError, InvokeError,
@@ -121,6 +122,9 @@ const NUDGE_STEP: i32 = 12;
 /// Click-to-select tolerance for a wire (window px) + the bezier sample count.
 const EDGE_HIT_THRESHOLD: i32 = 8;
 const EDGE_SAMPLES: i32 = 18;
+/// Minimum horizontal control-point offset for a wire (so near-vertical wires
+/// still bow into a readable S-curve rather than a straight diagonal).
+const MIN_WIRE_BOW: i32 = 60;
 
 // ─── numeric conversion helpers (centralise the few unavoidable casts) ──
 
@@ -199,6 +203,34 @@ struct Preview {
     to: Option<(usize, usize)>,
 }
 
+/// What is selected — a node, an edge, or nothing. A sum type so "both a node
+/// and an edge selected" is unrepresentable (was previously two `Option`
+/// Signals with a mutual-exclusion invariant maintained by hand).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+enum Selection {
+    None,
+    Node(usize),
+    Edge(usize),
+}
+
+impl Selection {
+    /// The selected node index, if a node is selected.
+    fn node(self) -> Option<usize> {
+        match self {
+            Selection::Node(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    /// The selected edge index, if an edge is selected.
+    fn edge(self) -> Option<usize> {
+        match self {
+            Selection::Edge(i) => Some(i),
+            _ => None,
+        }
+    }
+}
+
 /// First-paint graph — a tiny material graph (`Texture` × `Color` →
 /// `Multiply` → `Output`).
 fn default_nodes() -> Vec<GraphNode> {
@@ -241,7 +273,7 @@ fn output_port_center(node: &GraphNode, j: usize) -> (i32, i32) {
 /// hit-test ([`point_near_edge`]) read, so the drawn curve and the clickable
 /// curve can never diverge ([[two-text-layouts-paint-vs-geometry]] analogue).
 fn edge_curve(from: (i32, i32), to: (i32, i32)) -> ((i32, i32), (i32, i32)) {
-    let ctrl = (to.0 - from.0).abs().max(60) / 2;
+    let ctrl = (to.0 - from.0).abs().max(MIN_WIRE_BOW) / 2;
     ((from.0 + ctrl, from.1), (to.0 - ctrl, to.1))
 }
 
@@ -325,15 +357,9 @@ fn use_edges() -> Rc<Signal<Vec<Edge>>> {
 }
 
 #[must_use]
-fn use_selected() -> Rc<Signal<Option<usize>>> {
-    let owner = Owner::current().expect("use_selected requires an active Owner scope");
-    owner.cache("node_graph.selected", || Signal::new(None))
-}
-
-#[must_use]
-fn use_selected_edge() -> Rc<Signal<Option<usize>>> {
-    let owner = Owner::current().expect("use_selected_edge requires an active Owner scope");
-    owner.cache("node_graph.selected_edge", || Signal::new(None))
+fn use_selection() -> Rc<Signal<Selection>> {
+    let owner = Owner::current().expect("use_selection requires an active Owner scope");
+    owner.cache("node_graph.selection", || Signal::new(Selection::None))
 }
 
 #[must_use]
@@ -355,10 +381,10 @@ fn parse_oport_sub(sub: &str) -> Option<(usize, usize)> {
     Some((n.parse().ok()?, j.parse().ok()?))
 }
 
-/// A full drop tag `node_graph#iport_<n>_<i>` → (node, input port).
+/// A full drop tag `node_graph#iport_<n>_<i>` → (node, input port). Uses the
+/// canonical `#` splitter (`split_subindex`) rather than an inline split.
 fn parse_input_port_tag(tag: &str) -> Option<(usize, usize)> {
-    let (_, sub) = tag.split_once('#')?;
-    let (n, i) = sub.strip_prefix("iport_")?.split_once('_')?;
+    let (n, i) = split_subindex(tag).1?.strip_prefix("iport_")?.split_once('_')?;
     Some((n.parse().ok()?, i.parse().ok()?))
 }
 
@@ -415,10 +441,9 @@ enum PendingPress {
 struct NodeGraphExternal {
     nodes: Rc<Signal<Vec<GraphNode>>>,
     edges: Rc<Signal<Vec<Edge>>>,
-    /// Selected node index (mutually exclusive with `selected_edge`).
-    selected: Rc<Signal<Option<usize>>>,
-    /// Selected edge index (mutually exclusive with `selected`).
-    selected_edge: Rc<Signal<Option<usize>>>,
+    /// The single selection (node | edge | none) — a sum type, so node and
+    /// edge selection are mutually exclusive by construction.
+    selection: Rc<Signal<Selection>>,
     preview: Rc<Signal<Option<Preview>>>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<usize>>,
@@ -433,15 +458,13 @@ impl NodeGraphExternal {
     fn new(
         nodes: Rc<Signal<Vec<GraphNode>>>,
         edges: Rc<Signal<Vec<Edge>>>,
-        selected: Rc<Signal<Option<usize>>>,
-        selected_edge: Rc<Signal<Option<usize>>>,
+        selection: Rc<Signal<Selection>>,
         preview: Rc<Signal<Option<Preview>>>,
     ) -> Self {
         Self {
             nodes,
             edges,
-            selected,
-            selected_edge,
+            selection,
             preview,
             grabbed_node: Cell::new(None),
             node_drag: Cell::new(None),
@@ -495,10 +518,13 @@ impl NodeGraphExternal {
         }
         edges.retain(|e| !(e.to_node == to_node && e.to_port == to_port));
         edges.push(edge);
-        // The dedup-retain may shift indices — drop a now-ambiguous selection.
+        // The dedup-retain may shift edge indices — drop a now-ambiguous
+        // edge selection (a node selection is unaffected).
         batch(|| {
             self.edges.set(edges);
-            self.selected_edge.set(None);
+            if self.selection.get().edge().is_some() {
+                self.selection.set(Selection::None);
+            }
         });
         true
     }
@@ -512,9 +538,9 @@ impl NodeGraphExternal {
         batch(|| {
             self.edges.set(edges);
             // Drop / shift the edge selection to track the removal.
-            self.selected_edge.set(match self.selected_edge.get() {
-                Some(s) if s == index => None,
-                Some(s) if s > index => Some(s - 1),
+            self.selection.set(match self.selection.get() {
+                Selection::Edge(s) if s == index => Selection::None,
+                Selection::Edge(s) if s > index => Selection::Edge(s - 1),
                 other => other,
             });
         });
@@ -546,29 +572,27 @@ impl NodeGraphExternal {
                 }
                 next
             });
-            self.selected.set(match self.selected.get() {
-                Some(s) if s == k => None,
-                Some(s) if s > k => Some(s - 1),
+            // A selected node shifts with the reindex; a selected edge is now
+            // ambiguous (incident edges dropped + reindexed) so it clears.
+            self.selection.set(match self.selection.get() {
+                Selection::Node(s) if s == k => Selection::None,
+                Selection::Node(s) if s > k => Selection::Node(s - 1),
+                Selection::Edge(_) => Selection::None,
                 other => other,
             });
-            // Incident edges dropped + indices shifted — clear edge selection.
-            self.selected_edge.set(None);
         });
         self.grabbed_node.set(None);
         self.node_drag.set(None);
         true
     }
 
-    /// Delete whatever is selected — a selected edge takes priority over a
-    /// selected node (the two are mutually exclusive anyway). The `Delete` key
-    /// + the RPC `delete_selected` share this.
+    /// Delete whatever is selected — node or edge (the single `Selection` makes
+    /// the two cases exhaustive). The `Delete` key + RPC `delete_selected` share it.
     fn delete_selected(&self) -> bool {
-        if let Some(e) = self.selected_edge.get() {
-            return self.remove_edge(e);
-        }
-        match self.selected.get() {
-            Some(k) => self.delete_node(k),
-            None => false,
+        match self.selection.get() {
+            Selection::Edge(e) => self.remove_edge(e),
+            Selection::Node(k) => self.delete_node(k),
+            Selection::None => false,
         }
     }
 
@@ -587,7 +611,7 @@ impl NodeGraphExternal {
 
     /// Nudge the selected node by `(dx, dy)` (the arrow-key path).
     fn nudge_selected(&self, dx: i32, dy: i32) -> bool {
-        let Some(k) = self.selected.get() else {
+        let Some(k) = self.selection.get().node() else {
             return false;
         };
         let nodes = self.nodes.get();
@@ -597,32 +621,28 @@ impl NodeGraphExternal {
         self.set_node_pos(k, node.x + dx, node.y + dy)
     }
 
-    /// Select a node (clamped, in-range), clearing any edge selection — node
-    /// and edge selection are mutually exclusive.
-    fn set_selected(&self, value: Option<usize>) {
-        let clamped = value.filter(|&i| i < self.node_count());
-        batch(|| {
-            self.selected.set(clamped);
-            self.selected_edge.set(None);
-        });
+    /// Select a node (clamped, in-range). The sum type makes any prior edge
+    /// selection vanish for free — no "clear the other" bookkeeping.
+    fn select_node(&self, value: Option<usize>) {
+        let next = value.filter(|&i| i < self.node_count()).map_or(Selection::None, Selection::Node);
+        self.selection.set(next);
     }
 
-    /// Select an edge (clamped, in-range), clearing any node selection.
-    fn set_selected_edge(&self, value: Option<usize>) {
-        let clamped = value.filter(|&i| i < self.edges.get().len());
-        batch(|| {
-            self.selected_edge.set(clamped);
-            self.selected.set(None);
-        });
+    /// Select an edge (clamped, in-range).
+    fn select_edge(&self, value: Option<usize>) {
+        let next =
+            value.filter(|&i| i < self.edges.get().len()).map_or(Selection::None, Selection::Edge);
+        self.selection.set(next);
     }
 
     /// Pointer `send` wire (the same channel the router and RPC share).
     fn handle_send(&mut self, payload: &str) -> IntrospectValue {
-        let parts: Vec<&str> = payload.split(':').collect();
-        let (sub, event) = match parts.as_slice() {
-            [event] => (None, *event),
-            [sub, event, ..] => (Some(*sub), *event),
-            [] => (None, ""),
+        // Decode via the canonical send-wire SSOT (`split_send_payload`):
+        // a composite `"key:event[:mods]"` yields `(Some(key), event)`; a bare
+        // `"event"` (canvas background) yields `(None, event)`.
+        let (sub, event) = match split_send_payload(payload) {
+            Some((key, event, _mods)) => (Some(key), event),
+            None => (None, payload),
         };
         match (sub, event) {
             (Some(s), "PointerDown") => {
@@ -640,7 +660,7 @@ impl NodeGraphExternal {
             }
             (Some(s), "PointerUp") => {
                 if let Some(n) = parse_node_sub(s) {
-                    self.set_selected(Some(n));
+                    self.select_node(Some(n));
                 }
                 self.end_gesture();
             }
@@ -650,8 +670,8 @@ impl NodeGraphExternal {
                 // drag was armed.
                 if self.grabbed_node.get().is_none() {
                     match self.pending_edge_hit.get() {
-                        Some(e) => self.set_selected_edge(Some(e)),
-                        None => self.set_selected(None),
+                        Some(e) => self.select_edge(Some(e)),
+                        None => self.select_node(None),
                     }
                 }
                 self.end_gesture();
@@ -678,7 +698,7 @@ impl core::fmt::Debug for NodeGraphExternal {
         f.debug_struct("NodeGraphExternal")
             .field("nodes", &self.node_count())
             .field("edges", &self.edges.get().len())
-            .field("selected", &self.selected.get())
+            .field("selection", &self.selection.get())
             .finish_non_exhaustive()
     }
 }
@@ -816,11 +836,11 @@ impl ExternalIntrospect for NodeGraphExternal {
         match path {
             "node_count" => Some(IntrospectValue::Int(int_of(self.node_count()))),
             "edge_count" => Some(IntrospectValue::Int(int_of(self.edges.get().len()))),
-            "selected" => Some(match self.selected.get() {
+            "selected" => Some(match self.selection.get().node() {
                 Some(i) => IntrospectValue::Int(int_of(i)),
                 None => IntrospectValue::Null,
             }),
-            "selected_edge" => Some(match self.selected_edge.get() {
+            "selected_edge" => Some(match self.selection.get().edge() {
                 Some(i) => IntrospectValue::Int(int_of(i)),
                 None => IntrospectValue::Null,
             }),
@@ -857,12 +877,12 @@ impl ExternalIntrospect for NodeGraphExternal {
         if path == "selected" {
             return match value {
                 IntrospectValue::Null => {
-                    self.set_selected(None);
+                    self.select_node(None);
                     Ok(())
                 }
                 IntrospectValue::Int(i) => {
                     let idx = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
-                    self.set_selected(Some(idx));
+                    self.select_node(Some(idx));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -871,12 +891,12 @@ impl ExternalIntrospect for NodeGraphExternal {
         if path == "selected_edge" {
             return match value {
                 IntrospectValue::Null => {
-                    self.set_selected_edge(None);
+                    self.select_edge(None);
                     Ok(())
                 }
                 IntrospectValue::Int(i) => {
                     let idx = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
-                    self.set_selected_edge(Some(idx));
+                    self.select_edge(Some(idx));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -996,11 +1016,17 @@ fn view_edge(tag: String, from: (i32, i32), to: (i32, i32), color: Color, width:
         PathCommand::MoveTo(ppt(from.0, from.1)),
         PathCommand::CurveTo { c1: ppt(c1.0, c1.1), c2: ppt(c2.0, c2.1), end: ppt(to.0, to.1) },
     ];
-    // Tight bounding box at the wire's extent — and `pointer_transparent`
-    // so the (decorative) edge never intercepts a click meant for the
-    // canvas background or a node card beneath it.
-    let (ox, oy) = (from.0.min(to.0), from.1.min(to.1));
-    let (bw, bh) = ((from.0 - to.0).abs().max(1), (from.1 - to.1).abs().max(1));
+    // Bounding box over ALL four control points (the curve bows outside the
+    // endpoint box, so a snapshot bbox from endpoints alone understates the
+    // true extent — an AI-first `scene/snapshot` bbox query must be honest).
+    // `pointer_transparent` keeps the decorative edge from intercepting a
+    // click meant for the canvas background or a node card beneath it.
+    let xs = [from.0, c1.0, c2.0, to.0];
+    let ys = [from.1, c1.1, c2.1, to.1];
+    let ox = xs.iter().copied().min().unwrap_or(0);
+    let oy = ys.iter().copied().min().unwrap_or(0);
+    let bw = (xs.iter().copied().max().unwrap_or(0) - ox).max(1);
+    let bh = (ys.iter().copied().max().unwrap_or(0) - oy).max(1);
     Scene::Path(
         PathNode::new(
             Rect::new(upx(ox), upx(oy), upx(bw), upx(bh)),
@@ -1116,8 +1142,9 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let nodes = use_nodes().get();
     let edges = use_edges().get();
-    let selected = use_selected().get();
-    let selected_edge = use_selected_edge().get();
+    let selection = use_selection().get();
+    let selected = selection.node();
+    let selected_edge = selection.edge();
     let preview = use_preview().get();
 
     let mut children: Vec<Scene> = Vec::new();
@@ -1192,13 +1219,7 @@ impl WidgetCore for NodeEditorView {
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
-        Box::new(NodeGraphExternal::new(
-            use_nodes(),
-            use_edges(),
-            use_selected(),
-            use_selected_edge(),
-            use_preview(),
-        ))
+        Box::new(NodeGraphExternal::new(use_nodes(), use_edges(), use_selection(), use_preview()))
     }
 
     fn tag() -> &'static str {
@@ -1245,27 +1266,32 @@ impl WidgetCore for NodeEditorView {
 }
 
 impl WidgetA11y for NodeEditorView {
-    /// R838 §5.40 — the graph lowers to a WAI-ARIA `list` whose `listitem`
-    /// children are the nodes (named by title + port arity, selection
-    /// flagged). A true diagram role tree is a follow-up.
+    /// R838 §5.40 / R840 — the graph lowers to a WAI-ARIA `group` whose
+    /// children are the nodes (named by title + port arity, selection flagged).
+    ///
+    /// R840 audit fix: a node graph is **not** a linear list, so it must not
+    /// use `list`/`listitem` + `aria-posinset`/`aria-setsize` (which would
+    /// assert a false "item i of n in an ordered set" to assistive tech). It
+    /// lowers to `group` + neutral `generic` children — honest about being an
+    /// unordered set of nodes. The connectivity (edges) is still invisible to
+    /// AT: WAI-ARIA's `graphics-document` role and a multi-target
+    /// `flowto`/`owns` relation are a genuine `pinion-a11y` gap (no graphics
+    /// role or fan-out relation exists today) — the topology stays reachable
+    /// on the RPC axis (`query edge.<i>`) per [[ai-first-rpc-introspection-obligation]].
     fn access_node(_state: &(), focused: Option<&str>) -> Vec<AccessNode> {
         let nodes = use_nodes().get();
-        let selected = use_selected().get();
-        let mut list = AccessNode::new(GRAPH_TAG, AriaRole::List)
+        let selected = use_selection().get().node();
+        let mut group = AccessNode::new(GRAPH_TAG, AriaRole::Group)
             .with_name("Node graph")
             .with_state(AccessState { focused: focused == Some(GRAPH_TAG), ..AccessState::default() });
         for i in 0..nodes.len() {
-            list = list.with_child(format!("{GRAPH_TAG}#node_{i}"));
+            group = group.with_child(format!("{GRAPH_TAG}#node_{i}"));
         }
-        let mut out = vec![list];
+        let mut out = vec![group];
         for (i, node) in nodes.iter().enumerate() {
             out.push(
-                AccessNode::new(format!("{GRAPH_TAG}#node_{i}"), AriaRole::ListItem)
-                    .with_name(format!(
-                        "{} ({} in, {} out)",
-                        node.title, node.inputs, node.outputs
-                    ))
-                    .with_set_position(i, nodes.len())
+                AccessNode::new(format!("{GRAPH_TAG}#node_{i}"), AriaRole::Generic)
+                    .with_name(format!("{} ({} in, {} out)", node.title, node.inputs, node.outputs))
                     .with_selected(selected == Some(i)),
             );
         }
@@ -1539,13 +1565,7 @@ mod tests {
     /// A fresh coordinator over the shared Owner::cache holders (mutations
     /// persist across instances within one Owner scope).
     fn coordinator() -> NodeGraphExternal {
-        NodeGraphExternal::new(
-            use_nodes(),
-            use_edges(),
-            use_selected(),
-            use_selected_edge(),
-            use_preview(),
-        )
+        NodeGraphExternal::new(use_nodes(), use_edges(), use_selection(), use_preview())
     }
 
     #[test]
@@ -1587,16 +1607,15 @@ mod tests {
     }
 
     #[test]
-    fn r839_node_and_edge_selection_are_mutually_exclusive() {
+    fn r840_node_and_edge_selection_are_one_sum_type() {
         Owner::new().run(|| {
             let _ = boot_scene();
             let coord = coordinator();
-            coord.set_selected(Some(2));
-            assert_eq!(use_selected().get(), Some(2));
-            assert_eq!(use_selected_edge().get(), None);
-            coord.set_selected_edge(Some(1));
-            assert_eq!(use_selected_edge().get(), Some(1));
-            assert_eq!(use_selected().get(), None, "selecting an edge clears the node");
+            coord.select_node(Some(2));
+            assert_eq!(use_selection().get(), Selection::Node(2));
+            coord.select_edge(Some(1));
+            assert_eq!(use_selection().get(), Selection::Edge(1), "selecting an edge replaces the node");
+            // The illegal "both selected" state is unrepresentable by construction.
         });
     }
 
@@ -1605,12 +1624,12 @@ mod tests {
         Owner::new().run(|| {
             let _ = boot_scene();
             let coord = coordinator();
-            coord.set_selected_edge(Some(2));
+            coord.select_edge(Some(2));
             assert!(coord.remove_edge(0), "remove edge 0");
-            assert_eq!(use_selected_edge().get(), Some(1), "selection 2 shifts to 1");
-            coord.set_selected_edge(Some(1));
+            assert_eq!(use_selection().get(), Selection::Edge(1), "selection 2 shifts to 1");
+            coord.select_edge(Some(1));
             assert!(coord.remove_edge(1), "remove the selected edge");
-            assert_eq!(use_selected_edge().get(), None, "removing the selected edge clears it");
+            assert_eq!(use_selection().get(), Selection::None, "removing the selected edge clears it");
         });
     }
 
@@ -1619,10 +1638,10 @@ mod tests {
         Owner::new().run(|| {
             let _ = boot_scene();
             let coord = coordinator();
-            coord.set_selected_edge(Some(0));
+            coord.select_edge(Some(0));
             assert!(coord.delete_selected(), "delete the selected edge");
             assert_eq!(use_edges().get().len(), 2, "one edge removed");
-            assert_eq!(use_selected_edge().get(), None);
+            assert_eq!(use_selection().get(), Selection::None);
         });
     }
 
@@ -1665,21 +1684,24 @@ mod tests {
     }
 
     #[test]
-    fn r838_access_node_emits_list_with_selected_item() {
+    fn r840_access_node_emits_group_not_ordered_list() {
         Owner::new().run(|| {
             let _scene = boot_scene();
-            use_selected().set(Some(2));
+            use_selection().set(Selection::Node(2));
             let nodes = NodeEditorView::access_node(&(), Some(GRAPH_TAG));
-            assert_eq!(nodes.len(), 1 + 4, "list + one item per node");
-            assert_eq!(nodes[0].role, AriaRole::List);
+            assert_eq!(nodes.len(), 1 + 4, "group + one item per node");
+            // R840 audit fix: a graph is an unordered set, so Group/Generic —
+            // never List/ListItem with a false aria-posinset.
+            assert_eq!(nodes[0].role, AriaRole::Group);
             assert!(nodes[0].state.focused);
             let multiply = nodes
                 .iter()
                 .find(|n| n.tag == format!("{GRAPH_TAG}#node_2"))
                 .expect("Multiply node present");
-            assert_eq!(multiply.role, AriaRole::ListItem);
+            assert_eq!(multiply.role, AriaRole::Generic);
             assert_eq!(multiply.name.as_deref(), Some("Multiply (2 in, 1 out)"));
             assert_eq!(multiply.selected, Some(true));
+            assert_eq!(multiply.position_in_set, None, "no false ordered-set position");
         });
     }
 

@@ -34387,6 +34387,54 @@
         "marquee multi-select, edge re-route (drag an existing wire end), canvas pan/zoom = additive follow-ups"
       ]
     },
+    "R840": {
+      "decision_summary": "R840 audit-remediation (cost-no-object session review): enum Selection illegal-states + split_send_payload/split_subindex SSOT reuse + a11y group-not-list + curve bbox + magic-num const",
+      "changes_bullets": [
+        "enum Selection {None,Node,Edge} replaces 2 Option Signals (mutual-exclusion now structural)",
+        "handle_send reuses composite_tag::split_send_payload; parse_input_port_tag reuses split_subindex",
+        "a11y: graph lowers to Group/Generic not List/ListItem (a graph is not an ordered set)",
+        "edge snapshot bbox unions all 4 control points (the curve bows outside the endpoint box)",
+        "MIN_WIRE_BOW const replaces the magic 60 in edge_curve"
+      ],
+      "verification_bullets": [
+        "20 unit tests green (r840 enum-selection + group-a11y added); workspace test + clippy green",
+        "tools/demos/r838_node_editor.py PASS (52 assertions; wire contract preserved, behaviour-identical)",
+        "verified split_send_payload + split_subindex are the canonical SSOTs (repo-wide grep)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "stable node/edge ids (delete reindexes) = R841 next round (dock-panels-editor precedent; undo/serialize)",
+        "pinion-a11y gap: graphics-document role + multi-target flowto/owns relation for graph connectivity",
+        "\"click coords to External\" framework primitive (now via capture-seed); typed ports deferred"
+      ],
+      "publishable_decision_summary": "R840 audit-remediation (cost-no-object session review): enum Selection illegal-states + split_send_payload/split_subindex SSOT reuse + a11y group-not-list + curve bbox + magic-num const",
+      "publishable_changes_bullets": [
+        "enum Selection {None,Node,Edge} replaces 2 Option Signals (mutual-exclusion now structural)",
+        "handle_send reuses composite_tag::split_send_payload; parse_input_port_tag reuses split_subindex",
+        "a11y: graph lowers to Group/Generic not List/ListItem (a graph is not an ordered set)",
+        "edge snapshot bbox unions all 4 control points (the curve bows outside the endpoint box)",
+        "MIN_WIRE_BOW const replaces the magic 60 in edge_curve"
+      ],
+      "publishable_verification_bullets": [
+        "20 unit tests green (r840 enum-selection + group-a11y added); workspace test + clippy green",
+        "tools/demos/r838_node_editor.py PASS (52 assertions; wire contract preserved, behaviour-identical)",
+        "verified split_send_payload + split_subindex are the canonical SSOTs (repo-wide grep)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "stable node/edge ids (delete reindexes) = R841 next round (dock-panels-editor precedent; undo/serialize)",
+        "pinion-a11y gap: graphics-document role + multi-target flowto/owns relation for graph connectivity",
+        "\"click coords to External\" framework primitive (now via capture-seed); typed ports deferred"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
