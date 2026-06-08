@@ -34907,6 +34907,54 @@
         "frozen/pinned first column + per-group aggregate footer (R846 carries) still open"
       ]
     },
+    "R849": {
+      "decision_summary": "R849 node-graph node creation: the node editor becomes authorable - R838-R842 made it movable/connectable/deletable but a closed set (you could rearrange the 4 seed nodes, never grow the graph). An add-node palette sidebar and an add_node RPC verb create new nodes with fresh monotonic stable ids (use_next_node_id mirrors use_next_edge_id; first_dynamic_node_id derived from default_nodes). Palette cards route via the existing handle_send composite channel (node_graph#palette_<idx>); the canvas keeps its WIN_W x WIN_H coordinate system (the palette is an extra strip, so no drag/hit-test math changes). a11y: a toolbar of Add-kind buttons under a wrapping editor root. The Phase-D blueprint/material-graph editor seed.",
+      "changes_bullets": [
+        "next_node_id Cell (use_next_node_id) + first_dynamic_node_id derived from default_nodes (mirror edge peers)",
+        "NodeGraphExternal.add_node(kind): mint stable id + cascade place + push + select; PALETTE table (5 material kinds)",
+        "handle_send palette branch (palette_<idx> on PointerUp = activation edge) + parse_palette_sub",
+        "add_node RPC verb (by kind name, returns the new id; unknown kind Rejected) + schema slot",
+        "view: palette sidebar Row[palette, canvas]; window widened PALETTE_W+WIN_W; canvas WIN_W x WIN_H coords unchanged",
+        "a11y: toolbar of Add-<kind> buttons under a wrapping editor root (graph group found by tag)"
+      ],
+      "verification_bullets": [
+        "hello-node-editor 28 unit (5 new: first_dynamic_node_id / add_node mint+select+kind-guard / monotonic-no-reuse / RPC verb+reject / palette-release-adds)",
+        "tools/demos/r849_node_add.py 31 checks (boot palette / RPC add_node+reject / palette click renders card / connect+move+delete+monotonic mint)",
+        "cargo test --workspace -j2 = 148 ok 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello clean"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "node-type palette is a fixed 5-kind table; a searchable/categorised palette (UE-style add menu) = additive",
+        "new nodes spawn at a deterministic cascade; drop-at-cursor placement (R839 capture-seed coords) = additive",
+        "graph serialization (serde-derive ready) + undo of add/delete still open (R841/R842 carry)"
+      ],
+      "publishable_decision_summary": "R849 node-graph node creation: the node editor becomes authorable - R838-R842 made it movable/connectable/deletable but a closed set (you could rearrange the 4 seed nodes, never grow the graph). An add-node palette sidebar and an add_node RPC verb create new nodes with fresh monotonic stable ids (use_next_node_id mirrors use_next_edge_id; first_dynamic_node_id derived from default_nodes). Palette cards route via the existing handle_send composite channel (node_graph#palette_<idx>); the canvas keeps its WIN_W x WIN_H coordinate system (the palette is an extra strip, so no drag/hit-test math changes). a11y: a toolbar of Add-kind buttons under a wrapping editor root. The Phase-D blueprint/material-graph editor seed.",
+      "publishable_changes_bullets": [
+        "next_node_id Cell (use_next_node_id) + first_dynamic_node_id derived from default_nodes (mirror edge peers)",
+        "NodeGraphExternal.add_node(kind): mint stable id + cascade place + push + select; PALETTE table (5 material kinds)",
+        "handle_send palette branch (palette_<idx> on PointerUp = activation edge) + parse_palette_sub",
+        "add_node RPC verb (by kind name, returns the new id; unknown kind Rejected) + schema slot",
+        "view: palette sidebar Row[palette, canvas]; window widened PALETTE_W+WIN_W; canvas WIN_W x WIN_H coords unchanged",
+        "a11y: toolbar of Add-<kind> buttons under a wrapping editor root (graph group found by tag)"
+      ],
+      "publishable_verification_bullets": [
+        "hello-node-editor 28 unit (5 new: first_dynamic_node_id / add_node mint+select+kind-guard / monotonic-no-reuse / RPC verb+reject / palette-release-adds)",
+        "tools/demos/r849_node_add.py 31 checks (boot palette / RPC add_node+reject / palette click renders card / connect+move+delete+monotonic mint)",
+        "cargo test --workspace -j2 = 148 ok 0 fail; clippy --workspace --all-targets --features pinion-runtime/vello clean"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "node-type palette is a fixed 5-kind table; a searchable/categorised palette (UE-style add menu) = additive",
+        "new nodes spawn at a deterministic cascade; drop-at-cursor placement (R839 capture-seed coords) = additive",
+        "graph serialization (serde-derive ready) + undo of add/delete still open (R841/R842 carry)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

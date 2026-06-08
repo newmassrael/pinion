@@ -117,6 +117,35 @@ const THEME_TAG: &str = "app";
 /// and the canvas hit / capture-normalize root.
 const GRAPH_TAG: &str = "node_graph";
 
+/// R849 — the "add node" palette: the node kinds a sidebar click (or the
+/// `add_node` RPC verb) can create, as `(title, inputs, outputs)`. A tiny
+/// material-graph vocabulary (sources / op / sink), the same port shapes
+/// [`default_nodes`] seeds.
+const PALETTE: &[(&str, usize, usize)] = &[
+    ("Texture", 0, 1),
+    ("Color", 0, 1),
+    ("Multiply", 2, 1),
+    ("Add", 2, 1),
+    ("Output", 1, 0),
+];
+
+/// R849 — sidebar width for the node palette. The canvas keeps its
+/// `WIN_W × WIN_H` coordinate system; the palette is an extra left strip, so
+/// the capture-drag / hit-test canvas-extent math is unchanged (the
+/// `capture_normalize` reference is the offset `GRAPH_TAG` rect).
+const PALETTE_W: u32 = 132;
+/// R849 — the palette container tag (a11y `toolbar` root; routes no pointer
+/// events itself — only its `node_graph#palette_<idx>` item cards do).
+const PALETTE_TAG: &str = "node_palette";
+/// R849 — the editor a11y root wrapping the palette + the canvas.
+const ROOT_TAG: &str = "node_editor";
+
+/// R849 — where a newly added node first lands, and the per-add cascade step
+/// (in minted-id order) so repeated adds do not stack exactly.
+const SPAWN_X: i32 = 300;
+const SPAWN_Y: i32 = 44;
+const SPAWN_STEP: i32 = 26;
+
 const TITLE_PX: u32 = 20;
 const NODE_TITLE_PX: u32 = 14;
 const STATUS_PX: u32 = 12;
@@ -294,6 +323,13 @@ fn first_dynamic_edge_id() -> u32 {
     default_edges().iter().map(|e| e.id.raw()).max().map_or(0, |m| m + 1)
 }
 
+/// R849 — the id new nodes mint from: one past the highest [`default_nodes`]
+/// id. Derived (mirroring [`first_dynamic_edge_id`]) so adding a seed node
+/// cannot silently collide a minted id.
+fn first_dynamic_node_id() -> u32 {
+    default_nodes().iter().map(|n| n.id.raw()).max().map_or(0, |m| m + 1)
+}
+
 /// First-paint graph — a tiny material graph (`Texture` × `Color` →
 /// `Multiply` → `Output`). Node ids 0..=3, edge ids 0..=2.
 fn default_nodes() -> Vec<GraphNode> {
@@ -439,11 +475,25 @@ fn use_next_edge_id() -> Rc<Cell<u32>> {
     owner.cache("node_graph.next_edge_id", || Cell::new(first_dynamic_edge_id()))
 }
 
+/// R849 — the monotonic [`NodeId`] source for newly created nodes (mirrors
+/// [`use_next_edge_id`]). One shared `Cell` per Owner scope so a minted id is
+/// never reused, even across deletes.
+fn use_next_node_id() -> Rc<Cell<u32>> {
+    let owner = Owner::current().expect("use_next_node_id requires an active Owner scope");
+    owner.cache("node_graph.next_node_id", || Cell::new(first_dynamic_node_id()))
+}
+
 // ─── sub-tag grammar (composite paint tags route to the coordinator) ──
 
 /// `node_graph#node_<id>` → [`NodeId`].
 fn parse_node_sub(sub: &str) -> Option<NodeId> {
     Some(NodeId(sub.strip_prefix("node_")?.parse().ok()?))
+}
+
+/// R849 — `node_graph#palette_<idx>` → the [`PALETTE`] index of an add-node
+/// sidebar card.
+fn parse_palette_sub(sub: &str) -> Option<usize> {
+    sub.strip_prefix("palette_")?.parse().ok()
 }
 
 /// `oport_<id>_<j>` → (node id, output port).
@@ -524,6 +574,8 @@ struct NodeGraphExternal {
     preview: Rc<Signal<Option<Preview>>>,
     /// Monotonic [`EdgeId`] source for newly-connected wires.
     next_edge_id: Rc<Cell<u32>>,
+    /// R849 — monotonic [`NodeId`] source for newly created (palette / RPC) nodes.
+    next_node_id: Rc<Cell<u32>>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<NodeId>>,
     node_drag: Cell<Option<NodeDragStart>>,
@@ -540,6 +592,7 @@ impl NodeGraphExternal {
         selection: Rc<Signal<Selection>>,
         preview: Rc<Signal<Option<Preview>>>,
         next_edge_id: Rc<Cell<u32>>,
+        next_node_id: Rc<Cell<u32>>,
     ) -> Self {
         Self {
             nodes,
@@ -547,6 +600,7 @@ impl NodeGraphExternal {
             selection,
             preview,
             next_edge_id,
+            next_node_id,
             grabbed_node: Cell::new(None),
             node_drag: Cell::new(None),
             pending_press: Cell::new(PendingPress::None),
@@ -591,6 +645,32 @@ impl NodeGraphExternal {
             next
         });
         moved
+    }
+
+    /// R849 — create a new node of [`PALETTE`] kind `kind` at the next cascade
+    /// position, minting a fresh stable [`NodeId`] (monotonic, never reused),
+    /// and select it. Returns the new id, or `None` for an out-of-range kind.
+    /// The single mutation behind both a palette card click ([`handle_send`])
+    /// and the `add_node` RPC verb — the graph can finally *grow*, not only be
+    /// rearranged. A new node has no edges, so no edge / selection bookkeeping
+    /// is needed (the stable-id model: adding is purely additive).
+    fn add_node(&self, kind: usize) -> Option<NodeId> {
+        let &(title, inputs, outputs) = PALETTE.get(kind)?;
+        let raw = self.next_node_id.get();
+        self.next_node_id.set(raw + 1);
+        let id = NodeId(raw);
+        // Cascade in minted order from the spawn point so repeated adds fan out
+        // instead of stacking exactly on one another.
+        let step = i32::try_from(raw.saturating_sub(first_dynamic_node_id())).unwrap_or(0) % 8;
+        let x = clamp_node_x(SPAWN_X + step * SPAWN_STEP);
+        let y = clamp_node_y(SPAWN_Y + step * SPAWN_STEP);
+        self.nodes.set_with(|prev| {
+            let mut next = prev.clone();
+            next.push(GraphNode { id, title: title.to_owned(), x, y, inputs, outputs });
+            next
+        });
+        self.selection.set(Selection::Node(id));
+        Some(id)
     }
 
     /// Add an edge output `(from_node, from_port)` → input `(to_node,
@@ -747,7 +827,13 @@ impl NodeGraphExternal {
                 }
             }
             (Some(s), "PointerUp") => {
-                if let Some(n) = parse_node_sub(s) {
+                // R849 — a palette card's release creates a node (the activation
+                // edge); a node card's release selects it. (A palette press
+                // landed in the input-port arm above, which only suppresses the
+                // background edge-probe — harmless, reset by `end_gesture`.)
+                if let Some(kind) = parse_palette_sub(s) {
+                    self.add_node(kind);
+                } else if let Some(n) = parse_node_sub(s) {
                     self.select_node(Some(n));
                 }
                 self.end_gesture();
@@ -914,6 +1000,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node.<id>.outputs", "int"),
             ("edge.<id>", "string"),
             ("send", "string"),
+            ("add_node", "string"),
             ("add_edge", "string"),
             ("remove_edge", "int"),
             ("delete_node", "int"),
@@ -1032,6 +1119,20 @@ impl ExternalIntrospect for NodeGraphExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(s) => Ok(self.handle_send(&s)),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R849 — create a node by kind name; returns the new node's stable
+            // id in one round-trip. An unknown kind is Rejected (the graph is
+            // unchanged), the AI-first mirror of a clicked palette card.
+            "add_node" => match args {
+                IntrospectValue::Text(s) => {
+                    let kind = PALETTE
+                        .iter()
+                        .position(|&(name, _, _)| name == s)
+                        .ok_or(InvokeError::Rejected)?;
+                    let id = self.add_node(kind).ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Int(i64::from(id.raw())))
+                }
                 _ => Err(InvokeError::TypeMismatch),
             },
             "add_edge" => match args {
@@ -1245,6 +1346,54 @@ fn view_node(node: &GraphNode, selected: bool, theme: &Theme) -> Scene {
     )
 }
 
+/// R849 — the "add node" palette sidebar: a labelled column of clickable cards,
+/// one per [`PALETTE`] kind. Each card is a `node_graph#palette_<idx>` composite,
+/// so a click routes to the coordinator's `handle_send` (the same wire the
+/// `add_node` RPC verb drives) and creates that node. Plain clickable cards (the
+/// grouped-header precedent — a list of actions), not Material buttons;
+/// press-state feedback is an additive axis.
+fn view_palette(theme: &Theme) -> Scene {
+    let mut items: Vec<Scene> = Vec::with_capacity(PALETTE.len() + 1);
+    items.push(Scene::Text(
+        TextNode::styled(
+            "Add node",
+            Rect::default(),
+            TextStyle::new().with_size_px(NODE_TITLE_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+        )
+        .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 12, 12, 4))),
+    ));
+    for (idx, &(title, inputs, outputs)) in PALETTE.iter().enumerate() {
+        let label = Scene::Text(TextNode::styled(
+            format!("{title} ({inputs}/{outputs})"),
+            Rect::default(),
+            TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+        ));
+        items.push(Scene::Container(
+            ContainerNode::new(vec![label])
+                .with_tag(format!("{GRAPH_TAG}#palette_{idx}"))
+                .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+                .with_layout(
+                    LayoutStyle::new()
+                        .flex(FlexDirection::Row)
+                        .with_align_items(AlignItems::Center)
+                        .with_size(Size::px(PALETTE_W - 16, 30))
+                        .with_padding(Rect::new(10, 0, 8, 0)),
+                ),
+        ));
+    }
+    Scene::Container(
+        ContainerNode::new(items)
+            .with_tag(PALETTE_TAG)
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_gap(6)
+                    .with_size(Size::px(PALETTE_W, WIN_H)),
+            ),
+    )
+}
+
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(_state: (), _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
@@ -1309,12 +1458,21 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(16, i32::try_from(WIN_H).map_or(0, |h| upx(h - 26)))),
     ));
 
-    Scene::Container(
+    let canvas = Scene::Container(
         ContainerNode::new(children)
             .with_tag(GRAPH_TAG)
             .with_aria_label("Node graph")
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
+    );
+    // R849 — palette sidebar beside the canvas. The canvas keeps its
+    // `WIN_W × WIN_H` coordinate system (its rect is merely offset by the
+    // palette width; `capture_normalize` resolves against that offset rect), so
+    // none of the node geometry / drag math changes.
+    Scene::Container(
+        ContainerNode::new(vec![view_palette(&theme), canvas]).with_layout(
+            LayoutStyle::new().flex(FlexDirection::Row).with_size(Size::px(PALETTE_W + WIN_W, WIN_H)),
+        ),
     )
 }
 
@@ -1333,6 +1491,7 @@ impl WidgetCore for NodeEditorView {
             use_selection(),
             use_preview(),
             use_next_edge_id(),
+            use_next_node_id(),
         ))
     }
 
@@ -1395,13 +1554,31 @@ impl WidgetA11y for NodeEditorView {
     fn access_node(_state: &(), focused: Option<&str>) -> Vec<AccessNode> {
         let nodes = use_nodes().get();
         let selected = use_selection().get().node();
+        // R849 — the editor lowers to a root with two regions: the add-node
+        // palette (a `toolbar` of `button`s that create nodes) and the graph
+        // canvas (the R840 unordered `group` of node `generic`s).
+        let root = AccessNode::new(ROOT_TAG, AriaRole::Group)
+            .with_name("Node editor")
+            .with_child(PALETTE_TAG)
+            .with_child(GRAPH_TAG);
+        let mut palette = AccessNode::new(PALETTE_TAG, AriaRole::Toolbar).with_name("Add node");
+        for idx in 0..PALETTE.len() {
+            palette = palette.with_child(format!("{GRAPH_TAG}#palette_{idx}"));
+        }
+        let mut out = vec![root, palette];
+        for (idx, &(title, _, _)) in PALETTE.iter().enumerate() {
+            out.push(
+                AccessNode::new(format!("{GRAPH_TAG}#palette_{idx}"), AriaRole::Button)
+                    .with_name(format!("Add {title}")),
+            );
+        }
         let mut group = AccessNode::new(GRAPH_TAG, AriaRole::Group)
             .with_name("Node graph")
             .with_state(AccessState { focused: focused == Some(GRAPH_TAG), ..AccessState::default() });
         for node in &nodes {
             group = group.with_child(format!("{GRAPH_TAG}#node_{}", node.id));
         }
-        let mut out = vec![group];
+        out.push(group);
         for node in &nodes {
             out.push(
                 AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
@@ -1417,7 +1594,7 @@ impl WidgetView for NodeEditorView {
     type Renderer = HelloNodeEditorRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: WIN_W, height: WIN_H }
+        pinion_shell::SizeStrategy::Fixed { width: PALETTE_W + WIN_W, height: WIN_H }
     }
 }
 
@@ -1688,6 +1865,7 @@ mod tests {
             use_selection(),
             use_preview(),
             use_next_edge_id(),
+            use_next_node_id(),
         )
     }
 
@@ -1811,6 +1989,97 @@ mod tests {
         });
     }
 
+    #[test]
+    fn r849_first_dynamic_node_id_is_derived_from_defaults() {
+        // Mirrors the edge-id seed: one past the highest default node id, derived
+        // so adding a seed node can never collide a minted id.
+        let max_default = default_nodes().iter().map(|n| n.id.raw()).max().unwrap();
+        assert_eq!(first_dynamic_node_id(), max_default + 1);
+    }
+
+    #[test]
+    fn r849_add_node_mints_a_fresh_stable_id_selects_it_and_guards_kind() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            assert_eq!(coord.node_count(), 4);
+            // Add a Multiply (palette index 2): id = first dynamic, count 5.
+            let id = coord.add_node(2).expect("Multiply is a valid kind");
+            assert_eq!(id, NodeId(first_dynamic_node_id()));
+            assert_eq!(coord.node_count(), 5);
+            assert_eq!(use_selection().get(), Selection::Node(id), "the new node is selected");
+            let n = coord.node_by_id(id).expect("new node present");
+            assert_eq!(n.title, "Multiply");
+            assert_eq!((n.inputs, n.outputs), (2, 1));
+            // An out-of-range kind adds nothing.
+            assert_eq!(coord.add_node(99), None);
+            assert_eq!(coord.node_count(), 5);
+        });
+    }
+
+    #[test]
+    fn r849_added_node_ids_are_monotonic_never_reused_after_delete() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let a = coord.add_node(0).expect("Texture"); // first dynamic id
+            assert!(coord.delete_node(a), "remove the just-added node");
+            let b = coord.add_node(0).expect("Texture again");
+            assert!(b.raw() > a.raw(), "a deleted id is never reused (monotonic mint)");
+        });
+    }
+
+    #[test]
+    fn r849_add_node_rpc_returns_the_new_id_and_rejects_unknown_kinds() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let intro = node.handle.introspect_mut().expect("introspect");
+            // Create by kind NAME; returns the new stable id (AI-first one-shot).
+            let id = match intro.invoke("add_node", IntrospectValue::Text("Add".to_owned())) {
+                Ok(IntrospectValue::Int(i)) => i,
+                other => panic!("expected the new id, got {other:?}"),
+            };
+            assert_eq!(id, i64::from(first_dynamic_node_id()));
+            assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(5)));
+            assert_eq!(
+                intro.query(&format!("node.{id}.title")),
+                Some(IntrospectValue::Text("Add".to_owned())),
+            );
+            assert_eq!(intro.query(&format!("node.{id}.inputs")), Some(IntrospectValue::Int(2)));
+            // An unknown kind is Rejected; the graph is unchanged.
+            assert_eq!(
+                intro.invoke("add_node", IntrospectValue::Text("Bogus".to_owned())),
+                Err(InvokeError::Rejected),
+            );
+            assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(5)));
+            // node_ids enumerates the new sparse id (read/write symmetry).
+            match intro.query("node_ids") {
+                Some(IntrospectValue::Text(s)) => {
+                    assert!(s.split(',').any(|t| t == id.to_string()), "node_ids lists the added id: {s}");
+                }
+                other => panic!("expected node_ids string, got {other:?}"),
+            }
+        });
+    }
+
+    #[test]
+    fn r849_palette_card_release_adds_a_node() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            assert_eq!(coord.node_count(), 4);
+            // A palette card press+release creates the node (activation on release);
+            // the press alone does not.
+            coord.handle_send("palette_2:PointerDown");
+            assert_eq!(coord.node_count(), 4, "the press alone adds nothing");
+            coord.handle_send("palette_2:PointerUp");
+            assert_eq!(coord.node_count(), 5, "releasing the palette card created a node");
+            let id = use_selection().get().node().expect("new node selected");
+            assert_eq!(coord.node_by_id(id).expect("present").title, "Multiply");
+        });
+    }
+
     /// Test helper — the live edge id set via the RPC enumeration.
     fn live_edge_ids(coord: &NodeGraphExternal) -> Vec<u32> {
         match coord.query("edge_ids") {
@@ -1881,11 +2150,26 @@ mod tests {
             let _scene = boot_scene();
             use_selection().set(Selection::Node(NodeId(2)));
             let nodes = NodeEditorView::access_node(&(), Some(GRAPH_TAG));
-            assert_eq!(nodes.len(), 1 + 4, "group + one item per node");
+            // R849 — root + palette toolbar + 5 palette buttons + graph group +
+            // one generic per node.
+            assert_eq!(nodes.len(), 1 + 1 + PALETTE.len() + 1 + 4, "root + palette + graph");
+            // The root wraps the palette + the canvas; the focusable canvas is
+            // the graph group (found by tag, not position).
+            assert_eq!(nodes[0].role, AriaRole::Group, "editor root is a group");
+            assert_eq!(nodes[0].tag, ROOT_TAG);
+            let palette = nodes.iter().find(|n| n.tag == PALETTE_TAG).expect("palette toolbar present");
+            assert_eq!(palette.role, AriaRole::Toolbar);
+            let add_texture = nodes
+                .iter()
+                .find(|n| n.tag == format!("{GRAPH_TAG}#palette_0"))
+                .expect("Texture palette button present");
+            assert_eq!(add_texture.role, AriaRole::Button);
+            assert_eq!(add_texture.name.as_deref(), Some("Add Texture"));
+            let graph = nodes.iter().find(|n| n.tag == GRAPH_TAG).expect("graph group present");
             // R840 audit fix: a graph is an unordered set, so Group/Generic —
             // never List/ListItem with a false aria-posinset.
-            assert_eq!(nodes[0].role, AriaRole::Group);
-            assert!(nodes[0].state.focused);
+            assert_eq!(graph.role, AriaRole::Group);
+            assert!(graph.state.focused, "the canvas is the focused tab stop");
             let multiply = nodes
                 .iter()
                 .find(|n| n.tag == format!("{GRAPH_TAG}#node_2"))
