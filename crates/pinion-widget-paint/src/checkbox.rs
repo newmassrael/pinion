@@ -159,49 +159,7 @@ pub fn view_checkbox(
     style: &CheckboxStyle,
     label: &str,
 ) -> Scene {
-    let box_fill = if checked {
-        checkbox_accent_for(theme, interaction)
-    } else {
-        // Unchecked: transparent — the border + parent surface mark
-        // the empty state per M3.
-        Color::TRANSPARENT
-    };
-    let border_color = checkbox_outline_for(theme, interaction);
-    let mut box_children: Vec<Scene> = Vec::new();
-    if checked {
-        let glyph_color = if matches!(interaction, CheckboxState::Disabled) {
-            theme.resolve(ColorRole::OnSurfaceMuted)
-        } else {
-            theme.resolve(ColorRole::OnAccent)
-        };
-        box_children.push(Scene::Text(
-            TextNode::styled(
-                CHECK_GLYPH,
-                Rect::default(),
-                TextStyle::new()
-                    .with_size_px(style.glyph_size_px)
-                    .with_fg(glyph_color),
-            )
-            // R51.81 — Presentational so enrich_names_from_scene
-            // skips the glyph and lands on the linguistic label.
-            .with_role(TextRole::Presentational),
-        ));
-    }
-    let box_visual = Scene::Container(
-        ContainerNode::new(box_children)
-            .with_style(
-                BoxStyle::filled(box_fill)
-                    .with_corner_radius(style.box_radius)
-                    .with_border(Border::new(border_color, style.border_width)),
-            )
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(style.box_size, style.box_size)),
-            ),
-    );
+    let box_visual = view_checkbox_box(checked, interaction, theme, style);
     let label_color = if matches!(interaction, CheckboxState::Disabled) {
         theme.resolve(ColorRole::OnSurfaceMuted)
     } else {
@@ -222,6 +180,69 @@ pub fn view_checkbox(
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
                     .with_gap(style.row_gap),
+            ),
+    )
+}
+
+/// (R837 §5.50) The bare M3 check-*box* visual — the rounded square +
+/// optional `\u{2713}` glyph, **without** the label or the outer dispatch
+/// tag. The SSOT [`view_checkbox`] composes around it (box + label + tag);
+/// non-interactive consumers that render a bool as a checkbox glyph inside
+/// their own cell (the editable property grid / data grid, whose value cell
+/// already carries the hit-test tag and toggles through the grid
+/// coordinator, not a per-cell `CheckboxExternal`) reuse just the box. This
+/// keeps one M3 checkbox rendering across the catalog — pass
+/// [`CheckboxState::Idle`] for a static display.
+///
+/// Unchecked is transparent (border + parent surface mark the empty state,
+/// the M3 spec); the box never invents a fill.
+#[must_use]
+pub fn view_checkbox_box(
+    checked: bool,
+    interaction: CheckboxState,
+    theme: &Theme,
+    style: &CheckboxStyle,
+) -> Scene {
+    let box_fill = if checked {
+        checkbox_accent_for(theme, interaction)
+    } else {
+        Color::TRANSPARENT
+    };
+    let border_color = checkbox_outline_for(theme, interaction);
+    let mut box_children: Vec<Scene> = Vec::new();
+    if checked {
+        let glyph_color = if matches!(interaction, CheckboxState::Disabled) {
+            theme.resolve(ColorRole::OnSurfaceMuted)
+        } else {
+            theme.resolve(ColorRole::OnAccent)
+        };
+        box_children.push(Scene::Text(
+            TextNode::styled(
+                CHECK_GLYPH,
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(style.glyph_size_px)
+                    .with_fg(glyph_color),
+            )
+            // R51.81 — Presentational so enrich_names_from_scene skips the
+            // glyph and lands on the linguistic label (when wrapped by
+            // `view_checkbox`).
+            .with_role(TextRole::Presentational),
+        ));
+    }
+    Scene::Container(
+        ContainerNode::new(box_children)
+            .with_style(
+                BoxStyle::filled(box_fill)
+                    .with_corner_radius(style.box_radius)
+                    .with_border(Border::new(border_color, style.border_width)),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_justify(JustifyContent::Center)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(style.box_size, style.box_size)),
             ),
     )
 }

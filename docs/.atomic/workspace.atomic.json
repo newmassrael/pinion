@@ -34225,6 +34225,62 @@
         "Lift the edit-in-cell coordinator mechanics (begin/commit/cancel) if a 3rd consumer needs it"
       ]
     },
+    "R837.1": {
+      "decision_summary": "R837.1 §5.50 audit remediation: lift checkbox-box SSOT (user review caught dup)",
+      "changes_bullets": [
+        "User cost-no-object review caught a checkbox-box smell in the R836/R837 grids",
+        "checkbox_visual was verbatim-duplicated across both grids (16 vs 14 px only)",
+        "It also diverged from the view_checkbox catalog SSOT (3rd checkbox rendering)",
+        "The hand-rolled unchecked box was non-M3 (filled SurfaceContainerHighest vs transparent)",
+        "Extract pinion_widget_paint::view_checkbox_box (the box visual SSOT); view_checkbox composes it",
+        "Both grids render bool cells via view_checkbox_box with CheckboxState::Idle (non-interactive)",
+        "One M3 checkbox rendering across the catalog; unchecked is now M3-correct transparent"
+      ],
+      "verification_bullets": [
+        "`cargo test -p pinion-widget-paint -j2` — 451 tests green (view_checkbox extraction behaviour-preserving)",
+        "`cargo test -p hello-property-grid -j2` — 19 green; `-p hello-data-grid` — 13 green",
+        "`cargo test --workspace -j2` — full suite green, no regressions",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean (-D pedantic)",
+        "r836 + r837 demos re-run PASS (bool cells now render via the SSOT)",
+        "`mnemosyne-cli validate-workspace` — T1 orphan total=0"
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "Edit-in-cell coordinator mechanics (property vs data grid) stay duplicated by design",
+        "That lift waits for the 3rd consumer (node-editor inspector / self-hosted editor) per Rule of Three",
+        "Lifting the 1-D vs 2-D coordinator now would be premature abstraction (also a smell)"
+      ],
+      "publishable_decision_summary": "R837.1 §5.50 audit remediation: lift checkbox-box SSOT (user review caught dup)",
+      "publishable_changes_bullets": [
+        "User cost-no-object review caught a checkbox-box smell in the R836/R837 grids",
+        "checkbox_visual was verbatim-duplicated across both grids (16 vs 14 px only)",
+        "It also diverged from the view_checkbox catalog SSOT (3rd checkbox rendering)",
+        "The hand-rolled unchecked box was non-M3 (filled SurfaceContainerHighest vs transparent)",
+        "Extract pinion_widget_paint::view_checkbox_box (the box visual SSOT); view_checkbox composes it",
+        "Both grids render bool cells via view_checkbox_box with CheckboxState::Idle (non-interactive)",
+        "One M3 checkbox rendering across the catalog; unchecked is now M3-correct transparent"
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-widget-paint -j2` — 451 tests green (view_checkbox extraction behaviour-preserving)",
+        "`cargo test -p hello-property-grid -j2` — 19 green; `-p hello-data-grid` — 13 green",
+        "`cargo test --workspace -j2` — full suite green, no regressions",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean (-D pedantic)",
+        "r836 + r837 demos re-run PASS (bool cells now render via the SSOT)",
+        "`mnemosyne-cli validate-workspace` — T1 orphan total=0"
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Edit-in-cell coordinator mechanics (property vs data grid) stay duplicated by design",
+        "That lift waits for the 3rd consumer (node-editor inspector / self-hosted editor) per Rule of Three",
+        "Lifting the 1-D vs 2-D coordinator now would be premature abstraction (also a smell)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

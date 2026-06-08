@@ -99,17 +99,19 @@ use pinion_core::external::{
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
+use pinion_core::widgets::checkbox::CheckboxState;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_widget_paint::checkbox::{view_checkbox_box, CheckboxStyle};
 use pinion_widget_paint::text_field as tf_paint;
 
 use pinion_widget_paint::state_layer::HOVER;
@@ -144,9 +146,6 @@ const EDIT_TF_TAG: &str = "property_grid_edit";
 /// Commit-on-blur intent the inline field raises on a click-away (R793).
 const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("property_grid_edit", "blur");
 
-/// U+2713 CHECK MARK — the bool-cell affordance (named const + escape per
-/// [[non-ascii-literal-named-const-escape]]; raw glyph in docs only).
-const CHECK_GLYPH: &str = "\u{2713}";
 
 // ─── typed property model ─────────────────────────────────────────
 
@@ -595,40 +594,12 @@ fn row_fill(theme: &Theme, focused: bool) -> Color {
     }
 }
 
-/// A non-interactive checkbox affordance for a bool value cell (the
-/// coordinator owns the toggle; this is paint only, no per-cell external).
-fn checkbox_visual(checked: bool, theme: &Theme) -> Scene {
-    let mark = if checked {
-        vec![Scene::Text(TextNode::styled(
-            CHECK_GLYPH,
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(16)
-                .with_fg(theme.resolve(ColorRole::OnAccent)),
-        ))]
-    } else {
-        Vec::new()
-    };
-    let fill = if checked {
-        theme.resolve(ColorRole::Accent)
-    } else {
-        theme.resolve(ColorRole::SurfaceContainerHighest)
-    };
-    Scene::Container(
-        ContainerNode::new(mark)
-            .with_style(
-                BoxStyle::filled(fill)
-                    .with_corner_radius(4)
-                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
-            )
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_justify(JustifyContent::Center)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(CHECKBOX_SIZE, CHECKBOX_SIZE)),
-            ),
-    )
+/// Cell-sized M3 checkbox-box style. The bool value cell renders the lifted
+/// `view_checkbox_box` SSOT non-interactively (the grid coordinator owns the
+/// toggle, so there is no per-cell `CheckboxExternal`) — keeping one M3
+/// checkbox rendering across the catalog instead of a hand-rolled copy.
+fn cell_checkbox_style() -> CheckboxStyle {
+    CheckboxStyle { box_size: CHECKBOX_SIZE, glyph_size_px: 16, ..CheckboxStyle::m3_filled() }
 }
 
 /// One property row: `[ name cell | value cell ]`, tagged `property_grid#<i>`
@@ -669,7 +640,9 @@ fn view_row(
         tf_paint::view_field(EDIT_TF_TAG, edit_field.0, edit_field.1, theme, &style, "")
     } else {
         match value {
-            CellValue::Bool(b) => checkbox_visual(*b, theme),
+            CellValue::Bool(b) => {
+                view_checkbox_box(*b, CheckboxState::Idle, theme, &cell_checkbox_style())
+            }
             other => Scene::Text(TextNode::styled(
                 other.display(),
                 Rect::default(),
