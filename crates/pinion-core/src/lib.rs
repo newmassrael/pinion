@@ -30,6 +30,7 @@ pub mod input;
 pub mod intent;
 pub mod modal_scope_request;
 pub mod directory;
+pub mod print;
 pub mod reactive;
 pub mod renderer;
 pub mod revision;

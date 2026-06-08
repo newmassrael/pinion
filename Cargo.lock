@@ -2283,6 +2283,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-print"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-platform-print",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-progress"
 version = "0.0.1"
 dependencies = [
@@ -4040,6 +4053,13 @@ version = "0.0.1"
 dependencies = [
  "pinion-core",
  "rfd",
+]
+
+[[package]]
+name = "pinion-platform-print"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
 ]
 
 [[package]]

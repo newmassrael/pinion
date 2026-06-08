@@ -33911,6 +33911,66 @@
         "print (own-dialog + CUPS) is the next OS-native-integration item (user-directed sequencing after this menu bar)"
       ]
     },
+    "R833": {
+      "decision_summary": "R833: own-rendered print dialog + print substrate. New pinion-core::print (PrintBackend trait + PrintJob/PrinterInfo/PrintReceipt + InMemoryPrintBackend) + pinion-platform-print crate (CupsPrintBackend: lpstat enumerate + lp submit), mirroring R665 Storage (trait + in-memory + platform). New hello-print example: own-rendered print dialog (no native GTK/Qt, §5.53) composing ButtonExternals (printer cycle + copies +/- + Print) over the substrate; the submitted job is exposed via QueryOnlyIntrospect for AI-first verification. Linux-RPC-verifiable (this box has no CUPS destination -> InMemory backend path; Cups backend is the real platform path). User-directed sequencing after the R832 menu bar.",
+      "changes_bullets": [
+        "new pinion-core::print: PrintBackend trait + PrintJob/PrinterInfo/PrintReceipt/PrintError + InMemoryPrintBackend",
+        "mirrors R665 Storage (trait + in-memory first impl + platform second impl); plain-text content, scene->PDF render is a future axis",
+        "new crate pinion-platform-print: CupsPrintBackend (lpstat -e/-d enumerate + lp submit: copies/title/IPP orientation; request-id parse) + cups_available()",
+        "new example hello-print: own-rendered print dialog (no native GTK/Qt) = printer-cycle + copies +/- + Print ButtonExternals over the substrate",
+        "InMemoryPrintBackend (3 sample printers) for headless; CupsPrintBackend is the real platform path when a destination is configured",
+        "submitted job exposed via QueryOnlyIntrospect `job` node (printer_count/selected/copies/submit_count/last_printer/last_copies/last_job)",
+        "apply_key forwards to the focused button (container-aware find_external_with_tag_mut, multi-external Container scene)",
+        "12 unit tests (core print 7 + platform 3 + example 2) + r833 demo (30+ asserts: cycle/wrap, copies +/-/clamp, Print->receipt x2)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: green (core print 7, platform-print 3, hello-print 2)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "full headless sweep (realgpu :0): r833 new + all prior regression",
+        "CUPS lp/lpstat/lpinfo present but no destinations on this box -> InMemory verifiable path; Cups enumerate unit-tested (runs, well-formed)"
+      ],
+      "impact_refs": [
+        "5.53",
+        "3",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "scene -> PDF/PostScript page-render pipeline: print content is plain text this round; the backend accepts arbitrary content so it lands additively",
+        "CupsPrintBackend end-to-end submission needs a configured destination (none on this CI box, cups-pdf not installed) -> env-carry; enumerate is verified",
+        "forward_key_to_external container-aware hardening: now 2 hand-rolled shapes (hello-menu-app fixed-tag + hello-print focused-tag); making the default container-aware = blast over all keyboard widgets -> focused round",
+        "clickable printer-row selection (currently a cycle button) + page-range + paper-size = additive dialog axes",
+        "view_menu_overlay lift (R832 carry) still pending a 3rd menu-bar consumer"
+      ],
+      "publishable_decision_summary": "R833: own-rendered print dialog + print substrate. New pinion-core::print (PrintBackend trait + PrintJob/PrinterInfo/PrintReceipt + InMemoryPrintBackend) + pinion-platform-print crate (CupsPrintBackend: lpstat enumerate + lp submit), mirroring R665 Storage (trait + in-memory + platform). New hello-print example: own-rendered print dialog (no native GTK/Qt, §5.53) composing ButtonExternals (printer cycle + copies +/- + Print) over the substrate; the submitted job is exposed via QueryOnlyIntrospect for AI-first verification. Linux-RPC-verifiable (this box has no CUPS destination -> InMemory backend path; Cups backend is the real platform path). User-directed sequencing after the R832 menu bar.",
+      "publishable_changes_bullets": [
+        "new pinion-core::print: PrintBackend trait + PrintJob/PrinterInfo/PrintReceipt/PrintError + InMemoryPrintBackend",
+        "mirrors R665 Storage (trait + in-memory first impl + platform second impl); plain-text content, scene->PDF render is a future axis",
+        "new crate pinion-platform-print: CupsPrintBackend (lpstat -e/-d enumerate + lp submit: copies/title/IPP orientation; request-id parse) + cups_available()",
+        "new example hello-print: own-rendered print dialog (no native GTK/Qt) = printer-cycle + copies +/- + Print ButtonExternals over the substrate",
+        "InMemoryPrintBackend (3 sample printers) for headless; CupsPrintBackend is the real platform path when a destination is configured",
+        "submitted job exposed via QueryOnlyIntrospect `job` node (printer_count/selected/copies/submit_count/last_printer/last_copies/last_job)",
+        "apply_key forwards to the focused button (container-aware find_external_with_tag_mut, multi-external Container scene)",
+        "12 unit tests (core print 7 + platform 3 + example 2) + r833 demo (30+ asserts: cycle/wrap, copies +/-/clamp, Print->receipt x2)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: green (core print 7, platform-print 3, hello-print 2)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "full headless sweep (realgpu :0): r833 new + all prior regression",
+        "CUPS lp/lpstat/lpinfo present but no destinations on this box -> InMemory verifiable path; Cups enumerate unit-tested (runs, well-formed)"
+      ],
+      "publishable_impact_refs": [
+        "5.53",
+        "3",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "scene -> PDF/PostScript page-render pipeline: print content is plain text this round; the backend accepts arbitrary content so it lands additively",
+        "CupsPrintBackend end-to-end submission needs a configured destination (none on this CI box, cups-pdf not installed) -> env-carry; enumerate is verified",
+        "forward_key_to_external container-aware hardening: now 2 hand-rolled shapes (hello-menu-app fixed-tag + hello-print focused-tag); making the default container-aware = blast over all keyboard widgets -> focused round",
+        "clickable printer-row selection (currently a cycle button) + page-range + paper-size = additive dialog axes",
+        "view_menu_overlay lift (R832 carry) still pending a 3rd menu-bar consumer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

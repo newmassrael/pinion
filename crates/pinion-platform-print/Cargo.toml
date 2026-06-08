@@ -1,0 +1,20 @@
+[package]
+name = "pinion-platform-print"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R833 §3 §5.53 §5.15 — CUPS print bridge for the pinion-core PrintBackend trait. CupsPrintBackend enumerates destinations via `lpstat -e`/`-d` and submits jobs via `lp` (copies / title / orientation), parsing the CUPS request id into a PrintReceipt. The FileStorage-equivalent platform impl; InMemoryPrintBackend stays the headless / CI default."
+publish = false
+
+[dependencies]
+# R833 §3 §5.53 — the `pinion_core::print::PrintBackend` trait this
+# crate's `CupsPrintBackend` second-consumer impl satisfies. The
+# in-memory first impl (`InMemoryPrintBackend`) stays the headless / CI
+# default; this crate adds the real Linux print path (no external dep —
+# CUPS ships the `lp` / `lpstat` CLI on every desktop Linux + macOS).
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+
+[lints]
+workspace = true
