@@ -72,8 +72,17 @@
 //!   `add_edge` validates arity but not type (a Float output can wire to any
 //!   input). The type lattice differs per graph kind (material vs blueprint),
 //!   so it is deferred until that consumer settles it ([[abstraction-needs-second-consumer]]).
-//! - **Persistence / undo**: the serde derives are load-bearing for `Signal`
-//!   storage, but no save/load or undo command-history is wired yet.
+//! - **Undo / redo** (R851): the **structural** edits — add node, delete node
+//!   (with its incident edges), connect, disconnect — are journaled onto the
+//!   shared [`UndoStack`] substrate as reversible [`GraphEdit`] deltas, driven
+//!   by `Ctrl+Z` / `Ctrl+Shift+Z` (`Ctrl+Y`) and the AI-first
+//!   [`UndoStackExternal`]. Node **moves** (drag / nudge / `intervene .x`) are
+//!   deliberately *not* journaled yet: a continuous drag needs command
+//!   coalescing (one drag = one undo step), the documented "live-drag" undo
+//!   round — so redoing a structural edit restores the node at its add-time
+//!   position. (A consequence kept honest, not hidden.)
+//! - **Persistence**: the serde derives are load-bearing for `Signal` storage,
+//!   but no save / load to a [`pinion_core::storage::Storage`] is wired yet.
 //! - **`add_node` over RPC**: the graph can be mutated / connected / deleted but
 //!   not grown (no node-creation verb); edge-id minting is in place for it.
 //! - **Crate extraction**: the model + pure bezier geometry are example-local;
@@ -97,6 +106,8 @@ use pinion_core::external::{
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
+use pinion_core::undo::{use_undo_stack, UndoCommand, UndoStack, UndoStackExternal};
+use pinion_core::widget_core::ExtraExternal;
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, PathStyle, Size,
     Stroke, StrokeCap, TextStyle,
@@ -141,6 +152,16 @@ const PALETTE_W: u32 = 132;
 const PALETTE_TAG: &str = "node_palette";
 /// R849 — the editor a11y root wrapping the palette + the canvas.
 const ROOT_TAG: &str = "node_editor";
+
+/// R851 — the [`UndoStackExternal`] anchor: the AI-first undo-history surface
+/// (`query can_undo` / `index` / `undo_label`; `invoke undo` / `redo` / `clear`),
+/// reached at `/node_undo/external/<slot>`. No `#` in the tag, so it routes as
+/// its own coordinator (never confused with a `node_graph#…` composite).
+const UNDO_TAG: &str = "node_undo";
+/// R851 — the [`use_undo_stack`] cache key: the reducer-side recorder (the
+/// coordinator), the keyboard `Ctrl+Z` path, and the [`UndoStackExternal`] all
+/// resolve the same shared [`UndoStack`] from this key.
+const UNDO_KEY: &str = "node_graph.undo";
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -485,6 +506,14 @@ fn use_next_node_id() -> Rc<Cell<u32>> {
     owner.cache("node_graph.next_node_id", || Cell::new(first_dynamic_node_id()))
 }
 
+/// R851 — the shared [`UndoStack`] for this editor scope. Reached identically
+/// by the coordinator (which records [`GraphEdit`]s in its mutation methods),
+/// the keyboard `Ctrl+Z` path, the status-line `undo_label` read, and the
+/// [`UndoStackExternal`] — one history source of truth ([`use_undo_stack`]).
+fn use_undo() -> Rc<UndoStack> {
+    use_undo_stack(UNDO_KEY)
+}
+
 // ─── sub-tag grammar (composite paint tags route to the coordinator) ──
 
 /// `node_graph#node_<id>` → [`NodeId`].
@@ -568,6 +597,104 @@ enum PendingPress {
     Palette,
 }
 
+// ─── reversible structural edit (the UndoCommand) ──────────────────
+
+/// R851 §5.52 — one reversible **structural** graph edit, recorded onto the
+/// shared [`UndoStack`]. A *granular delta* (only the entities that changed),
+/// never a whole-graph snapshot ([[granular-undo-not-snapshot]]): an add carries
+/// its new entities in `added_*`, a delete carries the removed entities (a node
+/// *and* its incident edges) in `removed_*`, and a connect that displaces a wire
+/// (the single-wire input rule) carries both. `redo` removes the `removed_*` and
+/// adds the `added_*`; `undo` is the exact inverse with the sets swapped, so the
+/// stored entities (with their stable ids) round-trip byte-for-byte — a redone
+/// node keeps its original [`NodeId`], a restored edge its [`EdgeId`].
+/// The entity delta of one [`GraphEdit`]: what the edit adds and what it
+/// removes. `add_*` are present *after* the edit but not before; `remove_*` are
+/// present *before* but not after, stored verbatim so `undo` re-inserts them
+/// with their original stable ids. A connect that displaces a wire fills both
+/// (`added_edges` = the new wire, `removed_edges` = the displaced one).
+#[derive(Default)]
+struct GraphDelta {
+    added_nodes: Vec<GraphNode>,
+    added_edges: Vec<Edge>,
+    removed_nodes: Vec<GraphNode>,
+    removed_edges: Vec<Edge>,
+}
+
+struct GraphEdit {
+    nodes: Rc<Signal<Vec<GraphNode>>>,
+    edges: Rc<Signal<Vec<Edge>>>,
+    selection: Rc<Signal<Selection>>,
+    label: Cow<'static, str>,
+    delta: GraphDelta,
+    sel_before: Selection,
+    sel_after: Selection,
+}
+
+impl GraphEdit {
+    /// Drop `rm_*` by stable id, append `add_*`, then set the selection — the
+    /// shared body of [`redo`](UndoCommand::redo) / [`undo`](UndoCommand::undo)
+    /// with the add / remove roles swapped. The signal writes are gated on a
+    /// non-empty delta so an edge-only edit never reclones the node vector
+    /// (and vice-versa), keeping the repaint minimal.
+    fn apply(
+        &self,
+        rm_nodes: &[GraphNode],
+        add_nodes: &[GraphNode],
+        rm_edges: &[Edge],
+        add_edges: &[Edge],
+        sel: Selection,
+    ) {
+        if !rm_nodes.is_empty() || !add_nodes.is_empty() {
+            self.nodes.set_with(|prev| {
+                let mut next: Vec<GraphNode> =
+                    prev.iter().filter(|n| !rm_nodes.iter().any(|r| r.id == n.id)).cloned().collect();
+                next.extend(add_nodes.iter().cloned());
+                next
+            });
+        }
+        if !rm_edges.is_empty() || !add_edges.is_empty() {
+            self.edges.set_with(|prev| {
+                let mut next: Vec<Edge> =
+                    prev.iter().copied().filter(|e| !rm_edges.iter().any(|r| r.id == e.id)).collect();
+                next.extend(add_edges.iter().copied());
+                next
+            });
+        }
+        self.selection.set(sel);
+    }
+}
+
+impl UndoCommand for GraphEdit {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        let d = &self.delta;
+        self.apply(&d.removed_nodes, &d.added_nodes, &d.removed_edges, &d.added_edges, self.sel_after);
+    }
+
+    fn undo(&self) {
+        let d = &self.delta;
+        self.apply(&d.added_nodes, &d.removed_nodes, &d.added_edges, &d.removed_edges, self.sel_before);
+    }
+}
+
+/// R851 — prune a selection that a structural edit just made dangling: a
+/// [`Selection`] over a removed node / edge id collapses to [`Selection::None`]
+/// (the stable-id analogue of R838's index-shift bookkeeping — "is it still
+/// alive?" is the whole adjustment). Computed at record time as the edit's
+/// `sel_after`, so the [`GraphEdit`] carries the post-edit selection explicitly
+/// rather than re-deriving it on each replay.
+fn validate_after(sel: Selection, removed_nodes: &[NodeId], removed_edges: &[EdgeId]) -> Selection {
+    match sel {
+        Selection::Node(id) if removed_nodes.contains(&id) => Selection::None,
+        Selection::Edge(id) if removed_edges.contains(&id) => Selection::None,
+        other => other,
+    }
+}
+
 // ─── coordinator External ──────────────────────────────────────────
 
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
@@ -577,13 +704,17 @@ struct NodeGraphExternal {
     edges: Rc<Signal<Vec<Edge>>>,
     /// The single selection (node | edge | none) — a sum type over stable ids,
     /// so node/edge selection is mutually exclusive AND survives an unrelated
-    /// delete (a dangling selection is pruned by [`Self::validate_selection`]).
+    /// delete (a dangling selection is pruned to `None` by [`validate_after`]
+    /// at record time, carried as the edit's `sel_after`).
     selection: Rc<Signal<Selection>>,
     preview: Rc<Signal<Option<Preview>>>,
     /// Monotonic [`EdgeId`] source for newly-connected wires.
     next_edge_id: Rc<Cell<u32>>,
     /// R849 — monotonic [`NodeId`] source for newly created (palette / RPC) nodes.
     next_node_id: Rc<Cell<u32>>,
+    /// R851 — the shared undo history every structural mutation records onto
+    /// (the same `Rc` the [`UndoStackExternal`] and the keyboard path reach).
+    undo: Rc<UndoStack>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<NodeId>>,
     node_drag: Cell<Option<NodeDragStart>>,
@@ -601,6 +732,7 @@ impl NodeGraphExternal {
         preview: Rc<Signal<Option<Preview>>>,
         next_edge_id: Rc<Cell<u32>>,
         next_node_id: Rc<Cell<u32>>,
+        undo: Rc<UndoStack>,
     ) -> Self {
         Self {
             nodes,
@@ -609,6 +741,7 @@ impl NodeGraphExternal {
             preview,
             next_edge_id,
             next_node_id,
+            undo,
             grabbed_node: Cell::new(None),
             node_drag: Cell::new(None),
             pending_press: Cell::new(PendingPress::None),
@@ -624,23 +757,33 @@ impl NodeGraphExternal {
         self.nodes.get().into_iter().find(|n| n.id == id)
     }
 
-    /// Clear the selection if it references a node / edge that no longer exists.
-    /// With stable ids this replaces all of R838's index-shift bookkeeping: a
-    /// structural mutation cannot *renumber* a survivor, only *remove* one, so
-    /// "is the selection still alive?" is the entire adjustment.
-    fn validate_selection(&self) {
-        let alive = match self.selection.get() {
-            Selection::None => true,
-            Selection::Node(id) => self.nodes.get().iter().any(|n| n.id == id),
-            Selection::Edge(id) => self.edges.get().iter().any(|e| e.id == id),
-        };
-        if !alive {
-            self.selection.set(Selection::None);
-        }
+    /// R851 — build a [`GraphEdit`] over the shared signals and `record` it onto
+    /// the undo stack. `record` applies the edit forward (its `redo`), so this
+    /// is the single mutation path for every *structural* change — the caller
+    /// supplies the delta + the before / after selection and never touches the
+    /// signals directly ([`UndoStack::record`] semantics).
+    fn record_edit(
+        &self,
+        label: impl Into<Cow<'static, str>>,
+        delta: GraphDelta,
+        sel_before: Selection,
+        sel_after: Selection,
+    ) {
+        self.undo.record(GraphEdit {
+            nodes: Rc::clone(&self.nodes),
+            edges: Rc::clone(&self.edges),
+            selection: Rc::clone(&self.selection),
+            label: label.into(),
+            delta,
+            sel_before,
+            sel_after,
+        });
     }
 
     /// Move node `id` to a clamped `(x, y)`. The single mutation behind both
-    /// the capture drag and the `intervene node.<id>.{x,y}` path.
+    /// the capture drag and the `intervene node.<id>.{x,y}` path. R851 — moves
+    /// are deliberately *not* journaled (see the module-doc undo gap), so this
+    /// stays a direct signal write.
     fn set_node_pos(&self, id: NodeId, x: i32, y: i32) -> bool {
         let mut moved = false;
         self.nodes.set_with(|prev| {
@@ -672,12 +815,16 @@ impl NodeGraphExternal {
         let step = i32::try_from(raw.saturating_sub(first_dynamic_node_id())).unwrap_or(0) % 8;
         let x = clamp_node_x(SPAWN_X + step * SPAWN_STEP);
         let y = clamp_node_y(SPAWN_Y + step * SPAWN_STEP);
-        self.nodes.set_with(|prev| {
-            let mut next = prev.clone();
-            next.push(GraphNode { id, title: title.to_owned(), x, y, inputs, outputs });
-            next
-        });
-        self.selection.set(Selection::Node(id));
+        let node = GraphNode { id, title: title.to_owned(), x, y, inputs, outputs };
+        let sel_before = self.selection.get();
+        // `record` applies the edit forward — pushing the node and selecting it
+        // (the prior direct writes) — so a single Ctrl+Z removes it again.
+        self.record_edit(
+            format!("Add {title}"),
+            GraphDelta { added_nodes: vec![node], ..GraphDelta::default() },
+            sel_before,
+            Selection::Node(id),
+        );
         Some(id)
     }
 
@@ -700,7 +847,7 @@ impl NodeGraphExternal {
         if from_port >= src.outputs || to_port >= dst.inputs {
             return false;
         }
-        let mut edges = self.edges.get();
+        let edges = self.edges.get();
         let dup = edges.iter().any(|e| {
             e.from_node == from_node
                 && e.from_port == from_port
@@ -710,40 +857,62 @@ impl NodeGraphExternal {
         if dup {
             return false;
         }
-        // Input single-wire rule: drop any existing wire into the target input.
-        edges.retain(|e| !(e.to_node == to_node && e.to_port == to_port));
+        // Input single-wire rule: the new wire displaces any existing wire into
+        // the same target input — captured as a removed delta so undo restores it.
+        let replaced: Vec<Edge> =
+            edges.iter().copied().filter(|e| e.to_node == to_node && e.to_port == to_port).collect();
         let id = EdgeId(self.next_edge_id.get());
         self.next_edge_id.set(id.raw() + 1);
-        edges.push(Edge { id, from_node, from_port, to_node, to_port });
-        self.edges.set(edges);
-        // The dedup-retain may have removed the selected edge — prune if gone.
-        self.validate_selection();
+        let new_edge = Edge { id, from_node, from_port, to_node, to_port };
+        let sel_before = self.selection.get();
+        // Displacing a wire may strand a selected edge — prune it post-edit.
+        let removed_ids: Vec<EdgeId> = replaced.iter().map(|e| e.id).collect();
+        let sel_after = validate_after(sel_before, &[], &removed_ids);
+        self.record_edit(
+            "Connect",
+            GraphDelta { added_edges: vec![new_edge], removed_edges: replaced, ..GraphDelta::default() },
+            sel_before,
+            sel_after,
+        );
         true
     }
 
-    /// Remove the edge with stable id `id` (no-op + `false` if absent).
+    /// Remove the edge with stable id `id` (no-op + `false` if absent). R851 —
+    /// the edge is stored as a removed delta so undo re-inserts it verbatim.
     fn remove_edge(&self, id: EdgeId) -> bool {
-        let mut edges = self.edges.get();
-        let before = edges.len();
-        edges.retain(|e| e.id != id);
-        if edges.len() == before {
+        let Some(edge) = self.edges.get().iter().copied().find(|e| e.id == id) else {
             return false;
-        }
-        self.edges.set(edges);
-        self.validate_selection();
+        };
+        let sel_before = self.selection.get();
+        let sel_after = validate_after(sel_before, &[], &[id]);
+        self.record_edit(
+            "Disconnect",
+            GraphDelta { removed_edges: vec![edge], ..GraphDelta::default() },
+            sel_before,
+            sel_after,
+        );
         true
     }
 
     /// Delete node `id` and its incident edges. No reindex: every surviving
     /// node and edge keeps its stable id, so references elsewhere stay valid.
+    /// R851 — the node *and* its incident edges are captured as a removed delta,
+    /// so one Ctrl+Z restores the node together with every wire it carried.
     fn delete_node(&self, id: NodeId) -> bool {
-        if !self.nodes.get().iter().any(|n| n.id == id) {
+        let Some(node) = self.nodes.get().iter().find(|n| n.id == id).cloned() else {
             return false;
-        }
-        self.nodes.set_with(|prev| prev.iter().filter(|n| n.id != id).cloned().collect());
-        self.edges
-            .set_with(|prev| prev.iter().copied().filter(|e| e.from_node != id && e.to_node != id).collect());
-        self.validate_selection();
+        };
+        let incident: Vec<Edge> =
+            self.edges.get().iter().copied().filter(|e| e.from_node == id || e.to_node == id).collect();
+        let sel_before = self.selection.get();
+        let incident_ids: Vec<EdgeId> = incident.iter().map(|e| e.id).collect();
+        let sel_after = validate_after(sel_before, &[id], &incident_ids);
+        self.record_edit(
+            "Delete node",
+            GraphDelta { removed_nodes: vec![node], removed_edges: incident, ..GraphDelta::default() },
+            sel_before,
+            sel_after,
+        );
         self.grabbed_node.set(None);
         self.node_drag.set(None);
         true
@@ -1193,7 +1362,41 @@ fn nudge_ok(intro: &mut dyn ExternalIntrospect, dx: i32, dy: i32) -> bool {
     )
 }
 
-fn apply_key_graph(scene: &mut Scene, key: &str) -> bool {
+/// R851 — map a held-`Ctrl` keystroke to an undo-stack verb: `Ctrl+Z` undoes,
+/// `Ctrl+Shift+Z` / `Ctrl+Y` redo (the canonical editor pairing). `None` for any
+/// other combination, so the plain-key handling below still runs.
+fn undo_redo_verb(key: &str, modifiers: Modifiers) -> Option<&'static str> {
+    if !modifiers.control_key() {
+        return None;
+    }
+    match key.to_ascii_lowercase().as_str() {
+        "z" if modifiers.shift_key() => Some("redo"),
+        "z" => Some("undo"),
+        "y" => Some("redo"),
+        _ => None,
+    }
+}
+
+/// R851 — drive `verb` (`undo` / `redo`) on the [`UndoStackExternal`] at
+/// [`UNDO_TAG`] — the same SSOT the RPC path drives, so the keyboard adds no
+/// hand-rolled undo logic to the graph coordinator. Returns `true` (the editor
+/// consumes Ctrl+Z even at a history boundary, where the verb is a harmless
+/// no-op) once the undo external is found.
+fn invoke_undo(scene: &mut Scene, verb: &str) -> bool {
+    let Some(node) = scene.find_external_with_tag_mut(UNDO_TAG) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    let _ = intro.invoke(verb, IntrospectValue::Null);
+    true
+}
+
+fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
+    if let Some(verb) = undo_redo_verb(key, modifiers) {
+        return invoke_undo(scene, verb);
+    }
     let Some(node) = scene.find_external_with_tag_mut(GRAPH_TAG) else {
         return false;
     };
@@ -1460,7 +1663,16 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     } else {
         "none".to_owned()
     };
-    let status = format!("{} nodes · {} edges · selected: {sel_label}", nodes.len(), edges.len());
+    // R851 — surface the next-undo action so the history is a visible witness
+    // (and reading it subscribes the view to the undo stack's revision signal,
+    // so an undo/redo that only moves the cursor still repaints the status).
+    let undo_label = use_undo().undo_label();
+    let status = format!(
+        "{} nodes · {} edges · selected: {sel_label} · undo: {}",
+        nodes.len(),
+        edges.len(),
+        undo_label.as_deref().unwrap_or("—"),
+    );
     children.push(Scene::Text(
         TextNode::styled(
             status,
@@ -1506,7 +1718,17 @@ impl WidgetCore for NodeEditorView {
             use_preview(),
             use_next_edge_id(),
             use_next_node_id(),
+            use_undo(),
         ))
+    }
+
+    /// R851 — the AI-first undo-history surface. The [`UndoStackExternal`] wraps
+    /// the **same** shared [`UndoStack`] the coordinator records onto (via
+    /// [`use_undo`]), so `query`/`invoke` at `/node_undo/external/…` observe and
+    /// drive the identical history the canvas + keyboard use (one SSOT). It is a
+    /// coordinator-only extra: it paints nothing and is not a focus stop.
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        vec![ExtraExternal::new(UNDO_TAG, Box::new(UndoStackExternal::new(use_undo())))]
     }
 
     fn tag() -> &'static str {
@@ -1545,10 +1767,10 @@ impl WidgetCore for NodeEditorView {
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
-        _modifiers: Modifiers,
+        modifiers: Modifiers,
     ) -> bool {
         match focused {
-            Some(GRAPH_TAG) => apply_key_graph(scene, key),
+            Some(GRAPH_TAG) => apply_key_graph(scene, key, modifiers),
             _ => false,
         }
     }
@@ -1891,6 +2113,7 @@ mod tests {
             use_preview(),
             use_next_edge_id(),
             use_next_node_id(),
+            use_undo(),
         )
     }
 
@@ -2220,5 +2443,252 @@ mod tests {
             (),
             &Frame::default(),
         );
+    }
+
+    // ── R851 undo / redo (structural edits) ────────────────────────
+
+    /// Modifier state for a held-`Ctrl` (optionally `Shift`) keystroke.
+    fn mods(ctrl: bool, shift: bool) -> Modifiers {
+        Modifiers { shift, ctrl, alt: false, meta: false }
+    }
+
+    /// A scene with the primary coordinator **and** the [`UndoStackExternal`]
+    /// extra, both sharing the one `use_undo()` stack — exactly what
+    /// `create_external` + `create_extra_externals` wire, so the keyboard /
+    /// RPC undo path (which finds [`UNDO_TAG`]) can be exercised in a unit test.
+    fn boot_full_scene() -> Scene {
+        let primary =
+            Scene::External(ExternalNode::new(NodeEditorView::create_external()).with_tag(GRAPH_TAG));
+        let undo = Scene::External(
+            ExternalNode::new(Box::new(UndoStackExternal::new(use_undo()))).with_tag(UNDO_TAG),
+        );
+        Scene::Container(ContainerNode::new(vec![primary, undo]))
+    }
+
+    fn undo_ext_query(scene: &Scene, slot: &str) -> Option<IntrospectValue> {
+        scene
+            .find_external_with_tag(UNDO_TAG)
+            .and_then(|n| n.handle.introspect())
+            .expect("undo external present")
+            .query(slot)
+    }
+
+    #[test]
+    fn r851_create_extra_externals_wires_one_undo_surface() {
+        Owner::new().run(|| {
+            let extras = NodeEditorView::create_extra_externals();
+            assert_eq!(extras.len(), 1, "exactly one extra external");
+            assert_eq!(extras[0].tag, UNDO_TAG, "the extra is the undo-history surface");
+        });
+    }
+
+    #[test]
+    fn r851_add_node_undo_removes_it_redo_restores_same_id() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            assert!(!stack.can_undo(), "boot: clean history");
+            let id = coord.add_node(2).expect("Multiply"); // first dynamic id
+            assert_eq!(coord.node_count(), 5);
+            assert_eq!(use_selection().get(), Selection::Node(id));
+            assert!(stack.can_undo(), "the add is journaled");
+            assert_eq!(stack.undo_label().as_deref(), Some("Add Multiply"));
+
+            assert!(stack.undo(), "undo the add");
+            assert_eq!(coord.node_count(), 4, "the node is gone");
+            assert_eq!(use_selection().get(), Selection::None, "selection reverts");
+            assert!(coord.node_by_id(id).is_none(), "the added id is gone");
+
+            assert!(stack.redo(), "redo the add");
+            assert_eq!(coord.node_count(), 5, "the node is back");
+            assert_eq!(use_selection().get(), Selection::Node(id), "and re-selected");
+            assert_eq!(coord.node_by_id(id).expect("present").id, id, "with the SAME stable id");
+        });
+    }
+
+    #[test]
+    fn r851_delete_node_undo_restores_node_and_all_incident_edges() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            // Node 2 (Multiply) is incident to all three seed edges (0, 1, 2).
+            assert!(coord.delete_node(NodeId(2)), "delete the central node");
+            assert_eq!(coord.node_count(), 3, "node removed");
+            assert_eq!(coord.edges.get().len(), 0, "all three incident edges removed");
+
+            assert!(stack.undo(), "undo the delete");
+            assert_eq!(coord.node_count(), 4, "the node is restored");
+            assert_eq!(coord.edges.get().len(), 3, "every incident edge is restored");
+            assert_eq!(
+                coord.query("edge.0"),
+                Some(IntrospectValue::Text("0:0->2:0".to_owned())),
+                "a restored edge keeps its stable id + endpoints",
+            );
+
+            assert!(stack.redo(), "redo the delete");
+            assert_eq!(coord.node_count(), 3);
+            assert_eq!(coord.edges.get().len(), 0);
+        });
+    }
+
+    #[test]
+    fn r851_connect_and_disconnect_round_trip_through_undo() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            // Disconnect seed edge 1 (1:0 -> 2:1), then undo restores it.
+            assert!(coord.remove_edge(EdgeId(1)), "disconnect edge 1");
+            assert_eq!(coord.edges.get().len(), 2);
+            assert_eq!(stack.undo_label().as_deref(), Some("Disconnect"));
+            assert!(stack.undo(), "undo the disconnect");
+            assert_eq!(coord.edges.get().len(), 3, "the wire is back");
+            assert_eq!(
+                coord.query("edge.1"),
+                Some(IntrospectValue::Text("1:0->2:1".to_owned())),
+                "edge 1 is restored verbatim",
+            );
+            // Now re-make a connection and undo it.
+            assert!(stack.redo(), "redo the disconnect");
+            assert_eq!(coord.edges.get().len(), 2);
+            let before = coord.edges.get().len();
+            assert!(coord.add_edge(NodeId(1), 0, NodeId(2), 1), "reconnect 1:0 -> 2:1");
+            assert_eq!(coord.edges.get().len(), before + 1);
+            assert_eq!(stack.undo_label().as_deref(), Some("Connect"));
+            assert!(stack.undo(), "undo the connect");
+            assert_eq!(coord.edges.get().len(), before, "the new wire is gone");
+        });
+    }
+
+    #[test]
+    fn r851_connect_displacing_a_wire_undo_restores_the_displaced_wire() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            // Seed edge 0 = 0:0 -> 2:0. Connecting 1:0 -> 2:0 (single-wire input
+            // rule) displaces edge 0; one undo restores it.
+            assert!(coord.add_edge(NodeId(1), 0, NodeId(2), 0), "connect into an occupied input");
+            assert_eq!(coord.edges.get().len(), 3, "one in, one out: count unchanged");
+            assert_eq!(coord.query("edge.0"), None, "edge 0 was displaced");
+
+            assert!(stack.undo(), "undo the displacing connect");
+            assert_eq!(coord.edges.get().len(), 3);
+            assert_eq!(
+                coord.query("edge.0"),
+                Some(IntrospectValue::Text("0:0->2:0".to_owned())),
+                "the displaced wire is restored",
+            );
+        });
+    }
+
+    #[test]
+    fn r851_a_new_edit_after_undo_truncates_the_redo_branch() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let a = coord.add_node(0).expect("Texture");
+            let b = coord.add_node(1).expect("Color");
+            assert_eq!(coord.node_count(), 6);
+            assert!(stack.undo(), "undo node b");
+            assert!(stack.can_redo(), "b is redoable");
+            assert!(coord.node_by_id(b).is_none());
+            // A fresh add truncates the redo branch (single-branch QUndoStack).
+            let c = coord.add_node(3).expect("Add");
+            assert!(!stack.can_redo(), "the redo branch was dropped");
+            assert_eq!(coord.node_count(), 6, "default 4 + a + c");
+            assert!(coord.node_by_id(a).is_some() && coord.node_by_id(c).is_some());
+            assert!(c.raw() > b.raw(), "ids stay monotonic across the truncation");
+        });
+    }
+
+    #[test]
+    fn r851_moves_are_not_journaled() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let id = coord.add_node(0).expect("Texture");
+            let count_after_add = stack.len();
+            assert_eq!(count_after_add, 1, "the add is one entry");
+            // A nudge + an intervene move must NOT push undo entries (documented
+            // deferral: moves join the live-drag coalescing round).
+            coord.select_node(Some(id));
+            assert!(coord.nudge_selected(NUDGE_STEP, 0), "nudge moves the node");
+            coord.set_node_pos(id, 200, 200);
+            assert_eq!(stack.len(), count_after_add, "no move was journaled");
+        });
+    }
+
+    #[test]
+    fn r851_undo_external_query_and_invoke_round_trip() {
+        Owner::new().run(|| {
+            let mut scene = boot_full_scene();
+            assert_eq!(undo_ext_query(&scene, "can_undo"), Some(IntrospectValue::Bool(false)));
+            // Add a node through the primary coordinator.
+            send(&mut scene, "palette_2:PointerDown");
+            send(&mut scene, "palette_2:PointerUp");
+            assert_eq!(query_int(&scene, "node_count"), 5);
+            // The undo surface observes the history as data.
+            assert_eq!(undo_ext_query(&scene, "can_undo"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(undo_ext_query(&scene, "index"), Some(IntrospectValue::Int(1)));
+            assert_eq!(undo_ext_query(&scene, "count"), Some(IntrospectValue::Int(1)));
+            assert_eq!(
+                undo_ext_query(&scene, "undo_label"),
+                Some(IntrospectValue::Text("Add Multiply".to_owned())),
+            );
+            // invoke undo on the external reverts the graph the coordinator reads.
+            {
+                let node = scene.find_external_with_tag_mut(UNDO_TAG).expect("undo external");
+                let intro = node.handle.introspect_mut().expect("introspect");
+                assert_eq!(intro.invoke("undo", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+            }
+            assert_eq!(query_int(&scene, "node_count"), 4, "RPC undo reverted the add");
+            assert_eq!(undo_ext_query(&scene, "can_undo"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(undo_ext_query(&scene, "can_redo"), Some(IntrospectValue::Bool(true)));
+        });
+    }
+
+    #[test]
+    fn r851_ctrl_z_undoes_and_ctrl_shift_z_ctrl_y_redo() {
+        Owner::new().run(|| {
+            let mut scene = boot_full_scene();
+            // Add a node, then Ctrl+Z removes it (the editor consumes the key).
+            send(&mut scene, "palette_0:PointerDown");
+            send(&mut scene, "palette_0:PointerUp");
+            assert_eq!(query_int(&scene, "node_count"), 5);
+            assert!(
+                NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "z", mods(true, false)),
+                "Ctrl+Z is handled",
+            );
+            assert_eq!(query_int(&scene, "node_count"), 4, "Ctrl+Z undid the add");
+            // Ctrl+Y redoes.
+            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "y", mods(true, false)));
+            assert_eq!(query_int(&scene, "node_count"), 5, "Ctrl+Y redid the add");
+            // Ctrl+Shift+Z undoes again (the redo-pairing alternative is undo's twin).
+            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "z", mods(true, false)));
+            assert_eq!(query_int(&scene, "node_count"), 4, "Ctrl+Z undid once more");
+            assert!(
+                NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "Z", mods(true, true)),
+                "Ctrl+Shift+Z is handled",
+            );
+            assert_eq!(query_int(&scene, "node_count"), 5, "Ctrl+Shift+Z redid the add");
+            // A plain 'z' (no Ctrl) is not an undo gesture — falls through.
+            assert!(!NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "z", mods(false, false)));
+        });
+    }
+
+    #[test]
+    fn r851_undo_redo_at_boundaries_are_noops() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let stack = use_undo();
+            assert!(!stack.undo(), "undo on empty history is a no-op");
+            assert!(!stack.redo(), "redo on empty history is a no-op");
+            assert_eq!(stack.len(), 0);
+        });
     }
 }

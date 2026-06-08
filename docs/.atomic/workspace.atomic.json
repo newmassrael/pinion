@@ -35003,6 +35003,64 @@
         "node/edge id mint uses raw+1 (theoretical u32::MAX overflow at ~4B creations) - matches existing edge code, low priority"
       ]
     },
+    "R851": {
+      "decision_summary": "R851 node-graph structural undo/redo on the UndoStack substrate (add/delete/connect/disconnect, Ctrl+Z + UndoStackExternal)",
+      "changes_bullets": [
+        "add GraphEdit + GraphDelta reversible command: a granular added/removed nodes+edges delta, never a snapshot",
+        "journal add_node / connect / disconnect / delete_node (node plus its incident edges) onto the shared UndoStack",
+        "stable-id round-trip: a redone node keeps its NodeId, a restored edge its EdgeId and endpoints verbatim",
+        "single-wire input replace: the displaced edge is captured as a removed delta so one undo restores it",
+        "Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in apply_key drive the UndoStackExternal (no hand-rolled undo verb on the graph)",
+        "UndoStackExternal extra at /node_undo/external surfaces can_undo/index/count/labels and invoke undo/redo/clear",
+        "status line shows the next-undo label: a visible witness that also subscribes the view to the stack revision",
+        "node moves (drag/nudge/intervene) are deliberately not journaled (documented live-drag coalescing carry)"
+      ],
+      "verification_bullets": [
+        "hello-node-editor 38 unit (10 new R851: add/delete-with-edges/connect/disconnect/displace/truncate/keyboard/moves-not-journaled/boundaries/external-roundtrip)",
+        "tools/demos/r851_node_undo.py PASS (~56 assert: RPC undo/redo, paint card witness, Ctrl+Z/Y/Shift+Z keyboard, clear)",
+        "cargo test --workspace -j2 green; clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: UndoStack substrate reused (use-substrate); GraphEdit peers SortFilterEdit/GridSortEdit/TextEditCommand"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "node moves not journaled: needs command coalescing (one drag = one undo step) = the live-drag undo round",
+        "graph serialization (serde-ready) to a Storage backend: save/load still open (R849 carry)",
+        "undo_redo_verb keymap is example-local: lift to pinion-core::undo at a 2nd apply_key-level undo consumer",
+        "GraphEdit/GraphDelta example-local: lift with the model + bezier geometry at the 2nd graph consumer",
+        "palette keyboard roving (2nd tab stop) still additive (R850 carry)"
+      ],
+      "publishable_decision_summary": "R851 node-graph structural undo/redo on the UndoStack substrate (add/delete/connect/disconnect, Ctrl+Z + UndoStackExternal)",
+      "publishable_changes_bullets": [
+        "add GraphEdit + GraphDelta reversible command: a granular added/removed nodes+edges delta, never a snapshot",
+        "journal add_node / connect / disconnect / delete_node (node plus its incident edges) onto the shared UndoStack",
+        "stable-id round-trip: a redone node keeps its NodeId, a restored edge its EdgeId and endpoints verbatim",
+        "single-wire input replace: the displaced edge is captured as a removed delta so one undo restores it",
+        "Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y in apply_key drive the UndoStackExternal (no hand-rolled undo verb on the graph)",
+        "UndoStackExternal extra at /node_undo/external surfaces can_undo/index/count/labels and invoke undo/redo/clear",
+        "status line shows the next-undo label: a visible witness that also subscribes the view to the stack revision",
+        "node moves (drag/nudge/intervene) are deliberately not journaled (documented live-drag coalescing carry)"
+      ],
+      "publishable_verification_bullets": [
+        "hello-node-editor 38 unit (10 new R851: add/delete-with-edges/connect/disconnect/displace/truncate/keyboard/moves-not-journaled/boundaries/external-roundtrip)",
+        "tools/demos/r851_node_undo.py PASS (~56 assert: RPC undo/redo, paint card witness, Ctrl+Z/Y/Shift+Z keyboard, clear)",
+        "cargo test --workspace -j2 green; clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: UndoStack substrate reused (use-substrate); GraphEdit peers SortFilterEdit/GridSortEdit/TextEditCommand"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "node moves not journaled: needs command coalescing (one drag = one undo step) = the live-drag undo round",
+        "graph serialization (serde-ready) to a Storage backend: save/load still open (R849 carry)",
+        "undo_redo_verb keymap is example-local: lift to pinion-core::undo at a 2nd apply_key-level undo consumer",
+        "GraphEdit/GraphDelta example-local: lift with the model + bezier geometry at the 2nd graph consumer",
+        "palette keyboard roving (2nd tab stop) still additive (R850 carry)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
