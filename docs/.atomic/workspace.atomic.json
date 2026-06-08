@@ -35363,6 +35363,46 @@
         "next Phase B item-2 feature: frozen left column / unified large-data layer (both touch the shared view_virtual_table)"
       ]
     },
+    "R858": {
+      "decision_summary": "R858 export query_proxy_external_impl! SSOT so examples reach the proxy-External skeleton (audit secondary finding); TreeSortExternal uses it",
+      "changes_bullets": [
+        "session-review remediation (audit secondary finding): export query_proxy_external_impl! so an example reaches the proxy-External-skeleton SSOT instead of hand-rolling it",
+        "pinion-core: #[macro_export] + pub use the macro (was pub(crate); pub use alone is E0364 for a non-exported macro_rules), usable as pinion_core::external::query_proxy_external_impl!",
+        "hello-tree-filter: TreeSortExternal's 5-method hand-rolled External impl becomes the macro invocation; the now-unused Backend / BackendFallback / BackendSupport / RepaintOwner / ThreadOwnership imports are dropped"
+      ],
+      "verification_bullets": [
+        "hello-tree-filter 16 unit + r855 / r821 demos PASS (behaviour-identical: the macro emits exactly the hand-rolled Gui+Rpc skeleton); the 3 in-crate proxies (ViewSortFilter / GridSort / GroupOrder) still consume it via the module path",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "the other 7 examples hand-roll DIFFERENT External skeletons (Gui+Tui+Rpc / Gui-only) - not duplicates of this Gui+Rpc macro; a backend-parameterized macro variant could unify them (separate, lower-value)",
+        "R851-R856 confirmed textbook-clean by the fresh cost-no-object audit; storage SSOT lifted (R857), proxy-skeleton SSOT reachable (R858) - both audit findings cleared",
+        "next Phase B item-2 feature: frozen left column / unified large-data layer (shared view_virtual_table, larger rounds)"
+      ],
+      "publishable_decision_summary": "R858 export query_proxy_external_impl! SSOT so examples reach the proxy-External skeleton (audit secondary finding); TreeSortExternal uses it",
+      "publishable_changes_bullets": [
+        "session-review remediation (audit secondary finding): export query_proxy_external_impl! so an example reaches the proxy-External-skeleton SSOT instead of hand-rolling it",
+        "pinion-core: #[macro_export] + pub use the macro (was pub(crate); pub use alone is E0364 for a non-exported macro_rules), usable as pinion_core::external::query_proxy_external_impl!",
+        "hello-tree-filter: TreeSortExternal's 5-method hand-rolled External impl becomes the macro invocation; the now-unused Backend / BackendFallback / BackendSupport / RepaintOwner / ThreadOwnership imports are dropped"
+      ],
+      "publishable_verification_bullets": [
+        "hello-tree-filter 16 unit + r855 / r821 demos PASS (behaviour-identical: the macro emits exactly the hand-rolled Gui+Rpc skeleton); the 3 in-crate proxies (ViewSortFilter / GridSort / GroupOrder) still consume it via the module path",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the other 7 examples hand-roll DIFFERENT External skeletons (Gui+Tui+Rpc / Gui-only) - not duplicates of this Gui+Rpc macro; a backend-parameterized macro variant could unify them (separate, lower-value)",
+        "R851-R856 confirmed textbook-clean by the fresh cost-no-object audit; storage SSOT lifted (R857), proxy-skeleton SSOT reachable (R858) - both audit findings cleared",
+        "next Phase B item-2 feature: frozen left column / unified large-data layer (shared view_virtual_table, larger rounds)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

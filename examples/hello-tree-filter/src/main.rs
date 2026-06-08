@@ -48,8 +48,7 @@
 
 use pinion_a11y::{tree_access_nodes, AccessNode, WidgetA11y};
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -332,23 +331,9 @@ impl core::fmt::Debug for TreeSortExternal {
     }
 }
 
-impl External for TreeSortExternal {
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
-    }
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-}
+// R858 — the Gui+Rpc display-config-proxy External skeleton via the lifted
+// pinion-core SSOT macro, instead of hand-rolling the five methods.
+pinion_core::external::query_proxy_external_impl!(TreeSortExternal);
 
 impl ExternalIntrospect for TreeSortExternal {
     fn schema(&self) -> IntrospectSchema {

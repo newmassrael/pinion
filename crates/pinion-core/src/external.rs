@@ -706,6 +706,12 @@ pub trait QuerySource {
 /// between them. The type must implement [`ExternalIntrospect`] (the macro's
 /// `introspect` / `introspect_mut` return `Some(self)`); each proxy keeps its
 /// own `ExternalIntrospect` impl (the part that genuinely differs).
+///
+/// R858 — exported (`pub use` below) so a `Gui`+`Rpc` config-holder External in
+/// an *example* (e.g. `hello-tree-filter`'s `TreeSortExternal`) reaches the same
+/// SSOT instead of hand-rolling the skeleton:
+/// `pinion_core::external::query_proxy_external_impl!(MyExternal);`.
+#[macro_export]
 macro_rules! query_proxy_external_impl {
     ($t:ty) => {
         impl $crate::external::External for $t {
@@ -730,7 +736,7 @@ macro_rules! query_proxy_external_impl {
         }
     };
 }
-pub(crate) use query_proxy_external_impl;
+pub use query_proxy_external_impl;
 
 /// R810.1 §5.38 §5.12 — the generic **query-only** introspection
 /// `External`: a node that paints nothing (RPC backend only), handles no
