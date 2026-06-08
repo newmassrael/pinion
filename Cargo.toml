@@ -104,6 +104,7 @@ members = [
     "examples/hello-combobox-editable",
     "examples/hello-number-input",
     "examples/hello-property-grid",
+    "examples/hello-data-grid",
     "examples/hello-slider-discrete",
     "examples/hello-slider-labeled",
     "examples/hello-image",

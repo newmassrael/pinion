@@ -1,0 +1,34 @@
+[package]
+name = "hello-data-grid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R837 §5.38 §5.40 §5.50 editable data grid — typed cells (bool/int/float/text) in a single-tab-stop WAI-ARIA grid with 2-D roving cursor + edit-in-cell; 2nd consumer of the lifted pinion_core::cell_value SSOT (after hello-property-grid) and of the grid_table_nodes a11y SSOT; pure composition of a DataGridExternal coordinator + one shared TextFieldExternal inline editor"
+publish = false
+
+[[bin]]
+name = "hello-data-grid"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R837 §5.40 — AccessKit substrate + the `grid_table_nodes` a11y SSOT.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R837 §5.50 — lifted TextField paint helpers (view_field + read_text_field_state).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+# R837 §5.37 — IME composition payloads on the inline editor.
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -1813,6 +1813,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-data-grid"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-datepicker"
 version = "0.0.1"
 dependencies = [

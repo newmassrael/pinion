@@ -26,7 +26,7 @@
 //! * **`PropertyGridExternal`** (`property_grid`, primary) — the grid
 //!   coordinator. It owns three reactive holders shared with the view fn
 //!   (`Owner::cache` dedup, the todomvc pattern): the typed value model
-//!   ([`Signal<Vec<PropertyValue>>`] — the value SSOT), the roving cursor
+//!   ([`Signal<Vec<CellValue>>`] — the value SSOT), the roving cursor
 //!   ([`Signal<usize>`] `focused_row`), and the edit-mode latch
 //!   ([`Signal<Option<usize>>`] `editing_row`, the todomvc `editing_id`
 //!   generalised to a row index). It exposes the whole grid for AI-first
@@ -107,6 +107,7 @@ use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
+use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::text_field as tf_paint;
@@ -151,155 +152,33 @@ const CHECK_GLYPH: &str = "\u{2713}";
 
 const ROW_COUNT: usize = 9;
 
-/// The property row names. Static — only the [`PropertyValue`]s mutate, so
+/// The property row names. Static — only the [`CellValue`]s mutate, so
 /// names live in a `const` (the value SSOT is the coordinator's Signal).
 const PROPERTY_NAMES: [&str; ROW_COUNT] = [
     "Name", "Tag", "Visible", "Locked", "Layer", "Health", "Pos X", "Pos Y", "Opacity",
 ];
 
-/// A typed property value — the editable cell's payload. The unifying
-/// abstraction a property grid adds over a plain form: one row model, four
-/// editor renderings, dispatched by [`kind_of`].
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-enum PropertyValue {
-    Bool(bool),
-    Int(i64),
-    Float(f64),
-    Text(String),
-}
-
-/// The static descriptor of a [`PropertyValue`] — drives editor behaviour
-/// (toggle vs text-edit), the keystroke gate, and parse / format.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum PropertyKind {
-    Bool,
-    Int,
-    Float,
-    Text,
-}
-
-fn kind_of(value: &PropertyValue) -> PropertyKind {
-    match value {
-        PropertyValue::Bool(_) => PropertyKind::Bool,
-        PropertyValue::Int(_) => PropertyKind::Int,
-        PropertyValue::Float(_) => PropertyKind::Float,
-        PropertyValue::Text(_) => PropertyKind::Text,
-    }
-}
-
-fn kind_name(kind: PropertyKind) -> &'static str {
-    match kind {
-        PropertyKind::Bool => "bool",
-        PropertyKind::Int => "int",
-        PropertyKind::Float => "float",
-        PropertyKind::Text => "text",
-    }
-}
-
-/// f64 → canonical text (`12.5`, `-4`, `1`). Used for both the cell display
-/// and the inline-editor seed so the parse round-trips it.
-fn format_float(value: f64) -> String {
-    format!("{value}")
-}
-
-/// The value shown in a non-edited value cell. Bools render as a checkbox
-/// glyph (not this text), but the AT name path reuses the `On` / `Off`
-/// wording so the spoken value reads naturally.
-fn display_value(value: &PropertyValue) -> String {
-    match value {
-        PropertyValue::Bool(b) => if *b { "On" } else { "Off" }.to_string(),
-        PropertyValue::Int(i) => i.to_string(),
-        PropertyValue::Float(f) => format_float(*f),
-        PropertyValue::Text(s) => s.clone(),
-    }
-}
-
-/// The text the inline editor is seeded with when a row enters edit mode.
-fn format_for_edit(value: &PropertyValue) -> String {
-    match value {
-        PropertyValue::Bool(b) => b.to_string(),
-        PropertyValue::Int(i) => i.to_string(),
-        PropertyValue::Float(f) => format_float(*f),
-        PropertyValue::Text(s) => s.clone(),
-    }
-}
-
-/// Parse the committed editor text back into a typed value. `None` on a
-/// malformed numeric commit — the caller keeps the prior value (no data
-/// loss). Bool never reaches here (bools toggle, they are not text-edited).
-fn parse_for_kind(kind: PropertyKind, text: &str) -> Option<PropertyValue> {
-    let trimmed = text.trim();
-    match kind {
-        PropertyKind::Bool => None,
-        PropertyKind::Int => trimmed.parse::<i64>().ok().map(PropertyValue::Int),
-        PropertyKind::Float => trimmed.parse::<f64>().ok().map(PropertyValue::Float),
-        PropertyKind::Text => Some(PropertyValue::Text(trimmed.to_owned())),
-    }
-}
-
-fn value_to_introspect(value: &PropertyValue) -> IntrospectValue {
-    match value {
-        PropertyValue::Bool(b) => IntrospectValue::Bool(*b),
-        PropertyValue::Int(i) => IntrospectValue::Int(*i),
-        PropertyValue::Float(f) => IntrospectValue::Float(*f),
-        PropertyValue::Text(s) => IntrospectValue::Text(s.clone()),
-    }
-}
-
-/// Validate an `intervene "value.<i>"` payload against the row's kind — the
-/// AI-first programmatic set path. Strict per kind (no silent coercion) so
-/// an RPC writes exactly the type the row holds.
-fn coerce_intervene(
-    kind: PropertyKind,
-    value: IntrospectValue,
-) -> Result<PropertyValue, InterveneError> {
-    match (kind, value) {
-        (PropertyKind::Bool, IntrospectValue::Bool(b)) => Ok(PropertyValue::Bool(b)),
-        (PropertyKind::Int, IntrospectValue::Int(i)) => Ok(PropertyValue::Int(i)),
-        (PropertyKind::Float, IntrospectValue::Float(f)) => Ok(PropertyValue::Float(f)),
-        (PropertyKind::Text, IntrospectValue::Text(s)) => Ok(PropertyValue::Text(s)),
-        _ => Err(InterveneError::TypeMismatch),
-    }
-}
+// R837 §5.38 — the typed value model + its pure helpers (kind dispatch,
+// display / edit formatting, parse, the keystroke gate, the introspect read
+// / intervene write) were lifted to `pinion_core::cell_value` at the 2nd
+// consumer (`hello-data-grid`); this binding consumes that SSOT. The R836
+// `CellValue` / `CellKind` are now `CellValue` / `CellKind`.
 
 /// First-paint property values. A game-object inspector — the kinds the
 /// self-hosted editor's Details panel needs (name / tag text, visibility /
 /// lock flags, layer / health ints, transform / opacity floats).
-fn default_properties() -> Vec<PropertyValue> {
+fn default_properties() -> Vec<CellValue> {
     vec![
-        PropertyValue::Text("Player".to_owned()),
-        PropertyValue::Text("hero".to_owned()),
-        PropertyValue::Bool(true),
-        PropertyValue::Bool(false),
-        PropertyValue::Int(3),
-        PropertyValue::Int(100),
-        PropertyValue::Float(12.5),
-        PropertyValue::Float(-4.0),
-        PropertyValue::Float(1.0),
+        CellValue::Text("Player".to_owned()),
+        CellValue::Text("hero".to_owned()),
+        CellValue::Bool(true),
+        CellValue::Bool(false),
+        CellValue::Int(3),
+        CellValue::Int(100),
+        CellValue::Float(12.5),
+        CellValue::Float(-4.0),
+        CellValue::Float(1.0),
     ]
-}
-
-/// Whether `key` is a single keystroke allowed into an `int` row (digit or
-/// sign). Multi-codepoint named keys are not keystrokes.
-fn is_int_char(key: &str) -> bool {
-    single_char(key, |c| c.is_ascii_digit() || c == '-')
-}
-
-/// Whether `key` is a single keystroke allowed into a `float` row (digit,
-/// sign, or decimal point).
-fn is_float_char(key: &str) -> bool {
-    single_char(key, |c| c.is_ascii_digit() || c == '-' || c == '.')
-}
-
-fn single_char(key: &str, pred: impl Fn(char) -> bool) -> bool {
-    let mut chars = key.chars();
-    let Some(c) = chars.next() else {
-        return false;
-    };
-    if chars.next().is_some() {
-        return false;
-    }
-    pred(c)
 }
 
 // ─── reactive holders (Owner::cache, shared view ↔ coordinator) ────
@@ -307,7 +186,7 @@ fn single_char(key: &str, pred: impl Fn(char) -> bool) -> bool {
 /// Typed value SSOT. A `Signal` so a value change (keyboard commit, RPC
 /// intervene, bool toggle) re-runs the subscribed view fn.
 #[must_use]
-fn use_property_model() -> Rc<Signal<Vec<PropertyValue>>> {
+fn use_property_model() -> Rc<Signal<Vec<CellValue>>> {
     let owner = Owner::current().expect("use_property_model requires an active Owner scope");
     owner.cache("property_grid.model", || Signal::new(default_properties()))
 }
@@ -337,7 +216,7 @@ fn use_editing_row() -> Rc<Signal<Option<usize>>> {
 /// no hooks at invoke time, so the External is self-contained on any thread
 /// (the todomvc `TodoEditExternal` shape).
 struct PropertyGridExternal {
-    model: Rc<Signal<Vec<PropertyValue>>>,
+    model: Rc<Signal<Vec<CellValue>>>,
     focused_row: Rc<Signal<usize>>,
     editing_row: Rc<Signal<Option<usize>>>,
     editor: Rc<TextEditState>,
@@ -345,7 +224,7 @@ struct PropertyGridExternal {
 
 impl PropertyGridExternal {
     fn new(
-        model: Rc<Signal<Vec<PropertyValue>>>,
+        model: Rc<Signal<Vec<CellValue>>>,
         focused_row: Rc<Signal<usize>>,
         editing_row: Rc<Signal<Option<usize>>>,
         editor: Rc<TextEditState>,
@@ -363,7 +242,7 @@ impl PropertyGridExternal {
         let mut toggled = false;
         self.model.set_with(|prev| {
             let mut next = prev.clone();
-            if let Some(PropertyValue::Bool(b)) = next.get_mut(row) {
+            if let Some(CellValue::Bool(b)) = next.get_mut(row) {
                 *b = !*b;
                 toggled = true;
             }
@@ -382,10 +261,10 @@ impl PropertyGridExternal {
         let Some(value) = model.get(row) else {
             return false;
         };
-        if kind_of(value) == PropertyKind::Bool {
+        if !value.kind().is_text_editable() {
             return false;
         }
-        let text = format_for_edit(value);
+        let text = value.edit_text();
         let len = text.len();
         self.editing_row.set(Some(row));
         self.editor.set_text(text);
@@ -472,13 +351,13 @@ impl ExternalIntrospect for PropertyGridExternal {
                     let idx: usize = idx_str.parse().ok()?;
                     let model = self.model.get();
                     let value = model.get(idx)?;
-                    return Some(IntrospectValue::Text(kind_name(kind_of(value)).to_owned()));
+                    return Some(IntrospectValue::Text(value.kind().name().to_owned()));
                 }
                 if let Some(idx_str) = path.strip_prefix("value.") {
                     let idx: usize = idx_str.parse().ok()?;
                     let model = self.model.get();
                     let value = model.get(idx)?;
-                    return Some(value_to_introspect(value));
+                    return Some(value.to_introspect());
                 }
                 None
             }
@@ -504,8 +383,7 @@ impl ExternalIntrospect for PropertyGridExternal {
                 if idx >= self.count() {
                     return Err(InterveneError::UnknownPath);
                 }
-                let kind = kind_of(&self.model.get()[idx]);
-                let new_value = coerce_intervene(kind, value)?;
+                let new_value = self.model.get()[idx].kind().coerce(value)?;
                 self.model.set_with(move |prev| {
                     let mut next = prev.clone();
                     next[idx] = new_value.clone();
@@ -534,7 +412,7 @@ impl ExternalIntrospect for PropertyGridExternal {
                             self.focused_row.set(idx);
                             let is_bool = matches!(
                                 self.model.get().get(idx),
-                                Some(PropertyValue::Bool(_))
+                                Some(CellValue::Bool(_))
                             );
                             if is_bool {
                                 self.toggle(idx);
@@ -583,7 +461,7 @@ fn commit_edit(restore_focus: bool) {
     let text = use_text_edit_state(EDIT_TF_TAG).text();
     let current = model.get();
     if let Some(value) = current.get(row) {
-        if let Some(parsed) = parse_for_kind(kind_of(value), &text) {
+        if let Some(parsed) = value.kind().parse(&text) {
             model.set_with(move |prev| {
                 let mut next = prev.clone();
                 next[row] = parsed.clone();
@@ -611,9 +489,9 @@ fn end_edit_mode(restore_focus: bool) {
 
 /// The kind of the row currently being edited (`None` when not editing) —
 /// drives the int / float keystroke gate.
-fn editing_kind() -> Option<PropertyKind> {
+fn editing_kind() -> Option<CellKind> {
     let row = use_editing_row().get()?;
-    use_property_model().get().get(row).map(kind_of)
+    use_property_model().get().get(row).map(CellValue::kind)
 }
 
 // ─── keyboard ─────────────────────────────────────────────────────
@@ -657,7 +535,7 @@ fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
 /// `invoke` so toggle / begin live in one place (the RPC path).
 fn activate_focused(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
     let kind = match use_property_model().get().get(row) {
-        Some(value) => kind_of(value),
+        Some(value) => value.kind(),
         None => return false,
     };
     let Some(node) = scene.find_external_with_tag_mut(GRID_TAG) else {
@@ -666,7 +544,7 @@ fn activate_focused(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
     let Some(intro) = node.handle.introspect_mut() else {
         return false;
     };
-    if kind == PropertyKind::Bool {
+    if kind == CellKind::Bool {
         intro.invoke("toggle", IntrospectValue::Null).is_ok()
     } else if allow_edit {
         let arg = IntrospectValue::Int(i64::try_from(row).expect("row index fits in i64"));
@@ -693,12 +571,7 @@ fn apply_key_edit(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
             pinion_core::forward_key_to_field(scene, EDIT_TF_TAG, key, modifiers)
         }
         other => {
-            let allowed = match editing_kind() {
-                Some(PropertyKind::Int) => is_int_char(other),
-                Some(PropertyKind::Float) => is_float_char(other),
-                Some(PropertyKind::Text) => true,
-                _ => false,
-            };
+            let allowed = editing_kind().is_some_and(|kind| kind.accepts_keystroke(other));
             if allowed {
                 pinion_core::forward_key_to_field(scene, EDIT_TF_TAG, other, modifiers)
             } else {
@@ -764,7 +637,7 @@ fn checkbox_visual(checked: bool, theme: &Theme) -> Scene {
 /// text.
 fn view_row(
     index: usize,
-    value: &PropertyValue,
+    value: &CellValue,
     is_focused: bool,
     edit_active: bool,
     theme: &Theme,
@@ -796,9 +669,9 @@ fn view_row(
         tf_paint::view_field(EDIT_TF_TAG, edit_field.0, edit_field.1, theme, &style, "")
     } else {
         match value {
-            PropertyValue::Bool(b) => checkbox_visual(*b, theme),
+            CellValue::Bool(b) => checkbox_visual(*b, theme),
             other => Scene::Text(TextNode::styled(
-                display_value(other),
+                other.display(),
                 Rect::default(),
                 TextStyle::new()
                     .with_size_px(CELL_PX)
@@ -880,7 +753,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let mut rows: Vec<Scene> = Vec::with_capacity(ROW_COUNT + 1);
     rows.push(view_header(&theme));
     for (index, value) in model.iter().enumerate() {
-        let edit_active = editing == Some(index) && kind_of(value) != PropertyKind::Bool;
+        let edit_active = editing == Some(index) && value.kind().is_text_editable();
         rows.push(view_row(
             index,
             value,
@@ -1075,7 +948,7 @@ impl WidgetA11y for PropertyGridView {
                     },
                     GridCell {
                         tag: format!("{GRID_TAG}#{index}"),
-                        name: format!("{}: {}", PROPERTY_NAMES[index], display_value(value)),
+                        name: format!("{}: {}", PROPERTY_NAMES[index], value.display()),
                         focused: index == focused,
                     },
                 ],
@@ -1102,58 +975,10 @@ mod tests {
     use super::*;
     use pinion_core::scene::ExternalNode;
 
-    // ----- pure helpers -----
-
-    #[test]
-    fn r836_kind_of_classifies_every_variant() {
-        assert_eq!(kind_of(&PropertyValue::Bool(true)), PropertyKind::Bool);
-        assert_eq!(kind_of(&PropertyValue::Int(1)), PropertyKind::Int);
-        assert_eq!(kind_of(&PropertyValue::Float(1.0)), PropertyKind::Float);
-        assert_eq!(kind_of(&PropertyValue::Text(String::new())), PropertyKind::Text);
-    }
-
-    #[test]
-    fn r836_kind_name_round_trips_the_wire_vocab() {
-        assert_eq!(kind_name(PropertyKind::Bool), "bool");
-        assert_eq!(kind_name(PropertyKind::Int), "int");
-        assert_eq!(kind_name(PropertyKind::Float), "float");
-        assert_eq!(kind_name(PropertyKind::Text), "text");
-    }
-
-    #[test]
-    fn r836_parse_for_kind_int_and_float_and_text() {
-        assert_eq!(parse_for_kind(PropertyKind::Int, " 42 "), Some(PropertyValue::Int(42)));
-        assert_eq!(parse_for_kind(PropertyKind::Int, "x"), None, "garbage int -> None");
-        assert_eq!(parse_for_kind(PropertyKind::Float, "-3.5"), Some(PropertyValue::Float(-3.5)));
-        assert_eq!(parse_for_kind(PropertyKind::Float, "."), None, "lone dot -> None");
-        assert_eq!(
-            parse_for_kind(PropertyKind::Text, "  hi "),
-            Some(PropertyValue::Text("hi".to_owned())),
-            "text trims",
-        );
-        assert_eq!(parse_for_kind(PropertyKind::Bool, "true"), None, "bool never text-parsed");
-    }
-
-    #[test]
-    fn r836_display_value_renders_each_kind() {
-        assert_eq!(display_value(&PropertyValue::Bool(true)), "On");
-        assert_eq!(display_value(&PropertyValue::Bool(false)), "Off");
-        assert_eq!(display_value(&PropertyValue::Int(7)), "7");
-        assert_eq!(display_value(&PropertyValue::Float(12.5)), "12.5");
-        assert_eq!(display_value(&PropertyValue::Text("hi".to_owned())), "hi");
-    }
-
-    #[test]
-    fn r836_numeric_gates() {
-        assert!(is_int_char("3"));
-        assert!(is_int_char("-"));
-        assert!(!is_int_char("."), "int rejects the decimal point");
-        assert!(!is_int_char("a"));
-        assert!(is_float_char("."), "float accepts the decimal point");
-        assert!(is_float_char("0"));
-        assert!(!is_float_char("a"));
-        assert!(!is_int_char("Enter"), "named key rejected");
-    }
+    // The typed-value pure helpers (kind / name / parse / display / the
+    // keystroke gate) are now tested in `pinion_core::cell_value`; this
+    // module tests the property-grid WIRING (coordinator, edit flow,
+    // keyboard, a11y, paint) on top of the lifted SSOT.
 
     #[test]
     fn r836_default_model_matches_name_count() {

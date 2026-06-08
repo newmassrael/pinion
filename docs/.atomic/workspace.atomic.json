@@ -34153,6 +34153,78 @@
         "Lift PropertyGridExternal + paint to a framework crate when the self-hosted editor consumes"
       ]
     },
+    "R837": {
+      "decision_summary": "R837 §5.38 editable data grid + lift typed CellValue SSOT to pinion-core",
+      "changes_bullets": [
+        "Lift typed CellValue/CellKind + pure helpers to pinion_core::cell_value",
+        "cell_value: kind / name / display / edit_text / parse / coerce / keystroke gate",
+        "2nd-consumer pure-logic SSOT lift (R836 property-grid was the 1st consumer)",
+        "Retrofit hello-property-grid onto the lifted cell_value (behaviour-identical)",
+        "New examples/hello-data-grid: editable 2-D data grid (N typed cols x M rows)",
+        "DataGridExternal coordinator: flat Signal cell model + 2-D roving cursor + edit latch",
+        "2-D edit-in-cell: arrows/Home/End rove, Space toggle bool, Enter/F2/dblclick edit",
+        "Reuses GridSendKey send SSOT + grid_table_nodes a11y (3rd consumer)",
+        "AI-first introspect: query/intervene value.<r>.<c>, col_name/kind, focused_row/col",
+        "Pure composition: 2 externals per grid, zero new framework crate beyond cell_value"
+      ],
+      "verification_bullets": [
+        "`cargo test -p pinion-core cell_value -j2` — 8 unit tests green",
+        "`cargo test -p hello-property-grid -j2` — 19 tests green (retrofit, behaviour-identical)",
+        "`cargo test -p hello-data-grid -j2` — 13 unit tests green",
+        "`cargo test --workspace -j2` — full suite green, no regressions",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean (-D pedantic)",
+        "r836 demo re-run PASS (lift behaviour-preserving) + r837 demo PASS (realgpu hidden, >=30 assert)",
+        "`mnemosyne-cli validate-workspace` — T1 orphan total=0 (no new orphans)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.12",
+        "5.40",
+        "5.50",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Native checkbox/textbox cell roles (per-cell a11y role) — additive, shared with R836",
+        "Per-column validation / clamp ranges (hello-number-input parse_clamp shape) — additive",
+        "Column sort / filter / grouping / frozen panes on an EDITABLE grid — own substrate rounds",
+        "Lift the edit-in-cell coordinator mechanics (begin/commit/cancel) if a 3rd consumer needs it"
+      ],
+      "publishable_decision_summary": "R837 §5.38 editable data grid + lift typed CellValue SSOT to pinion-core",
+      "publishable_changes_bullets": [
+        "Lift typed CellValue/CellKind + pure helpers to pinion_core::cell_value",
+        "cell_value: kind / name / display / edit_text / parse / coerce / keystroke gate",
+        "2nd-consumer pure-logic SSOT lift (R836 property-grid was the 1st consumer)",
+        "Retrofit hello-property-grid onto the lifted cell_value (behaviour-identical)",
+        "New examples/hello-data-grid: editable 2-D data grid (N typed cols x M rows)",
+        "DataGridExternal coordinator: flat Signal cell model + 2-D roving cursor + edit latch",
+        "2-D edit-in-cell: arrows/Home/End rove, Space toggle bool, Enter/F2/dblclick edit",
+        "Reuses GridSendKey send SSOT + grid_table_nodes a11y (3rd consumer)",
+        "AI-first introspect: query/intervene value.<r>.<c>, col_name/kind, focused_row/col",
+        "Pure composition: 2 externals per grid, zero new framework crate beyond cell_value"
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-core cell_value -j2` — 8 unit tests green",
+        "`cargo test -p hello-property-grid -j2` — 19 tests green (retrofit, behaviour-identical)",
+        "`cargo test -p hello-data-grid -j2` — 13 unit tests green",
+        "`cargo test --workspace -j2` — full suite green, no regressions",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean (-D pedantic)",
+        "r836 demo re-run PASS (lift behaviour-preserving) + r837 demo PASS (realgpu hidden, >=30 assert)",
+        "`mnemosyne-cli validate-workspace` — T1 orphan total=0 (no new orphans)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.12",
+        "5.40",
+        "5.50",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Native checkbox/textbox cell roles (per-cell a11y role) — additive, shared with R836",
+        "Per-column validation / clamp ranges (hello-number-input parse_clamp shape) — additive",
+        "Column sort / filter / grouping / frozen panes on an EDITABLE grid — own substrate rounds",
+        "Lift the edit-in-cell coordinator mechanics (begin/commit/cancel) if a 3rd consumer needs it"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
