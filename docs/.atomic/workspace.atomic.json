@@ -35115,6 +35115,60 @@
         "no auto-load on boot (deterministic seed); autosave-on-edit + a load-confirm prompt are additive follow-ups"
       ]
     },
+    "R853": {
+      "decision_summary": "R853 node-graph move undo: MoveNodeCmd (drag = one step, nudge burst coalesces via UndoCommand::merge); completes the node-editor undo story",
+      "changes_bullets": [
+        "add MoveNodeCmd: a reversible O(1) before/after position edit (distinct from the structural GraphEdit delta)",
+        "a capture drag records ONE move at gesture end (before = grab, after = release), not one per cursor frame",
+        "a keyboard nudge burst coalesces to one undo step via the UndoCommand::merge hook (its first node-editor consumer)",
+        "intervene x then y on the same node coalesce to one move; a drag stays a non-coalescable single step",
+        "moves are now journaled: this fixes the R851 wrinkle (redoing an add then a move restores the moved position)",
+        "set_node_pos clarified as the no-journal low-level reposition; the callers record once the gesture settles"
+      ],
+      "verification_bullets": [
+        "hello-node-editor 51 unit (5 new R853: nudge-burst coalesce, drag one-step, drag-vs-nudge no-coalesce, intervene x+y coalesce, move-after-add redoable; the stale r851 moves-not-journaled test removed)",
+        "tools/demos/r853_node_move_undo.py PASS (~30 assert: real tf.drag capture-drag undo/redo, Arrow nudge-burst coalesce, RPC intervene x+y coalesce, add+move redo restores moved pos)",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: MoveNodeCmd peers GraphEdit/SortFilterEdit/GridSortEdit/TextEditCommand (per-widget command); UndoCommand::merge reused"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "node-editor undo is now complete (structural R851 + moves R853); the deferred command-coalescing substrate (merge) has its first node-editor consumer (nudge bursts), drag sidesteps it by recording once at gesture end",
+        "use_app_storage lift to pinion-platform-storage at the 3rd storage consumer (R852 carry)",
+        "undo_redo_verb / save_load_verb keymap lift at a 2nd apply_key-level consumer (R851/R852 carry)",
+        "GraphEdit/MoveNodeCmd + model + bezier geometry crate-extract at the 2nd graph consumer (material graph)",
+        "per-cell column cursor / marquee multi-select / canvas pan-zoom = additive node-editor follow-ups"
+      ],
+      "publishable_decision_summary": "R853 node-graph move undo: MoveNodeCmd (drag = one step, nudge burst coalesces via UndoCommand::merge); completes the node-editor undo story",
+      "publishable_changes_bullets": [
+        "add MoveNodeCmd: a reversible O(1) before/after position edit (distinct from the structural GraphEdit delta)",
+        "a capture drag records ONE move at gesture end (before = grab, after = release), not one per cursor frame",
+        "a keyboard nudge burst coalesces to one undo step via the UndoCommand::merge hook (its first node-editor consumer)",
+        "intervene x then y on the same node coalesce to one move; a drag stays a non-coalescable single step",
+        "moves are now journaled: this fixes the R851 wrinkle (redoing an add then a move restores the moved position)",
+        "set_node_pos clarified as the no-journal low-level reposition; the callers record once the gesture settles"
+      ],
+      "publishable_verification_bullets": [
+        "hello-node-editor 51 unit (5 new R853: nudge-burst coalesce, drag one-step, drag-vs-nudge no-coalesce, intervene x+y coalesce, move-after-add redoable; the stale r851 moves-not-journaled test removed)",
+        "tools/demos/r853_node_move_undo.py PASS (~30 assert: real tf.drag capture-drag undo/redo, Arrow nudge-burst coalesce, RPC intervene x+y coalesce, add+move redo restores moved pos)",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: MoveNodeCmd peers GraphEdit/SortFilterEdit/GridSortEdit/TextEditCommand (per-widget command); UndoCommand::merge reused"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "node-editor undo is now complete (structural R851 + moves R853); the deferred command-coalescing substrate (merge) has its first node-editor consumer (nudge bursts), drag sidesteps it by recording once at gesture end",
+        "use_app_storage lift to pinion-platform-storage at the 3rd storage consumer (R852 carry)",
+        "undo_redo_verb / save_load_verb keymap lift at a 2nd apply_key-level consumer (R851/R852 carry)",
+        "GraphEdit/MoveNodeCmd + model + bezier geometry crate-extract at the 2nd graph consumer (material graph)",
+        "per-cell column cursor / marquee multi-select / canvas pan-zoom = additive node-editor follow-ups"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

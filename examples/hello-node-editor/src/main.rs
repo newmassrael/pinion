@@ -72,15 +72,13 @@
 //!   `add_edge` validates arity but not type (a Float output can wire to any
 //!   input). The type lattice differs per graph kind (material vs blueprint),
 //!   so it is deferred until that consumer settles it ([[abstraction-needs-second-consumer]]).
-//! - **Undo / redo** (R851): the **structural** edits — add node, delete node
-//!   (with its incident edges), connect, disconnect — are journaled onto the
-//!   shared [`UndoStack`] substrate as reversible [`GraphEdit`] deltas, driven
-//!   by `Ctrl+Z` / `Ctrl+Shift+Z` (`Ctrl+Y`) and the AI-first
-//!   [`UndoStackExternal`]. Node **moves** (drag / nudge / `intervene .x`) are
-//!   deliberately *not* journaled yet: a continuous drag needs command
-//!   coalescing (one drag = one undo step), the documented "live-drag" undo
-//!   round — so redoing a structural edit restores the node at its add-time
-//!   position. (A consequence kept honest, not hidden.)
+//! - **Undo / redo** (R851 + R853): every edit is reversible on the shared
+//!   [`UndoStack`] — the **structural** edits (add node, delete node + its
+//!   incident edges, connect, disconnect) as [`GraphEdit`] deltas, and node
+//!   **moves** (drag / nudge / `intervene .x`) as [`MoveNodeCmd`]s. A drag is
+//!   recorded as one move at gesture end; a keyboard nudge **burst** coalesces
+//!   to one undo step (the `UndoCommand::merge` hook). `Ctrl+Z` /
+//!   `Ctrl+Shift+Z` (`Ctrl+Y`) and the AI-first [`UndoStackExternal`] drive it.
 //! - **Persistence** (R852): the graph saves / loads through the §3 §5.15
 //!   [`Storage`] substrate — `save` / `load` write and restore a
 //!   [`SerializedGraph`] JSON blob (nodes + edges + the monotonic id counters)
@@ -782,6 +780,74 @@ impl UndoCommand for GraphEdit {
     }
 }
 
+/// R853 §5.52 — a reversible node **move** (the position-edit `UndoCommand`,
+/// distinct from the structural [`GraphEdit`]). A move stores only the moved
+/// node's `before` / `after` window position, so undo / redo is an O(1) reposition
+/// — never a graph-wide delta. It opts into the [`UndoCommand`] coalescing hook
+/// (`merge`): a `coalescable` move folds a contiguous same-node move into itself,
+/// so a keyboard nudge **burst** collapses to one undo step (the canonical
+/// editor behaviour). A drag is recorded as one *non*-coalescable move at gesture
+/// end (it is already the whole gesture), so it neither absorbs nor is absorbed
+/// by an adjacent nudge run.
+struct MoveNodeCmd {
+    nodes: Rc<Signal<Vec<GraphNode>>>,
+    id: NodeId,
+    before: (i32, i32),
+    after: (i32, i32),
+    coalescable: bool,
+}
+
+impl MoveNodeCmd {
+    /// Set the moved node's position (no clamp — `before` / `after` were
+    /// captured from already-clamped positions). A no-op if the node is absent
+    /// (a LIFO undo can never reach a move while the node is deleted, but the
+    /// signal write stays total either way).
+    fn set_pos(&self, pos: (i32, i32)) {
+        self.nodes.set_with(|prev| {
+            let mut next = prev.clone();
+            if let Some(n) = next.iter_mut().find(|n| n.id == self.id) {
+                n.x = pos.0;
+                n.y = pos.1;
+            }
+            next
+        });
+    }
+}
+
+impl UndoCommand for MoveNodeCmd {
+    fn label(&self) -> Cow<'static, str> {
+        Cow::Borrowed("Move node")
+    }
+
+    fn redo(&self) {
+        self.set_pos(self.after);
+    }
+
+    fn undo(&self) {
+        self.set_pos(self.before);
+    }
+
+    fn as_any(&self) -> Option<&dyn core::any::Any> {
+        Some(self)
+    }
+
+    /// Fold a contiguous same-node move into this one: extend `after` to the
+    /// successor's. Only when both ends are `coalescable` and target the same
+    /// node — so a drag (non-coalescable) breaks the run on either side, and a
+    /// move of a different node starts a fresh undo step.
+    fn merge(&mut self, next: &dyn UndoCommand) -> bool {
+        let Some(next) = next.as_any().and_then(|a| a.downcast_ref::<MoveNodeCmd>()) else {
+            return false;
+        };
+        if self.coalescable && next.coalescable && self.id == next.id {
+            self.after = next.after;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// R851 — prune a selection that a structural edit just made dangling: a
 /// [`Selection`] over a removed node / edge id collapses to [`Selection::None`]
 /// (the stable-id analogue of R838's index-shift bookkeeping — "is it still
@@ -893,6 +959,17 @@ impl NodeGraphExternal {
         });
     }
 
+    /// R853 — journal a node move onto the undo stack. The position is already
+    /// applied (the live drag / nudge / intervene set it), so this `push_applied`s
+    /// the [`MoveNodeCmd`] without re-applying; the stack's coalescing folds a
+    /// contiguous `coalescable` run (a nudge burst) into one step.
+    fn record_move(&self, id: NodeId, before: (i32, i32), after: (i32, i32), coalescable: bool) {
+        if before == after {
+            return;
+        }
+        self.undo.push_applied(MoveNodeCmd { nodes: Rc::clone(&self.nodes), id, before, after, coalescable });
+    }
+
     /// R852 — snapshot the persistable graph (nodes + edges + the monotonic id
     /// counters; the selection is transient and omitted).
     fn snapshot(&self) -> SerializedGraph {
@@ -964,10 +1041,11 @@ impl NodeGraphExternal {
         }
     }
 
-    /// Move node `id` to a clamped `(x, y)`. The single mutation behind both
-    /// the capture drag and the `intervene node.<id>.{x,y}` path. R851 — moves
-    /// are deliberately *not* journaled (see the module-doc undo gap), so this
-    /// stays a direct signal write.
+    /// Move node `id` to a clamped `(x, y)` — the low-level reposition behind the
+    /// capture drag, the arrow nudge, and the `intervene node.<id>.{x,y}` path.
+    /// It does *not* journal (a drag calls it many times per gesture); R853 — the
+    /// callers (`end_gesture` / `nudge_selected` / the `x`,`y` intervene arm)
+    /// record the [`MoveNodeCmd`] once the gesture / keystroke settles.
     fn set_node_pos(&self, id: NodeId, x: i32, y: i32) -> bool {
         let mut moved = false;
         self.nodes.set_with(|prev| {
@@ -1136,7 +1214,9 @@ impl NodeGraphExternal {
             .map(|e| e.id)
     }
 
-    /// Nudge the selected node by `(dx, dy)` (the arrow-key path).
+    /// Nudge the selected node by `(dx, dy)` (the arrow-key path). R853 — each
+    /// nudge journals a *coalescable* move, so a burst of arrow keys collapses to
+    /// one undo step.
     fn nudge_selected(&self, dx: i32, dy: i32) -> bool {
         let Some(id) = self.selection.get().node() else {
             return false;
@@ -1144,7 +1224,13 @@ impl NodeGraphExternal {
         let Some(node) = self.node_by_id(id) else {
             return false;
         };
-        self.set_node_pos(id, node.x + dx, node.y + dy)
+        let before = (node.x, node.y);
+        if !self.set_node_pos(id, node.x + dx, node.y + dy) {
+            return false;
+        }
+        let after = self.node_by_id(id).map_or(before, |n| (n.x, n.y));
+        self.record_move(id, before, after, true);
+        true
     }
 
     /// Select a node by id (must exist). The sum type makes any prior edge
@@ -1227,6 +1313,16 @@ impl NodeGraphExternal {
     }
 
     fn end_gesture(&self) {
+        // R853 — a completed node-body drag (a node was grabbed and a drag
+        // snapshot taken) journals as ONE non-coalescable move: before = the grab
+        // position, after = the release position. The intermediate `pointer_move`
+        // writes are live preview only. Edge-connect drags arm `pending_press`,
+        // not `grabbed_node`, so they never record a move here.
+        if let (Some(id), Some(start)) = (self.grabbed_node.get(), self.node_drag.get()) {
+            if let Some(node) = self.node_by_id(id) {
+                self.record_move(id, (start.x_at_press, start.y_at_press), (node.x, node.y), false);
+            }
+        }
         self.grabbed_node.set(None);
         self.node_drag.set(None);
         self.pending_press.set(PendingPress::None);
@@ -1477,11 +1573,16 @@ impl ExternalIntrospect for NodeGraphExternal {
                     return Err(InterveneError::TypeMismatch);
                 };
                 let coord = i32::try_from(v).map_err(|_| InterveneError::TypeMismatch)?;
+                let before = (node.x, node.y);
                 if field == "x" {
                     self.set_node_pos(id, coord, node.y);
                 } else {
                     self.set_node_pos(id, node.x, coord);
                 }
+                // R853 — journal the RPC move (coalescable, so an `x` then `y` on
+                // the same node fold into one undo step).
+                let after = self.node_by_id(id).map_or(before, |n| (n.x, n.y));
+                self.record_move(id, before, after, true);
                 Ok(())
             }
             "title" | "inputs" | "outputs" => Err(InterveneError::ReadOnly),
@@ -2845,24 +2946,6 @@ mod tests {
     }
 
     #[test]
-    fn r851_moves_are_not_journaled() {
-        Owner::new().run(|| {
-            let _ = boot_scene();
-            let coord = coordinator();
-            let stack = use_undo();
-            let id = coord.add_node(0).expect("Texture");
-            let count_after_add = stack.len();
-            assert_eq!(count_after_add, 1, "the add is one entry");
-            // A nudge + an intervene move must NOT push undo entries (documented
-            // deferral: moves join the live-drag coalescing round).
-            coord.select_node(Some(id));
-            assert!(coord.nudge_selected(NUDGE_STEP, 0), "nudge moves the node");
-            coord.set_node_pos(id, 200, 200);
-            assert_eq!(stack.len(), count_after_add, "no move was journaled");
-        });
-    }
-
-    #[test]
     fn r851_undo_external_query_and_invoke_round_trip() {
         Owner::new().run(|| {
             let mut scene = boot_full_scene();
@@ -3089,6 +3172,134 @@ mod tests {
                     Err(InvokeError::Rejected),
                 );
             }
+        });
+    }
+
+    // ── R853 node move undo (drag = one step, nudge burst coalesces) ─
+
+    /// Position of node `id` (panics if absent).
+    fn pos_of(coord: &NodeGraphExternal, id: NodeId) -> (i32, i32) {
+        coord.node_by_id(id).map(|n| (n.x, n.y)).expect("node present")
+    }
+
+    /// Arm + tear down a synthetic node-body drag from `before` to a `+delta`
+    /// position (the real `pointer_move` rel-math is exercised by the demo's
+    /// `tf.drag`; here we drive the latches directly to test the recording).
+    fn synth_drag(coord: &NodeGraphExternal, id: NodeId, before: (i32, i32), dx: i32, dy: i32) {
+        coord.grabbed_node.set(Some(id));
+        coord.node_drag.set(Some(NodeDragStart {
+            press_x_rel: 0.0,
+            press_y_rel: 0.0,
+            x_at_press: before.0,
+            y_at_press: before.1,
+        }));
+        coord.set_node_pos(id, before.0 + dx, before.1 + dy); // live preview write
+        coord.end_gesture(); // commits one non-coalescable move
+    }
+
+    #[test]
+    fn r853_nudge_burst_coalesces_to_one_undo_step() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let id = NodeId(0);
+            coord.select_node(Some(id));
+            let start = pos_of(&coord, id);
+            assert!(coord.nudge_selected(NUDGE_STEP, 0));
+            assert!(coord.nudge_selected(NUDGE_STEP, 0));
+            assert!(coord.nudge_selected(NUDGE_STEP, 0));
+            assert_eq!(stack.len(), 1, "the nudge burst is one coalesced undo step");
+            assert_eq!(pos_of(&coord, id), (start.0 + 3 * NUDGE_STEP, start.1), "moved 3 steps");
+            assert!(stack.undo(), "one undo reverts the whole burst");
+            assert_eq!(pos_of(&coord, id), start, "back to the start");
+            assert!(stack.redo(), "one redo re-applies the whole burst");
+            assert_eq!(pos_of(&coord, id), (start.0 + 3 * NUDGE_STEP, start.1));
+        });
+    }
+
+    #[test]
+    fn r853_drag_records_one_move_at_gesture_end() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let id = NodeId(0);
+            let before = pos_of(&coord, id);
+            coord.grabbed_node.set(Some(id));
+            coord.node_drag.set(Some(NodeDragStart {
+                press_x_rel: 0.0,
+                press_y_rel: 0.0,
+                x_at_press: before.0,
+                y_at_press: before.1,
+            }));
+            coord.set_node_pos(id, before.0 + 50, before.1 + 30);
+            assert_eq!(stack.len(), 0, "nothing is journaled mid-drag");
+            coord.end_gesture();
+            assert_eq!(stack.len(), 1, "the whole drag is one move at gesture end");
+            assert!(stack.undo());
+            assert_eq!(pos_of(&coord, id), before, "undo reverts the drag");
+            assert!(stack.redo());
+            assert_eq!(pos_of(&coord, id), (before.0 + 50, before.1 + 30), "redo re-applies it");
+        });
+    }
+
+    #[test]
+    fn r853_a_drag_does_not_coalesce_with_a_nudge() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let id = NodeId(0);
+            coord.select_node(Some(id));
+            assert!(coord.nudge_selected(NUDGE_STEP, 0), "a coalescable nudge");
+            let pos = pos_of(&coord, id);
+            synth_drag(&coord, id, pos, 40, 0); // a non-coalescable drag
+            assert_eq!(stack.len(), 2, "the drag is a fresh step, not folded into the nudge");
+        });
+    }
+
+    #[test]
+    fn r853_intervene_x_then_y_coalesce_to_one_move() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let stack = use_undo();
+            let before_x = query_int(&scene, "node.0.x");
+            let before_y = query_int(&scene, "node.0.y");
+            {
+                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let intro = node.handle.introspect_mut().expect("introspect");
+                intro.intervene("node.0.x", IntrospectValue::Int(200)).expect("x ok");
+                intro.intervene("node.0.y", IntrospectValue::Int(150)).expect("y ok");
+            }
+            assert_eq!(stack.len(), 1, "x then y on the same node coalesce to one move");
+            assert_eq!(query_int(&scene, "node.0.x"), 200);
+            assert!(stack.undo(), "one undo reverts both axes");
+            assert_eq!(query_int(&scene, "node.0.x"), before_x, "x restored");
+            assert_eq!(query_int(&scene, "node.0.y"), before_y, "y restored");
+        });
+    }
+
+    #[test]
+    fn r853_move_after_add_is_a_separate_redoable_step() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let id = coord.add_node(0).expect("Texture"); // structural step
+            let add_pos = pos_of(&coord, id);
+            assert!(coord.nudge_selected(NUDGE_STEP, NUDGE_STEP), "move the new node");
+            let moved_pos = pos_of(&coord, id);
+            assert_ne!(add_pos, moved_pos);
+            assert_eq!(stack.len(), 2, "add + move are two steps (move not folded into add)");
+            assert!(stack.undo(), "undo the move");
+            assert_eq!(pos_of(&coord, id), add_pos, "node back at its add-time position");
+            assert!(stack.undo(), "undo the add");
+            assert!(coord.node_by_id(id).is_none(), "the node is gone");
+            assert!(stack.redo(), "redo the add");
+            assert_eq!(pos_of(&coord, id), add_pos, "re-added at the add-time position");
+            assert!(stack.redo(), "redo the move");
+            assert_eq!(pos_of(&coord, id), moved_pos, "redo restores the moved position");
         });
     }
 
