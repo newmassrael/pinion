@@ -77,7 +77,7 @@ use pinion_core::external::{
     External, ExternalIntrospect, IntrospectSchema, IntrospectValue, InterveneError, InvokeError,
     RepaintOwner, ThreadOwnership,
 };
-use pinion_core::reactive::{batch, Owner, Signal};
+use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, PathStyle, Size,
@@ -157,10 +157,48 @@ fn ppt(x: i32, y: i32) -> PathPoint {
 
 // ─── graph model (example-local; lifted at the 2nd consumer) ───────
 
+/// Stable node handle (R841). Minted once at creation, never reused, never
+/// shifted — so an edge / selection / (future) undo record that references a
+/// node survives the deletion of *other* nodes. Positional indices (the R838
+/// model) invalidated every reference on each delete; this is the
+/// `hello-dock-panels-editor` stable-id discipline applied to the graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct NodeId(u32);
+
+/// Stable edge handle (R841), same discipline as [`NodeId`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+struct EdgeId(u32);
+
+impl NodeId {
+    fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl EdgeId {
+    fn raw(self) -> u32 {
+        self.0
+    }
+}
+
+impl core::fmt::Display for NodeId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl core::fmt::Display for EdgeId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// One node: a titled card with `inputs` input ports (left edge) and
-/// `outputs` output ports (right edge), placed at canvas `(x, y)`.
+/// `outputs` output ports (right edge), placed at canvas `(x, y)`. Carries a
+/// stable [`NodeId`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct GraphNode {
+    id: NodeId,
     title: String,
     x: i32,
     y: i32,
@@ -169,8 +207,8 @@ struct GraphNode {
 }
 
 impl GraphNode {
-    fn new(title: &str, x: i32, y: i32, inputs: usize, outputs: usize) -> Self {
-        Self { title: title.to_owned(), x, y, inputs, outputs }
+    fn new(id: u32, title: &str, x: i32, y: i32, inputs: usize, outputs: usize) -> Self {
+        Self { id: NodeId(id), title: title.to_owned(), x, y, inputs, outputs }
     }
 
     /// Port rows = the taller of the two columns (at least one, so a
@@ -184,69 +222,74 @@ impl GraphNode {
     }
 }
 
-/// A directed connection: source node's output port → target node's input
-/// port. Node indices are positions in the model `Vec` (delete reindexes).
+/// A directed connection (output port → input port), addressed by stable
+/// [`NodeId`]s and carrying its own stable [`EdgeId`]. Deleting a node drops
+/// only its incident edges — no other edge's identity changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Edge {
-    from_node: usize,
+    id: EdgeId,
+    from_node: NodeId,
     from_port: usize,
-    to_node: usize,
+    to_node: NodeId,
     to_port: usize,
 }
 
 /// Live drag preview while a wire is being pulled from an output port.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Preview {
-    from_node: usize,
+    from_node: NodeId,
     from_port: usize,
     /// Currently-hovered input port the wire would snap to, if any.
-    to: Option<(usize, usize)>,
+    to: Option<(NodeId, usize)>,
 }
 
 /// What is selected — a node, an edge, or nothing. A sum type so "both a node
-/// and an edge selected" is unrepresentable (was previously two `Option`
-/// Signals with a mutual-exclusion invariant maintained by hand).
+/// and an edge selected" is unrepresentable; the handles are stable ids, so a
+/// selection survives an unrelated delete.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Selection {
     None,
-    Node(usize),
-    Edge(usize),
+    Node(NodeId),
+    Edge(EdgeId),
 }
 
 impl Selection {
-    /// The selected node index, if a node is selected.
-    fn node(self) -> Option<usize> {
+    /// The selected node id, if a node is selected.
+    fn node(self) -> Option<NodeId> {
         match self {
-            Selection::Node(i) => Some(i),
+            Selection::Node(id) => Some(id),
             _ => None,
         }
     }
 
-    /// The selected edge index, if an edge is selected.
-    fn edge(self) -> Option<usize> {
+    /// The selected edge id, if an edge is selected.
+    fn edge(self) -> Option<EdgeId> {
         match self {
-            Selection::Edge(i) => Some(i),
+            Selection::Edge(id) => Some(id),
             _ => None,
         }
     }
 }
 
+/// New edges mint ids from here upward (after the [`default_edges`] ids 0..=2).
+const FIRST_DYNAMIC_EDGE_ID: u32 = 3;
+
 /// First-paint graph — a tiny material graph (`Texture` × `Color` →
-/// `Multiply` → `Output`).
+/// `Multiply` → `Output`). Node ids 0..=3, edge ids 0..=2.
 fn default_nodes() -> Vec<GraphNode> {
     vec![
-        GraphNode::new("Texture", 40, 70, 0, 1),
-        GraphNode::new("Color", 40, 210, 0, 1),
-        GraphNode::new("Multiply", 250, 110, 2, 1),
-        GraphNode::new("Output", 470, 150, 1, 0),
+        GraphNode::new(0, "Texture", 40, 70, 0, 1),
+        GraphNode::new(1, "Color", 40, 210, 0, 1),
+        GraphNode::new(2, "Multiply", 250, 110, 2, 1),
+        GraphNode::new(3, "Output", 470, 150, 1, 0),
     ]
 }
 
 fn default_edges() -> Vec<Edge> {
     vec![
-        Edge { from_node: 0, from_port: 0, to_node: 2, to_port: 0 },
-        Edge { from_node: 1, from_port: 0, to_node: 2, to_port: 1 },
-        Edge { from_node: 2, from_port: 0, to_node: 3, to_port: 0 },
+        Edge { id: EdgeId(0), from_node: NodeId(0), from_port: 0, to_node: NodeId(2), to_port: 0 },
+        Edge { id: EdgeId(1), from_node: NodeId(1), from_port: 0, to_node: NodeId(2), to_port: 1 },
+        Edge { id: EdgeId(2), from_node: NodeId(2), from_port: 0, to_node: NodeId(3), to_port: 0 },
     ]
 }
 
@@ -368,42 +411,55 @@ fn use_preview() -> Rc<Signal<Option<Preview>>> {
     owner.cache("node_graph.preview", || Signal::new(None))
 }
 
+/// Monotonic [`EdgeId`] allocator — persists across view-fn re-runs so a
+/// minted id is never reused (the stable-identity guarantee for new edges).
+#[must_use]
+fn use_next_edge_id() -> Rc<Cell<u32>> {
+    let owner = Owner::current().expect("use_next_edge_id requires an active Owner scope");
+    owner.cache("node_graph.next_edge_id", || Cell::new(FIRST_DYNAMIC_EDGE_ID))
+}
+
 // ─── sub-tag grammar (composite paint tags route to the coordinator) ──
 
-/// `node_graph#node_<i>` → node index.
-fn parse_node_sub(sub: &str) -> Option<usize> {
-    sub.strip_prefix("node_")?.parse().ok()
+/// `node_graph#node_<id>` → [`NodeId`].
+fn parse_node_sub(sub: &str) -> Option<NodeId> {
+    Some(NodeId(sub.strip_prefix("node_")?.parse().ok()?))
 }
 
-/// `oport_<n>_<j>` → (node, output port).
-fn parse_oport_sub(sub: &str) -> Option<(usize, usize)> {
+/// `oport_<id>_<j>` → (node id, output port).
+fn parse_oport_sub(sub: &str) -> Option<(NodeId, usize)> {
     let (n, j) = sub.strip_prefix("oport_")?.split_once('_')?;
-    Some((n.parse().ok()?, j.parse().ok()?))
+    Some((NodeId(n.parse().ok()?), j.parse().ok()?))
 }
 
-/// A full drop tag `node_graph#iport_<n>_<i>` → (node, input port). Uses the
-/// canonical `#` splitter (`split_subindex`) rather than an inline split.
-fn parse_input_port_tag(tag: &str) -> Option<(usize, usize)> {
+/// A full drop tag `node_graph#iport_<id>_<i>` → (node id, input port). Uses
+/// the canonical `#` splitter (`split_subindex`) rather than an inline split.
+fn parse_input_port_tag(tag: &str) -> Option<(NodeId, usize)> {
     let (n, i) = split_subindex(tag).1?.strip_prefix("iport_")?.split_once('_')?;
-    Some((n.parse().ok()?, i.parse().ok()?))
+    Some((NodeId(n.parse().ok()?), i.parse().ok()?))
 }
 
-/// Two comma-separated `usize`s ("dx,dy" sign-prefixed allowed via i32).
+/// Two comma-separated `i32`s ("dx,dy").
 fn parse_pair_i32(s: &str) -> Option<(i32, i32)> {
     let (a, b) = s.split_once(',')?;
     Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
 }
 
-/// Four comma-separated `usize`s ("from_node,from_port,to_node,to_port").
-fn parse_quad(csv: &str) -> Option<(usize, usize, usize, usize)> {
+/// Join stable ids into the CSV the `node_ids` / `edge_ids` queries return.
+fn csv_ids(ids: impl Iterator<Item = u32>) -> String {
+    ids.map(|id| id.to_string()).collect::<Vec<_>>().join(",")
+}
+
+/// Four comma-separated values: "from_node_id,from_port,to_node_id,to_port".
+fn parse_quad(csv: &str) -> Option<(NodeId, usize, NodeId, usize)> {
     let parts: Vec<&str> = csv.split(',').collect();
     let [fnode, fport, tnode, tport] = parts.as_slice() else {
         return None;
     };
     Some((
-        fnode.trim().parse().ok()?,
+        NodeId(fnode.trim().parse().ok()?),
         fport.trim().parse().ok()?,
-        tnode.trim().parse().ok()?,
+        NodeId(tnode.trim().parse().ok()?),
         tport.trim().parse().ok()?,
     ))
 }
@@ -430,7 +486,7 @@ enum PendingPress {
     /// port press is not mistaken for an empty-canvas click).
     None,
     NodeBody,
-    OutputPort(usize, usize),
+    OutputPort(NodeId, usize),
     InputPort,
 }
 
@@ -441,17 +497,20 @@ enum PendingPress {
 struct NodeGraphExternal {
     nodes: Rc<Signal<Vec<GraphNode>>>,
     edges: Rc<Signal<Vec<Edge>>>,
-    /// The single selection (node | edge | none) — a sum type, so node and
-    /// edge selection are mutually exclusive by construction.
+    /// The single selection (node | edge | none) — a sum type over stable ids,
+    /// so node/edge selection is mutually exclusive AND survives an unrelated
+    /// delete (a dangling selection is pruned by [`Self::validate_selection`]).
     selection: Rc<Signal<Selection>>,
     preview: Rc<Signal<Option<Preview>>>,
+    /// Monotonic [`EdgeId`] source for newly-connected wires.
+    next_edge_id: Rc<Cell<u32>>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
-    grabbed_node: Cell<Option<usize>>,
+    grabbed_node: Cell<Option<NodeId>>,
     node_drag: Cell<Option<NodeDragStart>>,
     pending_press: Cell<PendingPress>,
     /// Edge under the most recent background press (the capture-seed
     /// `pointer_move` records it; a background `PointerUp` consumes it).
-    pending_edge_hit: Cell<Option<usize>>,
+    pending_edge_hit: Cell<Option<EdgeId>>,
 }
 
 impl NodeGraphExternal {
@@ -460,12 +519,14 @@ impl NodeGraphExternal {
         edges: Rc<Signal<Vec<Edge>>>,
         selection: Rc<Signal<Selection>>,
         preview: Rc<Signal<Option<Preview>>>,
+        next_edge_id: Rc<Cell<u32>>,
     ) -> Self {
         Self {
             nodes,
             edges,
             selection,
             preview,
+            next_edge_id,
             grabbed_node: Cell::new(None),
             node_drag: Cell::new(None),
             pending_press: Cell::new(PendingPress::None),
@@ -477,13 +538,32 @@ impl NodeGraphExternal {
         self.nodes.get().len()
     }
 
-    /// Move node `i` to a clamped `(x, y)`. The single mutation behind both
-    /// the capture drag and the `intervene node.<i>.{x,y}` path.
-    fn set_node_pos(&self, i: usize, x: i32, y: i32) -> bool {
+    fn node_by_id(&self, id: NodeId) -> Option<GraphNode> {
+        self.nodes.get().into_iter().find(|n| n.id == id)
+    }
+
+    /// Clear the selection if it references a node / edge that no longer exists.
+    /// With stable ids this replaces all of R838's index-shift bookkeeping: a
+    /// structural mutation cannot *renumber* a survivor, only *remove* one, so
+    /// "is the selection still alive?" is the entire adjustment.
+    fn validate_selection(&self) {
+        let alive = match self.selection.get() {
+            Selection::None => true,
+            Selection::Node(id) => self.nodes.get().iter().any(|n| n.id == id),
+            Selection::Edge(id) => self.edges.get().iter().any(|e| e.id == id),
+        };
+        if !alive {
+            self.selection.set(Selection::None);
+        }
+    }
+
+    /// Move node `id` to a clamped `(x, y)`. The single mutation behind both
+    /// the capture drag and the `intervene node.<id>.{x,y}` path.
+    fn set_node_pos(&self, id: NodeId, x: i32, y: i32) -> bool {
         let mut moved = false;
         self.nodes.set_with(|prev| {
             let mut next = prev.clone();
-            if let Some(node) = next.get_mut(i) {
+            if let Some(node) = next.iter_mut().find(|n| n.id == id) {
                 node.x = clamp_node_x(x);
                 node.y = clamp_node_y(y);
                 moved = true;
@@ -494,93 +574,68 @@ impl NodeGraphExternal {
     }
 
     /// Add an edge output `(from_node, from_port)` → input `(to_node,
-    /// to_port)`. Rejects a self-loop, an out-of-range port, or a duplicate;
-    /// an input port takes a single wire, so an existing connection into the
-    /// target input is replaced (the canonical node-editor rule).
-    fn add_edge(&self, from_node: usize, from_port: usize, to_node: usize, to_port: usize) -> bool {
+    /// to_port)`. Rejects a self-loop, a missing node, an out-of-range port, or
+    /// a duplicate; an input port takes a single wire, so an existing
+    /// connection into the target input is replaced (the canonical node-editor
+    /// rule). The new edge mints a fresh stable [`EdgeId`].
+    fn add_edge(&self, from_node: NodeId, from_port: usize, to_node: NodeId, to_port: usize) -> bool {
         if from_node == to_node {
             return false;
         }
         let nodes = self.nodes.get();
-        let Some(src) = nodes.get(from_node) else {
+        let Some(src) = nodes.iter().find(|n| n.id == from_node) else {
             return false;
         };
-        let Some(dst) = nodes.get(to_node) else {
+        let Some(dst) = nodes.iter().find(|n| n.id == to_node) else {
             return false;
         };
         if from_port >= src.outputs || to_port >= dst.inputs {
             return false;
         }
-        let edge = Edge { from_node, from_port, to_node, to_port };
         let mut edges = self.edges.get();
-        if edges.contains(&edge) {
+        let dup = edges.iter().any(|e| {
+            e.from_node == from_node
+                && e.from_port == from_port
+                && e.to_node == to_node
+                && e.to_port == to_port
+        });
+        if dup {
             return false;
         }
+        // Input single-wire rule: drop any existing wire into the target input.
         edges.retain(|e| !(e.to_node == to_node && e.to_port == to_port));
-        edges.push(edge);
-        // The dedup-retain may shift edge indices — drop a now-ambiguous
-        // edge selection (a node selection is unaffected).
-        batch(|| {
-            self.edges.set(edges);
-            if self.selection.get().edge().is_some() {
-                self.selection.set(Selection::None);
-            }
-        });
+        let id = EdgeId(self.next_edge_id.get());
+        self.next_edge_id.set(id.raw() + 1);
+        edges.push(Edge { id, from_node, from_port, to_node, to_port });
+        self.edges.set(edges);
+        // The dedup-retain may have removed the selected edge — prune if gone.
+        self.validate_selection();
         true
     }
 
-    fn remove_edge(&self, index: usize) -> bool {
+    /// Remove the edge with stable id `id` (no-op + `false` if absent).
+    fn remove_edge(&self, id: EdgeId) -> bool {
         let mut edges = self.edges.get();
-        if index >= edges.len() {
+        let before = edges.len();
+        edges.retain(|e| e.id != id);
+        if edges.len() == before {
             return false;
         }
-        edges.remove(index);
-        batch(|| {
-            self.edges.set(edges);
-            // Drop / shift the edge selection to track the removal.
-            self.selection.set(match self.selection.get() {
-                Selection::Edge(s) if s == index => Selection::None,
-                Selection::Edge(s) if s > index => Selection::Edge(s - 1),
-                other => other,
-            });
-        });
+        self.edges.set(edges);
+        self.validate_selection();
         true
     }
 
-    /// Delete node `k`, drop its incident edges, and reindex the survivors
-    /// (node indices are model positions). Selection follows the same shift.
-    fn delete_node(&self, k: usize) -> bool {
-        if k >= self.node_count() {
+    /// Delete node `id` and its incident edges. No reindex: every surviving
+    /// node and edge keeps its stable id, so references elsewhere stay valid.
+    fn delete_node(&self, id: NodeId) -> bool {
+        if !self.nodes.get().iter().any(|n| n.id == id) {
             return false;
         }
-        batch(|| {
-            self.nodes.set_with(|prev| {
-                let mut next = prev.clone();
-                next.remove(k);
-                next
-            });
-            self.edges.set_with(|prev| {
-                let mut next: Vec<Edge> =
-                    prev.iter().copied().filter(|e| e.from_node != k && e.to_node != k).collect();
-                for e in &mut next {
-                    if e.from_node > k {
-                        e.from_node -= 1;
-                    }
-                    if e.to_node > k {
-                        e.to_node -= 1;
-                    }
-                }
-                next
-            });
-            // A selected node shifts with the reindex; a selected edge is now
-            // ambiguous (incident edges dropped + reindexed) so it clears.
-            self.selection.set(match self.selection.get() {
-                Selection::Node(s) if s == k => Selection::None,
-                Selection::Node(s) if s > k => Selection::Node(s - 1),
-                Selection::Edge(_) => Selection::None,
-                other => other,
-            });
-        });
+        self.nodes.set_with(|prev| prev.iter().filter(|n| n.id != id).cloned().collect());
+        self.edges
+            .set_with(|prev| prev.iter().copied().filter(|e| e.from_node != id && e.to_node != id).collect());
+        self.validate_selection();
         self.grabbed_node.set(None);
         self.node_drag.set(None);
         true
@@ -597,41 +652,54 @@ impl NodeGraphExternal {
     }
 
     /// Hit-test a window-px click against every wire; the first within
-    /// tolerance is the selection candidate.
-    fn hit_test_edge(&self, px: i32, py: i32) -> Option<usize> {
+    /// tolerance is the selection candidate (its stable [`EdgeId`]).
+    fn hit_test_edge(&self, px: i32, py: i32) -> Option<EdgeId> {
         let nodes = self.nodes.get();
-        let edges = self.edges.get();
-        edges.iter().position(|e| {
-            let (Some(src), Some(dst)) = (nodes.get(e.from_node), nodes.get(e.to_node)) else {
-                return false;
-            };
-            point_near_edge(px, py, output_port_center(src, e.from_port), input_port_center(dst, e.to_port))
-        })
+        self.edges
+            .get()
+            .iter()
+            .find(|e| {
+                let (Some(src), Some(dst)) = (
+                    nodes.iter().find(|n| n.id == e.from_node),
+                    nodes.iter().find(|n| n.id == e.to_node),
+                ) else {
+                    return false;
+                };
+                point_near_edge(
+                    px,
+                    py,
+                    output_port_center(src, e.from_port),
+                    input_port_center(dst, e.to_port),
+                )
+            })
+            .map(|e| e.id)
     }
 
     /// Nudge the selected node by `(dx, dy)` (the arrow-key path).
     fn nudge_selected(&self, dx: i32, dy: i32) -> bool {
-        let Some(k) = self.selection.get().node() else {
+        let Some(id) = self.selection.get().node() else {
             return false;
         };
-        let nodes = self.nodes.get();
-        let Some(node) = nodes.get(k) else {
+        let Some(node) = self.node_by_id(id) else {
             return false;
         };
-        self.set_node_pos(k, node.x + dx, node.y + dy)
+        self.set_node_pos(id, node.x + dx, node.y + dy)
     }
 
-    /// Select a node (clamped, in-range). The sum type makes any prior edge
+    /// Select a node by id (must exist). The sum type makes any prior edge
     /// selection vanish for free — no "clear the other" bookkeeping.
-    fn select_node(&self, value: Option<usize>) {
-        let next = value.filter(|&i| i < self.node_count()).map_or(Selection::None, Selection::Node);
+    fn select_node(&self, id: Option<NodeId>) {
+        let next = id
+            .filter(|id| self.nodes.get().iter().any(|n| n.id == *id))
+            .map_or(Selection::None, Selection::Node);
         self.selection.set(next);
     }
 
-    /// Select an edge (clamped, in-range).
-    fn select_edge(&self, value: Option<usize>) {
-        let next =
-            value.filter(|&i| i < self.edges.get().len()).map_or(Selection::None, Selection::Edge);
+    /// Select an edge by id (must exist).
+    fn select_edge(&self, id: Option<EdgeId>) {
+        let next = id
+            .filter(|id| self.edges.get().iter().any(|e| e.id == *id))
+            .map_or(Selection::None, Selection::Edge);
         self.selection.set(next);
     }
 
@@ -747,8 +815,7 @@ impl External for NodeGraphExternal {
         };
         match self.node_drag.get() {
             None => {
-                let nodes = self.nodes.get();
-                if let Some(n) = nodes.get(node) {
+                if let Some(n) = self.node_by_id(node) {
                     self.node_drag.set(Some(NodeDragStart {
                         press_x_rel: f64::from(x_rel),
                         press_y_rel: f64::from(y_rel),
@@ -791,8 +858,9 @@ impl External for NodeGraphExternal {
         if let (IntrospectValue::Text(src), Some((to_node, to_port))) =
             (&payload.value, over.as_ref().and_then(|dp| parse_input_port_tag(&dp.tag)))
         {
-            if let Some((from_node, from_port)) =
-                src.split_once('_').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
+            if let Some((from_node, from_port)) = src
+                .split_once('_')
+                .and_then(|(a, b)| Some((NodeId(a.parse().ok()?), b.parse::<usize>().ok()?)))
             {
                 self.add_edge(from_node, from_port, to_node, to_port);
             }
@@ -815,14 +883,16 @@ impl ExternalIntrospect for NodeGraphExternal {
         IntrospectSchema::new(&[
             ("node_count", "int"),
             ("edge_count", "int"),
+            ("node_ids", "string"),
+            ("edge_ids", "string"),
             ("selected", "int"),
             ("selected_edge", "int"),
-            ("node.<i>.title", "string"),
-            ("node.<i>.x", "int"),
-            ("node.<i>.y", "int"),
-            ("node.<i>.inputs", "int"),
-            ("node.<i>.outputs", "int"),
-            ("edge.<i>", "string"),
+            ("node.<id>.title", "string"),
+            ("node.<id>.x", "int"),
+            ("node.<id>.y", "int"),
+            ("node.<id>.inputs", "int"),
+            ("node.<id>.outputs", "int"),
+            ("edge.<id>", "string"),
             ("send", "string"),
             ("add_edge", "string"),
             ("remove_edge", "int"),
@@ -836,20 +906,28 @@ impl ExternalIntrospect for NodeGraphExternal {
         match path {
             "node_count" => Some(IntrospectValue::Int(int_of(self.node_count()))),
             "edge_count" => Some(IntrospectValue::Int(int_of(self.edges.get().len()))),
+            // CSV of the *current* (possibly sparse after deletes) stable ids —
+            // the enumeration handle an AI needs now that addressing is by id.
+            "node_ids" => Some(IntrospectValue::Text(csv_ids(
+                self.nodes.get().iter().map(|n| n.id.raw()),
+            ))),
+            "edge_ids" => Some(IntrospectValue::Text(csv_ids(
+                self.edges.get().iter().map(|e| e.id.raw()),
+            ))),
             "selected" => Some(match self.selection.get().node() {
-                Some(i) => IntrospectValue::Int(int_of(i)),
+                Some(id) => IntrospectValue::Int(i64::from(id.raw())),
                 None => IntrospectValue::Null,
             }),
             "selected_edge" => Some(match self.selection.get().edge() {
-                Some(i) => IntrospectValue::Int(int_of(i)),
+                Some(id) => IntrospectValue::Int(i64::from(id.raw())),
                 None => IntrospectValue::Null,
             }),
             _ => {
                 if let Some(rest) = path.strip_prefix("node.") {
-                    let (i_str, field) = rest.split_once('.')?;
-                    let i: usize = i_str.parse().ok()?;
+                    let (id_str, field) = rest.split_once('.')?;
+                    let id = NodeId(id_str.parse().ok()?);
                     let nodes = self.nodes.get();
-                    let node = nodes.get(i)?;
+                    let node = nodes.iter().find(|n| n.id == id)?;
                     return match field {
                         "title" => Some(IntrospectValue::Text(node.title.clone())),
                         "x" => Some(IntrospectValue::Int(i64::from(node.x))),
@@ -859,10 +937,10 @@ impl ExternalIntrospect for NodeGraphExternal {
                         _ => None,
                     };
                 }
-                if let Some(i_str) = path.strip_prefix("edge.") {
-                    let i: usize = i_str.parse().ok()?;
+                if let Some(id_str) = path.strip_prefix("edge.") {
+                    let id = EdgeId(id_str.parse().ok()?);
                     let edges = self.edges.get();
-                    let e = edges.get(i)?;
+                    let e = edges.iter().find(|e| e.id == id)?;
                     return Some(IntrospectValue::Text(format!(
                         "{}:{}->{}:{}",
                         e.from_node, e.from_port, e.to_node, e.to_port
@@ -881,8 +959,8 @@ impl ExternalIntrospect for NodeGraphExternal {
                     Ok(())
                 }
                 IntrospectValue::Int(i) => {
-                    let idx = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
-                    self.select_node(Some(idx));
+                    let id = u32::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
+                    self.select_node(Some(NodeId(id)));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -895,8 +973,8 @@ impl ExternalIntrospect for NodeGraphExternal {
                     Ok(())
                 }
                 IntrospectValue::Int(i) => {
-                    let idx = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
-                    self.select_edge(Some(idx));
+                    let id = u32::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
+                    self.select_edge(Some(EdgeId(id)));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -905,11 +983,11 @@ impl ExternalIntrospect for NodeGraphExternal {
         let Some(rest) = path.strip_prefix("node.") else {
             return Err(InterveneError::UnknownPath);
         };
-        let (i_str, field) = rest.split_once('.').ok_or(InterveneError::UnknownPath)?;
-        let i: usize = i_str.parse().map_err(|_| InterveneError::UnknownPath)?;
-        if i >= self.node_count() {
+        let (id_str, field) = rest.split_once('.').ok_or(InterveneError::UnknownPath)?;
+        let id = NodeId(id_str.parse().map_err(|_| InterveneError::UnknownPath)?);
+        let Some(node) = self.node_by_id(id) else {
             return Err(InterveneError::UnknownPath);
-        }
+        };
         // The field decides read-only-ness first (a read-only field rejects
         // any value type), then `x` / `y` require an `Int`.
         match field {
@@ -918,11 +996,10 @@ impl ExternalIntrospect for NodeGraphExternal {
                     return Err(InterveneError::TypeMismatch);
                 };
                 let coord = i32::try_from(v).map_err(|_| InterveneError::TypeMismatch)?;
-                let node = self.nodes.get()[i].clone();
                 if field == "x" {
-                    self.set_node_pos(i, coord, node.y);
+                    self.set_node_pos(id, coord, node.y);
                 } else {
-                    self.set_node_pos(i, node.x, coord);
+                    self.set_node_pos(id, node.x, coord);
                 }
                 Ok(())
             }
@@ -947,15 +1024,15 @@ impl ExternalIntrospect for NodeGraphExternal {
             },
             "remove_edge" => match args {
                 IntrospectValue::Int(i) => {
-                    let idx = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
-                    Ok(IntrospectValue::Bool(self.remove_edge(idx)))
+                    let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+                    Ok(IntrospectValue::Bool(self.remove_edge(EdgeId(id))))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
             "delete_node" => match args {
                 IntrospectValue::Int(i) => {
-                    let idx = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
-                    Ok(IntrospectValue::Bool(self.delete_node(idx)))
+                    let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+                    Ok(IntrospectValue::Bool(self.delete_node(NodeId(id))))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -1043,23 +1120,33 @@ fn view_edge(tag: String, from: (i32, i32), to: (i32, i32), color: Color, width:
     )
 }
 
+/// Look up a node by its stable id within a slice (the view's id→node resolve).
+fn node_ref(nodes: &[GraphNode], id: NodeId) -> Option<&GraphNode> {
+    nodes.iter().find(|n| n.id == id)
+}
+
 /// All committed edges, resolved to their port centres. Painted behind the
-/// node cards; the selected edge paints thicker in the highlight colour.
-fn view_edges(nodes: &[GraphNode], edges: &[Edge], selected_edge: Option<usize>, theme: &Theme) -> Vec<Scene> {
+/// node cards; the selected edge paints thicker in the highlight colour. Each
+/// edge is tagged by its stable [`EdgeId`].
+fn view_edges(
+    nodes: &[GraphNode],
+    edges: &[Edge],
+    selected_edge: Option<EdgeId>,
+    theme: &Theme,
+) -> Vec<Scene> {
     let color = theme.resolve(ColorRole::Accent);
     let hot = theme.resolve(ColorRole::OnSurface);
     edges
         .iter()
-        .enumerate()
-        .filter_map(|(i, e)| {
-            let from = output_port_center(nodes.get(e.from_node)?, e.from_port);
-            let to = input_port_center(nodes.get(e.to_node)?, e.to_port);
-            let (c, w) = if selected_edge == Some(i) {
+        .filter_map(|e| {
+            let from = output_port_center(node_ref(nodes, e.from_node)?, e.from_port);
+            let to = input_port_center(node_ref(nodes, e.to_node)?, e.to_port);
+            let (c, w) = if selected_edge == Some(e.id) {
                 (hot, SELECTED_EDGE_W)
             } else {
                 (color, EDGE_W)
             };
-            Some(view_edge(format!("{GRAPH_TAG}#edge_{i}"), from, to, c, w))
+            Some(view_edge(format!("{GRAPH_TAG}#edge_{}", e.id), from, to, c, w))
         })
         .collect()
 }
@@ -1081,7 +1168,8 @@ fn view_port(tag: String, left: i32, top: i32, color: Color) -> Scene {
 /// One node card: a header (title) over its input (left) + output (right)
 /// ports, absolutely placed at the node's canvas position. The whole card is
 /// one drag target; the ports are deeper hit targets for edge connect.
-fn view_node(idx: usize, node: &GraphNode, selected: bool, theme: &Theme) -> Scene {
+fn view_node(node: &GraphNode, selected: bool, theme: &Theme) -> Scene {
+    let id = node.id;
     let port_color = theme.resolve(ColorRole::Accent);
     let header = Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
@@ -1105,7 +1193,7 @@ fn view_node(idx: usize, node: &GraphNode, selected: bool, theme: &Theme) -> Sce
     let mut children = vec![header];
     for i in 0..node.inputs {
         children.push(view_port(
-            format!("{GRAPH_TAG}#iport_{idx}_{i}"),
+            format!("{GRAPH_TAG}#iport_{id}_{i}"),
             0,
             port_row_top(i),
             port_color,
@@ -1113,7 +1201,7 @@ fn view_node(idx: usize, node: &GraphNode, selected: bool, theme: &Theme) -> Sce
     }
     for j in 0..node.outputs {
         children.push(view_port(
-            format!("{GRAPH_TAG}#oport_{idx}_{j}"),
+            format!("{GRAPH_TAG}#oport_{id}_{j}"),
             NODE_W - PORT_SIZE,
             port_row_top(j),
             port_color,
@@ -1127,7 +1215,7 @@ fn view_node(idx: usize, node: &GraphNode, selected: bool, theme: &Theme) -> Sce
     };
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("{GRAPH_TAG}#node_{idx}"))
+            .with_tag(format!("{GRAPH_TAG}#node_{id}"))
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)).with_border(border))
             .with_layout(
                 LayoutStyle::new()
@@ -1153,11 +1241,11 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     children.extend(view_edges(&nodes, &edges, selected_edge, &theme));
 
     if let Some(p) = preview {
-        if let Some(from_node) = nodes.get(p.from_node) {
+        if let Some(from_node) = node_ref(&nodes, p.from_node) {
             let from = output_port_center(from_node, p.from_port);
             let to = p
                 .to
-                .and_then(|(tn, tp)| Some(input_port_center(nodes.get(tn)?, tp)))
+                .and_then(|(tn, tp)| Some(input_port_center(node_ref(&nodes, tn)?, tp)))
                 .unwrap_or(from);
             children.push(view_edge(
                 format!("{GRAPH_TAG}#preview"),
@@ -1169,8 +1257,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         }
     }
 
-    for (idx, node) in nodes.iter().enumerate() {
-        children.push(view_node(idx, node, selected == Some(idx), &theme));
+    for node in &nodes {
+        children.push(view_node(node, selected == Some(node.id), &theme));
     }
 
     children.push(Scene::Text(
@@ -1182,8 +1270,8 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(16, 12)),
     ));
 
-    let sel_label = if let Some(i) = selected {
-        format!("node {}", nodes.get(i).map_or("—", |n| n.title.as_str()))
+    let sel_label = if let Some(id) = selected {
+        format!("node {}", node_ref(&nodes, id).map_or("—", |n| n.title.as_str()))
     } else if let Some(e) = selected_edge {
         format!("edge {e}")
     } else {
@@ -1219,7 +1307,13 @@ impl WidgetCore for NodeEditorView {
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
-        Box::new(NodeGraphExternal::new(use_nodes(), use_edges(), use_selection(), use_preview()))
+        Box::new(NodeGraphExternal::new(
+            use_nodes(),
+            use_edges(),
+            use_selection(),
+            use_preview(),
+            use_next_edge_id(),
+        ))
     }
 
     fn tag() -> &'static str {
@@ -1284,15 +1378,15 @@ impl WidgetA11y for NodeEditorView {
         let mut group = AccessNode::new(GRAPH_TAG, AriaRole::Group)
             .with_name("Node graph")
             .with_state(AccessState { focused: focused == Some(GRAPH_TAG), ..AccessState::default() });
-        for i in 0..nodes.len() {
-            group = group.with_child(format!("{GRAPH_TAG}#node_{i}"));
+        for node in &nodes {
+            group = group.with_child(format!("{GRAPH_TAG}#node_{}", node.id));
         }
         let mut out = vec![group];
-        for (i, node) in nodes.iter().enumerate() {
+        for node in &nodes {
             out.push(
-                AccessNode::new(format!("{GRAPH_TAG}#node_{i}"), AriaRole::Generic)
+                AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
                     .with_name(format!("{} ({} in, {} out)", node.title, node.inputs, node.outputs))
-                    .with_selected(selected == Some(i)),
+                    .with_selected(selected == Some(node.id)),
             );
         }
         out
@@ -1414,19 +1508,21 @@ mod tests {
                 intro.invoke("add_edge", IntrospectValue::Text("0,5,3,0".to_owned())),
                 Ok(IntrospectValue::Bool(false)),
             );
-            // A new valid edge into Output's only input replaces edge 2's target.
+            // A new valid edge into Output's only input replaces edge id 2's
+            // target; the new wire mints a fresh id (3), edge id 2 is gone.
             assert_eq!(
                 intro.invoke("add_edge", IntrospectValue::Text("0,0,3,0".to_owned())),
                 Ok(IntrospectValue::Bool(true)),
             );
             // Input (3,0) now has exactly one wire — still 3 edges total.
             assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(3)));
-            assert_eq!(intro.query("edge.2"), Some(IntrospectValue::Text("0:0->3:0".to_owned())));
+            assert_eq!(intro.query("edge.2"), None, "old wire id 2 was replaced");
+            assert_eq!(intro.query("edge.3"), Some(IntrospectValue::Text("0:0->3:0".to_owned())));
         });
     }
 
     #[test]
-    fn r838_remove_edge_by_index() {
+    fn r838_remove_edge_by_id() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
@@ -1444,24 +1540,25 @@ mod tests {
     }
 
     #[test]
-    fn r838_delete_node_reindexes_edges_and_selection() {
+    fn r841_delete_node_keeps_stable_ids_over_rpc() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
-            let _ = intro.intervene("selected", IntrospectValue::Int(3));
-            // Delete node 1 (Color): drops edge 1:0->2:1, and node 2/3 shift to 1/2.
+            let _ = intro.intervene("selected", IntrospectValue::Int(3)); // Output
+            // Delete node id 1 (Color): drops only edge 1:0->2:1. NO reindex.
             assert_eq!(
                 intro.invoke("delete_node", IntrospectValue::Int(1)),
                 Ok(IntrospectValue::Bool(true)),
             );
             assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(3)));
             assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(2)));
-            // Old node 2 (Multiply) is now node 1; old edge 0:0->2:0 became 0:0->1:0.
-            assert_eq!(intro.query("node.1.title"), Some(IntrospectValue::Text("Multiply".to_owned())));
-            assert_eq!(intro.query("edge.0"), Some(IntrospectValue::Text("0:0->1:0".to_owned())));
-            // Selection (was 3 = Output) follows the shift to 2.
-            assert_eq!(intro.query("selected"), Some(IntrospectValue::Int(2)));
+            // Multiply is STILL id 2; edge id 0 still reads 0:0->2:0 (not renumbered).
+            assert_eq!(intro.query("node.2.title"), Some(IntrospectValue::Text("Multiply".to_owned())));
+            assert_eq!(intro.query("node.1.title"), None, "id 1 is gone, not reused");
+            assert_eq!(intro.query("edge.0"), Some(IntrospectValue::Text("0:0->2:0".to_owned())));
+            // Selection (Output id 3) is untouched — it did not shift to 2.
+            assert_eq!(intro.query("selected"), Some(IntrospectValue::Int(3)));
         });
     }
 
@@ -1565,7 +1662,13 @@ mod tests {
     /// A fresh coordinator over the shared Owner::cache holders (mutations
     /// persist across instances within one Owner scope).
     fn coordinator() -> NodeGraphExternal {
-        NodeGraphExternal::new(use_nodes(), use_edges(), use_selection(), use_preview())
+        NodeGraphExternal::new(
+            use_nodes(),
+            use_edges(),
+            use_selection(),
+            use_preview(),
+            use_next_edge_id(),
+        )
     }
 
     #[test]
@@ -1601,7 +1704,7 @@ mod tests {
                 0.5,
             );
             let coord = coordinator();
-            assert_eq!(coord.hit_test_edge(round_i32(mid.0), round_i32(mid.1)), Some(0));
+            assert_eq!(coord.hit_test_edge(round_i32(mid.0), round_i32(mid.1)), Some(EdgeId(0)));
             assert_eq!(coord.hit_test_edge(10, 10), None, "empty corner hits nothing");
         });
     }
@@ -1611,25 +1714,32 @@ mod tests {
         Owner::new().run(|| {
             let _ = boot_scene();
             let coord = coordinator();
-            coord.select_node(Some(2));
-            assert_eq!(use_selection().get(), Selection::Node(2));
-            coord.select_edge(Some(1));
-            assert_eq!(use_selection().get(), Selection::Edge(1), "selecting an edge replaces the node");
+            coord.select_node(Some(NodeId(2)));
+            assert_eq!(use_selection().get(), Selection::Node(NodeId(2)));
+            coord.select_edge(Some(EdgeId(1)));
+            assert_eq!(
+                use_selection().get(),
+                Selection::Edge(EdgeId(1)),
+                "selecting an edge replaces the node",
+            );
             // The illegal "both selected" state is unrepresentable by construction.
         });
     }
 
     #[test]
-    fn r839_remove_edge_shifts_the_edge_selection() {
+    fn r841_remove_edge_keeps_other_selections_stable() {
         Owner::new().run(|| {
             let _ = boot_scene();
             let coord = coordinator();
-            coord.select_edge(Some(2));
-            assert!(coord.remove_edge(0), "remove edge 0");
-            assert_eq!(use_selection().get(), Selection::Edge(1), "selection 2 shifts to 1");
-            coord.select_edge(Some(1));
-            assert!(coord.remove_edge(1), "remove the selected edge");
-            assert_eq!(use_selection().get(), Selection::None, "removing the selected edge clears it");
+            // With stable ids, removing a *different* edge does NOT renumber the
+            // selected one (the whole point — no index shift).
+            coord.select_edge(Some(EdgeId(2)));
+            assert!(coord.remove_edge(EdgeId(0)), "remove edge id 0");
+            assert_eq!(use_selection().get(), Selection::Edge(EdgeId(2)), "id 2 still selected");
+            // Removing the selected edge itself prunes the selection.
+            assert!(coord.remove_edge(EdgeId(2)), "remove the selected edge");
+            assert_eq!(use_selection().get(), Selection::None);
+            assert!(!coord.remove_edge(EdgeId(99)), "unknown edge id rejected");
         });
     }
 
@@ -1638,10 +1748,44 @@ mod tests {
         Owner::new().run(|| {
             let _ = boot_scene();
             let coord = coordinator();
-            coord.select_edge(Some(0));
+            coord.select_edge(Some(EdgeId(0)));
             assert!(coord.delete_selected(), "delete the selected edge");
             assert_eq!(use_edges().get().len(), 2, "one edge removed");
             assert_eq!(use_selection().get(), Selection::None);
+        });
+    }
+
+    #[test]
+    fn r841_delete_node_keeps_survivor_ids_stable() {
+        Owner::new().run(|| {
+            let coord = coordinator();
+            // Select Output (id 3); delete Color (id 1).
+            coord.select_node(Some(NodeId(3)));
+            assert!(coord.delete_node(NodeId(1)), "delete node id 1");
+            // No reindex: Multiply is STILL id 2; its edges keep their ids.
+            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.title), Some("Multiply".to_owned()));
+            assert!(coord.node_by_id(NodeId(1)).is_none(), "Color is gone");
+            let edges = use_edges().get();
+            assert_eq!(edges.len(), 2, "Color's incident edge dropped");
+            assert!(edges.iter().any(|e| e.id == EdgeId(0) && e.from_node == NodeId(0) && e.to_node == NodeId(2)));
+            // The selection (Output id 3) is untouched — it did not shift.
+            assert_eq!(use_selection().get(), Selection::Node(NodeId(3)));
+        });
+    }
+
+    #[test]
+    fn r841_node_ids_and_edge_ids_enumerate_the_sparse_space() {
+        Owner::new().run(|| {
+            let coord = coordinator();
+            assert_eq!(coord.query("node_ids"), Some(IntrospectValue::Text("0,1,2,3".to_owned())));
+            assert_eq!(coord.query("edge_ids"), Some(IntrospectValue::Text("0,1,2".to_owned())));
+            // Delete node id 1 → the id space stays sparse, no renumber.
+            coord.delete_node(NodeId(1));
+            assert_eq!(
+                coord.query("node_ids"),
+                Some(IntrospectValue::Text("0,2,3".to_owned())),
+                "sparse, no renumber",
+            );
         });
     }
 
@@ -1687,7 +1831,7 @@ mod tests {
     fn r840_access_node_emits_group_not_ordered_list() {
         Owner::new().run(|| {
             let _scene = boot_scene();
-            use_selection().set(Selection::Node(2));
+            use_selection().set(Selection::Node(NodeId(2)));
             let nodes = NodeEditorView::access_node(&(), Some(GRAPH_TAG));
             assert_eq!(nodes.len(), 1 + 4, "group + one item per node");
             // R840 audit fix: a graph is an unordered set, so Group/Generic —

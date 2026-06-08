@@ -27,6 +27,11 @@ R839 adds edge selection: click a wire (point-to-bezier hit-test via the
 R51.34 capture-seed click coords) to select it, Delete to remove it; node and
 edge selection are mutually exclusive.
 
+R841 makes node/edge identity stable: nodes and edges are addressed by stable
+ids (`node.<id>` / `edge.<id>`), enumerated via `node_ids` / `edge_ids`. Delete
+drops only the target + its incident edges — survivors keep their ids (no
+reindex), so an edge / selection reference survives an unrelated delete.
+
 Verified (>= 30 assertions):
   (A) boot taxonomy — 4 nodes / 3 edges, titles, port arity, seed wiring
   (A2) click-select a wire (R839 bezier hit-test) + delete_selected + restore
@@ -73,6 +78,23 @@ def _focus_graph(tf) -> None:
     )
 
 
+def _ids(tf, which: str) -> list[int]:
+    """Current stable node / edge id list (R841 — addressing is by id, and the
+    id space is sparse after deletes)."""
+    csv = tf.query(f"/external/{which}")
+    return [int(x) for x in csv.split(",")] if csv else []
+
+
+def _edge_conns(tf) -> dict[int, str]:
+    """Map each live edge id → its "from:port->to:port" connection string."""
+    return {eid: tf.query(f"/external/edge.{eid}") for eid in _ids(tf, "edge_ids")}
+
+
+def _edge_id_of(tf, conn: str) -> int | None:
+    """The stable id of the edge with connection string `conn`, if present."""
+    return next((eid for eid, c in _edge_conns(tf).items() if c == conn), None)
+
+
 def body() -> None:
     with RpcSubprocess("hello-node-editor", boot_grace=1.5) as tf:
         # ── (A) boot taxonomy ────────────────────────────────────────
@@ -90,6 +112,9 @@ def body() -> None:
         assert_eq(tf.query("/external/edge.0"), "0:0->2:0", "Texture -> Multiply.in0")
         assert_eq(tf.query("/external/edge.1"), "1:0->2:1", "Color -> Multiply.in1")
         assert_eq(tf.query("/external/edge.2"), "2:0->3:0", "Multiply -> Output.in0")
+        # R841 stable-id enumeration handles.
+        assert_eq(tf.query("/external/node_ids"), "0,1,2,3", "node id space")
+        assert_eq(tf.query("/external/edge_ids"), "0,1,2", "edge id space")
 
         # ── (A2) click-select a wire (R839 bezier hit-test) + delete ─
         # Edge 0 (Texture.out0 -> Multiply.in0) bows through ~(210, 134),
@@ -135,17 +160,21 @@ def body() -> None:
         tf.intervene("/external/selected", None)
         assert_eq(tf.query("/external/selected"), None, "intervene clears selection")
 
-        # ── (D) RPC edge edit — validation + remove ──────────────────
+        # ── (D) RPC edge edit — validation + remove (by stable id) ───
         assert_eq(tf.invoke("/external/add_edge", "2,0,2,0"), False, "self-loop rejected")
         assert_eq(tf.invoke("/external/add_edge", "0,9,3,0"), False, "bad port rejected")
-        # New wire into Output's single input replaces edge 2's target (input
-        # takes one wire), so the count stays 3.
+        # New wire into Output's single input replaces the existing wire there
+        # (input takes one wire) — count stays 3, the new edge mints a fresh id.
         assert_eq(tf.invoke("/external/add_edge", "0,0,3,0"), True, "valid edge added")
         assert_eq(tf.query("/external/edge_count"), 3, "input single-wire dedup keeps 3")
-        assert_eq(tf.query("/external/edge.2"), "0:0->3:0", "Output input rewired")
-        assert_eq(tf.invoke("/external/remove_edge", 2), True, "remove edge 2")
+        conns = set(_edge_conns(tf).values())
+        assert "0:0->3:0" in conns, f"Output input rewired ({conns})"
+        assert "2:0->3:0" not in conns, "old Multiply->Output wire replaced"
+        new_eid = _edge_id_of(tf, "0:0->3:0")
+        assert new_eid is not None, "new edge id resolvable"
+        assert_eq(tf.invoke("/external/remove_edge", new_eid), True, "remove that edge by id")
         assert_eq(tf.query("/external/edge_count"), 2, "now 2 edges")
-        assert_eq(tf.invoke("/external/remove_edge", 9), False, "out-of-range remove rejected")
+        assert_eq(tf.invoke("/external/remove_edge", 999), False, "unknown edge id rejected")
 
         # ── (E) live node drag (R51.34 capture lock) ─────────────────
         x_before = tf.query("/external/node.1.x")
@@ -166,8 +195,8 @@ def body() -> None:
         wait_until(lambda: tf.query("/external/edge_count") == 3, timeout=4.0,
                    interval=0.05, desc="port drag created an edge")
         # The new edge connects Multiply (2) output 0 to Output (3) input 0.
-        edges = [tf.query(f"/external/edge.{i}") for i in range(3)]
-        assert "2:0->3:0" in edges, f"Multiply->Output wire present ({edges})"
+        conns = set(_edge_conns(tf).values())
+        assert "2:0->3:0" in conns, f"Multiply->Output wire present ({conns})"
 
         # ── (G) keyboard nudge + delete the selected node ────────────
         _focus_graph(tf)
@@ -185,20 +214,22 @@ def body() -> None:
                    interval=0.03, desc="Delete removes the selected node")
         assert_eq(tf.query("/external/selected"), None, "selection cleared after delete")
 
-        # ── (H) delete_node reindex (RPC) ────────────────────────────
-        before = tf.query("/external/node_count")
-        assert_eq(tf.invoke("/external/delete_node", before), False, "out-of-range delete rejected")
-        assert_eq(tf.invoke("/external/delete_node", 0), True, "delete node 0")
+        # ── (H) delete_node by stable id; survivors keep their ids ───
+        node_ids = _ids(tf, "node_ids")  # node 0 was deleted in (G) → sparse
+        before = len(node_ids)
+        assert_eq(tf.invoke("/external/delete_node", 999), False, "unknown node id rejected")
+        victim = node_ids[0]
+        assert_eq(tf.invoke("/external/delete_node", victim), True, f"delete node id {victim}")
         assert_eq(tf.query("/external/node_count"), before - 1, "node removed")
+        assert victim not in _ids(tf, "node_ids"), "deleted id not reused"
 
         # ── (I) paint: nodes, ports, and bezier edges all render ─────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        nodes_now = tf.query("/external/node_count")
-        for i in range(nodes_now):
-            assert find_by_tag(snap, f"{G}#node_{i}") is not None, f"node {i} card painted"
-        edges_now = tf.query("/external/edge_count")
-        assert edges_now >= 1, "at least one edge remains"
-        assert find_by_tag(snap, f"{G}#edge_0") is not None, "edge 0 bezier painted"
+        for nid in _ids(tf, "node_ids"):
+            assert find_by_tag(snap, f"{G}#node_{nid}") is not None, f"node {nid} card painted"
+        edge_ids = _ids(tf, "edge_ids")
+        assert edge_ids, "at least one edge remains"
+        assert find_by_tag(snap, f"{G}#edge_{edge_ids[0]}") is not None, "a bezier edge painted"
         time.sleep(PAUSE)
 
 

@@ -34435,6 +34435,52 @@
         "\"click coords to External\" framework primitive (now via capture-seed); typed ports deferred"
       ]
     },
+    "R841": {
+      "decision_summary": "R841 stable node/edge ids: NodeId/EdgeId newtypes replace positional Vec-index; delete drops target+incident only (no reindex); selection/edges/RPC address by id (node.<id> + node_ids enum); survivors keep identity",
+      "changes_bullets": [
+        "NodeId/EdgeId newtypes; GraphNode/Edge carry stable ids; Selection is over ids",
+        "delete_node/remove_edge drop only the target + incident edges — no reindex of survivors",
+        "selection adjustment = validate_selection (is it still alive?), not index-shift bookkeeping",
+        "RPC addresses by id (node.<id>/edge.<id>) + node_ids/edge_ids enumerate the sparse space",
+        "new edges mint ids from a monotonic Cell (use_next_edge_id); dock-panels-editor precedent"
+      ],
+      "verification_bullets": [
+        "22 unit tests (r841 delete-keeps-stable-ids + node_ids enumeration added); workspace test green",
+        "clippy --workspace --all-targets --features pinion-runtime/vello green (-D pedantic)",
+        "tools/demos/r838_node_editor.py PASS (57 assertions; id-addressed; delete keeps survivor ids)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "add_node verb (id minting wired, no UI/RPC verb yet); graph serialization (serde derives ready)",
+        "typed ports (count-only today); a11y graphics-document role + flowto relation = pinion-a11y gap",
+        "\"click coords to External\" framework primitive (capture-seed workaround stands)"
+      ],
+      "publishable_decision_summary": "R841 stable node/edge ids: NodeId/EdgeId newtypes replace positional Vec-index; delete drops target+incident only (no reindex); selection/edges/RPC address by id (node.<id> + node_ids enum); survivors keep identity",
+      "publishable_changes_bullets": [
+        "NodeId/EdgeId newtypes; GraphNode/Edge carry stable ids; Selection is over ids",
+        "delete_node/remove_edge drop only the target + incident edges — no reindex of survivors",
+        "selection adjustment = validate_selection (is it still alive?), not index-shift bookkeeping",
+        "RPC addresses by id (node.<id>/edge.<id>) + node_ids/edge_ids enumerate the sparse space",
+        "new edges mint ids from a monotonic Cell (use_next_edge_id); dock-panels-editor precedent"
+      ],
+      "publishable_verification_bullets": [
+        "22 unit tests (r841 delete-keeps-stable-ids + node_ids enumeration added); workspace test green",
+        "clippy --workspace --all-targets --features pinion-runtime/vello green (-D pedantic)",
+        "tools/demos/r838_node_editor.py PASS (57 assertions; id-addressed; delete keeps survivor ids)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "add_node verb (id minting wired, no UI/RPC verb yet); graph serialization (serde derives ready)",
+        "typed ports (count-only today); a11y graphics-document role + flowto relation = pinion-a11y gap",
+        "\"click coords to External\" framework primitive (capture-seed workaround stands)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
