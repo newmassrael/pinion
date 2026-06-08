@@ -33971,6 +33971,70 @@
         "view_menu_overlay lift (R832 carry) still pending a 3rd menu-bar consumer"
       ]
     },
+    "R834": {
+      "decision_summary": "R834: remediate R831-R833 audit findings (cost-no-object adversarial re-audit at the user's request; [[verify-seed-claims-audit-first]] 9th self-assessment flip). 4 independent subagent audits found genuine BLOCKERs the green gates masked because the demos drove only mouse + RPC, never keyboard or the AccessKit action path. Fixed: (R833) the print example was a partially-HOLLOW feature — it hardwired InMemoryPrintBackend and never wired the CupsPrintBackend it shipped a whole crate for; now build_print_backend() selects cups-if-available else in-memory (mirroring todomvc's AppStorage), and the keyboard-dead dialog (invoke('key') on a button is unhandled; only 1 of 4 buttons focusable) now uses activate_or_rove + focusable_tags. (R832) access_child_invoke was a silent no-op on the multi-external Container (bare Scene::External match) -> find_external_with_tag_mut + a regression guard. (R831) docs overstated f32 chunking-determinism and falsely implied the animation clock was deterministic -> honest bounds. SSOT: reused R804 forward_key_to_field / R760 activate_or_rove instead of hand-rolls; lifted the int_of 3-copy to pinion_core::external.",
+      "changes_bullets": [
+        "R833 hollow fix: build_print_backend() selects CupsPrintBackend (cups_available + has-printers) else InMemoryPrintBackend",
+        "AppPrintBackend(Box<dyn PrintBackend>) newtype (mirrors todomvc AppStorage); pinion-platform-print now actually reachable; backend_kind exposed",
+        "R833 keyboard fix: focusable_tags()=all 4 buttons + apply_key=focus_request::activate_or_rove; prior invoke(\"key\") was DEAD (ButtonExternal handles only \"send\")",
+        "R832 a11y BLOCKER fix: access_child_invoke walks find_external_with_tag_mut (bare Scene::External match was a silent no-op on the doc-extra-external Container)",
+        "R832 SSOT: apply_key reuses R804 pinion_core::input::forward_key_to_field instead of hand-rolling the by-tag key forward",
+        "R831 doc honesty: FixedTimestep chunking-determinism bounded (f32 absorption); substep doc states the animation live-vs-RPC asymmetry is an un-fixed known limitation, not benign",
+        "int_of(usize)->i64 lifted to pinion_core::external::int_of; widgets::table + 2 examples drop their copies (was a 3-copy)",
+        "demos: r833 gains keyboard coverage + PINION_PRINT_BACKEND=memory pin + backend_kind assert; r832 unchanged-green; new access_child_invoke unit guard"
+      ],
+      "verification_bullets": [
+        "round driven by 4 independent adversarial subagent audits (cost-no-object) — they found genuine BLOCKERs the green gates masked (demos drove only mouse + RPC, never keyboard or the AT-action path)",
+        "cargo test --workspace -j2: green (incl new access_child_invoke guard + r833 keyboard)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "full headless sweep (realgpu :0): r832 + r833 (now with keyboard) + all regression"
+      ],
+      "impact_refs": [
+        "5.53",
+        "5.40",
+        "5.28",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "animation clock retains a live-variable / RPC-substep time-base asymmetry (R831 fixed only the immediate-mode loop) — unifying it on a fixed timestep is a deferred axis with broad spring-catalog regression surface; now honestly documented, NOT claimed fixed",
+        "forward_key_to_field is a misnomer (generic by-tag key-forward, named for its first text-field consumer); rename to forward_key_to_external_tag = cosmetic follow-up",
+        "view_menu_overlay lift (barrier+dropdown 2-copy) still pending a 3rd menu-bar consumer",
+        "print: scene->PDF/PostScript page-render + clickable printer-row + page-range + paper-size = additive dialog axes",
+        "CupsPrintBackend end-to-end submit still needs a configured destination (none on this box); now genuinely selectable at runtime when one exists",
+        "f64 / fixed-point FixedTimestep for cross-machine bit-determinism = future axis (no consumer yet)"
+      ],
+      "publishable_decision_summary": "R834: remediate R831-R833 audit findings (cost-no-object adversarial re-audit at the user's request; [[verify-seed-claims-audit-first]] 9th self-assessment flip). 4 independent subagent audits found genuine BLOCKERs the green gates masked because the demos drove only mouse + RPC, never keyboard or the AccessKit action path. Fixed: (R833) the print example was a partially-HOLLOW feature — it hardwired InMemoryPrintBackend and never wired the CupsPrintBackend it shipped a whole crate for; now build_print_backend() selects cups-if-available else in-memory (mirroring todomvc's AppStorage), and the keyboard-dead dialog (invoke('key') on a button is unhandled; only 1 of 4 buttons focusable) now uses activate_or_rove + focusable_tags. (R832) access_child_invoke was a silent no-op on the multi-external Container (bare Scene::External match) -> find_external_with_tag_mut + a regression guard. (R831) docs overstated f32 chunking-determinism and falsely implied the animation clock was deterministic -> honest bounds. SSOT: reused R804 forward_key_to_field / R760 activate_or_rove instead of hand-rolls; lifted the int_of 3-copy to pinion_core::external.",
+      "publishable_changes_bullets": [
+        "R833 hollow fix: build_print_backend() selects CupsPrintBackend (cups_available + has-printers) else InMemoryPrintBackend",
+        "AppPrintBackend(Box<dyn PrintBackend>) newtype (mirrors todomvc AppStorage); pinion-platform-print now actually reachable; backend_kind exposed",
+        "R833 keyboard fix: focusable_tags()=all 4 buttons + apply_key=focus_request::activate_or_rove; prior invoke(\"key\") was DEAD (ButtonExternal handles only \"send\")",
+        "R832 a11y BLOCKER fix: access_child_invoke walks find_external_with_tag_mut (bare Scene::External match was a silent no-op on the doc-extra-external Container)",
+        "R832 SSOT: apply_key reuses R804 pinion_core::input::forward_key_to_field instead of hand-rolling the by-tag key forward",
+        "R831 doc honesty: FixedTimestep chunking-determinism bounded (f32 absorption); substep doc states the animation live-vs-RPC asymmetry is an un-fixed known limitation, not benign",
+        "int_of(usize)->i64 lifted to pinion_core::external::int_of; widgets::table + 2 examples drop their copies (was a 3-copy)",
+        "demos: r833 gains keyboard coverage + PINION_PRINT_BACKEND=memory pin + backend_kind assert; r832 unchanged-green; new access_child_invoke unit guard"
+      ],
+      "publishable_verification_bullets": [
+        "round driven by 4 independent adversarial subagent audits (cost-no-object) — they found genuine BLOCKERs the green gates masked (demos drove only mouse + RPC, never keyboard or the AT-action path)",
+        "cargo test --workspace -j2: green (incl new access_child_invoke guard + r833 keyboard)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "full headless sweep (realgpu :0): r832 + r833 (now with keyboard) + all regression"
+      ],
+      "publishable_impact_refs": [
+        "5.53",
+        "5.40",
+        "5.28",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "animation clock retains a live-variable / RPC-substep time-base asymmetry (R831 fixed only the immediate-mode loop) — unifying it on a fixed timestep is a deferred axis with broad spring-catalog regression surface; now honestly documented, NOT claimed fixed",
+        "forward_key_to_field is a misnomer (generic by-tag key-forward, named for its first text-field consumer); rename to forward_key_to_external_tag = cosmetic follow-up",
+        "view_menu_overlay lift (barrier+dropdown 2-copy) still pending a 3rd menu-bar consumer",
+        "print: scene->PDF/PostScript page-render + clickable printer-row + page-range + paper-size = additive dialog axes",
+        "CupsPrintBackend end-to-end submit still needs a configured destination (none on this box); now genuinely selectable at runtime when one exists",
+        "f64 / fixed-point FixedTimestep for cross-machine bit-determinism = future axis (no consumer yet)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

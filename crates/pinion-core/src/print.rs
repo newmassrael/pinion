@@ -137,7 +137,11 @@ pub enum PrintError {
 /// R833 §3 §5.53 — the print backend contract: enumerate destinations
 /// and submit jobs. Mirrors [`Storage`](crate::storage::Storage) (a
 /// small total trait with an in-memory + a platform impl).
-pub trait PrintBackend {
+///
+/// `Debug` is a super-trait so a runtime-selected `Box<dyn PrintBackend>`
+/// (the binding's "CUPS if available, else in-memory" choice — mirroring
+/// todomvc's `AppStorage`) participates in `#[derive(Debug)]`.
+pub trait PrintBackend: core::fmt::Debug {
     /// The destinations this backend can print to. May be empty (no
     /// printer configured) — the dialog shows the empty state.
     fn enumerate_printers(&self) -> Vec<PrinterInfo>;

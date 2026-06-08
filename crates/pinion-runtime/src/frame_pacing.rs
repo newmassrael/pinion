@@ -94,6 +94,17 @@ const FIXED_TIMESTEP_SUBSTEP_SECS: f32 = 1.0 / 120.0;
 /// accumulator — instead. The shared [`FIXED_TIMESTEP_SUBSTEP_SECS`]
 /// constant keeps the two sub-step granularities in lockstep without
 /// conflating the two policies.
+///
+/// **Known limitation (honest):** the animation clock's *live* path
+/// (`pinion_shell` per-window paint) advances the full clamped frame `dt`
+/// in ONE step, while `scene/tick` substeps — the same live-vs-RPC
+/// asymmetry R831 removed for the immediate-mode loop. Springs converge,
+/// so the *settled* state matches, but for the same total elapsed time
+/// the two paths trace different *mid-flight* values (observable via §2
+/// #7 introspection). Unifying the animation live path on a fixed
+/// timestep too is a deferred axis (broad regression surface across the
+/// spring-animated catalog); it is NOT yet done, contrary to any reading
+/// that R831 made the animation clock deterministic.
 pub fn substep(dt: f32, mut step_fn: impl FnMut(f32)) {
     let mut remaining = dt.max(0.0);
     while remaining > 0.0 {
@@ -127,11 +138,16 @@ pub fn substep(dt: f32, mut step_fn: impl FnMut(f32)) {
 ///   same wall-clock window take the same number of fixed steps (modulo
 ///   a sub-step of carried phase), so simulation behaviour does not
 ///   depend on render cadence.
-/// - **`dt`-chunking determinism** — one `scene/tick 1.0` and a hundred
-///   `scene/tick 0.01` calls advance the simulation IDENTICALLY: only
-///   the total elapsed time matters, not how it was delivered. This is
-///   what lets `scene/tick` reproduce live behaviour (§2 #3 dry-run /
-///   deterministic-stepping guarantee extended to Phase C).
+/// - **`dt`-chunking determinism** — `scene/tick 1.0` and ten
+///   `scene/tick 0.1` calls advance the simulation by the same number of
+///   fixed steps: the total elapsed time, not its delivery, drives the
+///   step count. This is what lets `scene/tick` reproduce live behaviour
+///   (§2 #3 dry-run / deterministic-stepping extended to Phase C).
+///   **Bound:** the accumulator is `f32`, so chunks far below the
+///   accumulator's magnitude can be absorbed by rounding (≈10^6 chunks of
+///   1µs summing to 1s lose one step). Holds for realistic chunk sizes
+///   (frames, RPC ticks ≫ the f32 ULP at ~10⁻²s); a future round may
+///   widen to `f64` / fixed-point for cross-machine bit-determinism.
 ///
 /// The pre-R831 immediate-mode path had neither: live ticked the full
 /// wall-clock delta in one variable step, while `scene/tick` ran

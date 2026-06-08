@@ -46,7 +46,7 @@
 //! [`IntrospectValue::Int`].
 
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    int_of, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
     ThreadOwnership,
 };
@@ -974,13 +974,6 @@ impl ExternalIntrospect for TableExternal {
             _ => Err(InvokeError::UnknownPath),
         }
     }
-}
-
-/// Widen a `usize` index to the `i64` the introspect surface speaks,
-/// saturating at the (practically unreachable) `i64::MAX` edge so the
-/// conversion is total without a `cast_possible_truncation` lint.
-fn int_of(n: usize) -> i64 {
-    i64::try_from(n).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]

@@ -668,6 +668,16 @@ pub trait External: core::fmt::Debug {
 /// moves with its focus-trap, a snackbar's countdown is advanced by the
 /// animation driver — so a raw rewind would desync it. Mutations go
 /// through the holder's own methods (a reducer / action), never the wire.
+/// R834 §5.12 — widen a `usize` count to the `i64` an
+/// [`IntrospectValue::Int`] slot carries, saturating at [`i64::MAX`]
+/// rather than wrapping or panicking. The single SSOT for the
+/// introspect-count-widening decision (was hand-rolled in `widgets::table`
+/// + two example bindings).
+#[must_use]
+pub fn int_of(n: usize) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
+}
+
 pub trait QuerySource {
     /// The declared query paths and their type-name tags. Usually a
     /// `'static` slice independent of `self` (the schema is fixed per

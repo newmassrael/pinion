@@ -20,6 +20,7 @@ Controls (composed ButtonExternals): cycle printer / copies - / copies +
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -48,10 +49,16 @@ def _click(tf, tag: str) -> None:
 
 
 def body() -> None:
+    # Force the in-memory backend for a deterministic demo regardless of
+    # the box's CUPS state (mirrors todomvc's PINION_STORAGE_DIR override).
+    # A configured machine auto-selects CupsPrintBackend; here we pin memory
+    # so the sample roster + recorded receipts are stable.
+    os.environ["PINION_PRINT_BACKEND"] = "memory"
     with RpcSubprocess("hello-print", boot_grace=1.5) as tf:
         # ── (A) boot: dialog rendered, sample roster, clean state ────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, "printers") is not None, "printer list rendered"
+        assert_eq(tf.query("/job/external/backend_kind"), "memory", "in-memory backend pinned")
         assert_eq(tf.query("/job/external/printer_count"), 3, "3 sample printers")
         assert_eq(tf.query(SEL), 0, "first printer selected at boot")
         assert_eq(tf.query(SEL_ID), "office-laser", "default printer is office-laser")
@@ -114,6 +121,26 @@ def body() -> None:
         assert_eq(tf.query(LAST_PRINTER), "pdf-virtual", "second job went to pdf-virtual")
         assert_eq(tf.query(LAST_JOB), "mem-2", "second job id is mem-2")
         assert_eq(tf.query(LAST_COPIES), 2, "second job carried 2 copies")
+
+        # ── (F) KEYBOARD: focus a button, activate with Enter ─────────
+        # R834 regression guard — the original apply_key was dead code
+        # (invoke("key") on a button is unhandled) and only `print` was
+        # focusable. The dialog must be fully keyboard-operable.
+        tf.request("focus/set", {"tag": "inc"})
+        wait_until(lambda: tf.request("focus/get").result.get("focused") == "inc",
+                   timeout=4.0, interval=0.03, desc="focus the copies + button")
+        copies_before = tf.query(COPIES)
+        tf.key(path="inc", name="Enter")
+        wait_until(lambda: tf.query(COPIES) == copies_before + 1, timeout=4.0, interval=0.03,
+                   desc="Enter on the focused + button increments copies")
+        # Arrow roves focus to the next button (Print), Enter submits.
+        submits_before = tf.query(SUBMITS)
+        tf.key(path="inc", name="ArrowRight")
+        wait_until(lambda: tf.request("focus/get").result.get("focused") == "print",
+                   timeout=4.0, interval=0.03, desc="ArrowRight roves focus inc -> print")
+        tf.key(path="print", name="Enter")
+        wait_until(lambda: tf.query(SUBMITS) == submits_before + 1, timeout=4.0, interval=0.03,
+                   desc="Enter on the focused Print button submits")
 
 
 def _all_text(tf) -> list[str]:

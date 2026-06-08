@@ -30,10 +30,12 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{
-    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource,
+    int_of, External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource,
 };
 use pinion_core::intent::Intent;
-use pinion_core::print::{InMemoryPrintBackend, PrintBackend, PrintJob};
+use pinion_core::print::{
+    InMemoryPrintBackend, PrintBackend, PrintError, PrintJob, PrintReceipt, PrinterInfo,
+};
 use pinion_core::reactive::{batch, Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -44,6 +46,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_platform_print::{cups_available, CupsPrintBackend};
 use pinion_widget_paint::button::{read_button_state, view_button, ButtonColors, ButtonStyle};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -58,6 +61,10 @@ const CYCLE_TAG: &str = "cycle";
 const DEC_TAG: &str = "dec";
 const INC_TAG: &str = "inc";
 const JOB_TAG: &str = "job";
+
+/// The focusable / rovable buttons, in keyboard-roving order (R834: the
+/// `focusable_tags` + `activate_or_rove` keyboard model).
+const BUTTON_TAGS: [&str; 4] = [CYCLE_TAG, DEC_TAG, INC_TAG, PRINT_TAG];
 
 const PRINT_CLICK: &str = intent_tag!("print", "click");
 const CYCLE_CLICK: &str = intent_tag!("cycle", "click");
@@ -101,13 +108,14 @@ impl PrintUiModel {
 /// and the live dialog / receipt state from the model.
 #[derive(Debug)]
 struct PrintIntrospect {
-    backend: Rc<InMemoryPrintBackend>,
+    backend: Rc<AppPrintBackend>,
     model: Rc<PrintUiModel>,
 }
 
 impl QuerySource for PrintIntrospect {
     fn introspect_schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(&[
+            ("backend_kind", "string"),
             ("printer_count", "int"),
             ("selected", "int"),
             ("selected_id", "string"),
@@ -123,6 +131,7 @@ impl QuerySource for PrintIntrospect {
         let printers = self.backend.enumerate_printers();
         let selected = self.model.selected.get();
         match path {
+            "backend_kind" => Some(IntrospectValue::Text(self.backend.kind.to_owned())),
             "printer_count" => Some(IntrospectValue::Int(int_of(printers.len()))),
             "selected" => Some(IntrospectValue::Int(int_of(selected))),
             "selected_id" => Some(IntrospectValue::Text(
@@ -138,18 +147,63 @@ impl QuerySource for PrintIntrospect {
     }
 }
 
-fn int_of(n: usize) -> i64 {
-    i64::try_from(n).unwrap_or(i64::MAX)
-}
-
 fn use_model() -> Rc<PrintUiModel> {
     let owner = Owner::current().expect("use_model requires an active Owner scope");
     owner.cache("hello_print.model", PrintUiModel::new)
 }
 
-fn use_backend() -> Rc<InMemoryPrintBackend> {
+/// R834 — the runtime-selected print backend (mirrors todomvc's
+/// `AppStorage(Box<dyn Storage>)`): the real [`CupsPrintBackend`] when
+/// CUPS has destinations, else the in-memory sample backend. Boxed behind
+/// a newtype so [`Owner::cache`] stores one concrete type.
+#[derive(Debug)]
+struct AppPrintBackend {
+    inner: Box<dyn PrintBackend>,
+    /// `"cups"` or `"memory"` — surfaced through the introspect node so an
+    /// AI client knows which path is live.
+    kind: &'static str,
+}
+
+impl PrintBackend for AppPrintBackend {
+    fn enumerate_printers(&self) -> Vec<PrinterInfo> {
+        self.inner.enumerate_printers()
+    }
+
+    fn submit(&self, printer_id: &str, job: &PrintJob) -> Result<PrintReceipt, PrintError> {
+        self.inner.submit(printer_id, job)
+    }
+}
+
+/// Select the print backend: the real CUPS bridge when the scheduler is
+/// reachable AND has at least one destination, else the in-memory sample
+/// backend (this CI box has no destination). `PINION_PRINT_BACKEND=cups|
+/// memory` forces a choice (the demo forces `memory` for determinism —
+/// mirrors todomvc's `PINION_STORAGE_DIR` override).
+fn build_print_backend() -> AppPrintBackend {
+    let forced = std::env::var("PINION_PRINT_BACKEND").ok();
+    match forced.as_deref() {
+        Some("cups") => AppPrintBackend { inner: Box::new(CupsPrintBackend::new()), kind: "cups" },
+        Some("memory") => AppPrintBackend {
+            inner: Box::new(InMemoryPrintBackend::with_sample_printers()),
+            kind: "memory",
+        },
+        _ => {
+            let cups = CupsPrintBackend::new();
+            if cups_available() && !cups.enumerate_printers().is_empty() {
+                AppPrintBackend { inner: Box::new(cups), kind: "cups" }
+            } else {
+                AppPrintBackend {
+                    inner: Box::new(InMemoryPrintBackend::with_sample_printers()),
+                    kind: "memory",
+                }
+            }
+        }
+    }
+}
+
+fn use_backend() -> Rc<AppPrintBackend> {
     let owner = Owner::current().expect("use_backend requires an active Owner scope");
-    owner.cache("hello_print.backend", InMemoryPrintBackend::with_sample_printers)
+    owner.cache("hello_print.backend", build_print_backend)
 }
 
 /// Per-button interaction states captured for the paint.
@@ -336,31 +390,31 @@ impl WidgetCore for PrintView {
         "pinion hello-print (R833 own-rendered print dialog)"
     }
 
+    /// R834 — all four buttons are keyboard-focusable (the default would
+    /// expose only the primary `print` tag, leaving cycle/copies
+    /// unreachable by Tab — a BLOCKER the R833 demo missed by clicking
+    /// only with the mouse).
+    fn focusable_tags() -> Vec<&'static str> {
+        BUTTON_TAGS.to_vec()
+    }
+
     fn keybinding(_key: &str) -> Option<()> {
         None
     }
 
+    /// R834 — Space / Enter activates the focused button; Arrow / Home /
+    /// End rove between them — the shared
+    /// [`pinion_core::focus_request::activate_or_rove`] SSOT (as
+    /// hello-fab). The previous hand-rolled `invoke("key", …)` was dead
+    /// code: `ButtonExternal` only handles the `"send"` action, so it
+    /// never activated anything.
     fn apply_key(
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        // Forward the key to whichever button owns focus (container-aware:
-        // the boot scene is a multi-external Container).
-        let Some(tag) = focused else {
-            return false;
-        };
-        let Some(node) = scene.find_external_with_tag_mut(tag) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        matches!(
-            intro.invoke("key", IntrospectValue::Text(key.to_owned())),
-            Ok(IntrospectValue::Bool(true))
-        )
+        pinion_core::focus_request::activate_or_rove(scene, &BUTTON_TAGS, focused, key)
     }
 
     /// R833 §5.20 — the dialog reducer: cycle the selected printer, adjust
@@ -388,7 +442,7 @@ impl WidgetCore for PrintView {
 
 /// Build the [`PrintJob`] from the model and submit it to the selected
 /// destination, recording the receipt on success.
-fn submit_current_job(backend: &InMemoryPrintBackend, model: &PrintUiModel) {
+fn submit_current_job(backend: &AppPrintBackend, model: &PrintUiModel) {
     let printers = backend.enumerate_printers();
     let Some(printer) = printers.get(model.selected.get()) else {
         return;

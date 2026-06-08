@@ -50,7 +50,7 @@ use pinion_a11y::{
     WidgetA11y,
 };
 use pinion_core::external::{
-    External, ExternalIntrospect, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect,
+    int_of, External, ExternalIntrospect, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect,
     QuerySource,
 };
 use pinion_core::intent::Intent;
@@ -218,12 +218,6 @@ fn line_count(content: &str) -> usize {
     } else {
         content.lines().count()
     }
-}
-
-/// `usize -> i64` for an introspect `Int` slot, saturating (counts never
-/// realistically exceed `i64::MAX`).
-fn int_of(n: usize) -> i64 {
-    i64::try_from(n).unwrap_or(i64::MAX)
 }
 
 /// Apply a File / Edit document command addressed as `(menu, item)`.
@@ -516,27 +510,18 @@ impl WidgetCore for AppMenuView {
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
-        _modifiers: pinion_core::Modifiers,
+        modifiers: pinion_core::Modifiers,
     ) -> bool {
-        // Container-aware key forward: the boot state scene is a
-        // multi-external `Container([menu, doc])`, so resolve the primary
-        // `MenuBarExternal` by tag (the default `forward_key_to_external`
-        // assumes a bare `Scene::External`). Same idiom as the IME walk +
-        // settings-panel's `apply_key_nav`. The whole WAI-ARIA §3.5
-        // keyboard model lives in the External's `"key"` wire.
+        // R834 — reuse the R804 `forward_key_to_field` substrate (the
+        // generic "find the External by tag + invoke its `key` wire"
+        // by-tag forward) rather than hand-rolling it; the boot scene is a
+        // multi-external `Container([menu, doc])` so the bare-`Scene::External`
+        // default `forward_key_to_external` cannot reach the menu. The menu
+        // is one tab stop, so gate on focus first (WAI-ARIA §3.5).
         if focused != Some(<Self as WidgetCore>::tag()) {
             return false;
         }
-        let Some(node) = scene.find_external_with_tag_mut(BAR_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        matches!(
-            intro.invoke("key", IntrospectValue::Text(key.to_owned())),
-            Ok(IntrospectValue::Bool(true))
-        )
+        pinion_core::input::forward_key_to_field(scene, BAR_TAG, key, modifiers)
     }
 
     /// R832 §5.20 — the application reducer: a File / Edit `"menu.command"`
@@ -634,7 +619,12 @@ impl WidgetA11y for AppMenuView {
         let Some((kind, idx)) = parse_sub_tag(sub_tag) else {
             return false;
         };
-        let Scene::External(node) = scene else {
+        // R834 — multi-external scene: resolve the primary `MenuBarExternal`
+        // by tag (the bare `let Scene::External(node) = scene` here was the
+        // BLOCKER — the `doc` extra-external makes the scene a Container, so
+        // the bare match always failed and every AT-driven Click/Default/
+        // Focus on the menu bar was a silent no-op).
+        let Some(node) = scene.find_external_with_tag_mut(BAR_TAG) else {
             return false;
         };
         let Some(intro) = node.handle.introspect_mut() else {
@@ -712,6 +702,32 @@ mod tests {
         for title in &nodes[1..] {
             assert_eq!(title.role, AriaRole::MenuItem);
         }
+    }
+
+    #[test]
+    fn access_child_invoke_resolves_in_multi_external_container() {
+        // R834 regression guard for the R832 BLOCKER: the `doc`
+        // extra-external makes the boot scene a Container, so
+        // access_child_invoke MUST walk by tag. The pre-fix bare
+        // `let Scene::External(node) = scene` returned false on a Container
+        // → every AT-driven menu action was a silent no-op.
+        use pinion_core::scene::ExternalNode;
+        let menu = Scene::External(
+            ExternalNode::new(Box::new(MenuBarExternal::with_items(vec![vec![
+                MenuItem::command(),
+            ]])))
+            .with_tag(BAR_TAG),
+        );
+        let dummy = Scene::Text(TextNode::styled("doc", Rect::default(), TextStyle::new()));
+        let mut scene = Scene::Container(ContainerNode::new(vec![menu, dummy]));
+        // A Focus action on title 0 must resolve (intervene bar_focus) and
+        // return true — not silently fail on the Container shape.
+        assert!(AppMenuView::access_child_invoke(
+            &mut scene,
+            BAR_TAG,
+            "t0",
+            AccessAction::Focus,
+        ));
     }
 
     #[test]
