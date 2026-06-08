@@ -41,6 +41,7 @@ members = [
     "examples/hello-virtual-nav",
     "examples/hello-multi-select",
     "examples/hello-virtual-sort",
+    "examples/hello-grouped-list",
     "examples/hello-undo",
     "examples/hello-gradient",
     "examples/hello-path",

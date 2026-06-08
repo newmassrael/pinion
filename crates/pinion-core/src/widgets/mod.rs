@@ -11,6 +11,7 @@ pub mod disclosure;
 pub mod disclosure_group;
 pub mod file_browser;
 pub mod grid_sort;
+pub mod group_order;
 pub mod interaction;
 pub mod listbox;
 pub mod listbox_item;

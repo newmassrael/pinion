@@ -34529,6 +34529,82 @@
         "'click coords to External' framework primitive; crate extraction of model+geometry at 2nd consumer"
       ]
     },
+    "R843": {
+      "decision_summary": "R843 group-by proxy with collapsible headers: group_rows partitions an order permutation into first-appearance collapsible group runs (the 4th Model/View proxy peer after list sort/filter, grid sort/filter, tree filter); GroupOrderState holds the collapse Signal + memoized flatten, GroupOrderExternal surfaces it to RPC (query/intervene/invoke + composite send); hello-grouped-list virtualizes 10k rows over 6 collapsible asset-type groups by pure composition over view_virtual_list + VirtualSelectExternal (selection by source index survives collapse). Reuses windowing/at_index/composite-decode SSOTs; no new framework primitive.",
+      "changes_bullets": [
+        "group_order: GroupRow enum (Header{group,member_count,collapsed}/Data{source})",
+        "group_rows free-fn SSOT: partition order into first-appearance collapsible runs",
+        "GroupOrderState: collapse Signal + memoized flatten (keyed on collapse snapshot)",
+        "use_group_order hook + GroupOrderExternal (query/intervene/invoke + composite send)",
+        "composes on any order slice (sort within group additive); selection by source index",
+        "reuses compute_visible_range/content_height windowing + at_index introspect SSOT",
+        "hello-grouped-list: 10k rows x 6 asset-type groups, collapsible headers, virtualized",
+        "pure composition over view_virtual_list + VirtualSelectExternal (no new paint prim)",
+        "Tree/TreeItem a11y (header level1 aria-expanded, data level2 aria-selected)"
+      ],
+      "verification_bullets": [
+        "pinion-core group_order 13 unit tests green (partition/collapse/compose/memo/query/intervene/send)",
+        "hello-grouped-list 4 view+a11y tests green (boot window, collapse_all, keeps-selection, tree a11y)",
+        "tools/demos/r843_grouped_list.py 51 assertions PASS (hidden window, real render)",
+        "cargo test --workspace -j2 green; clippy workspace all-targets +vello clean (-D pedantic)",
+        "witness: visible_len 10006 boot; toggle Mesh->8339; collapse_all->6; expand_all->10006",
+        "witness: selection source 6 survives collapse/expand; clicked ggroup#0 header routes like RPC"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.12",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "group keyboard nav (arrows + collapse on header) deferred: windowed-list roving is a later axis",
+        "group-by inside a 2-D data grid (grouped rows over columns) = additive grid binding, 2nd consumer",
+        "per-group aggregate footers (sum/min/max) deferred: first consumer groups, does not aggregate",
+        "GroupOrderState uses identity base order; grouping a sorted ViewOrderState order() is additive",
+        "a11y posinset/setsize use the windowed visual-position convention, not posinset-within-sibling",
+        "full tree posinset-within-siblings for virtualized trees is a later a11y axis",
+        "a11y hand-rolls Tree/TreeItem (not tree_access_nodes): grouped list has two composite namespaces",
+        "per-row-tag tree_access_nodes generalization waits for a 2nd two-coordinator tree consumer",
+        "GroupRowsMemo distinct from OrderMemo (Vec<GroupRow> keyed on BTreeSet vs Vec<usize> on config)"
+      ],
+      "publishable_decision_summary": "R843 group-by proxy with collapsible headers: group_rows partitions an order permutation into first-appearance collapsible group runs (the 4th Model/View proxy peer after list sort/filter, grid sort/filter, tree filter); GroupOrderState holds the collapse Signal + memoized flatten, GroupOrderExternal surfaces it to RPC (query/intervene/invoke + composite send); hello-grouped-list virtualizes 10k rows over 6 collapsible asset-type groups by pure composition over view_virtual_list + VirtualSelectExternal (selection by source index survives collapse). Reuses windowing/at_index/composite-decode SSOTs; no new framework primitive.",
+      "publishable_changes_bullets": [
+        "group_order: GroupRow enum (Header{group,member_count,collapsed}/Data{source})",
+        "group_rows free-fn SSOT: partition order into first-appearance collapsible runs",
+        "GroupOrderState: collapse Signal + memoized flatten (keyed on collapse snapshot)",
+        "use_group_order hook + GroupOrderExternal (query/intervene/invoke + composite send)",
+        "composes on any order slice (sort within group additive); selection by source index",
+        "reuses compute_visible_range/content_height windowing + at_index introspect SSOT",
+        "hello-grouped-list: 10k rows x 6 asset-type groups, collapsible headers, virtualized",
+        "pure composition over view_virtual_list + VirtualSelectExternal (no new paint prim)",
+        "Tree/TreeItem a11y (header level1 aria-expanded, data level2 aria-selected)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core group_order 13 unit tests green (partition/collapse/compose/memo/query/intervene/send)",
+        "hello-grouped-list 4 view+a11y tests green (boot window, collapse_all, keeps-selection, tree a11y)",
+        "tools/demos/r843_grouped_list.py 51 assertions PASS (hidden window, real render)",
+        "cargo test --workspace -j2 green; clippy workspace all-targets +vello clean (-D pedantic)",
+        "witness: visible_len 10006 boot; toggle Mesh->8339; collapse_all->6; expand_all->10006",
+        "witness: selection source 6 survives collapse/expand; clicked ggroup#0 header routes like RPC"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.12",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "group keyboard nav (arrows + collapse on header) deferred: windowed-list roving is a later axis",
+        "group-by inside a 2-D data grid (grouped rows over columns) = additive grid binding, 2nd consumer",
+        "per-group aggregate footers (sum/min/max) deferred: first consumer groups, does not aggregate",
+        "GroupOrderState uses identity base order; grouping a sorted ViewOrderState order() is additive",
+        "a11y posinset/setsize use the windowed visual-position convention, not posinset-within-sibling",
+        "full tree posinset-within-siblings for virtualized trees is a later a11y axis",
+        "a11y hand-rolls Tree/TreeItem (not tree_access_nodes): grouped list has two composite namespaces",
+        "per-row-tag tree_access_nodes generalization waits for a 2nd two-coordinator tree consumer",
+        "GroupRowsMemo distinct from OrderMemo (Vec<GroupRow> keyed on BTreeSet vs Vec<usize> on config)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -47664,5 +47740,5 @@
       "reason": "design clarification — Intent.payload consumed by V::update reducer, not threaded through SCXML invoke send (R51.159 carry resolved as design choice)"
     }
   },
-  "schema_version": 8
+  "schema_version": 9
 }
