@@ -34605,6 +34605,72 @@
         "GroupRowsMemo distinct from OrderMemo (Vec<GroupRow> keyed on BTreeSet vs Vec<usize> on config)"
       ]
     },
+    "R844": {
+      "decision_summary": "R844 stacked Model/View proxies (filter -> sort -> group): GroupOrderState gains an OrderSource (identity Rc or an external closure over an upstream proxy's live order) via with_order_source, so group-by composes on top of the R747 sort/filter proxy; the flatten memo keys on (upstream-order Rc pointer, collapse set), sound over a mutable upstream (the OrderMemo doc's config-keyed-memo caveat, resolved by tracking the upstream's memoized output identity). hello-grouped-sort stacks ViewSortFilterExternal under GroupOrderExternal over 10k rows; selection by source index survives sort, filter and collapse. Group_rows' order param is now a runtime consumer; ViewOrderState is pre-resolved before the group cache factory (R666 no-nested-cache).",
+      "changes_bullets": [
+        "group_order: OrderSource enum (Identity Rc / External closure) + with_order_source builder",
+        "rows() groups over the order source; memo keyed on (upstream-order Rc ptr, collapsed)",
+        "pointer-keyed memo sound over a mutable upstream (OrderMemo doc config-keyed caveat)",
+        "member_count = dataset-total (order-independent); Header.member_count = filtered count",
+        "hello-grouped-sort: filter->sort->group stack, 10k rows, 6 collapsible asset-type groups",
+        "ViewSortFilterExternal upstream + GroupOrderExternal groups its order(); 4-coordinator compose",
+        "selection by source index survives sort + filter + collapse (orthogonal to all three stages)",
+        "pre-resolve ViewOrderState before the group cache factory (R666 no-nested-cache)"
+      ],
+      "verification_bullets": [
+        "pinion-core group_order 16 unit (13 R843 + 3 R844: supplied order / memo remint / filter-drops)",
+        "hello-grouped-sort 4 view+a11y tests green (boot/descending/filter-shrinks/selection-survives)",
+        "tools/demos/r844_grouped_sort.py 37 assertions PASS (hidden window, real render)",
+        "cargo test --workspace -j2 green; clippy workspace all-targets +vello clean (-D pedantic)",
+        "witness: descending regroups (group 3 leads, src 9999); filter member_count_at.0=334",
+        "witness: selection source 0 survives sort -> filter -> collapse -> expand/clear"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "grouped multi-column data grid (2nd structural consumer of group_rows; treegrid a11y) = R845",
+        "grouped-tree a11y now 2-copy (R843+R844 examples); lift deferred: R845 grid may be treegrid/",
+        "gridcell not tree/treeitem, so lifting now risks an abstraction the grid won't share (R735.1)",
+        "group keyboard nav still deferred (windowed-list roving is a family-wide axis)",
+        "per-group aggregate footers (sum/min/max) deferred: no consumer yet",
+        "member_count(group) is dataset-total; a filter-aware total accessor waits for a consumer"
+      ],
+      "publishable_decision_summary": "R844 stacked Model/View proxies (filter -> sort -> group): GroupOrderState gains an OrderSource (identity Rc or an external closure over an upstream proxy's live order) via with_order_source, so group-by composes on top of the R747 sort/filter proxy; the flatten memo keys on (upstream-order Rc pointer, collapse set), sound over a mutable upstream (the OrderMemo doc's config-keyed-memo caveat, resolved by tracking the upstream's memoized output identity). hello-grouped-sort stacks ViewSortFilterExternal under GroupOrderExternal over 10k rows; selection by source index survives sort, filter and collapse. Group_rows' order param is now a runtime consumer; ViewOrderState is pre-resolved before the group cache factory (R666 no-nested-cache).",
+      "publishable_changes_bullets": [
+        "group_order: OrderSource enum (Identity Rc / External closure) + with_order_source builder",
+        "rows() groups over the order source; memo keyed on (upstream-order Rc ptr, collapsed)",
+        "pointer-keyed memo sound over a mutable upstream (OrderMemo doc config-keyed caveat)",
+        "member_count = dataset-total (order-independent); Header.member_count = filtered count",
+        "hello-grouped-sort: filter->sort->group stack, 10k rows, 6 collapsible asset-type groups",
+        "ViewSortFilterExternal upstream + GroupOrderExternal groups its order(); 4-coordinator compose",
+        "selection by source index survives sort + filter + collapse (orthogonal to all three stages)",
+        "pre-resolve ViewOrderState before the group cache factory (R666 no-nested-cache)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core group_order 16 unit (13 R843 + 3 R844: supplied order / memo remint / filter-drops)",
+        "hello-grouped-sort 4 view+a11y tests green (boot/descending/filter-shrinks/selection-survives)",
+        "tools/demos/r844_grouped_sort.py 37 assertions PASS (hidden window, real render)",
+        "cargo test --workspace -j2 green; clippy workspace all-targets +vello clean (-D pedantic)",
+        "witness: descending regroups (group 3 leads, src 9999); filter member_count_at.0=334",
+        "witness: selection source 0 survives sort -> filter -> collapse -> expand/clear"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "grouped multi-column data grid (2nd structural consumer of group_rows; treegrid a11y) = R845",
+        "grouped-tree a11y now 2-copy (R843+R844 examples); lift deferred: R845 grid may be treegrid/",
+        "gridcell not tree/treeitem, so lifting now risks an abstraction the grid won't share (R735.1)",
+        "group keyboard nav still deferred (windowed-list roving is a family-wide axis)",
+        "per-group aggregate footers (sum/min/max) deferred: no consumer yet",
+        "member_count(group) is dataset-total; a filter-aware total accessor waits for a consumer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

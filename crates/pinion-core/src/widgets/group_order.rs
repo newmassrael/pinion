@@ -205,8 +205,46 @@ pub fn group_rows(
 /// (R831 distinct ≠ redundant), so it lives here rather than widening the
 /// shared permutation memo.
 struct GroupRowsMemo {
-    key: Option<BTreeSet<usize>>,
+    /// `(upstream-order Rc pointer, collapse snapshot)`. The flattening can
+    /// change only when the upstream `order` is recomputed (the sort/filter
+    /// proxy mints a fresh `Rc`, R843.1) or a group toggles, so keying on the
+    /// order's *identity* + the collapse set is sound even over a **mutable**
+    /// upstream — the reactive-tracking the `OrderMemo` doc flags a config-keyed
+    /// memo can't do for a live source, achieved here by tracking the upstream's
+    /// memoized output `Rc` rather than its config.
+    key: Option<(usize, BTreeSet<usize>)>,
     rows: Rc<Vec<GroupRow>>,
+}
+
+/// R843.1 §5.27 — where a [`GroupOrderState`] reads its base visual→source
+/// order: the identity `0..count` (group source order) or an **upstream
+/// proxy's** live `order` permutation (group a sorted/filtered view — the
+/// canonical filter → sort → group proxy chain).
+///
+/// The identity arm holds the permutation in a once-built `Rc` so its pointer
+/// is stable across reads (the memo hits); the external arm calls the
+/// consumer's closure — typically
+/// [`ViewOrderState::order`](crate::widgets::view_order::ViewOrderState::order),
+/// whose `Rc` is itself stable until the `(sort, filter)` changes. Either way
+/// [`rows`](GroupOrderState::rows) keys its memo on the returned `Rc`'s pointer.
+enum OrderSource {
+    /// Group source order: a once-built identity permutation `0..count`.
+    Identity(Rc<Vec<usize>>),
+    /// Group an upstream proxy's live order (read fresh, reactively).
+    External(Box<dyn Fn() -> Rc<Vec<usize>>>),
+}
+
+impl OrderSource {
+    /// Resolve the current base order. Reading the external closure
+    /// auto-subscribes to the upstream proxy's `Signal`s (so a sort/filter
+    /// change upstream repaints the grouped view), exactly as reading the
+    /// collapse `Signal` does for the group's own state.
+    fn order(&self) -> Rc<Vec<usize>> {
+        match self {
+            Self::Identity(order) => Rc::clone(order),
+            Self::External(f) => f(),
+        }
+    }
 }
 
 /// R843 §5.27 §5.40 — the reactive **single source of truth** for a grouped
@@ -229,6 +267,9 @@ pub struct GroupOrderState {
     member_counts: Vec<usize>,
     /// Collapsed group ids. Empty = every group expanded.
     collapsed: Signal<BTreeSet<usize>>,
+    /// Where the base visual→source order comes from: identity (group source
+    /// order) or an upstream sort/filter proxy (group a sorted/filtered view).
+    order_source: OrderSource,
     rows: RefCell<GroupRowsMemo>,
 }
 
@@ -251,14 +292,36 @@ impl GroupOrderState {
         for &g in &groups {
             member_counts[g] += 1;
         }
+        let identity: Rc<Vec<usize>> = Rc::new((0..groups.len()).collect());
         Self {
             tag: None,
             groups,
             group_labels,
             member_counts,
             collapsed: Signal::new(BTreeSet::new()),
+            order_source: OrderSource::Identity(identity),
             rows: RefCell::new(GroupRowsMemo { key: None, rows: Rc::new(Vec::new()) }),
         }
+    }
+
+    /// Group an **upstream proxy's** live `order` instead of source order: the
+    /// builder that turns a standalone grouped list into the third stage of a
+    /// filter → sort → group proxy chain. `source` is read fresh on every
+    /// [`rows`](Self::rows) recompute (typically `move || view_order.order()`
+    /// for an upstream
+    /// [`ViewOrderState`](crate::widgets::view_order::ViewOrderState)), so the
+    /// grouped view reflects the current sort/filter and repaints when it
+    /// changes (reading the closure auto-subscribes upstream). Groups appear in
+    /// first-appearance order *over that order*, so sorting reorders the groups
+    /// as well as the members within them, and filtering shrinks members (a
+    /// group whose every member is filtered out simply has no header).
+    ///
+    /// The selection (held by source index) is orthogonal to all three stages —
+    /// it survives filter, sort and collapse alike.
+    #[must_use]
+    pub fn with_order_source(mut self, source: impl Fn() -> Rc<Vec<usize>> + 'static) -> Self {
+        self.order_source = OrderSource::External(Box::new(source));
+        self
     }
 
     /// As [`new`](Self::new) but records the [`use_group_order`] cache key, for
@@ -293,26 +356,37 @@ impl GroupOrderState {
         self.group_labels.get(group).map(String::as_str)
     }
 
-    /// The data-row count of group `g` (collapse-independent), or `0` for an
-    /// out-of-range id.
+    /// The **dataset-total** data-row count of group `g`, or `0` for an
+    /// out-of-range id. Collapse- *and* order-source-independent: it counts
+    /// every source row in group `g`, not the rows surviving an upstream
+    /// filter. The *currently visible* member count (filter-respecting) is the
+    /// [`GroupRow::Header::member_count`] the flattening reports.
     #[must_use]
     pub fn member_count(&self, group: usize) -> usize {
         self.member_counts.get(group).copied().unwrap_or(0)
     }
 
-    /// The [`GroupRow`] flattening for the current collapse state, recomputed
-    /// only when a group toggles (memoized). Subscribes to the collapse
-    /// `Signal`, so a view that calls this repaints on a collapse change. Cheap
-    /// `Rc` clone on a cache hit.
+    /// The [`GroupRow`] flattening for the current base order + collapse state,
+    /// recomputed only when the upstream order is re-minted or a group toggles
+    /// (memoized). Subscribes to the collapse `Signal` and (for an external
+    /// order source) the upstream proxy's `Signal`s, so a view that calls this
+    /// repaints on a sort/filter/collapse change. Cheap `Rc` clone on a cache
+    /// hit.
     #[must_use]
     pub fn rows(&self) -> Rc<Vec<GroupRow>> {
+        let order = self.order_source.order();
         let collapsed = self.collapsed.get();
+        // Key on the upstream order's identity (pointer): it is re-minted iff
+        // the sort/filter recomputed, so a changed pointer means the flattening
+        // must recompute even though `collapsed` is unchanged. `Rc::as_ptr`
+        // never dereferences, so a stale-but-equal pointer cannot occur (the
+        // live `Rc` is held in `order` for the whole borrow).
+        let order_id = Rc::as_ptr(&order) as usize;
         let mut memo = self.rows.borrow_mut();
-        if memo.key.as_ref() != Some(&collapsed) {
-            let order: Vec<usize> = (0..self.groups.len()).collect();
+        if memo.key.as_ref().is_none_or(|(id, set)| *id != order_id || *set != collapsed) {
             let rows = group_rows(&order, |s| self.groups[s], |g| collapsed.contains(&g));
             memo.rows = Rc::new(rows);
-            memo.key = Some(collapsed);
+            memo.key = Some((order_id, collapsed));
         }
         Rc::clone(&memo.rows)
     }
@@ -879,5 +953,52 @@ mod tests {
         let mut e = GroupOrderExternal::new(Rc::clone(&s));
         e.invoke("toggle_group", IntrospectValue::Int(0)).unwrap();
         assert!(s.is_collapsed(0), "external + view share one source of truth");
+    }
+
+    // ── R844: group over an upstream proxy's order (filter → sort → group) ──
+
+    #[test]
+    fn with_order_source_groups_over_the_supplied_order() {
+        // Group the 3-group data over a REVERSED order: groups appear by the
+        // first (highest) source of each group, members within in that order.
+        let order = Rc::new((0..12).rev().collect::<Vec<usize>>()); // 11,10,..,0
+        let s = GroupOrderState::new(groups(), labels()).with_order_source(move || Rc::clone(&order));
+        let rows = s.rows();
+        // Source 11 is group 2 (11 % 3) → Charlie leads; members 11,8,5,2.
+        assert_eq!(rows[0], GroupRow::Header { group: 2, member_count: 4, collapsed: false });
+        assert_eq!(rows[1], GroupRow::Data { source: 11 });
+        assert_eq!(rows[2], GroupRow::Data { source: 8 });
+        assert_eq!(s.visible_len(), 15, "same rows, regrouped: 3 headers + 12 data");
+    }
+
+    #[test]
+    fn external_order_memo_recomputes_when_the_upstream_order_is_reminted() {
+        // A live upstream order: the same Rc → memo hit; a re-minted Rc (what a
+        // sort/filter change produces) → recompute, even though collapse is
+        // unchanged. This is the soundness the pointer-keyed memo buys over a
+        // mutable upstream (the OrderMemo doc's config-keyed-memo caveat).
+        let cell: Rc<RefCell<Rc<Vec<usize>>>> = Rc::new(RefCell::new(Rc::new((0..12).collect())));
+        let c2 = Rc::clone(&cell);
+        let s = GroupOrderState::new(groups(), labels()).with_order_source(move || Rc::clone(&c2.borrow()));
+        let first = s.rows();
+        assert!(Rc::ptr_eq(&first, &s.rows()), "unchanged upstream order Rc → memo hit");
+        *cell.borrow_mut() = Rc::new((0..12).rev().collect());
+        let second = s.rows();
+        assert!(!Rc::ptr_eq(&first, &second), "re-minted upstream order → recompute");
+        assert_eq!(second[1], GroupRow::Data { source: 11 }, "regrouped over the new order");
+    }
+
+    #[test]
+    fn external_filtered_order_drops_groups_with_no_surviving_members() {
+        // An upstream filter keeping only group-1 sources (1,4,7,10): the
+        // grouped view has exactly one header (Bravo) and its 4 members; the
+        // emptied groups have no header at all.
+        let filtered = Rc::new(vec![1usize, 4, 7, 10]);
+        let s = GroupOrderState::new(groups(), labels()).with_order_source(move || Rc::clone(&filtered));
+        let rows = s.rows();
+        assert_eq!(rows[0], GroupRow::Header { group: 1, member_count: 4, collapsed: false });
+        assert_eq!(s.visible_len(), 5, "one header + 4 members; emptied groups vanish");
+        // The dataset-total member_count is order-source-independent.
+        assert_eq!(s.member_count(0), 4, "member_count is the dataset total, not the filtered count");
     }
 }
