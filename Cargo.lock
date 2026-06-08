@@ -2307,6 +2307,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-property-grid"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-radio"
 version = "0.0.1"
 dependencies = [

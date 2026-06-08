@@ -1,0 +1,39 @@
+[package]
+name = "hello-property-grid"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R836 §5.38 §5.40 §5.50 property-grid / inspector detail panel — typed editable rows (bool / int / float / text) in a single-tab-stop WAI-ARIA grid with roving cursor + edit-in-cell; pure composition of a PropertyGridExternal coordinator + one shared TextFieldExternal inline editor (the editor self-host's detail panel; 3rd consumer of the grid a11y SSOT)"
+publish = false
+
+[[bin]]
+name = "hello-property-grid"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R836 §5.40 — AccessKit substrate for `WidgetA11y::access_node` + the
+# `grid_table_nodes` grid a11y SSOT (3rd consumer after hello-table[-multi]).
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R836 §5.50 — lifted TextField paint helpers (view_field + read_text_field_state).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+# R836 §5.12 — the `editing` introspect slot is a nullable Int (Json), the
+# todomvc `editing_id` shape.
+serde_json = { workspace = true }
+# R836 §5.31 — `Signal<T>` requires `T: Serialize + DeserializeOwned` (the
+# R36 hot-reload bound), so the typed `PropertyValue` model derives serde.
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+# composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -34079,6 +34079,80 @@
         "the 5 x11grab live-capture demos need a real mapped window + display+GPU -> only the CI sweep (or explicit local visible run) covers them"
       ]
     },
+    "R836": {
+      "decision_summary": "R836 §5.38 property-grid / inspector detail panel (typed editable rows)",
+      "changes_bullets": [
+        "New `examples/hello-property-grid` — property grid / inspector detail panel",
+        "Typed `PropertyValue` model (bool/int/float/text) + per-type editor dispatch",
+        "`PropertyGridExternal` coordinator: reactive value model + roving cursor + edit latch",
+        "Single-tab-stop WAI-ARIA grid; roving row cursor (Up/Down/Home/End, clamped, no wrap)",
+        "Bool rows toggle via Space / single-click; text/int/float rows edit in place",
+        "One shared `TextFieldExternal` inline editor (todomvc edit-in-cell, scales to N rows)",
+        "Edit-in-cell via `focus_request`: Enter/F2/double-click begin, Enter commit, Escape cancel",
+        "Int/float keystroke gate (hello-number-input shape); malformed commit reverts (no data loss)",
+        "AI-first introspection: query value/name/kind, intervene typed value strictly, focused_row",
+        "a11y via lifted `grid_table_nodes` SSOT (3rd consumer after hello-table / hello-table-multi)",
+        "Pure composition: 2 externals, zero new framework crate (1st consumer; lift at the 2nd)"
+      ],
+      "verification_bullets": [
+        "`cargo test -p hello-property-grid -j2` — 24 unit tests green",
+        "`cargo test --workspace -j2` — full suite green, no regressions (additive change)",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean (-D pedantic)",
+        "`tools/demos/r836_property_grid.py` — PASS (realgpu hidden-window, >=30 assertions)",
+        "Demo: boot taxonomy, keyboard roving+clamp, bool toggle (Space + click), text/int edit+gate",
+        "Demo: Escape cancel keeps value, programmatic typed set (intervene), double-click edit, paint",
+        "`mnemosyne-cli validate-workspace` — T1 orphan total=0 (no new orphans)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50",
+        "5.12",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "Native checkbox/textbox cell roles (per-cell a11y role) — additive, 2nd-consumer",
+        "Per-property validation / clamp ranges (hello-number-input parse_clamp shape) — additive",
+        "Enum / choice rows (combobox-in-cell = nested popup + 3-level focus) — own substrate round",
+        "Lift PropertyGridExternal + paint to a framework crate when the self-hosted editor consumes"
+      ],
+      "publishable_decision_summary": "R836 §5.38 property-grid / inspector detail panel (typed editable rows)",
+      "publishable_changes_bullets": [
+        "New `examples/hello-property-grid` — property grid / inspector detail panel",
+        "Typed `PropertyValue` model (bool/int/float/text) + per-type editor dispatch",
+        "`PropertyGridExternal` coordinator: reactive value model + roving cursor + edit latch",
+        "Single-tab-stop WAI-ARIA grid; roving row cursor (Up/Down/Home/End, clamped, no wrap)",
+        "Bool rows toggle via Space / single-click; text/int/float rows edit in place",
+        "One shared `TextFieldExternal` inline editor (todomvc edit-in-cell, scales to N rows)",
+        "Edit-in-cell via `focus_request`: Enter/F2/double-click begin, Enter commit, Escape cancel",
+        "Int/float keystroke gate (hello-number-input shape); malformed commit reverts (no data loss)",
+        "AI-first introspection: query value/name/kind, intervene typed value strictly, focused_row",
+        "a11y via lifted `grid_table_nodes` SSOT (3rd consumer after hello-table / hello-table-multi)",
+        "Pure composition: 2 externals, zero new framework crate (1st consumer; lift at the 2nd)"
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p hello-property-grid -j2` — 24 unit tests green",
+        "`cargo test --workspace -j2` — full suite green, no regressions (additive change)",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` — clean (-D pedantic)",
+        "`tools/demos/r836_property_grid.py` — PASS (realgpu hidden-window, >=30 assertions)",
+        "Demo: boot taxonomy, keyboard roving+clamp, bool toggle (Space + click), text/int edit+gate",
+        "Demo: Escape cancel keeps value, programmatic typed set (intervene), double-click edit, paint",
+        "`mnemosyne-cli validate-workspace` — T1 orphan total=0 (no new orphans)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50",
+        "5.12",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Native checkbox/textbox cell roles (per-cell a11y role) — additive, 2nd-consumer",
+        "Per-property validation / clamp ranges (hello-number-input parse_clamp shape) — additive",
+        "Enum / choice rows (combobox-in-cell = nested popup + 3-level focus) — own substrate round",
+        "Lift PropertyGridExternal + paint to a framework crate when the self-hosted editor consumes"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
