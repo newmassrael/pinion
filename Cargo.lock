@@ -2300,8 +2300,10 @@ dependencies = [
  "pinion-a11y",
  "pinion-core",
  "pinion-forge",
+ "pinion-platform-storage",
  "pinion-shell",
  "serde",
+ "serde_json",
  "vello",
 ]
 

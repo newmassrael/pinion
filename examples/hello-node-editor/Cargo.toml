@@ -21,6 +21,10 @@ vello = { workspace = true }
 # R838 — the graph model lives in reactive `Signal`s, which require their
 # payloads to be (de)serializable for the §2 #7 scene-as-data snapshot path.
 serde = { workspace = true }
+# R852 — graph serialization (save / load): the §3 §5.15 Storage substrate +
+# JSON (de)serialization of the persistable graph snapshot.
+serde_json = { workspace = true }
+pinion-platform-storage = { path = "../../crates/pinion-platform-storage", version = "0.0.1" }
 
 [dev-dependencies]
 # composite-paint-root-tag regression helper.

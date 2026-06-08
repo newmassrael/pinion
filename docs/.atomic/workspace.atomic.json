@@ -35061,6 +35061,60 @@
         "palette keyboard roving (2nd tab stop) still additive (R850 carry)"
       ]
     },
+    "R852": {
+      "decision_summary": "R852 node-graph serialization: save/load via the Storage substrate + AI-first serialized/set_graph blob + Ctrl+S/Ctrl+O",
+      "changes_bullets": [
+        "add SerializedGraph snapshot (nodes + edges + the monotonic id counters; the selection is transient and omitted)",
+        "save / load through the §3 §5.15 Storage substrate via build_graph_storage (FileStorage when the platform offers a dir, in-memory otherwise)",
+        "AI-first query serialized / invoke set_graph = the read-write twin over the same snapshot blob",
+        "loading a graph clears the undo history: the opened document is a fresh baseline (the QUndoStack model)",
+        "Ctrl+S save / Ctrl+O open in apply_key; loaded id counters resume monotonic minting",
+        "test helpers route through in-memory storage so unit tests never touch the filesystem"
+      ],
+      "verification_bullets": [
+        "hello-node-editor 47 unit (9 new R852: serialized/set_graph round-trip, save+load via storage, undo cleared on load, no-op empty load, reject malformed/version, counter resume, RPC verbs, Ctrl+S/O)",
+        "tools/demos/r852_node_persist.py PASS (~35 assert: real cross-launch FileStorage via isolated_storage_dir, AI-first wire round-trip, Ctrl+S/Ctrl+O)",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: Storage substrate reused; build_graph_storage is the 2nd inline copy of the build-fallback pattern (mechanical wiring, Rule-of-Three) -> documented carry"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "lift use_app_storage(key, app) + CachedStorage to pinion-platform-storage at the 3rd storage consumer (todomvc + node-editor are the 2 inline copies; the use_app_clipboard R790 precedent)",
+        "node move undo (drag coalescing, the live-drag round) still open (R851 carry)",
+        "undo_redo_verb / save_load_verb keymaps are example-local: lift at a 2nd apply_key-level consumer",
+        "GraphEdit/GraphDelta + the model + bezier geometry crate-extract at the 2nd graph consumer (material graph)",
+        "no auto-load on boot (deterministic seed); autosave-on-edit + a load-confirm prompt are additive follow-ups"
+      ],
+      "publishable_decision_summary": "R852 node-graph serialization: save/load via the Storage substrate + AI-first serialized/set_graph blob + Ctrl+S/Ctrl+O",
+      "publishable_changes_bullets": [
+        "add SerializedGraph snapshot (nodes + edges + the monotonic id counters; the selection is transient and omitted)",
+        "save / load through the §3 §5.15 Storage substrate via build_graph_storage (FileStorage when the platform offers a dir, in-memory otherwise)",
+        "AI-first query serialized / invoke set_graph = the read-write twin over the same snapshot blob",
+        "loading a graph clears the undo history: the opened document is a fresh baseline (the QUndoStack model)",
+        "Ctrl+S save / Ctrl+O open in apply_key; loaded id counters resume monotonic minting",
+        "test helpers route through in-memory storage so unit tests never touch the filesystem"
+      ],
+      "publishable_verification_bullets": [
+        "hello-node-editor 47 unit (9 new R852: serialized/set_graph round-trip, save+load via storage, undo cleared on load, no-op empty load, reject malformed/version, counter resume, RPC verbs, Ctrl+S/O)",
+        "tools/demos/r852_node_persist.py PASS (~35 assert: real cross-launch FileStorage via isolated_storage_dir, AI-first wire round-trip, Ctrl+S/Ctrl+O)",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: Storage substrate reused; build_graph_storage is the 2nd inline copy of the build-fallback pattern (mechanical wiring, Rule-of-Three) -> documented carry"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "lift use_app_storage(key, app) + CachedStorage to pinion-platform-storage at the 3rd storage consumer (todomvc + node-editor are the 2 inline copies; the use_app_clipboard R790 precedent)",
+        "node move undo (drag coalescing, the live-drag round) still open (R851 carry)",
+        "undo_redo_verb / save_load_verb keymaps are example-local: lift at a 2nd apply_key-level consumer",
+        "GraphEdit/GraphDelta + the model + bezier geometry crate-extract at the 2nd graph consumer (material graph)",
+        "no auto-load on boot (deterministic seed); autosave-on-edit + a load-confirm prompt are additive follow-ups"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -81,8 +81,15 @@
 //!   coalescing (one drag = one undo step), the documented "live-drag" undo
 //!   round — so redoing a structural edit restores the node at its add-time
 //!   position. (A consequence kept honest, not hidden.)
-//! - **Persistence**: the serde derives are load-bearing for `Signal` storage,
-//!   but no save / load to a [`pinion_core::storage::Storage`] is wired yet.
+//! - **Persistence** (R852): the graph saves / loads through the §3 §5.15
+//!   [`Storage`] substrate — `save` / `load` write and restore a
+//!   [`SerializedGraph`] JSON blob (nodes + edges + the monotonic id counters)
+//!   via [`build_graph_storage`] (a `FileStorage` when the platform offers a
+//!   data dir, the in-memory fallback otherwise — the todomvc runtime-selection
+//!   idiom, so the binding really reaches the file backend). The same snapshot
+//!   is the AI-first `query serialized` / `invoke set_graph` read-write pair,
+//!   and `Ctrl+S` / `Ctrl+O` drive save / open. Loading a graph clears the undo
+//!   history (the opened document is a fresh baseline — the `QUndoStack` model).
 //! - **`add_node` over RPC**: the graph can be mutated / connected / deleted but
 //!   not grown (no node-creation verb); edge-id minting is in place for it.
 //! - **Crate extraction**: the model + pure bezier geometry are example-local;
@@ -106,6 +113,7 @@ use pinion_core::external::{
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
+use pinion_core::storage::Storage;
 use pinion_core::undo::{use_undo_stack, UndoCommand, UndoStack, UndoStackExternal};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::style::{
@@ -114,6 +122,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
+use pinion_platform_storage::{open_app_storage, FileStorage};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use serde::{Deserialize, Serialize};
 
@@ -162,6 +171,21 @@ const UNDO_TAG: &str = "node_undo";
 /// coordinator), the keyboard `Ctrl+Z` path, and the [`UndoStackExternal`] all
 /// resolve the same shared [`UndoStack`] from this key.
 const UNDO_KEY: &str = "node_graph.undo";
+
+/// R852 — the per-OS data dir name for the file-backed graph store
+/// ([`open_app_storage`]); the `Owner::cache` key for the shared storage hook.
+const STORAGE_APP_NAME: &str = "pinion-node-editor";
+const STORAGE_CACHE_KEY: &str = "node_graph.storage";
+/// R852 — the single [`Storage`] key the whole graph snapshot is written under
+/// (one blob, so `FileStorage`'s tempfile + rename covers the whole save).
+const STORAGE_KEY: &str = "node_graph.state";
+/// R852 — env override pointing at a custom storage root (the demo's tempdir,
+/// shared by the todomvc persistence demos so launches do not contaminate the
+/// developer's real data dir).
+const STORAGE_DIR_ENV: &str = "PINION_STORAGE_DIR";
+/// R852 — bump on an incompatible [`SerializedGraph`] layout change; a load of a
+/// mismatched version starts fresh (silent fall-through, the todomvc precedent).
+const PERSISTED_SCHEMA_VERSION: u32 = 1;
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -372,6 +396,20 @@ fn default_edges() -> Vec<Edge> {
     ]
 }
 
+/// R852 — the persistable graph snapshot. Carries the nodes, the edges, **and**
+/// the monotonic id counters, so a reload resumes minting where the saved
+/// session left off (a deleted-then-saved id is never handed out again). The
+/// selection is transient UI state and is *not* persisted. `schema_version`
+/// gates the load: a mismatch starts fresh rather than misreading an old layout.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct SerializedGraph {
+    schema_version: u32,
+    nodes: Vec<GraphNode>,
+    edges: Vec<Edge>,
+    next_node_id: u32,
+    next_edge_id: u32,
+}
+
 // ─── geometry (window coordinates; canvas == window) ───────────────
 
 /// The vertical offset of port row `row` within a node card (top of the
@@ -512,6 +550,69 @@ fn use_next_node_id() -> Rc<Cell<u32>> {
 /// [`UndoStackExternal`] — one history source of truth ([`use_undo_stack`]).
 fn use_undo() -> Rc<UndoStack> {
     use_undo_stack(UNDO_KEY)
+}
+
+/// R852 — sized newtype around `Box<dyn Storage>` so the `Owner::cache` slot
+/// holds one concrete type while the runtime impl (`FileStorage` /
+/// [`InMemoryStorage`](pinion_core::storage::InMemoryStorage)) hides in the box
+/// (the todomvc `AppStorage` shape, [[owner-cache-typed-key]]).
+struct GraphStorage(Box<dyn Storage>);
+
+impl Storage for GraphStorage {
+    fn load(&self, key: &str) -> Option<Vec<u8>> {
+        self.0.load(key)
+    }
+    fn save(&self, key: &str, bytes: &[u8]) {
+        self.0.save(key, bytes);
+    }
+    fn remove(&self, key: &str) {
+        self.0.remove(key);
+    }
+}
+
+/// R852 — build the platform storage once. Priority: the [`STORAGE_DIR_ENV`]
+/// override (the demo's tempdir) → the per-OS data dir ([`open_app_storage`]) →
+/// the in-memory fallback (headless / sandboxed). The runtime selection is what
+/// makes `save` / `load` actually reach the file backend rather than a hardcoded
+/// in-memory stub (the R834 "binding must reach the real backend" lesson).
+fn build_graph_storage() -> Box<dyn Storage> {
+    if let Ok(custom_dir) = std::env::var(STORAGE_DIR_ENV) {
+        match FileStorage::try_new(std::path::PathBuf::from(&custom_dir)) {
+            Ok(file) => return Box::new(file) as Box<dyn Storage>,
+            Err(e) => eprintln!(
+                "hello-node-editor: FileStorage at {custom_dir:?} via {STORAGE_DIR_ENV} failed ({e}); \
+                 falling back to the default data dir",
+            ),
+        }
+    }
+    match open_app_storage(STORAGE_APP_NAME) {
+        Ok(file) => Box::new(file) as Box<dyn Storage>,
+        Err(e) => {
+            eprintln!(
+                "hello-node-editor: open_app_storage({STORAGE_APP_NAME:?}) failed ({e}); \
+                 persistence will be in-memory only (lost on exit)",
+            );
+            Box::new(pinion_core::storage::InMemoryStorage::new()) as Box<dyn Storage>
+        }
+    }
+}
+
+/// R852 — the shared graph store. The coordinator (which `save`s / `load`s) is
+/// the only consumer today; the hook keeps the platform handle a process
+/// singleton so a future status / autosave consumer reaches the same instance.
+///
+/// `GraphStorage` + [`build_graph_storage`] mirror todomvc's `AppStorage` +
+/// `build_app_storage` — this is the **2nd** inline copy of the boxed-dyn +
+/// env-override + in-memory-fallback pattern. The convention (clipboard's
+/// `pinion_platform_clipboard::use_app_clipboard`, lifted at R790 once the
+/// copies multiplied) is to lift a `use_app_storage(key, app)` into
+/// `pinion-platform-storage` at the **3rd** consumer; the fallback chain is
+/// mechanical wiring (a policy, not a correctness invariant), so 2 copies stay
+/// inline per the Rule of Three (documented carry, not silent debt).
+fn use_graph_storage() -> Rc<GraphStorage> {
+    Owner::current()
+        .expect("use_graph_storage requires an active Owner scope")
+        .cache(STORAGE_CACHE_KEY, || GraphStorage(build_graph_storage()))
 }
 
 // ─── sub-tag grammar (composite paint tags route to the coordinator) ──
@@ -697,6 +798,15 @@ fn validate_after(sel: Selection, removed_nodes: &[NodeId], removed_edges: &[Edg
 
 // ─── coordinator External ──────────────────────────────────────────
 
+/// R852 — the cross-cutting services the coordinator depends on, distinct from
+/// the reactive model holders: the shared undo history and the persistence
+/// backend. Bundled so [`NodeGraphExternal::new`] stays within the argument
+/// budget while the model holders remain explicit.
+struct GraphServices {
+    undo: Rc<UndoStack>,
+    storage: Rc<GraphStorage>,
+}
+
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
 /// (same instances the view fn reads) plus the internal drag latches.
 struct NodeGraphExternal {
@@ -715,6 +825,8 @@ struct NodeGraphExternal {
     /// R851 — the shared undo history every structural mutation records onto
     /// (the same `Rc` the [`UndoStackExternal`] and the keyboard path reach).
     undo: Rc<UndoStack>,
+    /// R852 — the platform graph store behind `save` / `load`.
+    storage: Rc<GraphStorage>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<NodeId>>,
     node_drag: Cell<Option<NodeDragStart>>,
@@ -732,7 +844,7 @@ impl NodeGraphExternal {
         preview: Rc<Signal<Option<Preview>>>,
         next_edge_id: Rc<Cell<u32>>,
         next_node_id: Rc<Cell<u32>>,
-        undo: Rc<UndoStack>,
+        services: GraphServices,
     ) -> Self {
         Self {
             nodes,
@@ -741,7 +853,8 @@ impl NodeGraphExternal {
             preview,
             next_edge_id,
             next_node_id,
-            undo,
+            undo: services.undo,
+            storage: services.storage,
             grabbed_node: Cell::new(None),
             node_drag: Cell::new(None),
             pending_press: Cell::new(PendingPress::None),
@@ -778,6 +891,77 @@ impl NodeGraphExternal {
             sel_before,
             sel_after,
         });
+    }
+
+    /// R852 — snapshot the persistable graph (nodes + edges + the monotonic id
+    /// counters; the selection is transient and omitted).
+    fn snapshot(&self) -> SerializedGraph {
+        SerializedGraph {
+            schema_version: PERSISTED_SCHEMA_VERSION,
+            nodes: self.nodes.get(),
+            edges: self.edges.get(),
+            next_node_id: self.next_node_id.get(),
+            next_edge_id: self.next_edge_id.get(),
+        }
+    }
+
+    /// R852 — the graph as a JSON string (the AI-first `query serialized` read).
+    fn serialized_json(&self) -> String {
+        serde_json::to_string(&self.snapshot()).unwrap_or_default()
+    }
+
+    /// R852 — replace the whole graph from a snapshot: swap nodes / edges, resume
+    /// the id counters where the snapshot left off, drop the selection / preview,
+    /// and clear the undo history — the opened document is a fresh baseline (the
+    /// `QUndoStack` "open clears the stack" model). The single restore path
+    /// behind `set_graph` / `load`, so every entry point clears undo identically.
+    fn apply_snapshot(&self, g: SerializedGraph) {
+        self.nodes.set(g.nodes);
+        self.edges.set(g.edges);
+        self.next_node_id.set(g.next_node_id);
+        self.next_edge_id.set(g.next_edge_id);
+        self.selection.set(Selection::None);
+        self.preview.set(None);
+        self.undo.clear();
+        self.end_gesture();
+    }
+
+    /// R852 — parse + apply a JSON snapshot (the AI-first `set_graph` write, the
+    /// inverse of [`serialized_json`](Self::serialized_json)). Rejects malformed
+    /// JSON or a schema-version mismatch (`false`, the graph unchanged).
+    fn load_json(&self, json: &str) -> bool {
+        let Ok(g) = serde_json::from_str::<SerializedGraph>(json) else {
+            return false;
+        };
+        if g.schema_version != PERSISTED_SCHEMA_VERSION {
+            return false;
+        }
+        self.apply_snapshot(g);
+        true
+    }
+
+    /// R852 — persist the current graph to [`STORAGE_KEY`] (the `Ctrl+S` / RPC
+    /// `save` path). The single blob keeps `FileStorage`'s tempfile + rename
+    /// covering the whole transaction. Returns whether the snapshot serialized.
+    fn save(&self) -> bool {
+        let Ok(bytes) = serde_json::to_vec(&self.snapshot()) else {
+            return false;
+        };
+        self.storage.save(STORAGE_KEY, &bytes);
+        true
+    }
+
+    /// R852 — restore the graph from [`STORAGE_KEY`] (the `Ctrl+O` / RPC `load`
+    /// path). `false` (graph unchanged) when nothing is stored or the blob is
+    /// unreadable / a version mismatch.
+    fn load(&self) -> bool {
+        let Some(bytes) = self.storage.load(STORAGE_KEY) else {
+            return false;
+        };
+        match std::str::from_utf8(&bytes) {
+            Ok(json) => self.load_json(json),
+            Err(_) => false,
+        }
     }
 
     /// Move node `id` to a clamped `(x, y)`. The single mutation behind both
@@ -1189,6 +1373,10 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("delete_node", "int"),
             ("delete_selected", "json"),
             ("nudge", "string"),
+            ("serialized", "string"),
+            ("set_graph", "string"),
+            ("save", "json"),
+            ("load", "json"),
         ])
     }
 
@@ -1212,6 +1400,9 @@ impl ExternalIntrospect for NodeGraphExternal {
                 Some(id) => IntrospectValue::Int(i64::from(id.raw())),
                 None => IntrospectValue::Null,
             }),
+            // R852 — the whole graph as one JSON blob (the AI-first read; its
+            // write-twin is `invoke set_graph`).
+            "serialized" => Some(IntrospectValue::Text(self.serialized_json())),
             _ => {
                 if let Some(rest) = path.strip_prefix("node.") {
                     let (id_str, field) = rest.split_once('.')?;
@@ -1348,6 +1539,20 @@ impl ExternalIntrospect for NodeGraphExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R852 — replace the graph from a JSON snapshot (the write-twin of
+            // `query serialized`); malformed JSON or a version mismatch is
+            // Rejected and leaves the graph unchanged.
+            "set_graph" => match args {
+                IntrospectValue::Text(s) => self
+                    .load_json(&s)
+                    .then_some(IntrospectValue::Bool(true))
+                    .ok_or(InvokeError::Rejected),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R852 — persist to / restore from the Storage backend. `load`
+            // returns false (graph unchanged) when nothing is stored yet.
+            "save" => Ok(IntrospectValue::Bool(self.save())),
+            "load" => Ok(IntrospectValue::Bool(self.load())),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1373,6 +1578,19 @@ fn undo_redo_verb(key: &str, modifiers: Modifiers) -> Option<&'static str> {
         "z" if modifiers.shift_key() => Some("redo"),
         "z" => Some("undo"),
         "y" => Some("redo"),
+        _ => None,
+    }
+}
+
+/// R852 — map a held-`Ctrl` keystroke to a persistence verb on the graph
+/// coordinator: `Ctrl+S` saves, `Ctrl+O` opens (loads). `None` otherwise.
+fn save_load_verb(key: &str, modifiers: Modifiers) -> Option<&'static str> {
+    if !modifiers.control_key() {
+        return None;
+    }
+    match key.to_ascii_lowercase().as_str() {
+        "s" => Some("save"),
+        "o" => Some("load"),
         _ => None,
     }
 }
@@ -1403,6 +1621,11 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     let Some(intro) = node.handle.introspect_mut() else {
         return false;
     };
+    // R852 — Ctrl+S save / Ctrl+O open, on the graph coordinator itself.
+    if let Some(verb) = save_load_verb(key, modifiers) {
+        let _ = intro.invoke(verb, IntrospectValue::Null);
+        return true;
+    }
     match key {
         "ArrowUp" => nudge_ok(intro, 0, -NUDGE_STEP),
         "ArrowDown" => nudge_ok(intro, 0, NUDGE_STEP),
@@ -1718,7 +1941,7 @@ impl WidgetCore for NodeEditorView {
             use_preview(),
             use_next_edge_id(),
             use_next_node_id(),
-            use_undo(),
+            GraphServices { undo: use_undo(), storage: use_graph_storage() },
         ))
     }
 
@@ -1855,7 +2078,10 @@ mod tests {
     use pinion_core::scene::ExternalNode;
 
     fn boot_scene() -> Scene {
-        Scene::External(ExternalNode::new(NodeEditorView::create_external()).with_tag(GRAPH_TAG))
+        // Build the primary from `coordinator()` (in-memory storage) rather than
+        // `create_external` so a unit test never spins up the real `FileStorage`
+        // (which eagerly create_dir_all's the OS data dir).
+        Scene::External(ExternalNode::new(Box::new(coordinator()) as Box<dyn External>).with_tag(GRAPH_TAG))
     }
 
     fn graph_intro(scene: &Scene) -> &dyn ExternalIntrospect {
@@ -2105,6 +2331,19 @@ mod tests {
 
     /// A fresh coordinator over the shared Owner::cache holders (mutations
     /// persist across instances within one Owner scope).
+    /// R852 — an in-memory `GraphStorage` cached under [`STORAGE_CACHE_KEY`], so
+    /// tests exercise `save` / `load` without touching the filesystem (the real
+    /// `FileStorage` path is covered by `tools/demos/r852_node_persist.py` via
+    /// `isolated_storage_dir`). Shared within the Owner scope, mirroring how
+    /// `use_graph_storage` makes the platform handle a process singleton.
+    fn mem_storage() -> Rc<GraphStorage> {
+        Owner::current()
+            .expect("mem_storage requires an active Owner scope")
+            .cache(STORAGE_CACHE_KEY, || {
+                GraphStorage(Box::new(pinion_core::storage::InMemoryStorage::new()))
+            })
+    }
+
     fn coordinator() -> NodeGraphExternal {
         NodeGraphExternal::new(
             use_nodes(),
@@ -2113,7 +2352,7 @@ mod tests {
             use_preview(),
             use_next_edge_id(),
             use_next_node_id(),
-            use_undo(),
+            GraphServices { undo: use_undo(), storage: mem_storage() },
         )
     }
 
@@ -2458,7 +2697,7 @@ mod tests {
     /// RPC undo path (which finds [`UNDO_TAG`]) can be exercised in a unit test.
     fn boot_full_scene() -> Scene {
         let primary =
-            Scene::External(ExternalNode::new(NodeEditorView::create_external()).with_tag(GRAPH_TAG));
+            Scene::External(ExternalNode::new(Box::new(coordinator()) as Box<dyn External>).with_tag(GRAPH_TAG));
         let undo = Scene::External(
             ExternalNode::new(Box::new(UndoStackExternal::new(use_undo()))).with_tag(UNDO_TAG),
         );
@@ -2689,6 +2928,187 @@ mod tests {
             assert!(!stack.undo(), "undo on empty history is a no-op");
             assert!(!stack.redo(), "redo on empty history is a no-op");
             assert_eq!(stack.len(), 0);
+        });
+    }
+
+    // ── R852 serialization + persistence ───────────────────────────
+
+    #[test]
+    fn r852_serialized_query_is_json_with_schema_version_and_model() {
+        Owner::new().run(|| {
+            let coord = coordinator();
+            let json = coord.serialized_json();
+            let g: SerializedGraph = serde_json::from_str(&json).expect("valid JSON");
+            assert_eq!(g.schema_version, PERSISTED_SCHEMA_VERSION);
+            assert_eq!(g.nodes.len(), 4, "the seed nodes serialize");
+            assert_eq!(g.edges.len(), 3, "the seed edges serialize");
+            assert_eq!(g.next_node_id, first_dynamic_node_id(), "counters captured");
+            assert_eq!(g.next_edge_id, first_dynamic_edge_id());
+        });
+    }
+
+    #[test]
+    fn r852_serialized_round_trips_through_set_graph() {
+        Owner::new().run(|| {
+            let coord = coordinator();
+            // Snapshot the seed graph, mutate, then restore via set_graph.
+            let snap = coord.serialized_json();
+            coord.add_node(2);
+            coord.add_node(0);
+            assert_eq!(coord.node_count(), 6, "two nodes added");
+            assert!(coord.load_json(&snap), "set_graph applies the snapshot");
+            assert_eq!(coord.node_count(), 4, "the graph reverted to the snapshot");
+            assert_eq!(coord.edges.get().len(), 3);
+            assert_eq!(use_selection().get(), Selection::None, "selection dropped on load");
+        });
+    }
+
+    #[test]
+    fn r852_save_then_load_restores_the_graph_via_storage() {
+        Owner::new().run(|| {
+            let coord = coordinator();
+            let a = coord.add_node(2).expect("Multiply"); // id 4
+            assert_eq!(coord.node_count(), 5);
+            assert!(coord.save(), "save the 5-node graph");
+            // Mutate after the save.
+            let b = coord.add_node(0).expect("Texture"); // id 5
+            assert_eq!(coord.node_count(), 6);
+            assert!(coord.load(), "load restores the saved graph");
+            assert_eq!(coord.node_count(), 5, "back to the saved 5 nodes");
+            assert!(coord.node_by_id(a).is_some(), "the saved node survives");
+            assert!(coord.node_by_id(b).is_none(), "the post-save node is gone");
+        });
+    }
+
+    #[test]
+    fn r852_load_clears_the_undo_history() {
+        Owner::new().run(|| {
+            let coord = coordinator();
+            let stack = use_undo();
+            coord.add_node(2);
+            assert!(stack.can_undo(), "the add is journaled");
+            assert!(coord.save());
+            coord.add_node(0);
+            assert!(coord.load(), "load restores + clears undo");
+            assert!(!stack.can_undo(), "the opened document is a fresh baseline");
+            assert!(!stack.can_redo());
+            assert_eq!(stack.len(), 0);
+        });
+    }
+
+    #[test]
+    fn r852_load_with_nothing_stored_is_a_noop() {
+        Owner::new().run(|| {
+            let coord = coordinator();
+            assert!(!coord.load(), "nothing stored yet -> false");
+            assert_eq!(coord.node_count(), 4, "the graph is unchanged");
+        });
+    }
+
+    #[test]
+    fn r852_set_graph_rejects_malformed_and_version_mismatch() {
+        Owner::new().run(|| {
+            let coord = coordinator();
+            assert!(!coord.load_json("not json at all"), "malformed JSON rejected");
+            assert_eq!(coord.node_count(), 4, "graph unchanged on malformed");
+            // Valid JSON, wrong schema version.
+            let bad = serde_json::to_string(&SerializedGraph {
+                schema_version: PERSISTED_SCHEMA_VERSION + 1,
+                nodes: Vec::new(),
+                edges: Vec::new(),
+                next_node_id: 0,
+                next_edge_id: 0,
+            })
+            .unwrap();
+            assert!(!coord.load_json(&bad), "version mismatch rejected");
+            assert_eq!(coord.node_count(), 4, "graph unchanged on version mismatch");
+        });
+    }
+
+    #[test]
+    fn r852_loaded_counters_resume_monotonic_mint() {
+        Owner::new().run(|| {
+            let coord = coordinator();
+            let a = coord.add_node(2).expect("Multiply"); // id 4, counter -> 5
+            assert!(coord.save());
+            let b = coord.add_node(0).expect("Texture"); // id 5, counter -> 6
+            assert!(b.raw() > a.raw());
+            assert!(coord.load(), "restore the counter to the saved value");
+            // The next mint resumes at the saved counter: id b (the post-save
+            // node) was discarded by the load, so reusing its number is correct
+            // monotonic-from-the-saved-state, never an id live in the graph.
+            let c = coord.add_node(0).expect("Texture");
+            assert_eq!(c.raw(), a.raw() + 1, "next id resumes at the saved next_node_id");
+        });
+    }
+
+    #[test]
+    fn r852_save_load_set_graph_over_rpc_invoke() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // serialized query returns JSON.
+            let json = match graph_intro(&scene).query("serialized") {
+                Some(IntrospectValue::Text(s)) => s,
+                other => panic!("expected serialized JSON, got {other:?}"),
+            };
+            assert!(json.contains("schema_version"), "serialized is the snapshot JSON");
+            // Mutate, save, mutate again, load -> reverts.
+            send(&mut scene, "palette_2:PointerDown");
+            send(&mut scene, "palette_2:PointerUp");
+            assert_eq!(query_int(&scene, "node_count"), 5);
+            {
+                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let intro = node.handle.introspect_mut().expect("introspect");
+                assert_eq!(intro.invoke("save", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+            }
+            send(&mut scene, "palette_0:PointerDown");
+            send(&mut scene, "palette_0:PointerUp");
+            assert_eq!(query_int(&scene, "node_count"), 6);
+            {
+                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let intro = node.handle.introspect_mut().expect("introspect");
+                assert_eq!(intro.invoke("load", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+            }
+            assert_eq!(query_int(&scene, "node_count"), 5, "RPC load reverted to the saved graph");
+            // set_graph with the boot snapshot reverts all the way to 4 nodes.
+            {
+                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let intro = node.handle.introspect_mut().expect("introspect");
+                assert_eq!(
+                    intro.invoke("set_graph", IntrospectValue::Text(json)),
+                    Ok(IntrospectValue::Bool(true)),
+                );
+            }
+            assert_eq!(query_int(&scene, "node_count"), 4, "set_graph restored the boot snapshot");
+            // A malformed set_graph is Rejected.
+            {
+                let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+                let intro = node.handle.introspect_mut().expect("introspect");
+                assert_eq!(
+                    intro.invoke("set_graph", IntrospectValue::Text("garbage".to_owned())),
+                    Err(InvokeError::Rejected),
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r852_ctrl_s_saves_and_ctrl_o_loads() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            send(&mut scene, "palette_2:PointerDown");
+            send(&mut scene, "palette_2:PointerUp");
+            assert_eq!(query_int(&scene, "node_count"), 5);
+            // Ctrl+S saves the 5-node graph.
+            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "s", mods(true, false)));
+            // Add another, then Ctrl+O reverts to the saved graph.
+            send(&mut scene, "palette_0:PointerDown");
+            send(&mut scene, "palette_0:PointerUp");
+            assert_eq!(query_int(&scene, "node_count"), 6);
+            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "o", mods(true, false)));
+            assert_eq!(query_int(&scene, "node_count"), 5, "Ctrl+O loaded the saved graph");
+            // Plain 's' (no Ctrl) is not a save gesture.
+            assert!(!NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "s", mods(false, false)));
         });
     }
 }
