@@ -35169,6 +35169,58 @@
         "per-cell column cursor / marquee multi-select / canvas pan-zoom = additive node-editor follow-ups"
       ]
     },
+    "R854": {
+      "decision_summary": "R854 per-group aggregates: count + total Size in the grouped-grid headers + AI-first QueryOnlyIntrospect surface; clears the R843 aggregate carry",
+      "changes_bullets": [
+        "add GroupAggregates: per-group member count + total Size, computed once from membership (data is a pure fn of the row index)",
+        "display the aggregate in the group header (count + total Size), visible even when the group is collapsed",
+        "expose it AI-first via the QueryOnlyIntrospect substrate at /ggs_agg/external (group_count/total_count/total_size/group.<g>.count|size)",
+        "lift the Size formula to row_size as the SSOT: cell_value formats it, the aggregate sums it (no display/aggregate drift)",
+        "clears the R843 deferred per-group-aggregate carry as pure example composition (zero shared-substrate change)"
+      ],
+      "verification_bullets": [
+        "hello-grouped-grid-sort 8 unit (4 new R854: aggregate tally, QuerySource paths, QueryOnlyIntrospect end-to-end, header displays the aggregate)",
+        "tools/demos/r854_grouped_aggregate.py PASS (~32 assert: per-group count+size, sums, sort-invariance, collapse-survival); r846 regression PASS",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: QueryOnlyIntrospect reused (3rd consumer after Modal/Snackbar); row_size SSOT fixes a within-round display/aggregate 2-copy"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "aggregate is example-local (GroupAggregates::compute); a 2nd consumer lifts a group-aggregate helper into the GroupOrderState substrate",
+        "richer aggregates (min/max/avg, per-column) + human Size formatting (KB/MB) are additive",
+        "node-editor undo/persist arc complete (R851-R853); use_app_storage lift at the 3rd storage consumer (R852 carry)",
+        "undo_redo_verb / save_load_verb keymap lift at a 2nd apply_key-level consumer (R851/R852 carry)",
+        "next Phase B item-2 candidates: tree+filter+sort outliner / frozen left column (both touch shared substrate)"
+      ],
+      "publishable_decision_summary": "R854 per-group aggregates: count + total Size in the grouped-grid headers + AI-first QueryOnlyIntrospect surface; clears the R843 aggregate carry",
+      "publishable_changes_bullets": [
+        "add GroupAggregates: per-group member count + total Size, computed once from membership (data is a pure fn of the row index)",
+        "display the aggregate in the group header (count + total Size), visible even when the group is collapsed",
+        "expose it AI-first via the QueryOnlyIntrospect substrate at /ggs_agg/external (group_count/total_count/total_size/group.<g>.count|size)",
+        "lift the Size formula to row_size as the SSOT: cell_value formats it, the aggregate sums it (no display/aggregate drift)",
+        "clears the R843 deferred per-group-aggregate carry as pure example composition (zero shared-substrate change)"
+      ],
+      "publishable_verification_bullets": [
+        "hello-grouped-grid-sort 8 unit (4 new R854: aggregate tally, QuerySource paths, QueryOnlyIntrospect end-to-end, header displays the aggregate)",
+        "tools/demos/r854_grouped_aggregate.py PASS (~32 assert: per-group count+size, sums, sort-invariance, collapse-survival); r846 regression PASS",
+        "cargo test --workspace -j2 green (148 suites); clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) green",
+        "self-grep: QueryOnlyIntrospect reused (3rd consumer after Modal/Snackbar); row_size SSOT fixes a within-round display/aggregate 2-copy"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "aggregate is example-local (GroupAggregates::compute); a 2nd consumer lifts a group-aggregate helper into the GroupOrderState substrate",
+        "richer aggregates (min/max/avg, per-column) + human Size formatting (KB/MB) are additive",
+        "node-editor undo/persist arc complete (R851-R853); use_app_storage lift at the 3rd storage consumer (R852 carry)",
+        "undo_redo_verb / save_load_verb keymap lift at a 2nd apply_key-level consumer (R851/R852 carry)",
+        "next Phase B item-2 candidates: tree+filter+sort outliner / frozen left column (both touch shared substrate)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

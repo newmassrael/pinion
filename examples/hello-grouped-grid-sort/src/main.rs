@@ -38,7 +38,9 @@
 use std::rc::Rc;
 
 use pinion_a11y::{grouped_grid_access_nodes, AccessNode, GridColumn, GroupedGridSpec, SortDirection, WidgetA11y};
-use pinion_core::external::External;
+use pinion_core::external::{
+    int_of, External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource,
+};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -81,6 +83,11 @@ const GROUP_TAG: &str = "ggrp";
 const SORT_TAG: &str = "gsort";
 const SCROLL_KEY: &str = "ggrid_scroll";
 const SCROLLBAR_TAG: &str = "ggrid_scrollbar";
+/// R854 — the per-group aggregate query surface (`group_count` / `total_count`
+/// / `total_size` / `group.<g>.{count,size}`), an AI-first read of the same
+/// counts + total Size the group headers show. `Owner::cache` key for it.
+const AGG_TAG: &str = "ggs_agg";
+const AGG_KEY: &str = "ggs_aggregates";
 
 const GROUPS: [&str; 6] = ["Mesh", "Texture", "Material", "Sound", "Script", "Prefab"];
 
@@ -100,13 +107,90 @@ fn row_group(i: usize) -> usize {
 fn cell_value(source: usize, col: usize) -> String {
     match col {
         0 => format!("asset_{source:05}"),
-        1 => format!("{}", (source * 13) % 990 + 8),
+        // R854 — the Size formula lives in `row_size` (the aggregate sums the
+        // same value the column displays; one SSOT, no display/aggregate drift).
+        1 => format!("{}", row_size(source)),
         _ => format!("day {:03}", source % 90),
     }
 }
 
 fn cell_tag(source: usize, col: usize) -> String {
     format!("gcell_{source}_{col}")
+}
+
+/// R854 — the numeric Size of row `source` (the integer [`cell_value`] formats
+/// into the Size column), summed into the per-group aggregate.
+fn row_size(source: usize) -> u64 {
+    u64::try_from((source * 13) % 990 + 8).unwrap_or(0)
+}
+
+/// R854 §5.27 — static per-group aggregates: the member count and the total
+/// Size of each group. The data is a pure function of the row index, so these
+/// never change — computed once and shared (the headers display them, the
+/// [`QueryOnlyIntrospect`] surfaces them as data). A real asset browser shows
+/// exactly this ("Textures: 1,234 items, 5.6 MB"); the aggregate stays visible
+/// when a group is collapsed because it rides the always-shown header.
+#[derive(Debug)]
+struct GroupAggregates {
+    /// `count[g]` / `total_size[g]` — the member count + Size sum of group `g`.
+    count: Vec<usize>,
+    total_size: Vec<u64>,
+}
+
+impl GroupAggregates {
+    /// Tally every row into its group once.
+    fn compute() -> Self {
+        let mut count = vec![0usize; GROUPS.len()];
+        let mut total_size = vec![0u64; GROUPS.len()];
+        for i in 0..N {
+            let g = row_group(i);
+            count[g] += 1;
+            total_size[g] += row_size(i);
+        }
+        Self { count, total_size }
+    }
+}
+
+impl QuerySource for GroupAggregates {
+    fn introspect_schema(&self) -> IntrospectSchema {
+        IntrospectSchema::new(&[
+            ("group_count", "int"),
+            ("total_count", "int"),
+            ("total_size", "int"),
+            ("group.<g>.count", "int"),
+            ("group.<g>.size", "int"),
+        ])
+    }
+
+    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "group_count" => Some(IntrospectValue::Int(int_of(self.count.len()))),
+            "total_count" => Some(IntrospectValue::Int(int_of(self.count.iter().sum()))),
+            "total_size" => Some(IntrospectValue::Int(
+                i64::try_from(self.total_size.iter().sum::<u64>()).unwrap_or(i64::MAX),
+            )),
+            _ => {
+                let (g_str, field) = path.strip_prefix("group.")?.split_once('.')?;
+                let g: usize = g_str.parse().ok()?;
+                match field {
+                    "count" => self.count.get(g).map(|&c| IntrospectValue::Int(int_of(c))),
+                    "size" => self
+                        .total_size
+                        .get(g)
+                        .map(|&s| IntrospectValue::Int(i64::try_from(s).unwrap_or(i64::MAX))),
+                    _ => None,
+                }
+            }
+        }
+    }
+}
+
+/// R854 — the shared aggregate cache (the headers + the [`QueryOnlyIntrospect`]
+/// read the same instance). The data is static, so this is computed once.
+fn use_group_aggregates() -> Rc<GroupAggregates> {
+    Owner::current()
+        .expect("use_group_aggregates requires an active Owner scope")
+        .cache(AGG_KEY, GroupAggregates::compute)
 }
 
 /// The shared column-sort proxy over the materialized cell grid.
@@ -176,9 +260,12 @@ fn column_header_row(sort: Option<(usize, bool)>, theme: &Theme) -> Scene {
     )
 }
 
-fn build_header(group: usize, member_count: usize, collapsed: bool, theme: &Theme) -> Scene {
+fn build_header(group: usize, member_count: usize, total_size: u64, collapsed: bool, theme: &Theme) -> Scene {
     let chevron = if collapsed { CHEVRON_COLLAPSED } else { CHEVRON_EXPANDED };
-    let text = format!("{chevron}  {}  ({member_count})", GROUPS[group % GROUPS.len()]);
+    // R854 — the per-group aggregate (member count + total Size) rides the
+    // always-shown header, so it stays visible when the group is collapsed.
+    let text =
+        format!("{chevron}  {}  ({member_count}, {total_size} B)", GROUPS[group % GROUPS.len()]);
     let label = Scene::Text(TextNode::styled(
         text,
         Rect::default(),
@@ -241,6 +328,7 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
 
     let grid = use_grid_data();
     let groups = use_grid_groups();
+    let aggregates = use_group_aggregates();
     let rows = groups.rows();
     let visible_len = rows.len();
 
@@ -254,7 +342,8 @@ fn view(selected: Option<usize>, _frame: &Frame) -> Scene {
         OVERSCAN,
         |view_pos| match rows[view_pos] {
             GroupRow::Header { group, member_count, collapsed } => {
-                build_header(group, member_count, collapsed, &theme)
+                let total_size = aggregates.total_size.get(group).copied().unwrap_or(0);
+                build_header(group, member_count, total_size, collapsed, &theme)
             }
             GroupRow::Data { source } => build_data_row(source, &theme, selected),
         },
@@ -302,6 +391,9 @@ impl WidgetCore for GroupedGridSortView {
         vec![
             ExtraExternal::new(SORT_TAG, Box::new(GridSortExternal::new(use_grid_data()))),
             ExtraExternal::new(GROUP_TAG, Box::new(GroupOrderExternal::new(use_grid_groups()))),
+            // R854 — the AI-first per-group aggregate surface, query-only via the
+            // QueryOnlyIntrospect substrate (the modal/snackbar R810.1 pattern).
+            ExtraExternal::new(AGG_TAG, Box::new(QueryOnlyIntrospect::new(use_group_aggregates()))),
             scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
         ]
     }
@@ -511,5 +603,93 @@ mod tests {
             walk(&scene, &format!("{GRID_TAG}#9999"))
         };
         assert_eq!(fill, Some(accent), "selected source 9999 stays Accent after the sort");
+    }
+
+    // ── R854 per-group aggregates ──────────────────────────────────
+
+    /// Every Text node's content, in walk order.
+    fn all_texts(scene: &Scene) -> Vec<String> {
+        fn walk(s: &Scene, out: &mut Vec<String>) {
+            match s {
+                Scene::Container(c) => c.children.iter().for_each(|ch| walk(ch, out)),
+                Scene::Scroll(sc) => walk(sc.content.as_ref(), out),
+                Scene::Text(t) => out.push(t.content.clone()),
+                _ => {}
+            }
+        }
+        let mut out = Vec::new();
+        walk(scene, &mut out);
+        out
+    }
+
+    #[test]
+    fn r854_group_aggregates_tally_every_row_once() {
+        let agg = GroupAggregates::compute();
+        assert_eq!(agg.count.len(), GROUPS.len(), "one tally per group");
+        assert_eq!(agg.count.iter().sum::<usize>(), N, "every row counted exactly once");
+        // Independent recomputation of the per-group Size sums.
+        let mut expected = vec![0u64; GROUPS.len()];
+        for i in 0..N {
+            expected[row_group(i)] += row_size(i);
+        }
+        assert_eq!(agg.total_size, expected, "per-group Size sums match a fresh tally");
+        assert_eq!(agg.count[0], (0..N).filter(|&i| row_group(i) == 0).count(), "group 0 count");
+    }
+
+    #[test]
+    fn r854_aggregate_query_source_paths() {
+        let agg = GroupAggregates::compute();
+        assert_eq!(
+            agg.introspect_query("group_count"),
+            Some(IntrospectValue::Int(int_of(GROUPS.len()))),
+        );
+        assert_eq!(agg.introspect_query("total_count"), Some(IntrospectValue::Int(int_of(N))));
+        let total: u64 = agg.total_size.iter().sum();
+        assert_eq!(
+            agg.introspect_query("total_size"),
+            Some(IntrospectValue::Int(i64::try_from(total).unwrap())),
+        );
+        assert_eq!(
+            agg.introspect_query("group.0.count"),
+            Some(IntrospectValue::Int(int_of(agg.count[0]))),
+        );
+        assert_eq!(
+            agg.introspect_query("group.0.size"),
+            Some(IntrospectValue::Int(i64::try_from(agg.total_size[0]).unwrap())),
+        );
+        assert_eq!(agg.introspect_query("group.99.count"), None, "out-of-range group is None");
+        assert_eq!(agg.introspect_query("bogus"), None, "unknown path is None");
+    }
+
+    #[test]
+    fn r854_aggregate_reaches_rpc_via_query_only_introspect() {
+        Owner::new().run(|| {
+            let agg = use_group_aggregates();
+            let ext = QueryOnlyIntrospect::new(Rc::clone(&agg));
+            let intro = External::introspect(&ext).expect("query-only introspectable");
+            assert_eq!(
+                intro.query("group_count"),
+                Some(IntrospectValue::Int(int_of(GROUPS.len()))),
+            );
+            assert_eq!(intro.query("total_count"), Some(IntrospectValue::Int(int_of(N))));
+            assert_eq!(
+                intro.query("group.0.size"),
+                Some(IntrospectValue::Int(i64::try_from(agg.total_size[0]).unwrap())),
+            );
+        });
+    }
+
+    #[test]
+    fn r854_group_header_displays_the_aggregate() {
+        // The leading group's header text carries its count + total Size, and it
+        // survives a collapse (the aggregate rides the always-shown header).
+        let agg = Owner::new().run(GroupAggregates::compute);
+        let want = format!("({}, {} B)", agg.count[0], agg.total_size[0]);
+        let scene = render(None, None);
+        let texts = all_texts(&scene);
+        assert!(
+            texts.iter().any(|t| t.contains(&want)),
+            "a group header shows its aggregate {want:?}; texts = {texts:?}",
+        );
     }
 }
