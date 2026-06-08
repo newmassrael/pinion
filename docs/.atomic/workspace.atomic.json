@@ -34281,6 +34281,64 @@
         "Lifting the 1-D vs 2-D coordinator now would be premature abstraction (also a smell)"
       ]
     },
+    "R838": {
+      "decision_summary": "R838 §5.38 §5.40 §5.51 node-graph editor substrate: draggable nodes + bezier-edge ports, AI-introspectable; pure composition of capture-drag + drag-DnD + vector-path + absolute-position",
+      "changes_bullets": [
+        "examples/hello-node-editor: canvas of titled nodes + input/output ports + cubic-bezier edges",
+        "NodeGraphExternal coordinator: Signal node/edge/selection model + capture-drag + port drag-connect",
+        "node move = R51.34 capture lock (pointer_move normalized vs canvas; R786 stable-rect idiom)",
+        "edge connect = R742 drag substrate (begin_drag on output port -> drag_release over input port)",
+        "edges = R721 Scene::Path beziers, pointer_transparent so they never block canvas/node clicks",
+        "RPC introspect: query node/edge/selected; intervene node.x/y + selected; invoke add/remove/delete/nudge",
+        "a11y: graph lowers to WAI-ARIA list of listitem nodes (selected flagged); reuses with_set_position SSOT",
+        "keyboard: arrows nudge selected node, Delete removes node + incident edges, Escape clears selection"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (14 new hello-node-editor unit tests + full suite)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello green (-D pedantic)",
+        "tools/demos/r838_node_editor.py PASS (43 assertions, hidden-window realgpu)",
+        "demo covers RPC node-move/edge-edit + live capture-drag move + live port-drag connect + keyboard"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "bezier-edge paint helper example-local; lift to pinion_widget_paint at 2nd consumer (chip/stepper)",
+        "selected non-windowed-list a11y = 1st consumer; lift list_nodes_selected peer at 2nd (R780 precedent)",
+        "2-D capture-drag snapshot distinct from 1-D column-resize; lift on a 2nd 2-D drag consumer",
+        "edge click-select/delete, node rename, canvas pan/zoom, stable node ids = additive follow-ups"
+      ],
+      "publishable_decision_summary": "R838 §5.38 §5.40 §5.51 node-graph editor substrate: draggable nodes + bezier-edge ports, AI-introspectable; pure composition of capture-drag + drag-DnD + vector-path + absolute-position",
+      "publishable_changes_bullets": [
+        "examples/hello-node-editor: canvas of titled nodes + input/output ports + cubic-bezier edges",
+        "NodeGraphExternal coordinator: Signal node/edge/selection model + capture-drag + port drag-connect",
+        "node move = R51.34 capture lock (pointer_move normalized vs canvas; R786 stable-rect idiom)",
+        "edge connect = R742 drag substrate (begin_drag on output port -> drag_release over input port)",
+        "edges = R721 Scene::Path beziers, pointer_transparent so they never block canvas/node clicks",
+        "RPC introspect: query node/edge/selected; intervene node.x/y + selected; invoke add/remove/delete/nudge",
+        "a11y: graph lowers to WAI-ARIA list of listitem nodes (selected flagged); reuses with_set_position SSOT",
+        "keyboard: arrows nudge selected node, Delete removes node + incident edges, Escape clears selection"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (14 new hello-node-editor unit tests + full suite)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello green (-D pedantic)",
+        "tools/demos/r838_node_editor.py PASS (43 assertions, hidden-window realgpu)",
+        "demo covers RPC node-move/edge-edit + live capture-drag move + live port-drag connect + keyboard"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "bezier-edge paint helper example-local; lift to pinion_widget_paint at 2nd consumer (chip/stepper)",
+        "selected non-windowed-list a11y = 1st consumer; lift list_nodes_selected peer at 2nd (R780 precedent)",
+        "2-D capture-drag snapshot distinct from 1-D column-resize; lift on a 2nd 2-D drag consumer",
+        "edge click-select/delete, node rename, canvas pan/zoom, stable node ids = additive follow-ups"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -1,0 +1,33 @@
+[package]
+name = "hello-node-editor"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R838 §5.38 §5.40 §5.51 node-graph editor substrate — a canvas of titled nodes with input/output ports connected by bezier edges; the visual-scripting / material-graph form factor and the self-hosted-editor blueprint panel seed. Nodes drag-to-move via the R51.34 capture lock, edges drag-to-connect via the R742 drag substrate, both mirrored on the AI-first RPC introspect path (intervene node position / invoke add_edge)"
+publish = false
+
+[[bin]]
+name = "hello-node-editor"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R838 §5.40 — AccessKit substrate (the graph lowers to a labelled node list).
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+# R838 — the graph model lives in reactive `Signal`s, which require their
+# payloads to be (de)serializable for the §2 #7 scene-as-data snapshot path.
+serde = { workspace = true }
+
+[dev-dependencies]
+# composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

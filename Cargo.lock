@@ -2246,6 +2246,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-node-editor"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "serde",
+ "vello",
+]
+
+[[package]]
 name = "hello-number-input"
 version = "0.0.1"
 dependencies = [
