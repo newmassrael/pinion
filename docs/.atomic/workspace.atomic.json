@@ -36163,6 +36163,62 @@
         "scrub sensitivity consts per-binding (GRID_W/FLOAT_PER_PX/PX_PER_STEP); DragCalibration<T> later"
       ]
     },
+    "R876": {
+      "decision_summary": "R876 §5.49 §5.51 — unify the click-vs-drag determination into one router SSOT: a per-pointer PressGesture tracker both the R794 trailing-click suppression and the R875 double-click invalidation read (one metric, one threshold), removing the parallel drag-detection R875 had introduced.",
+      "changes_bullets": [
+        "input.rs: new PressGesture{origin, became_drag} + press_gestures map = one press-to-drag SSOT",
+        "track_press_drag latches became_drag once a press strays past DRAG_CLICK_THRESHOLD_PX (Euclidean)",
+        "pointer_down opens the tracker (origin = press cursor) for every press over a tagged target",
+        "cursor_moved advances it, then drops the last_press double-click candidate once became_drag",
+        "pointer_up reads press_became_drag to gate the DnD trailing click, then closes the tracker",
+        "DragSession loses its press + moved fields; update_drag no longer re-derives the drag latch",
+        "replaces R875 ad-hoc per-axis 5px capture-only check with the shared 4px Euclidean determination",
+        "generalizes double-click invalidation to every press flavour (capture/DnD/free), not just capture"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (0 failed); pinion-runtime input lib 63 through the rewritten path",
+        "r794 trailing-click suppression now reads the unified determination (session.moved gone) — green",
+        "r875 double-click-on-capture-drag + click-in-place regressions green via the same determination",
+        "r664 double-click suite (back-to-back / spatial / cross-target / triple) green",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "demos PASS (fresh release): r875 scrub / r742 dnd / r786 column-resize / r737 slider"
+      ],
+      "impact_refs": [
+        "5.49",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "drag-calibration (Resize/Splitter/scrollbar/scrub DragStart) still 4-copy; borderline lift deferred",
+        "InputRouter SRP: hover/capture/drag/dblclick still inline; sub-component split is a larger carry"
+      ],
+      "publishable_decision_summary": "R876 §5.49 §5.51 — unify the click-vs-drag determination into one router SSOT: a per-pointer PressGesture tracker both the R794 trailing-click suppression and the R875 double-click invalidation read (one metric, one threshold), removing the parallel drag-detection R875 had introduced.",
+      "publishable_changes_bullets": [
+        "input.rs: new PressGesture{origin, became_drag} + press_gestures map = one press-to-drag SSOT",
+        "track_press_drag latches became_drag once a press strays past DRAG_CLICK_THRESHOLD_PX (Euclidean)",
+        "pointer_down opens the tracker (origin = press cursor) for every press over a tagged target",
+        "cursor_moved advances it, then drops the last_press double-click candidate once became_drag",
+        "pointer_up reads press_became_drag to gate the DnD trailing click, then closes the tracker",
+        "DragSession loses its press + moved fields; update_drag no longer re-derives the drag latch",
+        "replaces R875 ad-hoc per-axis 5px capture-only check with the shared 4px Euclidean determination",
+        "generalizes double-click invalidation to every press flavour (capture/DnD/free), not just capture"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (0 failed); pinion-runtime input lib 63 through the rewritten path",
+        "r794 trailing-click suppression now reads the unified determination (session.moved gone) — green",
+        "r875 double-click-on-capture-drag + click-in-place regressions green via the same determination",
+        "r664 double-click suite (back-to-back / spatial / cross-target / triple) green",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "demos PASS (fresh release): r875 scrub / r742 dnd / r786 column-resize / r737 slider"
+      ],
+      "publishable_impact_refs": [
+        "5.49",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "drag-calibration (Resize/Splitter/scrollbar/scrub DragStart) still 4-copy; borderline lift deferred",
+        "InputRouter SRP: hover/capture/drag/dblclick still inline; sub-component split is a larger carry"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

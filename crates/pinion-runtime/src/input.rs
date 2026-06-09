@@ -324,6 +324,20 @@ pub struct InputRouter {
     /// (a reorder source does not opt into `wants_pointer_capture`), so
     /// the two mechanisms never contend for one pointer.
     drag_sessions: HashMap<PointerId, DragSession>,
+    /// R876 §5.49 §5.51 — per-pointer press-to-drag tracker: the single
+    /// router answer to "has this held press strayed far enough to be a
+    /// *drag* rather than a *click*?" Opened on [`pointer_down`](Self::pointer_down)
+    /// (origin = the press cursor), latched to `became_drag` the first time
+    /// [`cursor_moved`](Self::cursor_moved) sees the cursor leave that origin
+    /// by more than [`DRAG_CLICK_THRESHOLD_PX`] (Euclidean), cleared on
+    /// [`pointer_up`](Self::pointer_up). It unifies the two click-vs-drag
+    /// consumers behind one metric + one threshold: the R794 trailing-click
+    /// suppression (a moved drag must not also activate its source) and the
+    /// R875 double-click invalidation (a press that became a drag must not
+    /// seed a `DoubleClick`). Covers every press flavour — capture
+    /// (slider / scrub), `begin_drag` `DnD`, and plain free-mode — so no
+    /// gesture path re-derives the determination ([[drag-release-trailing-pointerup-suppress]]).
+    press_gestures: HashMap<PointerId, PressGesture>,
 }
 
 /// R742 §5.51 — in-flight drag state owned by the [`InputRouter`].
@@ -340,16 +354,25 @@ struct DragSession {
     /// cross-widget target can match on it without the router re-deriving
     /// it.
     payload: DragPayload,
-    /// R794 §5.51 — the absolute cursor at the press that armed this
-    /// session, the anchor the [`DRAG_CLICK_THRESHOLD_PX`] drag-vs-click
-    /// test measures against.
-    press: (f64, f64),
-    /// R794 §5.51 — whether the cursor has moved past
-    /// [`DRAG_CLICK_THRESHOLD_PX`] from [`press`](Self::press) at any point
-    /// in the session. Once set it stays set (a drag that wanders back to
-    /// the press point is still a drag, not a click — the Qt `startDragDistance`
-    /// latch). Gates whether `pointer_up` synthesizes the trailing click.
-    moved: bool,
+}
+
+/// R876 §5.49 §5.51 — per-pointer press-to-drag state owned by the
+/// [`InputRouter`]'s `press_gestures` map. Opened on every
+/// [`pointer_down`](InputRouter::pointer_down) over a tagged target and
+/// closed on the matching [`pointer_up`](InputRouter::pointer_up); the
+/// click-vs-drag determination both the trailing-click suppression (R794)
+/// and the double-click detector (R875) read.
+#[derive(Clone, Copy, Debug)]
+struct PressGesture {
+    /// Absolute cursor (logical px) at the press that opened this gesture —
+    /// the anchor the [`DRAG_CLICK_THRESHOLD_PX`] drag-vs-click test measures
+    /// against.
+    origin: (f64, f64),
+    /// Latched `true` the first time the cursor strays past
+    /// [`DRAG_CLICK_THRESHOLD_PX`] from [`origin`](Self::origin). Once set it
+    /// never resets — a drag that wanders back to the press point is still a
+    /// drag, not a click (the Qt `startDragDistance` latch).
+    became_drag: bool,
 }
 
 impl InputRouter {
@@ -508,6 +531,33 @@ impl InputRouter {
         }
     }
 
+    /// R876 §5.49 §5.51 — advance the press-to-drag tracker for `id` against
+    /// its current cursor, latching `became_drag` the first time the press
+    /// strays past [`DRAG_CLICK_THRESHOLD_PX`] (Euclidean) from its origin.
+    /// No-op when no press is in flight for `id`. The single producer of the
+    /// click-vs-drag determination [`pointer_up`](Self::pointer_up) and the
+    /// double-click detector both consume — see [`press_became_drag`](Self::press_became_drag).
+    fn track_press_drag(&mut self, id: PointerId, x: f64, y: f64) {
+        if let Some(gesture) = self.press_gestures.get_mut(&id) {
+            if !gesture.became_drag {
+                let dx = x - gesture.origin.0;
+                let dy = y - gesture.origin.1;
+                if dx.hypot(dy) > DRAG_CLICK_THRESHOLD_PX {
+                    gesture.became_drag = true;
+                }
+            }
+        }
+    }
+
+    /// R876 §5.49 §5.51 — whether the in-flight press for `id` has strayed
+    /// into a drag. `false` when no press is tracked (already released, or a
+    /// press that never reached a tagged target). The click-vs-drag SSOT
+    /// query: a moved drag must neither activate its source on release (R794)
+    /// nor seed a `DoubleClick` (R875).
+    fn press_became_drag(&self, id: PointerId) -> bool {
+        self.press_gestures.get(&id).is_some_and(|g| g.became_drag)
+    }
+
     /// winit `CursorMoved` handler. Stores the new cursor position
     /// under `id` then either:
     ///
@@ -525,26 +575,21 @@ impl InputRouter {
     ///   cancel-by-leave UX.
     pub fn cursor_moved(&mut self, id: PointerId, x: f64, y: f64, state_scene: &mut Scene) {
         self.cursors.insert(id, (x, y));
-        // R875 §5.49 — a held press that strays beyond the double-click
-        // distance is a *drag*, not a click, so it must not seed a
-        // subsequent `DoubleClick`: drop the `last_press` candidate the
-        // matching `pointer_down` recorded. (W3C: only a press-release in
-        // place is a `click`; native: a drag cancels the double-click
-        // cycle.) Without this, two same-spot capture drags — a numeric
-        // scrub dragged back and forth over one property row — read as a
-        // double-click and spuriously open the inline editor. Gated to a
-        // held gesture (`captured_targets` / `drag_sessions`) so free-mode
-        // hover motion *between* two genuine clicks never clears the
-        // candidate; the same `DOUBLE_CLICK_DIST_PX` the press-vs-press
-        // test uses keeps the threshold self-consistent.
-        if self.captured_targets.contains_key(&id) || self.drag_sessions.contains_key(&id) {
-            if let Some(prev) = self.last_press.get(&id) {
-                if (prev.1 - x).abs() >= DOUBLE_CLICK_DIST_PX
-                    || (prev.2 - y).abs() >= DOUBLE_CLICK_DIST_PX
-                {
-                    self.last_press.remove(&id);
-                }
-            }
+        // R876 §5.49 §5.51 — advance the click-vs-drag SSOT, then let its two
+        // consumers read it. Once this press has strayed into a drag it is no
+        // longer a click candidate, so drop the `last_press` snapshot the
+        // matching `pointer_down` recorded — a press-drag-press sequence (e.g.
+        // two numeric scrubs back and forth over one property row) must not
+        // read as a `DoubleClick` (W3C: only a press-release in place is a
+        // `click`; native: a drag cancels the double-click cycle). The drag
+        // determination is `track_press_drag`'s alone — same metric +
+        // threshold the R794 trailing-click suppression reads — so no gesture
+        // path re-derives it. A tracked press only exists between
+        // `pointer_down` and `pointer_up`, so free-mode hover *between* two
+        // genuine clicks (no press held) never clears the candidate.
+        self.track_press_drag(id, x, y);
+        if self.press_became_drag(id) {
+            self.last_press.remove(&id);
         }
         if self.drag_sessions.contains_key(&id) {
             // R742 §5.51 — a drag started on this pointer: resolve the
@@ -620,6 +665,16 @@ impl InputRouter {
     pub fn pointer_down(&mut self, id: PointerId, state_scene: &mut Scene) {
         if let Some(tag) = self.hover_targets.get(&id).cloned() {
             dispatch_send(state_scene, &tag, PointerWireEvent::Down.as_wire_name());
+            // R876 §5.49 §5.51 — open the click-vs-drag tracker for this
+            // press (origin = the press cursor). Every press over a tagged
+            // target is a click *candidate*; `cursor_moved` latches it to a
+            // drag once it strays, and `pointer_up` closes it. One record per
+            // pointer feeds both the trailing-click suppression and the
+            // double-click detector.
+            if let Some(&origin) = self.cursors.get(&id) {
+                self.press_gestures
+                    .insert(id, PressGesture { origin, became_drag: false });
+            }
             // R51.40 §5.35 — read the cached wants_capture bit
             // populated by the matching `refresh_hover` instead of
             // re-walking the state-scene tree. The cache is
@@ -652,14 +707,11 @@ impl InputRouter {
             // `drag_release` until `pointer_up`. Default `begin_drag` is
             // `None`, so non-DnD widgets never open a session.
             if let Some(payload) = widget_begin_drag(state_scene, &tag) {
-                let press = self.cursors.get(&id).copied().unwrap_or((0.0, 0.0));
                 self.drag_sessions.insert(
                     id,
                     DragSession {
                         source_tag: tag.clone(),
                         payload,
-                        press,
-                        moved: false,
                     },
                 );
             }
@@ -733,6 +785,13 @@ impl InputRouter {
         state_scene: &mut Scene,
         modifiers: Modifiers,
     ) {
+        // R876 §5.49 §5.51 — read the click-vs-drag SSOT for this press, then
+        // close its tracker: the press ends here on every path (DnD commit,
+        // capture release, free release). `became_drag` gates the DnD
+        // trailing click below; the same determination already invalidated
+        // any `DoubleClick` candidate mid-drag in `cursor_moved`.
+        let became_drag = self.press_became_drag(id);
+        self.press_gestures.remove(&id);
         // R742 §5.51 — a drag started on this pointer commits here. The
         // final drop location is the tag under the release cursor; the
         // source coordinator applies the move (or ignores `None`). The
@@ -765,8 +824,10 @@ impl InputRouter {
             // must NOT also activate the source (the row a file move relocated,
             // the tab a reorder shifted). This is the framework SSOT for
             // click-vs-drag — Qt `startDragDistance`, the DOM no-`click`-after-
-            // drag rule — so no drag source re-derives it per binding.
-            if !session.moved {
+            // drag rule — so no drag source re-derives it per binding. R876:
+            // `became_drag` is the unified press-to-drag determination
+            // (`track_press_drag`), shared with the double-click detector.
+            if !became_drag {
                 dispatch_send_mods(
                     state_scene,
                     &session.source_tag,
@@ -1057,18 +1118,13 @@ impl InputRouter {
     /// vanished between the `contains_key` gate and here (it cannot, but
     /// the `get` keeps the borrow honest) or the source external is gone.
     fn update_drag(&mut self, id: PointerId, x: f64, y: f64, state_scene: &mut Scene) {
-        let Some(session) = self.drag_sessions.get_mut(&id) else {
+        // R876 — the drag-vs-click latch moved to `track_press_drag` (the
+        // shared click-vs-drag SSOT `cursor_moved` advances before this), so
+        // a DnD drag and a capture drag are judged by one metric + threshold.
+        // `pointer_up` reads `press_became_drag` to gate the trailing click.
+        let Some(session) = self.drag_sessions.get(&id) else {
             return;
         };
-        // R794 — latch the drag-vs-click distinction: once the cursor leaves
-        // the press point by more than DRAG_CLICK_THRESHOLD_PX this gesture is
-        // a drag, so `pointer_up` will not synthesize the trailing click.
-        if !session.moved
-            && ((x - session.press.0).powi(2) + (y - session.press.1).powi(2)).sqrt()
-                > DRAG_CLICK_THRESHOLD_PX
-        {
-            session.moved = true;
-        }
         let source = session.source_tag.clone();
         let payload = session.payload.clone();
         let over = self.resolve_drop_point(x, y);
