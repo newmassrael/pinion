@@ -111,7 +111,7 @@
 //!   metadata is an additive model field (the `hello-number-input`
 //!   `parse_clamp` shape) deferred to the same 2nd-consumer round.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use pinion_a11y::{
@@ -120,8 +120,8 @@ use pinion_a11y::{
 };
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, IntrospectSchema,
-    IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
+    IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -176,6 +176,22 @@ const CELL_PAD: u32 = 10;
 const CHECKBOX_SIZE: u32 = 20;
 const PANEL_PAD: u32 = 20;
 const ROW_GAP: u32 = 2;
+
+// ─── numeric scrub (R875) ─────────────────────────────────────────
+
+/// The stable pixel reference the numeric scrub normalizes the captured cursor
+/// against: the grid container's painted width (`GRID_TAG` is a row-wide flex
+/// column, so its rect is exactly `NAME_COL_W + VALUE_COL_W`). The cursor-
+/// fraction delta times this width recovers true pixel travel — the column-
+/// resize "stable basis" idiom (a scrub never resizes the grid, so its width
+/// is constant across the drag).
+const GRID_W_PX: f64 = (NAME_COL_W + VALUE_COL_W) as f64;
+/// Float scrub sensitivity: value units per pixel of horizontal drag (100 px
+/// ⇒ +1.0), the Blender / Unreal "drag the number field" gesture.
+const SCRUB_FLOAT_PER_PX: f64 = 0.01;
+/// Int scrub sensitivity: pixels of horizontal drag per integer step (8 px ⇒
+/// +1), so an int scrubs in whole units without runaway.
+const SCRUB_INT_PX_PER_STEP: f64 = 8.0;
 
 // ─── choice-popup geometry (R867) ─────────────────────────────────
 
@@ -491,6 +507,19 @@ fn clear_popup(
 /// [`Self::begin_edit`] can seed it. Mutations write the Signals directly —
 /// no hooks at invoke time, so the External is self-contained on any thread
 /// (the todomvc `TodoEditExternal` shape).
+/// R875 — the live numeric-scrub calibration. The first capture `pointer_move`
+/// of an armed drag snapshots the dragged source, its kind, its value at press,
+/// and the cursor's anchor fraction; each later move applies
+/// `base + travel_px · sensitivity`. `Copy` so it lives in a `Cell` (the
+/// column-resize `ResizeDragStart` idiom).
+#[derive(Clone, Copy)]
+struct ScrubDrag {
+    source: usize,
+    kind: CellKind,
+    base: f64,
+    press_x_rel: f64,
+}
+
 struct PropertyGridExternal {
     model: Rc<Signal<Vec<CellValue>>>,
     /// The grouped-collapse + roving-cursor SSOT — held so a data-row click can
@@ -501,6 +530,14 @@ struct PropertyGridExternal {
     editor: Rc<TextEditState>,
     popup_cursor: Rc<Signal<Option<usize>>>,
     popup_hover: Rc<Signal<Option<usize>>>,
+    /// R875 — the numeric source armed by a `PointerDown` over a numeric row,
+    /// before the first `pointer_move` calibrates the drag. `None` for a press
+    /// on a non-numeric row (which never scrubs).
+    scrub_armed: Cell<Option<usize>>,
+    /// R875 — the live scrub calibration once dragging begins; `Some` between
+    /// the first `pointer_move` and the release. Its presence at `PointerUp`
+    /// distinguishes a scrub (commit, suppress the click) from a click.
+    scrub_drag: Cell<Option<ScrubDrag>>,
 }
 
 impl PropertyGridExternal {
@@ -512,7 +549,16 @@ impl PropertyGridExternal {
         popup_cursor: Rc<Signal<Option<usize>>>,
         popup_hover: Rc<Signal<Option<usize>>>,
     ) -> Self {
-        Self { model, groups, editing_row, editor, popup_cursor, popup_hover }
+        Self {
+            model,
+            groups,
+            editing_row,
+            editor,
+            popup_cursor,
+            popup_hover,
+            scrub_armed: Cell::new(None),
+            scrub_drag: Cell::new(None),
+        }
     }
 
     fn count(&self) -> usize {
@@ -541,6 +587,88 @@ impl PropertyGridExternal {
             next
         });
         toggled
+    }
+
+    /// Write a typed value into the model slot — the scrub's live commit, the
+    /// same `Signal` the inline editor (`commit_edit`) and the RPC
+    /// `value.<i>` intervene write, so a drag, a typed edit, and an RPC set are
+    /// one source of truth.
+    fn set_value(&self, source: usize, value: CellValue) {
+        self.model.set_with(|prev| {
+            let mut next = prev.clone();
+            if let Some(slot) = next.get_mut(source) {
+                *slot = value;
+            }
+            next
+        });
+    }
+
+    /// R875 — arm a numeric scrub: a `PointerDown` over a numeric (`Int` /
+    /// `Float`) row records the source so the first capture `pointer_move` can
+    /// calibrate. A press on a non-numeric row leaves the arm clear (it never
+    /// scrubs — bool toggles, choice / colour open popups, text edits).
+    fn arm_scrub(&self, source: usize) {
+        let numeric = matches!(
+            self.model.get().get(source).map(CellValue::kind),
+            Some(CellKind::Int | CellKind::Float)
+        );
+        self.scrub_armed.set(numeric.then_some(source));
+    }
+
+    /// R875 — drive the live numeric scrub from the captured cursor's horizontal
+    /// fraction `x_rel` across the grid (`GRID_TAG`). The first move calibrates
+    /// (snapshot the base value + anchor fraction, no mutation — the user has
+    /// not dragged yet, exactly the column-resize first-move rule); each later
+    /// move writes `base + travel_px · sensitivity`, where
+    /// `travel_px = (x_rel − press_x_rel) · GRID_W_PX` recovers true pixels from
+    /// the fraction. An int scrub steps in whole units; a float scrub is
+    /// continuous.
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        reason = "scrub values are small game-object property magnitudes (layer / \
+                  health / transform), nowhere near f64's 2^53 exact-int limit or \
+                  i64's range; the f64→i64 step is an intentional round-to-unit"
+    )]
+    fn scrub_to(&self, x_rel: f64) {
+        match self.scrub_drag.get() {
+            None => {
+                let Some(source) = self.scrub_armed.get() else { return };
+                let model = self.model.get();
+                let (kind, base) = match model.get(source) {
+                    Some(CellValue::Int(i)) => (CellKind::Int, *i as f64),
+                    Some(CellValue::Float(f)) => (CellKind::Float, *f),
+                    // Armed source is no longer numeric (model changed under us).
+                    _ => return,
+                };
+                self.scrub_drag.set(Some(ScrubDrag { source, kind, base, press_x_rel: x_rel }));
+            }
+            Some(drag) => {
+                let travel_px = (x_rel - drag.press_x_rel) * GRID_W_PX;
+                let next = match drag.kind {
+                    CellKind::Int => {
+                        let steps = (travel_px / SCRUB_INT_PX_PER_STEP).round() as i64;
+                        CellValue::Int(drag.base as i64 + steps)
+                    }
+                    _ => CellValue::Float(drag.base + travel_px * SCRUB_FLOAT_PER_PX),
+                };
+                self.set_value(drag.source, next);
+            }
+        }
+    }
+
+    /// R875 — tear down the scrub at release. Returns whether a drag was in
+    /// flight (a real scrub committed live), so `PointerUp` can suppress the
+    /// click action: a scrub must not also open the inline editor or move the
+    /// cursor as a plain click would.
+    fn end_scrub(&self) -> bool {
+        self.scrub_armed.set(None);
+        self.scrub_drag.take().is_some()
+    }
+
+    /// Whether a numeric scrub is live (the AI-first `scrubbing` query slot).
+    fn is_scrubbing(&self) -> bool {
+        self.scrub_drag.get().is_some()
     }
 
     /// Enter edit mode on `row`. A text / int / float row latches
@@ -691,7 +819,19 @@ impl PropertyGridExternal {
             return Err(InvokeError::Rejected);
         }
         match event_name {
+            // R875 — arm a numeric scrub; the first capture `pointer_move`
+            // calibrates it. A non-numeric press leaves the arm clear.
+            "PointerDown" => {
+                self.arm_scrub(idx);
+                Ok(IntrospectValue::Null)
+            }
             "PointerUp" => {
+                // R875 — a scrub committed its value live during the drag; its
+                // release must NOT also fire the click action (open editor /
+                // toggle / move cursor). `end_scrub` reports whether a drag ran.
+                if self.end_scrub() {
+                    return Ok(IntrospectValue::Null);
+                }
                 self.set_cursor_to_source(idx);
                 match self.model.get().get(idx) {
                     Some(CellValue::Bool(_)) => {
@@ -706,6 +846,13 @@ impl PropertyGridExternal {
                     _ => {}
                 }
                 Ok(IntrospectValue::Int(i64::try_from(idx).expect("row index fits in i64")))
+            }
+            // R875 — the capture lock lets the cursor stray off the row; a
+            // release there arrives as PointerLeave / PointerCancel. Tear the
+            // scrub down (the value is already committed) with no click.
+            "PointerLeave" | "PointerCancel" => {
+                self.end_scrub();
+                Ok(IntrospectValue::Null)
             }
             "DoubleClick" => Ok(IntrospectValue::Bool(self.begin_edit(idx))),
             _ => Ok(IntrospectValue::Null),
@@ -736,6 +883,28 @@ impl External for PropertyGridExternal {
         ThreadOwnership::UiThreadSync
     }
 
+    /// R875 — opt into the R51.34 capture lock so a numeric scrub survives the
+    /// cursor straying off the row (the slider / column-resize stance). A press
+    /// that never moves is still a click — the release dispatches `PointerUp`
+    /// with no scrub calibrated, so the existing click path runs unchanged.
+    fn wants_pointer_capture(&self) -> bool {
+        true
+    }
+
+    /// R875 — normalize the captured cursor against the grid container
+    /// (`GRID_TAG`), a stable-width rect, so the cursor-fraction delta recovers
+    /// true pixel travel for the scrub (the column-resize stable-basis rule —
+    /// the scrubbed cell never resizes, so the whole grid is a fine basis).
+    fn capture_normalize(&self) -> CaptureNormalize<'_> {
+        CaptureNormalize::Tag(GRID_TAG)
+    }
+
+    /// R875 — drive the live numeric scrub from the captured cursor's horizontal
+    /// fraction across the grid; `y_rel` is ignored (scrub is the X axis only).
+    fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
+        self.scrub_to(f64::from(x_rel));
+    }
+
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
         Some(self)
     }
@@ -758,6 +927,9 @@ impl ExternalIntrospect for PropertyGridExternal {
             ("kind.<index>", "string"),
             ("value.<index>", "json"),
             ("popup_cursor", "int"),
+            // R875 — live numeric-scrub flag (true between the first drag move
+            // and the release); the AI-first witness of a scrub in flight.
+            ("scrubbing", "bool"),
             ("send", "string"),
             ("toggle", "int"),
             ("begin", "int"),
@@ -784,6 +956,7 @@ impl ExternalIntrospect for PropertyGridExternal {
                 }
                 None => IntrospectValue::Null,
             }),
+            "scrubbing" => Some(IntrospectValue::Bool(self.is_scrubbing())),
             _ => {
                 if let Some(idx_str) = path.strip_prefix("name.") {
                     let idx: usize = idx_str.parse().ok()?;
@@ -2139,6 +2312,90 @@ mod tests {
             let _ = intro.invoke("send", IntrospectValue::Text("0:PointerUp".to_owned()));
             let name_pos = use_property_groups().rows().iter().position(|r| r.source() == Some(0));
             assert_eq!(use_property_groups().cursor(), name_pos);
+        });
+    }
+
+    // ----- R875 numeric scrub -----
+
+    /// Float scrub: a rightward capture drag adds `travel_px · 0.01` to Pos X.
+    #[test]
+    fn r875_float_scrub_adds_pixel_travel_times_sensitivity() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            // Pos X (source 6) boots at 12.5.
+            assert_eq!(node.handle.introspect().unwrap().query("value.6"), Some(IntrospectValue::Float(12.5)));
+            // Press the row (arm), then drag the captured cursor from x_rel 0.5
+            // to 0.75 across the 400px grid: travel = 0.25 · 400 = 100px → +1.0.
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("6:PointerDown".to_owned())).unwrap();
+            node.handle.pointer_move(0.5, 0.5); // calibrate (no mutation)
+            assert_eq!(node.handle.introspect().unwrap().query("value.6"), Some(IntrospectValue::Float(12.5)),
+                "first move only calibrates");
+            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(true)));
+            node.handle.pointer_move(0.75, 0.5); // apply +100px
+            let IntrospectValue::Float(v) = node.handle.introspect().unwrap().query("value.6").unwrap() else {
+                panic!("Pos X stays a float");
+            };
+            assert!((v - 13.5).abs() < 1e-6, "12.5 + 100px·0.01 = 13.5, got {v}");
+            // Release clears the scrub; the value is the committed live value.
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("6:PointerUp".to_owned())).unwrap();
+            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(false)));
+        });
+    }
+
+    /// Int scrub steps in whole units (8px/step) and a leftward drag decrements.
+    #[test]
+    fn r875_int_scrub_steps_in_whole_units_both_directions() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            // Layer (source 4) boots at 3. Drag +80px → +10 steps → 13.
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("4:PointerDown".to_owned())).unwrap();
+            node.handle.pointer_move(0.5, 0.5);
+            node.handle.pointer_move(0.7, 0.5); // +0.2·400 = 80px → +10
+            assert_eq!(node.handle.introspect().unwrap().query("value.4"), Some(IntrospectValue::Int(13)));
+            // Same gesture, leftward: a fresh press anchors, drag −80px → 3.
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("4:PointerUp".to_owned())).unwrap();
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("4:PointerDown".to_owned())).unwrap();
+            node.handle.pointer_move(0.5, 0.5);
+            node.handle.pointer_move(0.3, 0.5); // −80px → −10 → 3
+            assert_eq!(node.handle.introspect().unwrap().query("value.4"), Some(IntrospectValue::Int(3)));
+        });
+    }
+
+    /// A scrub suppresses the trailing click (no editor opens), and a drag on a
+    /// non-numeric row never scrubs (its release still performs the click).
+    #[test]
+    fn r875_scrub_suppresses_click_and_skips_non_numeric() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            // Scrub the Float row, then release: the editor must NOT open.
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("6:PointerDown".to_owned())).unwrap();
+            node.handle.pointer_move(0.5, 0.5);
+            node.handle.pointer_move(0.6, 0.5);
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("6:PointerUp".to_owned())).unwrap();
+            assert_eq!(node.handle.introspect().unwrap().query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null)), "a scrub does not open the editor");
+            // A drag on the Visible bool (source 2) does not scrub; the release
+            // still toggles it (true → false).
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("2:PointerDown".to_owned())).unwrap();
+            node.handle.pointer_move(0.5, 0.5);
+            node.handle.pointer_move(0.8, 0.5); // no-op (non-numeric armed → none)
+            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(false)),
+                "a non-numeric press never calibrates a scrub");
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("2:PointerUp".to_owned())).unwrap();
+            assert_eq!(node.handle.introspect().unwrap().query("value.2"), Some(IntrospectValue::Bool(false)),
+                "the bool still toggles on release (drag did not scrub it)");
         });
     }
 

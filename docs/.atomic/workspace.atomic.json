@@ -36107,6 +36107,62 @@
         "GroupedGridSelection has no Multi variant (no multi-select grouped consumer yet); add when one lands, mirroring virtual_grid::GridSelection::Multi"
       ]
     },
+    "R875": {
+      "decision_summary": "R875 §5.38 property-grid numeric scrub (DCC drag-to-edit) + §5.49 framework fix: a capture drag must not seed a DoubleClick (else commit-on-blur reverts the scrubbed value).",
+      "changes_bullets": [
+        "hello-property-grid: drag a numeric (Int/Float) row to scrub its value (Blender/Unreal gesture)",
+        "scrub reuses R786 capture + capture_normalize(GRID_TAG) basis; base + travel_px*sensitivity",
+        "live commit writes the same value Signal as the inline editor + RPC value.<i> intervene (one SSOT)",
+        "arm on PointerDown over numeric row; first pointer_move calibrates base; release clears + eats click",
+        "non-numeric drag never scrubs (bool toggles on release); a click-without-move never calibrates",
+        "FRAMEWORK FIX input.rs (§5.49): a press strayed past DOUBLE_CLICK_DIST_PX is a drag, not a click",
+        "cursor_moved drops the last_press dblclick candidate when a held gesture strays past the threshold",
+        "without it two same-spot scrub drags read as a dblclick, opened the editor, commit-on-blur reverted",
+        "gated to a held gesture so free-mode hover between two clicks never clears it; same threshold"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (0 failed); pinion-runtime input lib 63 incl 2 new R875 regressions",
+        "r875_capture_drag_does_not_seed_double_click + r875_capture_click_in_place_still_double_clicks pass",
+        "existing dblclick suite unaffected (back-to-back / spatial / cross-target / triple-reset all green)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello -j2 clean (-D pedantic)",
+        "r875_property_grid_scrub.py PASS (30 assertions, sections A-I, fresh release binary)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "undo: a scrub is not yet one undo record per gesture (R744-749 carry; text-edit first)",
+        "scrub sensitivity consts per-binding (GRID_W/FLOAT_PER_PX/PX_PER_STEP); DragCalibration<T> later"
+      ],
+      "publishable_decision_summary": "R875 §5.38 property-grid numeric scrub (DCC drag-to-edit) + §5.49 framework fix: a capture drag must not seed a DoubleClick (else commit-on-blur reverts the scrubbed value).",
+      "publishable_changes_bullets": [
+        "hello-property-grid: drag a numeric (Int/Float) row to scrub its value (Blender/Unreal gesture)",
+        "scrub reuses R786 capture + capture_normalize(GRID_TAG) basis; base + travel_px*sensitivity",
+        "live commit writes the same value Signal as the inline editor + RPC value.<i> intervene (one SSOT)",
+        "arm on PointerDown over numeric row; first pointer_move calibrates base; release clears + eats click",
+        "non-numeric drag never scrubs (bool toggles on release); a click-without-move never calibrates",
+        "FRAMEWORK FIX input.rs (§5.49): a press strayed past DOUBLE_CLICK_DIST_PX is a drag, not a click",
+        "cursor_moved drops the last_press dblclick candidate when a held gesture strays past the threshold",
+        "without it two same-spot scrub drags read as a dblclick, opened the editor, commit-on-blur reverted",
+        "gated to a held gesture so free-mode hover between two clicks never clears it; same threshold"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (0 failed); pinion-runtime input lib 63 incl 2 new R875 regressions",
+        "r875_capture_drag_does_not_seed_double_click + r875_capture_click_in_place_still_double_clicks pass",
+        "existing dblclick suite unaffected (back-to-back / spatial / cross-target / triple-reset all green)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello -j2 clean (-D pedantic)",
+        "r875_property_grid_scrub.py PASS (30 assertions, sections A-I, fresh release binary)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "undo: a scrub is not yet one undo record per gesture (R744-749 carry; text-edit first)",
+        "scrub sensitivity consts per-binding (GRID_W/FLOAT_PER_PX/PX_PER_STEP); DragCalibration<T> later"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

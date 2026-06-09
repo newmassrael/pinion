@@ -525,6 +525,27 @@ impl InputRouter {
     ///   cancel-by-leave UX.
     pub fn cursor_moved(&mut self, id: PointerId, x: f64, y: f64, state_scene: &mut Scene) {
         self.cursors.insert(id, (x, y));
+        // R875 §5.49 — a held press that strays beyond the double-click
+        // distance is a *drag*, not a click, so it must not seed a
+        // subsequent `DoubleClick`: drop the `last_press` candidate the
+        // matching `pointer_down` recorded. (W3C: only a press-release in
+        // place is a `click`; native: a drag cancels the double-click
+        // cycle.) Without this, two same-spot capture drags — a numeric
+        // scrub dragged back and forth over one property row — read as a
+        // double-click and spuriously open the inline editor. Gated to a
+        // held gesture (`captured_targets` / `drag_sessions`) so free-mode
+        // hover motion *between* two genuine clicks never clears the
+        // candidate; the same `DOUBLE_CLICK_DIST_PX` the press-vs-press
+        // test uses keeps the threshold self-consistent.
+        if self.captured_targets.contains_key(&id) || self.drag_sessions.contains_key(&id) {
+            if let Some(prev) = self.last_press.get(&id) {
+                if (prev.1 - x).abs() >= DOUBLE_CLICK_DIST_PX
+                    || (prev.2 - y).abs() >= DOUBLE_CLICK_DIST_PX
+                {
+                    self.last_press.remove(&id);
+                }
+            }
+        }
         if self.drag_sessions.contains_key(&id) {
             // R742 §5.51 — a drag started on this pointer: resolve the
             // drop location under the absolute cursor and forward it to
@@ -3323,6 +3344,62 @@ mod tests {
         assert!(
             !read(&eb).iter().any(|s| s == "DoubleClick"),
             "slider B first press must not see stale DoubleClick from slider A",
+        );
+    }
+
+    /// R875 §5.49 — a capture drag is a *drag*, not a click. A press that
+    /// strays beyond [`DOUBLE_CLICK_DIST_PX`] while the capture lock is
+    /// held must not seed a `DoubleClick` for the next same-spot press.
+    /// Two numeric-scrub drags back and forth over one property row land
+    /// two presses at the *same* coordinate within the 300 ms window;
+    /// without invalidating the strayed `last_press` they would read as a
+    /// double-click and spuriously open the inline editor (the R875 regress
+    /// where a later commit-on-blur then reverts the scrubbed value). The
+    /// native "drag cancels the double-click cycle" rule, enforced at the
+    /// framework tier so no scrub binding re-derives it.
+    #[test]
+    fn r875_capture_drag_does_not_seed_double_click() {
+        let mut router = InputRouter::new();
+        let (mut state, events, _moves) = state_with_slider();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        // First gesture: press, drag 18 px (a scrub), release — a drag.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 118.0, 100.0, &mut state); // strays > 5 px
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        // Second press back at the original spot, well inside 300 ms.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert!(
+            !read(&events).iter().any(|s| s == "DoubleClick"),
+            "a capture drag must not seed a DoubleClick for the next press",
+        );
+    }
+
+    /// R875 §5.49 — the companion guarantee: a capture press that stays
+    /// *within* [`DOUBLE_CLICK_DIST_PX`] (a click-in-place, the cursor
+    /// only jitters) still double-clicks. The drag-invalidation must not
+    /// over-fire on the sub-threshold motion a real click carries, so a
+    /// genuine double-click on a capture widget (e.g. double-click a
+    /// numeric row to open its editor) keeps working.
+    #[test]
+    fn r875_capture_click_in_place_still_double_clicks() {
+        let mut router = InputRouter::new();
+        let (mut state, events, _moves) = state_with_slider();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 102.0, 101.0, &mut state); // 2 px jitter < 5
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert!(
+            read(&events).iter().any(|s| s == "DoubleClick"),
+            "a click-in-place on a capture widget must still double-click",
         );
     }
 
