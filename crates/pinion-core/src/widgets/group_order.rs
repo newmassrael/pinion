@@ -564,6 +564,45 @@ pub fn use_group_order(
         })
 }
 
+/// R872 §5.27 §5.40 — [`use_group_order`]'s **upstream-order** sibling: resolve
+/// the shared [`GroupOrderState`] for `key`, building it once over an
+/// **external** base order ([`with_order_source`](GroupOrderState::with_order_source))
+/// instead of the identity. `source` is the live base visual→source permutation
+/// — typically `move || upstream.order()` for an upstream sort / filter proxy —
+/// read fresh on every [`rows`](GroupOrderState::rows) recompute (so the grouped
+/// view reflects the current upstream and repaints when it changes).
+///
+/// The lifted SSOT for the *cache + `with_tag` + `with_order_source`* boilerplate
+/// the filter → sort → group proxy chain repeats: `hello-grouped-sort` (group a
+/// `ViewOrderState` order), `hello-grouped-grid-sort` (group a `GridSortState`
+/// order), and `hello-property-grid` (group a name-filtered order) are its three
+/// consumers — the R758 Rule-of-Three the identity [`use_group_order`] already
+/// modelled.
+///
+/// Resolve any upstream proxy **before** calling this (capture its `Rc` in
+/// `source`), never inside `source` / `data`, so the two `Owner::cache` calls do
+/// not nest ([`owner-cache-no-nested-factory`] R666).
+///
+/// # Panics
+///
+/// Panics if no current [`Owner`] is set (call from within a `view` /
+/// `create_extra_externals` hook — both run inside a `root_owner.run`).
+///
+/// [`owner-cache-no-nested-factory`]: crate::reactive::Owner::cache
+#[must_use]
+pub fn use_group_order_with_source(
+    key: &'static str,
+    data: impl FnOnce() -> (Vec<usize>, Vec<String>),
+    source: impl Fn() -> Rc<Vec<usize>> + 'static,
+) -> Rc<GroupOrderState> {
+    Owner::current()
+        .expect("use_group_order_with_source requires an active Owner scope")
+        .cache(key, || {
+            let (groups, labels) = data();
+            GroupOrderState::with_tag(key, groups, labels).with_order_source(source)
+        })
+}
+
 /// R848 §5.27 — read the roving keyboard cursor's visual position off a
 /// [`GroupOrderExternal`]'s introspect handle (the `cursor` query slot), the
 /// grouped peer of

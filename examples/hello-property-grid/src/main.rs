@@ -9,7 +9,8 @@
 //! list of `(name, typed-value)` rows where each value is editable in place
 //! by a *type-appropriate* control, **grouped under collapsible category
 //! sections** (R871 — Identity / Appearance / Physics / …, the Inspector
-//! grouping every DCC details panel has).
+//! grouping every DCC details panel has), with a **live name search box**
+//! (R872 — the Details-panel filter, composing the R844 filter → group chain).
 //!
 //! ## Why this is the Phase-B #1 leverage item
 //!
@@ -23,7 +24,14 @@
 //! crate). It is the accordion (R697) / settings-panel (R667) "Nth-consumer
 //! validates substrate health" pattern applied to the editable-grid axis.
 //!
-//! ## Architecture — three externals, the todomvc edit-in-cell shape
+//! ## Architecture — four externals, the todomvc edit-in-cell shape
+//!
+//! The fourth is the R872 **search box** (`property_grid_search`, extra): a
+//! `TextFieldExternal` whose live text is the filter query. The grouped order
+//! source (`use_group_order_with_source`) keeps only the rows whose name
+//! matches, so categories with no surviving member drop their header — the
+//! R844 filter → group proxy composition, here with a name-search filter.
+//! Below:
 //!
 //! * **`PropertyGridExternal`** (`property_grid`, primary) — the grid
 //!   coordinator. It owns the typed value model ([`Signal<Vec<CellValue>>`] —
@@ -121,7 +129,8 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
 use pinion_core::widgets::group_order::{
-    group_nav, use_group_order, GroupNavOutcome, GroupOrderExternal, GroupOrderState, GroupRow,
+    group_nav, use_group_order_with_source, GroupNavOutcome, GroupOrderExternal, GroupOrderState,
+    GroupRow,
 };
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
@@ -192,6 +201,12 @@ const GRID_TAG: &str = "property_grid";
 const GROUP_TAG: &str = "property_grid_cat";
 /// Extra External — the one shared inline text / number editor.
 const EDIT_TF_TAG: &str = "property_grid_edit";
+/// Extra External — the live property-name search / filter box (R872), in the
+/// title band. Its text is the filter query: the grouped order source keeps
+/// only the rows whose name matches, composing the R844 filter -> group chain.
+const SEARCH_TF_TAG: &str = "property_grid_search";
+/// Search box width inside the title band.
+const SEARCH_W: u32 = 190;
 /// Commit-on-blur intent the inline field raises on a click-away (R793).
 const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("property_grid_edit", "blur");
 /// The choice popup's paint panel + WAI-ARIA `listbox` container tag.
@@ -334,9 +349,31 @@ fn use_property_model() -> Rc<Signal<Vec<CellValue>>> {
 /// not a source index — the grouped peer of the old flat `focused_row`.
 #[must_use]
 fn use_property_groups() -> Rc<GroupOrderState> {
-    use_group_order(GROUP_TAG, || {
-        (PROPERTY_GROUPS.to_vec(), CATEGORY_LABELS.iter().map(|s| (*s).to_owned()).collect())
-    })
+    // R872 — the search box's text is the live filter query. Resolve its state
+    // BEFORE the group cache factory (captured in the order-source closure) so
+    // the two `Owner::cache` calls never nest ([[owner-cache-no-nested-factory]]).
+    // Reading `search.text()` inside the closure subscribes, so typing repaints
+    // and re-filters; the grouped flatten is the filter -> group composition
+    // (R844). The filtered order is small (<=12 rows) so it is recomputed per
+    // read rather than memoized.
+    let search = use_text_edit_state(SEARCH_TF_TAG);
+    use_group_order_with_source(
+        GROUP_TAG,
+        || (PROPERTY_GROUPS.to_vec(), CATEGORY_LABELS.iter().map(|s| (*s).to_owned()).collect()),
+        move || Rc::new(filtered_source_order(&search.text())),
+    )
+}
+
+/// R872 — the source indices kept by the live search query, in source order
+/// (the base order [`use_property_groups`] groups). A case-insensitive
+/// substring match on the property name; an empty / whitespace query keeps
+/// every row. A category whose every member is filtered out contributes no
+/// header (`group_rows` omits empty groups).
+fn filtered_source_order(query: &str) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    (0..ROW_COUNT)
+        .filter(|&s| q.is_empty() || PROPERTY_NAMES[s].to_lowercase().contains(&q))
+        .collect()
 }
 
 /// Edit-mode latch — `Some(row)` while that row's value is being text-edited
@@ -1070,6 +1107,26 @@ fn apply_key_edit(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     }
 }
 
+/// R872 — the search-box keymap (the live property filter). Every printable /
+/// editing key flows into the field (no numeric gate — a name search accepts
+/// anything), and the order source re-filters reactively on the text change.
+/// `Escape` clears the filter and returns focus to the grid; `Enter` (the
+/// filter is already live) just hands focus back to the grid.
+fn apply_key_search(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
+    match key {
+        "Escape" => {
+            use_text_edit_state(SEARCH_TF_TAG).set_text(String::new());
+            pinion_core::focus_request::request(GRID_TAG);
+            true
+        }
+        "Enter" => {
+            pinion_core::focus_request::request(GRID_TAG);
+            true
+        }
+        other => pinion_core::forward_key_to_field(scene, SEARCH_TF_TAG, other, modifiers),
+    }
+}
+
 // ─── paint ────────────────────────────────────────────────────────
 
 /// Focused-row background = the M3 `OnSurface` state-layer over the surface
@@ -1456,7 +1513,7 @@ fn view_popup_overlay(
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
-    let (edit_state, edit_caret) = state;
+    let ((edit_state, edit_caret), (search_state, search_caret)) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let model = use_property_model().get();
     let groups = use_property_groups();
@@ -1469,20 +1526,29 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // `None` when the cursor is on a category header or unset.
     let cursor_source = cursor.and_then(|c| group_rows.get(c)).and_then(GroupRow::source);
 
-    // Fixed-height title band — keeps the row → choice-popup anchor math
-    // deterministic (a bare Text node's height is font-metric dependent).
+    // Fixed-height title band — the "Inspector" label + the live search box
+    // (R872). Fixed height keeps the row → choice-popup anchor math
+    // deterministic (a bare Text node's height is font-metric dependent), and
+    // hosting the search box here (not above the grid) keeps `popup_origin`
+    // unchanged — the grid does not shift down.
+    let title_label = Scene::Text(TextNode::styled(
+        "Inspector",
+        Rect::default(),
+        TextStyle::new().with_size_px(TITLE_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+    ));
+    let search_style = tf_paint::TextFieldStyle {
+        field_w: SEARCH_W,
+        field_h: TITLE_H - 4,
+        ..tf_paint::TextFieldStyle::m3_filled()
+    };
+    let search_field =
+        tf_paint::view_field(SEARCH_TF_TAG, search_state, search_caret, &theme, &search_style, "Filter");
     let title = Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            "Inspector",
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(TITLE_PX)
-                .with_fg(theme.resolve(ColorRole::OnSurface)),
-        ))])
-        .with_layout(
+        ContainerNode::new(vec![title_label, search_field]).with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::SpaceBetween)
                 .with_size(Size::px(NAME_COL_W + VALUE_COL_W, TITLE_H)),
         ),
     );
@@ -1552,11 +1618,12 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
 
 // ─── WidgetCore impl ──────────────────────────────────────────────
 
-/// Cached paint posture — only the shared inline field's interaction state +
-/// caret. The model / cursor / edit-mode are read reactively in the view fn
-/// (the todomvc shape: read_state carries the field posture, hooks carry the
-/// reactive model).
-type RootState = (TextFieldState, u32);
+/// Cached paint posture for the two text fields — `(inline-cell-editor,
+/// search-box)`, each `(interaction-state, caret)`. The model / cursor /
+/// edit-mode / filter query are read reactively in the view fn (the todomvc
+/// shape: read_state carries the field postures, hooks carry the reactive
+/// model + the search text).
+type RootState = ((TextFieldState, u32), (TextFieldState, u32));
 
 struct PropertyGridView;
 
@@ -1594,6 +1661,8 @@ impl WidgetCore for PropertyGridView {
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let editor_state = use_text_edit_state(EDIT_TF_TAG);
         let blink = use_caret_blink(EDIT_TF_TAG);
+        let search_state = use_text_edit_state(SEARCH_TF_TAG);
+        let search_blink = use_caret_blink(SEARCH_TF_TAG);
         vec![
             // The group-by proxy coordinator: owns the category collapse set +
             // the roving visual-row cursor, exposed to AI through the §5.12
@@ -1608,11 +1677,20 @@ impl WidgetCore for PropertyGridView {
                         .with_blur_intent(),
                 ),
             ),
+            // R872 — the live search / filter box. No commit-on-blur intent:
+            // the filter is live (every keystroke re-filters), not commit-gated.
+            ExtraExternal::new(
+                SEARCH_TF_TAG,
+                Box::new(TextFieldExternal::new().attach_state(search_state).attach_blink(search_blink)),
+            ),
         ]
     }
 
     fn read_state(scene: &Scene) -> RootState {
-        tf_paint::read_text_field_state(scene, EDIT_TF_TAG)
+        (
+            tf_paint::read_text_field_state(scene, EDIT_TF_TAG),
+            tf_paint::read_text_field_state(scene, SEARCH_TF_TAG),
+        )
     }
 
     fn view(state: RootState, frame: &Frame) -> Scene {
@@ -1635,7 +1713,7 @@ impl WidgetCore for PropertyGridView {
     /// only while painted — entered through `focus_request`, the todomvc
     /// dynamic-editor shape).
     fn focusable_tags() -> Vec<&'static str> {
-        vec![GRID_TAG, EDIT_TF_TAG]
+        vec![GRID_TAG, EDIT_TF_TAG, SEARCH_TF_TAG]
     }
 
     /// R793 §5.38 — commit-on-blur: the inline editor lost focus (a click
@@ -1661,6 +1739,7 @@ impl WidgetCore for PropertyGridView {
         match focused {
             Some(GRID_TAG) => apply_key_grid(scene, key),
             Some(EDIT_TF_TAG) => apply_key_edit(scene, key, modifiers),
+            Some(SEARCH_TF_TAG) => apply_key_search(scene, key, modifiers),
             _ => false,
         }
     }
@@ -2175,7 +2254,7 @@ mod tests {
             let _scene = boot_scene();
             // Cursor on the Visible data row (source 2).
             scene_focus(view_pos_of(2));
-            let nodes = PropertyGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            let nodes = PropertyGridView::access_node(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG));
             assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Grid);
             assert_eq!(nodes[0].name.as_deref(), Some("Inspector"));
             // A category lowers to a spanning row with aria-expanded (Identity).
@@ -2354,22 +2433,22 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             // Closed: no popup paint, no listbox a11y.
-            let closed = view((TextFieldState::Idle, 0), &Frame::new());
+            let closed = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(!closed.contains_tag(CHOICE_POPUP_TAG), "no panel when closed");
             let closed_nodes =
-                PropertyGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+                PropertyGridView::access_node(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG));
             assert!(
                 !closed_nodes.iter().any(|n| n.role == pinion_a11y::AriaRole::Listbox),
                 "no listbox when closed",
             );
             // Open the Blend popup.
             open_choice(&mut scene, BLEND_ROW);
-            let open = view((TextFieldState::Idle, 0), &Frame::new());
+            let open = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(open.contains_tag(CHOICE_POPUP_TAG), "panel painted when open");
             assert!(open.contains_tag(POPUP_DISMISS_TAG), "dismiss barrier painted");
             assert!(open.contains_tag(&format!("{GRID_TAG}#opt0")), "option 0 painted");
             assert!(open.contains_tag(&format!("{GRID_TAG}#opt3")), "option 3 painted");
-            let nodes = PropertyGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            let nodes = PropertyGridView::access_node(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG));
             let listbox = nodes
                 .iter()
                 .find(|n| n.role == pinion_a11y::AriaRole::Listbox)
@@ -2468,15 +2547,15 @@ mod tests {
     fn r869_view_and_a11y_expose_the_open_color_popup() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let closed = view((TextFieldState::Idle, 0), &Frame::new());
+            let closed = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(!closed.contains_tag(COLOR_POPUP_TAG), "no colour panel when closed");
             open_choice(&mut scene, TINT_ROW);
-            let open = view((TextFieldState::Idle, 0), &Frame::new());
+            let open = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(open.contains_tag(COLOR_POPUP_TAG), "colour panel painted when open");
             assert!(open.contains_tag(POPUP_DISMISS_TAG), "dismiss barrier painted");
             assert!(open.contains_tag(&format!("{GRID_TAG}#sw0")), "swatch 0 painted");
             assert!(open.contains_tag(&format!("{GRID_TAG}#sw7")), "swatch 7 painted");
-            let nodes = PropertyGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            let nodes = PropertyGridView::access_node(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG));
             let listbox = nodes
                 .iter()
                 .find(|n| n.role == pinion_a11y::AriaRole::Listbox)
@@ -2498,28 +2577,28 @@ mod tests {
             let mut scene = boot_scene();
             // Navigating: the active descendant is the cursor's data row tag.
             use_property_groups().set_cursor(Some(view_pos_of(2)));
-            let f = PropertyGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG))
+            let f = PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG))
                 .expect("grid focused -> composite focus target");
             assert_eq!(f.focus_tag, GRID_TAG);
             assert_eq!(f.active_descendant.as_deref(), Some(format!("{GRID_TAG}#2").as_str()));
             // Cursor on a category header rings the header's composite tag.
             use_property_groups().set_cursor(Some(0));
-            let h = PropertyGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG))
+            let h = PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG))
                 .expect("composite");
             assert_eq!(h.active_descendant.as_deref(), Some(format!("{GROUP_TAG}#0").as_str()));
             // Choice popup open -> the active option (Blend cursor boots 0).
             open_choice(&mut scene, BLEND_ROW);
-            let f = PropertyGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG))
+            let f = PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG))
                 .expect("composite");
             assert_eq!(f.active_descendant.as_deref(), Some(format!("{GRID_TAG}#opt0").as_str()));
             // Colour popup open -> the active swatch (Tint boots Blue=4).
             open_choice(&mut scene, TINT_ROW);
-            let f = PropertyGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG))
+            let f = PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG))
                 .expect("composite");
             assert_eq!(f.active_descendant.as_deref(), Some(format!("{GRID_TAG}#sw4").as_str()));
             // Focus elsewhere -> atomic, no active descendant.
             let other =
-                PropertyGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(EDIT_TF_TAG));
+                PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(EDIT_TF_TAG));
             assert!(other.expect("atomic").active_descendant.is_none());
         });
     }
@@ -2531,7 +2610,7 @@ mod tests {
             open_choice(&mut scene, TINT_ROW); // opens the colour popup, seeds the hex field
             assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "#1e88e5", "hex field seeded Blue");
             // The popup paints the hex field (the shared EDIT_TF).
-            let painted = view((TextFieldState::Idle, 0), &Frame::new());
+            let painted = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(painted.contains_tag(EDIT_TF_TAG), "hex field painted in the colour popup");
             // Type an arbitrary hex + Enter (the EDIT_TF-focused commit path).
             use_text_edit_state(EDIT_TF_TAG).set_text("#abcdef".to_owned());
@@ -2559,7 +2638,7 @@ mod tests {
     fn r836_view_carries_grid_and_row_tags() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            let scene = view((TextFieldState::Idle, 0), &Frame::new());
+            let scene = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(scene.contains_tag(GRID_TAG), "grid root painted");
             assert!(scene.contains_tag(&format!("{GRID_TAG}#0")), "data row 0 painted");
             assert!(scene.contains_tag(&format!("{GRID_TAG}#8")), "data row 8 painted");
@@ -2572,13 +2651,13 @@ mod tests {
     fn r871_collapse_hides_category_data_rows_in_view() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            let before = view((TextFieldState::Idle, 0), &Frame::new());
+            let before = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(before.contains_tag(&format!("{GRID_TAG}#0")), "Name row painted when expanded");
             assert!(before.contains_tag(&format!("{GROUP_TAG}#0")), "Identity header painted");
             // Collapse Identity (category 0): its data rows (Name/Tag/Layer)
             // vanish, the header stays.
             use_property_groups().set_collapsed(0, true);
-            let after = view((TextFieldState::Idle, 0), &Frame::new());
+            let after = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(after.contains_tag(&format!("{GROUP_TAG}#0")), "header stays on collapse");
             assert!(!after.contains_tag(&format!("{GRID_TAG}#0")), "Name row hidden when collapsed");
             assert!(!after.contains_tag(&format!("{GRID_TAG}#1")), "Tag row hidden when collapsed");
@@ -2589,10 +2668,10 @@ mod tests {
     fn r836_view_paints_inline_field_only_while_editing() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            let before = view((TextFieldState::Idle, 0), &Frame::new());
+            let before = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(!before.contains_tag(EDIT_TF_TAG), "no inline field when not editing");
             use_editing_row().set(Some(0));
-            let during = view((TextFieldState::Idle, 0), &Frame::new());
+            let during = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(during.contains_tag(EDIT_TF_TAG), "inline field painted in the editing row");
         });
     }
@@ -2600,8 +2679,63 @@ mod tests {
     #[test]
     fn r836_view_contains_paint_tag() {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<PropertyGridView>(
-            (TextFieldState::Idle, 0),
+            ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)),
             &Frame::default(),
         );
+    }
+
+    // ----- R872 live search / filter -----
+
+    #[test]
+    fn r872_search_filters_rows_and_clears() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let groups = use_property_groups();
+            assert_eq!(groups.visible_len(), 17, "5 headers + 12 data with empty query");
+            // "pos" matches Pos X (6) + Pos Y (7), both Transform.
+            use_text_edit_state(SEARCH_TF_TAG).set_text("pos".to_owned());
+            assert_eq!(groups.visible_len(), 3, "Transform header + the 2 Pos rows");
+            let data: Vec<usize> = groups.rows().iter().filter_map(GroupRow::source).collect();
+            assert_eq!(data, vec![6, 7], "only Pos X / Pos Y match");
+            // Clearing restores every row (filter -> group recomputes reactively).
+            use_text_edit_state(SEARCH_TF_TAG).set_text(String::new());
+            assert_eq!(groups.visible_len(), 17, "cleared query restores every row");
+        });
+    }
+
+    #[test]
+    fn r872_filter_drops_empty_categories() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let groups = use_property_groups();
+            // "name" matches only Name (source 0, Identity) — every other
+            // category contributes no header (group_rows omits empty groups).
+            use_text_edit_state(SEARCH_TF_TAG).set_text("name".to_owned());
+            assert_eq!(groups.visible_len(), 2, "Identity header + Name only");
+            let rows = groups.rows();
+            assert!(
+                matches!(rows[0], GroupRow::Header { group: 0, .. }),
+                "the only header is Identity",
+            );
+            assert_eq!(rows.iter().filter_map(GroupRow::source).collect::<Vec<_>>(), vec![0]);
+        });
+    }
+
+    #[test]
+    fn r872_search_field_painted_and_escape_clears() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let painted = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
+            assert!(painted.contains_tag(SEARCH_TF_TAG), "search box painted in the title band");
+            // Escape on the focused search box clears the live filter.
+            use_text_edit_state(SEARCH_TF_TAG).set_text("xyz".to_owned());
+            assert!(PropertyGridView::apply_key(
+                &mut scene,
+                Some(SEARCH_TF_TAG),
+                "Escape",
+                Modifiers::empty(),
+            ));
+            assert_eq!(use_text_edit_state(SEARCH_TF_TAG).text(), "", "Escape clears the query");
+        });
     }
 }

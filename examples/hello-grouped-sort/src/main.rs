@@ -36,14 +36,15 @@ use std::rc::Rc;
 
 use pinion_a11y::{grouped_tree_access_nodes, AccessNode, AriaRole, GroupedTreeSpec, WidgetA11y};
 use pinion_core::external::External;
-use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::group_order::{GroupOrderExternal, GroupOrderState, GroupRow};
+use pinion_core::widgets::group_order::{
+    use_group_order_with_source, GroupOrderExternal, GroupOrderState, GroupRow,
+};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::view_order::{sort_dir_str, use_view_order, ViewOrderState, ViewSortFilterExternal};
@@ -115,14 +116,15 @@ fn use_sort() -> Rc<ViewOrderState> {
 /// reads `order()` reactively.
 fn use_groups() -> Rc<GroupOrderState> {
     let sort = use_sort();
-    Owner::current()
-        .expect("use_groups requires an active Owner scope")
-        .cache(GROUP_TAG, move || {
+    use_group_order_with_source(
+        GROUP_TAG,
+        || {
             let groups = (0..N).map(row_group).collect::<Vec<usize>>();
             let labels = GROUPS.iter().map(|&g| g.to_string()).collect::<Vec<String>>();
-            GroupOrderState::with_tag(GROUP_TAG, groups, labels)
-                .with_order_source(move || sort.order())
-        })
+            (groups, labels)
+        },
+        move || sort.order(),
+    )
 }
 
 /// The sort/filter control bar: shows the active sort + filter + visible-row
@@ -382,6 +384,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::reactive::Owner;
 
     /// Render with the upstream sort/filter pre-set (mutated within the same
     /// Owner scope the view + group state read from).

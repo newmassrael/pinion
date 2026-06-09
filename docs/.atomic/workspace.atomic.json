@@ -35945,6 +35945,58 @@
         "demos default to the release binary (RpcSubprocess release=True): after an example change rebuild --release, not just debug/test, or the demo runs stale code"
       ]
     },
+    "R872": {
+      "decision_summary": "R872 live property-name search/filter for the inspector: a title-bar search box whose text filters the visible rows by name, composing the R844 filter -> group proxy chain; lift use_group_order_with_source (the cache + with_tag + with_order_source boilerplate) at its 3rd consumer.",
+      "changes_bullets": [
+        "lift use_group_order_with_source(key, data, source) to group_order.rs (the cache + with_tag + with_order_source boilerplate), mirroring the identity use_group_order; retrofit hello-grouped-sort + hello-grouped-grid-sort (property-grid = the 3rd consumer)",
+        "hello-property-grid: a live name search box (property_grid_search TextField extra) in the title band; its text is the filter query",
+        "the filtered order source feeds group_order via use_group_order_with_source: keep sources whose name matches (case-insensitive substring), empty query keeps all, categories with no surviving member drop their header (the R844 filter -> group chain)",
+        "reactive: reading TextEditState.text() in the order-source closure subscribes (the combobox-editable precedent), so each keystroke re-filters + repaints; no memo (<=12 rows)",
+        "RootState -> (cell-editor, search) field-posture pair; apply_key routes the search box (Escape clears + refocuses the grid; printable forwards live, no numeric gate); hosting the box in the title band keeps popup_origin unchanged"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (0 failures); hello-property-grid 39 tests (3 new R872 filter tests) + group_order/group_header",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "r872 demo PASS (>=30 assertions: name filter narrows, clear restores, category drop, no-match empties, filter+collapse compose, Escape clears + refocuses)",
+        "regression demos PASS on fresh release binaries: r836/r867/r869/r871 property-grid + r843/r844/r845/r846/r848/r854 grouped"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "use_group_order_with_source is now the SSOT for the cache + with_order_source build; a 4th+ consumer is purely additive",
+        "the search box is not in the access_node a11y tree (consistent with the inline cell-editor gap); textbox a11y for both fields deferred to the 2nd-consumer round",
+        "the filtered order is recomputed per read (no memo) — fine at <=12 rows; memoize (OrderMemo is pub(crate)) at scale",
+        "R871 carries persist: HSV pad (Color->HSV gap) / AccessState.focused unlowered / atomic R863-R870 backfill (user)"
+      ],
+      "publishable_decision_summary": "R872 live property-name search/filter for the inspector: a title-bar search box whose text filters the visible rows by name, composing the R844 filter -> group proxy chain; lift use_group_order_with_source (the cache + with_tag + with_order_source boilerplate) at its 3rd consumer.",
+      "publishable_changes_bullets": [
+        "lift use_group_order_with_source(key, data, source) to group_order.rs (the cache + with_tag + with_order_source boilerplate), mirroring the identity use_group_order; retrofit hello-grouped-sort + hello-grouped-grid-sort (property-grid = the 3rd consumer)",
+        "hello-property-grid: a live name search box (property_grid_search TextField extra) in the title band; its text is the filter query",
+        "the filtered order source feeds group_order via use_group_order_with_source: keep sources whose name matches (case-insensitive substring), empty query keeps all, categories with no surviving member drop their header (the R844 filter -> group chain)",
+        "reactive: reading TextEditState.text() in the order-source closure subscribes (the combobox-editable precedent), so each keystroke re-filters + repaints; no memo (<=12 rows)",
+        "RootState -> (cell-editor, search) field-posture pair; apply_key routes the search box (Escape clears + refocuses the grid; printable forwards live, no numeric gate); hosting the box in the title band keeps popup_origin unchanged"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (0 failures); hello-property-grid 39 tests (3 new R872 filter tests) + group_order/group_header",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "r872 demo PASS (>=30 assertions: name filter narrows, clear restores, category drop, no-match empties, filter+collapse compose, Escape clears + refocuses)",
+        "regression demos PASS on fresh release binaries: r836/r867/r869/r871 property-grid + r843/r844/r845/r846/r848/r854 grouped"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "use_group_order_with_source is now the SSOT for the cache + with_order_source build; a 4th+ consumer is purely additive",
+        "the search box is not in the access_node a11y tree (consistent with the inline cell-editor gap); textbox a11y for both fields deferred to the 2nd-consumer round",
+        "the filtered order is recomputed per read (no memo) — fine at <=12 rows; memoize (OrderMemo is pub(crate)) at scale",
+        "R871 carries persist: HSV pad (Color->HSV gap) / AccessState.focused unlowered / atomic R863-R870 backfill (user)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

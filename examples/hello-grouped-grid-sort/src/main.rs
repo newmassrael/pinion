@@ -48,7 +48,9 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::grid_sort::{use_grid_sort, GridSortExternal, GridSortState};
-use pinion_core::widgets::group_order::{GroupOrderExternal, GroupOrderState, GroupRow};
+use pinion_core::widgets::group_order::{
+    use_group_order_with_source, GroupOrderExternal, GroupOrderState, GroupRow,
+};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::virtual_list::compute_visible_range;
@@ -222,13 +224,15 @@ fn use_grid_data() -> Rc<GridSortState> {
 /// (the 2nd consumer of [`GroupOrderState::with_order_source`]).
 fn use_grid_groups() -> Rc<GroupOrderState> {
     let grid = use_grid_data();
-    Owner::current()
-        .expect("use_grid_groups requires an active Owner scope")
-        .cache(GROUP_TAG, move || {
+    use_group_order_with_source(
+        GROUP_TAG,
+        || {
             let groups = (0..N).map(row_group).collect::<Vec<usize>>();
             let labels = GROUPS.iter().map(|&g| g.to_string()).collect::<Vec<String>>();
-            GroupOrderState::with_tag(GROUP_TAG, groups, labels).with_order_source(move || grid.order())
-        })
+            (groups, labels)
+        },
+        move || grid.order(),
+    )
 }
 
 /// The active sort direction of column `col`, or `None` when it is not the
