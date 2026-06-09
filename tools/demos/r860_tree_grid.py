@@ -61,6 +61,7 @@ EXPANDED_AT_BOOT = 3
 BOOT_ROWS = FOLDERS + EXPANDED_AT_BOOT * OBJECTS_PER  # 60
 TREE_TAG = "tgrid"
 STATE_TAG = "tgrid_state"
+CELLS_TAG = "tgrid_cells"  # R865 — off-window metadata-cell introspection
 FROZEN_HEADER_TAG = "tgrid_fhrow"
 SCROLL_HEADER_TAG = "tgrid_hrow"
 V_SCROLL_TAG = "tgrid_scroll"
@@ -142,6 +143,21 @@ def body() -> None:
         assert_eq(tf.query(f"/{STATE_TAG}/external/expanded_at.0"), True, "f0 boots expanded")
         assert_eq(tf.query(f"/{STATE_TAG}/external/id_at.1"), "f0-o0", "row 1 is f0's first child")
         assert_eq(tf.query(f"/{STATE_TAG}/external/level_at.1"), 2, "f0's child is aria-level 2")
+
+        # R865 — the metadata-cell peer: the AI reads cell values by (pos, col),
+        # including OFF-WINDOW rows the paint never realizes. f0 is a folder, so
+        # its Type (col 0) is the deterministic "Folder".
+        assert_eq(tf.query(f"/{CELLS_TAG}/external/col_count"), 3, "3 metadata columns")
+        assert_eq(tf.query(f"/{CELLS_TAG}/external/cell_at.0.0"), "Folder", "f0 Type = Folder")
+        # A row deep in the flattening (past the rendered window) still resolves.
+        deep = BOOT_ROWS - 1
+        assert deep > rendered, f"row {deep} is off the rendered window ({rendered})"
+        deep_type = tf.query(f"/{CELLS_TAG}/external/cell_at.{deep}.0")
+        assert isinstance(deep_type, str) and deep_type, \
+            f"off-window cell_at reports a value (AI reads what paint cannot), got {deep_type!r}"
+        # Out-of-range column / position report Null (present-but-empty).
+        assert tf.query(f"/{CELLS_TAG}/external/cell_at.0.99") is None, "OOR column -> null"
+        assert tf.query(f"/{CELLS_TAG}/external/cell_at.99999.0") is None, "OOR position -> null"
 
         # Frozen name cell left of its metadata strip; headers above rows.
         assert x_of(rects, name_cell("f0")) < x_of(rects, data_strip("f0")), \

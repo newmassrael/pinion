@@ -34,9 +34,12 @@
 //! scroll (`tgrid_hscroll`) shifts the metadata columns left while the name
 //! column stays put (the freeze); `scene/scroll` on the body (`tgrid_scroll`)
 //! slides BOTH panes in lockstep. `scene/query` on the [`TREE_STATE_TAG`]
-//! query-only introspection External reports the FULL visible-row count (the
-//! virtualization sees only a window, so the AI reads structure here, not
-//! from the painted nodes). See `tools/demos/r860_tree_grid.py`.
+//! query-only introspection External reports the FULL visible-row count + per
+//! row `id_at` / `level_at` / `expanded_at` (the virtualization sees only a
+//! window, so the AI reads structure here, not from the painted nodes); R865 —
+//! the [`CELLS_TAG`] peer reports `cell_at.<pos>.<col>` so the AI also reads the
+//! off-window metadata (Type / Visible / Layer) the paint window cannot expose.
+//! See `tools/demos/r860_tree_grid.py`.
 //!
 //! ## a11y (R863)
 //!
@@ -48,10 +51,14 @@
 //! the scrolling metadata pane (the R863 [`AccessNode::bounds_union_tags`]
 //! substrate). This resolves the R860 carry — the metadata columns were
 //! AT-invisible under the prior `tree` / `treeitem` topology (a `treeitem` has
-//! no `gridcell` children in WAI-ARIA).
+//! no `gridcell` children in WAI-ARIA). R865 — the AT tree is **windowed** to
+//! the rendered slice (the same `compute_visible_range` the paint uses), so it
+//! exposes exactly the realized rows, not bounds-less off-window ghosts.
 
 use pinion_a11y::{treegrid_nodes, AccessNode, WidgetA11y};
-use pinion_core::external::{External, IntrospectValue, StubExternal};
+use pinion_core::external::{
+    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, StubExternal,
+};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
 use pinion_core::scene::ContainerNode;
@@ -61,8 +68,9 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
 use pinion_core::widgets::tree_nav::{
     apply_tree_key, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
+    VisibleRow,
 };
-use pinion_core::widgets::virtual_list::scroll_offset_to_reveal;
+use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
 use pinion_core::{Frame, Modifiers, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -92,6 +100,15 @@ const ROOT_TAG: &str = "tgrid_root";
 /// this is the only way the AI reads the full structure (only a window
 /// paints).
 const TREE_STATE_TAG: &str = "tgrid_state";
+/// R865 §5.12 §5.50 — query-only introspection of the metadata CELL values.
+/// The off-window read an AI needs: the virtualization paints only a window
+/// and [`TREE_STATE_TAG`] reports only row STRUCTURE (id / level / expanded),
+/// not the per-column metadata, so an AI inspecting an off-window object could
+/// not read its Type / Visible / Layer. Binding-local because the `cell_data`
+/// derivation is binding-specific (the shared `pinion-core` tree introspection
+/// stays node-type agnostic until a 2nd tree-grid consumer surfaces it —
+/// `[[abstraction-needs-second-consumer]]`).
+const CELLS_TAG: &str = "tgrid_cells";
 /// Input-router tag for the vertical body `ScrollState` (shared by both
 /// panes).
 const SCROLL_KEY: &str = "tgrid_scroll";
@@ -205,6 +222,60 @@ fn cell_data(id: &str, col: usize) -> String {
         }
         1 => if hash % 2 == 0 { "Yes" } else { "No" }.to_string(),
         _ => format!("L{}", hash % 4),
+    }
+}
+
+/// R865 §5.12 §5.50 — the [`CELLS_TAG`] query-only introspection source: the
+/// metadata cell values keyed by `(visible position, column)`, read fresh on
+/// every query from the same retained tree the view windows over. It is the
+/// metadata peer of the shared structural [`tree_view_introspection_extra`]:
+/// where that reports `id_at` / `level_at` / `expanded_at`, this reports
+/// `cell_at` so an AI reads the off-window Type / Visible / Layer the paint
+/// window cannot expose ([[ai-first-rpc-introspection-obligation]]).
+struct CellsIntrospect {
+    rows: Box<dyn Fn() -> Vec<VisibleRow>>,
+}
+
+impl core::fmt::Debug for CellsIntrospect {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CellsIntrospect")
+            .field("row_count", &(self.rows)().len())
+            .field("col_count", &DATA_HEADERS.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl QuerySource for CellsIntrospect {
+    fn introspect_schema(&self) -> IntrospectSchema {
+        // `col_count` — the metadata column count (int).
+        // `cell_at`   — `cell_at.<pos>.<col>` visible position + metadata column
+        //               index -> the cell's display value (string), Null when
+        //               the position or column is out of range.
+        IntrospectSchema::new(&[("col_count", "int"), ("cell_at", "string")])
+    }
+
+    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+        if path == "col_count" {
+            return Some(IntrospectValue::Int(i64::try_from(DATA_HEADERS.len()).unwrap_or(i64::MAX)));
+        }
+        let rest = path.strip_prefix("cell_at.")?;
+        // `cell_at.<pos>.<col>` — two indices. A malformed or out-of-range
+        // address reports Null (present-but-empty), the convention the tree
+        // structural introspection uses for an off-the-end position.
+        let Some((pos_s, col_s)) = rest.split_once('.') else {
+            return Some(IntrospectValue::Null);
+        };
+        let (Ok(pos), Ok(col)) = (pos_s.parse::<usize>(), col_s.parse::<usize>()) else {
+            return Some(IntrospectValue::Null);
+        };
+        if col >= DATA_HEADERS.len() {
+            return Some(IntrospectValue::Null);
+        }
+        let rows = (self.rows)();
+        Some(match rows.get(pos) {
+            Some(row) => IntrospectValue::Text(cell_data(&row.id, col)),
+            None => IntrospectValue::Null,
+        })
     }
 }
 
@@ -342,14 +413,22 @@ impl WidgetCore for TreeGridView {
     /// flattening regardless of which window paints).
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let tree_state = use_tree_state();
-        let nodes = tree_state.nodes.clone();
+        let struct_nodes = tree_state.nodes.clone();
+        let cells_nodes = tree_state.nodes.clone();
         let focused = tree_state.focused_id.clone();
         vec![
             ExtraExternal::new(TREE_TAG, Box::new(TreeRowClickExternal::new())),
             tree_view_introspection_extra(
                 TREE_STATE_TAG,
-                move || flat_visible(&nodes.get()),
+                move || flat_visible(&struct_nodes.get()),
                 move || focused.get(),
+            ),
+            // R865 — the metadata-cell peer (off-window value read).
+            ExtraExternal::new(
+                CELLS_TAG,
+                Box::new(QueryOnlyIntrospect::new(Rc::new(CellsIntrospect {
+                    rows: Box::new(move || flat_visible(&cells_nodes.get())),
+                }))),
             ),
         ]
     }
@@ -419,17 +498,29 @@ impl WidgetA11y for TreeGridView {
     /// metadata column, with the row's bounds spanning the frozen name pane +
     /// the scrolling metadata pane. Resolves the R860 carry (metadata columns
     /// were AT-invisible under the prior `tree`/`treeitem` topology).
+    ///
+    /// R865 — windows the AT tree to the rendered slice (the same
+    /// `compute_visible_range` the paint uses), mirroring `hello-virtual-tree`:
+    /// the AT tree exposes exactly the rows the paint realizes, so off-window
+    /// rows are not announced as bounds-less ghost nodes. The keyboard cursor
+    /// always sits inside this window (R864 `reveal_cursor` scrolls it in), so
+    /// the `aria-selected` cursor row is always present.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let tree_state = use_tree_state();
         let rows = flat_visible(&tree_state.nodes.get());
         let focused = tree_state.focused_id.get();
+        let scroll = use_scroll_state(SCROLL_KEY);
+        let (_, measured_h) = scroll.measured_viewport();
+        let window =
+            compute_visible_range(scroll.offset_y(), measured_h, rows.len(), ROW_PITCH, OVERSCAN);
+        let slice: &[VisibleRow] = &rows[window.first..window.first + window.count];
         treegrid_nodes(
             ROOT_TAG,
             TREE_TAG,
             Some("Scene outliner"),
             TREE_HEADER,
             &DATA_HEADERS,
-            &rows,
+            slice,
             focused.as_deref(),
         )
     }
@@ -450,7 +541,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::widgets::virtual_list::compute_visible_range;
 
     #[test]
     fn metadata_overflows_the_window() {
@@ -578,5 +668,51 @@ mod tests {
                 "focus on the treegrid root -> key applies",
             );
         });
+    }
+
+    // ── R865 a11y windowing + cell_at introspection ──────────────────
+
+    #[test]
+    fn access_node_windows_the_treegrid_to_the_rendered_slice() {
+        // The AT tree exposes only the rendered window of rows, not the full
+        // boot flattening (the bounds-less off-window ghost rows R863 emitted).
+        let owner = Owner::new();
+        let nodes = owner.run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 8 * ROW_PITCH);
+            TreeGridView::access_node(&(), None)
+        });
+        assert_eq!(nodes[0].role, pinion_a11y::AriaRole::TreeGrid, "container is a treegrid");
+        let rows = nodes.iter().filter(|n| n.role == pinion_a11y::AriaRole::Row).count();
+        let visible = flat_visible(&initial_nodes()).len();
+        assert!(visible > 30, "boot has many visible rows ({visible})");
+        // header row + windowed data rows, far fewer than the full flattening.
+        assert!(rows < visible, "AT rows {rows} window the {visible} visible rows");
+        // The boot cursor (f0) is in the top window, so its row is present.
+        assert!(nodes.iter().any(|n| n.tag == "tgrid_drowf0"), "cursor row f0 windowed in");
+    }
+
+    #[test]
+    fn cell_at_reads_metadata_by_position_and_column() {
+        // The off-window read: `cell_at.<pos>.<col>` resolves the visible row
+        // at <pos> and reports its <col> metadata exactly as `cell_data` does.
+        let src = CellsIntrospect { rows: Box::new(|| flat_visible(&initial_nodes())) };
+        let rows = flat_visible(&initial_nodes());
+        // col_count mirrors the metadata header count.
+        assert_eq!(
+            src.introspect_query("col_count"),
+            Some(IntrospectValue::Int(i64::try_from(DATA_HEADERS.len()).unwrap())),
+        );
+        // An in-range cell reports the same string the painted cell shows.
+        let pos = 5.min(rows.len() - 1);
+        let expected = cell_data(&rows[pos].id, 1);
+        assert_eq!(
+            src.introspect_query(&format!("cell_at.{pos}.1")),
+            Some(IntrospectValue::Text(expected)),
+        );
+        // Out-of-range column / position / malformed address -> Null.
+        assert_eq!(src.introspect_query("cell_at.0.99"), Some(IntrospectValue::Null), "col OOR");
+        assert_eq!(src.introspect_query("cell_at.99999.0"), Some(IntrospectValue::Null), "pos OOR");
+        assert_eq!(src.introspect_query("cell_at.0"), Some(IntrospectValue::Null), "no column");
+        assert_eq!(src.introspect_query("bogus"), None, "unknown path");
     }
 }
