@@ -89,6 +89,7 @@ pub mod drawer;
 pub mod file_browser;
 pub mod listbox;
 pub mod menu;
+pub mod popup;
 pub mod radio_composite;
 pub mod scrim;
 pub mod scrollbar;

@@ -264,6 +264,16 @@ pub fn treegrid_nodes(
         // [`tree_access_nodes`]: a single-tab-stop treegrid conveys its keyboard
         // cursor via `aria-activedescendant` (the binding's `access_focus_target`
         // redirects to this row's `_drow{id}` node), not `aria-selected` alone.
+        // R870 — unlike `tree_access_nodes` (which decouples `selected_id` /
+        // `focused_id` for its diverse consumers, incl. the click-only
+        // `hello-multi-window` inspector), the treegrid takes a single
+        // `selected_id` and sets *both* `aria-selected` and the cursor
+        // `focused` marker: its sole consumer (`hello-tree-grid`) is
+        // selection-follows-focus, so the two ids are always equal. The
+        // `focused` marker is in any case redundant with the authoritative
+        // `aria-activedescendant` the binding's `access_focus_target` emits
+        // (the AT layer does not lower `AccessState.focused`); decoupling it
+        // here would buy nothing but an unused parameter (YAGNI).
         if selected_id == Some(row.id.as_str()) {
             row_node = row_node.with_selected(true).with_focused(true);
         }

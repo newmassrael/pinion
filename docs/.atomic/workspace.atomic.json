@@ -35825,6 +35825,68 @@
         "PRIOR GAP continues: R863-R866 store changelog entries absent (R867-R869 added; backfill = user)"
       ]
     },
+    "R870": {
+      "decision_summary": "R870 audit-remediation (R867-R869 cost-no-object session review): add the property-grid popups' missing aria-activedescendant, rename choice_*->popup_*, build the colour GUI hex field, lift popup_surface (4-copy), fix doc honesty",
+      "changes_bullets": [
+        "property-grid: add access_focus_target (popup item / roving cell -> activedescendant)",
+        "fixes the R836/R867/R869 gap (popup cursor was silent to AT); matches combobox/treegrid",
+        "rename shared popup infra choice_*->popup_* (Signals + popup_cursor/close_popup wire + teardown)",
+        "colour cell: build the GUI hex field (reuse EDIT_TF + parse=from_hex); enters arbitrary colours",
+        "CellKind::Color.accepts_keystroke accepts hex digits + the leading hash (the hex field input)",
+        "widget-paint: lift popup_surface(theme) (4 byte-identical copies); retrofit combobox/editable/grid",
+        "doc honesty: AccessState.focused is never lowered (access_focus_target is the channel); fix claims",
+        "cell_value doc: HSV-pad framing fixed (a Color->HSV gap, not a contract mismatch)"
+      ],
+      "verification_bullets": [
+        "pinion-core cell_value 19 + hello-property-grid 34 + pinion-widget-paint popup tests green",
+        "workspace test all green; clippy --workspace vello -D pedantic clean",
+        "demos PASS: r869 (hex field live) + r867/r836/r714/r717 regression",
+        "the live r869 demo caught a keystroke-gate bug the unit test missed (set_text bypassed the gate)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.16",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "2-D HSV pad in the cell still deferred (needs Color->HSV); a visual-convenience follow-up now that",
+        "the hex field covers arbitrary colours",
+        "AccessState.focused is unlowered codebase-wide (redundant with active_descendant per WAI-ARIA), so",
+        "treegrid_nodes keeps one selected_id (documented divergence, not decoupled - YAGNI)",
+        "popup anchor-flip (popup_origin) still 1-consumer; lifts when a 2nd binding needs the flip",
+        "PRIOR GAP continues: R863-R866 store changelog entries absent (R867-R870 added; backfill = user)"
+      ],
+      "publishable_decision_summary": "R870 audit-remediation (R867-R869 cost-no-object session review): add the property-grid popups' missing aria-activedescendant, rename choice_*->popup_*, build the colour GUI hex field, lift popup_surface (4-copy), fix doc honesty",
+      "publishable_changes_bullets": [
+        "property-grid: add access_focus_target (popup item / roving cell -> activedescendant)",
+        "fixes the R836/R867/R869 gap (popup cursor was silent to AT); matches combobox/treegrid",
+        "rename shared popup infra choice_*->popup_* (Signals + popup_cursor/close_popup wire + teardown)",
+        "colour cell: build the GUI hex field (reuse EDIT_TF + parse=from_hex); enters arbitrary colours",
+        "CellKind::Color.accepts_keystroke accepts hex digits + the leading hash (the hex field input)",
+        "widget-paint: lift popup_surface(theme) (4 byte-identical copies); retrofit combobox/editable/grid",
+        "doc honesty: AccessState.focused is never lowered (access_focus_target is the channel); fix claims",
+        "cell_value doc: HSV-pad framing fixed (a Color->HSV gap, not a contract mismatch)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core cell_value 19 + hello-property-grid 34 + pinion-widget-paint popup tests green",
+        "workspace test all green; clippy --workspace vello -D pedantic clean",
+        "demos PASS: r869 (hex field live) + r867/r836/r714/r717 regression",
+        "the live r869 demo caught a keystroke-gate bug the unit test missed (set_text bypassed the gate)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.16",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "2-D HSV pad in the cell still deferred (needs Color->HSV); a visual-convenience follow-up now that",
+        "the hex field covers arbitrary colours",
+        "AccessState.focused is unlowered codebase-wide (redundant with active_descendant per WAI-ARIA), so",
+        "treegrid_nodes keeps one selected_id (documented divergence, not decoupled - YAGNI)",
+        "popup anchor-flip (popup_origin) still 1-consumer; lifts when a 2nd binding needs the flip",
+        "PRIOR GAP continues: R863-R866 store changelog entries absent (R867-R870 added; backfill = user)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

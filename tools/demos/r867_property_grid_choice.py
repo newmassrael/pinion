@@ -14,15 +14,15 @@ Three drive paths, one model:
   * mouse — single-click the choice cell opens it; click an option to
     commit; click outside to dismiss.
   * RPC (AI-first) — `invoke begin` opens, `invoke choose` commits, `invoke
-    close_choice` dismisses, and `intervene value.<i> = <int>` sets the
+    close_popup` dismisses, and `intervene value.<i> = <int>` sets the
     option directly without opening the popup.
 
 Coordinator slots (`property_grid`, the primary external):
   /external/value.<i>     -> choice: { selected, label, options }
-  /external/choice_cursor -> the popup's roving cursor (null when closed)
+  /external/popup_cursor -> the popup's roving cursor (null when closed)
   /external/begin         -> invoke(int): open the choice popup
   /external/choose        -> invoke(int): commit an option + close
-  /external/close_choice  -> invoke: dismiss without committing
+  /external/close_popup  -> invoke: dismiss without committing
 
 Verified (>= 30 assertions):
   (A) boot taxonomy — two choice rows, their option lists + committed labels
@@ -30,7 +30,7 @@ Verified (>= 30 assertions):
   (C) keyboard — Escape dismisses, value untouched
   (D) mouse — click cell opens, click option commits
   (E) mouse — click outside dismisses, value untouched
-  (F) RPC — begin/choose commit, close_choice dismiss, intervene-by-index
+  (F) RPC — begin/choose commit, close_popup dismiss, intervene-by-index
   (G) paint — popup panel + options + barrier paint only while open
   (H) anchor — the popup sits at the value column, on screen
 """
@@ -93,7 +93,7 @@ def body() -> None:
             "Blend option list",
         )
         assert_eq(_label(tf, BODY), "Solid", "Body boots at Solid")
-        assert_eq(tf.query("/external/choice_cursor"), None, "no popup at boot")
+        assert_eq(tf.query("/external/popup_cursor"), None, "no popup at boot")
         assert_eq(_editing(tf), None, "nothing editing at boot")
 
         # ── (B) keyboard: open, rove + clamp, Enter commits ──────────
@@ -102,20 +102,20 @@ def body() -> None:
         tf.key(path=GRID, name="Enter")  # open the popup
         wait_until(lambda: _editing(tf) == BLEND, timeout=4.0, interval=0.03,
                    desc="Enter opens the choice popup")
-        assert_eq(tf.query("/external/choice_cursor"), 0, "cursor seeded at committed option")
+        assert_eq(tf.query("/external/popup_cursor"), 0, "cursor seeded at committed option")
         tf.key(path=GRID, name="ArrowDown")
-        wait_until(lambda: tf.query("/external/choice_cursor") == 1, timeout=4.0,
+        wait_until(lambda: tf.query("/external/popup_cursor") == 1, timeout=4.0,
                    interval=0.03, desc="ArrowDown roves the cursor")
         tf.key(path=GRID, name="ArrowDown")
         tf.key(path=GRID, name="ArrowDown")
         tf.key(path=GRID, name="ArrowDown")  # past the end
-        wait_until(lambda: tf.query("/external/choice_cursor") == 3, timeout=4.0,
+        wait_until(lambda: tf.query("/external/popup_cursor") == 3, timeout=4.0,
                    interval=0.03, desc="cursor clamps at the last option")
         tf.key(path=GRID, name="Enter")  # commit the cursor (Screen)
         wait_until(lambda: _label(tf, BLEND) == "Screen", timeout=4.0,
                    interval=0.03, desc="Enter commits the cursor")
         assert_eq(_editing(tf), None, "popup closed after commit")
-        assert_eq(tf.query("/external/choice_cursor"), None, "cursor cleared after commit")
+        assert_eq(tf.query("/external/popup_cursor"), None, "cursor cleared after commit")
 
         # ── (C) keyboard: Escape dismisses, value untouched ──────────
         tf.intervene("/external/focused_row", BODY)
@@ -154,12 +154,12 @@ def body() -> None:
         assert_eq(tf.invoke("/external/choose", 2), True, "RPC choose commits")
         assert_eq(_label(tf, BLEND), "Multiply", "choose 2 -> Multiply")
         assert_eq(_editing(tf), None, "choose closed the popup")
-        # close_choice dismisses without committing.
+        # close_popup dismisses without committing.
         tf.invoke("/external/begin", BODY)
         assert_eq(_editing(tf), BODY, "Body popup open")
-        tf.invoke("/external/close_choice", None)
-        assert_eq(_editing(tf), None, "close_choice dismissed")
-        assert_eq(_label(tf, BODY), "Solid", "close_choice did not commit")
+        tf.invoke("/external/close_popup", None)
+        assert_eq(_editing(tf), None, "close_popup dismissed")
+        assert_eq(_label(tf, BODY), "Solid", "close_popup did not commit")
         # intervene-by-index sets the value directly (no popup needed).
         tf.intervene("/external/value.9", 3)
         assert_eq(_label(tf, BLEND), "Screen", "intervene sets the option by index")
@@ -185,7 +185,7 @@ def body() -> None:
         px, py, pw, ph = rects[POPUP]
         assert 150 <= px <= 230, f"popup anchored near the value column (x={px})"
         assert py >= 0 and py + ph <= VIEWPORT[1], f"popup fully on screen (y={py} h={ph})"
-        tf.invoke("/external/close_choice", None)
+        tf.invoke("/external/close_popup", None)
 
 
 if __name__ == "__main__":

@@ -83,7 +83,7 @@ use pinion_core::external::{External, IntrospectValue};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
@@ -97,7 +97,7 @@ use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::listbox::{view_option, OptionRow};
-use pinion_widget_paint::elevation::{elevation, MENU_LEVEL};
+use pinion_widget_paint::popup::popup_surface;
 use pinion_widget_paint::text_field as tf_paint;
 use std::rc::Rc;
 
@@ -365,12 +365,7 @@ fn view(state: &ComboViewState, _frame: &Frame) -> Scene {
         let panel = Scene::Container(
             ContainerNode::new(options)
                 .with_tag(PANEL_TAG)
-                .with_style(
-                    BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainer))
-                        .with_corner_radius(6)
-                        .with_border(Border::new(theme.resolve(ColorRole::Outline), 1))
-                        .with_shadows(elevation(MENU_LEVEL)),
-                )
+                .with_style(popup_surface(&theme))
                 .with_layout(
                     LayoutStyle::new()
                         .with_absolute_position(PANEL_X, PANEL_Y)

@@ -40,9 +40,11 @@ pub enum CellValue {
     /// An sRGB colour (the property-grid colour cell, R869). Edited by a
     /// popup — a preset swatch palette plus a hex field for an arbitrary
     /// value — not inline text or a toggle. The `intervene` write takes a
-    /// `#RRGGBB[AA]` hex string ([`CellValue::with_intervene`]); the standalone
-    /// 2-D HSV picker stays the dedicated `hello-color-picker` widget (its
-    /// model-owning contract does not fit a cell whose model is this `Color`).
+    /// `#RRGGBB[AA]` hex string ([`CellValue::with_intervene`]). A 2-D HSV
+    /// pad in the cell is a deferred follow-up: it needs a `Color`→HSV
+    /// decomposition (the inverse of `Color::from_hsv`) to seed the pad from
+    /// a stored colour, which the substrate does not yet have — the
+    /// standalone `hello-color-picker` starts from picker state, not a colour.
     Color(Color),
 }
 
@@ -199,7 +201,9 @@ impl CellKind {
     #[must_use]
     pub fn accepts_keystroke(self, key: &str) -> bool {
         match self {
-            CellKind::Bool | CellKind::Choice | CellKind::Color => false,
+            CellKind::Bool | CellKind::Choice => false,
+            // A colour's popup hex field accepts hex digits + the leading `#`.
+            CellKind::Color => single_char(key, |c| c.is_ascii_hexdigit() || c == '#'),
             CellKind::Text => single_char(key, |_| true),
             CellKind::Int => single_char(key, |c| c.is_ascii_digit() || c == '-'),
             CellKind::Float => single_char(key, |c| c.is_ascii_digit() || c == '-' || c == '.'),
@@ -445,7 +449,10 @@ mod tests {
         assert_eq!(v.kind(), CellKind::Color);
         assert_eq!(CellKind::Color.name(), "color");
         assert!(!CellKind::Color.is_text_editable(), "colour is popup-edited, not inline text");
-        assert!(!CellKind::Color.accepts_keystroke("a"), "colour takes no inline keystroke");
+        // The popup hex field accepts hex digits + the leading '#', nothing else.
+        assert!(CellKind::Color.accepts_keystroke("a"), "hex field accepts hex digits");
+        assert!(CellKind::Color.accepts_keystroke("#"), "and the leading hash");
+        assert!(!CellKind::Color.accepts_keystroke("g"), "but not a non-hex letter");
     }
 
     #[test]
