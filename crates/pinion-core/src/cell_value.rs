@@ -19,6 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::external::{InterveneError, IntrospectValue};
+use crate::style::Color;
 
 /// A typed editable-cell value. `Signal<T>` requires `Serialize +
 /// DeserializeOwned` (the R36 §5.31 hot-reload bound), so the model derives
@@ -36,6 +37,13 @@ pub enum CellValue {
     /// and the `intervene` write addresses an option by index
     /// ([`CellValue::with_intervene`]).
     Choice { selected: usize, options: Vec<String> },
+    /// An sRGB colour (the property-grid colour cell, R869). Edited by a
+    /// popup — a preset swatch palette plus a hex field for an arbitrary
+    /// value — not inline text or a toggle. The `intervene` write takes a
+    /// `#RRGGBB[AA]` hex string ([`CellValue::with_intervene`]); the standalone
+    /// 2-D HSV picker stays the dedicated `hello-color-picker` widget (its
+    /// model-owning contract does not fit a cell whose model is this `Color`).
+    Color(Color),
 }
 
 /// The static descriptor of a [`CellValue`] — drives editor behaviour
@@ -50,6 +58,7 @@ pub enum CellKind {
     Float,
     Text,
     Choice,
+    Color,
 }
 
 impl CellValue {
@@ -62,6 +71,7 @@ impl CellValue {
             CellValue::Float(_) => CellKind::Float,
             CellValue::Text(_) => CellKind::Text,
             CellValue::Choice { .. } => CellKind::Choice,
+            CellValue::Color(_) => CellKind::Color,
         }
     }
 
@@ -81,6 +91,13 @@ impl CellValue {
                 "label": selected_label(*selected, options),
                 "options": options,
             })),
+            CellValue::Color(c) => IntrospectValue::Json(serde_json::json!({
+                "hex": c.to_hex(),
+                "r": c.r,
+                "g": c.g,
+                "b": c.b,
+                "a": c.a,
+            })),
         }
     }
 
@@ -96,6 +113,7 @@ impl CellValue {
             CellValue::Float(f) => format_float(*f),
             CellValue::Text(s) => s.clone(),
             CellValue::Choice { selected, options } => selected_label(*selected, options),
+            CellValue::Color(c) => c.to_hex(),
         }
     }
 
@@ -111,6 +129,7 @@ impl CellValue {
             CellValue::Float(f) => format_float(*f),
             CellValue::Text(s) => s.clone(),
             CellValue::Choice { selected, options } => selected_label(*selected, options),
+            CellValue::Color(c) => c.to_hex(),
         }
     }
 
@@ -124,7 +143,8 @@ impl CellValue {
     ///
     /// [`InterveneError::TypeMismatch`] when the payload variant is wrong for
     /// this value's kind; [`InterveneError::OutOfRange`] when a `Choice`
-    /// index is negative or past the option list.
+    /// index is negative or past the option list, or a `Color` hex string is
+    /// malformed.
     pub fn with_intervene(&self, value: IntrospectValue) -> Result<CellValue, InterveneError> {
         match self {
             CellValue::Choice { options, .. } => {
@@ -136,6 +156,12 @@ impl CellValue {
                     return Err(InterveneError::OutOfRange);
                 }
                 Ok(CellValue::Choice { selected: idx, options: options.clone() })
+            }
+            CellValue::Color(_) => {
+                let IntrospectValue::Text(hex) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                Color::from_hex(&hex).map(CellValue::Color).ok_or(InterveneError::OutOfRange)
             }
             _ => self.kind().coerce(value),
         }
@@ -153,12 +179,13 @@ impl CellKind {
             CellKind::Float => "float",
             CellKind::Text => "text",
             CellKind::Choice => "choice",
+            CellKind::Color => "color",
         }
     }
 
     /// Whether the kind is edited as text (text / int / float) rather than
-    /// toggled (bool) or popup-selected (choice). The begin-edit guard for
-    /// the inline text field.
+    /// toggled (bool) or popup-edited (choice / colour). The begin-edit guard
+    /// for the inline text field.
     #[must_use]
     pub fn is_text_editable(self) -> bool {
         matches!(self, CellKind::Int | CellKind::Float | CellKind::Text)
@@ -172,7 +199,7 @@ impl CellKind {
     #[must_use]
     pub fn accepts_keystroke(self, key: &str) -> bool {
         match self {
-            CellKind::Bool | CellKind::Choice => false,
+            CellKind::Bool | CellKind::Choice | CellKind::Color => false,
             CellKind::Text => single_char(key, |_| true),
             CellKind::Int => single_char(key, |c| c.is_ascii_digit() || c == '-'),
             CellKind::Float => single_char(key, |c| c.is_ascii_digit() || c == '-' || c == '.'),
@@ -188,6 +215,9 @@ impl CellKind {
         match self {
             // Bools toggle and choices popup-select — neither is text-parsed.
             CellKind::Bool | CellKind::Choice => None,
+            // A colour parses from a `#RRGGBB[AA]` hex string — the popup's
+            // hex field commits through this path.
+            CellKind::Color => Color::from_hex(trimmed).map(CellValue::Color),
             CellKind::Int => trimmed.parse::<i64>().ok().map(CellValue::Int),
             CellKind::Float => trimmed.parse::<f64>().ok().map(CellValue::Float),
             CellKind::Text => Some(CellValue::Text(trimmed.to_owned())),
@@ -407,5 +437,61 @@ mod tests {
             CellKind::Choice.coerce(IntrospectValue::Int(1)),
             Err(InterveneError::TypeMismatch),
         );
+    }
+
+    #[test]
+    fn color_kind_name_and_gates() {
+        let v = CellValue::Color(Color::rgb(255, 128, 0));
+        assert_eq!(v.kind(), CellKind::Color);
+        assert_eq!(CellKind::Color.name(), "color");
+        assert!(!CellKind::Color.is_text_editable(), "colour is popup-edited, not inline text");
+        assert!(!CellKind::Color.accepts_keystroke("a"), "colour takes no inline keystroke");
+    }
+
+    #[test]
+    fn color_display_and_edit_text_are_the_hex() {
+        let v = CellValue::Color(Color::rgb(255, 128, 0));
+        assert_eq!(v.display(), "#ff8000");
+        assert_eq!(v.edit_text(), "#ff8000");
+        // A non-opaque colour keeps its alpha byte.
+        assert_eq!(CellValue::Color(Color::rgba(255, 0, 0, 128)).display(), "#ff000080");
+    }
+
+    #[test]
+    fn color_parse_round_trips_the_hex() {
+        // The popup's hex field commits through CellKind::parse.
+        assert_eq!(
+            CellKind::Color.parse(" #00ff00 "),
+            Some(CellValue::Color(Color::rgb(0, 255, 0))),
+        );
+        assert_eq!(CellKind::Color.parse("not-a-colour"), None, "malformed hex rejected");
+    }
+
+    #[test]
+    fn color_to_introspect_is_a_structured_object() {
+        let IntrospectValue::Json(json) = CellValue::Color(Color::rgb(255, 128, 0)).to_introspect()
+        else {
+            panic!("colour introspects as json");
+        };
+        assert_eq!(json["hex"], serde_json::json!("#ff8000"));
+        assert_eq!(json["r"], serde_json::json!(255));
+        assert_eq!(json["g"], serde_json::json!(128));
+        assert_eq!(json["b"], serde_json::json!(0));
+        assert_eq!(json["a"], serde_json::json!(255));
+    }
+
+    #[test]
+    fn color_with_intervene_takes_a_hex_string() {
+        let v = CellValue::Color(Color::rgb(0, 0, 0));
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Text("#ff8000".to_owned())),
+            Ok(CellValue::Color(Color::rgb(255, 128, 0))),
+        );
+        // Malformed hex is out of range; a non-Text payload is a type mismatch.
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Text("xyz".to_owned())),
+            Err(InterveneError::OutOfRange),
+        );
+        assert_eq!(v.with_intervene(IntrospectValue::Int(5)), Err(InterveneError::TypeMismatch));
     }
 }

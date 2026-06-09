@@ -35763,6 +35763,68 @@
         "the row with_focused is secondary to the authoritative access_focus_target composite (both set)"
       ]
     },
+    "R869": {
+      "decision_summary": "R869 property-grid colour cell editor: CellValue::Color + coordinator-owned swatch-palette popup (keyboard/mouse/RPC); arbitrary colour via intervene hex; the 2-D HSV pad stays the dedicated hello-color-picker widget",
+      "changes_bullets": [
+        "core: CellValue::Color(Color) + CellKind::Color; display=to_hex; introspect=Json{hex,rgba}",
+        "core: CellKind::Color parse + CellValue::with_intervene take a #RRGGBB[AA] hex string",
+        "property-grid: colour cell as a coordinator-owned swatch-palette popup (R867 pattern reuse)",
+        "cell shows a filled swatch chip + the hex; swatches route via {GRID}#sw{i} composite tags",
+        "drive: keyboard (open/rove the 2-D palette/commit/Escape) + mouse (cell/swatch/outside) + RPC",
+        "arbitrary colour via intervene value.<i>=hex (AI-first); GUI offers the preset palette",
+        "popup_origin generalised (choice + colour); dispatch_send extracted (dedup opt/sw hover)",
+        "a11y: swatches lower to a listbox with colour-name labels + the cursor active descendant"
+      ],
+      "verification_bullets": [
+        "pinion-core cell_value 19 tests green (5 new Color arms)",
+        "hello-property-grid 32 tests green (5 new Color); r836/r867 demos updated for the 12th row",
+        "workspace test all green; clippy --workspace vello -D pedantic clean",
+        "demos PASS: r869 (>=30 assert kbd+mouse+RPC+paint+anchor) + r836/r867 regression"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.16",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "full 2-D HSV pad (ColorAreaExternal) NOT reused for the cell: its model-owning contract splits",
+        "the cell's Color model; it stays the dedicated hello-color-picker widget (R867 contract-vs-glue)",
+        "no Color->HSV decomposition exists; needed to seed a pad from a stored colour (gap for that axis)",
+        "GUI hex-entry field deferred: arbitrary colour is RPC-only in the GUI (intervene hex); a popup hex",
+        "field reusing EDIT_TF is the additive follow-up",
+        "PRIOR GAP continues: R863-R866 store changelog entries absent (R867-R869 added; backfill = user)"
+      ],
+      "publishable_decision_summary": "R869 property-grid colour cell editor: CellValue::Color + coordinator-owned swatch-palette popup (keyboard/mouse/RPC); arbitrary colour via intervene hex; the 2-D HSV pad stays the dedicated hello-color-picker widget",
+      "publishable_changes_bullets": [
+        "core: CellValue::Color(Color) + CellKind::Color; display=to_hex; introspect=Json{hex,rgba}",
+        "core: CellKind::Color parse + CellValue::with_intervene take a #RRGGBB[AA] hex string",
+        "property-grid: colour cell as a coordinator-owned swatch-palette popup (R867 pattern reuse)",
+        "cell shows a filled swatch chip + the hex; swatches route via {GRID}#sw{i} composite tags",
+        "drive: keyboard (open/rove the 2-D palette/commit/Escape) + mouse (cell/swatch/outside) + RPC",
+        "arbitrary colour via intervene value.<i>=hex (AI-first); GUI offers the preset palette",
+        "popup_origin generalised (choice + colour); dispatch_send extracted (dedup opt/sw hover)",
+        "a11y: swatches lower to a listbox with colour-name labels + the cursor active descendant"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core cell_value 19 tests green (5 new Color arms)",
+        "hello-property-grid 32 tests green (5 new Color); r836/r867 demos updated for the 12th row",
+        "workspace test all green; clippy --workspace vello -D pedantic clean",
+        "demos PASS: r869 (>=30 assert kbd+mouse+RPC+paint+anchor) + r836/r867 regression"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.16",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "full 2-D HSV pad (ColorAreaExternal) NOT reused for the cell: its model-owning contract splits",
+        "the cell's Color model; it stays the dedicated hello-color-picker widget (R867 contract-vs-glue)",
+        "no Color->HSV decomposition exists; needed to seed a pad from a stored colour (gap for that axis)",
+        "GUI hex-entry field deferred: arbitrary colour is RPC-only in the GUI (intervene hex); a popup hex",
+        "field reusing EDIT_TF is the additive follow-up",
+        "PRIOR GAP continues: R863-R866 store changelog entries absent (R867-R869 added; backfill = user)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

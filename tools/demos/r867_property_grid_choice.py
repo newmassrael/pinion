@@ -50,7 +50,7 @@ from rpc_verify import (  # noqa: E402
     wait_until,
 )
 
-VIEWPORT = (460, 580)
+VIEWPORT = (460, 620)
 
 GRID = "property_grid"
 POPUP = "property_grid_choice"
@@ -81,7 +81,7 @@ def _editing(tf):
 def body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
         # ── (A) boot taxonomy ────────────────────────────────────────
-        assert_eq(tf.query("/external/row_count"), 11, "11 rows (quartet + 2 choice)")
+        assert_eq(tf.query("/external/row_count"), 12, "12 rows (quartet + 2 choice + colour)")
         assert_eq(tf.query("/external/kind.9"), "choice", "Blend is a choice")
         assert_eq(tf.query("/external/kind.10"), "choice", "Body is a choice")
         blend = tf.query("/external/value.9")

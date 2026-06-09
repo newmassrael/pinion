@@ -126,9 +126,10 @@ vello_renderer_impl!(HelloPropertyGridRenderer, HelloPropertyGridRendererError);
 // ─── window + layout constants ─────────────────────────────────────
 
 const WIN_W: u32 = 460;
-// R867 — 11 rows (the bool/int/float/text quartet + two enum/choice rows)
-// plus the title band; a choice popup may flip above its row near the bottom.
-const WIN_H: u32 = 580;
+// R867/R869 — 12 rows (the bool/int/float/text quartet + two enum/choice
+// rows + one colour row) plus the title band; a popup may flip above its row
+// near the bottom.
+const WIN_H: u32 = 620;
 const THEME_TAG: &str = "app";
 
 const TITLE_PX: u32 = 22;
@@ -180,16 +181,41 @@ const CHOICE_DISMISS_TAG: &str = "property_grid#dismiss";
 /// routing the click / hover to the coordinator's `send`.
 const CHOICE_OPT_PREFIX: &str = "opt";
 
+// ─── colour-cell popup (R869) ─────────────────────────────────────
+
+/// The colour popup's paint panel + WAI-ARIA `listbox` container tag.
+const COLOR_POPUP_TAG: &str = "property_grid_color";
+/// Composite sub-tag prefix for a swatch cell (`{GRID_TAG}#sw{i}`).
+const COLOR_SW_PREFIX: &str = "sw";
+/// Swatch box size, columns, and gap in the popup grid.
+const SWATCH_SIZE: u32 = 34;
+const SWATCH_COLS: usize = 4;
+const SWATCH_GAP: u32 = 6;
+
+/// The preset colour palette the popup offers (name = the AT label). An
+/// arbitrary colour is set through `intervene value.<i>` with a hex string —
+/// the AI-first path; a GUI hex-entry field is a documented follow-up.
+const COLOR_SWATCHES: [(Color, &str); 8] = [
+    (Color::rgb(0xff, 0xff, 0xff), "White"),
+    (Color::rgb(0x21, 0x21, 0x21), "Black"),
+    (Color::rgb(0xe5, 0x39, 0x35), "Red"),
+    (Color::rgb(0x43, 0xa0, 0x47), "Green"),
+    (Color::rgb(0x1e, 0x88, 0xe5), "Blue"),
+    (Color::rgb(0xfd, 0xd8, 0x35), "Yellow"),
+    (Color::rgb(0x00, 0xac, 0xc1), "Cyan"),
+    (Color::rgb(0x8e, 0x24, 0xaa), "Purple"),
+];
+
 
 // ─── typed property model ─────────────────────────────────────────
 
-const ROW_COUNT: usize = 11;
+const ROW_COUNT: usize = 12;
 
 /// The property row names. Static — only the [`CellValue`]s mutate, so
 /// names live in a `const` (the value SSOT is the coordinator's Signal).
 const PROPERTY_NAMES: [&str; ROW_COUNT] = [
     "Name", "Tag", "Visible", "Locked", "Layer", "Health", "Pos X", "Pos Y", "Opacity", "Blend",
-    "Body",
+    "Body", "Tint",
 ];
 
 // R837 §5.38 — the typed value model + its pure helpers (kind dispatch,
@@ -227,6 +253,8 @@ fn default_properties() -> Vec<CellValue> {
             selected: 2,
             options: vec!["None".to_owned(), "Trigger".to_owned(), "Solid".to_owned()],
         },
+        // R869 — the colour cell (popup swatch palette): the object tint.
+        CellValue::Color(COLOR_SWATCHES[4].0), // Blue
     ]
 }
 
@@ -290,6 +318,24 @@ fn set_choice_selected(model: &Signal<Vec<CellValue>>, row: usize, i: usize) -> 
                 *selected = i;
                 committed = true;
             }
+        }
+        next
+    });
+    committed
+}
+
+/// Write the colour cell at `row` to swatch `i` (no-op if the row is not a
+/// colour or `i` is out of range). Returns whether it committed.
+fn set_color_swatch(model: &Signal<Vec<CellValue>>, row: usize, i: usize) -> bool {
+    let Some((color, _)) = COLOR_SWATCHES.get(i) else {
+        return false;
+    };
+    let mut committed = false;
+    model.set_with(|prev| {
+        let mut next = prev.clone();
+        if let Some(cell @ CellValue::Color(_)) = next.get_mut(row) {
+            *cell = CellValue::Color(*color);
+            committed = true;
         }
         next
     });
@@ -370,6 +416,9 @@ impl PropertyGridExternal {
         if matches!(value, CellValue::Choice { .. }) {
             return self.open_choice(row);
         }
+        if matches!(value, CellValue::Color(_)) {
+            return self.open_color(row);
+        }
         if !value.kind().is_text_editable() {
             return false;
         }
@@ -411,9 +460,109 @@ impl PropertyGridExternal {
     }
 
     /// Close the choice popup without committing (the dismiss-barrier +
-    /// RPC `close_choice` path).
+    /// RPC `close_choice` path). Generic popup teardown — also closes the
+    /// colour popup (the cursor / hover Signals are shared, only one popup is
+    /// open at a time).
     fn close_choice(&self) {
         clear_choice_popup(&self.editing_row, &self.choice_cursor, &self.choice_hover);
+    }
+
+    /// Open the colour popup on `row`: latch `editing_row` and seed the swatch
+    /// cursor at the preset matching the current colour (or 0). Focus stays on
+    /// the grid (the swatch grid is the roving active descendant). Returns
+    /// `false` for a non-colour row. Reuses the shared popup cursor / hover.
+    fn open_color(&self, row: usize) -> bool {
+        let model = self.model.get();
+        let Some(CellValue::Color(c)) = model.get(row) else {
+            return false;
+        };
+        let cursor = COLOR_SWATCHES.iter().position(|(sw, _)| sw == c).unwrap_or(0);
+        self.editing_row.set(Some(row));
+        self.choice_cursor.set(Some(cursor));
+        self.choice_hover.set(None);
+        true
+    }
+
+    /// Commit swatch `i` into the open colour row, then close the popup (the
+    /// swatch click + RPC `pick_color` + keyboard path); `false` if out of
+    /// range or not a colour row.
+    fn commit_color_swatch(&self, i: usize) -> bool {
+        let Some(row) = self.editing_row.get() else {
+            return false;
+        };
+        let committed = set_color_swatch(&self.model, row, i);
+        self.close_choice();
+        committed
+    }
+
+    /// Set / clear the popup item hover — the shared `PointerEnter` /
+    /// `PointerLeave` handler for choice options + colour swatches.
+    fn set_popup_hover(&self, event_name: &str, i: usize) {
+        match event_name {
+            "PointerEnter" => self.choice_hover.set(Some(i)),
+            "PointerLeave" => {
+                if self.choice_hover.get() == Some(i) {
+                    self.choice_hover.set(None);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Route a composite-tag `send` payload: the dismiss barrier (`dismiss`),
+    /// a popup option (`opt<i>` commits a choice), a colour swatch (`sw<i>`
+    /// commits a colour), or a numeric row (focus + bool-toggle / popup-open /
+    /// `DoubleClick`-edit) — all four route into this one coordinator.
+    fn dispatch_send(&mut self, s: &str) -> Result<IntrospectValue, InvokeError> {
+        let (key, event_name, _) = split_send_payload(s).ok_or(InvokeError::Rejected)?;
+        if key == "dismiss" {
+            if event_name == "PointerUp" {
+                self.close_choice();
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        if let Some(opt) = key.strip_prefix(CHOICE_OPT_PREFIX) {
+            let i: usize = opt.parse().map_err(|_| InvokeError::Rejected)?;
+            if event_name == "PointerUp" {
+                self.commit_choice_index(i);
+            } else {
+                self.set_popup_hover(event_name, i);
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        if let Some(sw) = key.strip_prefix(COLOR_SW_PREFIX) {
+            let i: usize = sw.parse().map_err(|_| InvokeError::Rejected)?;
+            if event_name == "PointerUp" {
+                self.commit_color_swatch(i);
+            } else {
+                self.set_popup_hover(event_name, i);
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        let idx: usize = key.parse().map_err(|_| InvokeError::Rejected)?;
+        if idx >= self.count() {
+            return Err(InvokeError::Rejected);
+        }
+        match event_name {
+            "PointerUp" => {
+                self.focused_row.set(idx);
+                match self.model.get().get(idx) {
+                    Some(CellValue::Bool(_)) => {
+                        self.toggle(idx);
+                    }
+                    Some(CellValue::Choice { .. }) => {
+                        self.open_choice(idx);
+                    }
+                    Some(CellValue::Color(_)) => {
+                        self.open_color(idx);
+                    }
+                    _ => {}
+                }
+                Ok(IntrospectValue::Int(i64::try_from(idx).expect("row index fits in i64")))
+            }
+            "DoubleClick" => Ok(IntrospectValue::Bool(self.begin_edit(idx))),
+            _ => Ok(IntrospectValue::Null),
+        }
     }
 
     fn set_focused_clamped(&self, row: usize) {
@@ -468,6 +617,7 @@ impl ExternalIntrospect for PropertyGridExternal {
             ("toggle", "json"),
             ("begin", "int"),
             ("choose", "int"),
+            ("pick_color", "int"),
             ("close_choice", "json"),
         ])
     }
@@ -550,62 +700,9 @@ impl ExternalIntrospect for PropertyGridExternal {
 
     fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         match path {
-            // Composite wire `"<key>:<EventName>"`. The key routes three
-            // kinds of click into the one coordinator: a numeric row (focus +
-            // bool-toggle / choice-open / DoubleClick-edit), a popup option
-            // `opt<i>` (commit on PointerUp, hover on Enter/Leave), or the
-            // dismiss barrier `dismiss` (close the popup). Other pointer
-            // phases are accepted as no-ops.
+            // Composite wire `"<key>:<EventName>"` — routed in `dispatch_send`.
             "send" => match args {
-                IntrospectValue::Text(ref s) => {
-                    let (key, event_name, _) =
-                        split_send_payload(s).ok_or(InvokeError::Rejected)?;
-                    if key == "dismiss" {
-                        if event_name == "PointerUp" {
-                            self.close_choice();
-                        }
-                        return Ok(IntrospectValue::Null);
-                    }
-                    if let Some(opt) = key.strip_prefix(CHOICE_OPT_PREFIX) {
-                        let i: usize = opt.parse().map_err(|_| InvokeError::Rejected)?;
-                        match event_name {
-                            "PointerUp" => {
-                                self.commit_choice_index(i);
-                            }
-                            "PointerEnter" => self.choice_hover.set(Some(i)),
-                            "PointerLeave" => {
-                                if self.choice_hover.get() == Some(i) {
-                                    self.choice_hover.set(None);
-                                }
-                            }
-                            _ => {}
-                        }
-                        return Ok(IntrospectValue::Null);
-                    }
-                    let idx: usize = key.parse().map_err(|_| InvokeError::Rejected)?;
-                    if idx >= self.count() {
-                        return Err(InvokeError::Rejected);
-                    }
-                    match event_name {
-                        "PointerUp" => {
-                            self.focused_row.set(idx);
-                            match self.model.get().get(idx) {
-                                Some(CellValue::Bool(_)) => {
-                                    self.toggle(idx);
-                                }
-                                Some(CellValue::Choice { .. }) => {
-                                    self.open_choice(idx);
-                                }
-                                _ => {}
-                            }
-                            Ok(IntrospectValue::Int(
-                                i64::try_from(idx).expect("row index fits in i64"),
-                            ))
-                        }
-                        "DoubleClick" => Ok(IntrospectValue::Bool(self.begin_edit(idx))),
-                        _ => Ok(IntrospectValue::Null),
-                    }
-                }
+                IntrospectValue::Text(ref s) => self.dispatch_send(s),
                 _ => Err(InvokeError::TypeMismatch),
             },
             // Toggle the focused bool (the `Space` keyboard path + the RPC
@@ -633,8 +730,17 @@ impl ExternalIntrospect for PropertyGridExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
-            // Dismiss the open choice popup without committing (RPC + the
-            // keyboard `Escape` / barrier path share `close_choice`).
+            // Commit a colour swatch by index, closing the popup (the swatch
+            // click + RPC path). Requires an open colour popup.
+            "pick_color" => match args {
+                IntrospectValue::Int(i) => {
+                    let sw = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.commit_color_swatch(sw)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Dismiss the open popup without committing (RPC + the keyboard
+            // `Escape` / barrier path share `close_choice`).
             "close_choice" => {
                 self.close_choice();
                 Ok(IntrospectValue::Null)
@@ -693,12 +799,15 @@ fn editing_kind() -> Option<CellKind> {
 
 // ─── keyboard ─────────────────────────────────────────────────────
 
-/// The row whose choice popup is open (the edit latch points at a choice
-/// row), or `None`. While a popup is open the grid keeps focus but the popup
+/// The kind of the open popup row (`Choice` / `Color`), or `None` when no
+/// popup is open. While a popup is open the grid keeps focus but the popup
 /// owns the keymap.
-fn choice_popup_row() -> Option<usize> {
+fn open_popup_kind() -> Option<(usize, CellKind)> {
     let row = use_editing_row().get()?;
-    matches!(use_property_model().get().get(row), Some(CellValue::Choice { .. })).then_some(row)
+    match use_property_model().get().get(row).map(CellValue::kind) {
+        Some(kind @ (CellKind::Choice | CellKind::Color)) => Some((row, kind)),
+        _ => None,
+    }
 }
 
 /// Commit the popup cursor into the choice row + close (the keyboard
@@ -708,7 +817,15 @@ fn commit_choice_keyboard(row: usize, i: usize) {
     close_choice_popup();
 }
 
-/// Close the choice popup without committing (keyboard `Escape`).
+/// Commit the swatch cursor into the colour row + close (the keyboard path,
+/// sharing the model SSOT with the pointer / RPC path).
+fn commit_color_keyboard(row: usize, i: usize) {
+    set_color_swatch(&use_property_model(), row, i);
+    close_choice_popup();
+}
+
+/// Close the open popup without committing (keyboard `Escape`). Generic —
+/// the cursor / hover Signals are shared across the choice + colour popups.
 fn close_choice_popup() {
     clear_choice_popup(&use_editing_row(), &use_choice_cursor(), &use_choice_hover());
 }
@@ -745,14 +862,44 @@ fn apply_key_choice(row: usize, key: &str) -> bool {
     true
 }
 
+/// Colour-popup keymap (the grid is focused, the popup is open): arrows rove
+/// the swatch cursor over the 2-D palette grid (Left/Right step, Up/Down jump
+/// a row), `Enter` / `Space` commit the cursor swatch, `Escape` dismisses.
+fn apply_key_color(row: usize, key: &str) -> bool {
+    let len = COLOR_SWATCHES.len();
+    let cursor = use_choice_cursor().get().unwrap_or(0).min(len - 1);
+    let target = match key {
+        "ArrowRight" => (cursor + 1).min(len - 1),
+        "ArrowLeft" => cursor.saturating_sub(1),
+        "ArrowDown" => (cursor + SWATCH_COLS).min(len - 1),
+        "ArrowUp" => cursor.saturating_sub(SWATCH_COLS),
+        "Home" => 0,
+        "End" => len - 1,
+        "Enter" | "Space" => {
+            commit_color_keyboard(row, cursor);
+            return true;
+        }
+        "Escape" => {
+            close_choice_popup();
+            return true;
+        }
+        _ => return false,
+    };
+    use_choice_cursor().set(Some(target));
+    true
+}
+
 /// Grid-focused keymap: roving navigation + activate. Navigation writes the
 /// `focused_row` Signal directly (pure cursor motion, no cross-external
 /// effect); `Space` / `Enter` / `F2` route through the coordinator's
 /// `invoke` so the keyboard path is identical to the RPC path. An open
-/// choice popup intercepts the keymap first.
+/// choice / colour popup intercepts the keymap first.
 fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
-    if let Some(row) = choice_popup_row() {
-        return apply_key_choice(row, key);
+    if let Some((row, kind)) = open_popup_kind() {
+        return match kind {
+            CellKind::Color => apply_key_color(row, key),
+            _ => apply_key_choice(row, key),
+        };
     }
     let focused = use_focused_row();
     let count = use_property_model().get().len();
@@ -800,9 +947,9 @@ fn activate_focused(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
     };
     match kind {
         CellKind::Bool => intro.invoke("toggle", IntrospectValue::Null).is_ok(),
-        // A choice row opens its popup on both Space and Enter (the dropdown
-        // affordance) — `allow_edit` only gates the text editors.
-        CellKind::Choice => {
+        // A choice / colour row opens its popup on both Space and Enter (the
+        // dropdown affordance) — `allow_edit` only gates the text editors.
+        CellKind::Choice | CellKind::Color => {
             let arg = IntrospectValue::Int(i64::try_from(row).expect("row index fits in i64"));
             intro.invoke("begin", arg).is_ok()
         }
@@ -905,6 +1052,7 @@ fn view_row(
                 view_checkbox_box(*b, CheckboxState::Idle, theme, &cell_checkbox_style())
             }
             CellValue::Choice { selected, options } => choice_value_cell(*selected, options, theme),
+            CellValue::Color(c) => color_value_cell(*c, theme),
             other => Scene::Text(TextNode::styled(
                 other.display(),
                 Rect::default(),
@@ -963,6 +1111,59 @@ fn choice_value_cell(selected: usize, options: &[String], theme: &Theme) -> Scen
     )
 }
 
+/// A closed colour cell: a filled swatch chip plus the `#RRGGBB` hex value.
+fn color_value_cell(color: Color, theme: &Theme) -> Scene {
+    let swatch = Scene::Container(ContainerNode::new(vec![]).with_style(
+        BoxStyle::filled(color)
+            .with_corner_radius(4)
+            .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
+    ).with_layout(LayoutStyle::new().with_size(Size::px(CELL_PX + 6, CELL_PX + 6))));
+    let hex = Scene::Text(TextNode::styled(
+        color.to_hex(),
+        Rect::default(),
+        TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+    ));
+    Scene::Container(
+        ContainerNode::new(vec![swatch, hex]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_gap(8)
+                .with_size(Size::px(VALUE_COL_W - 2 * CELL_PAD, ROW_H)),
+        ),
+    )
+}
+
+/// One popup swatch chip, tagged `{GRID_TAG}#sw{i}` so its click / hover
+/// routes to the coordinator. The cursor (active descendant) and the
+/// committed selection get a 2 px ring; hover too.
+fn view_swatch(
+    i: usize,
+    color: Color,
+    is_selected: bool,
+    is_active: bool,
+    is_hover: bool,
+    theme: &Theme,
+) -> Scene {
+    let (border_color, border_w) = if is_active || is_hover {
+        (theme.resolve(ColorRole::Accent), 2)
+    } else if is_selected {
+        (theme.resolve(ColorRole::OnSurface), 2)
+    } else {
+        (theme.resolve(ColorRole::Outline), 1)
+    };
+    Scene::Container(
+        ContainerNode::new(vec![])
+            .with_tag(format!("{GRID_TAG}#{COLOR_SW_PREFIX}{i}"))
+            .with_style(
+                BoxStyle::filled(color)
+                    .with_corner_radius(4)
+                    .with_border(Border::new(border_color, border_w)),
+            )
+            .with_layout(LayoutStyle::new().with_size(Size::px(SWATCH_SIZE, SWATCH_SIZE))),
+    )
+}
+
 /// The open choice popup: the dropdown panel of option rows (the lifted
 /// `view_option` skin, R867's 3rd consumer), absolutely positioned at — or
 /// flipped above — the editing row's value cell. Each option is tagged
@@ -999,9 +1200,9 @@ fn view_choice_popup(
             )
         })
         .collect();
-    let (x, y) = choice_popup_origin(row, options.len());
     let panel_h = u32::try_from(options.len()).expect("option count fits in u32") * POPUP_OPT_H
         + 2 * POPUP_PAD;
+    let (x, y) = popup_origin(row, panel_h);
     Scene::Container(
         ContainerNode::new(rows)
             .with_tag(CHOICE_POPUP_TAG)
@@ -1023,18 +1224,68 @@ fn view_choice_popup(
     )
 }
 
-/// The top-left of a choice popup for `row`: anchored at the value column,
-/// dropping below the row — or flipped above it when it would overflow the
-/// window bottom (the native dropdown edge behaviour). Deterministic because
-/// the title band has a fixed height ([`TITLE_H`]).
-fn choice_popup_origin(row: usize, options_len: usize) -> (u32, u32) {
+/// The open colour popup: a grid of swatch chips (R869), absolutely
+/// positioned at — or flipped above — the editing row's value cell. Each
+/// swatch is tagged `{GRID_TAG}#sw{i}` so its click / hover routes to the
+/// coordinator. The caller pushes a full-window dismiss barrier beneath it.
+fn view_color_popup(
+    row: usize,
+    current: Color,
+    cursor: usize,
+    hover: Option<usize>,
+    theme: &Theme,
+) -> Scene {
+    let grid_rows: Vec<Scene> = (0..COLOR_SWATCHES.len())
+        .step_by(SWATCH_COLS)
+        .map(|start| {
+            let end = (start + SWATCH_COLS).min(COLOR_SWATCHES.len());
+            let cells: Vec<Scene> = (start..end)
+                .map(|i| {
+                    let (color, _) = COLOR_SWATCHES[i];
+                    view_swatch(i, color, color == current, cursor == i, hover == Some(i), theme)
+                })
+                .collect();
+            Scene::Container(ContainerNode::new(cells).with_layout(
+                LayoutStyle::new().flex(FlexDirection::Row).with_gap(SWATCH_GAP),
+            ))
+        })
+        .collect();
+    let cols = u32::try_from(SWATCH_COLS).expect("cols fit in u32");
+    let n_rows =
+        u32::try_from(COLOR_SWATCHES.len().div_ceil(SWATCH_COLS)).expect("row count fits in u32");
+    let panel_w = cols * SWATCH_SIZE + (cols - 1) * SWATCH_GAP + 2 * POPUP_PAD;
+    let panel_h = n_rows * SWATCH_SIZE + (n_rows - 1) * SWATCH_GAP + 2 * POPUP_PAD;
+    let (x, y) = popup_origin(row, panel_h);
+    Scene::Container(
+        ContainerNode::new(grid_rows)
+            .with_tag(COLOR_POPUP_TAG)
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainer))
+                    .with_corner_radius(6)
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1))
+                    .with_shadows(elevation(MENU_LEVEL)),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(x, y)
+                    .with_size(Size::px(panel_w, panel_h))
+                    .flex(FlexDirection::Column)
+                    .with_gap(SWATCH_GAP)
+                    .with_padding(Rect::new(POPUP_PAD, POPUP_PAD, POPUP_PAD, POPUP_PAD)),
+            ),
+    )
+}
+
+/// The top-left of a popup of height `panel_h` for `row`: anchored at the
+/// value column, dropping below the row — or flipped above it when it would
+/// overflow the window bottom (the native dropdown edge behaviour). Shared by
+/// the choice + colour popups; deterministic because the title band has a
+/// fixed height ([`TITLE_H`]).
+fn popup_origin(row: usize, panel_h: u32) -> (u32, u32) {
     let x = PANEL_PAD + GRID_BORDER + NAME_COL_W;
     let row_step = ROW_H + ROW_GAP;
     let grid_top = PANEL_PAD + TITLE_H + TITLE_GAP + GRID_BORDER;
-    let row_top =
-        grid_top + row_step + u32::try_from(row).expect("row fits in u32") * row_step;
-    let panel_h =
-        u32::try_from(options_len).expect("option count fits in u32") * POPUP_OPT_H + 2 * POPUP_PAD;
+    let row_top = grid_top + row_step + u32::try_from(row).expect("row fits in u32") * row_step;
     let below = row_top + ROW_H;
     let content_bottom = WIN_H - PANEL_PAD;
     let y = if below + panel_h <= content_bottom {
@@ -1132,16 +1383,25 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     );
 
     let mut children = vec![title, grid];
-    // A choice popup floats over the grid (absolutely positioned) with a
-    // full-window light-dismiss barrier beneath it — the barrier is pushed
-    // first so the panel hit-tests on top; a click outside the panel routes
-    // `dismiss` to the coordinator (the toggle-close convention).
+    // A choice / colour popup floats over the grid (absolutely positioned)
+    // with a full-window light-dismiss barrier beneath it — the barrier is
+    // pushed first so the panel hit-tests on top; a click outside the panel
+    // routes `dismiss` to the coordinator (the toggle-close convention).
     if let Some(row) = editing {
-        if let Some(CellValue::Choice { selected, options }) = model.get(row) {
-            let cursor = use_choice_cursor().get().unwrap_or(*selected);
-            let hover = use_choice_hover().get();
-            children.push(dismiss_barrier(CHOICE_DISMISS_TAG, (0, 0), (WIN_W, WIN_H)));
-            children.push(view_choice_popup(row, options, *selected, cursor, hover, &theme));
+        match model.get(row) {
+            Some(CellValue::Choice { selected, options }) => {
+                let cursor = use_choice_cursor().get().unwrap_or(*selected);
+                let hover = use_choice_hover().get();
+                children.push(dismiss_barrier(CHOICE_DISMISS_TAG, (0, 0), (WIN_W, WIN_H)));
+                children.push(view_choice_popup(row, options, *selected, cursor, hover, &theme));
+            }
+            Some(CellValue::Color(c)) => {
+                let cursor = use_choice_cursor().get().unwrap_or(0);
+                let hover = use_choice_hover().get();
+                children.push(dismiss_barrier(CHOICE_DISMISS_TAG, (0, 0), (WIN_W, WIN_H)));
+                children.push(view_color_popup(row, *c, cursor, hover, &theme));
+            }
+            _ => {}
         }
     }
 
@@ -1340,29 +1600,56 @@ impl WidgetA11y for PropertyGridView {
         let mut nodes =
             grid_table_nodes(GRID_TAG, "Inspector", false, "pg_header", &columns, &rows);
         if let Some(row) = use_editing_row().get() {
-            if let Some(CellValue::Choice { selected, options }) = model.get(row) {
-                let cursor = use_choice_cursor().get().unwrap_or(*selected);
-                let hover = use_choice_hover().get();
-                let tags: Vec<String> = (0..options.len())
-                    .map(|i| format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}"))
-                    .collect();
-                let opts: Vec<ListOption<'_>> = options
-                    .iter()
-                    .enumerate()
-                    .map(|(i, label)| ListOption {
-                        tag: &tags[i],
-                        label: Some(label.as_str()),
-                        state: if hover == Some(i) {
-                            ListboxItemState::Hover
-                        } else {
-                            ListboxItemState::Idle
-                        },
-                        selected: *selected == i,
-                        focused: cursor == i,
-                    })
-                    .collect();
-                let name = format!("{} options", PROPERTY_NAMES[row]);
-                nodes.extend(listbox_option_nodes(CHOICE_POPUP_TAG, &name, false, &opts));
+            match model.get(row) {
+                Some(CellValue::Choice { selected, options }) => {
+                    let cursor = use_choice_cursor().get().unwrap_or(*selected);
+                    let hover = use_choice_hover().get();
+                    let tags: Vec<String> = (0..options.len())
+                        .map(|i| format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}"))
+                        .collect();
+                    let opts: Vec<ListOption<'_>> = options
+                        .iter()
+                        .enumerate()
+                        .map(|(i, label)| ListOption {
+                            tag: &tags[i],
+                            label: Some(label.as_str()),
+                            state: if hover == Some(i) {
+                                ListboxItemState::Hover
+                            } else {
+                                ListboxItemState::Idle
+                            },
+                            selected: *selected == i,
+                            focused: cursor == i,
+                        })
+                        .collect();
+                    let name = format!("{} options", PROPERTY_NAMES[row]);
+                    nodes.extend(listbox_option_nodes(CHOICE_POPUP_TAG, &name, false, &opts));
+                }
+                Some(CellValue::Color(current)) => {
+                    let cursor = use_choice_cursor().get().unwrap_or(0);
+                    let hover = use_choice_hover().get();
+                    let tags: Vec<String> = (0..COLOR_SWATCHES.len())
+                        .map(|i| format!("{GRID_TAG}#{COLOR_SW_PREFIX}{i}"))
+                        .collect();
+                    let opts: Vec<ListOption<'_>> = COLOR_SWATCHES
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &(color, label))| ListOption {
+                            tag: &tags[i],
+                            label: Some(label),
+                            state: if hover == Some(i) {
+                                ListboxItemState::Hover
+                            } else {
+                                ListboxItemState::Idle
+                            },
+                            selected: color == *current,
+                            focused: cursor == i,
+                        })
+                        .collect();
+                    let name = format!("{} swatches", PROPERTY_NAMES[row]);
+                    nodes.extend(listbox_option_nodes(COLOR_POPUP_TAG, &name, false, &opts));
+                }
+                _ => {}
             }
         }
         nodes
@@ -1421,7 +1708,7 @@ mod tests {
         Owner::new().run(|| {
             let scene = boot_scene();
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(11)));
+            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(12)));
             assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(0)));
             assert_eq!(intro.query("name.0"), Some(IntrospectValue::Text("Name".to_owned())));
             assert_eq!(intro.query("kind.2"), Some(IntrospectValue::Text("bool".to_owned())));
@@ -1468,7 +1755,7 @@ mod tests {
             assert!(intro.intervene("focused_row", IntrospectValue::Int(4)).is_ok());
             assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(4)));
             assert!(intro.intervene("focused_row", IntrospectValue::Int(999)).is_ok());
-            assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(10)), "clamped to last");
+            assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(11)), "clamped to last");
         });
     }
 
@@ -1853,6 +2140,115 @@ mod tests {
             assert_eq!(options.len(), 4, "one option node per choice");
             assert_eq!(options[0].selected, Some(true), "option 0 is aria-selected (Normal)");
             assert!(options[0].state.focused, "cursor 0 is the active descendant");
+        });
+    }
+
+    // ----- colour popup (R869) -----
+
+    /// The Tint colour row — index 11, default Blue (swatch index 4).
+    const TINT_ROW: usize = 11;
+
+    #[test]
+    fn r869_color_boot_taxonomy() {
+        Owner::new().run(|| {
+            let scene = boot_scene();
+            let intro = grid_intro(&scene);
+            assert_eq!(intro.query("kind.11"), Some(IntrospectValue::Text("color".to_owned())));
+            let Some(IntrospectValue::Json(tint)) = intro.query("value.11") else {
+                panic!("colour value is json");
+            };
+            assert_eq!(tint["hex"], serde_json::json!("#1e88e5"), "Tint boots Blue");
+            assert_eq!(tint["r"], serde_json::json!(0x1e));
+            assert_eq!(tint["b"], serde_json::json!(0xe5));
+        });
+    }
+
+    #[test]
+    fn r869_begin_opens_popup_and_seeds_swatch_cursor() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            open_choice(&mut scene, TINT_ROW); // shared open helper (invoke begin)
+            let intro = grid_intro(&scene);
+            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from(11))));
+            assert_eq!(
+                intro.query("choice_cursor"),
+                Some(IntrospectValue::Int(4)),
+                "cursor seeded at the swatch matching the committed colour (Blue=4)",
+            );
+        });
+    }
+
+    #[test]
+    fn r869_keyboard_roves_and_commits_swatch() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            open_choice(&mut scene, TINT_ROW);
+            // Blue(4) -> Right -> Yellow(5).
+            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowRight", Modifiers::empty()));
+            assert_eq!(grid_intro(&scene).query("choice_cursor"), Some(IntrospectValue::Int(5)));
+            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
+            let Some(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.11") else {
+                panic!("json");
+            };
+            assert_eq!(v["hex"], serde_json::json!("#fdd835"), "committed Yellow");
+            assert_eq!(grid_intro(&scene).query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+        });
+    }
+
+    #[test]
+    fn r869_pick_color_click_and_intervene_hex() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let n = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+            let intro = n.handle.introspect_mut().expect("introspectable");
+            // Single-click the Tint row opens; clicking swatch 2 (Red) commits.
+            let _ = intro.invoke("send", IntrospectValue::Text("11:PointerUp".to_owned()));
+            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from(11))));
+            let _ = intro.invoke("send", IntrospectValue::Text("sw2:PointerUp".to_owned()));
+            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else { panic!("json") };
+            assert_eq!(v["hex"], serde_json::json!("#e53935"), "clicked Red");
+            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            // The RPC pick_color path commits + closes too.
+            let _ = intro.invoke("begin", IntrospectValue::Int(11));
+            assert_eq!(intro.invoke("pick_color", IntrospectValue::Int(0)), Ok(IntrospectValue::Bool(true)));
+            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else { panic!("json") };
+            assert_eq!(v["hex"], serde_json::json!("#ffffff"), "pick_color 0 -> White");
+            // intervene sets an arbitrary colour by hex (the AI-first path).
+            assert!(intro.intervene("value.11", IntrospectValue::Text("#abcdef".to_owned())).is_ok());
+            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else { panic!("json") };
+            assert_eq!(v["hex"], serde_json::json!("#abcdef"));
+            assert_eq!(
+                intro.intervene("value.11", IntrospectValue::Text("nope".to_owned())),
+                Err(InterveneError::OutOfRange),
+            );
+        });
+    }
+
+    #[test]
+    fn r869_view_and_a11y_expose_the_open_color_popup() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let closed = view((TextFieldState::Idle, 0), &Frame::new());
+            assert!(!closed.contains_tag(COLOR_POPUP_TAG), "no colour panel when closed");
+            open_choice(&mut scene, TINT_ROW);
+            let open = view((TextFieldState::Idle, 0), &Frame::new());
+            assert!(open.contains_tag(COLOR_POPUP_TAG), "colour panel painted when open");
+            assert!(open.contains_tag(CHOICE_DISMISS_TAG), "dismiss barrier painted");
+            assert!(open.contains_tag(&format!("{GRID_TAG}#sw0")), "swatch 0 painted");
+            assert!(open.contains_tag(&format!("{GRID_TAG}#sw7")), "swatch 7 painted");
+            let nodes = PropertyGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            let listbox = nodes
+                .iter()
+                .find(|n| n.role == pinion_a11y::AriaRole::Listbox)
+                .expect("colour listbox node when open");
+            assert_eq!(listbox.name.as_deref(), Some("Tint swatches"));
+            let swatches: Vec<_> =
+                nodes.iter().filter(|n| n.role == pinion_a11y::AriaRole::ListBoxOption).collect();
+            assert_eq!(swatches.len(), COLOR_SWATCHES.len(), "one option node per swatch");
+            // Blue (index 4) is the committed selection + the cursor.
+            assert_eq!(swatches[4].selected, Some(true), "Blue swatch is aria-selected");
+            assert!(swatches[4].state.focused, "Blue swatch is the active descendant");
+            assert_eq!(swatches[2].name.as_deref(), Some("Red"));
         });
     }
 
