@@ -46,7 +46,7 @@
 //! the visible rows (the windowed-widget keyboard model
 //! `hello-virtual-select` / `hello-virtual-nav` use).
 
-use pinion_a11y::{tree_access_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, WidgetA11y};
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
@@ -669,7 +669,26 @@ impl WidgetA11y for SceneGraphFilter {
         let window =
             compute_visible_range(scroll.offset_y(), measured_h, rows.len(), ROW_PITCH, OVERSCAN);
         let slice: &[VisibleRow] = &rows[window.first..window.first + window.count];
-        tree_access_nodes(ROOT_TAG, TREE_TAG, Some("Scene graph"), slice, cursor.as_deref())
+        tree_access_nodes(
+            ROOT_TAG,
+            TREE_TAG,
+            Some("Scene graph"),
+            slice,
+            cursor.as_deref(),
+            cursor.as_deref(),
+        )
+    }
+
+    /// R868 — composite focus: the filtered tree's keyboard cursor is the
+    /// `aria-activedescendant` while the tree owns focus (the cursor row is
+    /// always within the filtered set — `reveal`/clamp keep it visible).
+    fn access_focus_target(_state: &ButtonState, focused: Option<&str>) -> Option<AccessFocus> {
+        if focused == Some(ROOT_TAG)
+            && let Some(cursor) = use_tree_state().focused_id.get()
+        {
+            return Some(AccessFocus::composite(ROOT_TAG, tree_row_tag(TREE_TAG, &cursor)));
+        }
+        focused.map(AccessFocus::atomic)
     }
 }
 
@@ -688,9 +707,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_key_impl, initial_nodes, sorted_tree, use_filter, use_tree_state, view,
+        apply_key_impl, initial_nodes, sorted_tree, tree_row_tag, use_filter, use_tree_state, view,
         SceneGraphFilter, TreeRow, TreeSort, TreeSortExternal, CHILDREN_PER, CLICK_INTENT_TAG,
-        EXPANDED_AT_BOOT, GROUPS, ROW_PITCH, SCROLL_KEY, TOTAL_NODES, TREE_TAG,
+        EXPANDED_AT_BOOT, GROUPS, ROOT_TAG, ROW_PITCH, SCROLL_KEY, TOTAL_NODES, TREE_TAG,
     };
     use std::rc::Rc;
 
@@ -835,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn a11y_tree_lowers_filtered_window_with_cursor_selected() {
+    fn a11y_tree_lowers_filtered_window_with_cursor_selected_and_active() {
         Owner::new().run(|| {
             use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_VIEWPORT_W, WIN_VIEWPORT_H);
             let filter = use_filter();
@@ -852,6 +871,17 @@ mod tests {
                 nodes.iter().any(|n| n.selected == Some(true)),
                 "the cursor row is aria-selected (selection-follows-focus)",
             );
+            // R868 — and `aria-activedescendant`: composite focus names the
+            // cursor row, and that row node carries `with_focused`.
+            let focus = SceneGraphFilter::access_focus_target(&ButtonState::Idle, Some(ROOT_TAG))
+                .expect("tree focused -> composite focus target");
+            assert_eq!(
+                focus.active_descendant.as_deref(),
+                Some(tree_row_tag(TREE_TAG, "g3").as_str()),
+            );
+            let cursor =
+                nodes.iter().find(|n| n.tag == tree_row_tag(TREE_TAG, "g3")).expect("cursor row");
+            assert!(cursor.state.focused, "cursor row carries with_focused");
         });
     }
 

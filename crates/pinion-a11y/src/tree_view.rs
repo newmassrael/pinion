@@ -55,7 +55,12 @@ use pinion_core::widgets::tree_nav::VisibleRow;
 /// composite-tag decision (only the decode side warrants a named parser),
 /// so it is inlined here rather than reaching across into
 /// `pinion-widget-paint`.
-fn tree_row_tag(row_prefix: &str, id: &str) -> String {
+/// The `treeitem` node tag for a row — `{row_prefix}#{id}`. Exported (R868)
+/// so a binding's `access_focus_target` override names the exact node the
+/// builder emits as the `aria-activedescendant` (the cursor row), one SSOT
+/// for the row tag instead of a hand-formatted composite that could drift.
+#[must_use]
+pub fn tree_row_tag(row_prefix: &str, id: &str) -> String {
     format!("{row_prefix}#{id}")
 }
 
@@ -79,6 +84,12 @@ fn tree_row_tag(row_prefix: &str, id: &str) -> String {
 /// - `selected_id` — the row id carrying `aria-selected` (the single-select
 ///   cursor / selection-follows-focus row), or `None` for a tree with no
 ///   selection model.
+/// - `focused_id` — the row id carrying `aria-activedescendant` (the keyboard
+///   cursor), or `None` for a tree the keyboard never roves (e.g. a
+///   click-only selection list). Decoupled from `selected_id` (R868) because
+///   a click-selected tree has a selection but no keyboard cursor, while a
+///   navigation tree has a cursor but no selection — only a roving
+///   selection-follows-focus tree passes the same id for both.
 ///
 /// # Returns
 ///
@@ -91,6 +102,7 @@ pub fn tree_access_nodes(
     name: Option<&str>,
     rows: &[VisibleRow],
     selected_id: Option<&str>,
+    focused_id: Option<&str>,
 ) -> Vec<AccessNode> {
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(rows.len() + 1);
     let mut root = AccessNode::new(tree_tag, AriaRole::Tree);
@@ -112,20 +124,19 @@ pub fn tree_access_nodes(
         if row.has_children {
             node = node.with_expanded(row.expanded);
         }
-        // Single-select tree: only the cursor / selected row is selected.
-        //
-        // R866 carry — a single-tab-stop *roving* tree should ALSO convey its
-        // keyboard cursor through `aria-activedescendant` (the binding overrides
-        // `access_focus_target` → [`AccessFocus::composite`] + the cursor row
-        // carries `with_focused`), not `aria-selected` alone. The treegrid
-        // (`treegrid_nodes`) establishes that pattern at R866; lifting it to
-        // this *plain*-tree builder touches every consumer
-        // (`hello-virtual-tree` / `hello-tree-view` / `hello-tree-filter` /
-        // the `hello-dock-panels` inspector), so it is a documented follow-up
-        // round, not bolted on here (the inspector's composite-focus model
-        // needs analysis first — `[[routing-and-focus-are-separate-axes]]`).
+        // R868 — the single-tab-stop *roving* tree conveys its keyboard
+        // cursor through BOTH `aria-selected` (when it is the selection) and
+        // `aria-activedescendant` (the binding overrides `access_focus_target`
+        // → [`AccessFocus::composite`]; the cursor row also carries
+        // `with_focused`), matching the treegrid (`treegrid_nodes`, R866).
+        // The two ids are separate inputs because a click-only selection tree
+        // (`hello-multi-window`) has no keyboard cursor and a navigation tree
+        // (`hello-tree-view`) has no selection.
         if selected_id == Some(row.id.as_str()) {
             node = node.with_selected(true);
+        }
+        if focused_id == Some(row.id.as_str()) {
+            node = node.with_focused(true);
         }
         nodes.push(node);
     }
@@ -345,7 +356,7 @@ mod tests {
     }
 
     fn nodes() -> Vec<AccessNode> {
-        tree_access_nodes("tree", "tree", None, &sample_rows(), None)
+        tree_access_nodes("tree", "tree", None, &sample_rows(), None, None)
     }
 
     #[test]
@@ -435,7 +446,7 @@ mod tests {
     #[test]
     fn selected_row_carries_aria_selected_others_omit_it() {
         // Single-select tree: only the named cursor row is aria-selected.
-        let out = tree_access_nodes("tree", "tree", None, &sample_rows(), Some("src/widgets"));
+        let out = tree_access_nodes("tree", "tree", None, &sample_rows(), Some("src/widgets"), None);
         let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
         assert_eq!(by_tag("tree#src/widgets").selected, Some(true), "cursor row selected");
         assert_eq!(by_tag("tree#src").selected, None, "non-cursor row omits aria-selected");
@@ -447,6 +458,23 @@ mod tests {
         for node in &nodes()[1..] {
             assert_eq!(node.selected, None, "None selected_id → no aria-selected anywhere");
         }
+    }
+
+    #[test]
+    fn focused_row_carries_activedescendant_decoupled_from_selection() {
+        // R868 — the keyboard cursor row carries `with_focused`
+        // (aria-activedescendant), independent of `aria-selected`: here a
+        // navigation tree has a cursor but no selection.
+        let out = tree_access_nodes("tree", "tree", None, &sample_rows(), None, Some("src/widgets"));
+        let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
+        assert!(by_tag("tree#src/widgets").state.focused, "cursor row is the active descendant");
+        assert_eq!(by_tag("tree#src/widgets").selected, None, "no selection model: not selected");
+        assert!(!by_tag("tree#src").state.focused, "non-cursor row is not focused");
+        // A click-only selection tree: selected but no keyboard cursor.
+        let sel = tree_access_nodes("tree", "tree", None, &sample_rows(), Some("docs"), None);
+        let sel_by = |tag: &str| sel.iter().find(|n| n.tag == tag).expect("row present");
+        assert_eq!(sel_by("tree#docs").selected, Some(true), "click-selected row is selected");
+        assert!(!sel_by("tree#docs").state.focused, "no keyboard cursor: not active descendant");
     }
 
     #[test]
@@ -465,7 +493,7 @@ mod tests {
         // ("tree_root") vs the painted tree container's row prefix
         // ("file_tree"). The Tree node carries the root tag; rows carry
         // the prefix.
-        let out = tree_access_nodes("tree_root", "file_tree", None, &sample_rows(), None);
+        let out = tree_access_nodes("tree_root", "file_tree", None, &sample_rows(), None, None);
         assert_eq!(out[0].tag, "tree_root", "Tree root node uses the focusable tag");
         assert_eq!(out[1].tag, "file_tree#src", "rows use the composite prefix");
         assert_eq!(out[0].children[0], "file_tree#src", "root references the prefixed row tags");
@@ -473,14 +501,15 @@ mod tests {
 
     #[test]
     fn optional_name_lowers_when_present() {
-        let named = tree_access_nodes("tree", "tree", Some("Scene inspector"), &sample_rows(), None);
+        let named =
+            tree_access_nodes("tree", "tree", Some("Scene inspector"), &sample_rows(), None, None);
         assert_eq!(named[0].name.as_deref(), Some("Scene inspector"));
         assert_eq!(nodes()[0].name, None, "no name when None");
     }
 
     #[test]
     fn empty_rows_emit_tree_root_only() {
-        let out = tree_access_nodes("tree", "tree", None, &[], None);
+        let out = tree_access_nodes("tree", "tree", None, &[], None, None);
         assert_eq!(out.len(), 1, "empty tree → just the role=tree root");
         assert_eq!(out[0].role, AriaRole::Tree);
         assert!(out[0].children.is_empty(), "root references no rows");

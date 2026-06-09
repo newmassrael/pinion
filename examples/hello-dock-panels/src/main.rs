@@ -1129,11 +1129,16 @@ impl WidgetView for DockPanelsView {
         let items = inspector_tree_items(*state, &theme);
         let rows = flat_visible(&items);
         let selected = use_selected_path().get();
+        // R868 — the inspector's selection is also its keyboard cursor (the
+        // `access_focus_target` override already names it as the active
+        // descendant); pass it as `focused_id` so the row node carries
+        // `with_focused` to match.
         tree_access_nodes(
             INSPECTOR_TREE_TAG,
             INSPECTOR_TREE_TAG,
             Some(INSPECTOR_TREE_NAME),
             &rows,
+            selected.as_deref(),
             selected.as_deref(),
         )
     }

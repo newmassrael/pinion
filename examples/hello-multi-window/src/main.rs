@@ -1072,12 +1072,16 @@ impl WidgetView for MultiWindowView {
         let items = inspector_tree_items(*state);
         let rows = flat_visible(&items);
         let selected = use_selected_path().get();
+        // R868 — the inspector is click-selected, not keyboard-roved, so it
+        // has a selection (`aria-selected`) but no keyboard cursor: pass
+        // `focused_id = None` (no `aria-activedescendant`).
         tree_access_nodes(
             INSPECTOR_TREE_TAG,
             INSPECTOR_TREE_TAG,
             Some(INSPECTOR_TREE_NAME),
             &rows,
             selected.as_deref(),
+            None,
         )
     }
 }

@@ -92,7 +92,7 @@ pub use tabs::{tablist_tab_nodes, TabCell};
 pub use toggle_group::{toggle_button_group_nodes, ToggleSegment};
 pub use toolbar::{toolbar_button_nodes, ToolbarControl};
 pub use tree::{tag_to_node_id, AccessTreeBuilder, ROOT_NODE_ID};
-pub use tree_view::{tree_access_nodes, treegrid_nodes};
+pub use tree_view::{tree_access_nodes, tree_row_tag, treegrid_nodes};
 pub use virtual_grid::{
     windowed_grid_nodes, windowed_grid_nodes_frozen, windowed_grid_nodes_multiselected,
     windowed_grid_nodes_selected, windowed_grid_nodes_sorted,

@@ -73,7 +73,7 @@
 //! consumers per [[abstraction-needs-second-consumer]]. Click-to-toggle
 //! is already wired (R674 [`TreeRowClickExternal`]).
 
-use pinion_a11y::{tree_access_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, WidgetA11y};
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -509,14 +509,31 @@ impl WidgetA11y for TreeViewBinding {
     /// the builder derives from the [`flat_visible`] SSOT — so the AT
     /// announces exactly the row set the user sees and the keyboard cursor
     /// navigates. This tree carries no selection model, so `selected_id`
-    /// is `None`.
+    /// is `None`; R868 conveys the keyboard cursor as `focused_id`
+    /// (`aria-activedescendant`) instead.
     fn access_node(
         _state: &<Self as WidgetCore>::State,
         _focused: Option<&str>,
     ) -> Vec<AccessNode> {
         let tree_state = use_tree_state();
         let nodes = tree_state.nodes.get();
-        tree_access_nodes(ROOT_BTN_TAG, TREE_TAG, None, &flat_visible(&nodes), None)
+        let cursor = tree_state.focused_id.get();
+        tree_access_nodes(ROOT_BTN_TAG, TREE_TAG, None, &flat_visible(&nodes), None, cursor.as_deref())
+    }
+
+    /// R868 — composite focus: a navigation tree (no selection) still owns a
+    /// keyboard cursor, conveyed as `aria-activedescendant` while the tree's
+    /// focusable root holds shell focus.
+    fn access_focus_target(
+        _state: &<Self as WidgetCore>::State,
+        focused: Option<&str>,
+    ) -> Option<AccessFocus> {
+        if focused == Some(ROOT_BTN_TAG)
+            && let Some(cursor) = use_tree_state().focused_id.get()
+        {
+            return Some(AccessFocus::composite(ROOT_BTN_TAG, tree_row_tag(TREE_TAG, &cursor)));
+        }
+        focused.map(AccessFocus::atomic)
     }
 }
 
@@ -601,7 +618,7 @@ mod r812_tree_access_node_lockstep {
         // External (ROOT_BTN_TAG), distinct from the painted tree
         // container's row prefix (TREE_TAG) — the builder takes both.
         let rows = flat_visible(&sample_tree());
-        let out = tree_access_nodes(ROOT_BTN_TAG, TREE_TAG, None, &rows, None);
+        let out = tree_access_nodes(ROOT_BTN_TAG, TREE_TAG, None, &rows, None, None);
         assert_eq!(out[0].tag, ROOT_BTN_TAG, "Tree root node = the focusable External");
         assert_eq!(out[0].role, AriaRole::Tree);
         // Every row tag matches the paint substrate's composite form, so
@@ -610,5 +627,39 @@ mod r812_tree_access_node_lockstep {
             assert_eq!(node.tag, composite_row_tag(TREE_TAG, &row.id));
             assert_eq!(node.role, AriaRole::TreeItem);
         }
+    }
+}
+
+#[cfg(test)]
+mod r868_active_descendant {
+    //! R868 §5.40 — the navigation tree's keyboard cursor lowers to
+    //! `aria-activedescendant` (composite focus + the cursor row's
+    //! `with_focused`) while carrying no `aria-selected` (no selection model).
+    use super::{TreeViewBinding, ROOT_BTN_TAG, TREE_TAG};
+    use pinion_a11y::{tree_row_tag, WidgetA11y};
+    use pinion_core::reactive::Owner;
+    use pinion_core::widgets::button::ButtonState;
+
+    #[test]
+    fn cursor_is_active_descendant_without_selection() {
+        Owner::new().run(|| {
+            // Boot cursor is "src".
+            let focus = TreeViewBinding::access_focus_target(&ButtonState::Idle, Some(ROOT_BTN_TAG))
+                .expect("tree focused -> composite focus target");
+            assert_eq!(focus.focus_tag, ROOT_BTN_TAG);
+            assert_eq!(
+                focus.active_descendant.as_deref(),
+                Some(tree_row_tag(TREE_TAG, "src").as_str()),
+                "active descendant = the cursor row",
+            );
+            let nodes = TreeViewBinding::access_node(&ButtonState::Idle, None);
+            let cursor =
+                nodes.iter().find(|n| n.tag == tree_row_tag(TREE_TAG, "src")).expect("cursor row");
+            assert!(cursor.state.focused, "cursor row carries with_focused");
+            assert_eq!(cursor.selected, None, "navigation tree: cursor not aria-selected");
+            // Focus elsewhere -> atomic, no active descendant.
+            let other = TreeViewBinding::access_focus_target(&ButtonState::Idle, Some("elsewhere"));
+            assert!(other.expect("atomic").active_descendant.is_none());
+        });
     }
 }

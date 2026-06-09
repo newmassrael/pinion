@@ -43,7 +43,7 @@
 //! the `clamp_nav` + `scroll_offset_to_reveal` SSOTs the family already
 //! owns; no new substrate.
 
-use pinion_a11y::{tree_access_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -456,7 +456,28 @@ impl WidgetA11y for VirtualTreeView {
         let window =
             compute_visible_range(scroll.offset_y(), measured_h, rows.len(), ROW_PITCH, OVERSCAN);
         let slice: &[VisibleRow] = &rows[window.first..window.first + window.count];
-        tree_access_nodes(ROOT_TAG, TREE_TAG, Some("Virtual file tree"), slice, cursor.as_deref())
+        tree_access_nodes(
+            ROOT_TAG,
+            TREE_TAG,
+            Some("Virtual file tree"),
+            slice,
+            cursor.as_deref(),
+            cursor.as_deref(),
+        )
+    }
+
+    /// R868 — composite focus: while the tree owns shell focus and a cursor
+    /// exists, focus stays on [`ROOT_TAG`] and the cursor row is the
+    /// `aria-activedescendant` (the treegrid R866 / combobox R714 pattern).
+    /// The cursor may be off the paint window; the AT still names it (a
+    /// virtualized tree's active descendant need not be rendered).
+    fn access_focus_target(_state: &ButtonState, focused: Option<&str>) -> Option<AccessFocus> {
+        if focused == Some(ROOT_TAG)
+            && let Some(cursor) = use_tree_state().focused_id.get()
+        {
+            return Some(AccessFocus::composite(ROOT_TAG, tree_row_tag(TREE_TAG, &cursor)));
+        }
+        focused.map(AccessFocus::atomic)
     }
 }
 
@@ -478,8 +499,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_key_impl, flat_visible, initial_nodes, toggle_expanded, use_tree_state, view,
-        TreeRow, VirtualTreeView, CHILDREN_PER, CLICK_INTENT_TAG, EXPANDED_AT_BOOT, OVERSCAN,
+        apply_key_impl, flat_visible, initial_nodes, toggle_expanded, tree_row_tag, use_tree_state,
+        view, TreeRow, VirtualTreeView, CHILDREN_PER, CLICK_INTENT_TAG, EXPANDED_AT_BOOT, OVERSCAN,
         ROOT_TAG, ROW_PITCH, SCROLL_KEY, SECTIONS, TOTAL_NODES, TREE_TAG,
     };
     use pinion_a11y::{AriaRole, WidgetA11y};
@@ -618,6 +639,38 @@ mod tests {
             .find(|n| n.tag.ends_with("#s0"))
             .expect("section 0 in the boot window");
         assert_eq!(s0.expanded, Some(true), "s0 boots expanded (aria-expanded=true)");
+    }
+
+    #[test]
+    fn r868_cursor_is_active_descendant() {
+        // R868 — while the tree owns focus, the keyboard cursor (boot "s0")
+        // is named as `aria-activedescendant` via composite focus, and the
+        // cursor row node carries `with_focused` to match.
+        let owner = Owner::new();
+        let (focus, nodes, elsewhere) = owner.run(|| {
+            let scroll = use_scroll_state(SCROLL_KEY);
+            scroll.set_measured_viewport(440, 10 * ROW_PITCH);
+            (
+                VirtualTreeView::access_focus_target(&ButtonState::Idle, Some(ROOT_TAG)),
+                VirtualTreeView::access_node(&ButtonState::Idle, None),
+                VirtualTreeView::access_focus_target(&ButtonState::Idle, Some("other")),
+            )
+        });
+        let focus = focus.expect("tree focused -> composite focus target");
+        assert_eq!(focus.focus_tag, ROOT_TAG);
+        assert_eq!(
+            focus.active_descendant.as_deref(),
+            Some(tree_row_tag(TREE_TAG, "s0").as_str()),
+            "active descendant = the cursor row",
+        );
+        let cursor =
+            nodes.iter().find(|n| n.tag == tree_row_tag(TREE_TAG, "s0")).expect("cursor windowed");
+        assert!(cursor.state.focused, "cursor row carries with_focused");
+        assert_eq!(cursor.selected, Some(true), "selection-follows-focus");
+        assert!(
+            elsewhere.expect("atomic when not on the tree").active_descendant.is_none(),
+            "focus elsewhere -> atomic, no active descendant",
+        );
     }
 
     #[test]

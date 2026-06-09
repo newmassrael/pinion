@@ -35707,6 +35707,62 @@
         "both choice rows near window bottom so both popups flip up; future layout could group them higher"
       ]
     },
+    "R868": {
+      "decision_summary": "R868 tree-family aria-activedescendant a11y: tree_access_nodes += focused_id (decoupled from aria-selected) + composite access_focus_target on the 3 plain trees, clearing the R866 carry",
+      "changes_bullets": [
+        "a11y: tree_access_nodes += focused_id (with_focused on cursor row, decoupled from aria-selected)",
+        "a11y: export tree_row_tag as the SSOT for the activedescendant tag the override names",
+        "a11y: resolve the R866-carry comment; treegrid_nodes left as-is (sole roved consumer)",
+        "tree-view: composite access_focus_target + cursor as focused_id (selected stays None)",
+        "virtual-tree + tree-filter: composite access_focus_target + cursor as focused_id",
+        "dock-panels: focused_id=selected (already had the composite override)",
+        "multi-window: focused_id=None (click-only inspector, no keyboard cursor)"
+      ],
+      "verification_bullets": [
+        "pinion-a11y tree_view 21 tests green (new decoupled selected-vs-focused test; 6 callsites)",
+        "3 plain trees gain an activedescendant test: virtual-tree 68 + tree-filter 16 + tree-view 17 green",
+        "dock-panels 2/213 + multi-window 12/17 tests green (builder wire, no behavior change)",
+        "workspace test all green; clippy --workspace vello -D pedantic clean",
+        "regression demos PASS: r820 virtual-tree + r821 tree-filter + r809 tree-view keyboard"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "treegrid_nodes keeps one selected_id (sets both): its consumer is roving selection-follows-focus",
+        "YAGNI on a treegrid focused_id param until a click-only treegrid consumer appears",
+        "a11y is not RPC-queryable: this correctness round is verified by unit tests, no new demo",
+        "the row with_focused is secondary to the authoritative access_focus_target composite (both set)"
+      ],
+      "publishable_decision_summary": "R868 tree-family aria-activedescendant a11y: tree_access_nodes += focused_id (decoupled from aria-selected) + composite access_focus_target on the 3 plain trees, clearing the R866 carry",
+      "publishable_changes_bullets": [
+        "a11y: tree_access_nodes += focused_id (with_focused on cursor row, decoupled from aria-selected)",
+        "a11y: export tree_row_tag as the SSOT for the activedescendant tag the override names",
+        "a11y: resolve the R866-carry comment; treegrid_nodes left as-is (sole roved consumer)",
+        "tree-view: composite access_focus_target + cursor as focused_id (selected stays None)",
+        "virtual-tree + tree-filter: composite access_focus_target + cursor as focused_id",
+        "dock-panels: focused_id=selected (already had the composite override)",
+        "multi-window: focused_id=None (click-only inspector, no keyboard cursor)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-a11y tree_view 21 tests green (new decoupled selected-vs-focused test; 6 callsites)",
+        "3 plain trees gain an activedescendant test: virtual-tree 68 + tree-filter 16 + tree-view 17 green",
+        "dock-panels 2/213 + multi-window 12/17 tests green (builder wire, no behavior change)",
+        "workspace test all green; clippy --workspace vello -D pedantic clean",
+        "regression demos PASS: r820 virtual-tree + r821 tree-filter + r809 tree-view keyboard"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "treegrid_nodes keeps one selected_id (sets both): its consumer is roving selection-follows-focus",
+        "YAGNI on a treegrid focused_id param until a click-only treegrid consumer appears",
+        "a11y is not RPC-queryable: this correctness round is verified by unit tests, no new demo",
+        "the row with_focused is secondary to the authoritative access_focus_target composite (both set)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
