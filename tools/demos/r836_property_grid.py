@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    cursor_to_source,
     find_by_tag,
     run_demo,
     wait_until,
@@ -68,16 +69,6 @@ def _cursor_source(tf):
     if pos is None:
         return None
     return tf.query(f"/{CAT}/external/source_at.{pos}")
-
-
-def _cursor_to_source(tf, source: int) -> None:
-    """Move the roving cursor onto `source`'s visual row (category expanded)."""
-    n = tf.query(f"/{CAT}/external/visible_len")
-    for pos in range(n):
-        if tf.query(f"/{CAT}/external/source_at.{pos}") == source:
-            tf.intervene(f"/{CAT}/external/cursor", pos)
-            return
-    raise AssertionError(f"source {source} not visible in the flatten")
 
 
 def _focus_grid(tf) -> None:
@@ -132,7 +123,7 @@ def body() -> None:
                    interval=0.03, desc="Home -> visual row 0")
 
         # ── (C) bool toggle: Space on the focused bool, then click ───
-        _cursor_to_source(tf, 2)  # Visible (bool)
+        cursor_to_source(tf, CAT, 2)  # Visible (bool)
         assert_eq(tf.query("/external/value.2"), True, "Visible true before")
         tf.key(path=GRID, name="Space")
         wait_until(lambda: tf.query("/external/value.2") is False, timeout=4.0,
@@ -146,7 +137,7 @@ def body() -> None:
 
         # ── (D) text edit via keyboard: Enter -> type -> Enter ───────
         _focus_grid(tf)
-        _cursor_to_source(tf, 0)  # Name (text)
+        cursor_to_source(tf, CAT, 0)  # Name (text)
         tf.key(path=GRID, name="Enter")  # enter edit mode
         wait_until(lambda: tf.query("/external/editing") == 0, timeout=4.0,
                    interval=0.03, desc="Enter starts editing row 0")
@@ -166,7 +157,7 @@ def body() -> None:
 
         # ── (E) int edit + numeric gate (letters dropped) ───────────
         _focus_grid(tf)
-        _cursor_to_source(tf, 4)  # Layer (int) = 3
+        cursor_to_source(tf, CAT, 4)  # Layer (int) = 3
         tf.key(path=GRID, name="Enter")
         wait_until(lambda: tf.query("/external/editing") == 4, timeout=4.0,
                    interval=0.03, desc="Enter starts editing the int row")
@@ -182,7 +173,7 @@ def body() -> None:
 
         # ── (F) Escape cancels — the value is untouched ─────────────
         _focus_grid(tf)
-        _cursor_to_source(tf, 1)  # Tag (text) = "hero"
+        cursor_to_source(tf, CAT, 1)  # Tag (text) = "hero"
         tf.key(path=GRID, name="Enter")
         wait_until(lambda: tf.query("/external/editing") == 1, timeout=4.0,
                    interval=0.03, desc="editing the Tag row")

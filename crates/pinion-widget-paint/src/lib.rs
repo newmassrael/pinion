@@ -87,6 +87,7 @@ pub mod elevation;
 pub mod dock;
 pub mod drawer;
 pub mod file_browser;
+pub mod glyph;
 pub mod group_header;
 pub mod listbox;
 pub mod menu;

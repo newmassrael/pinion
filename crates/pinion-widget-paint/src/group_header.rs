@@ -29,16 +29,10 @@
 //! `U+25BC` expanded), so a grouped header reads with the same affordance as a
 //! [`crate::disclosure`] section and a `tree_view` branch.
 
+use crate::glyph::{DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED};
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, Theme};
-
-/// Collapsed-state twisty — `U+25B6` BLACK RIGHT-POINTING TRIANGLE, the
-/// disclosure / tree-branch glyph (matches [`crate::disclosure`]'s collapsed
-/// twisty and `tree_view`'s branch chevron).
-const GLYPH_COLLAPSED: &str = "\u{25B6}";
-/// Expanded-state twisty — `U+25BC` BLACK DOWN-POINTING TRIANGLE.
-const GLYPH_EXPANDED: &str = "\u{25BC}";
 
 /// Header label font size — 14 px (the grouped-collection header value the four
 /// consumers shared).

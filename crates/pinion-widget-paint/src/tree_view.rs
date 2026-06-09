@@ -51,6 +51,7 @@
 //!   keyboard-defer precedent).
 //! - **Multi-select / drag-drop / inline rename**. Not in R671 scope.
 
+use crate::glyph::{DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED};
 use pinion_core::composite_tag::parse_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
@@ -242,12 +243,6 @@ impl pinion_core::widgets::tree_nav::TreeNode for TreeItem {
     }
 }
 
-/// R671 §5.50 — collapsed-state expand glyph (`U+25B6` BLACK
-/// RIGHT-POINTING TRIANGLE). Named per [[non-ascii-literal-named-const-escape]].
-const GLYPH_COLLAPSED: &str = "\u{25B6}";
-/// R671 §5.50 — expanded-state expand glyph (`U+25BC` BLACK
-/// DOWN-POINTING TRIANGLE).
-const GLYPH_EXPANDED: &str = "\u{25BC}";
 /// R671 §5.50 — leaf placeholder glyph (`U+00A0` NO-BREAK SPACE).
 /// Same width-class as the triangles so leaf rows line up vertically
 /// with branch rows. Renders invisible — leaves carry no disclosure

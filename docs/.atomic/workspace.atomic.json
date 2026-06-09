@@ -6904,7 +6904,7 @@
         "5.40",
         "7"
       ],
-      "coverage_expectation": "informative"
+      "coverage_expectation": "out_of_scope_here"
     },
     "5.6": {
       "title": "Reuse path (early cascade-emit vs Rust-native then port)",
@@ -35997,6 +35997,66 @@
         "R871 carries persist: HSV pad (Color->HSV gap) / AccessState.focused unlowered / atomic R863-R870 backfill (user)"
       ]
     },
+    "R873": {
+      "decision_summary": "R873 audit-remediation of the R871/R872 session: a cost-no-object review (3 adversarial reviewers + my grep+read verify) found 7 real issues in my work (4 a11y, 1 SSOT-miss, 1 memo anti-pattern, 1 test-harness duplication); cleared them inline. Pre-existing substrate-wide findings (grouped-grid treegrid role, cell-name double-speak) carried for a dedicated round. Also adopts the Mnemosyne R422 3-state coverage migration.",
+      "changes_bullets": [
+        "a11y (C2): property-grid passed selected_source=cursor_source, stamping aria-selected on the focus-cursor row though there is no selection model -> selected_source=None; focus is aria-activedescendant only",
+        "a11y (B-A): popup a11y + aria-activedescendant were gated on editing_row alone, so an RPC filter on an open popup could point AT at an unpainted popup -> lift popup_view_pos SSOT (editing source in the live flatten); paint + access_node + access_focus_target all gate on it (paint/introspect parity)",
+        "a11y (C1): the R872 search box was Tab-focusable but emitted no a11y node -> add the lifted text_field_a11y_node (textbox role + \"Filter properties\" name)",
+        "a11y (C3): add a polite Status live region announcing the filtered property count",
+        "SSOT (A1): the disclosure twisty glyph (U+25B6/U+25BC) was defined 3x (disclosure/tree_view/group_header; R871 added the 3rd) -> lift pinion_widget_paint::glyph SSOT + retrofit all 3 (datepicker/table arrows stay separate, different semantics)",
+        "smell (A3): the R872 filtered order minted a fresh Rc per read, defeating GroupOrderState::rows()'s pointer memo (the order_memo.rs-warned anti-pattern) -> memoize on the query string (stable Rc while unchanged), mirroring view_order::order()",
+        "test-harness (A4): lift the 4-copy _cursor_to_source demo helper to rpc_verify.cursor_to_source(tf, group_tag, source); retrofit r836/r867/r869/r871",
+        "Mnemosyne R422 adoption: migrate the one legacy coverage_expectation \"informative\" (S5.53 menu render strategy) -> \"out_of_scope_here\" (3-state coverage clean break); store schema auto-bumps v9 -> v11 on this save"
+      ],
+      "verification_bullets": [
+        "3 adversarial reviewers (SSOT/duplication, textbook/contract, WAI-ARIA a11y) + my own grep+read verified each finding real-vs-convention before fixing",
+        "cargo test --workspace -j2 green (0 failures, 150 groups); hello-property-grid 42 tests (+3 R873 a11y) + pinion-widget-paint 468 (glyph SSOT)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "11 demos PASS on fresh release binaries: r836/r867/r869/r871/r872 property-grid + r843-r846 grouped + r673 tree-view + r696 disclosure (glyph retrofit byte-identical)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.50",
+        "5.27",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "DEFER (pre-existing substrate, R847 builder, 3 consumers): grouped_grid_access_nodes emits Grid+Row+aria-expanded but should be treegrid + aria-level per the project's own R863 role; the gridcell name \"Property: <name>\" double-speaks the columnheader. Shared-substrate changes across hello-grouped-grid/grid-sort + property-grid -> a dedicated treegrid-role round (full aria-selected suppression for no-selection grids lands there)",
+        "DEFER (low/cosmetic): RootState nested tuple -> named struct (silent transposition hazard); the one LOW-severity item, deferred to avoid test churn",
+        "DEFER: live-text-filter wiring is the 2nd flat consumer (combobox-editable + property-grid); lift at the 3rd",
+        "R871/R872 carries persist: HSV pad (Color->HSV gap), AccessState.focused unlowered, atomic R863-R870 backfill (user)"
+      ],
+      "publishable_decision_summary": "R873 audit-remediation of the R871/R872 session: a cost-no-object review (3 adversarial reviewers + my grep+read verify) found 7 real issues in my work (4 a11y, 1 SSOT-miss, 1 memo anti-pattern, 1 test-harness duplication); cleared them inline. Pre-existing substrate-wide findings (grouped-grid treegrid role, cell-name double-speak) carried for a dedicated round. Also adopts the Mnemosyne R422 3-state coverage migration.",
+      "publishable_changes_bullets": [
+        "a11y (C2): property-grid passed selected_source=cursor_source, stamping aria-selected on the focus-cursor row though there is no selection model -> selected_source=None; focus is aria-activedescendant only",
+        "a11y (B-A): popup a11y + aria-activedescendant were gated on editing_row alone, so an RPC filter on an open popup could point AT at an unpainted popup -> lift popup_view_pos SSOT (editing source in the live flatten); paint + access_node + access_focus_target all gate on it (paint/introspect parity)",
+        "a11y (C1): the R872 search box was Tab-focusable but emitted no a11y node -> add the lifted text_field_a11y_node (textbox role + \"Filter properties\" name)",
+        "a11y (C3): add a polite Status live region announcing the filtered property count",
+        "SSOT (A1): the disclosure twisty glyph (U+25B6/U+25BC) was defined 3x (disclosure/tree_view/group_header; R871 added the 3rd) -> lift pinion_widget_paint::glyph SSOT + retrofit all 3 (datepicker/table arrows stay separate, different semantics)",
+        "smell (A3): the R872 filtered order minted a fresh Rc per read, defeating GroupOrderState::rows()'s pointer memo (the order_memo.rs-warned anti-pattern) -> memoize on the query string (stable Rc while unchanged), mirroring view_order::order()",
+        "test-harness (A4): lift the 4-copy _cursor_to_source demo helper to rpc_verify.cursor_to_source(tf, group_tag, source); retrofit r836/r867/r869/r871",
+        "Mnemosyne R422 adoption: migrate the one legacy coverage_expectation \"informative\" (S5.53 menu render strategy) -> \"out_of_scope_here\" (3-state coverage clean break); store schema auto-bumps v9 -> v11 on this save"
+      ],
+      "publishable_verification_bullets": [
+        "3 adversarial reviewers (SSOT/duplication, textbook/contract, WAI-ARIA a11y) + my own grep+read verified each finding real-vs-convention before fixing",
+        "cargo test --workspace -j2 green (0 failures, 150 groups); hello-property-grid 42 tests (+3 R873 a11y) + pinion-widget-paint 468 (glyph SSOT)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "11 demos PASS on fresh release binaries: r836/r867/r869/r871/r872 property-grid + r843-r846 grouped + r673 tree-view + r696 disclosure (glyph retrofit byte-identical)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.50",
+        "5.27",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DEFER (pre-existing substrate, R847 builder, 3 consumers): grouped_grid_access_nodes emits Grid+Row+aria-expanded but should be treegrid + aria-level per the project's own R863 role; the gridcell name \"Property: <name>\" double-speaks the columnheader. Shared-substrate changes across hello-grouped-grid/grid-sort + property-grid -> a dedicated treegrid-role round (full aria-selected suppression for no-selection grids lands there)",
+        "DEFER (low/cosmetic): RootState nested tuple -> named struct (silent transposition hazard); the one LOW-severity item, deferred to avoid test churn",
+        "DEFER: live-text-filter wiring is the 2nd flat consumer (combobox-editable + property-grid); lift at the 3rd",
+        "R871/R872 carries persist: HSV pad (Color->HSV gap), AccessState.focused unlowered, atomic R863-R870 backfill (user)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -49132,5 +49192,6 @@
       "reason": "design clarification — Intent.payload consumed by V::update reducer, not threaded through SCXML invoke send (R51.159 carry resolved as design choice)"
     }
   },
-  "schema_version": 9
+  "confirmation_events": {},
+  "schema_version": 11
 }

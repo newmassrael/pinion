@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    cursor_to_source,
     find_by_tag,
     run_demo,
     wait_until,
@@ -75,16 +76,6 @@ def _focus_grid(tf) -> None:
         interval=0.03,
         desc="grid owns keyboard focus",
     )
-
-
-def _cursor_to_source(tf, source: int) -> None:
-    """Move the roving cursor onto `source`'s visual row (category expanded)."""
-    n = tf.query(f"/{CAT}/external/visible_len")
-    for pos in range(n):
-        if tf.query(f"/{CAT}/external/source_at.{pos}") == source:
-            tf.intervene(f"/{CAT}/external/cursor", pos)
-            return
-    raise AssertionError(f"source {source} not visible in the flatten")
 
 
 def body() -> None:
@@ -179,7 +170,7 @@ def body() -> None:
         assert_eq(tf.query("/external/value.2"), False, "Visible toggled to false")
         # Keyboard edit a text row deep in a category (Tag, source 1).
         _focus_grid(tf)
-        _cursor_to_source(tf, 1)
+        cursor_to_source(tf, CAT, 1)
         tf.key(path=GRID, name="Enter")
         wait_until(lambda: tf.query("/external/editing") == 1, timeout=4.0,
                    interval=0.03, desc="Enter edits the Tag row inside Identity")

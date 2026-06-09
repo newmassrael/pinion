@@ -108,6 +108,7 @@
 //!   metadata is an additive model field (the `hello-number-input`
 //!   `parse_clamp` shape) deferred to the same 2nd-consumer round.
 
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use pinion_a11y::{
@@ -349,19 +350,44 @@ fn use_property_model() -> Rc<Signal<Vec<CellValue>>> {
 /// not a source index — the grouped peer of the old flat `focused_row`.
 #[must_use]
 fn use_property_groups() -> Rc<GroupOrderState> {
-    // R872 — the search box's text is the live filter query. Resolve its state
-    // BEFORE the group cache factory (captured in the order-source closure) so
-    // the two `Owner::cache` calls never nest ([[owner-cache-no-nested-factory]]).
-    // Reading `search.text()` inside the closure subscribes, so typing repaints
-    // and re-filters; the grouped flatten is the filter -> group composition
-    // (R844). The filtered order is small (<=12 rows) so it is recomputed per
-    // read rather than memoized.
+    // R872/R873 — the search box's text is the live filter query. Resolve the
+    // search state + the filter memo BEFORE the group cache factory (captured
+    // in the order-source closure) so the `Owner::cache` calls never nest
+    // ([[owner-cache-no-nested-factory]]). Reading `search.text()` inside the
+    // closure subscribes, so typing repaints and re-filters — the filter ->
+    // group composition (R844). The filter is **memoized on the query string**
+    // (R873): an unchanged query returns the SAME `Rc`, so
+    // `GroupOrderState::rows()`'s pointer-keyed memo hits — minting a fresh
+    // `Rc` per read would silently defeat that memo (the `order_memo.rs`-warned
+    // anti-pattern), mirroring how `view_order::order()` returns a stable `Rc`.
     let search = use_text_edit_state(SEARCH_TF_TAG);
+    let memo = use_filter_memo();
     use_group_order_with_source(
         GROUP_TAG,
         || (PROPERTY_GROUPS.to_vec(), CATEGORY_LABELS.iter().map(|s| (*s).to_owned()).collect()),
-        move || Rc::new(filtered_source_order(&search.text())),
+        move || {
+            let query = search.text();
+            let mut slot = memo.borrow_mut();
+            if slot.as_ref().map(|(q, _)| q.as_str()) != Some(query.as_str()) {
+                *slot = Some((query.clone(), Rc::new(filtered_source_order(&query))));
+            }
+            Rc::clone(&slot.as_ref().expect("just populated above").1)
+        },
     )
+}
+
+/// The filter memo's held shape — the last query string + its memoized order.
+type FilterMemo = Rc<RefCell<Option<(String, Rc<Vec<usize>>)>>>;
+
+/// R873 — single-entry memo of the filtered order keyed on the search query
+/// (the example-local peer of the crate-private `OrderMemo`): an unchanged
+/// query returns the same `Rc<Vec<usize>>` so the downstream
+/// `GroupOrderState::rows()` pointer memo can hit instead of re-flattening
+/// every read.
+#[must_use]
+fn use_filter_memo() -> FilterMemo {
+    let owner = Owner::current().expect("use_filter_memo requires an active Owner scope");
+    owner.cache("property_grid.filter_memo", || RefCell::new(None))
 }
 
 /// R872 — the source indices kept by the live search query, in source order
@@ -1479,17 +1505,77 @@ fn view_header(theme: &Theme) -> Scene {
 /// category is collapsed (the row is hidden, so no popup is shown). The barrier
 /// sorts first so the panel hit-tests on top; a click outside the panel routes
 /// `dismiss` to the coordinator (the toggle-close convention).
+/// R873 — the open popup's editing row resolved to `(source, visual_position)`,
+/// or `None` when nothing is editing **or** the editing row is filtered /
+/// collapsed out of the current flatten (its category hidden). The single SSOT
+/// the popup *paint* ([`view_popup_overlay`]) and the popup *a11y*
+/// ([`PropertyGridView::access_node`] / `access_focus_target`) both gate on, so
+/// a popup whose row is hidden is neither painted nor announced — the paint
+/// scene and the AT `aria-activedescendant` cannot diverge (the bug an
+/// RPC-driven filter on an open popup would otherwise expose).
+fn popup_view_pos(editing: Option<usize>) -> Option<(usize, usize)> {
+    let row = editing?;
+    let pos = use_property_groups().rows().iter().position(|r| r.source() == Some(row))?;
+    Some((row, pos))
+}
+
+/// R867/R869/R873 — the open popup's `listbox` a11y nodes (choice options or
+/// colour swatches), or empty when nothing is editing **or** the editing row is
+/// filtered / collapsed out of the flatten. Gated on [`popup_view_pos`] (the
+/// SSOT the paint uses) so the AT `listbox` is never emitted for a popup the
+/// screen does not show.
+fn popup_listbox_nodes(model: &[CellValue]) -> Vec<AccessNode> {
+    let Some((row, _)) = popup_view_pos(use_editing_row().get()) else { return Vec::new() };
+    match model.get(row) {
+        Some(CellValue::Choice { selected, options }) => {
+            let cursor = use_popup_cursor().get().unwrap_or(*selected);
+            let hover = use_popup_hover().get();
+            let tags: Vec<String> =
+                (0..options.len()).map(|i| format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}")).collect();
+            let opts: Vec<ListOption<'_>> = options
+                .iter()
+                .enumerate()
+                .map(|(i, label)| ListOption {
+                    tag: &tags[i],
+                    label: Some(label.as_str()),
+                    state: if hover == Some(i) { ListboxItemState::Hover } else { ListboxItemState::Idle },
+                    selected: *selected == i,
+                    focused: cursor == i,
+                })
+                .collect();
+            let name = format!("{} options", PROPERTY_NAMES[row]);
+            listbox_option_nodes(CHOICE_POPUP_TAG, &name, false, &opts)
+        }
+        Some(CellValue::Color(current)) => {
+            let cursor = use_popup_cursor().get().unwrap_or(0);
+            let hover = use_popup_hover().get();
+            let tags: Vec<String> =
+                (0..COLOR_SWATCHES.len()).map(|i| format!("{GRID_TAG}#{COLOR_SW_PREFIX}{i}")).collect();
+            let opts: Vec<ListOption<'_>> = COLOR_SWATCHES
+                .iter()
+                .enumerate()
+                .map(|(i, &(color, label))| ListOption {
+                    tag: &tags[i],
+                    label: Some(label),
+                    state: if hover == Some(i) { ListboxItemState::Hover } else { ListboxItemState::Idle },
+                    selected: color == *current,
+                    focused: cursor == i,
+                })
+                .collect();
+            let name = format!("{} swatches", PROPERTY_NAMES[row]);
+            listbox_option_nodes(COLOR_POPUP_TAG, &name, false, &opts)
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn view_popup_overlay(
     editing: Option<usize>,
     model: &[CellValue],
-    group_rows: &[GroupRow],
     edit_field: (TextFieldState, u32),
     theme: &Theme,
 ) -> Vec<Scene> {
-    let Some(row) = editing else { return Vec::new() };
-    let Some(view_pos) = group_rows.iter().position(|r| r.source() == Some(row)) else {
-        return Vec::new();
-    };
+    let Some((row, view_pos)) = popup_view_pos(editing) else { return Vec::new() };
     match model.get(row) {
         Some(CellValue::Choice { selected, options }) => {
             let cursor = use_popup_cursor().get().unwrap_or(*selected);
@@ -1600,7 +1686,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // pushed first so the panel hit-tests on top; a click outside the panel
     // routes `dismiss` to the coordinator (the toggle-close convention).
     let mut children = vec![title, grid];
-    children.extend(view_popup_overlay(editing, &model, &group_rows, (edit_state, edit_caret), &theme));
+    children.extend(view_popup_overlay(editing, &model, (edit_state, edit_caret), &theme));
 
     Scene::Container(
         ContainerNode::new(children)
@@ -1787,12 +1873,11 @@ impl WidgetA11y for PropertyGridView {
     /// shape): each option carries `aria-selected` (the committed value), and
     /// `access_focus_target` points the active descendant at the cursor
     /// option / swatch.
-    fn access_node(_state: &RootState, _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(state: &RootState, focused: Option<&str>) -> Vec<AccessNode> {
         let model = use_property_model().get();
         let groups = use_property_groups();
         let rows = groups.rows();
         let cursor = groups.cursor();
-        let cursor_source = cursor.and_then(|c| rows.get(c)).and_then(GroupRow::source);
         // Non-virtualized: every flattened row (category headers + visible data
         // rows) is in the a11y window.
         let window = VisibleWindow { first: 0, count: rows.len() };
@@ -1807,10 +1892,12 @@ impl WidgetA11y for PropertyGridView {
             columns: &columns,
             group_prefix: GROUP_TAG,
             data_prefix: GRID_TAG,
-            // The roving cursor's data row is the "current" property
-            // (aria-selected); the cursor's visual position is the active
-            // descendant (aria-activedescendant) — header or data alike.
-            selected_source: cursor_source,
+            // R873 — the roving cursor is keyboard FOCUS, exposed as
+            // `aria-activedescendant` via `focused_view_pos` + `access_focus_target`.
+            // The property grid has NO selection model, so `selected_source`
+            // stays `None`: a focus cursor must not stamp `aria-selected` (that
+            // would mis-announce the grid as a selection widget).
+            selected_source: None,
             focused_view_pos: cursor,
         };
         let mut nodes = grouped_grid_access_nodes(
@@ -1827,59 +1914,31 @@ impl WidgetA11y for PropertyGridView {
                 }
             },
         );
-        if let Some(row) = use_editing_row().get() {
-            match model.get(row) {
-                Some(CellValue::Choice { selected, options }) => {
-                    let cursor = use_popup_cursor().get().unwrap_or(*selected);
-                    let hover = use_popup_hover().get();
-                    let tags: Vec<String> = (0..options.len())
-                        .map(|i| format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}"))
-                        .collect();
-                    let opts: Vec<ListOption<'_>> = options
-                        .iter()
-                        .enumerate()
-                        .map(|(i, label)| ListOption {
-                            tag: &tags[i],
-                            label: Some(label.as_str()),
-                            state: if hover == Some(i) {
-                                ListboxItemState::Hover
-                            } else {
-                                ListboxItemState::Idle
-                            },
-                            selected: *selected == i,
-                            focused: cursor == i,
-                        })
-                        .collect();
-                    let name = format!("{} options", PROPERTY_NAMES[row]);
-                    nodes.extend(listbox_option_nodes(CHOICE_POPUP_TAG, &name, false, &opts));
-                }
-                Some(CellValue::Color(current)) => {
-                    let cursor = use_popup_cursor().get().unwrap_or(0);
-                    let hover = use_popup_hover().get();
-                    let tags: Vec<String> = (0..COLOR_SWATCHES.len())
-                        .map(|i| format!("{GRID_TAG}#{COLOR_SW_PREFIX}{i}"))
-                        .collect();
-                    let opts: Vec<ListOption<'_>> = COLOR_SWATCHES
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &(color, label))| ListOption {
-                            tag: &tags[i],
-                            label: Some(label),
-                            state: if hover == Some(i) {
-                                ListboxItemState::Hover
-                            } else {
-                                ListboxItemState::Idle
-                            },
-                            selected: color == *current,
-                            focused: cursor == i,
-                        })
-                        .collect();
-                    let name = format!("{} swatches", PROPERTY_NAMES[row]);
-                    nodes.extend(listbox_option_nodes(COLOR_POPUP_TAG, &name, false, &opts));
-                }
-                _ => {}
-            }
-        }
+        // R873 — the live search box is a Tab stop; emit its textbox node (the
+        // lifted `text_field_a11y_node` SSOT) so an AT user who tabs into it
+        // hears a named `textbox` with the current query, not a silent node.
+        let ((_, _), (search_posture, _)) = *state;
+        nodes.push(
+            tf_paint::text_field_a11y_node(
+                SEARCH_TF_TAG,
+                use_text_edit_state(SEARCH_TF_TAG).text(),
+                search_posture,
+                focused == Some(SEARCH_TF_TAG),
+            )
+            .with_name("Filter properties"),
+        );
+        // R873 — a polite live region reporting the filtered data-row count, so
+        // the filter narrowing / emptying the set is announced (the search/
+        // filter APG pattern). Recomputed from the live flatten.
+        let data_count = rows.iter().filter(|r| r.source().is_some()).count();
+        nodes.push(
+            AccessNode::new("pg_search_status", pinion_a11y::AriaRole::Status)
+                .with_name(format!("{data_count} properties")),
+        );
+        // The open choice / colour popup's `listbox` nodes (gated on the same
+        // `popup_view_pos` visibility predicate the paint uses, so the AT tree
+        // never advertises an unpainted popup — R873).
+        nodes.extend(popup_listbox_nodes(&model));
         nodes
     }
 
@@ -1894,7 +1953,10 @@ impl WidgetA11y for PropertyGridView {
         // A popup open while the grid holds focus → the active descendant is the
         // cursor option / swatch in the popup (the combobox a11y shape, R870).
         if focused == Some(GRID_TAG) {
-            if let Some(row) = use_editing_row().get() {
+            // Only point the active descendant into the popup when that popup is
+            // actually visible (its row not filtered / collapsed away) — the
+            // same `popup_view_pos` gate the paint + access_node use (R873).
+            if let Some((row, _)) = popup_view_pos(use_editing_row().get()) {
                 let cur = use_popup_cursor().get().unwrap_or(0);
                 match use_property_model().get().get(row).map(CellValue::kind) {
                     Some(CellKind::Choice) => {
@@ -2264,13 +2326,15 @@ mod tests {
                 .expect("Identity category header node");
             assert_eq!(header.role, pinion_a11y::AriaRole::Row);
             assert_eq!(header.expanded, Some(true), "expanded category header");
-            // The cursor's data row is the active descendant + aria-selected.
+            // The cursor's data row is the active descendant (keyboard focus),
+            // but NOT aria-selected — the property grid has no selection model
+            // (R873): focus is conveyed by `state.focused`, not `aria-selected`.
             let active = nodes
                 .iter()
                 .find(|n| n.tag == format!("{GRID_TAG}#2"))
                 .expect("Visible data row node");
             assert!(active.state.focused, "cursor row is the active descendant");
-            assert_eq!(active.selected, Some(true), "cursor data row is aria-selected");
+            assert_ne!(active.selected, Some(true), "focus cursor is not aria-selected");
             // The value gridcell carries the column + value context.
             let value_cell = nodes
                 .iter()
@@ -2736,6 +2800,90 @@ mod tests {
                 Modifiers::empty(),
             ));
             assert_eq!(use_text_edit_state(SEARCH_TF_TAG).text(), "", "Escape clears the query");
+        });
+    }
+
+    // ----- R873 audit remediation (a11y) -----
+
+    /// A neutral RootState (both fields idle) for a11y assertions.
+    fn idle_state() -> RootState {
+        ((TextFieldState::Idle, 0), (TextFieldState::Idle, 0))
+    }
+
+    #[test]
+    fn r873_search_box_has_textbox_a11y_node() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            use_text_edit_state(SEARCH_TF_TAG).set_text("pos".to_owned());
+            let nodes = PropertyGridView::access_node(&idle_state(), Some(SEARCH_TF_TAG));
+            let search = nodes
+                .iter()
+                .find(|n| n.tag == SEARCH_TF_TAG)
+                .expect("search box emits a textbox a11y node");
+            assert_eq!(search.role, pinion_a11y::AriaRole::TextInput, "searchbox -> textbox role");
+            assert_eq!(search.name.as_deref(), Some("Filter properties"), "accessible name");
+            assert!(search.state.focused, "the focused search box is announced focused");
+        });
+    }
+
+    #[test]
+    fn r873_filter_status_live_region_reports_count() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let status_count = || {
+                let nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
+                nodes
+                    .iter()
+                    .find(|n| n.tag == "pg_search_status")
+                    .map(|n| (n.role, n.name.clone()))
+                    .expect("a polite status live region")
+            };
+            let (role, name) = status_count();
+            assert_eq!(role, pinion_a11y::AriaRole::Status, "filter result = aria-live Status");
+            assert_eq!(name.as_deref(), Some("12 properties"), "all 12 with no filter");
+            // Narrowing the filter updates the announced count.
+            use_text_edit_state(SEARCH_TF_TAG).set_text("pos".to_owned());
+            assert_eq!(status_count().1.as_deref(), Some("2 properties"), "filtered to Pos X/Pos Y");
+        });
+    }
+
+    #[test]
+    fn r873_popup_a11y_gated_on_row_visibility() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            open_choice(&mut scene, BLEND_ROW); // editing the Blend choice (source 9)
+            // Visible: the popup lowers to a listbox + the active descendant
+            // points into it.
+            let nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
+            assert!(
+                nodes.iter().any(|n| n.role == pinion_a11y::AriaRole::Listbox),
+                "popup listbox emitted while its row is visible",
+            );
+            let f = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
+                .expect("composite focus");
+            assert!(
+                f.active_descendant.as_deref().is_some_and(|d| d.contains(CHOICE_OPT_PREFIX)),
+                "active descendant points into the open popup",
+            );
+            // Filter the Blend row out of the flatten — the popup is now neither
+            // painted (view_popup_overlay) nor announced (access_node / focus
+            // target): paint and a11y stay in agreement (R873).
+            use_text_edit_state(SEARCH_TF_TAG).set_text("zzz".to_owned());
+            assert!(
+                !view(idle_state(), &Frame::new()).contains_tag(CHOICE_POPUP_TAG),
+                "popup not painted when its row is filtered out",
+            );
+            let nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
+            assert!(
+                !nodes.iter().any(|n| n.role == pinion_a11y::AriaRole::Listbox),
+                "no listbox a11y when the popup's row is filtered out",
+            );
+            let f = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
+                .expect("focus target");
+            assert!(
+                !f.active_descendant.as_deref().unwrap_or("").contains(CHOICE_OPT_PREFIX),
+                "active descendant no longer points at the unpainted popup",
+            );
         });
     }
 }

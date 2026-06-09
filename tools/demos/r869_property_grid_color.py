@@ -48,6 +48,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    cursor_to_source,
     find_by_tag,
     run_demo,
     wait_until,
@@ -62,16 +63,6 @@ DISMISS = "property_grid#dismiss"
 CAT = "property_grid_cat"  # R871 group-by proxy (collapse set + roving cursor)
 
 TINT = 11  # the colour row; boots Blue (#1e88e5), swatch index 4
-
-
-def _cursor_to_source(tf, source: int) -> None:
-    """Move the roving visual-row cursor onto `source`'s row (R871)."""
-    n = tf.query(f"/{CAT}/external/visible_len")
-    for pos in range(n):
-        if tf.query(f"/{CAT}/external/source_at.{pos}") == source:
-            tf.intervene(f"/{CAT}/external/cursor", pos)
-            return
-    raise AssertionError(f"source {source} not visible in the flatten")
 
 
 def _focus_grid(tf) -> None:
@@ -105,7 +96,7 @@ def body() -> None:
 
         # ── (B) keyboard: open, rove, Enter commits ──────────────────
         _focus_grid(tf)
-        _cursor_to_source(tf, TINT)
+        cursor_to_source(tf, CAT, TINT)
         tf.key(path=GRID, name="Enter")  # open
         wait_until(lambda: _editing(tf) == TINT, timeout=4.0, interval=0.03,
                    desc="Enter opens the colour popup")

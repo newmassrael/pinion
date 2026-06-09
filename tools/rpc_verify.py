@@ -765,6 +765,26 @@ def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
     return None
 
 
+def cursor_to_source(tf, group_tag: str, source: int) -> None:
+    """Move a `GroupOrderExternal`'s roving visual-row cursor onto the data row
+    with stable `source` index (R873).
+
+    Walks the group proxy's flatten (`visible_len` + `source_at.<pos>`) for the
+    visual position whose data-row source matches, then sets the cursor there
+    via `intervene cursor`. The grouped-collection peer of a direct selection
+    set — `source_at`/`visible_len`/`cursor` are the generic `GroupOrderExternal`
+    wire, so this works for any grouped binding (property-grid, grouped-list,
+    grouped-grid, …). Raises if the source is filtered/collapsed out of the
+    flatten.
+    """
+    visible = tf.query(f"/{group_tag}/external/visible_len")
+    for pos in range(visible):
+        if tf.query(f"/{group_tag}/external/source_at.{pos}") == source:
+            tf.intervene(f"/{group_tag}/external/cursor", pos)
+            return
+    raise AssertionError(f"source {source} not visible in {group_tag}'s flatten")
+
+
 def rect_of(node: dict) -> dict:
     """Return the geometry rect of a snapshot node.
 

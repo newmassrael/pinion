@@ -40,6 +40,7 @@
 //! as the disclosure's accessible name, and the panel's text never
 //! leaks into the header's name.
 
+use crate::glyph::{DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED};
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
@@ -219,13 +220,6 @@ pub fn view_disclosure(
     )
 }
 
-/// R696 §5.50 — collapsed-state twisty (`U+25B6` BLACK RIGHT-POINTING
-/// TRIANGLE). Same glyph the §5.50 `tree_view` substrate uses for a
-/// collapsed branch, so the catalog's expand affordances read alike.
-const GLYPH_COLLAPSED: &str = "\u{25B6}";
-/// R696 §5.50 — expanded-state twisty (`U+25BC` BLACK DOWN-POINTING
-/// TRIANGLE).
-const GLYPH_EXPANDED: &str = "\u{25BC}";
 
 #[cfg(test)]
 mod tests {
