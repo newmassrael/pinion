@@ -90,9 +90,11 @@ const CLICK_INTENT_TAG: &str = intent_tag!("tgrid", "click");
 const DATA_HEADERS: [&str; 3] = ["Type", "Visible", "Layer"];
 /// Frozen tree (name) column width.
 const TREE_COL_W: u32 = 200;
-/// Each scrolling metadata column width (`3 × 120 + 200 = 560 > WIN_W`, so
-/// the metadata overflows and the grid scrolls horizontally).
-const DATA_COL_W: u32 = 120;
+/// Each scrolling metadata column width. `3 × 160 = 480` metadata px against
+/// a `480 − 200 = 280`px scrolled viewport gives a `200`px horizontal scroll
+/// range — wide enough that the freeze (and a scroll-to-max revealing the
+/// rightmost column) is a meaningful witness, not a token overflow.
+const DATA_COL_W: u32 = 160;
 /// Rows built beyond the strict window on each side.
 const OVERSCAN: usize = 3;
 /// Top-level scene folders.

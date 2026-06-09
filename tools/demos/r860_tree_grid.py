@@ -153,9 +153,9 @@ def body() -> None:
         child_strip_x_boot = x_of(rects, data_strip("f0-o0"))
 
         # ── (B) horizontal scroll => the FREEZE ─────────────────────
-        # The metadata pane overflows by only a few dozen px (3 cols vs the
-        # window minus the frozen tree column), so scroll within that range.
-        D = 40
+        # The metadata pane overflows by ~200px (3×160 cols vs the window
+        # minus the frozen tree column); scroll a meaningful fraction first.
+        D = 80
         tf.scroll(H_SCROLL_TAG, to=(D, 0))
         time.sleep(PAUSE)
         snap = snap_now()
@@ -178,6 +178,21 @@ def body() -> None:
                   "child metadata strip shifted left by exactly offset_x")
         # Frozen header pinned, scrolling header tracked h-scroll.
         assert FROZEN_HEADER_TAG in rects2, "frozen header still present after h-scroll"
+
+        # Scroll-to-max: offset_x clamps PAST D (the range is real — a widget
+        # that silently clamped at D, or dropped the rightmost column, would
+        # fail here), and the frozen name column is STILL pinned at boot x
+        # while the metadata strip shifts by the full max offset.
+        tf.scroll(H_SCROLL_TAG, to=(10 ** 9, 0))
+        time.sleep(PAUSE)
+        snap = snap_now()
+        max_x = offset_x(snap)
+        assert max_x > D, f"scroll-to-max advanced past D ({max_x} > {D})"
+        rects_max = abs_rects_of(snap)
+        assert_eq(x_of(rects_max, name_cell("f0")), f0_name_x_boot,
+                  "FROZEN name cell STILL at boot x at max horizontal scroll")
+        assert_eq(x_of(rects_max, data_strip("f0")), f0_strip_x_boot - max_x,
+                  "metadata strip shifted left by the full max offset")
 
         # Reset horizontal.
         tf.scroll(H_SCROLL_TAG, to=(0, 0))

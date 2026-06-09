@@ -35591,6 +35591,54 @@
         "next Phase B = enum/choice cell editor (R837 deferred, 2nd property-grid consumer) or pro-tool perf at scale"
       ]
     },
+    "R862": {
+      "decision_summary": "R862 GridTag container-tag SSOT: lifted the cross-crate paint<->a11y hand-synced presentational container tags (_hrow/_row/_ch/_frow/_fhrow/_drow) to one place in composite_tag - the cost-no-object correction of the R861 F3 reject, which had misapplied the R803 # send-wire reasoning to the _ container family",
+      "changes_bullets": [
+        "GridTag SSOT in pinion-core::composite_tag (header_row/col_header/data_row/frozen_*/metadata_row, Display id)",
+        "31 hand-synced container-tag format! literals across table.rs/tree_view.rs/column_widths.rs + a11y virtual_grid.rs lifted",
+        "cross-crate paint->a11y bounds-resolution coupling (rect_for_tag string-match) now single-site; string-pinned test",
+        "r860 demo: meaningful 200px metadata overflow + scroll-to-max coverage (was half-range, no clamp/drop test)"
+      ],
+      "verification_bullets": [
+        "cost-no-object session review (2 adversarial reviewers + my grep+read verify) overturned the R861 F3 reject",
+        "R803 governed the # send-wire family (non-trivial decode); the _ presentational container tags are a distinct cross-crate coupling",
+        "workspace test 150 ok groups; a11y literal-string tests unchanged (GridTag byte-identical output) = behaviour-identical",
+        "clippy --workspace (-D pedantic) green; r859 + r860 demos PASS after the lift"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.40",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "R863 (a11y span, real): frozen-grid Row bounds partial (scrolled pane only) + treegrid metadata gridcells AT-invisible",
+        "R863: treegrid focus Option<&str> -> TreeViewFocus struct (extensible, match plain tree); introspect expose cell_at metadata",
+        "rejected over-reach: cell_data hash (legit synthetic idiom), demo-helper dup (repo-wide sweep), TableStyle/TreeViewStyle 36-vs-48 (M3 list-vs-table density)"
+      ],
+      "publishable_decision_summary": "R862 GridTag container-tag SSOT: lifted the cross-crate paint<->a11y hand-synced presentational container tags (_hrow/_row/_ch/_frow/_fhrow/_drow) to one place in composite_tag - the cost-no-object correction of the R861 F3 reject, which had misapplied the R803 # send-wire reasoning to the _ container family",
+      "publishable_changes_bullets": [
+        "GridTag SSOT in pinion-core::composite_tag (header_row/col_header/data_row/frozen_*/metadata_row, Display id)",
+        "31 hand-synced container-tag format! literals across table.rs/tree_view.rs/column_widths.rs + a11y virtual_grid.rs lifted",
+        "cross-crate paint->a11y bounds-resolution coupling (rect_for_tag string-match) now single-site; string-pinned test",
+        "r860 demo: meaningful 200px metadata overflow + scroll-to-max coverage (was half-range, no clamp/drop test)"
+      ],
+      "publishable_verification_bullets": [
+        "cost-no-object session review (2 adversarial reviewers + my grep+read verify) overturned the R861 F3 reject",
+        "R803 governed the # send-wire family (non-trivial decode); the _ presentational container tags are a distinct cross-crate coupling",
+        "workspace test 150 ok groups; a11y literal-string tests unchanged (GridTag byte-identical output) = behaviour-identical",
+        "clippy --workspace (-D pedantic) green; r859 + r860 demos PASS after the lift"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.40",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R863 (a11y span, real): frozen-grid Row bounds partial (scrolled pane only) + treegrid metadata gridcells AT-invisible",
+        "R863: treegrid focus Option<&str> -> TreeViewFocus struct (extensible, match plain tree); introspect expose cell_at metadata",
+        "rejected over-reach: cell_data hash (legit synthetic idiom), demo-helper dup (repo-wide sweep), TableStyle/TreeViewStyle 36-vs-48 (M3 list-vs-table density)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -180,6 +180,74 @@ impl GridSendKey {
     }
 }
 
+/// R862 §5.16 §5.40 — the **grid container-tag** scheme: the presentational
+/// `'_'`-separated container tags a virtualized data-grid / tree-grid
+/// *paints* (the header band, each data-row strip, each column-header cell),
+/// which the **a11y** builder
+/// ([`windowed_grid_nodes`](../../pinion_a11y/fn.windowed_grid_nodes.html))
+/// *re-emits* to resolve each node's bounds by string-matching the tag into
+/// the paint scene (`pinion_runtime::layout::rect_for_tag`).
+///
+/// Unlike [`GridSendKey`] these are never *decoded* — they are only produced
+/// by paint and re-derived by a11y — but the cross-crate paint↔a11y string
+/// match is **load-bearing**: a divergence between the paint producer's
+/// `format!` and the a11y builder's would silently mis-resolve every grid
+/// Row / header / column-header bounds (the AT tree would point at the wrong
+/// pixels). So the scheme lives in exactly one place, applying the R773
+/// wire-form encode SSOT to the container-tag family (R862 audit-correction:
+/// the prior copies were hand-synced literals across `pinion-widget-paint`
+/// and `pinion-a11y` — the [[verify-seed-claims-audit-first]] re-examination
+/// that found the R803 `'#'`-send-wire reject did not govern this `'_'`
+/// presentational family).
+///
+/// Tags: header band `"{tag}_hrow"`, column-header `"{tag}_ch{col}"`, data
+/// row `"{tag}_row{id}"`, and the R859/R860 frozen-split additions — frozen
+/// header band `"{tag}_fhrow"`, frozen data row `"{tag}_frow{id}"`,
+/// tree-grid metadata row `"{tag}_drow{id}"`.
+pub struct GridTag;
+
+impl GridTag {
+    /// The header-row band container — `"{tag}_hrow"`.
+    #[must_use]
+    pub fn header_row(tag: &str) -> String {
+        format!("{tag}_hrow")
+    }
+
+    /// A column-header cell — `"{tag}_ch{col}"`.
+    #[must_use]
+    pub fn col_header(tag: &str, col: usize) -> String {
+        format!("{tag}_ch{col}")
+    }
+
+    /// A data-row strip — `"{tag}_row{id}"`. `id` is generic over
+    /// [`Display`](std::fmt::Display) because the data-grid keys rows by a
+    /// numeric index (`usize`) while the tree-grid keys them by a string
+    /// node id — the one SSOT serves both id spaces.
+    #[must_use]
+    pub fn data_row(tag: &str, id: impl core::fmt::Display) -> String {
+        format!("{tag}_row{id}")
+    }
+
+    /// (R859) The frozen pane's header-row band — `"{tag}_fhrow"`.
+    #[must_use]
+    pub fn frozen_header_row(tag: &str) -> String {
+        format!("{tag}_fhrow")
+    }
+
+    /// (R859) The frozen pane's data-row strip — `"{tag}_frow{id}"`.
+    #[must_use]
+    pub fn frozen_data_row(tag: &str, id: impl core::fmt::Display) -> String {
+        format!("{tag}_frow{id}")
+    }
+
+    /// (R860) The tree-grid metadata-row strip (the scrolling pane's row) —
+    /// `"{tag}_drow{id}"`.
+    #[must_use]
+    pub fn metadata_row(tag: &str, id: impl core::fmt::Display) -> String {
+        format!("{tag}_drow{id}")
+    }
+}
+
 /// R742.4 §5.16 §5.35 — split a (possibly composite) paint tag at the
 /// `#` separator into `(primary, Some(sub))`, the companion of
 /// [`parse_send_payload`] for the *tag* side of the R51.42 protocol.
@@ -209,10 +277,25 @@ pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_send_payload, split_send_payload, split_subindex, GridSendKey};
+    use super::{parse_send_payload, split_send_payload, split_subindex, GridSendKey, GridTag};
     use crate::input::Modifiers;
 
     const NONE: Modifiers = Modifiers::empty();
+
+    #[test]
+    fn grid_container_tag_scheme_is_pinned() {
+        // R862 — the cross-crate paint↔a11y SSOT: pin the exact strings so a
+        // change here is a deliberate, single-site edit (not a silent
+        // divergence between the paint producer and the a11y re-emit).
+        assert_eq!(GridTag::header_row("vtbl"), "vtbl_hrow");
+        assert_eq!(GridTag::col_header("vtbl", 2), "vtbl_ch2");
+        assert_eq!(GridTag::data_row("vtbl", 41), "vtbl_row41");
+        assert_eq!(GridTag::frozen_header_row("vtbl"), "vtbl_fhrow");
+        assert_eq!(GridTag::frozen_data_row("vtbl", 41), "vtbl_frow41");
+        // The tree-grid keys metadata rows by a string node id.
+        assert_eq!(GridTag::metadata_row("tg", "f3-o1"), "tg_drowf3-o1");
+        assert_eq!(GridTag::data_row("tg", "f3-o1"), "tg_rowf3-o1");
+    }
 
     #[test]
     fn grid_send_key_round_trips_cell_and_header() {

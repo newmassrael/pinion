@@ -25,7 +25,7 @@
 
 use crate::node::AccessNode;
 use crate::role::{AriaRole, SortDirection};
-use pinion_core::composite_tag::GridSendKey;
+use pinion_core::composite_tag::{GridSendKey, GridTag};
 use pinion_core::widgets::virtual_list::VisibleWindow;
 
 /// Build the virtualized `grid` container + frozen header row + one data
@@ -106,21 +106,21 @@ fn grid_nodes(
     if matches!(selection, GridSelection::Multi(_)) {
         grid.multiselectable = true;
     }
-    grid = grid.with_child(format!("{grid_tag}_hrow"));
+    grid = grid.with_child(GridTag::header_row(grid_tag));
     for id in window.indices() {
-        grid = grid.with_child(format!("{grid_tag}_row{id}"));
+        grid = grid.with_child(GridTag::data_row(grid_tag, id));
     }
     nodes.push(grid);
 
     // Frozen header row + its columnheader cells.
-    let mut hrow = AccessNode::new(format!("{grid_tag}_hrow"), AriaRole::Row);
+    let mut hrow = AccessNode::new(GridTag::header_row(grid_tag), AriaRole::Row);
     for col in 0..ncols {
-        hrow = hrow.with_child(format!("{grid_tag}_ch{col}"));
+        hrow = hrow.with_child(GridTag::col_header(grid_tag, col));
     }
     nodes.push(hrow);
     for (col, label) in headers.iter().enumerate() {
         nodes.push(
-            AccessNode::new(format!("{grid_tag}_ch{col}"), AriaRole::ColumnHeader)
+            AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
                 .with_name(*label),
         );
     }
@@ -128,7 +128,7 @@ fn grid_nodes(
     // Windowed data rows + their gridcells.
     for id in window.indices() {
         let posinset = u32::try_from(id + 1).unwrap_or(u32::MAX);
-        let mut row = AccessNode::new(format!("{grid_tag}_row{id}"), AriaRole::Row)
+        let mut row = AccessNode::new(GridTag::data_row(grid_tag, id), AriaRole::Row)
             .with_position_in_set(posinset)
             .with_size_of_set(set_size);
         for col in 0..ncols {
@@ -260,23 +260,23 @@ pub fn windowed_grid_nodes_sorted(
     let mut grid = AccessNode::new(grid_tag, AriaRole::Grid)
         .with_name(grid_name)
         .with_size_of_set(total);
-    grid = grid.with_child(format!("{grid_tag}_hrow"));
+    grid = grid.with_child(GridTag::header_row(grid_tag));
     for view_pos in window.indices() {
         if let Some(&source) = order.get(view_pos) {
-            grid = grid.with_child(format!("{grid_tag}_row{source}"));
+            grid = grid.with_child(GridTag::data_row(grid_tag, source));
         }
     }
     nodes.push(grid);
 
     // Frozen header row + its columnheaders; the active sort column carries
     // `aria-sort`.
-    let mut hrow = AccessNode::new(format!("{grid_tag}_hrow"), AriaRole::Row);
+    let mut hrow = AccessNode::new(GridTag::header_row(grid_tag), AriaRole::Row);
     for col in 0..ncols {
-        hrow = hrow.with_child(format!("{grid_tag}_ch{col}"));
+        hrow = hrow.with_child(GridTag::col_header(grid_tag, col));
     }
     nodes.push(hrow);
     for (col, label) in headers.iter().enumerate() {
-        let mut ch = AccessNode::new(format!("{grid_tag}_ch{col}"), AriaRole::ColumnHeader)
+        let mut ch = AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
             .with_name(*label);
         if let Some((active, ascending)) = sort {
             if active == col {
@@ -295,7 +295,7 @@ pub fn windowed_grid_nodes_sorted(
     for view_pos in window.indices() {
         let Some(&source) = order.get(view_pos) else { continue };
         let posinset = u32::try_from(view_pos + 1).unwrap_or(u32::MAX);
-        let mut row = AccessNode::new(format!("{grid_tag}_row{source}"), AriaRole::Row)
+        let mut row = AccessNode::new(GridTag::data_row(grid_tag, source), AriaRole::Row)
             .with_position_in_set(posinset)
             .with_size_of_set(total)
             .with_selected(selected == Some(source));

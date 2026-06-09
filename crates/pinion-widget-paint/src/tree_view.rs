@@ -56,6 +56,7 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use pinion_core::composite_tag::GridTag;
 use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
@@ -612,7 +613,7 @@ fn treegrid_data_row(
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
-            .with_tag(format!("{tag}_drow{}", row.id))
+            .with_tag(GridTag::metadata_row(tag, &row.id))
             .with_style(BoxStyle::filled(row_focus_bg(theme, is_focused)))
             .with_layout(
                 LayoutStyle::new()
@@ -650,7 +651,7 @@ fn treegrid_data_header(
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
-            .with_tag(format!("{tag}_hrow"))
+            .with_tag(GridTag::header_row(tag))
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     )
@@ -712,7 +713,7 @@ pub fn view_virtual_treegrid(
     // Frozen header band: the single tree-column header on the raised surface.
     let frozen_header = Scene::Container(
         ContainerNode::new(vec![treegrid_header_cell(data.tree_header, frozen_w, theme, style)])
-            .with_tag(format!("{tag}_fhrow"))
+            .with_tag(GridTag::frozen_header_row(tag))
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     );

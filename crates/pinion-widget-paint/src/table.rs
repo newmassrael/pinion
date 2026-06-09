@@ -30,7 +30,7 @@
 
 use std::rc::Rc;
 
-use pinion_core::composite_tag::GridSendKey;
+use pinion_core::composite_tag::{GridSendKey, GridTag};
 use pinion_core::scene::{ContainerNode, Rect, ScrollAxis, ScrollNode, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -243,7 +243,7 @@ fn resize_handle(tag: &str, col: usize, outline: Color, style: &TableStyle) -> S
     );
     Scene::Container(
         ContainerNode::new(vec![divider])
-            .with_tag(format!("{tag}_ch{col}#resize"))
+            .with_tag(format!("{}#resize", GridTag::col_header(tag, col)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -331,7 +331,7 @@ fn header_cell(
     }
     Scene::Container(
         ContainerNode::new(cell_children)
-            .with_tag(format!("{tag}_ch{col}"))
+            .with_tag(GridTag::col_header(tag, col))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     )
 }
@@ -529,7 +529,7 @@ pub fn view_table(
     let widths = resolve_widths(cols, None, style);
     // The eager table is uniform-width and not user-resizable (no width model);
     // the header keeps its full-width R707 layout.
-    let hrow_tag = format!("{tag}_hrow");
+    let hrow_tag = GridTag::header_row(tag);
     let header = header_row(
         tag,
         tag,
@@ -550,7 +550,7 @@ pub fn view_table(
         // across re-sorts; selection / state are **data-indexed**.
         let fill = row_fill(theme, state, selected, visual);
         let fg = row_fg(theme, state);
-        let row_tag = format!("{tag}_row{data_id}");
+        let row_tag = GridTag::data_row(tag, data_id);
         children.push(data_row(
             tag,
             data_id,
@@ -935,7 +935,7 @@ impl GridRender<'_> {
             let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
             let cells_text = build_cells(source);
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
-            let row_tag = format!("{}_row{source}", self.tag);
+            let row_tag = GridTag::data_row(self.tag, source);
             data_row(
                 self.tag,
                 source,
@@ -947,7 +947,7 @@ impl GridRender<'_> {
             )
         });
         let body = assemble_windowed_flex(scroll.body, total_w, self.total_h, slots, false);
-        let hrow_tag = format!("{}_hrow", self.tag);
+        let hrow_tag = GridTag::header_row(self.tag);
         let header = header_row(
             self.tag,
             self.click_tag,
@@ -998,7 +998,7 @@ impl GridRender<'_> {
             // R859 — distinct `_frow{id}` container tag so the split panes
             // never emit a duplicate strip tag (per-cell `_{col}` tags stay
             // unique by absolute column).
-            let frow_tag = format!("{}_frow{source}", self.tag);
+            let frow_tag = GridTag::frozen_data_row(self.tag, source);
             data_row(
                 self.tag,
                 source,
@@ -1014,7 +1014,7 @@ impl GridRender<'_> {
             let cells_text = build_cells(source);
             let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
             let split = frozen_cols.min(cell_refs.len());
-            let row_tag = format!("{}_row{source}", self.tag);
+            let row_tag = GridTag::data_row(self.tag, source);
             data_row(
                 self.tag,
                 source,
@@ -1033,7 +1033,7 @@ impl GridRender<'_> {
         // Frozen pane header (left, columns `0..frozen_cols`). Frozen
         // columns do not horizontally scroll, so a resize grabber (which
         // grows the horizontal extent) is moot — `resizable: false`.
-        let fhrow_tag = format!("{}_fhrow", self.tag);
+        let fhrow_tag = GridTag::frozen_header_row(self.tag);
         let frozen_header = header_row(
             self.tag,
             self.click_tag,
@@ -1049,7 +1049,7 @@ impl GridRender<'_> {
             self.style,
         );
         // Scrolling pane header (right, columns `frozen_cols..`).
-        let hrow_tag = format!("{}_hrow", self.tag);
+        let hrow_tag = GridTag::header_row(self.tag);
         let scroll_header = header_row(
             self.tag,
             self.click_tag,

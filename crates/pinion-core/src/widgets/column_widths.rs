@@ -633,7 +633,7 @@ pub fn column_resize_externals(
     (0..widths.col_count())
         .map(|col| {
             ExtraExternal::new(
-                format!("{table_tag}_ch{col}"),
+                crate::composite_tag::GridTag::col_header(table_tag, col),
                 Box::new(ColumnResizeExternal::new(
                     Rc::clone(widths),
                     col,
