@@ -27,6 +27,8 @@
 
 use std::rc::Rc;
 
+use super::scroll::ScrollState;
+use super::virtual_list::scroll_offset_to_reveal;
 use super::virtual_select::clamp_nav;
 use crate::external::{
     at_index, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource,
@@ -449,6 +451,32 @@ where
         TreeKey::Consumed => true,
         TreeKey::Unhandled => false,
     }
+}
+
+/// R866 §5.27 §5.45 — scroll a **windowed** tree's keyboard cursor row into the
+/// rendered window (the keyboard ⊥ virtualization step), so navigating (or
+/// type-ahead jumping) to a row outside the rendered window scrolls there and
+/// materializes it. No-op when nothing is focused or the cursor row is already
+/// visible (`scroll_offset_to_reveal` returns the unchanged offset).
+///
+/// Lifted at R866 from the byte-identical `reveal_cursor` copies in
+/// `hello-virtual-tree` (R820) and `hello-tree-grid` (R864): the second
+/// windowed-tree-keyboard consumer is the trigger that lifts the glue, exactly
+/// as [`apply_tree_key`] / [`tree_typeahead_jump`](pinion_shell::typeahead::tree_typeahead_jump)
+/// were lifted at their second consumers (the project's own
+/// `[[abstraction-needs-second-consumer]]` rule; R864's "no new substrate"
+/// rationalization was the smell). It composes the existing
+/// [`scroll_offset_to_reveal`] pixel math with the [`flat_visible`] cursor
+/// lookup — both already SSOTs — so it adds no new geometry logic.
+///
+/// `rows` is the visible flattening, `cursor` the focused row id, `scroll` the
+/// vertical body scroll, `pitch` the uniform row height.
+pub fn reveal_row_cursor(rows: &[VisibleRow], cursor: Option<&str>, scroll: &ScrollState, pitch: u32) {
+    let Some(id) = cursor else { return };
+    let Some(index) = rows.iter().position(|row| row.id == id) else { return };
+    let (_, measured_h) = scroll.measured_viewport();
+    let offset = scroll_offset_to_reveal(index, scroll.offset_y(), measured_h, pitch);
+    scroll.scroll_to(0, offset);
 }
 
 /// Resolve a visible position (`rest`, the part after a matched
@@ -1039,5 +1067,48 @@ mod tests {
             names,
             ["row_count", "cursor", "cursor_index", "id_at", "label_at", "level_at", "expanded_at"],
         );
+    }
+
+    // R866 §5.27 §5.45 — the lifted windowed-cursor scroll-into-view helper.
+
+    fn flat_rows(n: usize) -> Vec<VisibleRow> {
+        (0..n)
+            .map(|i| VisibleRow {
+                id: format!("r{i}"),
+                label: format!("Row {i}"),
+                depth: 0,
+                position_in_set: u32::try_from(i + 1).unwrap_or(u32::MAX),
+                size_of_set: u32::try_from(n).unwrap_or(u32::MAX),
+                has_children: false,
+                expanded: false,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reveal_row_cursor_scrolls_an_off_window_cursor_into_view() {
+        use super::reveal_row_cursor;
+        use crate::widgets::scroll::ScrollState;
+        let rows = flat_rows(100);
+        let scroll = ScrollState::new();
+        scroll.set_measured_viewport(200, 10 * 24); // 10-row window, pitch 24
+        scroll.set_max(0, 100 * 24);
+        // A deep cursor is scrolled into the window.
+        reveal_row_cursor(&rows, Some("r80"), &scroll, 24);
+        assert!(scroll.offset_y() > 0, "deep cursor scrolled into view");
+    }
+
+    #[test]
+    fn reveal_row_cursor_is_a_noop_without_a_resolvable_cursor() {
+        use super::reveal_row_cursor;
+        use crate::widgets::scroll::ScrollState;
+        let rows = flat_rows(100);
+        let scroll = ScrollState::new();
+        scroll.set_measured_viewport(200, 240);
+        scroll.set_max(0, 100 * 24);
+        reveal_row_cursor(&rows, None, &scroll, 24);
+        assert_eq!(scroll.offset_y(), 0, "no cursor -> no scroll");
+        reveal_row_cursor(&rows, Some("nonexistent"), &scroll, 24);
+        assert_eq!(scroll.offset_y(), 0, "unknown cursor -> no scroll");
     }
 }

@@ -57,12 +57,11 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::tree_nav::{
-    apply_tree_key, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
-    VisibleRow,
+    flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode, VisibleRow,
 };
-use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
+use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
-use pinion_shell::typeahead::tree_typeahead_jump;
+use pinion_shell::typeahead::apply_windowed_tree_key;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::tree_view::{view_virtual_tree, TreeViewFocus, TreeViewStyle};
@@ -220,38 +219,22 @@ fn use_tree_state() -> Rc<TreeState> {
     })
 }
 
-/// R820 §5.27 — scroll the keyboard cursor's row into the window
-/// ([`scroll_offset_to_reveal`]), so navigating to (or type-ahead jumping
-/// to) a row outside the rendered window scrolls there and materializes it
-/// — the keyboard ⊥ virtualization integration. No-op when nothing is
-/// focused or the cursor row is already visible.
-fn reveal_cursor(state: &TreeState, scroll: &Rc<pinion_core::widgets::scroll::ScrollState>) {
-    let Some(id) = state.focused_id.get() else {
-        return;
-    };
-    let nodes = state.nodes.get();
-    let rows = flat_visible(&nodes);
-    let Some(index) = rows.iter().position(|row| row.id == id) else {
-        return;
-    };
-    let (_, measured_h) = scroll.measured_viewport();
-    let offset = scroll_offset_to_reveal(index, scroll.offset_y(), measured_h, ROW_PITCH);
-    scroll.scroll_to(0, offset);
-}
-
 /// R820 §5.27 §5.50 — apply one key to the windowed tree: the lifted
-/// [`apply_tree_key`] resolve → flag-store bridge (shared with
-/// `hello-tree-view`), falling through to the lifted [`tree_typeahead_jump`]
-/// (R820.1, shared with all tree consumers), then scrolling the resulting
-/// cursor into the window via [`reveal_cursor`] (the windowed-tree step).
+/// [`apply_windowed_tree_key`] (R866) resolve → type-ahead → scroll-cursor-into-
+/// window pipeline, shared verbatim with `hello-tree-grid`. Threads only this
+/// binding's per-binding state (`use_tree_state`) + scroll + cache slot into the
+/// substrate; the navigation glue itself is the shared SSOT.
 fn apply_key_impl(key: &str) -> bool {
     let state = use_tree_state();
-    let handled = apply_tree_key(&state.nodes, &state.focused_id, key, NAV_PAGE)
-        || tree_typeahead_jump(&state.focused_id, &flat_visible(&state.nodes.get()), TYPEAHEAD_KEY, key);
-    if handled {
-        reveal_cursor(&state, &use_scroll_state(SCROLL_KEY));
-    }
-    handled
+    apply_windowed_tree_key(
+        &state.nodes,
+        &state.focused_id,
+        &use_scroll_state(SCROLL_KEY),
+        TYPEAHEAD_KEY,
+        NAV_PAGE,
+        ROW_PITCH,
+        key,
+    )
 }
 
 /// Header status line: the dataset size + the current visible-row count.

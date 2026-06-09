@@ -55,7 +55,7 @@
 //! the rendered slice (the same `compute_visible_range` the paint uses), so it
 //! exposes exactly the realized rows, not bounds-less off-window ghosts.
 
-use pinion_a11y::{treegrid_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{treegrid_nodes, AccessFocus, AccessNode, WidgetA11y};
 use pinion_core::external::{
     External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, StubExternal,
 };
@@ -64,15 +64,15 @@ use pinion_core::intent_tag;
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size};
 use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::composite_tag::GridTag;
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::tree_nav::{
-    apply_tree_key, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
-    VisibleRow,
+    flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode, VisibleRow,
 };
-use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
+use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Modifiers, Owner, Scene, Signal, WidgetCore};
-use pinion_shell::typeahead::tree_typeahead_jump;
+use pinion_shell::typeahead::apply_windowed_tree_key;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::table::GridScroll;
 use pinion_widget_paint::tree_view::{
@@ -299,42 +299,24 @@ fn use_tree_state() -> Rc<TreeState> {
     })
 }
 
-/// R864 §5.27 — scroll the keyboard cursor's row into the body window
-/// ([`scroll_offset_to_reveal`]), so navigating (or type-ahead jumping) to a
-/// row outside the rendered window scrolls there and materializes it — the
-/// keyboard ⊥ virtualization integration, shared with `hello-virtual-tree`.
-/// No-op when nothing is focused or the cursor row is already visible. Both
-/// frozen + scrolling panes share the body scroll (R859 follower), so revealing
-/// the body row reveals its name cell + metadata strip together.
-fn reveal_cursor(state: &TreeState, scroll: &Rc<ScrollState>) {
-    let Some(id) = state.focused_id.get() else {
-        return;
-    };
-    let nodes = state.nodes.get();
-    let rows = flat_visible(&nodes);
-    let Some(index) = rows.iter().position(|row| row.id == id) else {
-        return;
-    };
-    let (_, measured_h) = scroll.measured_viewport();
-    let offset = scroll_offset_to_reveal(index, scroll.offset_y(), measured_h, ROW_PITCH);
-    scroll.scroll_to(0, offset);
-}
-
 /// R864 §5.27 §5.50 — apply one key to the windowed tree-grid: the lifted
-/// [`apply_tree_key`] resolve → flag-store bridge (shared with the plain tree
-/// consumers), falling through to the lifted [`tree_typeahead_jump`], then
-/// [`reveal_cursor`] scrolls the resulting cursor row into the body window.
-/// Pure composition of the existing tree-nav substrate — the columned grid
-/// navigates exactly like the plain tree (the metadata columns are display
-/// cells the cursor rides past, not separate tab stops).
+/// [`apply_windowed_tree_key`] (R866) resolve → type-ahead → scroll-cursor-into-
+/// window pipeline, shared verbatim with `hello-virtual-tree`. The columned grid
+/// navigates exactly like the plain tree — the metadata columns are display
+/// cells the cursor rides past, not separate tab stops — so it threads only its
+/// own per-binding state (`use_tree_state`) + scroll + cache slot into the
+/// substrate; no per-binding navigation glue.
 fn apply_key_impl(key: &str) -> bool {
     let state = use_tree_state();
-    let handled = apply_tree_key(&state.nodes, &state.focused_id, key, NAV_PAGE)
-        || tree_typeahead_jump(&state.focused_id, &flat_visible(&state.nodes.get()), TYPEAHEAD_KEY, key);
-    if handled {
-        reveal_cursor(&state, &use_scroll_state(SCROLL_KEY));
-    }
-    handled
+    apply_windowed_tree_key(
+        &state.nodes,
+        &state.focused_id,
+        &use_scroll_state(SCROLL_KEY),
+        TYPEAHEAD_KEY,
+        NAV_PAGE,
+        ROW_PITCH,
+        key,
+    )
 }
 
 /// view-fn (§6.3): pure sync mapping. The dataset is virtual —
@@ -523,6 +505,22 @@ impl WidgetA11y for TreeGridView {
             slice,
             focused.as_deref(),
         )
+    }
+
+    /// R866 §5.40 — composite focus model (WAI-ARIA roving). When the outliner
+    /// root owns focus, the keyboard cursor row is the `aria-activedescendant`:
+    /// `AccessKit::TreeUpdate::focus` lands on the [`ROOT_TAG`] treegrid while
+    /// the active descendant names the cursor ROW node (`{TREE_TAG}_drow{id}`),
+    /// so the AT announces "you are on row X" rather than only "row X selected".
+    /// Mirrors the listbox / radiogroup composite-focus pattern; the cursor row
+    /// carries the matching `focused` flag from [`treegrid_nodes`].
+    fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
+        if focused == Some(ROOT_TAG)
+            && let Some(cursor) = use_tree_state().focused_id.get()
+        {
+            return Some(AccessFocus::composite(ROOT_TAG, GridTag::metadata_row(TREE_TAG, &cursor)));
+        }
+        focused.map(AccessFocus::atomic)
     }
 }
 
@@ -714,5 +712,37 @@ mod tests {
         assert_eq!(src.introspect_query("cell_at.99999.0"), Some(IntrospectValue::Null), "pos OOR");
         assert_eq!(src.introspect_query("cell_at.0"), Some(IntrospectValue::Null), "no column");
         assert_eq!(src.introspect_query("bogus"), None, "unknown path");
+    }
+
+    // ── R866 aria-activedescendant (roving composite focus) ──────────
+
+    #[test]
+    fn focused_outliner_returns_composite_activedescendant() {
+        // When the treegrid owns focus, the keyboard cursor row is conveyed via
+        // aria-activedescendant (focus on the container, active-descendant = the
+        // cursor ROW node), not aria-selected alone.
+        Owner::new().run(|| {
+            use_tree_state().focused_id.set(Some(String::from("f0-o3")));
+            let target = TreeGridView::access_focus_target(&(), Some(ROOT_TAG))
+                .expect("focused outliner -> composite focus");
+            assert_eq!(target.focus_tag, ROOT_TAG, "focus lands on the treegrid root");
+            assert_eq!(
+                target.active_descendant.as_deref(),
+                Some("tgrid_drowf0-o3"),
+                "aria-activedescendant = the cursor ROW node",
+            );
+        });
+    }
+
+    #[test]
+    fn unfocused_outliner_returns_atomic_for_a_sibling() {
+        // Focus elsewhere -> atomic on the sibling, no active descendant (the
+        // outliner does not claim the cursor while a sibling panel is focused).
+        Owner::new().run(|| {
+            let target = TreeGridView::access_focus_target(&(), Some("other_widget"))
+                .expect("sibling-focused -> atomic");
+            assert_eq!(target.focus_tag, "other_widget");
+            assert!(target.active_descendant.is_none());
+        });
     }
 }

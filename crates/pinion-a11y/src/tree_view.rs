@@ -113,6 +113,17 @@ pub fn tree_access_nodes(
             node = node.with_expanded(row.expanded);
         }
         // Single-select tree: only the cursor / selected row is selected.
+        //
+        // R866 carry — a single-tab-stop *roving* tree should ALSO convey its
+        // keyboard cursor through `aria-activedescendant` (the binding overrides
+        // `access_focus_target` → [`AccessFocus::composite`] + the cursor row
+        // carries `with_focused`), not `aria-selected` alone. The treegrid
+        // (`treegrid_nodes`) establishes that pattern at R866; lifting it to
+        // this *plain*-tree builder touches every consumer
+        // (`hello-virtual-tree` / `hello-tree-view` / `hello-tree-filter` /
+        // the `hello-dock-panels` inspector), so it is a documented follow-up
+        // round, not bolted on here (the inspector's composite-focus model
+        // needs analysis first — `[[routing-and-focus-are-separate-axes]]`).
         if selected_id == Some(row.id.as_str()) {
             node = node.with_selected(true);
         }
@@ -237,8 +248,13 @@ pub fn treegrid_nodes(
         if row.has_children {
             row_node = row_node.with_expanded(row.expanded);
         }
+        // R866 §5.40 — the cursor row carries `aria-selected` AND the roving
+        // `focused` flag (the `aria-activedescendant` target), mirroring
+        // [`tree_access_nodes`]: a single-tab-stop treegrid conveys its keyboard
+        // cursor via `aria-activedescendant` (the binding's `access_focus_target`
+        // redirects to this row's `_drow{id}` node), not `aria-selected` alone.
         if selected_id == Some(row.id.as_str()) {
-            row_node = row_node.with_selected(true);
+            row_node = row_node.with_selected(true).with_focused(true);
         }
         nodes.push(row_node);
         // The name cell is the row's label → `rowheader` (the row analogue of
@@ -572,6 +588,9 @@ mod tests {
         let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
         assert_eq!(by_tag("tg_drowsrc/widgets").selected, Some(true), "selected row");
         assert_eq!(by_tag("tg_drowsrc").selected, None, "non-selected row omits the axis");
+        // R866 — the cursor row carries the roving `focused` flag too.
+        assert!(by_tag("tg_drowsrc/widgets").state.focused, "cursor row is the active descendant");
+        assert!(!by_tag("tg_drowsrc").state.focused, "non-cursor row is not focused");
     }
 
     #[test]

@@ -43,8 +43,13 @@
 //!   [`char::to_lowercase`] — i18n labels (CJK, accented Latin,
 //!   Hangul, etc.) all participate.
 
-use pinion_core::widgets::tree_nav::VisibleRow;
+use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::tree_nav::{
+    apply_tree_key, flat_visible, reveal_row_cursor, TreeNode, VisibleRow,
+};
 use pinion_core::{Owner, Signal};
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -241,6 +246,46 @@ pub fn tree_typeahead_jump(
     };
     focused.set(Some(rows[idx].id.clone()));
     true
+}
+
+/// R866 §5.27 §5.50 — apply one key to a **windowed** keyboard-roving tree: the
+/// full keyboard step a virtualized tree binding's
+/// [`apply_key`](pinion_core::WidgetCore::apply_key) delegates to. Resolves the
+/// key through the lifted [`apply_tree_key`] (WAI-ARIA APG navigation →
+/// expand/collapse flag store), falls through to [`tree_typeahead_jump`]
+/// (type-ahead), then scrolls the resulting cursor into the rendered window via
+/// [`reveal_row_cursor`] (keyboard ⊥ virtualization). Returns the handled
+/// verdict so the shell swallow contract stays exact (an unhandled key like Tab
+/// falls through).
+///
+/// Lifted at R866 from the byte-identical `apply_key_impl` copies in
+/// `hello-virtual-tree` (R820) and `hello-tree-grid` (R864) — the windowed
+/// counterpart of the un-windowed `apply_tree_key`, completing the
+/// windowed-tree-keyboard substrate so the second consumer composes one call
+/// instead of re-deriving the resolve→typeahead→reveal pipeline. The caller
+/// supplies only its per-binding state (`nodes` / `focused`), scroll, and the
+/// `typeahead_key` cache slot (R811 cursor-storage-is-caller-choice); the
+/// pipeline glue is the SSOT here.
+#[must_use]
+pub fn apply_windowed_tree_key<N>(
+    nodes: &Signal<Vec<N>>,
+    focused: &Signal<Option<String>>,
+    scroll: &ScrollState,
+    typeahead_key: &'static str,
+    page: usize,
+    pitch: u32,
+    key: &str,
+) -> bool
+where
+    N: TreeNode + Clone + PartialEq + Serialize + DeserializeOwned + 'static,
+{
+    let handled = apply_tree_key(nodes, focused, key, page)
+        || tree_typeahead_jump(focused, &flat_visible(&nodes.get()), typeahead_key, key);
+    if handled {
+        let rows = flat_visible(&nodes.get());
+        reveal_row_cursor(&rows, focused.get().as_deref(), scroll, pitch);
+    }
+    handled
 }
 
 #[cfg(test)]
