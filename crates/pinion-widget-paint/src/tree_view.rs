@@ -60,7 +60,7 @@ use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::scroll::ScrollState;
@@ -486,15 +486,9 @@ fn build_row(
 ) -> Scene {
     let row_children = tree_cell_content(row, theme, style);
     let row_tag = composite_row_tag(tree_tag, &row.id);
-    // R673 §5.50 — focused row fills with the M3
-    // `SurfaceContainerHighest` tier (the canonical Material 3
-    // list-row focus state-layer). Non-focused rows stay transparent
-    // so the tree's outer Surface fill shows through.
-    let row_bg = if is_focused {
-        theme.resolve(ColorRole::SurfaceContainerHighest)
-    } else {
-        Color::TRANSPARENT
-    };
+    // R673 §5.50 — focused row fills with the M3 focus state-layer (the
+    // shared `row_focus_bg` SSOT, R860); non-focused rows stay transparent.
+    let row_bg = row_focus_bg(theme, is_focused);
     Scene::Container(
         ContainerNode::new(row_children)
             .with_tag(row_tag)
@@ -504,20 +498,12 @@ fn build_row(
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::Start)
                     .with_gap(style.glyph_label_gap)
-                    // R673 §5.50 — fixed row height matches the M3
-                    // Lists row token; width = Auto so the parent
-                    // container's `AlignItems::Stretch` extends the
-                    // row to the cross-axis full width (the focus
-                    // highlight + indent spacer rely on the row
-                    // filling the available width). The `Size` type
-                    // is `#[non_exhaustive]`, so build via default +
-                    // overwrite height — width stays at
-                    // `SizeValue::Auto`.
-                    .with_size({
-                        let mut s = Size::default();
-                        s.height = SizeValue::Px(style.row_height);
-                        s
-                    })
+                    // R673 §5.50 — fixed row height matches the M3 Lists row
+                    // token; width = Auto so the parent's `AlignItems::Stretch`
+                    // extends the row to the full cross-axis width (the focus
+                    // highlight + indent spacer rely on it). `Size::height_px`
+                    // is the width-Auto / height-pinned SSOT (R684).
+                    .with_size(Size::height_px(style.row_height))
                     .with_padding(Rect::new(
                         style.row_padding,
                         0,
@@ -628,11 +614,11 @@ fn treegrid_data_row(
         ContainerNode::new(cells)
             .with_tag(format!("{tag}_drow{}", row.id))
             .with_style(BoxStyle::filled(row_focus_bg(theme, is_focused)))
-            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_size({
-                let mut s = Size::default();
-                s.height = SizeValue::Px(style.row_height);
-                s
-            })),
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_size(Size::height_px(style.row_height)),
+            ),
     )
 }
 
@@ -1121,6 +1107,9 @@ impl ExternalIntrospect for TreeRowClickExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // `SizeValue` is no longer used in the lib body (R861 migrated the cells
+    // to `Size::height_px`), so the size-assertion tests import it directly.
+    use pinion_core::style::SizeValue;
 
     fn light_theme() -> Theme {
         Theme::light()
@@ -2047,9 +2036,9 @@ mod r819_virtual_tree_tests {
     //! [`build_row`] SSOT [`view_tree_focused`] also renders (a windowed
     //! row is byte-identical to the same row in the non-virtual path).
     use super::{
-        view_virtual_tree, Color, ColorRole, Scene, SizeValue, Theme, TreeItem, TreeViewFocus,
-        TreeViewStyle,
+        view_virtual_tree, Color, ColorRole, Scene, Theme, TreeItem, TreeViewFocus, TreeViewStyle,
     };
+    use pinion_core::style::SizeValue;
     use pinion_core::widgets::scroll::ScrollState;
     use pinion_core::widgets::tree_nav::flat_visible;
     use pinion_core::Owner;

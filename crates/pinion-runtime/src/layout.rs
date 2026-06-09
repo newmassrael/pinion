@@ -341,13 +341,14 @@ fn update_scroll_state_bounds(scene: &Scene) -> bool {
             // R859 §5.45 — a linked-scroll *follower* shares its state
             // with a primary node that owns the bounds write; the
             // follower never publishes. Publishing from both would
-            // flip-flop the shared `measured_h` (the two nodes sit in
-            // different bands with different cross-axis viewport
-            // heights) and spin a perpetual scroll-dirty re-pass. The
-            // follower still lays out its content unbounded along its
-            // axis in `lay_out_scroll_contents` (which is follower-
-            // agnostic), so the overflow clip + offset slide still
-            // apply — only the feedback is suppressed here.
+            // flip-flop the shared `measured_*` (the frozen-column grid's
+            // two vertical body scrolls share one vertical state but sit in
+            // side-by-side columns of different cross-axis *widths*) and
+            // spin a perpetual scroll-dirty re-pass. The follower still
+            // lays out its content unbounded along its axis in
+            // `lay_out_scroll_contents` (which is follower-agnostic), so
+            // the overflow clip + offset slide still apply — only the
+            // feedback is suppressed here.
             if let Some(state) = s.state.as_ref().filter(|_| !s.follower) {
                 let content_rect = s.content.rect();
                 // Content rect is scroll-local (origin at (0, 0)),
@@ -1106,35 +1107,35 @@ mod tests {
 
         #[test]
         fn r859_follower_scroll_skips_publish_so_settles_dirty_false() {
-            // R859 §5.45 — a linked-scroll *follower* sharing one state
-            // with a primary (the frozen-column grid's header strip vs
-            // its body) must NOT publish its measured viewport: the two
-            // sit in different bands with different cross-axis heights,
-            // so if both published, `set_measured_viewport` would
-            // flip-flop the shared `measured_h` and report dirty=true on
-            // every pass forever. The follower flag suppresses the
-            // header's write, so the pair settles and a second pass
-            // reports dirty=false (steady state). The primary still
-            // owns `max_x` and the published measured viewport.
+            // R859 §5.45 — the real frozen-column-grid configuration: two
+            // *vertical* body scrolls share one vertical `ScrollState` (so
+            // they scroll in vertical lockstep) but sit in side-by-side
+            // columns of different cross-axis *widths* (frozen pane 300 vs
+            // scrolling pane 200). If both published, `set_measured_viewport`
+            // would flip-flop the shared `measured_w` and report dirty=true
+            // every pass forever. The follower flag suppresses the frozen
+            // pane's write, so the pair settles and a second pass reports
+            // dirty=false. The primary still owns `max_y` + the published
+            // measured viewport.
             use pinion_core::widgets::scroll::ScrollState;
             use std::rc::Rc;
 
-            fn h_strip(h: u32) -> Scene {
-                let cells: Vec<Scene> = (0..6).map(|_| fixed_row_w(120, h)).collect();
+            fn v_col(w: u32) -> Scene {
+                // A tall column: 6 × 120 = 720 content height, `w` wide.
+                let cells: Vec<Scene> = (0..6).map(|_| fixed_row_w(w, 120)).collect();
                 Scene::Container(
-                    ContainerNode::new(cells).with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+                    ContainerNode::new(cells)
+                        .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
                 )
             }
 
             let state = Rc::new(ScrollState::new());
-            // Primary: the 40-tall body strip owns the bounds write.
-            let primary = ScrollNode::new(Rect::new(0, 0, 300, 40), h_strip(40))
-                .with_axis(ScrollAxis::Horizontal)
+            // Primary: the 300-wide scrolling-pane body owns the bounds write.
+            let primary = ScrollNode::new(Rect::new(0, 0, 300, 40), v_col(300))
                 .with_state(Rc::clone(&state));
-            // Follower: the 28-tall header strip slides with the same
-            // state but never publishes (different cross-axis height).
-            let follower = ScrollNode::new(Rect::new(0, 0, 300, 28), h_strip(28))
-                .with_axis(ScrollAxis::Horizontal)
+            // Follower: the 200-wide frozen-pane body slides with the same
+            // state but never publishes (different cross-axis width).
+            let follower = ScrollNode::new(Rect::new(0, 0, 200, 40), v_col(200))
                 .with_state(Rc::clone(&state))
                 .as_follower();
             let mut scene = Scene::Container(ContainerNode::new(vec![
@@ -1151,41 +1152,39 @@ mod tests {
                 !dirty_second,
                 "follower suppresses its publish, so the pair settles (no perpetual re-pass)",
             );
-            // 720 content − 300 viewport = 420 overflow, written by the
-            // primary; the follower never touched it.
-            assert_eq!(state.max(), (420, 0), "primary owns max_x; height clamped");
+            // 720 content − 40 viewport = 680 vertical overflow, written by
+            // the primary; the width is clamped so max_x is 0.
+            assert_eq!(state.max(), (0, 680), "primary owns max_y; width clamped");
             assert_eq!(
                 state.measured_viewport(),
                 (300, 40),
-                "published measured viewport is the PRIMARY's (300×40), not the follower's 28-tall band",
+                "published measured viewport is the PRIMARY's (300 wide), not the follower's 200-wide pane",
             );
         }
 
         #[test]
         fn r859_two_primaries_sharing_state_oscillate_negative_control() {
             // R859 negative control — proves the bug the follower flag
-            // cures. Two *primary* horizontal scrolls sharing one state
-            // with different cross-axis viewport heights both publish
-            // `set_measured_viewport`, so the shared `measured_h`
-            // flip-flops (40 ⇄ 28) every pass and the dirty bit never
-            // settles. This is exactly the perpetual re-pass that
-            // marking the header a follower eliminates above.
+            // cures. Two *primary* vertical scrolls sharing one state with
+            // different cross-axis viewport *widths* both publish
+            // `set_measured_viewport`, so the shared `measured_w` flip-flops
+            // (300 ⇄ 200) every pass and the dirty bit never settles — the
+            // perpetual re-pass marking the frozen pane a follower eliminates.
             use pinion_core::widgets::scroll::ScrollState;
             use std::rc::Rc;
 
-            fn h_strip(h: u32) -> Scene {
-                let cells: Vec<Scene> = (0..6).map(|_| fixed_row_w(120, h)).collect();
+            fn v_col(w: u32) -> Scene {
+                let cells: Vec<Scene> = (0..6).map(|_| fixed_row_w(w, 120)).collect();
                 Scene::Container(
-                    ContainerNode::new(cells).with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+                    ContainerNode::new(cells)
+                        .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
                 )
             }
 
             let state = Rc::new(ScrollState::new());
-            let a = ScrollNode::new(Rect::new(0, 0, 300, 40), h_strip(40))
-                .with_axis(ScrollAxis::Horizontal)
+            let a = ScrollNode::new(Rect::new(0, 0, 300, 40), v_col(300))
                 .with_state(Rc::clone(&state));
-            let b = ScrollNode::new(Rect::new(0, 0, 300, 28), h_strip(28))
-                .with_axis(ScrollAxis::Horizontal)
+            let b = ScrollNode::new(Rect::new(0, 0, 200, 40), v_col(200))
                 .with_state(Rc::clone(&state));
             let mut scene =
                 Scene::Container(ContainerNode::new(vec![Scene::Scroll(a), Scene::Scroll(b)]));
@@ -1195,7 +1194,7 @@ mod tests {
                 compute_layout_with_scroll_dirty(&mut scene, &mut cache(), 360, 320);
             assert!(
                 dirty_second,
-                "two primaries with mismatched heights oscillate measured_h → never settles",
+                "two primaries with mismatched widths oscillate measured_w → never settles",
             );
         }
 

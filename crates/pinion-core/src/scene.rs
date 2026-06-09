@@ -2152,15 +2152,18 @@ pub struct ScrollNode {
     ///
     /// This is the substrate behind the frozen-column data-grid (the
     /// Qt `QTableView` / AG-Grid / Excel "linked scrollbar" pattern):
-    /// the frozen-pane header and the scrolling body both reference one
-    /// horizontal [`ScrollState`], but they sit in different vertical
-    /// bands with different cross-axis viewport heights. If both
+    /// the frozen pane's body and the scrolling pane's body are two
+    /// *vertical* scroll nodes that both reference one vertical
+    /// [`ScrollState`] (so they scroll in vertical lockstep), but they
+    /// sit in side-by-side columns with different cross-axis viewport
+    /// *widths* (`frozen_w` vs the scrolling pane's width). If both
     /// published, `set_measured_viewport` would flip-flop the shared
-    /// `measured_h` every frame (header height vs body height) and spin
-    /// a perpetual scroll-dirty re-pass. Marking the header node a
-    /// follower makes it a passive slider: it still lays out its
-    /// content unbounded along its axis (so the overflow clips and the
-    /// `offset_*` slide applies), it just never feeds the bounds back.
+    /// `measured_w` every frame and spin a perpetual scroll-dirty
+    /// re-pass. Marking the frozen pane's body a follower makes it a
+    /// passive slider: it still lays out its content unbounded along its
+    /// axis (so the overflow clips and the `offset_*` slide applies), it
+    /// just never feeds the bounds back. (The mechanism is axis-agnostic
+    /// — it suppresses the publish on whichever axis the node scrolls.)
     ///
     /// Defaults to `false` (a primary, the only mode before R859), so
     /// every existing consumer is byte-unchanged. A follower must be
