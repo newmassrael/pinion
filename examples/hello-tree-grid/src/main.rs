@@ -18,8 +18,14 @@
 //! Click a folder row (the `{TREE_TAG}#{id}` composite-tag name cell, the
 //! R674 [`TreeRowClickExternal`] path) to expand / collapse it; the visible
 //! row count changes and the grid re-windows. Clicking also focuses the row
-//! (highlighted across both panes). Keyboard roving is a later additive axis
-//! (the `hello-virtual-tree` windowed-widget keyboard-defer precedent).
+//! (highlighted across both panes). R864 — the outliner is keyboard-navigable
+//! (single tab stop + `aria-activedescendant` roving cursor): Arrow Up/Down
+//! move the cursor, Arrow Right expands / descends, Arrow Left collapses /
+//! ascends, Enter/Space toggle, and type-ahead jumps by name — the lifted
+//! `apply_tree_key` + `tree_typeahead_jump` substrate, with the cursor
+//! scrolled into the body window (keyboard ⊥ virtualization). The metadata
+//! columns are display cells the row cursor rides past, not separate tab
+//! stops (an outliner navigates by row, not by cell).
 //!
 //! ## The witness (§2 #7 scene-as-data)
 //!
@@ -52,16 +58,19 @@ use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size};
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::scroll::use_scroll_state;
+use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
 use pinion_core::widgets::tree_nav::{
-    flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
+    apply_tree_key, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
 };
-use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
+use pinion_core::widgets::virtual_list::scroll_offset_to_reveal;
+use pinion_core::{Frame, Modifiers, Owner, Scene, Signal, WidgetCore};
+use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::table::GridScroll;
 use pinion_widget_paint::tree_view::{
     view_virtual_treegrid, TreeGridData, TreeRowClickExternal, TreeViewStyle,
 };
+use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTreeGridRenderer, HelloTreeGridRendererError);
@@ -112,6 +121,16 @@ const OBJECTS_PER: usize = 12;
 /// Folders expanded at boot (so the visible row count starts well above the
 /// window — the virtualization is obvious from frame one).
 const EXPANDED_AT_BOOT: usize = 3;
+/// Uniform per-row vertical slot pitch. Must equal
+/// [`TreeViewStyle::row_height`] (`view_virtual_treegrid` derives its slot
+/// pitch from the style); asserted in [`tests`] and used by the keyboard
+/// scroll-into-view ([`reveal_cursor`]).
+const ROW_PITCH: u32 = 48;
+/// Page Up / Down jump in rows (a viewport-ful, clamped via `clamp_nav`).
+const NAV_PAGE: usize = 10;
+/// Owner-cache key for the type-ahead cursor (buffer + last-typed instant),
+/// caller-side per the `tree_nav` purity boundary (R811).
+const TYPEAHEAD_KEY: &str = "hello_tree_grid::typeahead";
 
 /// One outliner node — a scene folder or object. Carries its own `expanded`
 /// flag (the retained flag-on-node storage). The `serde` + `PartialEq`
@@ -197,12 +216,54 @@ struct TreeState {
     focused_id: Signal<Option<String>>,
 }
 
-fn use_tree_state() -> std::rc::Rc<TreeState> {
+fn use_tree_state() -> Rc<TreeState> {
     let owner = Owner::current().expect("use_tree_state must run inside a CoreShell view / reducer wrap");
     owner.cache("hello_tree_grid::state", || TreeState {
         nodes: Signal::new(initial_nodes()),
-        focused_id: Signal::new(None),
+        // R864 — boot the keyboard cursor on the first row (the WAI-ARIA tree
+        // convention `hello-virtual-tree` also uses): the outliner is a single
+        // tab stop, so a defined `aria-activedescendant` exists from frame one
+        // and the focus highlight paints across both panes immediately.
+        focused_id: Signal::new(Some(String::from("f0"))),
     })
+}
+
+/// R864 §5.27 — scroll the keyboard cursor's row into the body window
+/// ([`scroll_offset_to_reveal`]), so navigating (or type-ahead jumping) to a
+/// row outside the rendered window scrolls there and materializes it — the
+/// keyboard ⊥ virtualization integration, shared with `hello-virtual-tree`.
+/// No-op when nothing is focused or the cursor row is already visible. Both
+/// frozen + scrolling panes share the body scroll (R859 follower), so revealing
+/// the body row reveals its name cell + metadata strip together.
+fn reveal_cursor(state: &TreeState, scroll: &Rc<ScrollState>) {
+    let Some(id) = state.focused_id.get() else {
+        return;
+    };
+    let nodes = state.nodes.get();
+    let rows = flat_visible(&nodes);
+    let Some(index) = rows.iter().position(|row| row.id == id) else {
+        return;
+    };
+    let (_, measured_h) = scroll.measured_viewport();
+    let offset = scroll_offset_to_reveal(index, scroll.offset_y(), measured_h, ROW_PITCH);
+    scroll.scroll_to(0, offset);
+}
+
+/// R864 §5.27 §5.50 — apply one key to the windowed tree-grid: the lifted
+/// [`apply_tree_key`] resolve → flag-store bridge (shared with the plain tree
+/// consumers), falling through to the lifted [`tree_typeahead_jump`], then
+/// [`reveal_cursor`] scrolls the resulting cursor row into the body window.
+/// Pure composition of the existing tree-nav substrate — the columned grid
+/// navigates exactly like the plain tree (the metadata columns are display
+/// cells the cursor rides past, not separate tab stops).
+fn apply_key_impl(key: &str) -> bool {
+    let state = use_tree_state();
+    let handled = apply_tree_key(&state.nodes, &state.focused_id, key, NAV_PAGE)
+        || tree_typeahead_jump(&state.focused_id, &flat_visible(&state.nodes.get()), TYPEAHEAD_KEY, key);
+    if handled {
+        reveal_cursor(&state, &use_scroll_state(SCROLL_KEY));
+    }
+    handled
 }
 
 /// view-fn (§6.3): pure sync mapping. The dataset is virtual —
@@ -210,6 +271,11 @@ fn use_tree_state() -> std::rc::Rc<TreeState> {
 /// scroll window, re-derived from `flat_visible(&nodes)`.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(_state: (), _frame: &Frame) -> Scene {
+    // `view_virtual_treegrid` derives its slot pitch from `style.row_height`;
+    // the keyboard scroll-into-view (`reveal_cursor`) uses ROW_PITCH, so keep
+    // them in lockstep.
+    debug_assert_eq!(TreeViewStyle::m3_default().row_height, ROW_PITCH);
+
     let theme = use_theme(THEME_TAG).theme_animated();
     let tree_state = use_tree_state();
     let nodes = tree_state.nodes.get();
@@ -313,8 +379,28 @@ impl WidgetCore for TreeGridView {
         Vec::new()
     }
 
+    /// R864 — the outliner is a single keyboard tab stop (the WAI-ARIA tree
+    /// convention: one tab stop + `aria-activedescendant` roving). The
+    /// focusable element is the [`ROOT_TAG`] treegrid root; arrow keys then
+    /// move the cursor via [`apply_key`].
     fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
+        vec![ROOT_TAG]
+    }
+
+    /// R864 §5.27 §5.50 — WAI-ARIA APG tree keyboard over the windowed rows:
+    /// the lifted [`apply_tree_key`] resolve → flag-store bridge + caller-side
+    /// type-ahead, then [`reveal_cursor`] scrolls the new cursor into the body
+    /// window (keyboard ⊥ virtualization). Single tab stop: keys apply only
+    /// while the treegrid root [`ROOT_TAG`] is focused — an ungated outliner
+    /// would steal keys from sibling panels in the eventual self-hosted editor
+    /// ([[routing-and-focus-are-separate-axes]]); the RPC demo issues
+    /// `focus/set` first like every other gated example.
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: Modifiers) -> bool {
+        let _ = scene;
+        if focused != Some(ROOT_TAG) {
+            return false;
+        }
+        apply_key_impl(key)
     }
 
     fn title() -> &'static str {
@@ -364,6 +450,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::widgets::virtual_list::compute_visible_range;
 
     #[test]
     fn metadata_overflows_the_window() {
@@ -393,5 +480,103 @@ mod tests {
         // FOLDERS folder rows + EXPANDED_AT_BOOT × OBJECTS_PER object rows.
         let expected = FOLDERS + EXPANDED_AT_BOOT * OBJECTS_PER;
         assert_eq!(rows.len(), expected, "boot visible rows = folders + expanded children");
+    }
+
+    // ── R864 keyboard roving ─────────────────────────────────────────
+
+    #[test]
+    fn slot_pitch_matches_style_row_height() {
+        // `view_virtual_treegrid` derives its pitch from the style; the
+        // keyboard scroll-into-view const must track it.
+        assert_eq!(TreeViewStyle::m3_default().row_height, ROW_PITCH);
+    }
+
+    #[test]
+    fn boot_cursor_sits_on_the_first_row() {
+        Owner::new().run(|| {
+            // WAI-ARIA tree convention: a defined aria-activedescendant from
+            // frame one, so the focus highlight + AT cursor exist at boot.
+            assert_eq!(use_tree_state().focused_id.get().as_deref(), Some("f0"));
+        });
+    }
+
+    #[test]
+    fn arrow_keys_move_the_row_cursor() {
+        Owner::new().run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * ROW_PITCH);
+            let state = use_tree_state();
+            // f0 boots expanded → ArrowDown descends to its first child.
+            assert_eq!(state.focused_id.get().as_deref(), Some("f0"));
+            assert!(apply_key_impl("ArrowDown"), "ArrowDown handled");
+            assert_eq!(state.focused_id.get().as_deref(), Some("f0-o0"), "Down -> first child");
+            assert!(apply_key_impl("ArrowUp"), "ArrowUp handled");
+            assert_eq!(state.focused_id.get().as_deref(), Some("f0"), "Up -> back to parent");
+            // A non-navigation, non-typeahead key is unhandled (falls through).
+            assert!(!apply_key_impl("F5"), "F5 is not a tree key");
+        });
+    }
+
+    #[test]
+    fn arrow_right_left_expand_collapse_a_folder() {
+        Owner::new().run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * ROW_PITCH);
+            let state = use_tree_state();
+            // Focus a collapsed folder (f10), then ArrowRight expands it.
+            state.focused_id.set(Some(String::from("f10")));
+            let before = flat_visible(&state.nodes.get()).len();
+            assert!(apply_key_impl("ArrowRight"), "ArrowRight handled");
+            let after = flat_visible(&state.nodes.get()).len();
+            assert_eq!(after, before + OBJECTS_PER, "ArrowRight expanded f10");
+            // ArrowLeft on the expanded branch collapses it again.
+            assert!(apply_key_impl("ArrowLeft"), "ArrowLeft handled");
+            assert_eq!(flat_visible(&state.nodes.get()).len(), before, "ArrowLeft collapsed f10");
+        });
+    }
+
+    #[test]
+    fn keyboard_reveals_an_off_window_cursor() {
+        Owner::new().run(|| {
+            let scroll = use_scroll_state(SCROLL_KEY);
+            scroll.set_measured_viewport(WIN_W, 10 * ROW_PITCH); // 10-row window
+            scroll.set_max(0, 1_000_000); // unclamp so scroll_to is honoured
+            // Drive the cursor well past the bottom of the window.
+            for _ in 0..40 {
+                apply_key_impl("ArrowDown");
+            }
+            assert!(scroll.offset_y() > 0, "navigating down scrolled the body window");
+            // The cursor row is inside the re-derived window (scroll-into-view).
+            let state = use_tree_state();
+            let cursor = state.focused_id.get().expect("cursor set");
+            let rows = flat_visible(&state.nodes.get());
+            let idx = rows.iter().position(|r| r.id == cursor).expect("cursor row visible");
+            let (_, mh) = scroll.measured_viewport();
+            let window = compute_visible_range(scroll.offset_y(), mh, rows.len(), ROW_PITCH, OVERSCAN);
+            assert!(
+                idx >= window.first && idx < window.first + window.count,
+                "cursor row {idx} stays within the revealed window {window:?}",
+            );
+        });
+    }
+
+    #[test]
+    fn apply_key_gates_on_root_focus() {
+        // Single tab stop: keys apply ONLY when the treegrid root is focused —
+        // an ungated outliner would steal keys from sibling panels.
+        Owner::new().run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * ROW_PITCH);
+            let mut scene = Scene::Container(pinion_core::scene::ContainerNode::new(Vec::new()));
+            assert!(
+                !TreeGridView::apply_key(&mut scene, None, "ArrowDown", Modifiers::default()),
+                "no focus -> key dropped",
+            );
+            assert!(
+                !TreeGridView::apply_key(&mut scene, Some("other"), "ArrowDown", Modifiers::default()),
+                "focus elsewhere -> key dropped",
+            );
+            assert!(
+                TreeGridView::apply_key(&mut scene, Some(ROOT_TAG), "ArrowDown", Modifiers::default()),
+                "focus on the treegrid root -> key applies",
+            );
+        });
     }
 }
