@@ -582,6 +582,11 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // its `aria-activedescendant`, so it joins the focus-only
         // container set (parallel to `Listbox` / `TabList` / `Tree`). Its
         // `GridCell` children land in the commit-class arm above.
+        // R863 §5.40 — `TreeGrid` (the columned-outliner container) is the
+        // grid analogue of `Tree`: it owns the single Tab stop and surfaces
+        // the roving row as its `aria-activedescendant`, so it joins the
+        // focus-only container set. Its `Row` / `RowHeader` / `GridCell`
+        // children are structural (the passive arm below).
         AriaRole::RadioGroup
         | AriaRole::Listbox
         | AriaRole::List
@@ -594,6 +599,7 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         | AriaRole::Toolbar
         | AriaRole::Dialog
         | AriaRole::Grid
+        | AriaRole::TreeGrid
         | AriaRole::Generic => {
             node.add_action(Action::Focus);
         }
@@ -648,8 +654,15 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         // Distinct from `RadioGroup` / `Toolbar` (focus-only above): those
         // own the single Tab stop + roving cursor, whereas a multi-select
         // toggle-button group leaves each button independently tabbable.
+        // R863 §5.40 — `RowHeader` (the tree-grid name column's label cell)
+        // is a structural header like `ColumnHeader`: AT reads its name to
+        // label the row, but it owns no AT-action surface (the tree-grid's
+        // pointer click routes through hit-test, not an AT action; a future
+        // keyboard-roving model would surface expand/collapse on the `Row`,
+        // not the header cell). Joins the zero-action arm.
         AriaRole::Tooltip
         | AriaRole::ColumnHeader
+        | AriaRole::RowHeader
         | AriaRole::Row
         | AriaRole::ProgressBar
         | AriaRole::Status

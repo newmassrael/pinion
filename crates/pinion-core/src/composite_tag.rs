@@ -203,7 +203,9 @@ impl GridSendKey {
 /// Tags: header band `"{tag}_hrow"`, column-header `"{tag}_ch{col}"`, data
 /// row `"{tag}_row{id}"`, and the R859/R860 frozen-split additions — frozen
 /// header band `"{tag}_fhrow"`, frozen data row `"{tag}_frow{id}"`,
-/// tree-grid metadata row `"{tag}_drow{id}"`.
+/// tree-grid metadata row `"{tag}_drow{id}"`. The R863 tree-grid `treegrid`
+/// a11y adds the metadata cell `"{tag}_dcell{id}_{col}"` and the tree-column
+/// header `"{tag}_chtree"`.
 pub struct GridTag;
 
 impl GridTag {
@@ -245,6 +247,28 @@ impl GridTag {
     #[must_use]
     pub fn metadata_row(tag: &str, id: impl core::fmt::Display) -> String {
         format!("{tag}_drow{id}")
+    }
+
+    /// (R863) One tree-grid metadata **cell** — `"{tag}_dcell{id}_{col}"`,
+    /// the `col`-th display cell of the metadata strip for row `id`. Stays
+    /// in the `'_'` presentational family (no `'#'`) so it never enters the
+    /// composite click-router namespace — a click on a metadata cell remains
+    /// a no-op, exactly as the untagged cell was. Tagging it lets the a11y
+    /// `treegrid` resolve a per-cell `gridcell` bounds rect (the metadata
+    /// columns were AT-invisible while untagged).
+    #[must_use]
+    pub fn metadata_cell(tag: &str, id: impl core::fmt::Display, col: usize) -> String {
+        format!("{tag}_dcell{id}_{col}")
+    }
+
+    /// (R863) The tree-grid's **name**-column header cell — `"{tag}_chtree"`.
+    /// The frozen tree column's `columnheader` (the metadata columns reuse
+    /// the numeric [`Self::col_header`]); a dedicated tag keeps the
+    /// metadata-column index space 0-based and free of an off-by-one for the
+    /// leading tree column.
+    #[must_use]
+    pub fn tree_col_header(tag: &str) -> String {
+        format!("{tag}_chtree")
     }
 }
 
@@ -295,6 +319,9 @@ mod tests {
         // The tree-grid keys metadata rows by a string node id.
         assert_eq!(GridTag::metadata_row("tg", "f3-o1"), "tg_drowf3-o1");
         assert_eq!(GridTag::data_row("tg", "f3-o1"), "tg_rowf3-o1");
+        // R863 — metadata cell + tree-column header.
+        assert_eq!(GridTag::metadata_cell("tg", "f3-o1", 2), "tg_dcellf3-o1_2");
+        assert_eq!(GridTag::tree_col_header("tg"), "tg_chtree");
     }
 
     #[test]

@@ -335,6 +335,15 @@ pub enum AriaRole {
     /// itself owns no keyboard model and no AT actions (matching
     /// [`Self::Tooltip`]'s passive arm).
     ColumnHeader,
+    /// R863 §5.40 §5.27 — WAI-ARIA 1.2 §3.3 `rowheader` role. A header cell
+    /// labelling a [`Self::Row`] — the row analogue of [`Self::ColumnHeader`].
+    /// Pinion's first consumer is the tree-grid's frozen **name** column: the
+    /// `{tag}#{id}` name cell is the row's label, so it lowers to `rowheader`
+    /// (the metadata columns lower to plain [`Self::GridCell`]). Structural /
+    /// non-interactive at the AT-action surface, matching [`Self::ColumnHeader`]
+    /// — the tree-grid routes a *click* on the name cell to the toggle/select
+    /// coordinator, but the AT role itself owns no keyboard model.
+    RowHeader,
     /// R704 §5.40 — WAI-ARIA 1.2 §3.3 `row` role. A structural grouping
     /// of [`Self::GridCell`] children in a [`Self::Grid`]. Non-
     /// interactive (no keyboard model, no AT actions); present so AT can
@@ -343,6 +352,19 @@ pub enum AriaRole {
     /// a consumer needs explicit row grouping — the variant lands so the
     /// role surface is complete for future tabular widgets.
     Row,
+    /// R863 §5.40 §5.27 §5.50 — WAI-ARIA 1.2 §3.3 `treegrid` role. A grid
+    /// whose [`Self::Row`] children additionally carry the tree disclosure
+    /// axes (`aria-level` / `aria-expanded` / `aria-posinset` / `aria-setsize`)
+    /// — the textbook role for a hierarchical outliner with metadata columns
+    /// (the self-hosted editor's scene outliner). Distinct from [`Self::Tree`]
+    /// (a one-dimensional disclosure list with no columns) and [`Self::Grid`]
+    /// (a flat two-dimensional grid with no disclosure): a `treegrid` is both,
+    /// and AccessKit carries it as its own [`accesskit::Role::TreeGrid`].
+    /// Pinion's first consumer is `view_virtual_treegrid` (R860); a
+    /// `tree`+`treeitem` topology cannot expose the metadata columns as cells
+    /// (a `treeitem` has no `gridcell` children in WAI-ARIA), so the columned
+    /// tree lowers here instead.
+    TreeGrid,
     /// R718 §5.40 — WAI-ARIA 1.2 §3.5 `progressbar` role. A
     /// descriptive (non-interactive) widget that reports the progress
     /// of a long-running task. Pairs with the §5.38
@@ -469,7 +491,11 @@ impl AriaRole {
             Self::Grid => Role::Grid,
             Self::GridCell => Role::GridCell,
             Self::ColumnHeader => Role::ColumnHeader,
+            // R863 §5.40 §5.27 — AccessKit carries `rowheader` / `treegrid`
+            // one-to-one, completing the columned-tree role set.
+            Self::RowHeader => Role::RowHeader,
             Self::Row => Role::Row,
+            Self::TreeGrid => Role::TreeGrid,
             // R718 §5.40 — AccessKit carries `progressbar` one-to-one
             // (`Role::ProgressIndicator`); the numeric value lowers
             // through the same `set_numeric_value` path as `Slider`.
@@ -529,7 +555,9 @@ impl AriaRole {
             Self::Grid => "grid",
             Self::GridCell => "gridcell",
             Self::ColumnHeader => "columnheader",
+            Self::RowHeader => "rowheader",
             Self::Row => "row",
+            Self::TreeGrid => "treegrid",
             Self::ProgressBar => "progressbar",
             Self::Status => "status",
             Self::Navigation => "navigation",
@@ -916,6 +944,21 @@ mod tests {
     fn r704_row_lowers_to_accesskit_row() {
         assert_eq!(AriaRole::Row.to_accesskit(), Role::Row);
         assert_eq!(AriaRole::Row.aria_name(), "row");
+    }
+
+    // R863 §5.40 §5.27 — RowHeader / TreeGrid lowering + names (the columned
+    // tree-grid role set).
+
+    #[test]
+    fn r863_row_header_lowers_to_accesskit_row_header() {
+        assert_eq!(AriaRole::RowHeader.to_accesskit(), Role::RowHeader);
+        assert_eq!(AriaRole::RowHeader.aria_name(), "rowheader");
+    }
+
+    #[test]
+    fn r863_tree_grid_lowers_to_accesskit_tree_grid() {
+        assert_eq!(AriaRole::TreeGrid.to_accesskit(), Role::TreeGrid);
+        assert_eq!(AriaRole::TreeGrid.aria_name(), "treegrid");
     }
 
     #[test]

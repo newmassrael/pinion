@@ -102,6 +102,10 @@ def data_strip(rid: str) -> str:
     return f"{TREE_TAG}_drow{rid}"
 
 
+def data_cell(rid: str, col: int) -> str:
+    return f"{TREE_TAG}_dcell{rid}_{col}"
+
+
 def row_count(tf) -> int:
     return int(tf.query(f"/{STATE_TAG}/external/row_count"))
 
@@ -144,6 +148,24 @@ def body() -> None:
             "name column left of metadata column"
         assert y_of(rects, FROZEN_HEADER_TAG) < y_of(rects, name_cell("f0")), \
             "frozen header above the first name cell"
+
+        # ── (A2) R863 — the metadata cells + headers are individually
+        # addressable. Each `{TREE_TAG}_dcell{id}_{col}` cell + `{TREE_TAG}_ch{col}`
+        # / `{TREE_TAG}_chtree` header is a tagged scene node, the geometry the
+        # a11y `treegrid` resolves its `gridcell` / `columnheader` bounds from
+        # (the metadata columns were AT-invisible under the prior `tree` /
+        # `treeitem` topology). The cells ascend left-to-right inside their row's
+        # strip, and each cell sits within the strip's horizontal extent.
+        assert "tgrid_chtree" in rects, "R863 name-column header is tagged"
+        assert all(f"{TREE_TAG}_ch{c}" in rects for c in range(3)), \
+            "R863 each metadata column header is tagged"
+        for col in range(3):
+            assert data_cell("f0", col) in rects, f"R863 metadata cell col {col} is tagged"
+        cell_xs = [x_of(rects, data_cell("f0", c)) for c in range(3)]
+        assert cell_xs == sorted(cell_xs) and len(set(cell_xs)) == 3, \
+            f"R863 metadata cells ascend left-to-right ({cell_xs})"
+        strip_x = x_of(rects, data_strip("f0"))
+        assert cell_xs[0] >= strip_x, "R863 first metadata cell sits inside its row strip"
 
         f0_name_x_boot = x_of(rects, name_cell("f0"))
         f0_strip_x_boot = x_of(rects, data_strip("f0"))

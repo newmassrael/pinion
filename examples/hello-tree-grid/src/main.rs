@@ -32,14 +32,19 @@
 //! virtualization sees only a window, so the AI reads structure here, not
 //! from the painted nodes). See `tools/demos/r860_tree_grid.py`.
 //!
-//! ## a11y (carry)
+//! ## a11y (R863)
 //!
-//! The binding supplies the WAI-ARIA `tree` / `treeitem` structure via the
-//! shared [`tree_access_nodes`] (the name cells resolve correct bounds). A
-//! span-aware `treegrid` role whose `gridcell`s cover the metadata columns
-//! is a documented R860 carry — the second tree-grid consumer lifts it.
+//! The binding supplies a WAI-ARIA `treegrid` via the shared
+//! [`treegrid_nodes`]: each `row` carries the tree disclosure axes
+//! (`aria-level` / `aria-expanded` / `aria-posinset` / `aria-setsize`) **and**
+//! holds a `rowheader` (the `{TREE_TAG}#{id}` name cell) + one `gridcell` per
+//! metadata column, with the row's AT bounds spanning the frozen name pane +
+//! the scrolling metadata pane (the R863 [`AccessNode::bounds_union_tags`]
+//! substrate). This resolves the R860 carry — the metadata columns were
+//! AT-invisible under the prior `tree` / `treeitem` topology (a `treeitem` has
+//! no `gridcell` children in WAI-ARIA).
 
-use pinion_a11y::{tree_access_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{treegrid_nodes, AccessNode, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue, StubExternal};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -88,6 +93,9 @@ const CLICK_INTENT_TAG: &str = intent_tag!("tgrid", "click");
 
 /// Metadata column headers (the scrolling pane).
 const DATA_HEADERS: [&str; 3] = ["Type", "Visible", "Layer"];
+/// The frozen name-column header label (shared by the paint + the a11y
+/// `treegrid` so the columnheader name matches the painted header).
+const TREE_HEADER: &str = "Name";
 /// Frozen tree (name) column width.
 const TREE_COL_W: u32 = 200;
 /// Each scrolling metadata column width. `3 × 160 = 480` metadata px against
@@ -215,7 +223,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         GridScroll { body: &scroll, horizontal: &h_scroll },
         &TreeGridData {
             rows: &rows,
-            tree_header: "Name",
+            tree_header: TREE_HEADER,
             data_headers: &DATA_HEADERS,
             tree_col_width: TREE_COL_W,
             data_col_width: DATA_COL_W,
@@ -319,17 +327,22 @@ impl WidgetCore for TreeGridView {
 }
 
 impl WidgetA11y for TreeGridView {
-    /// WAI-ARIA `tree` over the windowed rows (the shared
-    /// [`tree_access_nodes`]); the name cells (`{TREE_TAG}#{id}`) resolve the
-    /// treeitem bounds. The metadata columns are a documented R860 a11y carry.
+    /// R863 — WAI-ARIA `treegrid` over the windowed rows (the shared
+    /// [`treegrid_nodes`]): each `row` carries the tree disclosure axes and a
+    /// `rowheader` (the `{TREE_TAG}#{id}` name cell) + one `gridcell` per
+    /// metadata column, with the row's bounds spanning the frozen name pane +
+    /// the scrolling metadata pane. Resolves the R860 carry (metadata columns
+    /// were AT-invisible under the prior `tree`/`treeitem` topology).
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let tree_state = use_tree_state();
         let rows = flat_visible(&tree_state.nodes.get());
         let focused = tree_state.focused_id.get();
-        tree_access_nodes(
+        treegrid_nodes(
             ROOT_TAG,
-            &format!("{TREE_TAG}#"),
+            TREE_TAG,
             Some("Scene outliner"),
+            TREE_HEADER,
+            &DATA_HEADERS,
             &rows,
             focused.as_deref(),
         )

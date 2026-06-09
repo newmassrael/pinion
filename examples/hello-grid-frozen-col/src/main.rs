@@ -39,16 +39,18 @@
 //!
 //! ## a11y (WAI-ARIA virtualized grid)
 //!
-//! The shared `pinion_a11y::windowed_grid_nodes` builds the `AriaRole::Grid`
-//! over the (scrolling-pane) header `row` + the windowed data `row`s; every
-//! `gridcell` (`gfz#<id>_<col>`) resolves its own bounds across the split,
-//! so cell-level navigation is correct for all columns. The row / header
-//! *container* `AccessNode` resolves to the scrolling pane's strip (the frozen
-//! pane uses distinct `gfz_fhrow` / `gfz_frow<id>` tags so the paint scene
-//! never carries a duplicate container tag); a span-aware split-pane row node
-//! is a documented follow-up for the second frozen-grid consumer.
+//! The shared `pinion_a11y::windowed_grid_nodes_frozen` builds the
+//! `AriaRole::Grid` over the (scrolling-pane) header `row` + the windowed data
+//! `row`s; every `gridcell` (`gfz#<id>_<col>`) resolves its own bounds across
+//! the split, so cell-level navigation is correct for all columns. R863 — each
+//! header / data `row` additionally lists its frozen-pane strip
+//! (`gfz_fhrow` / `gfz_frow<id>`) as a `bounds_union_tags` fragment, so the
+//! shell resolves the **row container** bounds across both panes (the frozen
+//! identity columns are inside the AT row bounds, not just the scrolling
+//! pane's strip). This is the first `bounds_union_tags` substrate consumer
+//! (the R860 tree-grid `row` is the second).
 
-use pinion_a11y::{windowed_grid_nodes, AccessNode, WidgetA11y};
+use pinion_a11y::{windowed_grid_nodes_frozen, AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{BoxStyle, FlexDirection, LayoutStyle};
@@ -212,17 +214,18 @@ impl WidgetCore for GridFrozenColView {
 }
 
 impl WidgetA11y for GridFrozenColView {
-    /// WAI-ARIA virtualized `grid` — the shared `pinion_a11y::windowed_grid_nodes`
-    /// over the header `row` + the windowed data `row`s. Each `gridcell`
-    /// (`gfz#<id>_<col>`) resolves its own bounds across the frozen / scrolling
-    /// split, so cell navigation is correct for every column; the row / header
-    /// container node resolves to the scrolling pane's strip (see the module
-    /// doc — the frozen pane uses distinct `gfz_frow<id>` tags).
+    /// R863 — WAI-ARIA virtualized frozen-split `grid` (the shared
+    /// `pinion_a11y::windowed_grid_nodes_frozen`) over the header `row` + the
+    /// windowed data `row`s. Each `gridcell` (`gfz#<id>_<col>`) resolves its own
+    /// bounds per-pane, and each header / data `row` now spans **both** panes
+    /// via `bounds_union_tags` (the scrolling strip ∪ the `gfz_fhrow` /
+    /// `gfz_frow<id>` frozen strip), so the AT row bounds cover the frozen
+    /// identity columns too.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window = compute_visible_range(scroll.offset_y(), measured_h, N, ROW_H, OVERSCAN);
-        windowed_grid_nodes(
+        windowed_grid_nodes_frozen(
             TABLE_TAG,
             "Frozen-column data grid",
             &HEADERS,

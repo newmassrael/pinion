@@ -56,7 +56,36 @@ pub fn windowed_grid_nodes(
     set_size: u32,
     window: &VisibleWindow,
 ) -> Vec<AccessNode> {
-    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Display)
+    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Display, false)
+}
+
+/// R863 §5.40 §5.27 §5.45 — build a **frozen-split** virtualized `grid`: the
+/// same container + header + windowed-row topology as [`windowed_grid_nodes`],
+/// but each header / data `Row` additionally lists its **frozen-pane** strip
+/// (`{tag}_fhrow` / `{tag}_frow{id}`) as a
+/// [bounds-union fragment](AccessNode::bounds_union_tags) so the shell resolves
+/// the Row's AT bounds as the union of both panes.
+///
+/// The R859 frozen-left-column grid paints each logical row across two scene
+/// fragments — the scrolling pane's `{tag}_row{id}` strip and the frozen pane's
+/// `{tag}_frow{id}` strip — but the a11y `Row` container resolves only the
+/// former, so the frozen (identity / name) columns fall outside its bounds. The
+/// individual `gridcell`s already resolve correctly per-pane (each `{tag}#{id}_{col}`
+/// is painted in its own pane); only the row **container** needs the span. This
+/// is the first [`AccessNode::bounds_union_tags`] consumer (the tree-grid `row`
+/// is the second, the divergence-is-a-bug trigger that lifted the union into the
+/// substrate). Display-only — a frozen + selectable grid would add the
+/// `aria-selected` axis additively at its second consumer
+/// (`[[abstraction-needs-second-consumer]]`).
+#[must_use]
+pub fn windowed_grid_nodes_frozen(
+    grid_tag: &str,
+    grid_name: &str,
+    headers: &[&str],
+    set_size: u32,
+    window: &VisibleWindow,
+) -> Vec<AccessNode> {
+    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Display, true)
 }
 
 /// Whether the grid exposes an `aria-selected` axis on its data rows, and
@@ -91,6 +120,7 @@ fn grid_nodes(
     set_size: u32,
     window: &VisibleWindow,
     selection: GridSelection,
+    frozen: bool,
 ) -> Vec<AccessNode> {
     let ncols = headers.len();
     // grid + header row + ncols columnheaders + per windowed row (1 row +
@@ -112,8 +142,15 @@ fn grid_nodes(
     }
     nodes.push(grid);
 
-    // Frozen header row + its columnheader cells.
+    // Frozen header row + its columnheader cells. R863 §5.45 — in a
+    // frozen-split grid (R859) the header band is painted as `{tag}_hrow`
+    // (scrolling pane) + `{tag}_fhrow` (frozen pane); the a11y `Row`
+    // resolves only the former, so the frozen columns fall outside its
+    // bounds. Union the frozen-pane band so the header Row spans both panes.
     let mut hrow = AccessNode::new(GridTag::header_row(grid_tag), AriaRole::Row);
+    if frozen {
+        hrow = hrow.with_bounds_union_tag(GridTag::frozen_header_row(grid_tag));
+    }
     for col in 0..ncols {
         hrow = hrow.with_child(GridTag::col_header(grid_tag, col));
     }
@@ -131,6 +168,12 @@ fn grid_nodes(
         let mut row = AccessNode::new(GridTag::data_row(grid_tag, id), AriaRole::Row)
             .with_position_in_set(posinset)
             .with_size_of_set(set_size);
+        // R863 §5.45 — the frozen pane paints this row's frozen columns as
+        // `{tag}_frow{id}`; union it so the data Row's AT bounds cover the
+        // frozen (e.g. name) columns, not just the scrolling pane's strip.
+        if frozen {
+            row = row.with_bounds_union_tag(GridTag::frozen_data_row(grid_tag, id));
+        }
         for col in 0..ncols {
             row = row.with_child(cell_tag(grid_tag, id, col));
         }
@@ -177,7 +220,7 @@ pub fn windowed_grid_nodes_selected(
     window: &VisibleWindow,
     selected: Option<usize>,
 ) -> Vec<AccessNode> {
-    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Single(selected))
+    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Single(selected), false)
 }
 
 /// Build a **multi-select** virtualized `grid` (R782 §5.40): the same
@@ -212,7 +255,7 @@ pub fn windowed_grid_nodes_multiselected(
     window: &VisibleWindow,
     selection: &std::collections::BTreeSet<usize>,
 ) -> Vec<AccessNode> {
-    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Multi(selection))
+    grid_nodes(grid_tag, grid_name, headers, set_size, window, GridSelection::Multi(selection), false)
 }
 
 /// Build a **sorted / filtered** virtualized `grid` (R783 §5.40, lifted from
@@ -359,6 +402,57 @@ mod tests {
         let nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(0, 2));
         for n in nodes.iter().filter(|n| n.role == AriaRole::Row && n.tag != "vtbl_hrow") {
             assert_eq!(n.selected, None, "display-only data rows omit aria-selected");
+        }
+    }
+
+    // ── R863 frozen-split bounds union ───────────────────────────────
+
+    #[test]
+    fn unsplit_grid_rows_carry_no_bounds_union() {
+        // The shared (non-frozen) builders never list a frozen-pane fragment —
+        // a single-pane row resolves bounds from its own tag alone.
+        let nodes = windowed_grid_nodes("vtbl", "G", &HEADERS, 10_000, &window(0, 2));
+        for n in nodes.iter().filter(|n| n.role == AriaRole::Row) {
+            assert!(n.bounds_union_tags.is_empty(), "unsplit Row {} has no union", n.tag);
+        }
+    }
+
+    #[test]
+    fn frozen_grid_rows_union_the_frozen_pane_strip() {
+        // The frozen builder makes the header Row + each data Row span both
+        // panes: the scrolling-pane strip (own tag) ∪ the frozen-pane strip.
+        let nodes = windowed_grid_nodes_frozen("gfz", "Frozen grid", &HEADERS, 10_000, &window(0, 2));
+        let hrow = nodes.iter().find(|n| n.tag == "gfz_hrow").unwrap();
+        assert_eq!(
+            hrow.bounds_union_tags,
+            vec!["gfz_fhrow"],
+            "header Row unions the frozen header band",
+        );
+        let row0 = nodes.iter().find(|n| n.tag == "gfz_row0").unwrap();
+        assert_eq!(row0.bounds_union_tags, vec!["gfz_frow0"], "data Row unions its frozen strip");
+        let row1 = nodes.iter().find(|n| n.tag == "gfz_row1").unwrap();
+        assert_eq!(row1.bounds_union_tags, vec!["gfz_frow1"]);
+    }
+
+    #[test]
+    fn frozen_is_a_superset_of_the_display_topology() {
+        // The frozen builder must build the IDENTICAL container + header +
+        // row + cell topology as the display-only builder — only each Row's
+        // bounds_union_tags fragment is added (the gridcells already resolve
+        // per-pane, so they are byte-identical).
+        let plain = windowed_grid_nodes("gfz", "G", &HEADERS, 10_000, &window(0, 2));
+        let frozen = windowed_grid_nodes_frozen("gfz", "G", &HEADERS, 10_000, &window(0, 2));
+        assert_eq!(plain.len(), frozen.len());
+        for (p, f) in plain.iter().zip(&frozen) {
+            assert_eq!(p.tag, f.tag);
+            assert_eq!(p.role, f.role);
+            assert_eq!(p.children, f.children, "{} children unchanged", p.tag);
+            assert_eq!(p.position_in_set, f.position_in_set);
+        }
+        // Only the Row nodes gain a union fragment; gridcells / columnheaders
+        // stay single-fragment.
+        for n in frozen.iter().filter(|n| n.role != AriaRole::Row) {
+            assert!(n.bounds_union_tags.is_empty(), "{} is single-fragment", n.tag);
         }
     }
 

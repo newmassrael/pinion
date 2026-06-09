@@ -44,6 +44,7 @@
 
 use crate::node::AccessNode;
 use crate::role::AriaRole;
+use pinion_core::composite_tag::GridTag;
 use pinion_core::widgets::tree_nav::VisibleRow;
 
 /// Compose a row's composite `AccessNode` tag — the frozen R51.42
@@ -116,6 +117,141 @@ pub fn tree_access_nodes(
             node = node.with_selected(true);
         }
         nodes.push(node);
+    }
+    nodes
+}
+
+/// R863 §5.40 §5.27 §5.50 — WAI-ARIA `treegrid` + `row` + `rowheader` /
+/// `gridcell` `AccessNode` builder: the columned analogue of
+/// [`tree_access_nodes`] for [`view_virtual_treegrid`](pinion_widget_paint::tree_view::view_virtual_treegrid).
+///
+/// A `tree` / `treeitem` topology cannot expose the metadata columns — a
+/// `treeitem` has no `gridcell` children in WAI-ARIA — so a hierarchical
+/// outliner *with columns* (the self-hosted editor's scene outliner) lowers to
+/// a `treegrid`: rows carry the tree disclosure axes (`aria-level` /
+/// `aria-expanded` / `aria-posinset` / `aria-setsize`) **and** hold one
+/// `gridcell` per column. The leading **name** column is the row's label, so it
+/// lowers to a `rowheader`; the metadata columns lower to plain `gridcell`s.
+///
+/// Each `row` is painted across two frozen-split panes — the `{grid_tag}_drow{id}`
+/// metadata strip (scrolling pane) and the `{grid_tag}#{id}` name cell (frozen
+/// pane) — so the `row` node lists the name cell as a
+/// [bounds-union fragment](AccessNode::bounds_union_tags) and the shell resolves
+/// its bounds across both panes (the second `bounds_union_tags` consumer, after
+/// the frozen data-grid). The header `row` spans the panes the same way
+/// (`{grid_tag}_hrow` ∪ `{grid_tag}_fhrow`).
+///
+/// # Arguments
+///
+/// - `treegrid_tag` — the `role=treegrid` container node's tag: the focusable
+///   element (`AccessKit::TreeUpdate::focus` lands here). Usually a separate
+///   invisible root anchor (`hello-tree-grid`'s `"tgrid_root"`), distinct from
+///   `grid_tag`.
+/// - `grid_tag` — the paint-root tag every cell / header / strip tag derives
+///   from: name cells `{grid_tag}#{id}`, metadata cells
+///   `{grid_tag}_dcell{id}_{col}`, metadata-row strips `{grid_tag}_drow{id}`,
+///   name header `{grid_tag}_chtree`, metadata headers `{grid_tag}_ch{col}`,
+///   header bands `{grid_tag}_hrow` / `{grid_tag}_fhrow` — the same scheme
+///   `view_virtual_treegrid` paints (the cross-crate [`GridTag`] SSOT).
+/// - `name` — optional accessible name for the treegrid container.
+/// - `tree_header` — the name column's header label.
+/// - `data_headers` — the metadata column header labels; `data_headers.len()`
+///   is the metadata column count.
+/// - `rows` — the [`flat_visible`](pinion_core::widgets::tree_nav::flat_visible)
+///   flattening of the visible tree (the SSOT the paint walk also consumes).
+/// - `selected_id` — the row id carrying `aria-selected`, or `None`.
+///
+/// # Returns
+///
+/// `[treegrid, header_row, name_columnheader, metadata_columnheader…, (row,
+/// rowheader, gridcell…)…]` — the container first, mirroring the flat
+/// convention [`lower_access_node`](crate::tree::AccessTreeBuilder) resolves
+/// into a tree. Gridcell names are left `None` so the shell's
+/// [`enrich_names_from_scene`](crate::enrich_names_from_scene) derives them from
+/// the painted cell text (scene-as-data: the value lives in one place).
+#[must_use]
+pub fn treegrid_nodes(
+    treegrid_tag: &str,
+    grid_tag: &str,
+    name: Option<&str>,
+    tree_header: &str,
+    data_headers: &[&str],
+    rows: &[VisibleRow],
+    selected_id: Option<&str>,
+) -> Vec<AccessNode> {
+    let ncols = data_headers.len();
+    // container + header row + (ncols + 1) columnheaders + per row (row +
+    // rowheader + ncols gridcells).
+    let mut nodes: Vec<AccessNode> = Vec::with_capacity(rows.len() * (ncols + 2) + ncols + 3);
+
+    // TreeGrid container: references the header row + every visible data row.
+    let mut grid = AccessNode::new(treegrid_tag, AriaRole::TreeGrid);
+    if let Some(name) = name {
+        grid = grid.with_name(name);
+    }
+    grid = grid.with_child(GridTag::header_row(grid_tag));
+    for row in rows {
+        grid = grid.with_child(GridTag::metadata_row(grid_tag, &row.id));
+    }
+    nodes.push(grid);
+
+    // Header `row`: the metadata header band (`{grid_tag}_hrow`) ∪ the frozen
+    // name header band (`{grid_tag}_fhrow`), with the name columnheader first.
+    let mut hrow = AccessNode::new(GridTag::header_row(grid_tag), AriaRole::Row)
+        .with_bounds_union_tag(GridTag::frozen_header_row(grid_tag))
+        .with_child(GridTag::tree_col_header(grid_tag));
+    for col in 0..ncols {
+        hrow = hrow.with_child(GridTag::col_header(grid_tag, col));
+    }
+    nodes.push(hrow);
+    nodes.push(
+        AccessNode::new(GridTag::tree_col_header(grid_tag), AriaRole::ColumnHeader)
+            .with_name(tree_header),
+    );
+    for (col, label) in data_headers.iter().enumerate() {
+        nodes.push(
+            AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
+                .with_name(*label),
+        );
+    }
+
+    // Windowed data rows: each `row` carries the tree disclosure axes + a
+    // bounds span over both panes, holding a `rowheader` (name) + one
+    // `gridcell` per metadata column.
+    for row in rows {
+        let row_tag = GridTag::metadata_row(grid_tag, &row.id);
+        let name_cell = tree_row_tag(grid_tag, &row.id);
+        let mut row_node = AccessNode::new(&row_tag, AriaRole::Row)
+            // R863 — span the frozen name cell (the other pane fragment).
+            .with_bounds_union_tag(&name_cell)
+            // WAI-ARIA 1.2 6.6.8 / 6.6.9 / 6.6.10 — one-based depth + sibling
+            // index + count (a treegrid row carries the tree axes itself).
+            .with_level(row.depth + 1)
+            .with_position_in_set(row.position_in_set)
+            .with_size_of_set(row.size_of_set)
+            .with_child(&name_cell);
+        for col in 0..ncols {
+            row_node = row_node.with_child(GridTag::metadata_cell(grid_tag, &row.id, col));
+        }
+        // 6.6.3 — disclosure state on branches only; leaves omit it.
+        if row.has_children {
+            row_node = row_node.with_expanded(row.expanded);
+        }
+        if selected_id == Some(row.id.as_str()) {
+            row_node = row_node.with_selected(true);
+        }
+        nodes.push(row_node);
+        // The name cell is the row's label → `rowheader` (the row analogue of
+        // a columnheader); the explicit name mirrors the painted label.
+        nodes.push(AccessNode::new(&name_cell, AriaRole::RowHeader).with_name(row.label.as_str()));
+        // Metadata `gridcell`s — names left to `enrich_names_from_scene` (the
+        // painted cell text is the single source of truth).
+        for col in 0..ncols {
+            nodes.push(AccessNode::new(
+                GridTag::metadata_cell(grid_tag, &row.id, col),
+                AriaRole::GridCell,
+            ));
+        }
     }
     nodes
 }
@@ -332,5 +468,119 @@ mod tests {
         assert_eq!(out.len(), 1, "empty tree → just the role=tree root");
         assert_eq!(out[0].role, AriaRole::Tree);
         assert!(out[0].children.is_empty(), "root references no rows");
+    }
+
+    // ── R863 §5.40 §5.27 — treegrid (columned tree) builder ──────────
+
+    use super::treegrid_nodes;
+
+    const DATA_HEADERS: [&str; 3] = ["Type", "Visible", "Layer"];
+
+    /// `[treegrid, header_row, name_columnheader, 3 metadata columnheaders,
+    /// (row, rowheader, 3 gridcells) × rows]`.
+    fn tg_nodes() -> Vec<AccessNode> {
+        treegrid_nodes("tg_root", "tg", Some("Scene outliner"), "Name", &DATA_HEADERS, &sample_rows(), None)
+    }
+
+    #[test]
+    fn treegrid_emits_container_header_and_one_row_block_per_visible_row() {
+        let out = tg_nodes();
+        // 1 treegrid + 1 header row + (1 name + 3 metadata) columnheaders +
+        // 5 rows × (1 row + 1 rowheader + 3 gridcells).
+        assert_eq!(out.len(), 1 + 1 + 4 + sample_rows().len() * 5);
+        assert_eq!(out[0].role, AriaRole::TreeGrid, "container is a treegrid, not a tree");
+        assert_eq!(out[0].name.as_deref(), Some("Scene outliner"));
+        // The container references the header row + every visible data-row strip.
+        assert_eq!(out[0].children[0], "tg_hrow");
+        assert_eq!(out[0].children[1], "tg_drowsrc");
+        assert_eq!(out[0].children.len(), 1 + sample_rows().len());
+    }
+
+    #[test]
+    fn treegrid_rows_span_both_panes_via_bounds_union() {
+        // The defining R863 fix: each row is painted across the scrolling
+        // metadata strip (own tag) + the frozen name cell (union fragment), so
+        // the AT row bounds cover the name column, not just the metadata.
+        let out = tg_nodes();
+        let hrow = out.iter().find(|n| n.tag == "tg_hrow").unwrap();
+        assert_eq!(hrow.bounds_union_tags, vec!["tg_fhrow"], "header row spans both header bands");
+        let row = out.iter().find(|n| n.tag == "tg_drowsrc").unwrap();
+        assert_eq!(row.role, AriaRole::Row);
+        assert_eq!(row.bounds_union_tags, vec!["tg#src"], "data row spans the frozen name cell");
+    }
+
+    #[test]
+    fn treegrid_name_cell_is_rowheader_metadata_are_gridcells() {
+        let out = tg_nodes();
+        // The name cell (`tg#src`) is the row's label → rowheader.
+        let name = out.iter().find(|n| n.tag == "tg#src").unwrap();
+        assert_eq!(name.role, AriaRole::RowHeader);
+        assert_eq!(name.name.as_deref(), Some("src"), "rowheader name mirrors the label");
+        // The metadata cells are gridcells, named by enrichment (None here).
+        let cell0 = out.iter().find(|n| n.tag == "tg_dcellsrc_0").unwrap();
+        assert_eq!(cell0.role, AriaRole::GridCell);
+        assert!(cell0.name.is_none(), "gridcell name comes from the painted text, not the builder");
+        // The row references the rowheader first, then one gridcell per column.
+        let row = out.iter().find(|n| n.tag == "tg_drowsrc").unwrap();
+        assert_eq!(row.children, vec!["tg#src", "tg_dcellsrc_0", "tg_dcellsrc_1", "tg_dcellsrc_2"]);
+    }
+
+    #[test]
+    fn treegrid_rows_carry_the_tree_disclosure_axes() {
+        // A treegrid row IS the tree node: it carries level / posinset /
+        // setsize, and aria-expanded on branches only (leaves omit it).
+        let out = tg_nodes();
+        let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
+        let src = by_tag("tg_drowsrc");
+        assert_eq!(src.level, Some(1), "root row is level 1");
+        assert_eq!((src.position_in_set, src.size_of_set), (Some(1), Some(2)));
+        assert_eq!(src.expanded, Some(true), "expanded branch");
+        let mod_rs = by_tag("tg_drowsrc/widgets/mod.rs");
+        assert_eq!(mod_rs.level, Some(3));
+        assert_eq!(mod_rs.expanded, None, "a leaf omits aria-expanded");
+        let docs = by_tag("tg_drowdocs");
+        assert_eq!(docs.expanded, Some(false), "collapsed branch");
+    }
+
+    #[test]
+    fn treegrid_columnheaders_cover_name_then_metadata() {
+        let out = tg_nodes();
+        let headers: Vec<(&str, &str)> = out
+            .iter()
+            .filter(|n| n.role == AriaRole::ColumnHeader)
+            .map(|n| (n.tag.as_str(), n.name.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(
+            headers,
+            vec![
+                ("tg_chtree", "Name"),
+                ("tg_ch0", "Type"),
+                ("tg_ch1", "Visible"),
+                ("tg_ch2", "Layer"),
+            ],
+            "name column header first, then metadata headers in order",
+        );
+        // The header row references them in the same order.
+        let hrow = out.iter().find(|n| n.tag == "tg_hrow").unwrap();
+        assert_eq!(hrow.children, vec!["tg_chtree", "tg_ch0", "tg_ch1", "tg_ch2"]);
+    }
+
+    #[test]
+    fn treegrid_selected_row_carries_aria_selected_others_omit_it() {
+        let out =
+            treegrid_nodes("tg_root", "tg", None, "Name", &DATA_HEADERS, &sample_rows(), Some("src/widgets"));
+        let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
+        assert_eq!(by_tag("tg_drowsrc/widgets").selected, Some(true), "selected row");
+        assert_eq!(by_tag("tg_drowsrc").selected, None, "non-selected row omits the axis");
+    }
+
+    #[test]
+    fn treegrid_empty_rows_emit_container_and_headers_only() {
+        let out = treegrid_nodes("tg_root", "tg", None, "Name", &DATA_HEADERS, &[], None);
+        // container + header row + (1 name + 3 metadata) columnheaders.
+        assert_eq!(out.len(), 1 + 1 + 4);
+        assert_eq!(out[0].role, AriaRole::TreeGrid);
+        assert_eq!(out[0].children, vec!["tg_hrow"], "no data rows referenced");
+        assert!(out.iter().all(|n| n.role != AriaRole::Row || n.tag == "tg_hrow"));
     }
 }

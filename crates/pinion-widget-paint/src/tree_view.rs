@@ -585,8 +585,11 @@ fn treegrid_name_cell(
 }
 
 /// R860 — a display text cell for one metadata column (fixed width × row
-/// height). Display-only: no tag, so a click falls through to the row.
-fn treegrid_text_cell(text: &str, width: u32, theme: &Theme, style: &TreeViewStyle) -> Scene {
+/// height). R863 — tagged `cell_tag` (`GridTag::metadata_cell`) so the a11y
+/// `treegrid` resolves a per-cell `gridcell` bounds rect; the tag is in the
+/// `'_'` presentational family (no `'#'`), so a click on it stays a no-op,
+/// exactly as the untagged cell was.
+fn treegrid_text_cell(cell_tag: String, text: &str, width: u32, theme: &Theme, style: &TreeViewStyle) -> Scene {
     let label = Scene::Text(TextNode::styled(
         text.to_string(),
         Rect::default(),
@@ -594,7 +597,7 @@ fn treegrid_text_cell(text: &str, width: u32, theme: &Theme, style: &TreeViewSty
             .with_size_px(style.font_size_px)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
-    Scene::Container(treegrid_strip(vec![label], width, style))
+    Scene::Container(treegrid_strip(vec![label], width, style).with_tag(cell_tag))
 }
 
 /// R860 — one metadata-row strip (the scrolling pane's row): one display
@@ -609,7 +612,10 @@ fn treegrid_data_row(
     cell_data: &impl Fn(&str, usize) -> String,
 ) -> Scene {
     let cells: Vec<Scene> = (0..data.data_headers.len())
-        .map(|col| treegrid_text_cell(&cell_data(&row.id, col), data.data_col_width, theme, style))
+        .map(|col| {
+            let cell_tag = GridTag::metadata_cell(tag, &row.id, col);
+            treegrid_text_cell(cell_tag, &cell_data(&row.id, col), data.data_col_width, theme, style)
+        })
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
@@ -624,8 +630,11 @@ fn treegrid_data_row(
 }
 
 /// R860 — a header label cell (no fill — the header *band* container owns
-/// the raised [`ColorRole::SurfaceContainerHigh`] surface).
-fn treegrid_header_cell(label: &str, width: u32, theme: &Theme, style: &TreeViewStyle) -> Scene {
+/// the raised [`ColorRole::SurfaceContainerHigh`] surface). R863 — tagged
+/// `cell_tag` (`GridTag::col_header` for a metadata column, `tree_col_header`
+/// for the name column) so the a11y `treegrid` resolves a per-column
+/// `columnheader` bounds rect.
+fn treegrid_header_cell(cell_tag: String, label: &str, width: u32, theme: &Theme, style: &TreeViewStyle) -> Scene {
     let text = Scene::Text(TextNode::styled(
         label.to_string(),
         Rect::default(),
@@ -633,7 +642,7 @@ fn treegrid_header_cell(label: &str, width: u32, theme: &Theme, style: &TreeView
             .with_size_px(style.font_size_px)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
-    Scene::Container(treegrid_strip(vec![text], width, style))
+    Scene::Container(treegrid_strip(vec![text], width, style).with_tag(cell_tag))
 }
 
 /// R860 — the scrolling pane's header band (`"{tag}_hrow"`): one header cell
@@ -647,7 +656,10 @@ fn treegrid_data_header(
 ) -> Scene {
     let cells: Vec<Scene> = headers
         .iter()
-        .map(|label| treegrid_header_cell(label, col_width, theme, style))
+        .enumerate()
+        .map(|(col, label)| {
+            treegrid_header_cell(GridTag::col_header(tag, col), label, col_width, theme, style)
+        })
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
@@ -670,11 +682,16 @@ fn treegrid_data_header(
 /// `composite_row_tag(tag, id)` (`"{tag}#{id}"`) so a click routes to the
 /// binding's tree coordinator, exactly as [`view_virtual_tree`]'s rows do.
 ///
-/// Tags: tree name cells `"{tag}#{id}"`, metadata-row strips `"{tag}_drow{id}"`,
-/// headers `"{tag}_fhrow"` (tree) / `"{tag}_hrow"` (data). a11y: the binding
-/// supplies the WAI-ARIA `tree`/`treeitem` structure as for a plain tree; a
-/// span-aware `treegrid` role with `gridcell` columns is a documented R860
-/// carry (the 2nd tree-grid consumer lifts it).
+/// Tags: tree name cells `"{tag}#{id}"`, metadata cells `"{tag}_dcell{id}_{col}"`
+/// (R863), metadata-row strips `"{tag}_drow{id}"`, name-column header
+/// `"{tag}_chtree"` (R863) / metadata headers `"{tag}_ch{col}"` (R863), header
+/// bands `"{tag}_fhrow"` (tree) / `"{tag}_hrow"` (data). a11y (R863): the
+/// binding supplies a WAI-ARIA `treegrid` via
+/// [`treegrid_nodes`](pinion_a11y::treegrid_nodes) — the name cell lowers to a
+/// `rowheader`, the metadata cells to `gridcell`s, and each `row` spans both
+/// panes via [`AccessNode::bounds_union_tags`](pinion_a11y::AccessNode). (A
+/// `tree`/`treeitem` topology could not expose the metadata columns — a
+/// `treeitem` has no `gridcell` children in WAI-ARIA.)
 #[must_use]
 pub fn view_virtual_treegrid(
     tag: &'static str,
@@ -712,8 +729,14 @@ pub fn view_virtual_treegrid(
 
     // Frozen header band: the single tree-column header on the raised surface.
     let frozen_header = Scene::Container(
-        ContainerNode::new(vec![treegrid_header_cell(data.tree_header, frozen_w, theme, style)])
-            .with_tag(GridTag::frozen_header_row(tag))
+        ContainerNode::new(vec![treegrid_header_cell(
+            GridTag::tree_col_header(tag),
+            data.tree_header,
+            frozen_w,
+            theme,
+            style,
+        )])
+        .with_tag(GridTag::frozen_header_row(tag))
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     );

@@ -52,7 +52,34 @@ pub struct AccessNode {
     pub state: AccessState,
     /// Hit-test rectangle. Used by AT to overlay focus rings,
     /// magnifiers, and pointer-driven readout.
+    ///
+    /// The shell resolves this after layout from [`Self::tag`] (plus any
+    /// [`Self::bounds_union_tags`]); a11y builders leave it `None`.
     pub bounds: Option<Rect>,
+    /// R863 §5.40 §5.27 §5.45 — additional paint tags whose rects union
+    /// into this node's resolved [`Self::bounds`].
+    ///
+    /// A node painted as a single fragment leaves this empty (the default):
+    /// the shell resolves [`Self::bounds`] from [`Self::tag`] alone. A node
+    /// whose visual extent is painted across **several** scene fragments —
+    /// a frozen-split grid `Row` painted as `{tag}_row{id}` in the scrolling
+    /// pane *and* `{tag}_frow{id}` in the frozen pane, or a tree-grid `row`
+    /// painted as the `{tag}_drow{id}` metadata strip *and* the `{tag}#{id}`
+    /// frozen name cell — lists the *other* fragment tags here, and the shell
+    /// resolves [`Self::bounds`] as the union of `tag`'s rect with each
+    /// resolvable union-tag rect (per [`Rect::union`](pinion_core::scene::Rect::union)).
+    ///
+    /// Only the fragments that resolve contribute: a union tag absent from
+    /// the current paint scene is skipped, so the field is safe to populate
+    /// unconditionally where the split may or may not be active. The
+    /// frozen-pane span is the first consumer (the data-grid's `Row`); the
+    /// tree-grid's `row` is the second, the divergence-is-a-bug trigger that
+    /// lifts the union into the substrate rather than per-binding glue.
+    ///
+    /// Placed on [`AccessNode`] (the R674 / R693 / R695 / R696 / R714 /
+    /// R717 / R730 / R731 / R739 additive-axis convention) so it defaults
+    /// empty without forcing every hand-written node literal to enumerate it.
+    pub bounds_union_tags: Vec<String>,
     /// Tag references for composite children. Empty for atomic
     /// widgets. The tree builder resolves these into
     /// `accesskit::NodeId`s and attaches them under this node.
@@ -254,6 +281,7 @@ impl AccessNode {
             value: None,
             state: AccessState::default(),
             bounds: None,
+            bounds_union_tags: Vec::new(),
             children: Vec::new(),
             selected: None,
             multiselectable: false,
@@ -296,6 +324,18 @@ impl AccessNode {
     #[must_use]
     pub fn with_bounds(mut self, bounds: Rect) -> Self {
         self.bounds = Some(bounds);
+        self
+    }
+
+    /// R863 §5.40 §5.27 — append a paint tag whose rect unions into this
+    /// node's resolved [`Self::bounds`]. Call once per *additional* fragment
+    /// the node is painted across (the node's own [`Self::tag`] is always the
+    /// primary fragment, so it is never listed here). See
+    /// [`Self::bounds_union_tags`] for the frozen-split / tree-grid span the
+    /// substrate serves.
+    #[must_use]
+    pub fn with_bounds_union_tag(mut self, tag: impl Into<String>) -> Self {
+        self.bounds_union_tags.push(tag.into());
         self
     }
 
@@ -640,6 +680,28 @@ mod tests {
         let n = AccessNode::new("btn", AriaRole::Button)
             .with_bounds(Rect::new(10, 20, 100, 30));
         assert_eq!(n.bounds, Some(Rect::new(10, 20, 100, 30)));
+    }
+
+    #[test]
+    fn r863_new_omits_bounds_union_tags() {
+        // The frozen-split / tree-grid span axis defaults empty so a
+        // single-fragment node resolves bounds from its own tag alone.
+        let n = AccessNode::new("row", AriaRole::Row);
+        assert!(n.bounds_union_tags.is_empty());
+    }
+
+    #[test]
+    fn r863_with_bounds_union_tag_appends_in_order() {
+        // A frozen-grid Row lists the frozen-pane strip; the substrate later
+        // unions its rect into the resolved bounds. Multiple fragments append
+        // in call order.
+        let n = AccessNode::new("vtbl_row3", AriaRole::Row)
+            .with_bounds_union_tag("vtbl_frow3");
+        assert_eq!(n.bounds_union_tags, vec!["vtbl_frow3"]);
+        let multi = AccessNode::new("tg_drowf1", AriaRole::Row)
+            .with_bounds_union_tag("tg#f1")
+            .with_bounds_union_tag("tg_xtra");
+        assert_eq!(multi.bounds_union_tags, vec!["tg#f1", "tg_xtra"]);
     }
 
     #[test]

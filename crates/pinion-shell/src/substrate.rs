@@ -2314,11 +2314,7 @@ impl<V: WidgetView> ShellCore<V> {
         // window's `TreeUpdate`.
         let mut nodes = owner.run(|| V::access_node_for_window(window_id, cached, focused.as_deref()));
         pinion_a11y::enrich_names_from_scene(&mut nodes, paint_scene);
-        for node in &mut nodes {
-            if let Some(rect) = rect_for_tag(paint_scene, &node.tag) {
-                node.bounds = Some(rect);
-            }
-        }
+        resolve_access_bounds(paint_scene, &mut nodes);
         let at_focus = owner.run(|| V::access_focus_target(cached, focused.as_deref()));
         (nodes, at_focus)
     }
@@ -3531,4 +3527,108 @@ fn build_tag_map(nodes: &[AccessNode]) -> HashMap<NodeId, String> {
         map.insert(tag_to_node_id(&node.tag), node.tag.clone());
     }
     map
+}
+
+/// R863 §5.40 §5.27 §5.45 — resolve each [`AccessNode`]'s `bounds` from the
+/// post-layout paint scene.
+///
+/// A node's visual extent may be painted across several scene fragments — a
+/// frozen-split grid Row strip in both panes (`{tag}_row{id}` ∪ `{tag}_frow{id}`),
+/// a tree-grid `row`'s metadata strip + frozen name cell (`{tag}_drow{id}` ∪
+/// `{tag}#{id}`). The node's own [`tag`](AccessNode::tag) is the primary
+/// fragment; each [`bounds_union_tags`](AccessNode::bounds_union_tags) entry is
+/// an *additional* fragment whose rect unions in. A union fragment absent from
+/// this paint scene is skipped (so the field is safe to populate even when the
+/// split is inactive), and a node whose primary tag is absent but which has a
+/// resolvable union fragment still gets bounds from the union. The single
+/// coordinate-translation authority [`rect_for_tag`] is the per-fragment
+/// resolver, so the unioned bounds inherit its scroll-offset translation +
+/// viewport clipping.
+fn resolve_access_bounds(paint_scene: &Scene, nodes: &mut [AccessNode]) {
+    for node in nodes {
+        let mut bounds = rect_for_tag(paint_scene, &node.tag);
+        for extra in &node.bounds_union_tags {
+            if let Some(rect) = rect_for_tag(paint_scene, extra) {
+                bounds = Some(bounds.map_or(rect, |b| b.union(rect)));
+            }
+        }
+        node.bounds = bounds;
+    }
+}
+
+#[cfg(test)]
+mod r863_bounds_union_tests {
+    use super::{compute_layout, rect_for_tag, resolve_access_bounds, AccessNode, LayoutCache, Scene};
+    use pinion_a11y::AriaRole;
+    use pinion_core::scene::ContainerNode;
+    use pinion_core::style::{FlexDirection, LayoutStyle, Size};
+
+    /// A frozen-split-shaped scene: a flex row of two fixed-width strips
+    /// tagged like a frozen grid's two panes for one logical row (`g_frow0`
+    /// frozen pane, `g_row0` scrolling pane).
+    fn split_row_scene() -> Scene {
+        let frozen = Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_tag("g_frow0")
+                .with_layout(LayoutStyle::new().with_size(Size::px(80, 24))),
+        );
+        let scrolled = Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_tag("g_row0")
+                .with_layout(LayoutStyle::new().with_size(Size::px(200, 24))),
+        );
+        Scene::Container(
+            ContainerNode::new(vec![frozen, scrolled])
+                .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+        )
+    }
+
+    #[test]
+    fn union_bounds_span_both_frozen_split_panes() {
+        let mut scene = split_row_scene();
+        let mut cache = LayoutCache::new();
+        compute_layout(&mut scene, &mut cache, 280, 24);
+        let frozen_rect = rect_for_tag(&scene, "g_frow0").expect("frozen strip resolves");
+        let scrolled_rect = rect_for_tag(&scene, "g_row0").expect("scrolled strip resolves");
+
+        // A Row node painted across both panes: own tag = the scrolled strip,
+        // union fragment = the frozen strip.
+        let mut nodes =
+            vec![AccessNode::new("g_row0", AriaRole::Row).with_bounds_union_tag("g_frow0")];
+        resolve_access_bounds(&scene, &mut nodes);
+        let union = nodes[0].bounds.expect("row bounds resolved");
+
+        assert_eq!(union, frozen_rect.union(scrolled_rect), "bounds = union of both panes");
+        assert_eq!(union.x, frozen_rect.x, "union starts at the frozen pane's left");
+        assert!(
+            union.w > scrolled_rect.w,
+            "the unioned row ({union:?}) is wider than the scrolled strip alone ({scrolled_rect:?})",
+        );
+    }
+
+    #[test]
+    fn absent_union_fragment_is_skipped() {
+        // The defining safety property: a union tag absent from the paint
+        // scene contributes nothing, so a Row resolves to its own strip when
+        // the split is inactive (or the fragment scrolled out / never painted).
+        let mut scene = split_row_scene();
+        let mut cache = LayoutCache::new();
+        compute_layout(&mut scene, &mut cache, 280, 24);
+        let scrolled_rect = rect_for_tag(&scene, "g_row0").unwrap();
+        let mut nodes =
+            vec![AccessNode::new("g_row0", AriaRole::Row).with_bounds_union_tag("g_absent")];
+        resolve_access_bounds(&scene, &mut nodes);
+        assert_eq!(nodes[0].bounds, Some(scrolled_rect), "absent fragment leaves the primary rect");
+    }
+
+    #[test]
+    fn no_union_tags_resolves_primary_only() {
+        let mut scene = split_row_scene();
+        let mut cache = LayoutCache::new();
+        compute_layout(&mut scene, &mut cache, 280, 24);
+        let scrolled_rect = rect_for_tag(&scene, "g_row0").unwrap();
+        let mut nodes = vec![AccessNode::new("g_row0", AriaRole::Row)];
+        resolve_access_bounds(&scene, &mut nodes);
+        assert_eq!(nodes[0].bounds, Some(scrolled_rect), "single-fragment node = its own tag");
+    }
 }
