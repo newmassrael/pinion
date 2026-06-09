@@ -1,13 +1,13 @@
 //! R847 §5.50 §5.27 — WAI-ARIA `AccessNode` builders for a **grouped** Model/View
 //! collection (the R843 [`GroupRow`] flatten), in two presentations: a grouped
 //! **list** ([`grouped_tree_access_nodes`], a one-level `tree`) and a grouped
-//! **grid** ([`grouped_grid_access_nodes`], a `grid` with spanning group-header
-//! rows).
+//! **grid** ([`grouped_grid_access_nodes`], a two-level `treegrid` with spanning
+//! group-header rows).
 //!
 //! Lifted at the second consumer of each shape (R847 audit): `hello-grouped-list`
 //! and `hello-grouped-sort` both build the grouped-list `tree` topology, while
 //! `hello-grouped-grid` and `hello-grouped-grid-sort` both build the
-//! grouped-grid `grid` topology. By the project's a11y doctrine — *a divergence between two
+//! grouped-grid `treegrid` topology. By the project's a11y doctrine — *a divergence between two
 //! consumers' AT topology is a bug, not a style choice; lift at the second
 //! consumer* ([`tree_access_nodes`](crate::tree_access_nodes) /
 //! [`grid_table_nodes`](crate::grid_table_nodes) / `windowed_*_nodes` all did) —
@@ -18,12 +18,25 @@
 //! divergence into *data* the consumer supplies, while the builder owns the
 //! load-bearing topology decision.
 //!
+//! ## Why a `treegrid` (R874)
+//!
+//! A grouped grid is *hierarchical with columns*: expandable group-header rows
+//! at `aria-level = 1` over data rows at `aria-level = 2`, each data row holding
+//! one `gridcell` per column. That is precisely WAI-ARIA's
+//! [`treegrid`](crate::AriaRole::TreeGrid), not a flat `grid` — a `grid` has no
+//! disclosure axis. The grouped grid was first built as a flat `grid` only
+//! because pinion had no `treegrid` role (the R845 note); R863 added the role
+//! (its first consumer was the columned outliner [`treegrid_nodes`](crate::treegrid_nodes)),
+//! so R874 lands the grouped grid as the role's second consumer — the
+//! documented future-axis reaching its genuine user, not a flat-grid regression.
+//!
 //! ## What the builder owns vs the consumer owns
 //!
 //! The builder owns the **AT decision** every grouped collection must agree on:
-//! the roles (`tree`/`treeitem`; `grid`/`row`/`columnheader`/`gridcell`), the
-//! `aria-level` (header = 1, data = 2 in the list), `aria-expanded` on group
-//! headers, `aria-selected` on the selected data row, the
+//! the roles (`tree`/`treeitem`; `treegrid`/`row`/`columnheader`/`gridcell`), the
+//! `aria-level` (header = 1, data = 2 in both presentations), `aria-expanded` on
+//! group headers, whether the collection exposes an `aria-selected` axis at all
+//! ([`GroupedGridSelection`] — a focus-only inspector carries none), the
 //! `aria-posinset`/`aria-setsize`-over-the-window convention, and the header
 //! name format `"<group> (<count>)"`. The consumer owns only what genuinely
 //! differs: the composite **tag namespaces** (group headers vs data rows route
@@ -154,12 +167,34 @@ pub fn grouped_tree_access_nodes(
     nodes
 }
 
-/// The addressing config of a grouped **grid** a11y tree. Columns are a
-/// [`GridColumn`] slice (tag + label + optional `aria-sort`) — the same
-/// caller-owned-columns convention as [`grid_table_nodes`], so a *sortable*
+/// R874 §5.40 — whether a grouped grid exposes an `aria-selected` axis on its
+/// data rows, and (if so) which source is selected.
+///
+/// Mirrors the [`virtual_grid`](crate::virtual_grid) `GridSelection` split:
+/// the distinction between "no selection model" and "selection model, nothing
+/// selected" is a *role* fact (`aria-selected` only belongs on rows in a
+/// container that supports selection), expressed as a named enum rather than a
+/// nested `Option`. A focus-only inspector (the property grid, whose roving
+/// cursor is keyboard focus surfaced as `aria-activedescendant`) must **not**
+/// stamp `aria-selected` — doing so would mis-announce it as a selection widget
+/// (R873/R874). The grouped grid has no multi-select consumer, so unlike
+/// `virtual_grid::GridSelection` there is no `Multi` variant (added when one
+/// lands).
+#[derive(Clone, Copy)]
+pub enum GroupedGridSelection {
+    /// Display / focus-only — data rows carry **no** `aria-selected`.
+    Display,
+    /// Single-select — each data row carries `aria-selected = (source == _)`;
+    /// `None` selects nothing (every data row is `aria-selected = false`).
+    Single(Option<usize>),
+}
+
+/// The addressing config of a grouped **grid** a11y tree (a `treegrid`, R874).
+/// Columns are a [`GridColumn`] slice (tag + label + optional `aria-sort`) — the
+/// same caller-owned-columns convention as [`grid_table_nodes`], so a *sortable*
 /// grid and a static one differ only in the slice they pass, not in code.
 pub struct GroupedGridSpec<'a> {
-    /// The `role=grid` container tag.
+    /// The `role=treegrid` container tag.
     pub grid_tag: &'a str,
     /// Optional accessible name for the grid.
     pub name: Option<&'a str>,
@@ -171,8 +206,9 @@ pub struct GroupedGridSpec<'a> {
     pub group_prefix: &'a str,
     /// Composite-tag namespace of data rows (`"{data_prefix}#{s}"`).
     pub data_prefix: &'a str,
-    /// The selected **source** index, or `None`.
-    pub selected_source: Option<usize>,
+    /// Whether the grid exposes an `aria-selected` axis, and which source is
+    /// selected ([`GroupedGridSelection`]).
+    pub selection: GroupedGridSelection,
     /// R848 — the roving keyboard cursor's **visual position** (into `rows`),
     /// or `None`. The windowed `role=row` at that position (group header or
     /// data row) carries the `focused` state (`aria-activedescendant`). A
@@ -180,21 +216,28 @@ pub struct GroupedGridSpec<'a> {
     pub focused_view_pos: Option<usize>,
 }
 
-/// R847 §5.50 — build the grouped-**grid** `grid` a11y nodes over the visible
-/// window of a [`GroupRow`] flatten.
+/// R847 §5.50 — build the grouped-**grid** `treegrid` a11y nodes over the
+/// visible window of a [`GroupRow`] flatten (R874: a `treegrid`, the
+/// hierarchical-with-columns role, not a flat `grid`).
 ///
-/// Emits `[grid, header_row, ...columnheaders, ...windowed rows + gridcells]`:
-/// a `role=grid` root referencing the header row + every windowed row; a
+/// Emits `[treegrid, header_row, ...columnheaders, ...windowed rows + gridcells]`:
+/// a `role=treegrid` root referencing the header row + every windowed row; a
 /// `role=row` header carrying one `role=columnheader` per [`GridColumn`] (with
 /// `aria-sort` when the column's [`GridColumn::sort`] is `Some`); then per
-/// visible row a spanning **group-header** `role=row` (`aria-expanded`, name
-/// `"<group> (<count>)"`) or a **data** `role=row` (`aria-selected`) whose
-/// `role=gridcell` children are named `"<column>: <value>"`.
+/// visible row a spanning **group-header** `role=row` at `aria-level = 1`
+/// (`aria-expanded`, name `"<group> (<count>)"`) or a **data** `role=row` at
+/// `aria-level = 2` whose `role=gridcell` children are named by value.
+///
+/// Whether data rows carry `aria-selected` is the [`GroupedGridSpec::selection`]
+/// decision: [`GroupedGridSelection::Display`] omits the axis entirely (a
+/// focus-only inspector), [`GroupedGridSelection::Single`] marks the selected
+/// source. Cell names are the bare `cell_value` — the column label lives once on
+/// the `columnheader`, so prefixing it onto every cell would duplicate what AT
+/// already announces from the cell's column association (R874).
 ///
 /// `group_label(group)` yields the group's display name; `cell_tag(source, col)`
 /// the per-cell composite tag (a `pointer_transparent` paint node carries its
-/// bound); `cell_value(source, col)` the cell's value (the builder prefixes the
-/// column label).
+/// bound); `cell_value(source, col)` the cell's value.
 #[must_use]
 pub fn grouped_grid_access_nodes(
     spec: &GroupedGridSpec,
@@ -209,8 +252,8 @@ pub fn grouped_grid_access_nodes(
 
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (spec.columns.len() + 1) + 2);
 
-    // Grid root: header row then every windowed row.
-    let mut grid = AccessNode::new(spec.grid_tag, AriaRole::Grid);
+    // TreeGrid root: header row then every windowed row.
+    let mut grid = AccessNode::new(spec.grid_tag, AriaRole::TreeGrid);
     if let Some(name) = spec.name {
         grid = grid.with_name(name);
     }
@@ -245,9 +288,11 @@ pub fn grouped_grid_access_nodes(
         let focused = spec.focused_view_pos == Some(view_pos);
         match *row {
             GroupRow::Header { group, member_count, collapsed } => {
+                // Group header = level-1 expandable branch row (WAI-ARIA 6.6.8).
                 nodes.push(
                     AccessNode::new(row_tag(row), AriaRole::Row)
                         .with_name(format!("{} ({member_count})", group_label(group)))
+                        .with_level(1)
                         .with_position_in_set(posinset)
                         .with_size_of_set(total)
                         .with_expanded(!collapsed)
@@ -255,19 +300,27 @@ pub fn grouped_grid_access_nodes(
                 );
             }
             GroupRow::Data { source } => {
+                // Data row = level-2 leaf row carrying one gridcell per column.
                 let mut data_row = AccessNode::new(row_tag(row), AriaRole::Row)
+                    .with_level(2)
                     .with_position_in_set(posinset)
                     .with_size_of_set(total)
-                    .with_selected(spec.selected_source == Some(source))
                     .with_focused(focused);
+                // `aria-selected` only on a selection-capable grid (R874): a
+                // focus-only inspector (`Display`) omits the axis entirely.
+                if let GroupedGridSelection::Single(sel) = spec.selection {
+                    data_row = data_row.with_selected(sel == Some(source));
+                }
                 for c in 0..spec.columns.len() {
                     data_row = data_row.with_child(cell_tag(source, c));
                 }
                 nodes.push(data_row);
-                for (c, column) in spec.columns.iter().enumerate() {
+                for c in 0..spec.columns.len() {
+                    // Bare value: the column label lives on the columnheader, so
+                    // AT announces "<column>: <value>" without prefixing (R874).
                     nodes.push(
                         AccessNode::new(cell_tag(source, c), AriaRole::GridCell)
-                            .with_name(format!("{}: {}", column.label, cell_value(source, c))),
+                            .with_name(cell_value(source, c)),
                     );
                 }
             }
@@ -279,8 +332,8 @@ pub fn grouped_grid_access_nodes(
 #[cfg(test)]
 mod tests {
     use super::{
-        grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes, GroupedGridSpec,
-        GroupedTreeSpec,
+        grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes,
+        GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec,
     };
     use crate::grid::GridColumn;
     use crate::role::{AriaRole, SortDirection};
@@ -344,14 +397,18 @@ mod tests {
         assert!(!h0.state.focused, "the header is not the cursor here");
     }
 
-    #[test]
-    fn grouped_grid_emits_grid_columnheaders_group_rows_and_gridcells() {
-        let rows = sample();
-        let win = full_window(&rows);
-        let columns = [
+    fn grid_columns() -> [GridColumn; 2] {
+        [
             GridColumn { tag: "c0".into(), label: "Name".into(), sort: Some(SortDirection::Ascending) },
             GridColumn { tag: "c1".into(), label: "Size".into(), sort: None },
-        ];
+        ]
+    }
+
+    #[test]
+    fn grouped_grid_emits_treegrid_columnheaders_group_rows_and_gridcells() {
+        let rows = sample();
+        let win = full_window(&rows);
+        let columns = grid_columns();
         // Cursor on visual pos 0 (the group-0 header).
         let spec = GroupedGridSpec {
             grid_tag: "grid",
@@ -360,7 +417,7 @@ mod tests {
             columns: &columns,
             group_prefix: "grp",
             data_prefix: "row",
-            selected_source: Some(0),
+            selection: GroupedGridSelection::Single(Some(0)),
             focused_view_pos: Some(0),
         };
         let nodes = grouped_grid_access_nodes(
@@ -371,29 +428,71 @@ mod tests {
             |s, c| format!("cell_{s}_{c}"),
             |s, c| format!("v{s}{c}"),
         );
-        assert_eq!(nodes[0].role, AriaRole::Grid);
+        // R874 — the grouped grid is a `treegrid` (hierarchical + columns), not
+        // a flat `grid`.
+        assert_eq!(nodes[0].role, AriaRole::TreeGrid);
         // Two column headers; the active one carries aria-sort, the other none.
         let c0 = nodes.iter().find(|n| n.tag == "c0").expect("column 0");
         assert_eq!(c0.role, AriaRole::ColumnHeader);
         assert_eq!(c0.sort, Some(SortDirection::Ascending));
         let c1 = nodes.iter().find(|n| n.tag == "c1").expect("column 1");
         assert_eq!(c1.sort, None);
-        // Group 0 header is an expandable Row, and the cursor (visual pos 0)
-        // rests on it → focused (active descendant); a data row is not.
+        // Group 0 header is an expandable level-1 Row, and the cursor (visual
+        // pos 0) rests on it → focused (active descendant); a data row is not.
         let h0 = nodes.iter().find(|n| n.tag == "grp#0").expect("group 0 header");
         assert_eq!(h0.role, AriaRole::Row);
+        assert_eq!(h0.level, Some(1), "group header is aria-level 1");
         assert_eq!(h0.expanded, Some(true));
         assert!(h0.state.focused, "the cursor rests on the group-0 header");
-        // Data row source 0: Row, selected, with two gridcells named "Col: value".
+        // Data row source 0: level-2 Row, selected, with two gridcells named by
+        // bare value (no column-label prefix — that lives on the columnheader).
         let d0 = nodes.iter().find(|n| n.tag == "row#0").expect("data row 0");
         assert_eq!(d0.role, AriaRole::Row);
+        assert_eq!(d0.level, Some(2), "data row is aria-level 2");
         assert_eq!(d0.selected, Some(true));
         assert!(!d0.state.focused, "a data row is not the cursor here");
         let cell00 = nodes.iter().find(|n| n.tag == "cell_0_0").expect("cell 0,0");
         assert_eq!(cell00.role, AriaRole::GridCell);
-        assert_eq!(cell00.name.as_deref(), Some("Name: v00"));
+        assert_eq!(cell00.name.as_deref(), Some("v00"));
         let cell01 = nodes.iter().find(|n| n.tag == "cell_0_1").expect("cell 0,1");
-        assert_eq!(cell01.name.as_deref(), Some("Size: v01"));
+        assert_eq!(cell01.name.as_deref(), Some("v01"));
+    }
+
+    #[test]
+    fn grouped_grid_display_selection_omits_aria_selected() {
+        // R874 — a focus-only grid (`Display`) carries NO `aria-selected` axis:
+        // its roving cursor is keyboard focus (`aria-activedescendant`), not
+        // selection. Every data row's `selected` is `None` (absent), not
+        // `Some(false)` — which would mis-announce a selection model.
+        let rows = sample();
+        let win = full_window(&rows);
+        let columns = grid_columns();
+        let spec = GroupedGridSpec {
+            grid_tag: "grid",
+            name: None,
+            header_row_tag: "head",
+            columns: &columns,
+            group_prefix: "grp",
+            data_prefix: "row",
+            selection: GroupedGridSelection::Display,
+            focused_view_pos: Some(1),
+        };
+        let nodes = grouped_grid_access_nodes(
+            &spec,
+            &rows,
+            win,
+            |g| format!("G{g}"),
+            |s, c| format!("cell_{s}_{c}"),
+            |s, c| format!("v{s}{c}"),
+        );
+        for tag in ["row#0", "row#1", "row#2"] {
+            let d = nodes.iter().find(|n| n.tag == tag).unwrap_or_else(|| panic!("{tag}"));
+            assert_eq!(d.selected, None, "{tag} carries no aria-selected under Display");
+        }
+        // The cursor row (visual pos 1 = data source 0) is still the active
+        // descendant — focus is orthogonal to the absent selection axis.
+        let cursor = nodes.iter().find(|n| n.tag == "row#0").expect("cursor data row");
+        assert!(cursor.state.focused, "Display still conveys the roving cursor via focus");
     }
 
     #[test]

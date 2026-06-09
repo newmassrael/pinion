@@ -36057,6 +36057,56 @@
         "R871/R872 carries persist: HSV pad (Color->HSV gap), AccessState.focused unlowered, atomic R863-R870 backfill (user)"
       ]
     },
+    "R874": {
+      "decision_summary": "R874 §5.40 §5.27 — grouped-grid a11y lowers to a WAI-ARIA treegrid (aria-level 1/2) instead of a flat grid, omits aria-selected on focus-only grids via GroupedGridSelection::Display, and drops the columnheader-duplicating cell-name prefix; clears the R873 C4/C5 carry on the shared grouped_grid_access_nodes builder (3 consumers).",
+      "changes_bullets": [
+        "grouped_grid_access_nodes: container role Grid -> TreeGrid; group headers aria-level 1, data rows aria-level 2 (R863 role: hierarchical + columns)",
+        "GroupedGridSpec.selected_source:Option<usize> -> selection:GroupedGridSelection{Display,Single} (mirrors virtual_grid::GridSelection, no nested Option)",
+        "Display omits the aria-selected axis entirely (focus-only inspector); Single marks the selected source as before",
+        "gridcell name = bare cell_value, dropping the \"<column>: \" prefix (the column label lives once on the columnheader)",
+        "3 consumers migrated: hello-grouped-grid + hello-grouped-grid-sort = Single; hello-property-grid = Display"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-a11y 214+17, hello-grouped-grid 4, hello-grouped-grid-sort 8, hello-property-grid 42)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "new unit grouped_grid_display_selection_omits_aria_selected: Display -> selected None on every data row, not Some(false)",
+        "3 demos PASS on fresh release binaries: r845_grouped_grid, r846_grouped_grid_sort, r872_property_grid_search"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "group-header row stays a named Row with no spanning gridcell (aria-colspan); pre-existing, refine when a spanning-cell model lands",
+        "grouped_tree_access_nodes keeps selected_source:Option<usize> (no no-selection tree consumer yet); add a Display analogue at the 2nd such consumer",
+        "GroupedGridSelection has no Multi variant (no multi-select grouped consumer yet); add when one lands, mirroring virtual_grid::GridSelection::Multi"
+      ],
+      "publishable_decision_summary": "R874 §5.40 §5.27 — grouped-grid a11y lowers to a WAI-ARIA treegrid (aria-level 1/2) instead of a flat grid, omits aria-selected on focus-only grids via GroupedGridSelection::Display, and drops the columnheader-duplicating cell-name prefix; clears the R873 C4/C5 carry on the shared grouped_grid_access_nodes builder (3 consumers).",
+      "publishable_changes_bullets": [
+        "grouped_grid_access_nodes: container role Grid -> TreeGrid; group headers aria-level 1, data rows aria-level 2 (R863 role: hierarchical + columns)",
+        "GroupedGridSpec.selected_source:Option<usize> -> selection:GroupedGridSelection{Display,Single} (mirrors virtual_grid::GridSelection, no nested Option)",
+        "Display omits the aria-selected axis entirely (focus-only inspector); Single marks the selected source as before",
+        "gridcell name = bare cell_value, dropping the \"<column>: \" prefix (the column label lives once on the columnheader)",
+        "3 consumers migrated: hello-grouped-grid + hello-grouped-grid-sort = Single; hello-property-grid = Display"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-a11y 214+17, hello-grouped-grid 4, hello-grouped-grid-sort 8, hello-property-grid 42)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "new unit grouped_grid_display_selection_omits_aria_selected: Display -> selected None on every data row, not Some(false)",
+        "3 demos PASS on fresh release binaries: r845_grouped_grid, r846_grouped_grid_sort, r872_property_grid_search"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "group-header row stays a named Row with no spanning gridcell (aria-colspan); pre-existing, refine when a spanning-cell model lands",
+        "grouped_tree_access_nodes keeps selected_source:Option<usize> (no no-selection tree consumer yet); add a Display analogue at the 2nd such consumer",
+        "GroupedGridSelection has no Multi variant (no multi-select grouped consumer yet); add when one lands, mirroring virtual_grid::GridSelection::Multi"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

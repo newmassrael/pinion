@@ -78,8 +78,8 @@ pub use described::describedby_region;
 pub use focus::AccessFocus;
 pub use grid::{grid_table_nodes, GridCell, GridColumn, GridRow};
 pub use grouped::{
-    grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes, GroupedGridSpec,
-    GroupedTreeSpec,
+    grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes,
+    GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec,
 };
 pub use listbox::{listbox_option_nodes, ListOption};
 pub use menu::{menu_item_nodes, MenuItemCell};

@@ -81,15 +81,18 @@
 //! rides the field's `with_blur_intent` (R793), the todomvc commit-on-blur
 //! shape.
 //!
-//! ## a11y (R836 / R871 §5.40 §5.27) — grouped grid SSOT
+//! ## a11y (R836 / R871 / R874 §5.40 §5.27) — grouped grid SSOT
 //!
-//! The panel lowers to a WAI-ARIA `grid` with spanning group-header rows
-//! through the lifted [`pinion_a11y::grouped_grid_access_nodes`] builder
-//! (`hello-grouped-grid` is the 1st / 2nd consumer of each shape): a
-//! `Property` / `Value` column-header row, then per visible row either a
-//! spanning category `row` (`aria-expanded`, `"<category> (<count>)"`) or a
-//! data `row` (`aria-selected` on the cursor row) carrying two `gridcell`
-//! children named `"<column>: <value>"`. The roving cursor is exposed as
+//! The panel lowers to a WAI-ARIA `treegrid` (hierarchical category headers +
+//! columns; R874) with spanning group-header rows through the lifted
+//! [`pinion_a11y::grouped_grid_access_nodes`] builder: a `Property` / `Value`
+//! column-header row, then per visible row either a spanning `aria-level = 1`
+//! category `row` (`aria-expanded`, `"<category> (<count>)"`) or an
+//! `aria-level = 2` data `row` carrying two `gridcell` children named by bare
+//! value (the column label lives on the `columnheader`, not repeated per cell).
+//! The inspector has **no selection model** ([`GroupedGridSelection::Display`]),
+//! so data rows carry **no** `aria-selected`: the roving cursor is keyboard
+//! focus, exposed as
 //! `aria-activedescendant` through `access_focus_target` → the lifted
 //! [`pinion_a11y::grouped_focus_target`] (R850/R871 — the authoritative
 //! channel; the per-node `focused` flag is a redundant marker), so the ring
@@ -98,8 +101,8 @@
 //! ## Known gaps (honest carry)
 //!
 //! - **Native checkbox / textbox cell roles.** Bool cells encode their state
-//!   as cell text (`"Visible: On"`) rather than a nested `checkbox` role, and
-//!   the inline editor is a plain `textbox`. A per-cell-role grid a11y axis
+//!   as cell text (the value `"On"` / `"Off"`) rather than a nested `checkbox`
+//!   role, and the inline editor is a plain `textbox`. A per-cell-role grid a11y axis
 //!   is additive and deferred until the self-hosted editor (2nd consumer)
 //!   pins the exact shape (`[[abstraction-needs-second-consumer]]`).
 //! - **Per-property validation / clamp ranges.** Numeric rows accept any
@@ -113,7 +116,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{
     grouped_focus_target, grouped_grid_access_nodes, listbox_option_nodes, AccessFocus, AccessNode,
-    GridColumn, GroupedGridSpec, ListOption, WidgetA11y,
+    GridColumn, GroupedGridSelection, GroupedGridSpec, ListOption, WidgetA11y,
 };
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::external::{
@@ -1861,12 +1864,14 @@ impl WidgetCore for PropertyGridView {
 }
 
 impl WidgetA11y for PropertyGridView {
-    /// R836 §5.40 — the panel lowers to a WAI-ARIA `grid` through the lifted
-    /// [`grid_table_nodes`] SSOT (3rd consumer). `Property` / `Value` header
-    /// over one data row per property. The roving cursor's
-    /// `aria-activedescendant` is supplied by [`Self::access_focus_target`]
-    /// (R870); the typed value is encoded in the cell name so AT hears the
-    /// value with its context.
+    /// R836 / R874 §5.40 — the panel lowers to a WAI-ARIA `treegrid` through the
+    /// lifted [`grouped_grid_access_nodes`] SSOT (3rd consumer): a `Property` /
+    /// `Value` columnheader row over level-1 category headers + level-2 data
+    /// rows. The roving cursor's `aria-activedescendant` is supplied by
+    /// [`Self::access_focus_target`] (R870); the typed value is the bare cell
+    /// name (the column label is on the columnheader). The inspector has no
+    /// selection model ([`GroupedGridSelection::Display`]), so no data row
+    /// carries `aria-selected` (R873/R874).
     ///
     /// R867 — an open choice popup additionally lowers to a WAI-ARIA
     /// `listbox` (the lifted [`listbox_option_nodes`] SSOT, the combobox a11y
@@ -1892,12 +1897,13 @@ impl WidgetA11y for PropertyGridView {
             columns: &columns,
             group_prefix: GROUP_TAG,
             data_prefix: GRID_TAG,
-            // R873 — the roving cursor is keyboard FOCUS, exposed as
+            // R873/R874 — the roving cursor is keyboard FOCUS, exposed as
             // `aria-activedescendant` via `focused_view_pos` + `access_focus_target`.
-            // The property grid has NO selection model, so `selected_source`
-            // stays `None`: a focus cursor must not stamp `aria-selected` (that
-            // would mis-announce the grid as a selection widget).
-            selected_source: None,
+            // The property grid has NO selection model, so the selection is
+            // `Display`: data rows carry no `aria-selected` axis at all (a focus
+            // cursor must not stamp `aria-selected`, which would mis-announce the
+            // grid as a selection widget).
+            selection: GroupedGridSelection::Display,
             focused_view_pos: cursor,
         };
         let mut nodes = grouped_grid_access_nodes(
@@ -2317,30 +2323,35 @@ mod tests {
             // Cursor on the Visible data row (source 2).
             scene_focus(view_pos_of(2));
             let nodes = PropertyGridView::access_node(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG));
-            assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Grid);
+            // R874 — treegrid (hierarchical category headers + columns).
+            assert_eq!(nodes[0].role, pinion_a11y::AriaRole::TreeGrid);
             assert_eq!(nodes[0].name.as_deref(), Some("Inspector"));
-            // A category lowers to a spanning row with aria-expanded (Identity).
+            // A category lowers to a spanning level-1 row with aria-expanded.
             let header = nodes
                 .iter()
                 .find(|n| n.tag == format!("{GROUP_TAG}#0"))
                 .expect("Identity category header node");
             assert_eq!(header.role, pinion_a11y::AriaRole::Row);
+            assert_eq!(header.level, Some(1), "category header is aria-level 1");
             assert_eq!(header.expanded, Some(true), "expanded category header");
             // The cursor's data row is the active descendant (keyboard focus),
-            // but NOT aria-selected — the property grid has no selection model
-            // (R873): focus is conveyed by `state.focused`, not `aria-selected`.
+            // but carries NO `aria-selected` axis — the property grid has no
+            // selection model (R873/R874, `Display`): focus is conveyed by
+            // `state.focused` / `aria-activedescendant`, not selection.
             let active = nodes
                 .iter()
                 .find(|n| n.tag == format!("{GRID_TAG}#2"))
                 .expect("Visible data row node");
+            assert_eq!(active.level, Some(2), "data row is aria-level 2");
             assert!(active.state.focused, "cursor row is the active descendant");
-            assert_ne!(active.selected, Some(true), "focus cursor is not aria-selected");
-            // The value gridcell carries the column + value context.
+            assert_eq!(active.selected, None, "no selection model → no aria-selected axis");
+            // The value gridcell carries the bare value (the column label lives
+            // on the `Value` columnheader, not repeated per cell — R874).
             let value_cell = nodes
                 .iter()
                 .find(|n| n.tag == "pg_cell2_1")
                 .expect("Visible value gridcell present");
-            assert_eq!(value_cell.name.as_deref(), Some("Value: On"));
+            assert_eq!(value_cell.name.as_deref(), Some("On"));
         });
     }
 

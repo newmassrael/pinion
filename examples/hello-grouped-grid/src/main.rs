@@ -22,15 +22,16 @@
 //!   toggles collapse.
 //! - **Extra** [`ScrollBarExternal`].
 //!
-//! ## a11y (WAI-ARIA `grid`)
+//! ## a11y (WAI-ARIA `treegrid`)
 //!
 //! Built by the
 //! [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes) SSOT
-//! (R847) — a `grid` root, a `columnheader` per column, a spanning `row` +
-//! `aria-expanded` per group header, and a `row` (`aria-selected`) + `gridcell`
-//! children per data row. This grouped-grid shape (group-header rows
-//! interleaved with cell rows; `grid`/`row`/`gridcell`, since pinion has no
-//! `treegrid` role) is distinct from the grouped-*list*'s `tree`/`treeitem`
+//! (R847) — a `treegrid` root, a `columnheader` per column, a spanning
+//! `aria-level = 1` `row` + `aria-expanded` per group header, and an
+//! `aria-level = 2` `row` (`aria-selected`) + `gridcell` children per data row.
+//! This grouped-grid shape is hierarchical *with columns*, so it lowers to a
+//! `treegrid` (R874; R863 added the role) — distinct from the grouped-*list*'s
+//! `tree`/`treeitem`
 //! ([`grouped_tree_access_nodes`](pinion_a11y::grouped_tree_access_nodes)) — two
 //! builders, one per shape, each shared by its two consumers.
 
@@ -38,7 +39,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{
     grouped_focus_target, grouped_grid_access_nodes, AccessFocus, AccessNode, GridColumn,
-    GroupedGridSpec, WidgetA11y,
+    GroupedGridSelection, GroupedGridSpec, WidgetA11y,
 };
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -366,14 +367,16 @@ impl WidgetCore for GroupedGridView {
 }
 
 impl WidgetA11y for GroupedGridView {
-    /// WAI-ARIA `grid` via the
+    /// WAI-ARIA `treegrid` via the
     /// [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes) SSOT
-    /// builder (R847): a `grid` root over the header row + windowed rows, a
-    /// `columnheader` per column, a spanning `row` + `aria-expanded` per group
-    /// header, and a `row` (`aria-selected`) + `gridcell` children per data row.
-    /// The columns are static (no `aria-sort`) — passed as a [`GridColumn`]
-    /// slice with `sort: None`, the same slice a sortable grid
-    /// (`hello-grouped-grid-sort`) fills with the active direction.
+    /// builder (R847): a `treegrid` root over the header row + windowed rows, a
+    /// `columnheader` per column, a spanning level-1 `row` + `aria-expanded` per
+    /// group header, and a level-2 `row` (`aria-selected`) + `gridcell` children
+    /// per data row. The columns are static (no `aria-sort`) — passed as a
+    /// [`GridColumn`] slice with `sort: None`, the same slice a sortable grid
+    /// (`hello-grouped-grid-sort`) fills with the active direction. The asset
+    /// grid has a real selection model, so its rows carry `aria-selected`
+    /// ([`GroupedGridSelection::Single`]).
     fn access_node(state: &GridState, _focused: Option<&str>) -> Vec<AccessNode> {
         let scroll_state = use_scroll_state(SCROLL_KEY);
         let groups = use_grid_groups();
@@ -397,7 +400,7 @@ impl WidgetA11y for GroupedGridView {
             columns: &columns,
             group_prefix: GROUP_TAG,
             data_prefix: GRID_TAG,
-            selected_source: state.selected,
+            selection: GroupedGridSelection::Single(state.selected),
             focused_view_pos: state.cursor,
         };
         grouped_grid_access_nodes(
@@ -500,24 +503,26 @@ mod tests {
     }
 
     #[test]
-    fn a11y_grid_has_columnheaders_expandable_group_rows_and_gridcells() {
+    fn a11y_treegrid_has_columnheaders_expandable_group_rows_and_gridcells() {
         // Cursor on visual pos 1 (the first data row, source 0).
         let nodes = Owner::new().run(|| {
             GroupedGridView::access_node(&GridState { selected: Some(0), cursor: Some(1) }, None)
         });
-        // Grid root.
-        assert_eq!(nodes[0].role, AriaRole::Grid);
+        // R874 — treegrid root (hierarchical + columns), not a flat grid.
+        assert_eq!(nodes[0].role, AriaRole::TreeGrid);
         // Three column headers.
         let col_headers = nodes.iter().filter(|n| n.role == AriaRole::ColumnHeader).count();
         assert_eq!(col_headers, COLS.len(), "one columnheader per column");
-        // Group-0 header is an expandable Row.
+        // Group-0 header is an expandable level-1 Row.
         let gh = nodes.iter().find(|n| n.tag == format!("{GROUP_TAG}#0")).expect("group header node");
         assert_eq!(gh.role, AriaRole::Row);
+        assert_eq!(gh.level, Some(1), "group header is aria-level 1");
         assert_eq!(gh.expanded, Some(true), "expanded group header carries aria-expanded");
-        // The selected data row is a Row with aria-selected and three gridcells,
-        // and it is the cursor row (active descendant) → focused.
+        // The selected data row is a level-2 Row with aria-selected and three
+        // gridcells, and it is the cursor row (active descendant) → focused.
         let dr = nodes.iter().find(|n| n.tag == format!("{GRID_TAG}#0")).expect("data row node");
         assert_eq!(dr.role, AriaRole::Row);
+        assert_eq!(dr.level, Some(2), "data row is aria-level 2");
         assert_eq!(dr.selected, Some(true), "selected row carries aria-selected");
         assert!(dr.state.focused, "the cursor row is the active descendant");
         let cells = nodes.iter().filter(|n| n.role == AriaRole::GridCell).count();

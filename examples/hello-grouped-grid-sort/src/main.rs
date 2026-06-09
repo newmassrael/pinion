@@ -28,16 +28,20 @@
 //!
 //! ## a11y
 //!
-//! WAI-ARIA `grid` via the
+//! WAI-ARIA `treegrid` via the
 //! [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes) SSOT
-//! builder (R847): the header row's `columnheader`s carry `aria-sort` on the
+//! builder (R847; R874 lowers the hierarchical-with-columns grid to a
+//! `treegrid`): the header row's `columnheader`s carry `aria-sort` on the
 //! active sort column (passed in the [`GridColumn`] slice), group headers are
-//! spanning `row`s with `aria-expanded`, and data rows are `row`s
-//! (`aria-selected`) with `gridcell` children.
+//! spanning `aria-level = 1` `row`s with `aria-expanded`, and data rows are
+//! `aria-level = 2` `row`s (`aria-selected`) with `gridcell` children.
 
 use std::rc::Rc;
 
-use pinion_a11y::{grouped_grid_access_nodes, AccessNode, GridColumn, GroupedGridSpec, SortDirection, WidgetA11y};
+use pinion_a11y::{
+    grouped_grid_access_nodes, AccessNode, GridColumn, GroupedGridSelection, GroupedGridSpec,
+    SortDirection, WidgetA11y,
+};
 use pinion_core::external::{
     int_of, External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource,
 };
@@ -444,7 +448,7 @@ impl WidgetCore for GroupedGridSortView {
 }
 
 impl WidgetA11y for GroupedGridSortView {
-    /// WAI-ARIA `grid` via [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes):
+    /// WAI-ARIA `treegrid` via [`grouped_grid_access_nodes`](pinion_a11y::grouped_grid_access_nodes):
     /// the active sort column's `aria-sort` is the one datum that differs from
     /// the static `hello-grouped-grid`, carried in the [`GridColumn`] slice.
     fn access_node(selected: &Option<usize>, _focused: Option<&str>) -> Vec<AccessNode> {
@@ -475,7 +479,7 @@ impl WidgetA11y for GroupedGridSortView {
             columns: &columns,
             group_prefix: GROUP_TAG,
             data_prefix: GRID_TAG,
-            selected_source: *selected,
+            selection: GroupedGridSelection::Single(*selected),
             // No keyboard navigation in this sort-focused slice (R848 wires
             // grouped-list / grouped-grid); the cursor axis is absent here.
             focused_view_pos: None,
