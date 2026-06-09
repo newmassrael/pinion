@@ -143,6 +143,9 @@ pub fn compute_layout_with_scroll_dirty(
 /// - `Some(ScrollAxis::Horizontal)` — width unbounded (R784): the
 ///   content keeps its viewport height and may grow wider, so a
 ///   horizontally-scrolling container's content overflows sideways.
+/// - `Some(ScrollAxis::Both)` — both axes unbounded (R877): a
+///   pannable 2-D canvas declares its world extent and the measuring
+///   pass must not clamp either dimension to the clip window.
 ///
 /// # Panics
 ///
@@ -157,8 +160,10 @@ fn compute_layout_inner(
     viewport_h: u32,
     unbounded: Option<ScrollAxis>,
 ) -> bool {
-    let width_unbounded = unbounded == Some(ScrollAxis::Horizontal);
-    let height_unbounded = unbounded == Some(ScrollAxis::Vertical);
+    let width_unbounded =
+        matches!(unbounded, Some(ScrollAxis::Horizontal | ScrollAxis::Both));
+    let height_unbounded =
+        matches!(unbounded, Some(ScrollAxis::Vertical | ScrollAxis::Both));
     let mut tree: TaffyTree<NodeContext> = TaffyTree::new();
     let layout_tree = build(scene, &mut tree);
     // Force the root to fill the viewport. The user's declared size
@@ -172,14 +177,30 @@ fn compute_layout_inner(
     // flex Column total can overflow the clip window instead of
     // being clamped. The outer-window pass keeps the explicit
     // `length(viewport_h)` cap so block defaults still fill.
+    //
+    // R877 §5.45 — on an unbounded axis an *explicitly declared*
+    // definite extent survives (the pannable canvas declares its world
+    // size and positions children absolutely, so there is no intrinsic
+    // child size for `auto` to measure — CSS likewise honours an
+    // explicit size on an absolutely-positioning containing block).
+    // Undeclared stays `auto` (the flex list/grid measuring path,
+    // byte-identical to pre-R877).
+    let declared = root_style.size;
+    let keep_declared = |dim: Dimension| {
+        if matches!(dim, Dimension::Length(_)) {
+            dim
+        } else {
+            auto()
+        }
+    };
     root_style.size = TaffySize {
         width: if width_unbounded {
-            auto()
+            keep_declared(declared.width)
         } else {
             length(viewport_w as f32)
         },
         height: if height_unbounded {
-            auto()
+            keep_declared(declared.height)
         } else {
             length(viewport_h as f32)
         },
@@ -1073,6 +1094,33 @@ mod tests {
                 state.max(),
                 (420, 0),
                 "horizontal overflow flows into max_x; height clamped to the viewport",
+            );
+        }
+
+        #[test]
+        fn r877_both_axis_scroll_unbounds_both_and_writes_both_maxima() {
+            // R877 §5.45 — a `ScrollAxis::Both` container (the pannable
+            // 2-D canvas) keeps its content's declared extent on BOTH
+            // axes: a fixed 720×600 world inside a 300×200 clip writes
+            // (420, 400) maxima — the R784 single-axis modes each
+            // clamp the cross axis, so neither could host a canvas
+            // panned freely in x and y.
+            use pinion_core::widgets::scroll::ScrollState;
+            use std::rc::Rc;
+
+            let content = fixed_row_w(720, 600);
+            let state = Rc::new(ScrollState::new());
+            let scroll = ScrollNode::new(Rect::new(0, 0, 300, 200), content)
+                .with_axis(ScrollAxis::Both)
+                .with_state(Rc::clone(&state));
+            let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+            compute_layout(&mut scene, &mut cache(), 360, 320);
+
+            assert_eq!(
+                state.max(),
+                (420, 400),
+                "both axes overflow into (max_x, max_y)",
             );
         }
 

@@ -2068,10 +2068,14 @@ impl ExternalNode {
 ///   row and body share one horizontal scroll so the header tracks
 ///   the body's horizontal offset while staying vertically pinned.
 ///
-/// A two-axis (`Both`) mode is a deferred follow-up — no consumer
-/// needs simultaneous overflow on both axes yet, and the
-/// frozen-header grid composes one single-axis scroll per axis
-/// (nested) rather than one two-axis scroll.
+/// - [`Self::Both`] (R877) — content may overflow on *both* axes; the
+///   motivating consumer is the node-editor's pannable 2-D canvas
+///   (one world surface, panned freely in x and y). The R784 note
+///   deferring `Both` ("no consumer needs simultaneous overflow yet")
+///   is hereby resolved by that first consumer — the frozen-header
+///   grid still composes nested single-axis scrolls because its two
+///   axes are *coupled to different followers*, which a single
+///   two-axis scroll cannot express; the two shapes coexist.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
 pub enum ScrollAxis {
     /// Content overflows vertically; width clamped to the viewport.
@@ -2079,6 +2083,12 @@ pub enum ScrollAxis {
     Vertical,
     /// Content overflows horizontally; height clamped to the viewport.
     Horizontal,
+    /// R877 §5.45 — content overflows on both axes (a pannable 2-D
+    /// canvas). [`ScrollState`](crate::widgets::scroll::ScrollState)
+    /// has always carried both offsets / maxima; this variant lets the
+    /// layout pass leave both axes unbounded so the declared content
+    /// extent survives measuring.
+    Both,
 }
 
 impl ScrollAxis {
@@ -2092,6 +2102,7 @@ impl ScrollAxis {
         match self {
             Self::Vertical => "vertical",
             Self::Horizontal => "horizontal",
+            Self::Both => "both",
         }
     }
 }

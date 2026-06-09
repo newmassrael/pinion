@@ -120,9 +120,12 @@ def body() -> None:
         assert_eq(tf.query("/external/edge_ids"), "0,1,2", "edge id space")
 
         # ── (A2) click-select a wire (R839 bezier hit-test) + delete ─
-        # Edge 0 (Texture.out0 -> Multiply.in0) bows through ~(210, 134),
-        # open space between the two cards. Clicking there selects the wire.
-        tf.click(at=(210.0, 134.0))
+        # Edge 0 (Texture.out0 -> Multiply.in0) bows through graph ~(210, 134),
+        # open space between the two cards — window x offsets by the R849
+        # palette strip (132), so the click lands at (342, 134). (The stale
+        # pre-palette coordinate had silently landed on node 0's card; caught
+        # and corrected in R877's regression pass.)
+        tf.click(at=(342.0, 134.0))
         wait_until(lambda: tf.query("/external/selected_edge") == 0, timeout=4.0,
                    interval=0.03, desc="clicking the wire selects edge 0")
         assert_eq(tf.query("/external/selected"), None, "node selection cleared (mutual exclusion)")
@@ -146,9 +149,11 @@ def body() -> None:
         tf.intervene("/external/node.0.y", 90)
         assert_eq(tf.query("/external/node.0.x"), 180, "node 0 moved x")
         assert_eq(tf.query("/external/node.0.y"), 90, "node 0 moved y")
-        tf.intervene("/external/node.0.x", 99999)  # off-canvas
+        tf.intervene("/external/node.0.x", 99999)  # beyond the world edge
         clamped_x = tf.query("/external/node.0.x")
-        assert clamped_x < 640, f"off-canvas x clamps into the window ({clamped_x})"
+        # R877 — the canvas pans over a finite WORLD (2048), so the clamp is
+        # the world extent, not the boot window.
+        assert clamped_x < 2048, f"an off-world x clamps to the WORLD extent ({clamped_x})"
         tf.intervene("/external/node.0.x", 40)  # restore
 
         # ── (C) selection: click selects, empty click / intervene clear ─

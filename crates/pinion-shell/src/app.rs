@@ -1901,8 +1901,9 @@ fn winit_touch_to_pinion(touch: winit::event::Touch) -> pinion_runtime::Touch {
 /// high-resolution scroll. Both narrow into pinion's unit-tagged
 /// variants. The `PhysicalPosition<f64>` narrows to `f32` here
 /// (winit's logical-pixel coordinates already use `f32` precision;
-/// the substrate's `wheel_delta_to_pixels` rounds to `i32`, so the
-/// wider `f64` carries no information past the boundary).
+/// the substrate consumes the delta at `f32` — `External::wheel`
+/// directly, the `ScrollState` fallback after an `i32` round — so
+/// the wider `f64` carries no information past the boundary).
 ///
 /// (R51.192 §5.45 R55.C.2) Both axes flip sign at this boundary.
 /// winit's [`MouseScrollDelta`] convention is "positive = content

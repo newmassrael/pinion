@@ -1813,11 +1813,29 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
         delta: WheelDelta,
     ) -> (DispatchTail<V::State>, bool) {
-        let router = self
-            .routers
+        self.wheel_with_modifiers_for_window(window_id, pid, delta, pinion_core::Modifiers::empty())
+    }
+
+    /// R877 §5.15 §5.49 — per-window wheel dispatch carrying the held
+    /// keyboard `modifiers` (the GUI shell's `ModifiersChanged` cache),
+    /// so a hovered [`External`](pinion_core::external::External) wheel
+    /// consumer can distinguish plain pan / `Shift` horizontal /
+    /// `Ctrl` zoom. Routes through
+    /// [`InputRouter::wheel_with_modifiers`](crate::input::InputRouter::wheel_with_modifiers)
+    /// — the External offer needs the state scene, hence the borrow
+    /// split mirroring [`Self::pointer_down_for_window`].
+    pub fn wheel_with_modifiers_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        delta: WheelDelta,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
+        let Self { scene, routers, .. } = self;
+        let router = routers
             .entry(window_id.to_owned())
             .or_default();
-        let dispatched = router.wheel(pid, delta);
+        let dispatched = router.wheel_with_modifiers(pid, delta, modifiers, scene);
         (self.tail(), dispatched)
     }
 

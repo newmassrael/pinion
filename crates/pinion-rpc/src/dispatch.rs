@@ -384,6 +384,13 @@ pub enum DeferredInput {
     /// the router has a fresh cursor before the wheel arm fires
     /// (mirrors the winit / web / iOS flow that re-uses the last
     /// pointer position).
+    ///
+    /// R877 §5.15 §5.49 — held modifiers ride the R763 out-of-band
+    /// [`Self::SetModifiers`] absolute-state channel (`scene/modifiers`,
+    /// the `ModifiersChanged` mirror), NOT a per-wheel field: the
+    /// embedder's drain reads its modifier cache when forwarding, so
+    /// `scene/modifiers {ctrl} → scene/wheel` zooms a canvas exactly as
+    /// a held physical `Ctrl` would.
     Wheel { x: f64, y: f64, delta: WheelDelta },
     /// R51.196 §5.49 — `scene/click` v1 injection. Synthesises one
     /// complete press / release cycle (down → up) at `(x, y)`. The

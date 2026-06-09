@@ -556,6 +556,45 @@ pub trait External: core::fmt::Debug {
     /// the cursor X).
     fn pointer_move(&mut self, _x_rel: f32, _y_rel: f32) {}
 
+    /// R877 §5.15 §5.49 — wheel-input forward (the §5.15 item-5 input-
+    /// forwarding leg the pointer hooks left open). The framework's
+    /// [`InputRouter`](crate#) offers a wheel event to the `External`
+    /// resolved from the tag under the cursor *before* falling back to
+    /// the `Scene::Scroll` dispatch — the W3C model where the innermost
+    /// wheel listener may consume the event ahead of the scroll
+    /// container chain.
+    ///
+    /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect
+    ///   [`capture_normalize`](Self::capture_normalize) selects for
+    ///   [`pointer_move`](Self::pointer_move), so wheel-anchor math (a
+    ///   canvas zoom anchored at the cursor) and drag math share one
+    ///   coordinate basis.
+    /// * `dx` / `dy` — the wheel delta in logical pixels (lines already
+    ///   scaled by the framework's line height), W3C sign convention:
+    ///   positive `dy` scrolls content downward.
+    /// * `modifiers` — the held keyboard modifiers, so one hook covers
+    ///   the canonical wheel vocabulary (plain = pan / scroll,
+    ///   `Shift` = horizontal, `Ctrl` = zoom).
+    ///
+    /// Return `true` to consume the event (the router stops — no scroll
+    /// dispatch); `false` to decline (default), letting the wheel fall
+    /// through to the nearest [`Scene::Scroll`] ancestor exactly as
+    /// before this hook existed. First consumer: the node-editor canvas
+    /// (pan / `Ctrl`-zoom); the same shape serves a spin-box / slider
+    /// wheel-step without another trait change.
+    ///
+    /// [`Scene::Scroll`]: crate::Scene::Scroll
+    fn wheel(
+        &mut self,
+        _x_rel: f32,
+        _y_rel: f32,
+        _dx: f32,
+        _dy: f32,
+        _modifiers: crate::input::Modifiers,
+    ) -> bool {
+        false
+    }
+
     // --- 5b. Drag-and-drop source / coordinator (R742 §5.51) ---
 
     /// R742 §5.51 — drag-source hook. The framework's

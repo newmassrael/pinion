@@ -94,8 +94,17 @@
 //! - **Crate extraction**: the model + pure bezier geometry are example-local;
 //!   the 2nd consumer (a self-hosted material graph) lifts them to a crate
 //!   (the chip / stepper inline-first precedent) — extract, not extend.
-//! - Node rename (inline editor), canvas pan / zoom, multi-select marquee — all
-//!   additive follow-ups.
+//! - **Canvas pan / zoom** (R877): pan = a [`ScrollAxis::Both`] scroll over a
+//!   fixed `WORLD`-extent surface (the finite huge canvas — plain wheel pans
+//!   through the router's native scroll dispatch, zero canvas code);
+//!   zoom = a shared `Signal<f64>` the view projects every world coordinate
+//!   through. `Ctrl`+wheel zooms anchored at the cursor (the R877
+//!   [`External::wheel`] forwarding leg), `Shift`+wheel pans horizontally,
+//!   `Ctrl`+`=`/`-`/`0` step/reset, `f` frames the graph. AI-first:
+//!   `query`/`intervene viewport.{x,y,zoom}` (pan in zoom-independent graph
+//!   units) + `invoke frame_all`. Drag-to-pan (Space/middle-drag) and
+//!   edge-drag auto-pan are documented follow-ups.
+//! - Node rename (inline editor), multi-select marquee — additive follow-ups.
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -110,9 +119,12 @@ use pinion_core::external::{
     External, ExternalIntrospect, IntrospectSchema, IntrospectValue, InterveneError, InvokeError,
     RepaintOwner, ThreadOwnership,
 };
-use pinion_core::reactive::{Owner, Signal};
-use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
+use pinion_core::reactive::{batch, Owner, Signal};
+use pinion_core::scene::{
+    ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
+};
 use pinion_core::storage::Storage;
+use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::undo::{use_undo_stack, UndoCommand, UndoStack, UndoStackExternal};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::style::{
@@ -199,7 +211,31 @@ const HEADER_H: i32 = 30;
 const PORT_PITCH: i32 = 28;
 const PORT_SIZE: i32 = 12;
 const BODY_PAD: i32 = 10;
-const MIN_NODE_Y: i32 = 44;
+
+// ─── R877 viewport (pan = ScrollState, zoom = shared Signal) ───────
+
+/// R877 — the world extent (graph units, both axes): the finite huge
+/// canvas every desktop node editor uses (Unreal's blueprint graph is
+/// likewise bounded, just vast). Pan = a [`ScrollAxis::Both`] scroll
+/// over this world; the scene substrate is unsigned so the world's
+/// origin is its top-left corner and node coordinates stay `>= 0`.
+const WORLD: i32 = 2048;
+/// R877 — zoom bounds. The floor keeps `WORLD × zoom` no smaller than
+/// the canvas viewport (so the scroll maxima never collapse below 0
+/// and the world always fills the view); the ceiling is the usual
+/// 400% detail zoom.
+const ZOOM_MIN: f64 = 0.5;
+const ZOOM_MAX: f64 = 4.0;
+/// R877 — zoom factor per wheel notch (`Ctrl`+wheel) and per keyboard
+/// step (`Ctrl`+`=` / `Ctrl`+`-`).
+const ZOOM_STEP: f64 = 1.2;
+/// R877 — logical pixels one wheel notch arrives as ([`External::wheel`]
+/// hands `Lines` deltas pre-scaled by the framework's 16-px W3C default
+/// line height), so `dy / WHEEL_NOTCH_PX` recovers the notch count the
+/// zoom exponent wants.
+const WHEEL_NOTCH_PX: f64 = 16.0;
+/// R877 — margin (screen px) `frame_all` keeps around the node bbox.
+const FRAME_MARGIN: i32 = 24;
 
 const EDGE_W: u32 = 3;
 const SELECTED_EDGE_W: u32 = 5;
@@ -463,18 +499,24 @@ fn point_seg_dist2(point: (f64, f64), seg_a: (f64, f64), seg_b: (f64, f64)) -> f
     dx * dx + dy * dy
 }
 
-/// Whether `(px, py)` (window px) lands within [`EDGE_HIT_THRESHOLD`] of the
-/// wire from `from` to `to` — the click-to-select-an-edge predicate. The
-/// curve is sampled into [`EDGE_SAMPLES`] segments and the click tested
-/// against each (a thin wire needs no analytic root-finding).
-fn point_near_edge(px: i32, py: i32, from: (i32, i32), to: (i32, i32)) -> bool {
+/// Whether `(px, py)` (graph units) lands within `threshold` of the wire
+/// from `from` to `to` — the click-to-select-an-edge predicate. The curve
+/// is sampled into [`EDGE_SAMPLES`] segments and the click tested against
+/// each (a thin wire needs no analytic root-finding).
+///
+/// R877 — the test runs in graph space; the caller scales the
+/// screen-constant [`EDGE_HIT_THRESHOLD`] by `1 / zoom` so the clickable
+/// halo around a wire stays the same *on-screen* size at every zoom (at
+/// 50% zoom a wire is half as wide, so its graph-space halo must be
+/// twice as generous).
+fn point_near_edge(px: f64, py: f64, from: (i32, i32), to: (i32, i32), threshold: f64) -> bool {
     let (c1, c2) = edge_curve(from, to);
-    let click = (f64::from(px), f64::from(py));
+    let click = (px, py);
     let p0 = (f64::from(from.0), f64::from(from.1));
     let p1 = (f64::from(c1.0), f64::from(c1.1));
     let p2 = (f64::from(c2.0), f64::from(c2.1));
     let p3 = (f64::from(to.0), f64::from(to.1));
-    let thr2 = f64::from(EDGE_HIT_THRESHOLD) * f64::from(EDGE_HIT_THRESHOLD);
+    let thr2 = threshold * threshold;
     let mut prev = p0;
     for step in 1..=EDGE_SAMPLES {
         let t = f64::from(step) / f64::from(EDGE_SAMPLES);
@@ -487,14 +529,40 @@ fn point_near_edge(px: i32, py: i32, from: (i32, i32), to: (i32, i32)) -> bool {
     false
 }
 
+/// R877 — node positions clamp to the WORLD extent, not the window: the
+/// canvas pans, so the old window-extent clamp would have pinned every
+/// node inside the boot view. The unsigned scene substrate makes `0` the
+/// world's hard left/top edge; the right/bottom clamp keeps the whole
+/// card on the world surface.
 fn clamp_node_x(x: i32) -> i32 {
-    let max = i32::try_from(WIN_W).unwrap_or(i32::MAX) - NODE_W;
-    x.clamp(0, max.max(0))
+    x.clamp(0, WORLD - NODE_W)
 }
 
 fn clamp_node_y(y: i32) -> i32 {
-    let max = i32::try_from(WIN_H).unwrap_or(i32::MAX) - HEADER_H - 8;
-    y.clamp(MIN_NODE_Y, max.max(MIN_NODE_Y))
+    y.clamp(0, WORLD - HEADER_H - 8)
+}
+
+// ─── R877 viewport math (graph units ↔ world px ↔ canvas px) ───────
+//
+// One affine: `world = graph · zoom`, `canvas = world − scroll_offset`.
+// Graph units are what the model stores (node x/y — identical to the
+// pre-R877 coordinates, so saved graphs load unchanged); world px are
+// what the view paints inside the scroll content; canvas px are what
+// the cursor reports relative to the `GRAPH_TAG` rect.
+
+/// Project a graph-unit length/coordinate into world px at `zoom`.
+fn wpx(graph: i32, zoom: f64) -> i32 {
+    round_i32(f64::from(graph) * zoom)
+}
+
+/// A stroke width scaled to `zoom`, floored at one visible pixel.
+fn wstroke(width: u32, zoom: f64) -> u32 {
+    upx(wpx(i32::try_from(width).unwrap_or(1), zoom).max(1))
+}
+
+/// A font size scaled to `zoom`, floored at a legible minimum.
+fn wfont(px: u32, zoom: f64) -> u32 {
+    upx(wpx(i32::try_from(px).unwrap_or(12), zoom).max(6))
 }
 
 // ─── reactive holders (Owner::cache, shared view ↔ coordinator) ────
@@ -537,6 +605,27 @@ fn use_next_edge_id() -> Rc<Cell<u32>> {
 fn use_next_node_id() -> Rc<Cell<u32>> {
     let owner = Owner::current().expect("use_next_node_id requires an active Owner scope");
     owner.cache("node_graph.next_node_id", || Cell::new(first_dynamic_node_id()))
+}
+
+/// R877 — the canvas zoom (shared coordinator ↔ view): the view fn projects
+/// every world coordinate through it; the coordinator's `Ctrl`+wheel /
+/// keyboard / `intervene viewport.zoom` paths write it. Transient UI state
+/// (like the selection), so it is not persisted.
+#[must_use]
+fn use_zoom() -> Rc<Signal<f64>> {
+    let owner = Owner::current().expect("use_zoom requires an active Owner scope");
+    owner.cache("node_graph.zoom", || Signal::new(1.0))
+}
+
+/// R877 — the canvas pan: the [`ScrollState`] behind the
+/// [`ScrollAxis::Both`] world scroll. One `Rc` shared by the view (the
+/// `ScrollNode` link), the coordinator (anchored zoom + `viewport.x/y`
+/// intervene), and the router's native wheel dispatch — pan IS scroll, so
+/// the plain-wheel path needs no canvas-specific code at all.
+#[must_use]
+fn use_canvas_scroll() -> Rc<ScrollState> {
+    let owner = Owner::current().expect("use_canvas_scroll requires an active Owner scope");
+    owner.cache("node_graph.scroll", ScrollState::new)
 }
 
 /// R851 — the shared [`UndoStack`] for this editor scope. Reached identically
@@ -610,12 +699,19 @@ fn parse_quad(csv: &str) -> Option<(NodeId, usize, NodeId, usize)> {
 
 // ─── internal drag latches (Cell — not read by the view) ───────────
 
-/// Snapshot taken on the first capture move of a node drag (the R786
-/// `ResizeDragStart` analogue at 2-D).
+/// Snapshot taken on the first capture move of a node drag.
+///
+/// R877 — the anchor is the *graph-space grab offset* (`node_pos −
+/// cursor_graph` at the press), not a cursor-fraction delta: every later
+/// move re-derives `node_pos = cursor_graph + grab` against the *current*
+/// viewport, so a zoom or pan mid-drag (`Ctrl`+wheel while holding a card)
+/// keeps the grab point pinned under the cursor instead of drifting — the
+/// canonical anchor model. `*_at_press` feeds the R853 one-move-per-gesture
+/// undo journal.
 #[derive(Clone, Copy, Debug)]
 struct NodeDragStart {
-    press_x_rel: f64,
-    press_y_rel: f64,
+    grab_dx: f64,
+    grab_dy: f64,
     x_at_press: i32,
     y_at_press: i32,
 }
@@ -820,6 +916,10 @@ fn validate_after(sel: Selection, removed_nodes: &[NodeId], removed_edges: &[Edg
 struct GraphServices {
     undo: Rc<UndoStack>,
     storage: Rc<AppStorage>,
+    /// R877 — the canvas zoom (shared with the view fn's projection).
+    zoom: Rc<Signal<f64>>,
+    /// R877 — the canvas pan (the `ScrollAxis::Both` world scroll's state).
+    scroll: Rc<ScrollState>,
 }
 
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
@@ -842,6 +942,12 @@ struct NodeGraphExternal {
     undo: Rc<UndoStack>,
     /// R852 — the platform graph store behind `save` / `load`.
     storage: Rc<AppStorage>,
+    /// R877 — canvas zoom; the same Signal the view projects through.
+    zoom: Rc<Signal<f64>>,
+    /// R877 — canvas pan; the same `ScrollState` the world `ScrollNode`
+    /// links (so the router's native wheel pan and the coordinator's
+    /// anchored zoom write one offset).
+    scroll: Rc<ScrollState>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<NodeId>>,
     node_drag: Cell<Option<NodeDragStart>>,
@@ -870,6 +976,8 @@ impl NodeGraphExternal {
             next_node_id,
             undo: services.undo,
             storage: services.storage,
+            zoom: services.zoom,
+            scroll: services.scroll,
             grabbed_node: Cell::new(None),
             node_drag: Cell::new(None),
             pending_press: Cell::new(PendingPress::None),
@@ -883,6 +991,95 @@ impl NodeGraphExternal {
 
     fn node_by_id(&self, id: NodeId) -> Option<GraphNode> {
         self.nodes.get().into_iter().find(|n| n.id == id)
+    }
+
+    // ── R877 viewport (pan = scroll offset, zoom = shared Signal) ──
+
+    /// The graph-space point under a canvas-relative cursor fraction
+    /// (the `pointer_move` / `wheel` coordinate basis): un-normalise to
+    /// canvas px, add the pan offset (world px), divide by zoom.
+    fn cursor_graph(&self, x_rel: f64, y_rel: f64) -> (f64, f64) {
+        let (ox, oy) = self.scroll.offset();
+        let zoom = self.zoom.get();
+        (
+            (f64::from(ox) + x_rel * f64::from(WIN_W)) / zoom,
+            (f64::from(oy) + y_rel * f64::from(WIN_H)) / zoom,
+        )
+    }
+
+    /// Set the zoom, keeping the graph point under the canvas-px anchor
+    /// `(sx, sy)` pinned (the cursor-anchored wheel zoom; the keyboard /
+    /// RPC paths anchor at the canvas centre). The world extent scales
+    /// with the zoom, so the scroll maxima are rewritten in the same
+    /// reactive batch as the offset — one atomic viewport update
+    /// ([[signal-batch-atomic-multi-axis-update]]); the next layout pass
+    /// re-derives the identical maxima from the declared world size.
+    /// Returns whether the zoom actually changed (already clamped =
+    /// no-op).
+    fn set_zoom_anchored(&self, target: f64, sx: f64, sy: f64) -> bool {
+        let old = self.zoom.get();
+        let zoom = target.clamp(ZOOM_MIN, ZOOM_MAX);
+        if (zoom - old).abs() < f64::EPSILON {
+            return false;
+        }
+        let (ox, oy) = self.scroll.offset();
+        let (gx, gy) = ((f64::from(ox) + sx) / old, (f64::from(oy) + sy) / old);
+        batch(|| {
+            self.zoom.set(zoom);
+            let content = wpx(WORLD, zoom);
+            self.scroll.set_max(
+                content - i32::try_from(WIN_W).unwrap_or(0),
+                content - i32::try_from(WIN_H).unwrap_or(0),
+            );
+            self.scroll.scroll_to(round_i32(gx * zoom - sx), round_i32(gy * zoom - sy));
+        });
+        true
+    }
+
+    /// Centre-anchored zoom step (keyboard `Ctrl`+`=` / `Ctrl`+`-` /
+    /// `Ctrl`+`0`, and the `intervene viewport.zoom` RPC write).
+    fn set_zoom_centered(&self, target: f64) -> bool {
+        self.set_zoom_anchored(target, f64::from(WIN_W) / 2.0, f64::from(WIN_H) / 2.0)
+    }
+
+    /// R877 — `frame_all` (`f`, the Unreal / Blender "frame" idiom): fit
+    /// the node bounding box into the canvas with [`FRAME_MARGIN`],
+    /// clamped to the zoom range, and centre it. `false` on an empty
+    /// graph (nothing to frame, viewport unchanged).
+    fn frame_all(&self) -> bool {
+        let nodes = self.nodes.get();
+        let Some(first) = nodes.first() else {
+            return false;
+        };
+        let mut min_x = first.x;
+        let mut min_y = first.y;
+        let mut max_x = first.x + NODE_W;
+        let mut max_y = first.y + first.height();
+        for n in &nodes {
+            min_x = min_x.min(n.x);
+            min_y = min_y.min(n.y);
+            max_x = max_x.max(n.x + NODE_W);
+            max_y = max_y.max(n.y + n.height());
+        }
+        let bw = f64::from((max_x - min_x).max(1));
+        let bh = f64::from((max_y - min_y).max(1));
+        let fit_w = f64::from(i32::try_from(WIN_W).unwrap_or(0) - 2 * FRAME_MARGIN) / bw;
+        let fit_h = f64::from(i32::try_from(WIN_H).unwrap_or(0) - 2 * FRAME_MARGIN) / bh;
+        let zoom = fit_w.min(fit_h).clamp(ZOOM_MIN, ZOOM_MAX);
+        let (cx, cy) = (f64::from(min_x + max_x) / 2.0, f64::from(min_y + max_y) / 2.0);
+        batch(|| {
+            self.zoom.set(zoom);
+            let content = wpx(WORLD, zoom);
+            self.scroll.set_max(
+                content - i32::try_from(WIN_W).unwrap_or(0),
+                content - i32::try_from(WIN_H).unwrap_or(0),
+            );
+            self.scroll.scroll_to(
+                round_i32(cx * zoom - f64::from(WIN_W) / 2.0),
+                round_i32(cy * zoom - f64::from(WIN_H) / 2.0),
+            );
+        });
+        true
     }
 
     /// R851 — build a [`GraphEdit`] over the shared signals and `record` it onto
@@ -1025,10 +1222,18 @@ impl NodeGraphExternal {
         self.next_node_id.set(raw + 1);
         let id = NodeId(raw);
         // Cascade in minted order from the spawn point so repeated adds fan out
-        // instead of stacking exactly on one another.
+        // instead of stacking exactly on one another. R877 — the spawn point is
+        // a fixed *canvas* position projected into graph space through the
+        // current viewport, so a new node always lands in the visible view
+        // (spawning at a fixed graph point would drop it off-screen once the
+        // canvas has panned away).
         let step = i32::try_from(raw.saturating_sub(first_dynamic_node_id())).unwrap_or(0) % 8;
-        let x = clamp_node_x(SPAWN_X + step * SPAWN_STEP);
-        let y = clamp_node_y(SPAWN_Y + step * SPAWN_STEP);
+        let (gx, gy) = self.cursor_graph(
+            f64::from(SPAWN_X) / f64::from(WIN_W),
+            f64::from(SPAWN_Y) / f64::from(WIN_H),
+        );
+        let x = clamp_node_x(round_i32(gx) + step * SPAWN_STEP);
+        let y = clamp_node_y(round_i32(gy) + step * SPAWN_STEP);
         let node = GraphNode { id, title: title.to_owned(), x, y, inputs, outputs };
         let sel_before = self.selection.get();
         // `record` applies the edit forward — pushing the node and selecting it
@@ -1144,8 +1349,11 @@ impl NodeGraphExternal {
 
     /// Hit-test a window-px click against every wire; the first within
     /// tolerance is the selection candidate (its stable [`EdgeId`]).
-    fn hit_test_edge(&self, px: i32, py: i32) -> Option<EdgeId> {
+    /// R877 — `(px, py)` in graph units (the caller converts the cursor via
+    /// [`cursor_graph`](Self::cursor_graph)); the hit halo is screen-constant.
+    fn hit_test_edge(&self, px: f64, py: f64) -> Option<EdgeId> {
         let nodes = self.nodes.get();
+        let threshold = f64::from(EDGE_HIT_THRESHOLD) / self.zoom.get();
         self.edges
             .get()
             .iter()
@@ -1161,6 +1369,7 @@ impl NodeGraphExternal {
                     py,
                     output_port_center(src, e.from_port),
                     input_port_center(dst, e.to_port),
+                    threshold,
                 )
             })
             .map(|e| e.id)
@@ -1328,18 +1537,18 @@ impl External for NodeGraphExternal {
     }
 
     /// Capture-drag a node. `x_rel` / `y_rel` are the cursor's fraction across
-    /// the canvas; the first move snapshots the press anchor, each later move
-    /// applies `pos_at_press + (rel − press_rel) · canvas_extent`.
+    /// the canvas; the first move snapshots the graph-space grab offset, each
+    /// later move re-derives `node = cursor_graph + grab` against the current
+    /// viewport (R877 — robust to a pan / zoom landing mid-drag).
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+        let (gx, gy) = self.cursor_graph(f64::from(x_rel), f64::from(y_rel));
         let Some(node) = self.grabbed_node.get() else {
             // Not dragging a node. A background press (the R51.35 capture seed
             // forwards the press cursor here) probes for an edge under the
             // click so a background `PointerUp` can select it. An input-port
             // press is excluded via `PendingPress::InputPort`.
             if self.pending_press.get() == PendingPress::None {
-                let px = round_i32(f64::from(x_rel) * f64::from(WIN_W));
-                let py = round_i32(f64::from(y_rel) * f64::from(WIN_H));
-                self.pending_edge_hit.set(self.hit_test_edge(px, py));
+                self.pending_edge_hit.set(self.hit_test_edge(gx, gy));
             }
             return;
         };
@@ -1347,19 +1556,54 @@ impl External for NodeGraphExternal {
             None => {
                 if let Some(n) = self.node_by_id(node) {
                     self.node_drag.set(Some(NodeDragStart {
-                        press_x_rel: f64::from(x_rel),
-                        press_y_rel: f64::from(y_rel),
+                        grab_dx: f64::from(n.x) - gx,
+                        grab_dy: f64::from(n.y) - gy,
                         x_at_press: n.x,
                         y_at_press: n.y,
                     }));
                 }
             }
             Some(start) => {
-                let dx = round_i32((f64::from(x_rel) - start.press_x_rel) * f64::from(WIN_W));
-                let dy = round_i32((f64::from(y_rel) - start.press_y_rel) * f64::from(WIN_H));
-                self.set_node_pos(node, start.x_at_press + dx, start.y_at_press + dy);
+                self.set_node_pos(
+                    node,
+                    round_i32(gx + start.grab_dx),
+                    round_i32(gy + start.grab_dy),
+                );
             }
         }
+    }
+
+    /// R877 §5.15 §5.49 — the canvas wheel vocabulary, riding the router's
+    /// External-first offer:
+    ///
+    /// * `Ctrl`+wheel — zoom, anchored at the cursor (consumed).
+    /// * `Shift`+wheel — horizontal pan: the vertical notches drive the
+    ///   x offset, the browser/Figma convention (consumed; written
+    ///   straight onto the shared [`ScrollState`]).
+    /// * plain wheel — **declined** (`false`): the router's pre-R877
+    ///   scroll fallback pans the world `ScrollNode` natively, so the
+    ///   2-D pan costs this binding zero code.
+    ///
+    /// The rel coordinates are normalised over the `GRAPH_TAG` canvas
+    /// rect; a wheel routed here from a palette card (composite
+    /// `node_graph#palette_*` shares the primary) lands outside `[0, 1]`
+    /// and is declined — the R799 bounds-guard discipline.
+    fn wheel(&mut self, x_rel: f32, y_rel: f32, dx: f32, dy: f32, modifiers: Modifiers) -> bool {
+        if !(0.0..=1.0).contains(&x_rel) || !(0.0..=1.0).contains(&y_rel) {
+            return false;
+        }
+        if modifiers.control_key() {
+            let factor = ZOOM_STEP.powf(-f64::from(dy) / WHEEL_NOTCH_PX);
+            let sx = f64::from(x_rel) * f64::from(WIN_W);
+            let sy = f64::from(y_rel) * f64::from(WIN_H);
+            self.set_zoom_anchored(self.zoom.get() * factor, sx, sy);
+            return true;
+        }
+        if modifiers.shift_key() {
+            self.scroll.scroll_by(round_i32(f64::from(dy) + f64::from(dx)), 0);
+            return true;
+        }
+        false
     }
 
     /// Arm an edge drag from an output port (the R742 drag substrate). The
@@ -1423,8 +1667,12 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node.<id>.inputs", "int"),
             ("node.<id>.outputs", "int"),
             ("edge.<id>", "string"),
+            ("viewport.x", "float"),
+            ("viewport.y", "float"),
+            ("viewport.zoom", "float"),
             ("send", "string"),
             ("add_node", "string"),
+            ("frame_all", "json"),
             ("add_edge", "string"),
             ("remove_edge", "int"),
             ("delete_node", "int"),
@@ -1460,6 +1708,15 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R852 — the whole graph as one JSON blob (the AI-first read; its
             // write-twin is `invoke set_graph`).
             "serialized" => Some(IntrospectValue::Text(self.serialized_json())),
+            // R877 — the viewport, in zoom-independent graph units (pan) +
+            // the zoom factor. Write-twins: `intervene viewport.{x,y,zoom}`.
+            "viewport.x" => {
+                Some(IntrospectValue::Float(f64::from(self.scroll.offset().0) / self.zoom.get()))
+            }
+            "viewport.y" => {
+                Some(IntrospectValue::Float(f64::from(self.scroll.offset().1) / self.zoom.get()))
+            }
+            "viewport.zoom" => Some(IntrospectValue::Float(self.zoom.get())),
             _ => {
                 if let Some(rest) = path.strip_prefix("node.") {
                     let (id_str, field) = rest.split_once('.')?;
@@ -1490,6 +1747,33 @@ impl ExternalIntrospect for NodeGraphExternal {
     }
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        // R877 — viewport write-twins. Pan in graph units (`scroll_to` clamps
+        // against the world maxima — read the outcome back via the query
+        // twin); zoom clamps to [ZOOM_MIN, ZOOM_MAX], anchored at the canvas
+        // centre (an RPC client has no cursor). Strictly `Float` — `as_f64`'s
+        // deliberate no-Int-coercion contract (R51.155), matching the slots'
+        // declared `float` schema type.
+        if let Some(axis) = path.strip_prefix("viewport.") {
+            let v = value.as_f64().ok_or(InterveneError::TypeMismatch)?;
+            let zoom = self.zoom.get();
+            match axis {
+                "x" => {
+                    let oy = self.scroll.offset().1;
+                    self.scroll.scroll_to(round_i32(v * zoom), oy);
+                    return Ok(());
+                }
+                "y" => {
+                    let ox = self.scroll.offset().0;
+                    self.scroll.scroll_to(ox, round_i32(v * zoom));
+                    return Ok(());
+                }
+                "zoom" => {
+                    self.set_zoom_centered(v);
+                    return Ok(());
+                }
+                _ => return Err(InterveneError::UnknownPath),
+            }
+        }
         if path == "selected" {
             return match value {
                 IntrospectValue::Null => {
@@ -1594,6 +1878,9 @@ impl ExternalIntrospect for NodeGraphExternal {
                 _ => Err(InvokeError::TypeMismatch),
             },
             "delete_selected" => Ok(IntrospectValue::Bool(self.delete_selected())),
+            // R877 — fit the node bbox into the canvas (the keyboard `f`
+            // twin). `false` on an empty graph.
+            "frame_all" => Ok(IntrospectValue::Bool(self.frame_all())),
             "nudge" => match args {
                 IntrospectValue::Text(s) => {
                     let (dx, dy) = parse_pair_i32(&s).ok_or(InvokeError::Rejected)?;
@@ -1673,6 +1960,29 @@ fn invoke_undo(scene: &mut Scene, verb: &str) -> bool {
     true
 }
 
+/// R877 — a held-`Ctrl` zoom keystroke (the browser / IDE convention).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ZoomKey {
+    /// `Ctrl`+`=` / `Ctrl`+`+` — one step in.
+    In,
+    /// `Ctrl`+`-` — one step out.
+    Out,
+    /// `Ctrl`+`0` — reset to 100%.
+    Reset,
+}
+
+fn zoom_verb(key: &str, modifiers: Modifiers) -> Option<ZoomKey> {
+    if !modifiers.control_key() {
+        return None;
+    }
+    match key {
+        "=" | "+" => Some(ZoomKey::In),
+        "-" => Some(ZoomKey::Out),
+        "0" => Some(ZoomKey::Reset),
+        _ => None,
+    }
+}
+
 fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     if let Some(verb) = undo_redo_verb(key, modifiers) {
         return invoke_undo(scene, verb);
@@ -1683,6 +1993,23 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     let Some(intro) = node.handle.introspect_mut() else {
         return false;
     };
+    // R877 — zoom keys funnel through the same `viewport.zoom`
+    // query/intervene pair the RPC path drives (the invoke-funnel
+    // discipline: shell keyboard and AI client share one wire-form).
+    // The centre anchor lives behind the intervene arm.
+    if let Some(verb) = zoom_verb(key, modifiers) {
+        let target = match verb {
+            ZoomKey::Reset => 1.0,
+            ZoomKey::In | ZoomKey::Out => {
+                let Some(IntrospectValue::Float(zoom)) = intro.query("viewport.zoom") else {
+                    return false;
+                };
+                if verb == ZoomKey::In { zoom * ZOOM_STEP } else { zoom / ZOOM_STEP }
+            }
+        };
+        let _ = intro.intervene("viewport.zoom", IntrospectValue::Float(target));
+        return true;
+    }
     // R852 — Ctrl+S save / Ctrl+O open, on the graph coordinator itself.
     if let Some(verb) = save_load_verb(key, modifiers) {
         let _ = intro.invoke(verb, IntrospectValue::Null);
@@ -1701,6 +2028,11 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
             let _ = intro.intervene("selected", IntrospectValue::Null);
             true
         }
+        // R877 — frame the whole graph (Unreal / Blender `F`).
+        "f" => matches!(
+            intro.invoke("frame_all", IntrospectValue::Null),
+            Ok(IntrospectValue::Bool(true))
+        ),
         _ => false,
     }
 }
@@ -1710,8 +2042,17 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
 /// One cubic-bezier edge path between two window-space port centres. An
 /// S-curve: control points offset horizontally so wires leave / enter ports
 /// level (the canonical node-graph wire shape).
-fn view_edge(tag: String, from: (i32, i32), to: (i32, i32), color: Color, width: u32) -> Scene {
+fn view_edge(tag: String, from: (i32, i32), to: (i32, i32), color: Color, width: u32, zoom: f64) -> Scene {
+    // R877 — the curve is *computed* in graph space (the same
+    // `edge_curve` SSOT the hit-test samples) and *projected* per control
+    // point: pan + zoom is affine, so scaling the four control points
+    // scales the exact same cubic — painted wire and clickable wire stay
+    // one curve at every zoom.
     let (c1, c2) = edge_curve(from, to);
+    let from = (wpx(from.0, zoom), wpx(from.1, zoom));
+    let to = (wpx(to.0, zoom), wpx(to.1, zoom));
+    let (c1, c2) = ((wpx(c1.0, zoom), wpx(c1.1, zoom)), (wpx(c2.0, zoom), wpx(c2.1, zoom)));
+    let width = wstroke(width, zoom);
     let commands = vec![
         PathCommand::MoveTo(ppt(from.0, from.1)),
         PathCommand::CurveTo { c1: ppt(c1.0, c1.1), c2: ppt(c2.0, c2.1), end: ppt(to.0, to.1) },
@@ -1756,6 +2097,7 @@ fn view_edges(
     edges: &[Edge],
     selected_edge: Option<EdgeId>,
     theme: &Theme,
+    zoom: f64,
 ) -> Vec<Scene> {
     let color = theme.resolve(ColorRole::Accent);
     let hot = theme.resolve(ColorRole::OnSurface);
@@ -1769,21 +2111,23 @@ fn view_edges(
             } else {
                 (color, EDGE_W)
             };
-            Some(view_edge(format!("{GRAPH_TAG}#edge_{}", e.id), from, to, c, w))
+            Some(view_edge(format!("{GRAPH_TAG}#edge_{}", e.id), from, to, c, w, zoom))
         })
         .collect()
 }
 
-/// One port box (a small rounded square on the card edge).
-fn view_port(tag: String, left: i32, top: i32, color: Color) -> Scene {
+/// One port box (a small rounded square on the card edge). `left` / `top`
+/// are node-local graph units, projected here.
+fn view_port(tag: String, left: i32, top: i32, color: Color, zoom: f64) -> Scene {
+    let size = upx(wpx(PORT_SIZE, zoom).max(2));
     Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(tag)
-            .with_style(BoxStyle::filled(color).with_corner_radius(upx(PORT_SIZE / 2)))
+            .with_style(BoxStyle::filled(color).with_corner_radius(size / 2))
             .with_layout(
                 LayoutStyle::new()
-                    .with_absolute_position(upx(left), upx(top))
-                    .with_size(Size::px(upx(PORT_SIZE), upx(PORT_SIZE))),
+                    .with_absolute_position(upx(wpx(left, zoom)), upx(wpx(top, zoom)))
+                    .with_size(Size::px(size, size)),
             ),
     )
 }
@@ -1791,7 +2135,7 @@ fn view_port(tag: String, left: i32, top: i32, color: Color) -> Scene {
 /// One node card: a header (title) over its input (left) + output (right)
 /// ports, absolutely placed at the node's canvas position. The whole card is
 /// one drag target; the ports are deeper hit targets for edge connect.
-fn view_node(node: &GraphNode, selected: bool, theme: &Theme) -> Scene {
+fn view_node(node: &GraphNode, selected: bool, theme: &Theme, zoom: f64) -> Scene {
     let id = node.id;
     let port_color = theme.resolve(ColorRole::Accent);
     let header = Scene::Container(
@@ -1799,7 +2143,7 @@ fn view_node(node: &GraphNode, selected: bool, theme: &Theme) -> Scene {
             node.title.clone(),
             Rect::default(),
             TextStyle::new()
-                .with_size_px(NODE_TITLE_PX)
+                .with_size_px(wfont(NODE_TITLE_PX, zoom))
                 .with_fg(theme.resolve(ColorRole::OnSurface)),
         ))])
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
@@ -1809,7 +2153,7 @@ fn view_node(node: &GraphNode, selected: bool, theme: &Theme) -> Scene {
                 .flex(FlexDirection::Row)
                 .with_justify(JustifyContent::Center)
                 .with_align_items(AlignItems::Center)
-                .with_size(Size::px(upx(NODE_W), upx(HEADER_H))),
+                .with_size(Size::px(upx(wpx(NODE_W, zoom)), upx(wpx(HEADER_H, zoom)))),
         ),
     );
 
@@ -1820,6 +2164,7 @@ fn view_node(node: &GraphNode, selected: bool, theme: &Theme) -> Scene {
             0,
             port_row_top(i),
             port_color,
+            zoom,
         ));
     }
     for j in 0..node.outputs {
@@ -1828,6 +2173,7 @@ fn view_node(node: &GraphNode, selected: bool, theme: &Theme) -> Scene {
             NODE_W - PORT_SIZE,
             port_row_top(j),
             port_color,
+            zoom,
         ));
     }
 
@@ -1842,8 +2188,8 @@ fn view_node(node: &GraphNode, selected: bool, theme: &Theme) -> Scene {
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)).with_border(border))
             .with_layout(
                 LayoutStyle::new()
-                    .with_absolute_position(upx(node.x), upx(node.y))
-                    .with_size(Size::px(upx(NODE_W), upx(node.height()))),
+                    .with_absolute_position(upx(wpx(node.x, zoom)), upx(wpx(node.y, zoom)))
+                    .with_size(Size::px(upx(wpx(NODE_W, zoom)), upx(wpx(node.height(), zoom)))),
             ),
     )
 }
@@ -1905,11 +2251,17 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let selected = selection.node();
     let selected_edge = selection.edge();
     let preview = use_preview().get();
+    // R877 — the viewport: zoom projects every world coordinate below;
+    // pan is the scroll offset (reading the zoom Signal subscribes the
+    // paint Effect, so a wheel zoom repaints reactively; the offset is
+    // the ScrollNode's own substrate concern).
+    let zoom = use_zoom().get();
+    let canvas_scroll = use_canvas_scroll();
 
-    let mut children: Vec<Scene> = Vec::new();
+    let mut world_children: Vec<Scene> = Vec::new();
 
-    // Edges (behind) → preview wire → node cards (on top) → chrome.
-    children.extend(view_edges(&nodes, &edges, selected_edge, &theme));
+    // Edges (behind) → preview wire → node cards (on top).
+    world_children.extend(view_edges(&nodes, &edges, selected_edge, &theme, zoom));
 
     if let Some(p) = preview {
         if let Some(from_node) = node_ref(&nodes, p.from_node) {
@@ -1918,20 +2270,39 @@ fn view(_state: (), _frame: &Frame) -> Scene {
                 .to
                 .and_then(|(tn, tp)| Some(input_port_center(node_ref(&nodes, tn)?, tp)))
                 .unwrap_or(from);
-            children.push(view_edge(
+            world_children.push(view_edge(
                 format!("{GRAPH_TAG}#preview"),
                 from,
                 to,
                 theme.resolve(ColorRole::OnSurfaceMuted),
                 PREVIEW_W,
+                zoom,
             ));
         }
     }
 
     for node in &nodes {
-        children.push(view_node(node, selected == Some(node.id), &theme));
+        world_children.push(view_node(node, selected == Some(node.id), &theme, zoom));
     }
 
+    // R877 — the world surface: a fixed WORLD×WORLD extent (scaled by the
+    // zoom) the nodes live on, panned by a `ScrollAxis::Both` scroll. The
+    // declared size survives the measuring pass (the R877 layout rule for
+    // explicitly-sized scroll content), and `update_scroll_state_bounds`
+    // derives the pan maxima from it each frame.
+    let world_extent = upx(wpx(WORLD, zoom));
+    let world = Scene::Container(
+        ContainerNode::new(world_children)
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+            .with_layout(LayoutStyle::new().with_size(Size::px(world_extent, world_extent))),
+    );
+    let world_scroll = Scene::Scroll(
+        ScrollNode::from_state(canvas_scroll, Rect::new(0, 0, WIN_W, WIN_H), world)
+            .with_axis(ScrollAxis::Both),
+    );
+
+    // Chrome (title + status) sits OUTSIDE the scroll so it never pans away.
+    let mut children = vec![world_scroll];
     children.push(Scene::Text(
         TextNode::styled(
             "Node graph",
@@ -1952,10 +2323,12 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     // (and reading it subscribes the view to the undo stack's revision signal,
     // so an undo/redo that only moves the cursor still repaints the status).
     let undo_label = use_undo().undo_label();
+    // R877 — surface the zoom so the viewport state is a visible witness.
     let status = format!(
-        "{} nodes · {} edges · selected: {sel_label} · undo: {}",
+        "{} nodes · {} edges · selected: {sel_label} · zoom {}% · undo: {}",
         nodes.len(),
         edges.len(),
+        round_i32(zoom * 100.0),
         undo_label.as_deref().unwrap_or("—"),
     );
     children.push(Scene::Text(
@@ -2003,7 +2376,12 @@ impl WidgetCore for NodeEditorView {
             use_preview(),
             use_next_edge_id(),
             use_next_node_id(),
-            GraphServices { undo: use_undo(), storage: use_graph_storage() },
+            GraphServices {
+                undo: use_undo(),
+                storage: use_graph_storage(),
+                zoom: use_zoom(),
+                scroll: use_canvas_scroll(),
+            },
         ))
     }
 
@@ -2196,7 +2574,8 @@ mod tests {
             assert!(intro.intervene("node.0.y", IntrospectValue::Int(90)).is_ok());
             assert_eq!(intro.query("node.0.x"), Some(IntrospectValue::Int(120)));
             assert_eq!(intro.query("node.0.y"), Some(IntrospectValue::Int(90)));
-            // Off-canvas request clamps to the window bounds.
+            // An out-of-world request clamps to the WORLD extent (R877: the
+            // canvas pans, so the clamp is the world edge, not the window).
             assert!(intro.intervene("node.0.x", IntrospectValue::Int(99999)).is_ok());
             let x = intro.query("node.0.x");
             assert_eq!(x, Some(IntrospectValue::Int(i64::from(clamp_node_x(99999)))));
@@ -2414,7 +2793,12 @@ mod tests {
             use_preview(),
             use_next_edge_id(),
             use_next_node_id(),
-            GraphServices { undo: use_undo(), storage: mem_storage() },
+            GraphServices {
+                undo: use_undo(),
+                storage: mem_storage(),
+                zoom: use_zoom(),
+                scroll: use_canvas_scroll(),
+            },
         )
     }
 
@@ -2422,11 +2806,18 @@ mod tests {
     fn r839_point_near_edge_is_curve_distance() {
         let from = (164, 114);
         let to = (256, 154);
+        let thr = f64::from(EDGE_HIT_THRESHOLD);
         // The endpoints lie exactly on the curve.
-        assert!(point_near_edge(from.0, from.1, from, to), "start on curve");
-        assert!(point_near_edge(to.0, to.1, from, to), "end on curve");
+        assert!(
+            point_near_edge(f64::from(from.0), f64::from(from.1), from, to, thr),
+            "start on curve",
+        );
+        assert!(
+            point_near_edge(f64::from(to.0), f64::from(to.1), from, to, thr),
+            "end on curve",
+        );
         // A point far above the wire is not near it.
-        assert!(!point_near_edge(210, 30, from, to), "far point misses");
+        assert!(!point_near_edge(210.0, 30.0, from, to, thr), "far point misses");
     }
 
     #[test]
@@ -2451,8 +2842,8 @@ mod tests {
                 0.5,
             );
             let coord = coordinator();
-            assert_eq!(coord.hit_test_edge(round_i32(mid.0), round_i32(mid.1)), Some(EdgeId(0)));
-            assert_eq!(coord.hit_test_edge(10, 10), None, "empty corner hits nothing");
+            assert_eq!(coord.hit_test_edge(mid.0, mid.1), Some(EdgeId(0)));
+            assert_eq!(coord.hit_test_edge(10.0, 10.0), None, "empty corner hits nothing");
         });
     }
 
@@ -3149,8 +3540,8 @@ mod tests {
     fn synth_drag(coord: &NodeGraphExternal, id: NodeId, before: (i32, i32), dx: i32, dy: i32) {
         coord.grabbed_node.set(Some(id));
         coord.node_drag.set(Some(NodeDragStart {
-            press_x_rel: 0.0,
-            press_y_rel: 0.0,
+            grab_dx: 0.0,
+            grab_dy: 0.0,
             x_at_press: before.0,
             y_at_press: before.1,
         }));
@@ -3189,8 +3580,8 @@ mod tests {
             let before = pos_of(&coord, id);
             coord.grabbed_node.set(Some(id));
             coord.node_drag.set(Some(NodeDragStart {
-                press_x_rel: 0.0,
-                press_y_rel: 0.0,
+                grab_dx: 0.0,
+                grab_dy: 0.0,
                 x_at_press: before.0,
                 y_at_press: before.1,
             }));
@@ -3235,8 +3626,8 @@ mod tests {
             // Arm an in-flight drag (grab + a live move), no release.
             coord.grabbed_node.set(Some(id));
             coord.node_drag.set(Some(NodeDragStart {
-                press_x_rel: 0.0,
-                press_y_rel: 0.0,
+                grab_dx: 0.0,
+                grab_dy: 0.0,
                 x_at_press: before.0,
                 y_at_press: before.1,
             }));
@@ -3331,6 +3722,298 @@ mod tests {
             assert_eq!(query_int(&scene, "node_count"), 5, "Ctrl+O loaded the saved graph");
             // Plain 's' (no Ctrl) is not a save gesture.
             assert!(!NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "s", mods(false, false)));
+        });
+    }
+
+    // ── R877 viewport (pan = ScrollAxis::Both scroll, zoom = Signal) ─
+
+    #[test]
+    fn r877_ctrl_wheel_zooms_anchored_at_the_cursor() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            // Anchor at canvas (160, 105) = rel (0.25, 0.25); the graph point
+            // under that cursor before the zoom must still be under it after.
+            let (ax, ay) = (0.25_f32, 0.25_f32);
+            let before = coord.cursor_graph(f64::from(ax), f64::from(ay));
+            // One notch in: dy = -16 px -> factor ZOOM_STEP.
+            assert!(coord.wheel(ax, ay, 0.0, -16.0, mods(true, false)), "ctrl-wheel consumed");
+            let zoom = coord.zoom.get();
+            assert!((zoom - ZOOM_STEP).abs() < 1e-9, "one notch = one ZOOM_STEP, got {zoom}");
+            let after = coord.cursor_graph(f64::from(ax), f64::from(ay));
+            // The scroll offset quantises to whole px, so the anchor holds to
+            // sub-pixel-per-zoom tolerance (< 1 graph unit).
+            assert!(
+                (after.0 - before.0).abs() < 1.0 && (after.1 - before.1).abs() < 1.0,
+                "graph point under the cursor is pinned: {before:?} -> {after:?}",
+            );
+        });
+    }
+
+    #[test]
+    fn r877_plain_wheel_is_declined_so_the_scroll_substrate_pans() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            // No modifiers: the External declines and the router's native
+            // Scroll fallback owns the pan (zero canvas code).
+            assert!(!coord.wheel(0.5, 0.5, 0.0, 32.0, mods(false, false)));
+            assert!((coord.zoom.get() - 1.0).abs() < f64::EPSILON, "zoom untouched");
+        });
+    }
+
+    #[test]
+    fn r877_shift_wheel_pans_horizontally() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            // Give the pan some range first (the layout pass does this in the
+            // running app; unit tests write the world maxima directly).
+            coord.scroll.set_max(WORLD, WORLD);
+            assert!(coord.wheel(0.5, 0.5, 0.0, 48.0, mods(false, true)), "shift-wheel consumed");
+            assert_eq!(coord.scroll.offset(), (48, 0), "vertical notches drive the x offset");
+        });
+    }
+
+    #[test]
+    fn r877_wheel_outside_the_canvas_rect_is_declined() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            // A palette-card wheel routes here via the shared primary but
+            // normalises outside [0, 1] (the palette is left of the canvas).
+            assert!(!coord.wheel(-0.2, 0.5, 0.0, -16.0, mods(true, false)));
+            assert!((coord.zoom.get() - 1.0).abs() < f64::EPSILON, "zoom untouched");
+        });
+    }
+
+    #[test]
+    fn r877_viewport_zoom_intervene_clamps_and_round_trips() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert!(intro.intervene("viewport.zoom", IntrospectValue::Float(2.0)).is_ok());
+            assert_eq!(intro.query("viewport.zoom"), Some(IntrospectValue::Float(2.0)));
+            // Out-of-range writes clamp (the setter-returns-outcome read-back).
+            assert!(intro.intervene("viewport.zoom", IntrospectValue::Float(99.0)).is_ok());
+            assert_eq!(intro.query("viewport.zoom"), Some(IntrospectValue::Float(ZOOM_MAX)));
+            assert!(intro.intervene("viewport.zoom", IntrospectValue::Float(0.01)).is_ok());
+            assert_eq!(intro.query("viewport.zoom"), Some(IntrospectValue::Float(ZOOM_MIN)));
+            // Type mismatch is rejected.
+            assert_eq!(
+                intro.intervene("viewport.zoom", IntrospectValue::Text("big".into())),
+                Err(InterveneError::TypeMismatch),
+            );
+        });
+    }
+
+    #[test]
+    fn r877_viewport_pan_intervene_is_graph_units_and_clamps() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Zoom to 2x first: set_zoom writes the world maxima, exactly as
+            // the layout pass does on every painted frame.
+            assert!(intro.intervene("viewport.zoom", IntrospectValue::Float(2.0)).is_ok());
+            // Pan to graph (100, 50): the query twin reads back in graph units
+            // (zoom-independent), the wire shape an AI client can reason in.
+            assert!(intro.intervene("viewport.x", IntrospectValue::Float(100.0)).is_ok());
+            assert!(intro.intervene("viewport.y", IntrospectValue::Float(50.0)).is_ok());
+            assert_eq!(intro.query("viewport.x"), Some(IntrospectValue::Float(100.0)));
+            assert_eq!(intro.query("viewport.y"), Some(IntrospectValue::Float(50.0)));
+            // A huge pan clamps against the world maxima.
+            assert!(intro.intervene("viewport.x", IntrospectValue::Float(1.0e9)).is_ok());
+            let clamped = match intro.query("viewport.x") {
+                Some(IntrospectValue::Float(v)) => v,
+                other => panic!("expected Float, got {other:?}"),
+            };
+            assert!(
+                clamped < 2.0 * f64::from(WORLD),
+                "pan clamped to the world extent, got {clamped}",
+            );
+            // An Int payload is a TypeMismatch — the slot is declared `float`
+            // and `as_f64` deliberately does not coerce (R51.155).
+            assert_eq!(
+                intro.intervene("viewport.x", IntrospectValue::Int(0)),
+                Err(InterveneError::TypeMismatch),
+            );
+        });
+    }
+
+    #[test]
+    fn r877_frame_all_fits_the_node_bbox() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            // Pan + zoom somewhere unhelpful first.
+            coord.set_zoom_centered(4.0);
+            assert!(coord.frame_all(), "frame_all on a non-empty graph");
+            let zoom = coord.zoom.get();
+            // Boot bbox: x 40..600, y 70..~318 -> fit is width-bound:
+            // (640 - 48) / 560 ~= 1.057.
+            assert!(zoom > 1.0 && zoom < 1.2, "fit zoom in the expected band, got {zoom}");
+            // Every node's projected position lies inside the canvas.
+            let (ox, oy) = coord.scroll.offset();
+            for n in &coord.nodes.get() {
+                let sx = wpx(n.x, zoom) - ox;
+                let sy = wpx(n.y, zoom) - oy;
+                assert!(sx >= 0 && sy >= 0, "node {} on-canvas, got ({sx}, {sy})", n.id);
+                assert!(
+                    sx + wpx(NODE_W, zoom) <= i32::try_from(WIN_W).unwrap_or(0)
+                        && sy + wpx(n.height(), zoom) <= i32::try_from(WIN_H).unwrap_or(0),
+                    "node {} fully visible",
+                    n.id,
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn r877_frame_all_on_an_empty_graph_is_a_noop() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            coord.nodes.set(Vec::new());
+            coord.edges.set(Vec::new());
+            assert!(!coord.frame_all(), "nothing to frame");
+            assert!((coord.zoom.get() - 1.0).abs() < f64::EPSILON, "viewport untouched");
+        });
+    }
+
+    #[test]
+    fn r877_keyboard_zoom_steps_and_resets() {
+        Owner::new().run(|| {
+            let mut scene = boot_full_scene();
+            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "=", mods(true, false)));
+            let intro = graph_intro(&scene);
+            let zoomed = match intro.query("viewport.zoom") {
+                Some(IntrospectValue::Float(v)) => v,
+                other => panic!("expected Float, got {other:?}"),
+            };
+            assert!((zoomed - ZOOM_STEP).abs() < 1e-9, "Ctrl+= one step in, got {zoomed}");
+            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "0", mods(true, false)));
+            assert_eq!(
+                graph_intro(&scene).query("viewport.zoom"),
+                Some(IntrospectValue::Float(1.0)),
+                "Ctrl+0 resets to 100%",
+            );
+            // 'f' frames the graph (zoom moves off 1.0).
+            assert!(NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "f", mods(false, false)));
+            let framed = match graph_intro(&scene).query("viewport.zoom") {
+                Some(IntrospectValue::Float(v)) => v,
+                other => panic!("expected Float, got {other:?}"),
+            };
+            assert!((framed - 1.0).abs() > 1e-3, "f framed the graph, got {framed}");
+            // Plain '=' (no Ctrl) is not a zoom gesture.
+            assert!(!NodeEditorView::apply_key(&mut scene, Some(GRAPH_TAG), "=", mods(false, false)));
+        });
+    }
+
+    #[test]
+    fn r877_drag_at_zoom_moves_in_graph_units() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            coord.set_zoom_centered(2.0);
+            coord.scroll.scroll_to(0, 0);
+            let id = NodeId(0);
+            let before = pos_of(&coord, id);
+            coord.grabbed_node.set(Some(id));
+            // Press at rel (0.1, 0.1), move to rel (0.2, 0.1): 64 canvas px =
+            // 32 graph units at 2x zoom.
+            coord.pointer_move(0.1, 0.1);
+            coord.pointer_move(0.2, 0.1);
+            let after = pos_of(&coord, id);
+            assert_eq!(after.0 - before.0, 32, "64 screen px / 2x zoom = 32 graph units");
+            assert_eq!(after.1, before.1);
+            coord.end_gesture();
+        });
+    }
+
+    #[test]
+    fn r877_edge_hit_halo_is_screen_constant_across_zoom() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let nodes = default_nodes();
+            let from = output_port_center(&nodes[0], 0);
+            let to = input_port_center(&nodes[2], 0);
+            let mid = cubic_at(
+                (f64::from(from.0), f64::from(from.1)),
+                {
+                    let (c1, _) = edge_curve(from, to);
+                    (f64::from(c1.0), f64::from(c1.1))
+                },
+                {
+                    let (_, c2) = edge_curve(from, to);
+                    (f64::from(c2.0), f64::from(c2.1))
+                },
+                (f64::from(to.0), f64::from(to.1)),
+                0.5,
+            );
+            // 6 graph units off the wire: inside the 8-unit halo at zoom 1,
+            // outside the (8 / 2 = 4)-unit halo at zoom 2 — the on-screen
+            // tolerance stays 8 px in both cases.
+            let probe = (mid.0, mid.1 - 6.0);
+            assert_eq!(coord.hit_test_edge(probe.0, probe.1), Some(EdgeId(0)), "hit at zoom 1");
+            coord.set_zoom_centered(2.0);
+            assert_eq!(coord.hit_test_edge(probe.0, probe.1), None, "missed at zoom 2");
+        });
+    }
+
+    #[test]
+    fn r877_add_node_spawns_inside_the_panned_view() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            // Pan deep into the world, then add: the new node must land in
+            // the visible region, not at the boot-view spawn point.
+            coord.scroll.set_max(WORLD, WORLD);
+            coord.scroll.scroll_to(900, 700);
+            let id = coord.add_node(0).expect("kind 0 exists");
+            let pos = pos_of(&coord, id);
+            assert!(
+                pos.0 >= 900 && pos.1 >= 700,
+                "spawn follows the viewport, got {pos:?}",
+            );
+        });
+    }
+
+    /// The canvas's world Scroll, if the view built one.
+    fn find_scroll(scene: &Scene) -> Option<&ScrollNode> {
+        match scene {
+            Scene::Scroll(s) => Some(s),
+            Scene::Container(c) => c.children.iter().find_map(find_scroll),
+            _ => None,
+        }
+    }
+
+    /// Whether any `Scene::Text` under `scene` contains `needle`.
+    fn text_in(scene: &Scene, needle: &str) -> bool {
+        match scene {
+            Scene::Text(t) => t.content.contains(needle),
+            Scene::Container(c) => c.children.iter().any(|ch| text_in(ch, needle)),
+            Scene::Scroll(s) => text_in(s.content.as_ref(), needle),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn r877_view_world_scroll_is_both_axis_and_chrome_stays_outside() {
+        Owner::new().run(|| {
+            let scene = NodeEditorView::view((), &Frame::new());
+            // The canvas contains a Both-axis Scroll (the pannable world).
+            let scroll = find_scroll(&scene).expect("the canvas hosts a world Scroll");
+            assert_eq!(scroll.axis, ScrollAxis::Both, "2-D pan needs both axes");
+            assert!(scroll.state.is_some(), "the pan state is wired for wheel routing");
+            // The status line (chrome) is NOT inside the scroll content.
+            assert!(
+                !text_in(scroll.content.as_ref(), "zoom"),
+                "status chrome must not pan away with the world",
+            );
+            assert!(text_in(&scene, "zoom 100%"), "the status line surfaces the zoom");
         });
     }
 }

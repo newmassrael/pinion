@@ -36219,6 +36219,72 @@
         "InputRouter SRP: hover/capture/drag/dblclick still inline; sub-component split is a larger carry"
       ]
     },
+    "R877": {
+      "decision_summary": "Canvas viewport: External::wheel forwarding (S5.15 input leg) + ScrollAxis::Both (R784 carry) + node-editor pan/zoom = pan via scroll substrate, zoom via shared Signal, cursor-anchored Ctrl+wheel",
+      "changes_bullets": [
+        "External::wheel forwarding leg (§5.15 item-5): router offers wheel to hovered External before Scroll fallback",
+        "InputRouter::wheel_with_modifiers + capture_rel_coords SSOT (normalize-basis decision lifted, 2 consumers)",
+        "wheel delta conversion kept fractional (f32); ScrollState fallback rounds on top",
+        "ScrollAxis::Both (R784 carry landed): layout unbounds both axes; declared definite content extent survives measuring",
+        "hello-node-editor viewport: pan = ScrollAxis::Both world scroll (2048-unit world), zoom = shared Signal projection",
+        "Ctrl+wheel cursor-anchored zoom / Shift+wheel horizontal pan / plain wheel declines to native scroll pan",
+        "Ctrl+= / Ctrl+- / Ctrl+0 keyboard zoom via the viewport.zoom intervene funnel; f = frame_all",
+        "node drag rewritten to graph-space grab-offset anchor (robust to mid-drag pan/zoom)",
+        "AI-first: query/intervene viewport.{x,y,zoom} (pan in zoom-independent graph units) + invoke frame_all",
+        "node clamps move from window extent to WORLD extent; spawn point projects through the live viewport",
+        "r838 demo stale wire-click coordinate fixed (broken since R849 palette offset; pre-existing, verified on pre-R877 binary)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green (4 new router wheel-offer tests, 1 Both-axis layout test, 12 new example tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "demos (fresh release binary): r877_node_canvas_viewport PASS (40+ asserts) + r838/r849/r851/r852/r853 regression PASS",
+        "anchored-zoom invariant: graph point under cursor pinned across Ctrl+wheel (unit + RPC demo)"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.45",
+        "5.49",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "drag-to-pan (Space/middle-drag) + edge-drag auto-pan: needs middle-button drag pipeline or capture became_drag exposure; documented follow-up",
+        "TUI wheel modifiers: TUI has no modifier cache (existing debt); Ctrl-zoom on TUI rides that axis",
+        "capture-drag calibration 4-copy lift: re-deferred — wheel-pan made the predicted 5th consumer moot and the anchor rewrite retired the node-editor copy",
+        "marquee multi-select reserves LMB background-drag (deliberately left free)"
+      ],
+      "publishable_decision_summary": "Canvas viewport: External::wheel forwarding (S5.15 input leg) + ScrollAxis::Both (R784 carry) + node-editor pan/zoom = pan via scroll substrate, zoom via shared Signal, cursor-anchored Ctrl+wheel",
+      "publishable_changes_bullets": [
+        "External::wheel forwarding leg (§5.15 item-5): router offers wheel to hovered External before Scroll fallback",
+        "InputRouter::wheel_with_modifiers + capture_rel_coords SSOT (normalize-basis decision lifted, 2 consumers)",
+        "wheel delta conversion kept fractional (f32); ScrollState fallback rounds on top",
+        "ScrollAxis::Both (R784 carry landed): layout unbounds both axes; declared definite content extent survives measuring",
+        "hello-node-editor viewport: pan = ScrollAxis::Both world scroll (2048-unit world), zoom = shared Signal projection",
+        "Ctrl+wheel cursor-anchored zoom / Shift+wheel horizontal pan / plain wheel declines to native scroll pan",
+        "Ctrl+= / Ctrl+- / Ctrl+0 keyboard zoom via the viewport.zoom intervene funnel; f = frame_all",
+        "node drag rewritten to graph-space grab-offset anchor (robust to mid-drag pan/zoom)",
+        "AI-first: query/intervene viewport.{x,y,zoom} (pan in zoom-independent graph units) + invoke frame_all",
+        "node clamps move from window extent to WORLD extent; spawn point projects through the live viewport",
+        "r838 demo stale wire-click coordinate fixed (broken since R849 palette offset; pre-existing, verified on pre-R877 binary)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green (4 new router wheel-offer tests, 1 Both-axis layout test, 12 new example tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): clean",
+        "demos (fresh release binary): r877_node_canvas_viewport PASS (40+ asserts) + r838/r849/r851/r852/r853 regression PASS",
+        "anchored-zoom invariant: graph point under cursor pinned across Ctrl+wheel (unit + RPC demo)"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.45",
+        "5.49",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "drag-to-pan (Space/middle-drag) + edge-drag auto-pan: needs middle-button drag pipeline or capture became_drag exposure; documented follow-up",
+        "TUI wheel modifiers: TUI has no modifier cache (existing debt); Ctrl-zoom on TUI rides that axis",
+        "capture-drag calibration 4-copy lift: re-deferred — wheel-pan made the predicted 5th consumer moot and the anchor rewrite retired the node-editor copy",
+        "marquee multi-select reserves LMB background-drag (deliberately left free)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -869,19 +869,41 @@ impl InputRouter {
     }
 
     /// (R51.186 §5.45 R55.C.2) Mouse wheel input dispatch.
+    /// Zero-modifier wrapper around
+    /// [`wheel_with_modifiers`](Self::wheel_with_modifiers) (native
+    /// notched wheels without held keys, the TUI shell, tests) —
+    /// mirrors the [`pointer_up`](Self::pointer_up) /
+    /// [`pointer_up_with_modifiers`](Self::pointer_up_with_modifiers)
+    /// pair.
+    pub fn wheel(&mut self, id: PointerId, delta: WheelDelta, state_scene: &mut Scene) -> bool {
+        self.wheel_with_modifiers(id, delta, Modifiers::empty(), state_scene)
+    }
+
+    /// R877 §5.15 §5.49 — wheel dispatch carrying the held keyboard
+    /// `modifiers`. Two-stage routing, innermost-listener-first (the
+    /// W3C wheel model):
     ///
-    /// Forwards the wheel delta to the deepest
-    /// [`ScrollNode`](pinion_core::scene::ScrollNode) covering the
-    /// pointer's last-known cursor position whose
-    /// `state: Option<Rc<ScrollState>>` link is wired. `Pixels`
-    /// route through verbatim; `Lines` multiply by [`LINE_HEIGHT_PX`]
-    /// (16, the W3C / browser default) before `f32 → i32`
-    /// round-to-nearest. The translated `(dx, dy)` pair feeds
-    /// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by),
-    /// which clamps against the declared bounds and fires the
-    /// reactive `Signal::set` — the next paint cycle re-runs the
-    /// view fn against the updated offset without any
-    /// application-level wiring.
+    /// 1. **`External` offer** — resolve the hover target tag under
+    ///    the pointer's last-known cursor, find its primary
+    ///    [`External`](pinion_core::external::External), normalise the
+    ///    cursor against the widget's
+    ///    [`capture_normalize`](pinion_core::external::External::capture_normalize)
+    ///    basis (the SAME rect its `pointer_move` drag math uses) and
+    ///    call [`External::wheel`](pinion_core::external::External::wheel)
+    ///    with the pixel delta + `modifiers`. A `true` return consumes
+    ///    the event — no scroll dispatch (the node-editor canvas pans /
+    ///    `Ctrl`-zooms here). The default impl returns `false`, so
+    ///    every pre-R877 widget falls straight through.
+    /// 2. **Scroll fallback** — the pre-R877 path, byte-identical:
+    ///    forward to the deepest
+    ///    [`ScrollNode`](pinion_core::scene::ScrollNode) covering the
+    ///    cursor whose `state: Option<Rc<ScrollState>>` link is wired.
+    ///    `Pixels` route through verbatim; `Lines` multiply by
+    ///    [`LINE_HEIGHT_PX`] (16, the W3C / browser default). The
+    ///    translated `(dx, dy)` pair feeds
+    ///    [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by),
+    ///    which clamps against the declared bounds and fires the
+    ///    reactive `Signal::set`.
     ///
     /// W3C sign convention: positive `dy` scrolls *downward*
     /// (content shifts up visually); positive `dx` scrolls
@@ -900,31 +922,57 @@ impl InputRouter {
     ///   same.
     /// - The retained paint scene is unset (wheel fired before
     ///   the first frame).
-    /// - No `Scene::Scroll` covers the cursor point.
+    /// - No hovered `External` consumed it AND no `Scene::Scroll`
+    ///   covers the cursor point.
     /// - The covering `ScrollNode` has no `state` attached (a
     ///   declarative-only scroll node the application built
     ///   without `with_state(...)` — the router silently drops
     ///   the wheel rather than panicking).
     ///
-    /// Returns `true` when the wheel was dispatched against an
-    /// attached `ScrollState`. Backends (Vello: `ShellCore::wheel`;
-    /// TUI: `ShellCoreTui::wheel`) use the return to decide
-    /// whether to request a repaint — silent drops never bump the
-    /// redraw flag.
-    pub fn wheel(&mut self, id: PointerId, delta: WheelDelta) -> bool {
+    /// Returns `true` when the wheel was consumed by an `External`
+    /// or dispatched against an attached `ScrollState`. Backends
+    /// (Vello: `ShellCore::wheel`; TUI: `ShellCoreTui::wheel`) use
+    /// the return to decide whether to request a repaint — silent
+    /// drops never bump the redraw flag.
+    pub fn wheel_with_modifiers(
+        &mut self,
+        id: PointerId,
+        delta: WheelDelta,
+        modifiers: Modifiers,
+        state_scene: &mut Scene,
+    ) -> bool {
         let Some(&(x, y)) = self.cursors.get(&id) else {
             return false;
         };
         let Some(paint) = self.last_paint_scene.as_ref() else {
             return false;
         };
+        // One unit conversion for both stages: the External offer reads
+        // the fractional pair; the Scroll fallback rounds it.
+        let (dx, dy) = wheel_delta_to_pixels_f32(delta);
+        // R877 — stage 1: offer the wheel to the hovered External. The
+        // hover target is the routed (possibly composite `widget#sub`)
+        // tag, so wheeling over a node card still reaches the canvas
+        // coordinator via its primary tag.
+        if let Some(target_tag) = self.hover_targets.get(&id).cloned() {
+            let (primary, _) = split_subindex(&target_tag);
+            if let Some(external) = find_external_by_tag(state_scene, primary) {
+                if let Some((x_rel, y_rel)) =
+                    capture_rel_coords(paint, external, primary, &target_tag, x, y)
+                {
+                    if external.handle.wheel(x_rel, y_rel, dx, dy, modifiers) {
+                        return true;
+                    }
+                }
+            }
+        }
+        // Stage 2: the pre-R877 Scroll dispatch, unchanged.
         let xu = floor_clamp_u32(x);
         let yu = floor_clamp_u32(y);
         let Some(state) = paint.scroll_state_at(xu, yu) else {
             return false;
         };
-        let (dx, dy) = wheel_delta_to_pixels(delta);
-        state.scroll_by(dx, dy);
+        state.scroll_by(round_clamp_i32(dx), round_clamp_i32(dy));
         true
     }
 
@@ -1084,28 +1132,11 @@ impl InputRouter {
         let Some(external) = find_external_by_tag(state_scene, primary) else {
             return;
         };
-        // R738 §5.35 — choose the normalization rect per the widget's
-        // opt-in. Default: the captured (sub-)tag's own rect — correct
-        // for single-tag capture widgets (primary == target_tag) and for
-        // composites whose drag value is sub-region-relative (dock
-        // tear-off). A widget whose value spans the whole widget (the
-        // range slider) returns `true` and normalizes against the primary
-        // (track) rect, so grabbing a thumb sub-tag still maps the cursor
-        // across the full track instead of saturating on the thumb rect.
-        //
-        // R786 §5.35 — `Tag(name)` names a rect that is neither the grabbed
-        // tag nor its primary (the column-resize handle, whose pixel delta
-        // needs the *stable* viewport rect — the grabbed cell resizes under
-        // the drag). One exhaustive decision, no precedence rule.
-        let norm_tag = match external.handle.capture_normalize() {
-            CaptureNormalize::Tag(tag) => tag,
-            CaptureNormalize::Primary => primary,
-            CaptureNormalize::Target => target_tag,
-        };
-        let Some(rect) = rect_for_tag(paint, norm_tag) else {
+        let Some((x_rel, y_rel)) =
+            capture_rel_coords(paint, external, primary, target_tag, cursor_x, cursor_y)
+        else {
             return;
         };
-        let (x_rel, y_rel) = normalize_cursor(rect, cursor_x, cursor_y);
         external.handle.pointer_move(x_rel, y_rel);
     }
 
@@ -1334,6 +1365,44 @@ pub fn rect_for_tag(scene: &Scene, target_tag: &str) -> Option<Rect> {
     scene.rect_for_tag_absolute(target_tag)
 }
 
+/// R877 §5.35 — resolve a widget's capture-normalization basis rect and
+/// normalise the absolute cursor against it. The shared body of
+/// [`InputRouter::forward_pointer_move`] (capture drags) and the
+/// [`InputRouter::wheel_with_modifiers`] `External` offer, so wheel-anchor
+/// math and drag math read one coordinate basis — the normalization-rect
+/// *decision* ([`CaptureNormalize`]) is encoded once.
+///
+/// R738 §5.35 — the decision: default `Target` is the captured
+/// (sub-)tag's own rect — correct for single-tag capture widgets
+/// (primary == `target_tag`) and for composites whose drag value is
+/// sub-region-relative (dock tear-off). A widget whose value spans the
+/// whole widget (the range slider) chooses `Primary` (track) so grabbing
+/// a thumb sub-tag still maps the cursor across the full track.
+///
+/// R786 §5.35 — `Tag(name)` names a rect that is neither the grabbed
+/// tag nor its primary (the column-resize handle, whose pixel delta
+/// needs the *stable* viewport rect — the grabbed cell resizes under
+/// the drag). One exhaustive decision, no precedence rule.
+///
+/// `None` when the chosen rect is absent from the paint scene (not yet
+/// laid out) — callers skip the forward.
+fn capture_rel_coords(
+    paint: &Scene,
+    external: &ExternalNode,
+    primary: &str,
+    target_tag: &str,
+    cursor_x: f64,
+    cursor_y: f64,
+) -> Option<(f32, f32)> {
+    let norm_tag = match external.handle.capture_normalize() {
+        CaptureNormalize::Tag(tag) => tag,
+        CaptureNormalize::Primary => primary,
+        CaptureNormalize::Target => target_tag,
+    };
+    let rect = rect_for_tag(paint, norm_tag)?;
+    Some(normalize_cursor(rect, cursor_x, cursor_y))
+}
+
 /// R51.34 §5.35 — normalise a winit cursor `(f64, f64)` into
 /// widget-relative `(f32, f32)` over `rect`. `0.0` maps to the
 /// left / top edge, `1.0` to the right / bottom edge. Coordinates
@@ -1468,15 +1537,17 @@ pub const LINE_HEIGHT_PX: f32 = 16.0;
 /// keypress.
 const LINE_HEIGHT_PX_I32: i32 = 16;
 
-/// (R51.186 §5.45 R55.C.2) Convert a unit-tagged
-/// [`WheelDelta`](pinion_core::event::WheelDelta) into the
-/// `(dx, dy)` integer pixel pair `ScrollState::scroll_by`
-/// expects. `Pixels` route through verbatim; `Lines` multiply
-/// by [`LINE_HEIGHT_PX`]. Both axes round to the nearest pixel
-/// and saturate at `i32` boundaries; `NaN` clamps to zero so an
-/// adversarial input never produces a wrap.
-fn wheel_delta_to_pixels(delta: WheelDelta) -> (i32, i32) {
-    let (fx, fy) = match delta {
+/// (R51.186 §5.45 R55.C.2, fractional since R877) Convert a unit-tagged
+/// [`WheelDelta`](pinion_core::event::WheelDelta) into a `(dx, dy)`
+/// logical-pixel pair: `Pixels` route through verbatim, `Lines`
+/// multiply by [`LINE_HEIGHT_PX`]. Kept at `f32` so a trackpad's
+/// sub-pixel deltas reach an
+/// [`External::wheel`](pinion_core::external::External::wheel) zoom /
+/// pan consumer at full precision; the integer `ScrollState` fallback
+/// rounds on top via [`round_clamp_i32`] — one conversion, two
+/// precisions.
+fn wheel_delta_to_pixels_f32(delta: WheelDelta) -> (f32, f32) {
+    match delta {
         WheelDelta::Pixels { dx, dy } => (dx, dy),
         WheelDelta::Lines { dx, dy } => (dx * LINE_HEIGHT_PX, dy * LINE_HEIGHT_PX),
         // R55.C.2 — `WheelDelta` is `#[non_exhaustive]`; an
@@ -1488,8 +1559,7 @@ fn wheel_delta_to_pixels(delta: WheelDelta) -> (i32, i32) {
         // R55.C.* sub-axis cascade adds the explicit arms as
         // each variant gains a defined offset semantics.
         _ => (0.0, 0.0),
-    };
-    (round_clamp_i32(fx), round_clamp_i32(fy))
+    }
 }
 
 /// (R51.186 §5.45 R55.C.2) Round-to-nearest `f32 → i32` with
@@ -2858,7 +2928,7 @@ mod tests {
         router.update_paint_scene(paint, &mut state_scene);
         // No cursor_moved before wheel.
         let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
         assert!(!dispatched);
         assert_eq!(state.offset(), (0, 0));
     }
@@ -2872,7 +2942,7 @@ mod tests {
         let (mut state_scene, _) = state_with_button();
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
         let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
         assert!(!dispatched);
     }
 
@@ -2887,7 +2957,7 @@ mod tests {
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state_scene);
         let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
         assert!(!dispatched);
     }
 
@@ -2910,7 +2980,7 @@ mod tests {
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
         let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
         assert!(!dispatched);
     }
 
@@ -2934,14 +3004,14 @@ mod tests {
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
         let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 });
+            router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 40.0 }, &mut state_scene);
         assert!(dispatched);
         assert_eq!(state.offset(), (0, 40));
         // Second wheel — accumulates.
-        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 35.0 });
+        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 35.0 }, &mut state_scene);
         assert_eq!(state.offset(), (0, 75));
         // Horizontal axis routes too.
-        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 12.0, dy: 0.0 });
+        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 12.0, dy: 0.0 }, &mut state_scene);
         assert_eq!(state.offset(), (12, 75));
     }
 
@@ -2965,11 +3035,11 @@ mod tests {
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
         let dispatched =
-            router.wheel(PointerId::MOUSE, WheelDelta::Lines { dx: 0.0, dy: 3.0 });
+            router.wheel(PointerId::MOUSE, WheelDelta::Lines { dx: 0.0, dy: 3.0 }, &mut state_scene);
         assert!(dispatched);
         assert_eq!(state.offset(), (0, 48));
         // Negative line delta scrolls upward; clamped at zero.
-        router.wheel(PointerId::MOUSE, WheelDelta::Lines { dx: 0.0, dy: -10.0 });
+        router.wheel(PointerId::MOUSE, WheelDelta::Lines { dx: 0.0, dy: -10.0 }, &mut state_scene);
         assert_eq!(state.offset(), (0, 0));
     }
 
@@ -2993,7 +3063,7 @@ mod tests {
         );
         router.update_paint_scene(paint, &mut state_scene);
         router.cursor_moved(PointerId::MOUSE, 50.0, 50.0, &mut state_scene);
-        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 9999.0 });
+        router.wheel(PointerId::MOUSE, WheelDelta::Pixels { dx: 0.0, dy: 9999.0 }, &mut state_scene);
         // Bound is 100 on the y axis.
         assert_eq!(state.offset(), (0, 100));
     }
@@ -3024,6 +3094,7 @@ mod tests {
         let dispatched = router.wheel(
             PointerId::MOUSE,
             WheelDelta::Pixels { dx: f32::NAN, dy: f32::NAN },
+            &mut state_scene,
         );
         assert!(dispatched, "NaN delta still counts as a dispatched wheel");
         assert_eq!(state.offset(), (0, 0));
@@ -3055,6 +3126,7 @@ mod tests {
         assert!(router.wheel(
             PointerId::MOUSE,
             WheelDelta::Pixels { dx: 0.0, dy: 30.0 },
+            &mut state_scene,
         ));
         assert_eq!(state.offset(), (0, 30));
         // Cursor leaves the scroll viewport → wheel silently
@@ -3067,6 +3139,7 @@ mod tests {
         assert!(!router.wheel(
             PointerId::MOUSE,
             WheelDelta::Pixels { dx: 0.0, dy: 30.0 },
+            &mut state_scene,
         ));
         // Offset unchanged.
         assert_eq!(state.offset(), (0, 30));
@@ -3098,14 +3171,213 @@ mod tests {
         router.cursor_moved(t, 150.0, 150.0, &mut state_scene);
         // Wheel via touch — touch cursor is outside the scroll
         // viewport → silent drop.
-        assert!(!router.wheel(t, WheelDelta::Pixels { dx: 0.0, dy: 20.0 }));
+        assert!(!router.wheel(t, WheelDelta::Pixels { dx: 0.0, dy: 20.0 }, &mut state_scene));
         assert_eq!(state.offset(), (0, 0));
         // Wheel via mouse — dispatches.
         assert!(router.wheel(
             PointerId::MOUSE,
             WheelDelta::Pixels { dx: 0.0, dy: 20.0 },
+            &mut state_scene,
         ));
         assert_eq!(state.offset(), (0, 20));
+    }
+
+    // ─── R877 §5.15 §5.49 External wheel-offer tests ───────────────
+
+    /// One recorded [`External::wheel`] call: `(x_rel, y_rel, dx, dy, ctrl)`.
+    type WheelCall = (f32, f32, f32, f32, bool);
+
+    /// Records every [`External::wheel`] call; consumes (returns
+    /// `true`) iff `consume` is set — the two sides of the R877
+    /// innermost-listener-first contract.
+    struct WheelExternal {
+        calls: Arc<Mutex<Vec<WheelCall>>>,
+        consume: bool,
+    }
+
+    impl WheelExternal {
+        fn new(consume: bool) -> (Self, Arc<Mutex<Vec<WheelCall>>>) {
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            (Self { calls: Arc::clone(&calls), consume }, calls)
+        }
+    }
+
+    impl std::fmt::Debug for WheelExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("WheelExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for WheelExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn wheel(&mut self, x_rel: f32, y_rel: f32, dx: f32, dy: f32, modifiers: Modifiers) -> bool {
+            self.calls
+                .lock()
+                .expect("mutex poisoned")
+                .push((x_rel, y_rel, dx, dy, modifiers.control_key()));
+            self.consume
+        }
+    }
+
+    /// Paint: the `main_btn` rect (80..120 × 80..120, optionally with a
+    /// composite `sub` child) inside a stateful scroll viewport covering
+    /// the whole 200×200 window, so a declined offer has a live scroll
+    /// fallback to land on. The tagged button sits inside an *untagged*
+    /// content container — Scroll content is path-transparent (R55.A.3),
+    /// so the content node itself is a wrapper layer, never a hover
+    /// target (the real-binding shape).
+    fn paint_with_button_over_scroll(state: Rc<ScrollState>, sub: Option<Scene>) -> Scene {
+        let button = {
+            let mut b = Scene::Container(
+                ContainerNode::new(sub.into_iter().collect())
+                    .with_tag("main_btn")
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut b {
+                c.rect = Rect::new(80, 80, 40, 40);
+            }
+            b
+        };
+        let content = {
+            let mut c = Scene::Container(
+                ContainerNode::new(vec![button]).with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(node) = &mut c {
+                node.rect = Rect::new(0, 0, 200, 1000);
+            }
+            c
+        };
+        let scroll = ScrollNode::new(Rect::new(0, 0, 200, 200), content).with_state(state);
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![Scene::Scroll(scroll)])
+                .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 200, 200);
+        }
+        root
+    }
+
+    #[test]
+    fn r877_wheel_offer_consumed_by_hovered_external_skips_scroll() {
+        // The hovered External consumes the wheel → dispatched, scroll
+        // state untouched, coordinates normalised over the Target rect
+        // (cursor (100, 90) over rect 80..120 → rel (0.5, 0.25)), and
+        // Lines deltas arrive pre-scaled by LINE_HEIGHT_PX at f32.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, calls) = WheelExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        assert!(router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Lines { dx: 0.0, dy: 2.0 },
+            &mut state_scene,
+        ));
+        assert_eq!(scroll.offset(), (0, 0), "consumed wheel must not also scroll");
+        let recorded = calls.lock().expect("mutex poisoned").clone();
+        assert_eq!(recorded.len(), 1);
+        let (x_rel, y_rel, dx, dy, ctrl) = recorded[0];
+        assert!((x_rel - 0.5).abs() < 1e-6, "x_rel {x_rel}");
+        assert!((y_rel - 0.25).abs() < 1e-6, "y_rel {y_rel}");
+        assert!((dx - 0.0).abs() < f32::EPSILON);
+        assert!((dy - 2.0 * LINE_HEIGHT_PX).abs() < f32::EPSILON, "dy {dy}");
+        assert!(!ctrl);
+    }
+
+    #[test]
+    fn r877_wheel_offer_declined_falls_through_to_scroll() {
+        // The hovered External declines (returns false) → the pre-R877
+        // Scroll dispatch runs byte-identically underneath.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, calls) = WheelExternal::new(false);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        assert!(router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 40.0 },
+            &mut state_scene,
+        ));
+        assert_eq!(scroll.offset(), (0, 40), "declined offer falls through to scroll");
+        assert_eq!(calls.lock().expect("mutex poisoned").len(), 1, "offer was made first");
+    }
+
+    #[test]
+    fn r877_wheel_modifiers_reach_the_external() {
+        // wheel_with_modifiers hands the held modifiers through — the
+        // Ctrl bit a canvas zoom branches on.
+        let scroll = Rc::new(ScrollState::new());
+        let (ext, calls) = WheelExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(paint_with_button_over_scroll(scroll, None), &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        let ctrl = Modifiers { ctrl: true, ..Modifiers::empty() };
+        assert!(router.wheel_with_modifiers(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: -10.0 },
+            ctrl,
+            &mut state_scene,
+        ));
+        let recorded = calls.lock().expect("mutex poisoned").clone();
+        assert_eq!(recorded.len(), 1);
+        assert!(recorded[0].4, "ctrl modifier must reach the External");
+    }
+
+    #[test]
+    fn r877_wheel_composite_subtag_routes_to_primary_external() {
+        // Hovering a composite `main_btn#sub_0` child still offers the
+        // wheel to the `main_btn` primary External (split_subindex), so
+        // wheeling over a node card reaches the canvas coordinator.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, calls) = WheelExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let sub = {
+            let mut s = Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag("main_btn#sub_0")
+                    .with_style(BoxStyle::filled(Color::default())),
+            );
+            if let Scene::Container(c) = &mut s {
+                c.rect = Rect::new(90, 90, 20, 20);
+            }
+            s
+        };
+        let paint = paint_with_button_over_scroll(Rc::clone(&scroll), Some(sub));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(paint, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state_scene);
+        assert!(router.wheel(
+            PointerId::MOUSE,
+            WheelDelta::Pixels { dx: 0.0, dy: 8.0 },
+            &mut state_scene,
+        ));
+        assert_eq!(scroll.offset(), (0, 0));
+        assert_eq!(calls.lock().expect("mutex poisoned").len(), 1);
     }
 
     // ─── R51.187 §5.45 R55.C.3 keyboard scroll dispatch tests ─────

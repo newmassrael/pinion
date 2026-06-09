@@ -1561,13 +1561,21 @@ impl<V: WidgetView> ShellCore<V> {
     }
 
     /// R672 §5.35 §5.41 — per-window variant of [`Self::wheel`].
+    ///
+    /// R877 §5.15 §5.49 — forwards the shell's modifier cache (winit
+    /// `ModifiersChanged`, or the R763 `scene/modifiers` RPC mirror —
+    /// one cache, both producers), so a hovered `External` wheel
+    /// consumer (canvas pan / `Ctrl`-zoom) reads the held modifiers
+    /// the same way `scene/click` Shift-extend does.
     pub fn wheel_for_window(
         &mut self,
         window_id: &str,
         pid: PointerId,
         delta: WheelDelta,
     ) {
-        let (tail, dispatched) = self.core.wheel_for_window(window_id, pid, delta);
+        let (tail, dispatched) =
+            self.core
+                .wheel_with_modifiers_for_window(window_id, pid, delta, self.modifiers);
         if dispatched {
             self.request_redraw();
         }
