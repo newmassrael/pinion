@@ -7,7 +7,9 @@
 //! inspector detail panel**: the editor's "Details" panel (Unreal Details
 //! / Qt `QtPropertyBrowser` / a CSS-devtools style editor) — a vertical
 //! list of `(name, typed-value)` rows where each value is editable in place
-//! by a *type-appropriate* control.
+//! by a *type-appropriate* control, **grouped under collapsible category
+//! sections** (R871 — Identity / Appearance / Physics / …, the Inspector
+//! grouping every DCC details panel has).
 //!
 //! ## Why this is the Phase-B #1 leverage item
 //!
@@ -21,21 +23,29 @@
 //! crate). It is the accordion (R697) / settings-panel (R667) "Nth-consumer
 //! validates substrate health" pattern applied to the editable-grid axis.
 //!
-//! ## Architecture — two externals, the todomvc edit-in-cell shape
+//! ## Architecture — three externals, the todomvc edit-in-cell shape
 //!
 //! * **`PropertyGridExternal`** (`property_grid`, primary) — the grid
-//!   coordinator. It owns three reactive holders shared with the view fn
-//!   (`Owner::cache` dedup, the todomvc pattern): the typed value model
-//!   ([`Signal<Vec<CellValue>>`] — the value SSOT), the roving cursor
-//!   ([`Signal<usize>`] `focused_row`), and the edit-mode latch
-//!   ([`Signal<Option<usize>>`] `editing_row`, the todomvc `editing_id`
-//!   generalised to a row index). It exposes the whole grid for AI-first
-//!   introspection (§2 #2): `query "value.<i>"` reads each typed value,
-//!   `query "name.<i>"` / `"kind.<i>"` the row metadata, `intervene
-//!   "value.<i>"` sets a value programmatically (the deterministic AI
-//!   driving path — no simulated typing), `intervene "focused_row"` moves
-//!   the cursor, `invoke "toggle"` flips the focused bool, `invoke "begin"`
-//!   enters edit mode.
+//!   coordinator. It owns the typed value model ([`Signal<Vec<CellValue>>`] —
+//!   the value SSOT, source-keyed) and the edit-mode latch
+//!   ([`Signal<Option<usize>>`] `editing_row`, the todomvc `editing_id` keyed
+//!   by source index), and holds the shared [`GroupOrderState`] so a data-row
+//!   click can move the cursor. It exposes the grid for AI-first introspection
+//!   (§2 #2): `query "value.<source>"` reads each typed value, `"name.<source>"`
+//!   / `"kind.<source>"` the row metadata, `intervene "value.<source>"` sets a
+//!   value programmatically (the deterministic AI driving path — no simulated
+//!   typing), `invoke "toggle" <source>` flips a bool, `invoke "begin" <source>`
+//!   enters edit mode. The *source* index is the row's stable identity — it
+//!   survives collapse and regroup.
+//! * **`GroupOrderExternal`** (`property_grid_cat`, extra) — R871, the R843
+//!   group-by proxy coordinator. It owns the **category collapse set** + the
+//!   **roving visual-row cursor** (a position over the flattened headers +
+//!   visible data rows). AI drives the grouping through its wire:
+//!   `query "label_at.<pos>"` / `"member_count_at.<pos>"` / `"collapsed.<g>"` /
+//!   `"cursor"` / `"visible_len"`, `intervene "collapsed.<g>"` / `"cursor"`,
+//!   `invoke "toggle_group" <g>` / `"collapse_all"` / `"expand_all"`. The
+//!   property grid is the **3rd structural consumer** of this substrate, after
+//!   `hello-grouped-list` and `hello-grouped-grid`.
 //! * **`TextFieldExternal`** (`property_grid_edit`, extra) — ONE shared
 //!   inline editor reused across every text / int / float row (the todomvc
 //!   single-editor pattern; scales to any row count). It paints only inside
@@ -44,34 +54,38 @@
 //!
 //! There is no per-row external — bools toggle through the coordinator
 //! (`Space` / single-click, the checkbox affordance), and text / number
-//! rows route their inline edit through the one shared field. Two externals
-//! drive an arbitrary number of typed rows.
+//! rows route their inline edit through the one shared field.
 //!
-//! ## Keyboard model (WAI-ARIA editable data-grid)
+//! ## Keyboard model (WAI-ARIA editable data-grid + grouped tree)
 //!
-//! The grid is a **single Tab stop** with a roving row cursor (the APG
-//! data-grid pattern, scales to large grids — unlike one-Tab-stop-per-row).
-//! While the grid holds focus: `ArrowUp` / `ArrowDown` move the cursor
-//! (clamped — a grid has ends, no wrap), `Home` / `End` jump; `Space`
-//! toggles a bool row; `Enter` / `F2` toggles a bool or enters edit mode on
-//! a text / int / float row (focus moves into the shared inline field via
-//! the [`pinion_core::focus_request`] mailbox). While editing: `Enter`
-//! commits (parse → write back to the model), `Escape` cancels (the value is
-//! left untouched), and the int / float rows gate non-numeric keystrokes the
-//! way `hello-number-input` does. A click-away commit-on-blur rides the
-//! field's `with_blur_intent` (R793), the todomvc commit-on-blur shape.
+//! The grid is a **single Tab stop** with a roving cursor over the flattened
+//! category headers + visible data rows (the APG data-grid pattern, scales to
+//! large grids — unlike one-Tab-stop-per-row). While the grid holds focus the
+//! shared [`group_nav`] policy moves the cursor (`ArrowUp` / `ArrowDown` /
+//! `Home` / `End`, clamped — no wrap) and expands / collapses a **category
+//! header** (`ArrowRight` / `ArrowLeft`, or `Enter` / `Space` on a header). On
+//! a **data row**, `Space` toggles a bool and `Enter` / `F2` toggles a bool or
+//! enters edit mode on a text / int / float row (focus moves into the shared
+//! inline field via the [`pinion_core::focus_request`] mailbox). While editing:
+//! `Enter` commits (parse → write back to the model), `Escape` cancels (the
+//! value is left untouched), and the int / float rows gate non-numeric
+//! keystrokes the way `hello-number-input` does. A click-away commit-on-blur
+//! rides the field's `with_blur_intent` (R793), the todomvc commit-on-blur
+//! shape.
 //!
-//! ## a11y (R836 §5.40) — 3rd consumer of the grid SSOT
+//! ## a11y (R836 / R871 §5.40 §5.27) — grouped grid SSOT
 //!
-//! The panel lowers to a WAI-ARIA `grid` through the lifted
-//! [`pinion_a11y::grid::grid_table_nodes`] builder (hello-table /
-//! hello-table-multi are the 1st / 2nd consumers): a `Property` / `Value`
-//! header row over one data `row` per property, each row a `rowheader`-like
-//! name cell + a `gridcell` value cell. The roving cursor is exposed as
-//! `aria-activedescendant` through `access_focus_target` (R870 — the
-//! authoritative channel; the per-cell `focused` flag is a redundant marker).
-//! The typed value is encoded in the cell's accessible name (`"Opacity: 1"`)
-//! so an AT user hears the value with its column context.
+//! The panel lowers to a WAI-ARIA `grid` with spanning group-header rows
+//! through the lifted [`pinion_a11y::grouped_grid_access_nodes`] builder
+//! (`hello-grouped-grid` is the 1st / 2nd consumer of each shape): a
+//! `Property` / `Value` column-header row, then per visible row either a
+//! spanning category `row` (`aria-expanded`, `"<category> (<count>)"`) or a
+//! data `row` (`aria-selected` on the cursor row) carrying two `gridcell`
+//! children named `"<column>: <value>"`. The roving cursor is exposed as
+//! `aria-activedescendant` through `access_focus_target` → the lifted
+//! [`pinion_a11y::grouped_focus_target`] (R850/R871 — the authoritative
+//! channel; the per-node `focused` flag is a redundant marker), so the ring
+//! frames the cursor's category header or data row identically.
 //!
 //! ## Known gaps (honest carry)
 //!
@@ -89,8 +103,8 @@
 use std::rc::Rc;
 
 use pinion_a11y::{
-    grid_table_nodes, listbox_option_nodes, AccessFocus, AccessNode, GridCell, GridColumn, GridRow,
-    ListOption, WidgetA11y,
+    grouped_focus_target, grouped_grid_access_nodes, listbox_option_nodes, AccessFocus, AccessNode,
+    GridColumn, GroupedGridSpec, ListOption, WidgetA11y,
 };
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::external::{
@@ -106,15 +120,19 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
+use pinion_core::widgets::group_order::{
+    group_nav, use_group_order, GroupNavOutcome, GroupOrderExternal, GroupOrderState, GroupRow,
+};
 use pinion_core::widgets::listbox_item::ListboxItemState;
-use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
+use pinion_core::widgets::virtual_list::VisibleWindow;
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::checkbox::{view_checkbox_box, CheckboxStyle};
+use pinion_widget_paint::group_header::group_header_row;
 use pinion_widget_paint::listbox::{view_option, OptionRow};
 use pinion_widget_paint::popup::popup_surface;
 use pinion_widget_paint::text_field as tf_paint;
@@ -127,10 +145,11 @@ vello_renderer_impl!(HelloPropertyGridRenderer, HelloPropertyGridRendererError);
 // ─── window + layout constants ─────────────────────────────────────
 
 const WIN_W: u32 = 460;
-// R867/R869 — 12 rows (the bool/int/float/text quartet + two enum/choice
-// rows + one colour row) plus the title band; a popup may flip above its row
-// near the bottom.
-const WIN_H: u32 = 620;
+// R871 — 12 typed property rows grouped under 5 collapsible category headers,
+// plus the `Property` / `Value` column header and the title band: 18 visible
+// rows when every category is expanded (a popup may flip above its row near
+// the bottom). Collapsing a category hides its data rows, shrinking the list.
+const WIN_H: u32 = 820;
 const THEME_TAG: &str = "app";
 
 const TITLE_PX: u32 = 22;
@@ -166,6 +185,11 @@ const CHOICE_CHEVRON: &str = "\u{25BE}";
 
 /// Primary External — the grid coordinator (the single keyboard Tab stop).
 const GRID_TAG: &str = "property_grid";
+/// Extra External — the group-by proxy coordinator (R843 `GroupOrderExternal`,
+/// R871): owns the category collapse set + the roving visual-row cursor.
+/// A category-header click routes to `{GROUP_TAG}#{group}` (the collapse
+/// coordinator); the grid's data rows stay under `{GRID_TAG}#{source}`.
+const GROUP_TAG: &str = "property_grid_cat";
 /// Extra External — the one shared inline text / number editor.
 const EDIT_TF_TAG: &str = "property_grid_edit";
 /// Commit-on-blur intent the inline field raises on a click-away (R793).
@@ -221,6 +245,36 @@ const PROPERTY_NAMES: [&str; ROW_COUNT] = [
     "Body", "Tint",
 ];
 
+// R871 §5.27 §5.40 — collapsible category sections (Inspector grouping). The
+// flat 12-row list groups under named categories through the R843
+// `GroupOrderState` substrate (the 3rd structural consumer after grouped-list +
+// grouped-grid): the *source* index stays the row's stable identity (the value
+// SSOT, RPC `value.<source>` path, edit latch — all source-keyed and stable
+// across collapse / regroup), while the visible-row cursor and the collapse set
+// live in the group proxy. Categories appear in **first-appearance order** over
+// the source order, so `PROPERTY_GROUPS` below yields the display order
+// Identity → Appearance → Physics → Stats → Transform.
+
+/// Category id of each property (an index into [`CATEGORY_LABELS`]).
+const PROPERTY_GROUPS: [usize; ROW_COUNT] = [
+    0, // Name     → Identity
+    0, // Tag      → Identity
+    1, // Visible  → Appearance
+    2, // Locked   → Physics
+    0, // Layer    → Identity
+    3, // Health   → Stats
+    4, // Pos X    → Transform
+    4, // Pos Y    → Transform
+    1, // Opacity  → Appearance
+    1, // Blend    → Appearance
+    2, // Body     → Physics
+    1, // Tint     → Appearance
+];
+
+/// Category labels, indexed by the [`PROPERTY_GROUPS`] id. The visible header
+/// text per category (the group proxy appends the member count).
+const CATEGORY_LABELS: [&str; 5] = ["Identity", "Appearance", "Physics", "Stats", "Transform"];
+
 // R837 §5.38 — the typed value model + its pure helpers (kind dispatch,
 // display / edit formatting, parse, the keystroke gate, the introspect read
 // / intervene write) were lifted to `pinion_core::cell_value` at the 2nd
@@ -271,12 +325,18 @@ fn use_property_model() -> Rc<Signal<Vec<CellValue>>> {
     owner.cache("property_grid.model", || Signal::new(default_properties()))
 }
 
-/// Roving row cursor. `Signal` so navigation re-runs the view fn (the
-/// focused-row highlight + `aria-activedescendant` follow it).
+/// R871 — the grouped-collapse + roving-cursor SSOT (the R843
+/// [`GroupOrderState`]). Shared by the [`GroupOrderExternal`] (mutates the
+/// collapse set + cursor), the [`PropertyGridExternal`] (moves the cursor on a
+/// data-row click), the view fn (reads `rows()` / `cursor()` — both subscribe,
+/// so a collapse / cursor move repaints) and the a11y tree. The roving cursor
+/// is a **visual position** into the flattened rows (headers + visible data),
+/// not a source index — the grouped peer of the old flat `focused_row`.
 #[must_use]
-fn use_focused_row() -> Rc<Signal<usize>> {
-    let owner = Owner::current().expect("use_focused_row requires an active Owner scope");
-    owner.cache("property_grid.focused_row", || Signal::new(0_usize))
+fn use_property_groups() -> Rc<GroupOrderState> {
+    use_group_order(GROUP_TAG, || {
+        (PROPERTY_GROUPS.to_vec(), CATEGORY_LABELS.iter().map(|s| (*s).to_owned()).collect())
+    })
 }
 
 /// Edit-mode latch — `Some(row)` while that row's value is being text-edited
@@ -367,7 +427,10 @@ fn clear_popup(
 /// (the todomvc `TodoEditExternal` shape).
 struct PropertyGridExternal {
     model: Rc<Signal<Vec<CellValue>>>,
-    focused_row: Rc<Signal<usize>>,
+    /// The grouped-collapse + roving-cursor SSOT — held so a data-row click can
+    /// move the visual-row cursor onto the clicked source (R871). The keyboard
+    /// path moves it through [`group_nav`]; collapse lives here too.
+    groups: Rc<GroupOrderState>,
     editing_row: Rc<Signal<Option<usize>>>,
     editor: Rc<TextEditState>,
     popup_cursor: Rc<Signal<Option<usize>>>,
@@ -377,17 +440,26 @@ struct PropertyGridExternal {
 impl PropertyGridExternal {
     fn new(
         model: Rc<Signal<Vec<CellValue>>>,
-        focused_row: Rc<Signal<usize>>,
+        groups: Rc<GroupOrderState>,
         editing_row: Rc<Signal<Option<usize>>>,
         editor: Rc<TextEditState>,
         popup_cursor: Rc<Signal<Option<usize>>>,
         popup_hover: Rc<Signal<Option<usize>>>,
     ) -> Self {
-        Self { model, focused_row, editing_row, editor, popup_cursor, popup_hover }
+        Self { model, groups, editing_row, editor, popup_cursor, popup_hover }
     }
 
     fn count(&self) -> usize {
         self.model.get().len()
+    }
+
+    /// Move the roving visual-row cursor onto the data row whose stable source
+    /// index is `source` (a no-op leaving the cursor cleared if that source is
+    /// not in the current flatten — i.e. its category is collapsed). The
+    /// pointer peer of the keyboard [`group_nav`] cursor motion.
+    fn set_cursor_to_source(&self, source: usize) {
+        let pos = self.groups.rows().iter().position(|r| r.source() == Some(source));
+        self.groups.set_cursor(pos);
     }
 
     /// Toggle the bool at `row`; no-op (returns `false`) if the row is not a
@@ -554,7 +626,7 @@ impl PropertyGridExternal {
         }
         match event_name {
             "PointerUp" => {
-                self.focused_row.set(idx);
+                self.set_cursor_to_source(idx);
                 match self.model.get().get(idx) {
                     Some(CellValue::Bool(_)) => {
                         self.toggle(idx);
@@ -573,18 +645,13 @@ impl PropertyGridExternal {
             _ => Ok(IntrospectValue::Null),
         }
     }
-
-    fn set_focused_clamped(&self, row: usize) {
-        let max = self.count().saturating_sub(1);
-        self.focused_row.set(row.min(max));
-    }
 }
 
 impl core::fmt::Debug for PropertyGridExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PropertyGridExternal")
             .field("row_count", &self.count())
-            .field("focused_row", &self.focused_row.get())
+            .field("cursor", &self.groups.cursor())
             .field("editing_row", &self.editing_row.get())
             .finish_non_exhaustive()
     }
@@ -614,16 +681,19 @@ impl External for PropertyGridExternal {
 
 impl ExternalIntrospect for PropertyGridExternal {
     fn schema(&self) -> IntrospectSchema {
+        // The roving visual-row cursor + the category collapse set live on the
+        // sibling `GROUP_TAG` `GroupOrderExternal` (R871) — query `cursor` /
+        // `collapsed.<group>` / `label_at.<pos>` there. This coordinator owns
+        // the source-keyed value model + the edit / popup state.
         IntrospectSchema::new(&[
             ("row_count", "int"),
-            ("focused_row", "int"),
             ("editing", "json"),
             ("name.<index>", "string"),
             ("kind.<index>", "string"),
             ("value.<index>", "json"),
             ("popup_cursor", "int"),
             ("send", "string"),
-            ("toggle", "json"),
+            ("toggle", "int"),
             ("begin", "int"),
             ("choose", "int"),
             ("pick_color", "int"),
@@ -635,9 +705,6 @@ impl ExternalIntrospect for PropertyGridExternal {
         match path {
             "row_count" => Some(IntrospectValue::Int(
                 i64::try_from(self.count()).expect("row count fits in i64"),
-            )),
-            "focused_row" => Some(IntrospectValue::Int(
-                i64::try_from(self.focused_row.get()).expect("row index fits in i64"),
             )),
             "editing" => Some(IntrospectValue::Json(match self.editing_row.get() {
                 Some(row) => serde_json::Value::from(
@@ -678,14 +745,6 @@ impl ExternalIntrospect for PropertyGridExternal {
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "row_count" | "editing" | "popup_cursor" => Err(InterveneError::ReadOnly),
-            "focused_row" => match value {
-                IntrospectValue::Int(i) => {
-                    let row = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
-                    self.set_focused_clamped(row);
-                    Ok(())
-                }
-                _ => Err(InterveneError::TypeMismatch),
-            },
             _ => {
                 let Some(idx_str) = path.strip_prefix("value.") else {
                     return Err(InterveneError::UnknownPath);
@@ -714,9 +773,18 @@ impl ExternalIntrospect for PropertyGridExternal {
                 IntrospectValue::Text(ref s) => self.dispatch_send(s),
                 _ => Err(InvokeError::TypeMismatch),
             },
-            // Toggle the focused bool (the `Space` keyboard path + the RPC
-            // affordance). No-op on a non-bool focused row.
-            "toggle" => Ok(IntrospectValue::Bool(self.toggle(self.focused_row.get()))),
+            // Toggle the bool at a given source row (the `Space` keyboard path
+            // resolves the cursor → source and passes it; the RPC affordance
+            // names the row directly — deterministic, no hidden focused-row
+            // dependency). No-op (returns `false`) on a non-bool / out-of-range
+            // row.
+            "toggle" => match args {
+                IntrospectValue::Int(i) => {
+                    let row = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.toggle(row)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
             // Enter edit mode on a given row (the `Enter` / `F2` keyboard
             // path + the RPC edit-entry affordance) — text edit, or for a
             // choice row, opens the popup.
@@ -900,11 +968,20 @@ fn apply_key_color(row: usize, key: &str) -> bool {
     true
 }
 
-/// Grid-focused keymap: roving navigation + activate. Navigation writes the
-/// `focused_row` Signal directly (pure cursor motion, no cross-external
-/// effect); `Space` / `Enter` / `F2` route through the coordinator's
-/// `invoke` so the keyboard path is identical to the RPC path. An open
-/// choice / colour popup intercepts the keymap first.
+/// Grid-focused keymap (R871): the roving cursor moves over the flattened
+/// category headers + visible data rows. An open choice / colour popup
+/// intercepts the keymap first. Otherwise:
+///
+/// - On a **data row**, `Space` toggles a bool and `Enter` / `F2` edits a
+///   text / int / float row or opens a choice / colour popup — routed through
+///   the coordinator's `invoke` so the keyboard path is identical to the RPC
+///   path. (The data rows are editable cells, so these keys activate the cell
+///   rather than re-affirming a selection the way [`group_nav`] would.)
+/// - Everything else — `ArrowUp` / `ArrowDown` / `Home` / `End` movement over
+///   headers + data, and `ArrowRight` / `ArrowLeft` / `Enter` / `Space` on a
+///   **category header** to expand / collapse it — is the shared [`group_nav`]
+///   policy (the grouped-list / grouped-grid SSOT, so the collapse + roving
+///   semantics cannot diverge between the grouped collections).
 fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
     if let Some((row, kind)) = open_popup_kind() {
         return match kind {
@@ -912,40 +989,39 @@ fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
             _ => apply_key_choice(row, key),
         };
     }
-    let focused = use_focused_row();
-    let count = use_property_model().get().len();
-    if count == 0 {
+    let groups = use_property_groups();
+    let rows = groups.rows();
+    if rows.is_empty() {
         return false;
     }
-    let current = focused.get().min(count - 1);
-    match key {
-        "ArrowDown" => {
-            focused.set((current + 1).min(count - 1));
-            true
+    let cursor = groups.cursor();
+    // In-cell activation when the cursor rests on a data row.
+    if let Some(source) = cursor.and_then(|c| rows.get(c)).and_then(GroupRow::source) {
+        match key {
+            "Space" => return activate_source(scene, source, false),
+            "Enter" | "F2" => return activate_source(scene, source, true),
+            _ => {}
         }
-        "ArrowUp" => {
-            focused.set(current.saturating_sub(1));
-            true
-        }
-        "Home" => {
-            focused.set(0);
-            true
-        }
-        "End" => {
-            focused.set(count - 1);
-            true
-        }
-        "Space" => activate_focused(scene, current, false),
-        "Enter" | "F2" => activate_focused(scene, current, true),
-        _ => false,
     }
+    // Movement over the flatten + header expand / collapse — the shared policy.
+    let page = rows.len(); // non-virtualized: PageUp / PageDown jump to the ends.
+    let Some(outcome) = group_nav(&rows, cursor, key, page) else {
+        return false;
+    };
+    match outcome {
+        GroupNavOutcome::MoveTo(pos) => groups.set_cursor(Some(pos)),
+        GroupNavOutcome::Toggle(group) => {
+            groups.toggle_group(group);
+        }
+    }
+    true
 }
 
-/// Activate the focused row: toggle a bool, open a choice popup, or (when
-/// `allow_edit`) enter edit mode on a text / int / float row. Routes through
-/// the coordinator's `invoke` so toggle / begin live in one place (the RPC
-/// path).
-fn activate_focused(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
+/// Activate the data row at stable source index `row`: toggle a bool, open a
+/// choice / colour popup, or (when `allow_edit`) enter edit mode on a text /
+/// int / float row. Routes through the coordinator's `invoke` so toggle /
+/// begin live in one place (the RPC path).
+fn activate_source(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
     let kind = match use_property_model().get().get(row) {
         Some(value) => value.kind(),
         None => return false,
@@ -956,18 +1032,13 @@ fn activate_focused(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
     let Some(intro) = node.handle.introspect_mut() else {
         return false;
     };
+    let arg = IntrospectValue::Int(i64::try_from(row).expect("row index fits in i64"));
     match kind {
-        CellKind::Bool => intro.invoke("toggle", IntrospectValue::Null).is_ok(),
+        CellKind::Bool => intro.invoke("toggle", arg).is_ok(),
         // A choice / colour row opens its popup on both Space and Enter (the
         // dropdown affordance) — `allow_edit` only gates the text editors.
-        CellKind::Choice | CellKind::Color => {
-            let arg = IntrospectValue::Int(i64::try_from(row).expect("row index fits in i64"));
-            intro.invoke("begin", arg).is_ok()
-        }
-        _ if allow_edit => {
-            let arg = IntrospectValue::Int(i64::try_from(row).expect("row index fits in i64"));
-            intro.invoke("begin", arg).is_ok()
-        }
+        CellKind::Choice | CellKind::Color => intro.invoke("begin", arg).is_ok(),
+        _ if allow_edit => intro.invoke("begin", arg).is_ok(),
         _ => false,
     }
 }
@@ -1181,7 +1252,7 @@ fn view_swatch(
 /// `{GRID_TAG}#opt{i}` so its click / hover routes to the coordinator. The
 /// caller pushes a full-window dismiss barrier beneath it.
 fn view_choice_popup(
-    row: usize,
+    view_pos: usize,
     options: &[String],
     selected: usize,
     cursor: usize,
@@ -1213,7 +1284,7 @@ fn view_choice_popup(
         .collect();
     let panel_h = u32::try_from(options.len()).expect("option count fits in u32") * POPUP_OPT_H
         + 2 * POPUP_PAD;
-    let (x, y) = popup_origin(row, panel_h);
+    let (x, y) = popup_origin(view_pos, panel_h);
     Scene::Container(
         ContainerNode::new(rows)
             .with_tag(CHOICE_POPUP_TAG)
@@ -1238,7 +1309,7 @@ fn view_choice_popup(
 /// Enter commits through `commit_edit` → `Color::from_hex`). The caller
 /// pushes a full-window dismiss barrier beneath it.
 fn view_color_popup(
-    row: usize,
+    view_pos: usize,
     current: Color,
     cursor: usize,
     hover: Option<usize>,
@@ -1274,7 +1345,7 @@ fn view_color_popup(
     let panel_w = inner_w + 2 * POPUP_PAD;
     let panel_h =
         n_rows * SWATCH_SIZE + (n_rows - 1) * SWATCH_GAP + SWATCH_GAP + HEX_FIELD_H + 2 * POPUP_PAD;
-    let (x, y) = popup_origin(row, panel_h);
+    let (x, y) = popup_origin(view_pos, panel_h);
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(COLOR_POPUP_TAG)
@@ -1290,16 +1361,19 @@ fn view_color_popup(
     )
 }
 
-/// The top-left of a popup of height `panel_h` for `row`: anchored at the
-/// value column, dropping below the row — or flipped above it when it would
-/// overflow the window bottom (the native dropdown edge behaviour). Shared by
-/// the choice + colour popups; deterministic because the title band has a
-/// fixed height ([`TITLE_H`]).
-fn popup_origin(row: usize, panel_h: u32) -> (u32, u32) {
+/// The top-left of a popup of height `panel_h` for the editing row at flatten
+/// **visual position** `view_pos`: anchored at the value column, dropping below
+/// the row — or flipped above it when it would overflow the window bottom (the
+/// native dropdown edge behaviour). Shared by the choice + colour popups;
+/// deterministic because every row (the column header, the category headers,
+/// and the data rows) shares the uniform [`ROW_H`] + [`ROW_GAP`] pitch and the
+/// title band has a fixed height ([`TITLE_H`]). The leading `row_step` skips
+/// the `Property` / `Value` column-header row above the flatten.
+fn popup_origin(view_pos: usize, panel_h: u32) -> (u32, u32) {
     let x = PANEL_PAD + GRID_BORDER + NAME_COL_W;
     let row_step = ROW_H + ROW_GAP;
     let grid_top = PANEL_PAD + TITLE_H + TITLE_GAP + GRID_BORDER;
-    let row_top = grid_top + row_step + u32::try_from(row).expect("row fits in u32") * row_step;
+    let row_top = grid_top + row_step + u32::try_from(view_pos).expect("row fits in u32") * row_step;
     let below = row_top + ROW_H;
     let content_bottom = WIN_H - PANEL_PAD;
     let y = if below + panel_h <= content_bottom {
@@ -1342,13 +1416,58 @@ fn view_header(theme: &Theme) -> Scene {
     )
 }
 
+/// The popup overlay (a full-window light-dismiss barrier + the open choice /
+/// colour panel) for the editing row, anchored at its **visual position** in
+/// the current flatten. Empty when nothing is editing or the editing row's
+/// category is collapsed (the row is hidden, so no popup is shown). The barrier
+/// sorts first so the panel hit-tests on top; a click outside the panel routes
+/// `dismiss` to the coordinator (the toggle-close convention).
+fn view_popup_overlay(
+    editing: Option<usize>,
+    model: &[CellValue],
+    group_rows: &[GroupRow],
+    edit_field: (TextFieldState, u32),
+    theme: &Theme,
+) -> Vec<Scene> {
+    let Some(row) = editing else { return Vec::new() };
+    let Some(view_pos) = group_rows.iter().position(|r| r.source() == Some(row)) else {
+        return Vec::new();
+    };
+    match model.get(row) {
+        Some(CellValue::Choice { selected, options }) => {
+            let cursor = use_popup_cursor().get().unwrap_or(*selected);
+            let hover = use_popup_hover().get();
+            vec![
+                dismiss_barrier(POPUP_DISMISS_TAG, (0, 0), (WIN_W, WIN_H)),
+                view_choice_popup(view_pos, options, *selected, cursor, hover, theme),
+            ]
+        }
+        Some(CellValue::Color(c)) => {
+            let cursor = use_popup_cursor().get().unwrap_or(0);
+            let hover = use_popup_hover().get();
+            vec![
+                dismiss_barrier(POPUP_DISMISS_TAG, (0, 0), (WIN_W, WIN_H)),
+                view_color_popup(view_pos, *c, cursor, hover, edit_field, theme),
+            ]
+        }
+        _ => Vec::new(),
+    }
+}
+
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
     let (edit_state, edit_caret) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let model = use_property_model().get();
-    let focused = use_focused_row().get();
+    let groups = use_property_groups();
+    // Reading `rows()` (collapse + order) and `cursor()` inside the view-fn
+    // subscribes, so a category collapse / cursor move repaints (R871).
+    let group_rows = groups.rows();
+    let cursor = groups.cursor();
     let editing = use_editing_row().get();
+    // The data row the roving cursor rests on (for the focused-row highlight);
+    // `None` when the cursor is on a category header or unset.
+    let cursor_source = cursor.and_then(|c| group_rows.get(c)).and_then(GroupRow::source);
 
     // Fixed-height title band — keeps the row → choice-popup anchor math
     // deterministic (a bare Text node's height is font-metric dependent).
@@ -1368,18 +1487,32 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         ),
     );
 
-    let mut rows: Vec<Scene> = Vec::with_capacity(ROW_COUNT + 1);
+    let mut rows: Vec<Scene> = Vec::with_capacity(group_rows.len() + 1);
     rows.push(view_header(&theme));
-    for (index, value) in model.iter().enumerate() {
-        let edit_active = editing == Some(index) && value.kind().is_text_editable();
-        rows.push(view_row(
-            index,
-            value,
-            index == focused,
-            edit_active,
-            &theme,
-            (edit_state, edit_caret),
-        ));
+    for row in group_rows.iter() {
+        match *row {
+            GroupRow::Header { group, member_count, collapsed } => rows.push(group_header_row(
+                format!("{GROUP_TAG}#{group}"),
+                CATEGORY_LABELS[group],
+                &member_count.to_string(),
+                collapsed,
+                &theme,
+                NAME_COL_W + VALUE_COL_W,
+                ROW_H,
+            )),
+            GroupRow::Data { source } => {
+                let value = &model[source];
+                let edit_active = editing == Some(source) && value.kind().is_text_editable();
+                rows.push(view_row(
+                    source,
+                    value,
+                    Some(source) == cursor_source,
+                    edit_active,
+                    &theme,
+                    (edit_state, edit_caret),
+                ));
+            }
+        }
     }
     let grid = Scene::Container(
         ContainerNode::new(rows)
@@ -1396,35 +1529,12 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             ),
     );
 
-    let mut children = vec![title, grid];
     // A choice / colour popup floats over the grid (absolutely positioned)
     // with a full-window light-dismiss barrier beneath it — the barrier is
     // pushed first so the panel hit-tests on top; a click outside the panel
     // routes `dismiss` to the coordinator (the toggle-close convention).
-    if let Some(row) = editing {
-        match model.get(row) {
-            Some(CellValue::Choice { selected, options }) => {
-                let cursor = use_popup_cursor().get().unwrap_or(*selected);
-                let hover = use_popup_hover().get();
-                children.push(dismiss_barrier(POPUP_DISMISS_TAG, (0, 0), (WIN_W, WIN_H)));
-                children.push(view_choice_popup(row, options, *selected, cursor, hover, &theme));
-            }
-            Some(CellValue::Color(c)) => {
-                let cursor = use_popup_cursor().get().unwrap_or(0);
-                let hover = use_popup_hover().get();
-                children.push(dismiss_barrier(POPUP_DISMISS_TAG, (0, 0), (WIN_W, WIN_H)));
-                children.push(view_color_popup(
-                    row,
-                    *c,
-                    cursor,
-                    hover,
-                    (edit_state, edit_caret),
-                    &theme,
-                ));
-            }
-            _ => {}
-        }
-    }
+    let mut children = vec![title, grid];
+    children.extend(view_popup_overlay(editing, &model, &group_rows, (edit_state, edit_caret), &theme));
 
     Scene::Container(
         ContainerNode::new(children)
@@ -1458,14 +1568,14 @@ impl WidgetCore for PropertyGridView {
 
     fn create_external() -> Box<dyn External> {
         let model = use_property_model();
-        let focused = use_focused_row();
+        let groups = use_property_groups();
         let editing = use_editing_row();
         let editor = use_text_edit_state(EDIT_TF_TAG);
         let popup_cursor = use_popup_cursor();
         let popup_hover = use_popup_hover();
         Box::new(PropertyGridExternal::new(
             model,
-            focused,
+            groups,
             editing,
             editor,
             popup_cursor,
@@ -1484,15 +1594,21 @@ impl WidgetCore for PropertyGridView {
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let editor_state = use_text_edit_state(EDIT_TF_TAG);
         let blink = use_caret_blink(EDIT_TF_TAG);
-        vec![ExtraExternal::new(
-            EDIT_TF_TAG,
-            Box::new(
-                TextFieldExternal::new()
-                    .attach_state(editor_state)
-                    .attach_blink(blink)
-                    .with_blur_intent(),
+        vec![
+            // The group-by proxy coordinator: owns the category collapse set +
+            // the roving visual-row cursor, exposed to AI through the §5.12
+            // wire (`collapsed.<group>` / `cursor` / `toggle_group` / …).
+            ExtraExternal::new(GROUP_TAG, Box::new(GroupOrderExternal::new(use_property_groups()))),
+            ExtraExternal::new(
+                EDIT_TF_TAG,
+                Box::new(
+                    TextFieldExternal::new()
+                        .attach_state(editor_state)
+                        .attach_blink(blink)
+                        .with_blur_intent(),
+                ),
             ),
-        )]
+        ]
     }
 
     fn read_state(scene: &Scene) -> RootState {
@@ -1594,34 +1710,44 @@ impl WidgetA11y for PropertyGridView {
     /// option / swatch.
     fn access_node(_state: &RootState, _focused: Option<&str>) -> Vec<AccessNode> {
         let model = use_property_model().get();
-        let focused = use_focused_row().get();
+        let groups = use_property_groups();
+        let rows = groups.rows();
+        let cursor = groups.cursor();
+        let cursor_source = cursor.and_then(|c| rows.get(c)).and_then(GroupRow::source);
+        // Non-virtualized: every flattened row (category headers + visible data
+        // rows) is in the a11y window.
+        let window = VisibleWindow { first: 0, count: rows.len() };
         let columns = vec![
             GridColumn { tag: "pg_col_name".to_owned(), label: "Property".to_owned(), sort: None },
             GridColumn { tag: "pg_col_value".to_owned(), label: "Value".to_owned(), sort: None },
         ];
-        let rows: Vec<GridRow> = model
-            .iter()
-            .enumerate()
-            .map(|(index, value)| GridRow {
-                tag: format!("pg_row{index}"),
-                selected: false,
-                state: RadioState::Idle,
-                cells: vec![
-                    GridCell {
-                        tag: format!("pg_name{index}"),
-                        name: PROPERTY_NAMES[index].to_owned(),
-                        focused: false,
-                    },
-                    GridCell {
-                        tag: format!("{GRID_TAG}#{index}"),
-                        name: format!("{}: {}", PROPERTY_NAMES[index], value.display()),
-                        focused: index == focused,
-                    },
-                ],
-            })
-            .collect();
-        let mut nodes =
-            grid_table_nodes(GRID_TAG, "Inspector", false, "pg_header", &columns, &rows);
+        let spec = GroupedGridSpec {
+            grid_tag: GRID_TAG,
+            name: Some("Inspector"),
+            header_row_tag: "pg_header",
+            columns: &columns,
+            group_prefix: GROUP_TAG,
+            data_prefix: GRID_TAG,
+            // The roving cursor's data row is the "current" property
+            // (aria-selected); the cursor's visual position is the active
+            // descendant (aria-activedescendant) — header or data alike.
+            selected_source: cursor_source,
+            focused_view_pos: cursor,
+        };
+        let mut nodes = grouped_grid_access_nodes(
+            &spec,
+            &rows,
+            window,
+            |g| CATEGORY_LABELS[g].to_owned(),
+            |source, col| format!("pg_cell{source}_{col}"),
+            |source, col| {
+                if col == 0 {
+                    PROPERTY_NAMES[source].to_owned()
+                } else {
+                    model[source].display()
+                }
+            },
+        );
         if let Some(row) = use_editing_row().get() {
             match model.get(row) {
                 Some(CellValue::Choice { selected, options }) => {
@@ -1686,29 +1812,35 @@ impl WidgetA11y for PropertyGridView {
     /// redundant marker the AT layer does not lower) — the combobox / treegrid
     /// pattern, previously missing here.
     fn access_focus_target(_state: &RootState, focused: Option<&str>) -> Option<AccessFocus> {
+        // A popup open while the grid holds focus → the active descendant is the
+        // cursor option / swatch in the popup (the combobox a11y shape, R870).
         if focused == Some(GRID_TAG) {
             if let Some(row) = use_editing_row().get() {
-                let cursor = use_popup_cursor().get().unwrap_or(0);
+                let cur = use_popup_cursor().get().unwrap_or(0);
                 match use_property_model().get().get(row).map(CellValue::kind) {
                     Some(CellKind::Choice) => {
                         return Some(AccessFocus::composite(
                             GRID_TAG,
-                            format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{cursor}"),
+                            format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{cur}"),
                         ));
                     }
                     Some(CellKind::Color) => {
                         return Some(AccessFocus::composite(
                             GRID_TAG,
-                            format!("{GRID_TAG}#{COLOR_SW_PREFIX}{cursor}"),
+                            format!("{GRID_TAG}#{COLOR_SW_PREFIX}{cur}"),
                         ));
                     }
                     _ => {}
                 }
             }
-            let focused_row = use_focused_row().get();
-            return Some(AccessFocus::composite(GRID_TAG, format!("{GRID_TAG}#{focused_row}")));
         }
-        focused.map(AccessFocus::atomic)
+        // Otherwise the active descendant follows the roving visual-row cursor
+        // over the category headers + data rows — the grouped-collection ring
+        // SSOT (R850/R871), shared with grouped-list / grouped-grid. Rings the
+        // cursor's row tag (`{GROUP_TAG}#{group}` header or `{GRID_TAG}#{source}`
+        // data) when the grid owns focus, else the focused element atomically.
+        let groups = use_property_groups();
+        grouped_focus_target(&groups, GRID_TAG, GROUP_TAG, groups.cursor(), focused)
     }
 }
 
@@ -1738,6 +1870,11 @@ mod tests {
     fn r836_default_model_matches_name_count() {
         assert_eq!(default_properties().len(), ROW_COUNT);
         assert_eq!(PROPERTY_NAMES.len(), ROW_COUNT);
+        assert_eq!(PROPERTY_GROUPS.len(), ROW_COUNT, "every property has a category");
+        assert!(
+            PROPERTY_GROUPS.iter().all(|&g| g < CATEGORY_LABELS.len()),
+            "every category id indexes the label table",
+        );
     }
 
     // ----- coordinator + scene fixture -----
@@ -1765,7 +1902,6 @@ mod tests {
             let scene = boot_scene();
             let intro = grid_intro(&scene);
             assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(12)));
-            assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(0)));
             assert_eq!(intro.query("name.0"), Some(IntrospectValue::Text("Name".to_owned())));
             assert_eq!(intro.query("kind.2"), Some(IntrospectValue::Text("bool".to_owned())));
             assert_eq!(intro.query("kind.4"), Some(IntrospectValue::Text("int".to_owned())));
@@ -1803,48 +1939,59 @@ mod tests {
     }
 
     #[test]
-    fn r836_intervene_focused_row_clamps() {
+    fn r871_group_external_exposes_categories_cursor_collapse() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
-            let intro = node.handle.introspect_mut().expect("introspectable");
-            assert!(intro.intervene("focused_row", IntrospectValue::Int(4)).is_ok());
-            assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(4)));
-            assert!(intro.intervene("focused_row", IntrospectValue::Int(999)).is_ok());
-            assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(11)), "clamped to last");
+            let gn = scene.find_external_with_tag_mut(GROUP_TAG).expect("group external present");
+            let gi = gn.handle.introspect_mut().expect("introspectable");
+            // 5 categories, first-appearance order; Identity is first with 3
+            // members (Name, Tag, Layer).
+            assert_eq!(gi.query("group_count"), Some(IntrospectValue::Int(5)));
+            assert_eq!(gi.query("label_at.0"), Some(IntrospectValue::Text("Identity".to_owned())));
+            assert_eq!(gi.query("member_count_at.0"), Some(IntrospectValue::Int(3)));
+            // The roving cursor is read/write (a visual position over the flatten).
+            assert_eq!(gi.query("cursor"), Some(IntrospectValue::Null), "no cursor at boot");
+            assert!(gi.intervene("cursor", IntrospectValue::Int(1)).is_ok());
+            assert_eq!(gi.query("cursor"), Some(IntrospectValue::Int(1)));
+            // 5 headers + 12 data rows = 17 visible; collapsing Identity hides
+            // its 3 data rows (toggle_group returns the new visible_len).
+            assert_eq!(gi.query("visible_len"), Some(IntrospectValue::Int(17)));
+            assert_eq!(gi.invoke("toggle_group", IntrospectValue::Int(0)), Ok(IntrospectValue::Int(14)));
+            assert_eq!(gi.query("collapsed.0"), Some(IntrospectValue::Bool(true)));
         });
     }
 
     #[test]
-    fn r836_toggle_invoke_flips_focused_bool_only() {
+    fn r836_toggle_invoke_flips_bool_by_source() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
             let intro = node.handle.introspect_mut().expect("introspectable");
-            // Focus a bool row (index 2 = Visible) then toggle.
-            let _ = intro.intervene("focused_row", IntrospectValue::Int(2));
-            assert_eq!(intro.invoke("toggle", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+            // Toggle the Visible bool by its stable source index (2).
+            assert_eq!(intro.invoke("toggle", IntrospectValue::Int(2)), Ok(IntrospectValue::Bool(true)));
             assert_eq!(intro.query("value.2"), Some(IntrospectValue::Bool(false)));
-            // Focus a non-bool row -> toggle is a no-op.
-            let _ = intro.intervene("focused_row", IntrospectValue::Int(0));
-            assert_eq!(intro.invoke("toggle", IntrospectValue::Null), Ok(IntrospectValue::Bool(false)));
+            // A non-bool source -> no-op.
+            assert_eq!(intro.invoke("toggle", IntrospectValue::Int(0)), Ok(IntrospectValue::Bool(false)));
             assert_eq!(intro.query("value.0"), Some(IntrospectValue::Text("Player".to_owned())));
         });
     }
 
     #[test]
-    fn r836_click_focuses_row_and_toggles_bool() {
+    fn r836_click_moves_cursor_and_toggles_bool() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
             let intro = node.handle.introspect_mut().expect("introspectable");
-            // PointerUp on the Locked bool (index 3) focuses + toggles it.
+            // PointerUp on the Locked bool (source 3) moves the cursor onto its
+            // visual row + toggles it.
             let _ = intro.invoke("send", IntrospectValue::Text("3:PointerUp".to_owned()));
-            assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(3)));
             assert_eq!(intro.query("value.3"), Some(IntrospectValue::Bool(true)), "false -> true");
-            // PointerUp on a text row focuses but does not toggle.
+            let pos = use_property_groups().rows().iter().position(|r| r.source() == Some(3));
+            assert_eq!(use_property_groups().cursor(), pos, "cursor moved onto the clicked row");
+            // PointerUp on a text row moves the cursor but does not toggle.
             let _ = intro.invoke("send", IntrospectValue::Text("0:PointerUp".to_owned()));
-            assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(0)));
+            let name_pos = use_property_groups().rows().iter().position(|r| r.source() == Some(0));
+            assert_eq!(use_property_groups().cursor(), name_pos);
         });
     }
 
@@ -1912,20 +2059,54 @@ mod tests {
 
     // ----- keyboard -----
 
+    /// The visual position of source `s` in the current flatten (panics if its
+    /// category is collapsed — the test setups keep everything expanded).
+    fn view_pos_of(source: usize) -> usize {
+        use_property_groups()
+            .rows()
+            .iter()
+            .position(|r| r.source() == Some(source))
+            .expect("source is in the flatten")
+    }
+
     #[test]
-    fn r836_grid_arrows_navigate_and_clamp() {
+    fn r871_grid_arrows_navigate_over_flatten_and_clamp() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
+            let groups = use_property_groups();
+            let last = groups.rows().len() - 1; // 16 (5 headers + 12 data − 1)
+            // First ArrowDown from no cursor lands on row 0 (the Identity header).
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", Modifiers::empty()));
-            assert_eq!(use_focused_row().get(), 1);
+            assert_eq!(groups.cursor(), Some(0));
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "End", Modifiers::empty()));
-            assert_eq!(use_focused_row().get(), ROW_COUNT - 1);
+            assert_eq!(groups.cursor(), Some(last));
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", Modifiers::empty()));
-            assert_eq!(use_focused_row().get(), ROW_COUNT - 1, "clamps at the bottom");
+            assert_eq!(groups.cursor(), Some(last), "clamps at the bottom");
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Home", Modifiers::empty()));
-            assert_eq!(use_focused_row().get(), 0);
+            assert_eq!(groups.cursor(), Some(0));
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowUp", Modifiers::empty()));
-            assert_eq!(use_focused_row().get(), 0, "clamps at the top");
+            assert_eq!(groups.cursor(), Some(0), "clamps at the top");
+        });
+    }
+
+    #[test]
+    fn r871_keyboard_collapses_and_expands_category_header() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let groups = use_property_groups();
+            // Cursor on the Identity header (visual position 0).
+            groups.set_cursor(Some(0));
+            // ArrowLeft on an expanded header collapses it; its 3 data rows vanish.
+            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowLeft", Modifiers::empty()));
+            assert!(groups.is_collapsed(0), "ArrowLeft collapses the focused category");
+            assert_eq!(groups.visible_len(), 14, "17 − 3 Identity data rows");
+            // ArrowRight re-expands.
+            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowRight", Modifiers::empty()));
+            assert!(!groups.is_collapsed(0));
+            assert_eq!(groups.visible_len(), 17);
+            // Enter on a header toggles it too.
+            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
+            assert!(groups.is_collapsed(0), "Enter on a header toggles collapse");
         });
     }
 
@@ -1933,18 +2114,12 @@ mod tests {
     fn r836_space_toggles_bool_enter_edits_text() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            // Move to the Visible bool (index 2) and Space-toggle it.
-            let _ = scene
-                .find_external_with_tag_mut(GRID_TAG)
-                .and_then(|n| n.handle.introspect_mut())
-                .map(|i| i.intervene("focused_row", IntrospectValue::Int(2)));
+            // Cursor onto the Visible bool (source 2) and Space-toggle it.
+            use_property_groups().set_cursor(Some(view_pos_of(2)));
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Space", Modifiers::empty()));
             assert_eq!(grid_intro(&scene).query("value.2"), Some(IntrospectValue::Bool(false)));
-            // Move to the Name text row and Enter -> edit mode.
-            let _ = scene
-                .find_external_with_tag_mut(GRID_TAG)
-                .and_then(|n| n.handle.introspect_mut())
-                .map(|i| i.intervene("focused_row", IntrospectValue::Int(0)));
+            // Cursor onto the Name text row (source 0) and Enter -> edit mode.
+            use_property_groups().set_cursor(Some(view_pos_of(0)));
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
             assert_eq!(
                 grid_intro(&scene).query("editing"),
@@ -1988,37 +2163,46 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             assert!(!PropertyGridView::apply_key(&mut scene, None, "ArrowDown", Modifiers::empty()));
-            assert_eq!(use_focused_row().get(), 0, "cursor unchanged");
+            assert_eq!(use_property_groups().cursor(), None, "cursor unchanged");
         });
     }
 
     // ----- a11y -----
 
     #[test]
-    fn r836_access_node_emits_grid_with_rows_and_active_cell() {
+    fn r871_access_node_emits_grouped_grid_with_headers_and_active_row() {
         Owner::new().run(|| {
             let _scene = boot_scene();
-            scene_focus(4);
+            // Cursor on the Visible data row (source 2).
+            scene_focus(view_pos_of(2));
             let nodes = PropertyGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
-            // grid + header row + 2 columnheaders + 9 rows + 18 cells.
-            assert_eq!(nodes.len(), 1 + 1 + 2 + ROW_COUNT + ROW_COUNT * 2);
             assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Grid);
             assert_eq!(nodes[0].name.as_deref(), Some("Inspector"));
+            // A category lowers to a spanning row with aria-expanded (Identity).
+            let header = nodes
+                .iter()
+                .find(|n| n.tag == format!("{GROUP_TAG}#0"))
+                .expect("Identity category header node");
+            assert_eq!(header.role, pinion_a11y::AriaRole::Row);
+            assert_eq!(header.expanded, Some(true), "expanded category header");
+            // The cursor's data row is the active descendant + aria-selected.
             let active = nodes
                 .iter()
-                .find(|n| n.tag == format!("{GRID_TAG}#4"))
-                .expect("focused value cell present");
-            assert!(active.state.focused, "focused row's value cell is the active descendant");
-            let visible_cell = nodes
-                .iter()
                 .find(|n| n.tag == format!("{GRID_TAG}#2"))
-                .expect("bool value cell present");
-            assert_eq!(visible_cell.name.as_deref(), Some("Visible: On"));
+                .expect("Visible data row node");
+            assert!(active.state.focused, "cursor row is the active descendant");
+            assert_eq!(active.selected, Some(true), "cursor data row is aria-selected");
+            // The value gridcell carries the column + value context.
+            let value_cell = nodes
+                .iter()
+                .find(|n| n.tag == "pg_cell2_1")
+                .expect("Visible value gridcell present");
+            assert_eq!(value_cell.name.as_deref(), Some("Value: On"));
         });
     }
 
-    fn scene_focus(row: usize) {
-        use_focused_row().set(row);
+    fn scene_focus(view_pos: usize) {
+        use_property_groups().set_cursor(Some(view_pos));
     }
 
     // ----- choice popup (R867) -----
@@ -2312,12 +2496,17 @@ mod tests {
     fn r870_access_focus_target_tracks_the_cursor() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            // Navigating: the focused value cell is the active descendant.
-            use_focused_row().set(5);
+            // Navigating: the active descendant is the cursor's data row tag.
+            use_property_groups().set_cursor(Some(view_pos_of(2)));
             let f = PropertyGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG))
                 .expect("grid focused -> composite focus target");
             assert_eq!(f.focus_tag, GRID_TAG);
-            assert_eq!(f.active_descendant.as_deref(), Some(format!("{GRID_TAG}#5").as_str()));
+            assert_eq!(f.active_descendant.as_deref(), Some(format!("{GRID_TAG}#2").as_str()));
+            // Cursor on a category header rings the header's composite tag.
+            use_property_groups().set_cursor(Some(0));
+            let h = PropertyGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG))
+                .expect("composite");
+            assert_eq!(h.active_descendant.as_deref(), Some(format!("{GROUP_TAG}#0").as_str()));
             // Choice popup open -> the active option (Blend cursor boots 0).
             open_choice(&mut scene, BLEND_ROW);
             let f = PropertyGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG))
@@ -2372,8 +2561,27 @@ mod tests {
             let _ = boot_scene();
             let scene = view((TextFieldState::Idle, 0), &Frame::new());
             assert!(scene.contains_tag(GRID_TAG), "grid root painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#0")), "row 0 painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#8")), "row 8 painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#0")), "data row 0 painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#8")), "data row 8 painted");
+            assert!(scene.contains_tag(&format!("{GROUP_TAG}#0")), "Identity header painted");
+            assert!(scene.contains_tag(&format!("{GROUP_TAG}#4")), "Transform header painted");
+        });
+    }
+
+    #[test]
+    fn r871_collapse_hides_category_data_rows_in_view() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let before = view((TextFieldState::Idle, 0), &Frame::new());
+            assert!(before.contains_tag(&format!("{GRID_TAG}#0")), "Name row painted when expanded");
+            assert!(before.contains_tag(&format!("{GROUP_TAG}#0")), "Identity header painted");
+            // Collapse Identity (category 0): its data rows (Name/Tag/Layer)
+            // vanish, the header stays.
+            use_property_groups().set_collapsed(0, true);
+            let after = view((TextFieldState::Idle, 0), &Frame::new());
+            assert!(after.contains_tag(&format!("{GROUP_TAG}#0")), "header stays on collapse");
+            assert!(!after.contains_tag(&format!("{GRID_TAG}#0")), "Name row hidden when collapsed");
+            assert!(!after.contains_tag(&format!("{GRID_TAG}#1")), "Tag row hidden when collapsed");
         });
     }
 

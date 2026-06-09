@@ -35887,6 +35887,64 @@
         "PRIOR GAP continues: R863-R866 store changelog entries absent (R867-R870 added; backfill = user)"
       ]
     },
+    "R871": {
+      "decision_summary": "R871 collapsible property-grid category sections: group the inspector's flat typed-row list under named collapsible categories as the 3rd structural consumer of the R843 GroupOrderState substrate (no new framework crate), and lift the group-header paint to one group_header_row SSOT.",
+      "changes_bullets": [
+        "pinion_widget_paint::group_header::group_header_row lift (twisty + label + parenthesized detail skin); retrofit the 4 grouped examples, removing the 4-copy build_header + chevron consts (Rule-of-Three)",
+        "hello-property-grid groups its 12 typed rows under 5 collapsible categories (Identity/Appearance/Physics/Stats/Transform) via use_group_order + a GroupOrderExternal extra; 3rd structural consumer of the R843 substrate",
+        "focus SSOT migrated: PropertyGridExternal.focused_row (model index) -> GroupOrderState.cursor (visual-row position); the toggle invoke now takes an explicit source index (no hidden focused-row dependency)",
+        "view iterates groups.rows() (headers via group_header_row, data via the existing view_row); a collapse hides the data rows; the popup anchors at the editing row visual position",
+        "apply_key composes group_nav (Arrow/Home/End movement + Right/Left/Enter header expand-collapse) with in-cell activation on data rows (Space toggle, Enter/F2 edit/popup)",
+        "a11y -> grouped_grid_access_nodes + grouped_focus_target (popup composite while editing); the source index stays each row stable identity; typed-cell + popup machinery preserved"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (0 failures); hello-property-grid 38 tests + pinion_widget_paint group_header 4 tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "r871_property_grid_groups demo PASS (44 assertions: category taxonomy, collapse/expand via RPC + keyboard + pointer, cursor roving over the flatten, cell edit inside a category, paint hide-on-collapse)",
+        "r836/r867/r869 property-grid regression demos PASS; r843/r844/r845/r846/r848/r854 grouped regression demos PASS (build_header retrofit byte-identical)"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "2-D HSV colour pad stays a Color->HSV decomposition gap (R870 carry; the hex field covers arbitrary colour)",
+        "AccessState.focused remains unlowered codebase-wide (aria-activedescendant is the channel per WAI-ARIA roving; R870 carry)",
+        "atomic store R863-R870 entry backfill = user decision (R870 carry)",
+        "per-cell checkbox/textbox grid a11y role deferred to the self-hosted editor (2nd consumer pins the shape)",
+        "demos default to the release binary (RpcSubprocess release=True): after an example change rebuild --release, not just debug/test, or the demo runs stale code"
+      ],
+      "publishable_decision_summary": "R871 collapsible property-grid category sections: group the inspector's flat typed-row list under named collapsible categories as the 3rd structural consumer of the R843 GroupOrderState substrate (no new framework crate), and lift the group-header paint to one group_header_row SSOT.",
+      "publishable_changes_bullets": [
+        "pinion_widget_paint::group_header::group_header_row lift (twisty + label + parenthesized detail skin); retrofit the 4 grouped examples, removing the 4-copy build_header + chevron consts (Rule-of-Three)",
+        "hello-property-grid groups its 12 typed rows under 5 collapsible categories (Identity/Appearance/Physics/Stats/Transform) via use_group_order + a GroupOrderExternal extra; 3rd structural consumer of the R843 substrate",
+        "focus SSOT migrated: PropertyGridExternal.focused_row (model index) -> GroupOrderState.cursor (visual-row position); the toggle invoke now takes an explicit source index (no hidden focused-row dependency)",
+        "view iterates groups.rows() (headers via group_header_row, data via the existing view_row); a collapse hides the data rows; the popup anchors at the editing row visual position",
+        "apply_key composes group_nav (Arrow/Home/End movement + Right/Left/Enter header expand-collapse) with in-cell activation on data rows (Space toggle, Enter/F2 edit/popup)",
+        "a11y -> grouped_grid_access_nodes + grouped_focus_target (popup composite while editing); the source index stays each row stable identity; typed-cell + popup machinery preserved"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (0 failures); hello-property-grid 38 tests + pinion_widget_paint group_header 4 tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "r871_property_grid_groups demo PASS (44 assertions: category taxonomy, collapse/expand via RPC + keyboard + pointer, cursor roving over the flatten, cell edit inside a category, paint hide-on-collapse)",
+        "r836/r867/r869 property-grid regression demos PASS; r843/r844/r845/r846/r848/r854 grouped regression demos PASS (build_header retrofit byte-identical)"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.50",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "2-D HSV colour pad stays a Color->HSV decomposition gap (R870 carry; the hex field covers arbitrary colour)",
+        "AccessState.focused remains unlowered codebase-wide (aria-activedescendant is the channel per WAI-ARIA roving; R870 carry)",
+        "atomic store R863-R870 entry backfill = user decision (R870 carry)",
+        "per-cell checkbox/textbox grid a11y role deferred to the self-hosted editor (2nd consumer pins the shape)",
+        "demos default to the release binary (RpcSubprocess release=True): after an example change rebuild --release, not just debug/test, or the demo runs stale code"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -55,6 +55,7 @@ use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_in
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_widget_paint::group_header::group_header_row;
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -87,11 +88,6 @@ const SCROLLBAR_TAG: &str = "glist_scrollbar";
 
 /// Six asset-type groups. Source row `i` belongs to `GROUPS[i % 6]`.
 const GROUPS: [&str; 6] = ["Mesh", "Texture", "Material", "Sound", "Script", "Prefab"];
-
-/// `\u{25BC}` ▼ — an expanded group's disclosure chevron.
-const CHEVRON_EXPANDED: &str = "\u{25BC}";
-/// `\u{25B6}` ▶ — a collapsed group's disclosure chevron.
-const CHEVRON_COLLAPSED: &str = "\u{25B6}";
 
 /// Group id of source row `i` (an index into [`GROUPS`]).
 fn row_group(i: usize) -> usize {
@@ -135,29 +131,19 @@ fn use_list_groups() -> Rc<GroupOrderState> {
 
 /// One group header row. `group` is the group id; the row is tagged
 /// `"ggroup#<group>"` (R51.42 composite) so a click routes to the
-/// [`GroupOrderExternal`] anchor and toggles the group. Shows the disclosure
-/// chevron, the group label, and the member count.
+/// [`GroupOrderExternal`] anchor and toggles the group. The header *skin*
+/// (twisty + label + count, the `SurfaceContainerHigh` flex row) is the
+/// [`group_header_row`] SSOT (R871); this binds the example's group-label table
+/// and list width to it.
 fn build_header(group: usize, member_count: usize, collapsed: bool, theme: &Theme) -> Scene {
-    let chevron = if collapsed { CHEVRON_COLLAPSED } else { CHEVRON_EXPANDED };
-    let text = format!("{chevron}  {}  ({member_count})", GROUPS[group % GROUPS.len()]);
-    let label = Scene::Text(TextNode::styled(
-        text,
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(14)
-            .with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
-    Scene::Container(
-        ContainerNode::new(vec![label])
-            .with_tag(format!("{GROUP_TAG}#{group}"))
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(VIEWPORT_W, ROW_PITCH))
-                    .with_padding(Rect::new(10, 0, 10, 0)),
-            ),
+    group_header_row(
+        format!("{GROUP_TAG}#{group}"),
+        GROUPS[group % GROUPS.len()],
+        &member_count.to_string(),
+        collapsed,
+        theme,
+        VIEWPORT_W,
+        ROW_PITCH,
     )
 }
 

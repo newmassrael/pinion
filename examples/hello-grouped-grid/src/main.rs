@@ -55,6 +55,7 @@ use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_in
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
 use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_widget_paint::group_header::group_header_row;
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -86,11 +87,6 @@ const SCROLLBAR_TAG: &str = "ggrid_scrollbar";
 
 /// Six asset-type groups (the group facet). Row `i` is `GROUPS[i % 6]`.
 const GROUPS: [&str; 6] = ["Mesh", "Texture", "Material", "Sound", "Script", "Prefab"];
-
-/// `\u{25BC}` ▼ — an expanded group's disclosure chevron.
-const CHEVRON_EXPANDED: &str = "\u{25BC}";
-/// `\u{25B6}` ▶ — a collapsed group's disclosure chevron.
-const CHEVRON_COLLAPSED: &str = "\u{25B6}";
 
 fn row_group(i: usize) -> usize {
     i % GROUPS.len()
@@ -173,26 +169,17 @@ fn column_header_row(theme: &Theme) -> Scene {
 }
 
 /// One group-header row (`ggrp#<group>`): chevron + type + member count,
-/// spanning the whole grid width.
+/// spanning the whole grid width. The header skin is the [`group_header_row`]
+/// SSOT (R871); this binds the example's group-label table + grid width.
 fn build_header(group: usize, member_count: usize, collapsed: bool, theme: &Theme) -> Scene {
-    let chevron = if collapsed { CHEVRON_COLLAPSED } else { CHEVRON_EXPANDED };
-    let text = format!("{chevron}  {}  ({member_count})", GROUPS[group % GROUPS.len()]);
-    let label = Scene::Text(TextNode::styled(
-        text,
-        Rect::default(),
-        TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
-    Scene::Container(
-        ContainerNode::new(vec![label])
-            .with_tag(format!("{GROUP_TAG}#{group}"))
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(GRID_W, ROW_PITCH))
-                    .with_padding(Rect::new(10, 0, 10, 0)),
-            ),
+    group_header_row(
+        format!("{GROUP_TAG}#{group}"),
+        GROUPS[group % GROUPS.len()],
+        &member_count.to_string(),
+        collapsed,
+        theme,
+        GRID_W,
+        ROW_PITCH,
     )
 }
 

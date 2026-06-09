@@ -50,14 +50,25 @@ from rpc_verify import (  # noqa: E402
     wait_until,
 )
 
-VIEWPORT = (460, 620)
+VIEWPORT = (460, 820)
 
 GRID = "property_grid"
 POPUP = "property_grid_choice"
 DISMISS = "property_grid#dismiss"
+CAT = "property_grid_cat"  # R871 group-by proxy (collapse set + roving cursor)
 
 BLEND = 9   # 4 options: Normal / Additive / Multiply / Screen (default Normal)
 BODY = 10   # 3 options: None / Trigger / Solid (default Solid)
+
+
+def _cursor_to_source(tf, source: int) -> None:
+    """Move the roving visual-row cursor onto `source`'s row (R871)."""
+    n = tf.query(f"/{CAT}/external/visible_len")
+    for pos in range(n):
+        if tf.query(f"/{CAT}/external/source_at.{pos}") == source:
+            tf.intervene(f"/{CAT}/external/cursor", pos)
+            return
+    raise AssertionError(f"source {source} not visible in the flatten")
 
 
 def _focus_grid(tf) -> None:
@@ -98,7 +109,7 @@ def body() -> None:
 
         # ── (B) keyboard: open, rove + clamp, Enter commits ──────────
         _focus_grid(tf)
-        tf.intervene("/external/focused_row", BLEND)
+        _cursor_to_source(tf, BLEND)
         tf.key(path=GRID, name="Enter")  # open the popup
         wait_until(lambda: _editing(tf) == BLEND, timeout=4.0, interval=0.03,
                    desc="Enter opens the choice popup")
@@ -118,7 +129,7 @@ def body() -> None:
         assert_eq(tf.query("/external/popup_cursor"), None, "cursor cleared after commit")
 
         # ── (C) keyboard: Escape dismisses, value untouched ──────────
-        tf.intervene("/external/focused_row", BODY)
+        _cursor_to_source(tf, BODY)
         tf.key(path=GRID, name="Enter")
         wait_until(lambda: _editing(tf) == BODY, timeout=4.0, interval=0.03,
                    desc="open Body popup")

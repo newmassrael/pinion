@@ -55,6 +55,7 @@ use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::widgets::virtual_select::{read_selected, VirtualSelectExternal};
 use pinion_core::reactive::Owner;
 use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_widget_paint::group_header::group_header_row;
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -91,8 +92,6 @@ const AGG_KEY: &str = "ggs_aggregates";
 
 const GROUPS: [&str; 6] = ["Mesh", "Texture", "Material", "Sound", "Script", "Prefab"];
 
-const CHEVRON_EXPANDED: &str = "\u{25BC}";
-const CHEVRON_COLLAPSED: &str = "\u{25B6}";
 const ARROW_ASC: &str = "\u{25B2}"; // ▲
 const ARROW_DESC: &str = "\u{25BC}"; // ▼
 const ARROW_NONE: &str = "\u{2195}"; // ↕ sortable, unsorted
@@ -275,28 +274,20 @@ fn column_header_row(sort: Option<(usize, bool)>, theme: &Theme) -> Scene {
     )
 }
 
+/// R854 — the per-group aggregate (member count + total Size) rides the
+/// always-shown header, so it stays visible when the group is collapsed. The
+/// header skin is the [`group_header_row`] SSOT (R871); this variant passes the
+/// aggregate as the parenthesized detail (the only divergence from the three
+/// count-only grouped headers).
 fn build_header(group: usize, member_count: usize, total_size: u64, collapsed: bool, theme: &Theme) -> Scene {
-    let chevron = if collapsed { CHEVRON_COLLAPSED } else { CHEVRON_EXPANDED };
-    // R854 — the per-group aggregate (member count + total Size) rides the
-    // always-shown header, so it stays visible when the group is collapsed.
-    let text =
-        format!("{chevron}  {}  ({member_count}, {total_size} B)", GROUPS[group % GROUPS.len()]);
-    let label = Scene::Text(TextNode::styled(
-        text,
-        Rect::default(),
-        TextStyle::new().with_size_px(14).with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
-    Scene::Container(
-        ContainerNode::new(vec![label])
-            .with_tag(format!("{GROUP_TAG}#{group}"))
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(GRID_W, ROW_PITCH))
-                    .with_padding(Rect::new(10, 0, 10, 0)),
-            ),
+    group_header_row(
+        format!("{GROUP_TAG}#{group}"),
+        GROUPS[group % GROUPS.len()],
+        &format!("{member_count}, {total_size} B"),
+        collapsed,
+        theme,
+        GRID_W,
+        ROW_PITCH,
     )
 }
 
