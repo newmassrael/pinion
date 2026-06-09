@@ -35639,6 +35639,74 @@
         "rejected over-reach: cell_data hash (legit synthetic idiom), demo-helper dup (repo-wide sweep), TableStyle/TreeViewStyle 36-vs-48 (M3 list-vs-table density)"
       ]
     },
+    "R867": {
+      "decision_summary": "R867 enum/choice property-grid cell editor: CellValue::Choice + lifted view_option paint + coordinator-owned popup (keyboard/mouse/RPC drive, listbox a11y)",
+      "changes_bullets": [
+        "core: add CellValue::Choice{selected,options} + CellKind::Choice (Copy-safe; options on value)",
+        "core: extend kind/display/edit_text/to_introspect(json)/name/is_text_editable/keystroke/parse",
+        "core: add CellValue::with_intervene (options-aware write; delegates to coerce for scalars)",
+        "widget-paint: lift listbox option cell to pinion_widget_paint::listbox::view_option (3rd consumer)",
+        "widget-paint: retrofit combobox + editable to view_option (byte-identical; 2 copies removed)",
+        "hello-property-grid: enum/choice cell as a grid-coordinator-owned popup (no new External)",
+        "popup reuses view_option + dismiss_barrier + listbox_option_nodes; routes via composite tags",
+        "drive: keyboard (open/rove/clamp/commit/Esc) + mouse (cell/option/outside) + RPC (begin/choose)",
+        "RPC intervene value.<i>=Int sets the option directly; choice_cursor query exposes the cursor",
+        "anchor flips above on bottom overflow; fixed title band; 2 choice rows; window grown to 11"
+      ],
+      "verification_bullets": [
+        "pinion-core cell_value 14 tests green (6 new Choice arms)",
+        "pinion-widget-paint listbox 3 tests green; hello-property-grid 27 tests green (7 new Choice)",
+        "regression: hello-combobox 17 + editable 19 tests green (lift behaviour-preserved)",
+        "workspace: cargo test 150 suites ok; clippy --workspace vello -D pedantic clean",
+        "demos PASS: r867 (>=30 assert; keyboard+mouse+RPC+paint+anchor) + r836/r714/r717 regression"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.16",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "popup panel surface now 3rd inline copy; kept inline per R758 (decision-free; elevation tier SSOT)",
+        "a cross-module popup-surface helper (spans menu.rs) = documented future-axis, not hidden dup",
+        "ListBoxExternal NOT used: cell model is the grid CellValue; a listbox would split the selection",
+        "coordinator-owned overlay avoids gain-only-emit on click-same-index (textbook transient editor)",
+        "PRIOR GAP: store last updated R862; R863-R866 committed without changelog entries (git+SEED SoT)",
+        "both choice rows near window bottom so both popups flip up; future layout could group them higher"
+      ],
+      "publishable_decision_summary": "R867 enum/choice property-grid cell editor: CellValue::Choice + lifted view_option paint + coordinator-owned popup (keyboard/mouse/RPC drive, listbox a11y)",
+      "publishable_changes_bullets": [
+        "core: add CellValue::Choice{selected,options} + CellKind::Choice (Copy-safe; options on value)",
+        "core: extend kind/display/edit_text/to_introspect(json)/name/is_text_editable/keystroke/parse",
+        "core: add CellValue::with_intervene (options-aware write; delegates to coerce for scalars)",
+        "widget-paint: lift listbox option cell to pinion_widget_paint::listbox::view_option (3rd consumer)",
+        "widget-paint: retrofit combobox + editable to view_option (byte-identical; 2 copies removed)",
+        "hello-property-grid: enum/choice cell as a grid-coordinator-owned popup (no new External)",
+        "popup reuses view_option + dismiss_barrier + listbox_option_nodes; routes via composite tags",
+        "drive: keyboard (open/rove/clamp/commit/Esc) + mouse (cell/option/outside) + RPC (begin/choose)",
+        "RPC intervene value.<i>=Int sets the option directly; choice_cursor query exposes the cursor",
+        "anchor flips above on bottom overflow; fixed title band; 2 choice rows; window grown to 11"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core cell_value 14 tests green (6 new Choice arms)",
+        "pinion-widget-paint listbox 3 tests green; hello-property-grid 27 tests green (7 new Choice)",
+        "regression: hello-combobox 17 + editable 19 tests green (lift behaviour-preserved)",
+        "workspace: cargo test 150 suites ok; clippy --workspace vello -D pedantic clean",
+        "demos PASS: r867 (>=30 assert; keyboard+mouse+RPC+paint+anchor) + r836/r714/r717 regression"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.16",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "popup panel surface now 3rd inline copy; kept inline per R758 (decision-free; elevation tier SSOT)",
+        "a cross-module popup-surface helper (spans menu.rs) = documented future-axis, not hidden dup",
+        "ListBoxExternal NOT used: cell model is the grid CellValue; a listbox would split the selection",
+        "coordinator-owned overlay avoids gain-only-emit on click-same-index (textbook transient editor)",
+        "PRIOR GAP: store last updated R862; R863-R866 committed without changelog entries (git+SEED SoT)",
+        "both choice rows near window bottom so both popups flip up; future layout could group them higher"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

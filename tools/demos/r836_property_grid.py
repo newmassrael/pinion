@@ -50,7 +50,7 @@ from rpc_verify import (  # noqa: E402
     wait_until,
 )
 
-VIEWPORT = (460, 440)
+VIEWPORT = (460, 580)
 PAUSE = 0.10
 
 GRID = "property_grid"
@@ -77,7 +77,7 @@ def body() -> None:
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid present"
-        assert_eq(tf.query("/external/row_count"), 9, "9 property rows")
+        assert_eq(tf.query("/external/row_count"), 11, "11 property rows")
         assert_eq(tf.query("/external/focused_row"), 0, "cursor boots at row 0")
         assert_eq(tf.query("/external/editing"), None, "no row editing at boot")
         assert_eq(tf.query("/external/name.0"), "Name", "row 0 name")
@@ -97,11 +97,11 @@ def body() -> None:
         wait_until(lambda: tf.query("/external/focused_row") == 1, timeout=4.0,
                    interval=0.03, desc="ArrowDown -> row 1")
         tf.key(path=GRID, name="End")
-        wait_until(lambda: tf.query("/external/focused_row") == 8, timeout=4.0,
+        wait_until(lambda: tf.query("/external/focused_row") == 10, timeout=4.0,
                    interval=0.03, desc="End -> last row")
         tf.key(path=GRID, name="ArrowDown")
         time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focused_row"), 8, "ArrowDown at bottom clamps")
+        assert_eq(tf.query("/external/focused_row"), 10, "ArrowDown at bottom clamps")
         tf.key(path=GRID, name="Home")
         wait_until(lambda: tf.query("/external/focused_row") == 0, timeout=4.0,
                    interval=0.03, desc="Home -> row 0")
@@ -188,7 +188,7 @@ def body() -> None:
 
         # ── (I) paint: rows render; field only while editing ─────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        for i in range(9):
+        for i in range(11):
             assert find_by_tag(snap, f"{GRID}#{i}") is not None, f"row {i} painted"
         assert find_by_tag(snap, EDIT) is None, "no inline field when not editing"
 

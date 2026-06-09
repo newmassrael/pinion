@@ -29,17 +29,27 @@ pub enum CellValue {
     Int(i64),
     Float(f64),
     Text(String),
+    /// An enumerated value — one of a fixed list of option labels (the
+    /// property-grid combobox cell, R867). Unlike the scalar kinds, the
+    /// options are part of the value's identity, not derivable from the
+    /// [`CellKind`], so the editor is a popup listbox (not text or toggle)
+    /// and the `intervene` write addresses an option by index
+    /// ([`CellValue::with_intervene`]).
+    Choice { selected: usize, options: Vec<String> },
 }
 
 /// The static descriptor of a [`CellValue`] — drives editor behaviour
-/// (toggle vs text-edit), the keystroke gate, and parse / format. `Copy`
-/// (per-column kind arrays live in `[CellKind; N]`).
+/// (toggle vs text-edit vs popup), the keystroke gate, and parse / format.
+/// `Copy` (per-column kind arrays live in `[CellKind; N]`); the option list a
+/// [`CellKind::Choice`] needs lives on the *value*, not the kind, so `Copy`
+/// is preserved.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CellKind {
     Bool,
     Int,
     Float,
     Text,
+    Choice,
 }
 
 impl CellValue {
@@ -51,10 +61,14 @@ impl CellValue {
             CellValue::Int(_) => CellKind::Int,
             CellValue::Float(_) => CellKind::Float,
             CellValue::Text(_) => CellKind::Text,
+            CellValue::Choice { .. } => CellKind::Choice,
         }
     }
 
-    /// The wire value for `scene/query` (AI-first introspection).
+    /// The wire value for `scene/query` (AI-first introspection). A `Choice`
+    /// reads as a structured object — `{ selected, label, options }` — so the
+    /// AI sees the current index, its label, and the whole domain in one
+    /// query (the richest honest representation of an enumerated cell).
     #[must_use]
     pub fn to_introspect(&self) -> IntrospectValue {
         match self {
@@ -62,12 +76,18 @@ impl CellValue {
             CellValue::Int(i) => IntrospectValue::Int(*i),
             CellValue::Float(f) => IntrospectValue::Float(*f),
             CellValue::Text(s) => IntrospectValue::Text(s.clone()),
+            CellValue::Choice { selected, options } => IntrospectValue::Json(serde_json::json!({
+                "selected": selected,
+                "label": selected_label(*selected, options),
+                "options": options,
+            })),
         }
     }
 
     /// The value shown in a non-edited cell. Bools render as a checkbox
     /// affordance (not this text), but the spoken / AT name reuses the
-    /// `On` / `Off` wording so the value reads naturally.
+    /// `On` / `Off` wording so the value reads naturally; a `Choice` reads
+    /// as its selected option label.
     #[must_use]
     pub fn display(&self) -> String {
         match self {
@@ -75,11 +95,14 @@ impl CellValue {
             CellValue::Int(i) => i.to_string(),
             CellValue::Float(f) => format_float(*f),
             CellValue::Text(s) => s.clone(),
+            CellValue::Choice { selected, options } => selected_label(*selected, options),
         }
     }
 
     /// The text the inline editor is seeded with when the cell enters edit
-    /// mode (the round-trip inverse of [`CellKind::parse`]).
+    /// mode (the round-trip inverse of [`CellKind::parse`]). A `Choice` is
+    /// popup-edited, not text-edited, so this is unused for it — it returns
+    /// the selected label for completeness.
     #[must_use]
     pub fn edit_text(&self) -> String {
         match self {
@@ -87,6 +110,34 @@ impl CellValue {
             CellValue::Int(i) => i.to_string(),
             CellValue::Float(f) => format_float(*f),
             CellValue::Text(s) => s.clone(),
+            CellValue::Choice { selected, options } => selected_label(*selected, options),
+        }
+    }
+
+    /// Apply an `intervene` payload, producing the updated value — the
+    /// value-level write path (the kind-level [`CellKind::coerce`] cannot
+    /// build a [`CellValue::Choice`] because the options live on the value).
+    /// Scalar kinds delegate to `coerce`; a `Choice` takes an
+    /// [`IntrospectValue::Int`] option **index** and preserves its options.
+    ///
+    /// # Errors
+    ///
+    /// [`InterveneError::TypeMismatch`] when the payload variant is wrong for
+    /// this value's kind; [`InterveneError::OutOfRange`] when a `Choice`
+    /// index is negative or past the option list.
+    pub fn with_intervene(&self, value: IntrospectValue) -> Result<CellValue, InterveneError> {
+        match self {
+            CellValue::Choice { options, .. } => {
+                let IntrospectValue::Int(i) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                let idx = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
+                if idx >= options.len() {
+                    return Err(InterveneError::OutOfRange);
+                }
+                Ok(CellValue::Choice { selected: idx, options: options.clone() })
+            }
+            _ => self.kind().coerce(value),
         }
     }
 }
@@ -101,14 +152,16 @@ impl CellKind {
             CellKind::Int => "int",
             CellKind::Float => "float",
             CellKind::Text => "text",
+            CellKind::Choice => "choice",
         }
     }
 
     /// Whether the kind is edited as text (text / int / float) rather than
-    /// toggled (bool). The begin-edit guard.
+    /// toggled (bool) or popup-selected (choice). The begin-edit guard for
+    /// the inline text field.
     #[must_use]
     pub fn is_text_editable(self) -> bool {
-        !matches!(self, CellKind::Bool)
+        matches!(self, CellKind::Int | CellKind::Float | CellKind::Text)
     }
 
     /// Whether a single printable keystroke is allowed into this kind's
@@ -119,7 +172,7 @@ impl CellKind {
     #[must_use]
     pub fn accepts_keystroke(self, key: &str) -> bool {
         match self {
-            CellKind::Bool => false,
+            CellKind::Bool | CellKind::Choice => false,
             CellKind::Text => single_char(key, |_| true),
             CellKind::Int => single_char(key, |c| c.is_ascii_digit() || c == '-'),
             CellKind::Float => single_char(key, |c| c.is_ascii_digit() || c == '-' || c == '.'),
@@ -133,7 +186,8 @@ impl CellKind {
     pub fn parse(self, text: &str) -> Option<CellValue> {
         let trimmed = text.trim();
         match self {
-            CellKind::Bool => None,
+            // Bools toggle and choices popup-select — neither is text-parsed.
+            CellKind::Bool | CellKind::Choice => None,
             CellKind::Int => trimmed.parse::<i64>().ok().map(CellValue::Int),
             CellKind::Float => trimmed.parse::<f64>().ok().map(CellValue::Float),
             CellKind::Text => Some(CellValue::Text(trimmed.to_owned())),
@@ -141,13 +195,16 @@ impl CellKind {
     }
 
     /// Validate a programmatic `intervene` payload against this kind — the
-    /// AI-first typed-set path. Strict per kind (no silent coercion) so an
-    /// RPC writes exactly the type the cell holds.
+    /// AI-first typed-set path for the **scalar** kinds. Strict per kind (no
+    /// silent coercion) so an RPC writes exactly the type the cell holds. A
+    /// `Choice` cannot be rebuilt from a kind alone (the options live on the
+    /// value), so it falls through to `TypeMismatch` here — write a `Choice`
+    /// through [`CellValue::with_intervene`] instead.
     ///
     /// # Errors
     ///
     /// [`InterveneError::TypeMismatch`] when `value`'s variant does not
-    /// match this kind.
+    /// match this kind (and for every `Choice` payload).
     pub fn coerce(self, value: IntrospectValue) -> Result<CellValue, InterveneError> {
         match (self, value) {
             (CellKind::Bool, IntrospectValue::Bool(b)) => Ok(CellValue::Bool(b)),
@@ -163,6 +220,12 @@ impl CellKind {
 /// inline-editor seed; the parse round-trips it.
 fn format_float(value: f64) -> String {
     format!("{value}")
+}
+
+/// The label of the selected option, or `""` if the index is stale — the
+/// `Choice` SSOT shared by `display`, `edit_text`, and `to_introspect`.
+fn selected_label(selected: usize, options: &[String]) -> String {
+    options.get(selected).cloned().unwrap_or_default()
 }
 
 /// Whether `key` is a single codepoint satisfying `pred`. Multi-codepoint
@@ -266,6 +329,83 @@ mod tests {
         assert_eq!(
             CellValue::Text("x".to_owned()).to_introspect(),
             IntrospectValue::Text("x".to_owned()),
+        );
+    }
+
+    /// A two-option `Choice` fixture — `Normal` / `Additive`, currently
+    /// `Additive`.
+    fn choice_fixture() -> CellValue {
+        CellValue::Choice { selected: 1, options: vec!["Normal".to_owned(), "Additive".to_owned()] }
+    }
+
+    #[test]
+    fn choice_kind_name_and_text_gates() {
+        assert_eq!(choice_fixture().kind(), CellKind::Choice);
+        assert_eq!(CellKind::Choice.name(), "choice");
+        assert!(!CellKind::Choice.is_text_editable(), "choice is popup-edited, not text");
+        assert!(!CellKind::Choice.accepts_keystroke("a"), "choice takes no keystroke");
+        assert_eq!(CellKind::Choice.parse("Normal"), None, "choice is never text-parsed");
+    }
+
+    #[test]
+    fn choice_display_and_edit_text_are_the_selected_label() {
+        assert_eq!(choice_fixture().display(), "Additive");
+        assert_eq!(choice_fixture().edit_text(), "Additive");
+        // A stale index degrades to the empty label, never panics.
+        let stale = CellValue::Choice { selected: 9, options: vec!["X".to_owned()] };
+        assert_eq!(stale.display(), "");
+    }
+
+    #[test]
+    fn choice_to_introspect_is_a_structured_object() {
+        let IntrospectValue::Json(json) = choice_fixture().to_introspect() else {
+            panic!("choice introspects as json");
+        };
+        assert_eq!(json["selected"], serde_json::json!(1));
+        assert_eq!(json["label"], serde_json::json!("Additive"));
+        assert_eq!(json["options"], serde_json::json!(["Normal", "Additive"]));
+    }
+
+    #[test]
+    fn choice_with_intervene_selects_by_index_and_preserves_options() {
+        let v = CellValue::Choice {
+            selected: 0,
+            options: vec!["A".to_owned(), "B".to_owned(), "C".to_owned()],
+        };
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Int(2)),
+            Ok(CellValue::Choice {
+                selected: 2,
+                options: vec!["A".to_owned(), "B".to_owned(), "C".to_owned()],
+            }),
+        );
+        // Out of range and negative both reject without mutating.
+        assert_eq!(v.with_intervene(IntrospectValue::Int(3)), Err(InterveneError::OutOfRange));
+        assert_eq!(v.with_intervene(IntrospectValue::Int(-1)), Err(InterveneError::OutOfRange));
+        // Wrong payload variant is a type mismatch (choice sets by index).
+        assert_eq!(
+            v.with_intervene(IntrospectValue::Text("B".to_owned())),
+            Err(InterveneError::TypeMismatch),
+        );
+    }
+
+    #[test]
+    fn with_intervene_delegates_to_coerce_for_scalars() {
+        // The scalar path is byte-identical to kind().coerce.
+        assert_eq!(CellValue::Int(0).with_intervene(IntrospectValue::Int(5)), Ok(CellValue::Int(5)));
+        assert_eq!(
+            CellValue::Text(String::new()).with_intervene(IntrospectValue::Bool(true)),
+            Err(InterveneError::TypeMismatch),
+        );
+    }
+
+    #[test]
+    fn choice_coerce_via_kind_is_a_type_mismatch() {
+        // The kind-level path can't build a Choice (no options) —
+        // with_intervene is the Choice write path.
+        assert_eq!(
+            CellKind::Choice.coerce(IntrospectValue::Int(1)),
+            Err(InterveneError::TypeMismatch),
         );
     }
 }

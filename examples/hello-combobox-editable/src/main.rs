@@ -96,6 +96,7 @@ use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::barrier::dismiss_barrier;
+use pinion_widget_paint::listbox::{view_option, OptionRow};
 use pinion_widget_paint::elevation::{elevation, MENU_LEVEL};
 use pinion_widget_paint::text_field as tf_paint;
 use std::rc::Rc;
@@ -130,10 +131,6 @@ const LABELS: [&str; N] = [
 
 /// Placeholder shown in the empty field before any text is typed.
 const PLACEHOLDER: &str = "Type to filter fruit";
-
-/// U+2713 CHECK MARK — committed-option marker in the popup
-/// ([[non-ascii-literal-named-const-escape]]: named const + escape).
-const CHECK_MARK: &str = "\u{2713}";
 
 /// `Owner::cache` key for the `Signal<bool>` "is the popup open".
 const OPEN_KEY: &str = "hello_combobox_editable.open";
@@ -279,48 +276,19 @@ fn read_combo_state(scene: &Scene) -> ComboViewState {
 /// filtered options are passed here, but the tag keeps the *absolute*
 /// index so selection / roving stay consistent with the full listbox.
 fn option_scene(abs_index: usize, state: &ComboViewState, active: Option<usize>, theme: &Theme) -> Scene {
-    let item_state = state.options[abs_index];
-    let is_active = active == Some(abs_index);
-    let is_selected = state.selected == Some(abs_index);
-    let fill = match item_state {
-        ListboxItemState::Hover | ListboxItemState::Pressed => {
-            theme.resolve(ColorRole::SurfaceContainerHighest)
-        }
-        _ if is_active => theme.resolve(ColorRole::SurfaceContainerHigh),
-        _ => theme.resolve(ColorRole::SurfaceContainer),
-    };
-    let mark = Scene::Text(TextNode::styled(
-        if is_selected { CHECK_MARK } else { " " },
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(15)
-            .with_fg(theme.resolve(ColorRole::Accent)),
-    ));
-    let label = Scene::Text(TextNode::styled(
-        LABELS[abs_index],
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(15)
-            .with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
-    let mut style = BoxStyle::filled(fill).with_corner_radius(4);
-    if is_active {
-        // 2-px accent — the WAI-ARIA active-descendant hint (no focus
-        // ring substrate yet; mirrors hello-listbox's focused-row cue).
-        style = style.with_border(Border::new(theme.resolve(ColorRole::Accent), 2));
-    }
-    Scene::Container(
-        ContainerNode::new(vec![mark, label])
-            .with_tag(format!("{OPTIONS_TAG}#{abs_index}"))
-            .with_style(style)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(INPUT_W - 2 * PANEL_PAD, OPT_H))
-                    .with_gap(8)
-                    .with_padding(Rect::new(10, 0, 10, 0)),
-            ),
+    // The option-cell skin is the lifted [`view_option`] SSOT (R867, 2nd of
+    // three consumers — combobox / editable-combobox / property-grid choice).
+    view_option(
+        &OptionRow {
+            tag: format!("{OPTIONS_TAG}#{abs_index}"),
+            label: LABELS[abs_index],
+            state: state.options[abs_index],
+            active: active == Some(abs_index),
+            selected: state.selected == Some(abs_index),
+        },
+        INPUT_W - 2 * PANEL_PAD,
+        OPT_H,
+        theme,
     )
 }
 
