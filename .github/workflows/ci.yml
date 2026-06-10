@@ -20,7 +20,7 @@ jobs:
     name: clippy + workspace tests (windowless)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Rust toolchain (rust-toolchain.toml)
@@ -52,7 +52,7 @@ jobs:
       PINION_HIDDEN_WINDOW: "1"
       PINION_SWEEP_DISPLAY: ":99"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: recursive
       - name: Rust toolchain (rust-toolchain.toml)
@@ -61,8 +61,12 @@ jobs:
       - name: System deps (fontconfig, Xvfb, lavapipe, ffmpeg, XTEST, x11-utils)
         run: |
           sudo apt-get update
+          # libxkbcommon-x11-0: winit's xkbcommon-dl dlopens
+          # libxkbcommon-x11.so.0 at X11-backend boot; the -dev package
+          # alone does not pull the x11 runtime library in.
           sudo apt-get install -y \
-            pkg-config libfontconfig1-dev libxkbcommon-dev libwayland-dev \
+            pkg-config libfontconfig1-dev libxkbcommon-dev \
+            libxkbcommon-x11-0 libwayland-dev \
             xvfb mesa-vulkan-drivers vulkan-tools libvulkan1 \
             ffmpeg x11-utils gcc libxtst-dev libx11-dev python3
       - name: Build workspace (release — sweep runs release binaries)
