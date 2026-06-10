@@ -999,10 +999,14 @@ impl<V: WidgetView> AppShell<V> {
     /// - **Left Pressed / Released** — pointer down / up
     ///   ([`CoreShell::mouse_pressed_for_window`] /
     ///   [`CoreShell::mouse_released_for_window`]).
-    /// - **Middle Pressed** — R56.2.e `apply_middle_click`, the canonical
-    ///   X11 / Wayland "paste PRIMARY at the focused text widget" path
-    ///   (via `ShellCore::middle_click`, which reads the focused tag from
-    ///   the focus manager).
+    /// - **Middle Pressed / Released** — R881 §5.35 §5.49 middle-button
+    ///   gesture pair ([`ShellCore::middle_pressed_for_window`] /
+    ///   [`ShellCore::middle_released_for_window`]). The router's
+    ///   `DragLatch` resolves the press: a drag past the dead zone pans
+    ///   the pinned scrollable / canvas (Blender / Unreal middle-drag),
+    ///   a release-in-place runs the R56.2.e `apply_middle_click` paste
+    ///   funnel (X11 PRIMARY at the focused text widget — paste moved
+    ///   from press to release, the xterm / Qt convention).
     /// - **Right Pressed** — R772 §5.53 `apply_secondary_click`, the
     ///   own-renderer context-menu open path (R771.1: pinion draws its own
     ///   menu on every platform). `secondary_click_for_window` reads the
@@ -1011,7 +1015,7 @@ impl<V: WidgetView> AppShell<V> {
     ///
     /// winit normalises each platform's button events (X11 `ButtonEvent` /
     /// Wayland `wl_pointer` button / macOS `NSEvent` / Windows
-    /// `WM_*BUTTONDOWN`) under one enum, so these four arms cover every
+    /// `WM_*BUTTONDOWN`) under one enum, so these five arms cover every
     /// backend. Other button / state combinations are ignored.
     fn handle_mouse_button(&mut self, spec_id: &str, button: MouseButton, state: ElementState) {
         match (button, state) {
@@ -1022,7 +1026,10 @@ impl<V: WidgetView> AppShell<V> {
                 self.core.mouse_released_for_window(spec_id, PointerId::MOUSE);
             }
             (MouseButton::Middle, ElementState::Pressed) => {
-                self.core.middle_click();
+                self.core.middle_pressed_for_window(spec_id, PointerId::MOUSE);
+            }
+            (MouseButton::Middle, ElementState::Released) => {
+                self.core.middle_released_for_window(spec_id, PointerId::MOUSE);
             }
             (MouseButton::Right, ElementState::Pressed) => {
                 self.core.secondary_click_for_window(spec_id, PointerId::MOUSE);

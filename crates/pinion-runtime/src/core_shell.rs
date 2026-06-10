@@ -78,7 +78,7 @@ use pinion_core::scene::{ContainerNode, ExternalNode};
 use pinion_core::{Command, Owner, Scene, WidgetCore};
 
 use crate::command::CommandExecutor;
-use crate::input::{InputRouter, PointerId, Touch, TouchPhase};
+use crate::input::{InputRouter, MiddleRelease, PointerId, Touch, TouchPhase};
 use crate::intent_queue::{walk_scene_and_drain, IntentQueue};
 
 /// R51.122 §5.41 — backend-agnostic dispatch substrate.
@@ -1590,12 +1590,59 @@ impl<V: WidgetCore> CoreShell<V> {
         x: f64,
         y: f64,
     ) -> DispatchTail<V::State> {
+        self.cursor_moved_for_window_with_modifiers(
+            window_id,
+            pid,
+            x,
+            y,
+            pinion_core::Modifiers::empty(),
+        )
+        .0
+    }
+
+    /// R881 §5.35 §5.49 — [`cursor_moved_for_window`](Self::cursor_moved_for_window)
+    /// carrying the held keyboard `modifiers` (the shell threads its
+    /// out-of-band cache, the R781 `pointer_up` / R877 `wheel` pattern).
+    /// The second tuple element reports whether an in-flight middle pan
+    /// dispatched a delta this move — the backend's repaint cue,
+    /// mirroring [`Self::wheel_with_modifiers_for_window`]'s flag.
+    pub fn cursor_moved_for_window_with_modifiers(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        x: f64,
+        y: f64,
+        modifiers: pinion_core::Modifiers,
+    ) -> (DispatchTail<V::State>, bool) {
         let Self { scene, routers, .. } = self;
         let router = routers
             .entry(window_id.to_owned())
             .or_default();
-        router.cursor_moved(pid, x, y, scene);
-        self.tail()
+        let pan_dispatched = router.cursor_moved_with_modifiers(pid, x, y, modifiers, scene);
+        (self.tail(), pan_dispatched)
+    }
+
+    /// R881 §5.35 §5.49 — middle-button press for the addressed window
+    /// (winit `MouseInput { Middle, Pressed }`). Opens the router's
+    /// middle gesture (pan targets pinned at the press point); the X11
+    /// PRIMARY paste that pre-R881 fired on press is deferred to a
+    /// release-in-place — see [`Self::middle_up_for_window`].
+    pub fn middle_down_for_window(&mut self, window_id: &str, pid: PointerId) {
+        self.routers
+            .entry(window_id.to_owned())
+            .or_default()
+            .middle_down(pid);
+    }
+
+    /// R881 §5.35 §5.49 — middle-button release for the addressed
+    /// window. Closes the router's middle gesture and reports the
+    /// click-vs-pan determination ([`MiddleRelease`]); the shell runs
+    /// its paste funnel on [`MiddleRelease::Click`] only.
+    pub fn middle_up_for_window(&mut self, window_id: &str, pid: PointerId) -> MiddleRelease {
+        self.routers
+            .entry(window_id.to_owned())
+            .or_default()
+            .middle_up(pid)
     }
 
     /// R51.122 §5.41 — pointer leaves the surface for `pid` (winit's

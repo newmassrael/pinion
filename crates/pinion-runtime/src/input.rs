@@ -77,6 +77,7 @@
 //!   a separate carry.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::Instant;
 
 use pinion_core::composite_tag::{compose_send_payload, split_subindex};
@@ -84,6 +85,7 @@ use pinion_core::event::WheelDelta;
 use pinion_core::external::{CaptureNormalize, DragPayload, DropPoint, IntrospectValue};
 use pinion_core::input::PointerWireEvent;
 use pinion_core::scene::{ExternalNode, Rect, Scene};
+use pinion_core::widgets::scroll::ScrollState;
 
 /// R664 §5.49 — W3C UI Events `dblclick` time threshold (milliseconds).
 /// Two consecutive `pointer_down` calls within this window on the same
@@ -343,6 +345,77 @@ pub struct InputRouter {
     /// (slider / scrub), `begin_drag` `DnD`, and plain free-mode — so no
     /// gesture path re-derives the determination ([[drag-release-trailing-pointerup-suppress]]).
     press_gestures: HashMap<PointerId, DragLatch>,
+    /// R881 §5.35 §5.49 — per-pointer in-flight middle-button gesture.
+    /// Opened by [`middle_down`](Self::middle_down), advanced by
+    /// [`cursor_moved`](Self::cursor_moved) (the pan arm), consumed by
+    /// [`middle_up`](Self::middle_up), revoked by
+    /// [`pointer_cancel`](Self::pointer_cancel). The middle button is a
+    /// *gesture chord*, not a routed widget event: release-in-place is
+    /// the X11 PRIMARY paste (deferred to release — xterm / Qt
+    /// convention), a latched move is drag-to-pan (Blender / Unreal /
+    /// browser auto-scroll family). See [`MiddleGesture`].
+    middle_gestures: HashMap<PointerId, MiddleGesture>,
+}
+
+/// R881 §5.35 §5.49 — one held middle-button press. `pan` is `None`
+/// only when the press arrived before any `cursor_moved` seeded a
+/// cursor for the pointer (then the press can never pan — there is no
+/// origin to latch against — and release degrades to the click/paste
+/// path, the pre-R881 behaviour).
+#[derive(Debug)]
+struct MiddleGesture {
+    pan: Option<MiddlePanState>,
+}
+
+/// R881 §5.35 §5.49 — the middle-button drag-to-pan state. Targets are
+/// **pinned at press** (gesture-capture semantics): a pan must keep
+/// driving the scrollable it started on even when the moving content
+/// slides a different container under the cursor mid-gesture —
+/// per-move re-resolution would hop containers, which no native pan
+/// implementation does.
+#[derive(Debug)]
+struct MiddlePanState {
+    /// The click-vs-pan dead zone — the R880 [`DragLatch`] contract
+    /// predicate, its 2nd direct capture-path consumer. Until it
+    /// latches, the press is still a paste-click candidate; once
+    /// latched the gesture is a pan for its lifetime (release never
+    /// pastes).
+    latch: DragLatch,
+    /// Cursor at the previous pan dispatch — each move dispatches the
+    /// `last - current` delta (content follows the cursor, the grab
+    /// convention every canvas pan implements).
+    last: (f64, f64),
+    /// Sub-pixel remainder carried between moves on the integer
+    /// [`ScrollState::scroll_by`] branch (the Qt wheel-remainder
+    /// accumulator) so a slow high-DPI pan whose per-event delta
+    /// rounds to zero still accumulates motion.
+    frac: (f32, f32),
+    /// Hover target tag at press (full routed, possibly composite,
+    /// form) — the pinned stage-1 wheel-offer recipient, mirroring
+    /// [`InputRouter::wheel_with_modifiers`]'s two-stage routing.
+    tag: Option<String>,
+    /// Deepest attached [`ScrollState`] under the press point — the
+    /// pinned stage-2 fallback recipient.
+    scroll: Option<Rc<ScrollState>>,
+}
+
+/// R881 §5.35 — what a middle-button release resolved to. The router
+/// owns the click-vs-pan determination (the [`DragLatch`] SSOT); the
+/// *paste policy* on `Click` stays with the shell (`ShellCore`
+/// `middle_click`, the X11 PRIMARY funnel) — substrate decides the
+/// gesture, backend decides the action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MiddleRelease {
+    /// The press latched into a drag-to-pan; the pan deltas were
+    /// already dispatched move-by-move. Release performs no action.
+    Pan,
+    /// Press-release in place (never strayed past the dead zone) —
+    /// the canonical middle-*click*. The shell runs its paste funnel.
+    Click,
+    /// No gesture was in flight for this pointer: the press was never
+    /// seen, or [`InputRouter::pointer_cancel`] revoked it (a
+    /// cancelled gesture is "never happened" — it must not paste).
+    NoPress,
 }
 
 /// R742 §5.51 — in-flight drag state owned by the [`InputRouter`].
@@ -554,8 +627,44 @@ impl InputRouter {
     ///   pointer's hover target and dispatch `PointerEnter` /
     ///   `PointerLeave` on transitions — the canonical button-like
     ///   cancel-by-leave UX.
-    pub fn cursor_moved(&mut self, id: PointerId, x: f64, y: f64, state_scene: &mut Scene) {
+    ///
+    /// Zero-modifier wrapper around
+    /// [`cursor_moved_with_modifiers`](Self::cursor_moved_with_modifiers)
+    /// (tests, the TUI shell) — mirrors the
+    /// [`pointer_up`](Self::pointer_up) /
+    /// [`pointer_up_with_modifiers`](Self::pointer_up_with_modifiers)
+    /// pair.
+    pub fn cursor_moved(&mut self, id: PointerId, x: f64, y: f64, state_scene: &mut Scene) -> bool {
+        self.cursor_moved_with_modifiers(id, x, y, Modifiers::empty(), state_scene)
+    }
+
+    /// R881 §5.35 §5.49 — [`cursor_moved`](Self::cursor_moved) carrying
+    /// the held keyboard `modifiers` (the shell threads its out-of-band
+    /// `ModifiersChanged` cache here, the R781 / R877 pattern). The
+    /// modifiers feed the middle-button pan arm's wheel-vocabulary
+    /// dispatch so a `Ctrl`+middle-drag reaches a canvas's `Ctrl`-zoom
+    /// wheel arm exactly as a held `Ctrl`+wheel would (the Blender
+    /// chord set, for free, because pan rides the wheel vocabulary).
+    ///
+    /// Returns `true` when an in-flight middle pan dispatched a delta
+    /// this move (an `External` consumed it or a pinned [`ScrollState`]
+    /// scrolled) — the backend's repaint cue, mirroring
+    /// [`wheel_with_modifiers`](Self::wheel_with_modifiers)'s return.
+    pub fn cursor_moved_with_modifiers(
+        &mut self,
+        id: PointerId,
+        x: f64,
+        y: f64,
+        modifiers: Modifiers,
+        state_scene: &mut Scene,
+    ) -> bool {
         self.cursors.insert(id, (x, y));
+        // R881 §5.35 §5.49 — advance the middle-button pan first: while a
+        // pan is live the pointer is captured by the gesture, so free-mode
+        // hover Enter/Leave churn is suppressed below (the same pinning
+        // capture and DnD already get).
+        let (pan_live, pan_dispatched) =
+            self.advance_middle_pan(id, x, y, modifiers, state_scene);
         // R876 §5.49 §5.51 — advance the click-vs-drag SSOT, then let its two
         // consumers read it. Once this press has strayed into a drag it is no
         // longer a click candidate, so drop the `last_press` snapshot the
@@ -580,9 +689,142 @@ impl InputRouter {
             self.update_drag(id, x, y, state_scene);
         } else if let Some(tag) = self.captured_targets.get(&id).cloned() {
             self.forward_pointer_move(state_scene, &tag, x, y);
-        } else {
+        } else if !pan_live {
             self.refresh_hover(id, state_scene);
         }
+        pan_dispatched
+    }
+
+    /// R881 §5.35 §5.49 — open a middle-button gesture for `id` (winit
+    /// `MouseInput { Middle, Pressed }`). Dispatches **nothing**: the
+    /// press is ambiguous between a paste-click and a drag-to-pan until
+    /// the [`DragLatch`] resolves it, so the X11 PRIMARY paste that
+    /// pre-R881 fired here is deferred to a release-in-place
+    /// ([`middle_up`](Self::middle_up) → [`MiddleRelease::Click`]) —
+    /// the xterm / Qt release-paste convention.
+    ///
+    /// Pan targets are pinned now, against the press point: the hover
+    /// target tag (the stage-1 wheel-offer recipient) and the deepest
+    /// attached [`ScrollState`] under the cursor (the stage-2
+    /// fallback) — the same two-stage routing
+    /// [`wheel_with_modifiers`](Self::wheel_with_modifiers) resolves
+    /// per-event, frozen per-gesture here so a pan can never hop
+    /// containers mid-drag.
+    pub fn middle_down(&mut self, id: PointerId) {
+        let pan = self.cursors.get(&id).copied().map(|origin| {
+            let scroll = self.last_paint_scene.as_ref().and_then(|paint| {
+                paint.scroll_state_at(floor_clamp_u32(origin.0), floor_clamp_u32(origin.1))
+            });
+            MiddlePanState {
+                latch: DragLatch::new(origin),
+                last: origin,
+                frac: (0.0, 0.0),
+                tag: self.hover_targets.get(&id).cloned(),
+                scroll,
+            }
+        });
+        self.middle_gestures.insert(id, MiddleGesture { pan });
+    }
+
+    /// R881 §5.35 §5.49 — close the middle-button gesture for `id`
+    /// (winit `MouseInput { Middle, Released }`) and report what it
+    /// was. The shell acts on [`MiddleRelease::Click`] only (the
+    /// paste funnel); a pan already applied itself move-by-move, and
+    /// [`MiddleRelease::NoPress`] covers both a spurious release and a
+    /// gesture [`pointer_cancel`](Self::pointer_cancel) revoked — a
+    /// cancelled press is "never happened" and must not paste.
+    pub fn middle_up(&mut self, id: PointerId) -> MiddleRelease {
+        match self.middle_gestures.remove(&id) {
+            None => MiddleRelease::NoPress,
+            Some(gesture) => match gesture.pan {
+                Some(pan) if pan.latch.live() => MiddleRelease::Pan,
+                _ => MiddleRelease::Click,
+            },
+        }
+    }
+
+    /// R881 §5.35 — whether a *latched* middle pan is in flight for
+    /// `id` (a non-latched middle press is still a click candidate and
+    /// does not pin the hover).
+    fn middle_pan_live(&self, id: PointerId) -> bool {
+        self.middle_gestures
+            .get(&id)
+            .and_then(|g| g.pan.as_ref())
+            .is_some_and(|pan| pan.latch.live())
+    }
+
+    /// R881 §5.35 §5.49 — the middle-pan `cursor_moved` arm. Advances
+    /// the gesture's [`DragLatch`]; once live, dispatches the
+    /// `last - current` cursor delta (content follows the cursor — the
+    /// grab convention) through the pinned two-stage wheel routing:
+    /// offer the press-time hover `External` first (a consuming canvas
+    /// pans / `Ctrl`-zooms itself), else [`ScrollState::scroll_by`] on
+    /// the pinned scroll container. Pan deltas ARE wheel-vocabulary
+    /// pixel deltas — winit itself reports touchpad pan gestures as
+    /// `WheelDelta::PixelDelta`, so a widget's wheel arm already
+    /// speaks this dialect; the middle drag is just a second producer.
+    ///
+    /// Returns `(pan_live, dispatched_this_move)`.
+    fn advance_middle_pan(
+        &mut self,
+        id: PointerId,
+        x: f64,
+        y: f64,
+        modifiers: Modifiers,
+        state_scene: &mut Scene,
+    ) -> (bool, bool) {
+        // Stage 0: advance the latch + compute the delta, then release
+        // the gesture borrow before touching the paint scene.
+        let (dx, dy, tag, scroll) = {
+            let Some(pan) = self
+                .middle_gestures
+                .get_mut(&id)
+                .and_then(|g| g.pan.as_mut())
+            else {
+                return (false, false);
+            };
+            if !pan.latch.advance((x, y)) {
+                return (false, false);
+            }
+            let (last_x, last_y) = pan.last;
+            pan.last = (x, y);
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "per-move cursor deltas are a few logical px; f32 is the wheel \
+                          vocabulary's precision"
+            )]
+            let (dx, dy) = ((last_x - x) as f32, (last_y - y) as f32);
+            (dx, dy, pan.tag.clone(), pan.scroll.clone())
+        };
+        if dx == 0.0 && dy == 0.0 {
+            return (true, false);
+        }
+        // Stage 1: pinned External offer (same helper as the wheel path
+        // — one dialect, two producers).
+        if let (Some(tag), Some(paint)) = (tag.as_deref(), self.last_paint_scene.as_ref()) {
+            if offer_wheel_to_external(paint, state_scene, tag, (x, y), (dx, dy), modifiers) {
+                return (true, true);
+            }
+        }
+        // Stage 2: pinned scroll container, with the sub-pixel
+        // remainder carried across moves (integer scroll offsets — the
+        // Qt wheel-remainder accumulator) so slow precise pans never
+        // stall on per-event rounding.
+        if let Some(state) = scroll {
+            let Some(pan) = self
+                .middle_gestures
+                .get_mut(&id)
+                .and_then(|g| g.pan.as_mut())
+            else {
+                return (true, false);
+            };
+            let (tx, ty) = (pan.frac.0 + dx, pan.frac.1 + dy);
+            let (ix, iy) = (tx.round(), ty.round());
+            pan.frac = (tx - ix, ty - iy);
+            state.scroll_by(round_clamp_i32(ix), round_clamp_i32(iy));
+            return (true, true);
+        }
+        (true, false)
     }
 
     /// winit `CursorLeft` handler. Drops the cursor for `id` and
@@ -597,8 +839,14 @@ impl InputRouter {
         self.cursors.remove(&id);
         // R742 §5.51 — an in-flight drag suppresses the leave for the
         // same reason capture does: the gesture survives the cursor
-        // straying outside the window and re-entering.
-        if self.captured_targets.contains_key(&id) || self.drag_sessions.contains_key(&id) {
+        // straying outside the window and re-entering. R881 — a live
+        // middle pan is the same gesture class (the OS implicit grab
+        // keeps streaming motion while the button is held), so it pins
+        // the hover identically.
+        if self.captured_targets.contains_key(&id)
+            || self.drag_sessions.contains_key(&id)
+            || self.middle_pan_live(id)
+        {
             return;
         }
         if let Some(tag) = self.hover_targets.remove(&id) {
@@ -936,17 +1184,14 @@ impl InputRouter {
         // R877 — stage 1: offer the wheel to the hovered External. The
         // hover target is the routed (possibly composite `widget#sub`)
         // tag, so wheeling over a node card still reaches the canvas
-        // coordinator via its primary tag.
+        // coordinator via its primary tag. R881 extracted the offer
+        // into `offer_wheel_to_external` so the middle-button pan arm
+        // dispatches through the identical mechanics (one dialect, two
+        // producers — divergence here would be a routing bug).
         if let Some(target_tag) = self.hover_targets.get(&id).cloned() {
-            let (primary, _) = split_subindex(&target_tag);
-            if let Some(external) = find_external_by_tag(state_scene, primary) {
-                if let Some((x_rel, y_rel)) =
-                    capture_rel_coords(paint, external, primary, &target_tag, x, y)
-                {
-                    if external.handle.wheel(x_rel, y_rel, dx, dy, modifiers) {
-                        return true;
-                    }
-                }
+            if offer_wheel_to_external(paint, state_scene, &target_tag, (x, y), (dx, dy), modifiers)
+            {
+                return true;
             }
         }
         // Stage 2: the pre-R877 Scroll dispatch, unchanged.
@@ -1079,6 +1324,13 @@ impl InputRouter {
         if let Some(tag) = target {
             dispatch_send(state_scene, &tag, PointerWireEvent::Cancel.as_wire_name());
         }
+        // R881 §5.35 — revoke any in-flight middle gesture: a cancelled
+        // press is "never happened", so the trailing OS `Released` (if
+        // one still arrives) resolves to `MiddleRelease::NoPress` and
+        // neither pastes nor pans (the R880.1 mandatory-cancel-arm
+        // discipline). Pan deltas already applied stay applied — a pan
+        // is incremental scrolling, not a journaled transaction.
+        self.middle_gestures.remove(&id);
         if self.captured_targets.remove(&id).is_some() {
             self.refresh_hover(id, state_scene);
         }
@@ -1379,6 +1631,35 @@ pub fn rect_for_tag(scene: &Scene, target_tag: &str) -> Option<Rect> {
 ///
 /// `None` when the chosen rect is absent from the paint scene (not yet
 /// laid out) — callers skip the forward.
+/// R877 / R881 §5.35 §5.49 — the wheel-vocabulary `External` offer,
+/// shared verbatim between the per-event wheel path
+/// ([`InputRouter::wheel_with_modifiers`] stage 1, target = current
+/// hover) and the middle-button pan arm (target = the tag pinned at
+/// press). Resolves the (possibly composite) `target_tag`'s primary
+/// `External` in the state scene, normalises the cursor over the
+/// widget's [`CaptureNormalize`] basis, and offers the pixel delta +
+/// modifiers to [`External::wheel`](pinion_core::external::External::wheel).
+/// `true` = consumed (no scroll fallback may run).
+fn offer_wheel_to_external(
+    paint: &Scene,
+    state_scene: &mut Scene,
+    target_tag: &str,
+    cursor: (f64, f64),
+    delta: (f32, f32),
+    modifiers: Modifiers,
+) -> bool {
+    let (primary, _) = split_subindex(target_tag);
+    let Some(external) = find_external_by_tag(state_scene, primary) else {
+        return false;
+    };
+    let Some((x_rel, y_rel)) =
+        capture_rel_coords(paint, external, primary, target_tag, cursor.0, cursor.1)
+    else {
+        return false;
+    };
+    external.handle.wheel(x_rel, y_rel, delta.0, delta.1, modifiers)
+}
+
 fn capture_rel_coords(
     paint: &Scene,
     external: &ExternalNode,
@@ -3421,6 +3702,217 @@ mod tests {
         ));
         assert_eq!(scroll.offset(), (0, 0));
         assert_eq!(calls.lock().expect("mutex poisoned").len(), 1);
+    }
+
+    // ─── R881 §5.35 §5.49 middle-button drag-to-pan tests ─────────
+
+    #[test]
+    fn r881_middle_drag_pans_pinned_scroll_content_follows_cursor() {
+        // The core arc: middle press over a scrollable, drag past the
+        // dead zone → the pinned ScrollState pans by `last - current`
+        // (content follows the cursor: dragging the cursor UP reveals
+        // lower content, offset grows). Release resolves to Pan so the
+        // shell never pastes.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        // (50, 90): inside the scroll viewport, off the tagged button.
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        // 2 px wobble: inside the dead zone — nothing pans yet.
+        assert!(!router.cursor_moved(PointerId::MOUSE, 50.0, 88.0, &mut state_scene));
+        assert_eq!(scroll.offset(), (0, 0), "dead-zone wobble must not pan");
+        // 30 px up from the origin: latched. Dead-zone wobble never
+        // advanced `last`, so the FULL displacement from the grab
+        // origin (90 → 60 = 30) dispatches — total tracking, the
+        // Blender grab semantic (no motion is lost to the dead zone).
+        assert!(router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene));
+        assert_eq!(scroll.offset(), (0, 30), "content follows the cursor");
+        // Further horizontal move pans x too.
+        assert!(router.cursor_moved(PointerId::MOUSE, 30.0, 60.0, &mut state_scene));
+        assert_eq!(scroll.offset(), (20, 30));
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
+    }
+
+    #[test]
+    fn r881_middle_press_release_in_place_is_click() {
+        // A press-release inside the dead zone is the middle-*click*:
+        // the shell runs its paste funnel on this verdict, and nothing
+        // pans.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        router.cursor_moved(PointerId::MOUSE, 52.0, 91.0, &mut state_scene);
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Click);
+        assert_eq!(scroll.offset(), (0, 0));
+        // The gesture is consumed: a second (spurious) release reports
+        // NoPress, so the shell cannot double-paste.
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::NoPress);
+    }
+
+    #[test]
+    fn r881_pointer_cancel_revokes_middle_gesture_no_paste() {
+        // The R880.1 mandatory-cancel-arm discipline: a cancelled
+        // gesture is "never happened" — the trailing OS release must
+        // resolve to NoPress (no paste), and already-applied pan
+        // deltas stay (incremental scrolling, not a journaled
+        // transaction).
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene);
+        assert_eq!(scroll.offset(), (0, 30));
+        router.pointer_cancel(PointerId::MOUSE, &mut state_scene);
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::NoPress);
+        assert_eq!(scroll.offset(), (0, 30), "applied pan deltas are not rolled back");
+    }
+
+    #[test]
+    fn r881_middle_press_before_any_cursor_degrades_to_click() {
+        // A middle press that arrives before any cursor_moved has no
+        // origin to latch against: pan is impossible, release degrades
+        // to the click/paste path — the pre-R881 behaviour.
+        let mut router = InputRouter::new();
+        router.middle_down(PointerId::MOUSE);
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Click);
+    }
+
+    #[test]
+    fn r881_middle_pan_targets_are_pinned_at_press() {
+        // Gesture capture: the pan keeps driving the scrollable it
+        // started on even when the cursor strays outside every scroll
+        // viewport mid-drag (per-move re-resolution would drop or hop
+        // the target — no native pan does that).
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        // March far outside the 200×200 paint root.
+        assert!(router.cursor_moved(PointerId::MOUSE, 50.0, 400.0, &mut state_scene));
+        // Content follows the cursor down: offset shrinks, clamped at 0
+        // … so drag the other way to observe motion.
+        assert!(router.cursor_moved(PointerId::MOUSE, 50.0, 350.0, &mut state_scene));
+        assert_eq!(scroll.offset(), (0, 50), "pinned target pans outside its viewport");
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
+    }
+
+    #[test]
+    fn r881_middle_pan_offers_pinned_external_with_modifiers() {
+        // Stage 1 of the pan dispatch is the SAME wheel-vocabulary
+        // offer the wheel path makes (one dialect, two producers): a
+        // consuming External receives the per-move delta + the held
+        // modifiers (Ctrl+middle-drag = the canvas zoom chord), and
+        // the scroll fallback must not also fire.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, calls) = WheelExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        // Over the tagged button → the hover tag is pinned at press.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        let ctrl = Modifiers { ctrl: true, ..Modifiers::empty() };
+        assert!(router.cursor_moved_with_modifiers(
+            PointerId::MOUSE,
+            100.0,
+            60.0,
+            ctrl,
+            &mut state_scene,
+        ));
+        let recorded = calls.lock().expect("mutex poisoned").clone();
+        assert_eq!(recorded.len(), 1);
+        let (_, _, dx, dy, got_ctrl) = recorded[0];
+        assert!((dx - 0.0).abs() < f32::EPSILON);
+        assert!((dy - 30.0).abs() < f32::EPSILON, "delta = last - current, dy {dy}");
+        assert!(got_ctrl, "held modifiers reach the External's wheel arm");
+        assert_eq!(scroll.offset(), (0, 0), "consumed offer skips the scroll fallback");
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
+    }
+
+    #[test]
+    fn r881_middle_pan_pins_hover_until_release() {
+        // While a pan is live the pointer belongs to the gesture: the
+        // free-mode hover walk is suppressed (no Enter/Leave churn as
+        // content slides under the cursor), exactly like capture and
+        // DnD. Hover resettles on the first move after release.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, _calls) = WheelExternal::new(false);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_btn"));
+        router.middle_down(PointerId::MOUSE);
+        // Latch + stray far off the button: hover stays pinned.
+        router.cursor_moved(PointerId::MOUSE, 30.0, 30.0, &mut state_scene);
+        assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_btn"));
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
+        // First post-release move resettles hover normally.
+        router.cursor_moved(PointerId::MOUSE, 30.0, 31.0, &mut state_scene);
+        assert_eq!(router.hover_target(PointerId::MOUSE), None);
+    }
+
+    #[test]
+    fn r881_middle_pan_accumulates_sub_pixel_remainders() {
+        // Integer scroll offsets round per move; the Qt-style
+        // remainder carry keeps a slow high-DPI pan moving instead of
+        // rounding every 0.4 px step to zero forever.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 50.0, 100.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        // Latch with a clean 10 px pull.
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        assert_eq!(scroll.offset(), (0, 10));
+        // Two 0.4 px creeps: the first rounds to 0 (remainder 0.4),
+        // the second accumulates to 0.8 → rounds to 1 (remainder
+        // -0.2). Motion is preserved across moves.
+        router.cursor_moved(PointerId::MOUSE, 50.0, 89.6, &mut state_scene);
+        assert_eq!(scroll.offset(), (0, 10), "first sub-pixel step carries");
+        router.cursor_moved(PointerId::MOUSE, 50.0, 89.2, &mut state_scene);
+        assert_eq!(scroll.offset(), (0, 11), "accumulated remainder lands");
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
     }
 
     // ─── R51.187 §5.45 R55.C.3 keyboard scroll dispatch tests ─────

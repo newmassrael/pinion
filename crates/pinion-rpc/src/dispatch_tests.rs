@@ -799,6 +799,74 @@ fn scene_click_v1_enqueues_click_at_coordinate() {
     assert!((y - 80.0).abs() < f64::EPSILON);
 }
 
+// ---- R881 §5.35 §5.49 — scene/drag button param (DragButton) ----
+
+#[test]
+fn r881_scene_drag_defaults_to_left_button() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/drag","params":{"from":{"x":10.0,"y":10.0},"to":{"x":50.0,"y":50.0}},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::Drag { steps, button, .. } = inbox[0] else {
+        panic!("expected Drag variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(steps, 8, "default steps");
+    assert_eq!(button, DragButton::Left, "omitted button defaults to left");
+}
+
+#[test]
+fn r881_scene_drag_middle_button_enqueues_middle() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/drag","params":{"from":{"x":10.0,"y":10.0},"to":{"x":50.0,"y":50.0},"button":"middle"},"id":2}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::Drag { button, .. } = inbox[0] else {
+        panic!("expected Drag variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(button, DragButton::Middle);
+}
+
+#[test]
+fn r881_scene_drag_unknown_button_is_invalid_params() {
+    // Out-of-vocabulary names reject loudly (no silent left-drag) —
+    // the DragButton decode is the single gate.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/drag","params":{"from":{"x":10.0,"y":10.0},"to":{"x":50.0,"y":50.0},"button":"right"},"id":3}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("unknown button must error");
+    assert_eq!(err.code, -32602);
+    assert!(inbox.is_empty(), "rejected request enqueues nothing");
+}
+
+#[test]
+fn r881_drag_button_wire_pair_round_trips() {
+    // decode == inverse(encode) for the whole vocabulary; unknown
+    // names decode to None (the R773 wire-vocabulary SSOT guard).
+    for b in [DragButton::Left, DragButton::Middle] {
+        assert_eq!(DragButton::from_wire_str(b.as_wire_str()), Some(b));
+    }
+    assert_eq!(DragButton::from_wire_str("right"), None);
+    assert_eq!(DragButton::from_wire_str(""), None);
+    assert_eq!(DragButton::default(), DragButton::Left);
+}
+
 // ---- R724 §5.28 — scene/tick (DeferredInput::Tick) ----
 
 #[test]

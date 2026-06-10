@@ -587,6 +587,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         to_at: Optional[tuple[float, float]] = None,
         to_path: Optional[str] = None,
         steps: int = 8,
+        button: str = "left",
     ) -> None:
         """`scene/drag` typed wrapper (R660 §5.49).
 
@@ -608,6 +609,11 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         without paying for hundreds of redundant samples. Pass `0` for
         a degenerate press / release at `from_at` (well-defined but
         usually a test bug).
+
+        `button` (R881 §5.35 §5.49) selects the held mouse button:
+        "left" (default — the capture-lock / DnD / text-select arc) or
+        "middle" (drag-to-pan; an in-place press/release is the
+        middle-click paste).
         """
         if (from_at is None) == (from_path is None):
             raise ValueError("exactly one of `from_at` or `from_path` must be supplied")
@@ -616,6 +622,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         if steps < 0:
             raise ValueError("steps must be non-negative")
         params: dict[str, Any] = {"steps": int(steps)}
+        if button != "left":
+            params["button"] = button
         if from_at is not None:
             params["from"] = {"x": float(from_at[0]), "y": float(from_at[1])}
         else:

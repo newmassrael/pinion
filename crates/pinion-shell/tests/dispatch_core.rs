@@ -2421,6 +2421,55 @@ mod r56_2_e_apply_middle_click_wire {
 }
 
 #[cfg(test)]
+mod r881_middle_gesture_paste_on_release {
+    //! R881 §5.35 §5.49 — the middle-button press/release pair
+    //! choreography at the `ShellCore` tier. Pre-R881 the winit
+    //! `{ Middle, Pressed }` arm pasted immediately; R881 defers the
+    //! paste to a release-in-place (`MiddleRelease::Click` from the
+    //! router's `DragLatch`) so a drag-to-pan never pastes — and the
+    //! paste funnel itself (`ShellCore::middle_click`, covered by the
+    //! `r56_2_e` mod above) is unchanged, just re-sequenced.
+
+    use super::{reset_mocks, APPLY_MIDDLE_CLICK_LOG, TEST_LOCK, TestView};
+    use pinion_runtime::PointerId;
+    use pinion_shell::ShellCore;
+
+    fn paste_count() -> usize {
+        APPLY_MIDDLE_CLICK_LOG.lock().unwrap().len()
+    }
+
+    #[test]
+    fn r881_press_does_not_paste_release_in_place_pastes_once() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.middle_pressed(PointerId::MOUSE);
+        assert_eq!(paste_count(), 0, "paste is deferred past the press");
+        core.middle_released(PointerId::MOUSE);
+        assert_eq!(paste_count(), 1, "release-in-place runs the paste funnel once");
+        // A trailing spurious release must not double-paste.
+        core.middle_released(PointerId::MOUSE);
+        assert_eq!(paste_count(), 1, "NoPress release is silent");
+    }
+
+    #[test]
+    fn r881_middle_drag_never_pastes() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        // Seed a cursor so the press opens a pan-capable gesture, then
+        // stray far past the DragLatch dead zone before releasing.
+        core.cursor_moved(PointerId::MOUSE, 10.0, 10.0);
+        core.middle_pressed(PointerId::MOUSE);
+        core.cursor_moved(PointerId::MOUSE, 60.0, 60.0);
+        core.middle_released(PointerId::MOUSE);
+        assert_eq!(paste_count(), 0, "a moved middle drag is a pan, never a paste");
+    }
+}
+
+#[cfg(test)]
 mod r56_2_c_ime_caret_rect_default {
     //! R56.2.c §5.13 §5.38 — `WidgetView::ime_caret_rect` default-impl
     //! contract regression.

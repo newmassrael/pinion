@@ -368,6 +368,55 @@ pub struct DispatchContext<'a> {
     pub fragment_cache_stats: Option<pinion_runtime::FragmentCacheStats>,
 }
 
+/// R881 §5.35 §5.49 — which mouse button a `scene/drag` injection
+/// holds for the duration of the gesture. The wire vocabulary is the
+/// W3C `PointerEvent.button` *name* set (lower-case, human/AI-readable
+/// per the RPC string-vocab convention): `"left"` (the default — every
+/// pre-R881 `scene/drag`) and `"middle"` (drag-to-pan / the middle
+/// gesture pair). `"right"` is deliberately absent until a right-drag
+/// gesture exists to expand to — `scene/click`-class context-menu
+/// injection is a different arc.
+///
+/// Encode ([`as_wire_str`](Self::as_wire_str)) and decode
+/// ([`from_wire_str`](Self::from_wire_str)) live as an adjacent pair —
+/// `decode == inverse(encode)`, the R773 wire-vocabulary SSOT class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DragButton {
+    /// The primary button — the pre-R881 `scene/drag` arc
+    /// (press / capture-lock march / release).
+    #[default]
+    Left,
+    /// The middle (W3C "auxiliary") button — expands through the
+    /// R881 middle-gesture pair: a moved drag pans the pinned
+    /// scrollable / canvas, an in-place press-release pastes.
+    Middle,
+}
+
+impl DragButton {
+    /// Canonical wire name — the single source the docs / errors quote.
+    /// Inverse of [`from_wire_str`](Self::from_wire_str).
+    #[must_use]
+    pub fn as_wire_str(self) -> &'static str {
+        match self {
+            DragButton::Left => "left",
+            DragButton::Middle => "middle",
+        }
+    }
+
+    /// Decode a wire button name; `None` for anything outside the
+    /// vocabulary (the dispatcher rejects with `invalid_params` so a
+    /// typo surfaces at the call site, not as a silent left-drag).
+    /// Inverse of [`as_wire_str`](Self::as_wire_str).
+    #[must_use]
+    pub fn from_wire_str(name: &str) -> Option<Self> {
+        match name {
+            "left" => Some(DragButton::Left),
+            "middle" => Some(DragButton::Middle),
+            _ => None,
+        }
+    }
+}
+
 /// R51.195 §5.49 §5.45 — single deferred-input entry. One per
 /// AI-injected event; the embedder drains the inbox once `dispatch`
 /// returns and feeds each entry into the matching shell substrate
@@ -452,12 +501,21 @@ pub enum DeferredInput {
     /// plus the receiving widget's `pointer_move` fractional dispatch
     /// — R55.D.3 `ScrollBar` drag math today; future `Slider` drag
     /// rides the same primitive.
+    ///
+    /// R881 §5.35 §5.49 — `button` selects which mouse button holds the
+    /// drag (`params.button`, default [`DragButton::Left`]). A
+    /// [`DragButton::Middle`] drag expands through the middle-gesture
+    /// pair (`middle_pressed` / `middle_released`) instead, so an AI
+    /// client drives drag-to-pan over a scrollable / canvas through the
+    /// exact arc a physical middle-button drag takes (§2 invariant #2 —
+    /// every input a human makes must have an RPC peer).
     Drag {
         from_x: f64,
         from_y: f64,
         to_x: f64,
         to_y: f64,
         steps: u32,
+        button: DragButton,
     },
     /// R770 §5.49 §5.15 — `scene/hover_file` injection: the winit
     /// `WindowEvent::HoveredFile(PathBuf)` RPC peer. A file is being
@@ -1694,7 +1752,8 @@ where
 /// {
 ///   "from": {"x": <f64>, "y": <f64>},   // or "from_path": "<tag>"
 ///   "to":   {"x": <f64>, "y": <f64>},   // or "to_path":   "<tag>"
-///   "steps": <u32>                       // optional, default 8
+///   "steps": <u32>,                      // optional, default 8
+///   "button": "left" | "middle"          // optional, default "left" (R881)
 /// }
 /// ```
 ///
@@ -1756,12 +1815,25 @@ where
             })?,
         None => 8,
     };
+    // R881 §5.35 §5.49 — optional held-button selector. Decode through
+    // the DragButton wire pair so an out-of-vocabulary name rejects
+    // loudly instead of silently degrading to a left drag.
+    let button = match params.get("button") {
+        None => DragButton::default(),
+        Some(v) => v
+            .as_str()
+            .and_then(DragButton::from_wire_str)
+            .ok_or_else(|| {
+                RpcError::invalid_params("params.button must be \"left\" or \"middle\"")
+            })?,
+    };
     inbox.push(DeferredInput::Drag {
         from_x: from.0,
         from_y: from.1,
         to_x: to.0,
         to_y: to.1,
         steps,
+        button,
     });
     Ok(Value::Null)
 }

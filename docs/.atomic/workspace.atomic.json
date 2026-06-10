@@ -36647,6 +36647,68 @@
         "TUI shell passes no pointer modifiers (GUI/TUI dual divergence on the modifier wire; pre-existing axis)"
       ]
     },
+    "R881": {
+      "decision_summary": "R881 SS5.35 SS5.49 - middle-button drag-to-pan (Blender/Unreal idiom) + paste-on-release. The shell dropped Middle releases and pasted at press; now the router owns a per-pointer MiddleGesture: press pins pan targets (hovered External tag + deepest ScrollState - gesture capture, no container hopping), the R880 DragLatch (2nd direct capture-path consumer) splits click from pan, and each latched move dispatches the last-minus-current cursor delta (content follows the cursor, grab convention) through the SAME two-stage wheel routing R877 built - stage 1 extracted as offer_wheel_to_external so the wheel path and the pan path cannot diverge. Pan is therefore zero code per binding: plain deltas land on the pinned ScrollState (with a Qt-style sub-pixel remainder carry), and held chords reach the External wheel vocabulary (Ctrl+middle-drag zooms the node canvas via its existing R877 arm - winit itself reports touchpad pans as pixel wheel deltas, so this is one dialect with two producers). Release-in-place resolves to MiddleRelease::Click and only then runs the X11 PRIMARY paste funnel (xterm/Qt release-paste; a pan never pastes); PointerCancel revokes the gesture so a cancelled press neither pastes nor pans (R880.1 mandatory-cancel-arm). Modifiers thread through the new cursor_moved_with_modifiers peer (R781/R877 out-of-band pattern). scene/drag gains a button param (DragButton left|middle wire pair, decode=inverse(encode), unknown names reject) expanding through the identical shell methods the native winit arms call - SS2 #2 peer: an AI client drives drag-to-pan with no new RPC method.",
+      "changes_bullets": [
+        "pinion-runtime: InputRouter MiddleGesture - DragLatch click-vs-pan, targets pinned at press",
+        "pinion-runtime: pan deltas ride the R877 two-stage wheel routing (offer_wheel_to_external extracted as the shared helper)",
+        "pinion-runtime: cursor_moved_with_modifiers pair threads the shell modifier cache; returns the pan repaint flag",
+        "pinion-shell: middle_pressed/middle_released_for_window pair; paste deferred to release-in-place (MiddleRelease::Click)",
+        "pinion-shell: winit Middle Released arm wired (was dropped); Pressed no longer pastes",
+        "pinion-rpc: scene/drag button param (\"left\"|\"middle\", DragButton wire pair, default left)",
+        "pinion-tui: middle pair + drain parity (pan works; TUI paste stays a documented divergence carry)",
+        "PointerCancel revokes the middle gesture (cancelled press never pastes)",
+        "tests: 8 router + 2 shell + 4 rpc; demo r881_middle_pan.py (12 asserts) + 8 regression demos PASS"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 150 test groups green (8 new router + 2 shell + 4 rpc R881 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic baseline)",
+        "demo r881_middle_pan.py: PASS, 12 assertions (pan both axes / clamp / click-in-place / Ctrl chord zoom / palette no-op / button reject + recovery)",
+        "regression demos fresh-release PASS: r838 r853 r877 r879 r880 (node editor) + r742 r743 r763 (left-drag arcs)",
+        "native winit Middle arms route to the same shell methods the RPC drain calls; choreography pinned by shell unit tests (r56_2_e precedent: arm verified by inspection)"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "Space-hold pan (shell ignores ElementState::Released for keys; held-key absolute state = ShellCore::modifiers generalisation + scene/key up/down RPC peer)",
+        "marquee edge auto-pan (example-level Tickable; joins after Space-hold)",
+        "TUI middle paste parity (Click verdict is a documented no-op on TUI; terminal owns middle-paste at the terminal tier)",
+        "TUI pointer modifiers absent (pre-existing SS2 #6 divergence; middle pan on TUI is plain-delta only)",
+        "InputRouter SRP decomposition (R876 carry, large)"
+      ],
+      "publishable_decision_summary": "R881 SS5.35 SS5.49 - middle-button drag-to-pan (Blender/Unreal idiom) + paste-on-release. The shell dropped Middle releases and pasted at press; now the router owns a per-pointer MiddleGesture: press pins pan targets (hovered External tag + deepest ScrollState - gesture capture, no container hopping), the R880 DragLatch (2nd direct capture-path consumer) splits click from pan, and each latched move dispatches the last-minus-current cursor delta (content follows the cursor, grab convention) through the SAME two-stage wheel routing R877 built - stage 1 extracted as offer_wheel_to_external so the wheel path and the pan path cannot diverge. Pan is therefore zero code per binding: plain deltas land on the pinned ScrollState (with a Qt-style sub-pixel remainder carry), and held chords reach the External wheel vocabulary (Ctrl+middle-drag zooms the node canvas via its existing R877 arm - winit itself reports touchpad pans as pixel wheel deltas, so this is one dialect with two producers). Release-in-place resolves to MiddleRelease::Click and only then runs the X11 PRIMARY paste funnel (xterm/Qt release-paste; a pan never pastes); PointerCancel revokes the gesture so a cancelled press neither pastes nor pans (R880.1 mandatory-cancel-arm). Modifiers thread through the new cursor_moved_with_modifiers peer (R781/R877 out-of-band pattern). scene/drag gains a button param (DragButton left|middle wire pair, decode=inverse(encode), unknown names reject) expanding through the identical shell methods the native winit arms call - SS2 #2 peer: an AI client drives drag-to-pan with no new RPC method.",
+      "publishable_changes_bullets": [
+        "pinion-runtime: InputRouter MiddleGesture - DragLatch click-vs-pan, targets pinned at press",
+        "pinion-runtime: pan deltas ride the R877 two-stage wheel routing (offer_wheel_to_external extracted as the shared helper)",
+        "pinion-runtime: cursor_moved_with_modifiers pair threads the shell modifier cache; returns the pan repaint flag",
+        "pinion-shell: middle_pressed/middle_released_for_window pair; paste deferred to release-in-place (MiddleRelease::Click)",
+        "pinion-shell: winit Middle Released arm wired (was dropped); Pressed no longer pastes",
+        "pinion-rpc: scene/drag button param (\"left\"|\"middle\", DragButton wire pair, default left)",
+        "pinion-tui: middle pair + drain parity (pan works; TUI paste stays a documented divergence carry)",
+        "PointerCancel revokes the middle gesture (cancelled press never pastes)",
+        "tests: 8 router + 2 shell + 4 rpc; demo r881_middle_pan.py (12 asserts) + 8 regression demos PASS"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 150 test groups green (8 new router + 2 shell + 4 rpc R881 tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic baseline)",
+        "demo r881_middle_pan.py: PASS, 10 assertions + 4 observed-state wait_until gates (pan both axes / clamp / click-in-place / Ctrl chord zoom / palette no-op / button reject + recovery)",
+        "regression demos fresh-release PASS: r838 r853 r877 r879 r880 (node editor) + r742 r743 r763 (left-drag arcs)",
+        "native winit Middle arms route to the same shell methods the RPC drain calls; choreography pinned by shell unit tests (r56_2_e precedent: arm verified by inspection)"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Space-hold pan (shell ignores ElementState::Released for keys; held-key absolute state = ShellCore::modifiers generalisation + scene/key up/down RPC peer)",
+        "marquee edge auto-pan (example-level Tickable; joins after Space-hold)",
+        "TUI middle paste parity (Click verdict is a documented no-op on TUI; terminal owns middle-paste at the terminal tier)",
+        "TUI pointer modifiers absent (pre-existing SS2 #6 divergence; middle pan on TUI is plain-delta only)",
+        "InputRouter SRP decomposition (R876 carry, large)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

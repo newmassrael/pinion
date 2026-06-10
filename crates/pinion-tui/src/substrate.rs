@@ -423,8 +423,45 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// the visible cached state (e.g. cursor entered a widget rect
     /// and the `Idle → Hover` transition fired).
     pub fn cursor_moved(&mut self, x: f64, y: f64) -> bool {
-        let tail = self.core.cursor_moved(PointerId::MOUSE, x, y);
-        self.handle_tail(&tail)
+        // R881 §5.35 — zero modifiers: the TUI pointer path carries no
+        // modifier chords yet (§2 #6 divergence carry, pre-existing).
+        // The second flag reports a live middle pan dispatching a
+        // scroll this move — repaint-relevant exactly like `wheel`.
+        let (tail, pan_dispatched) = self.core.cursor_moved_for_window_with_modifiers(
+            pinion_runtime::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            x,
+            y,
+            pinion_core::Modifiers::empty(),
+        );
+        let state_changed = self.handle_tail(&tail);
+        pan_dispatched || state_changed
+    }
+
+    /// R881 §5.35 §5.49 — middle-button press (the `scene/drag
+    /// {button: "middle"}` drain; crossterm `MouseButton::Middle` can
+    /// route here when the TUI surface wires it). Opens the router's
+    /// middle gesture — pan targets pinned at the press point. Never a
+    /// visible state change by itself.
+    pub fn middle_pressed(&mut self) {
+        self.core
+            .middle_down_for_window(pinion_runtime::DEFAULT_WINDOW, PointerId::MOUSE);
+    }
+
+    /// R881 §5.35 §5.49 — middle-button release. A latched gesture
+    /// already panned move-by-move (each `cursor_moved` reported the
+    /// repaint); a release-in-place resolves to the middle-*click*,
+    /// which on the GUI shell runs the X11 PRIMARY paste funnel — the
+    /// TUI has no clipboard arc on this path yet (the terminal
+    /// emulator owns middle-paste at the terminal tier; §2 #6
+    /// divergence carry, pre-existing for the whole TUI paste axis),
+    /// so `Click` is a documented no-op here. Returns `false` — no
+    /// repaint originates at the release edge.
+    pub fn middle_released(&mut self) -> bool {
+        let _ = self
+            .core
+            .middle_up_for_window(pinion_runtime::DEFAULT_WINDOW, PointerId::MOUSE);
+        false
     }
 
     /// R51.117 §5.41 — pointer press (mouse left button down,
@@ -551,6 +588,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                     to_x,
                     to_y,
                     steps,
+                    button,
                 } => {
                     // R660 §5.49 — linear cursor march under the
                     // R51.34 InputRouter capture lock. `steps == 0`
@@ -559,8 +597,16 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                     // it asked for); positive steps drive
                     // `steps` interpolated `cursor_moved` frames
                     // between `from` and `to` inclusive.
+                    // R881 §5.35 §5.49 — `button: "middle"` runs the
+                    // same march between the middle-gesture pair
+                    // (drag-to-pan), mirroring the Vello sibling.
                     state_changed |= self.cursor_moved(from_x, from_y);
-                    state_changed |= self.pointer_down();
+                    match button {
+                        pinion_rpc::DragButton::Left => {
+                            state_changed |= self.pointer_down();
+                        }
+                        pinion_rpc::DragButton::Middle => self.middle_pressed(),
+                    }
                     if steps > 0 {
                         for step in 1..=steps {
                             let t = f64::from(step) / f64::from(steps);
@@ -569,7 +615,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                             state_changed |= self.cursor_moved(x, y);
                         }
                     }
-                    state_changed |= self.pointer_up();
+                    match button {
+                        pinion_rpc::DragButton::Left => {
+                            state_changed |= self.pointer_up();
+                        }
+                        pinion_rpc::DragButton::Middle => {
+                            state_changed |= self.middle_released();
+                        }
+                    }
                 }
                 // `DeferredInput` is `non_exhaustive`; future variants
                 // (focus_request, IME composition, gesture …) land
@@ -1888,6 +1941,7 @@ mod tests {
             to_x: 200.0,
             to_y: 200.0,
             steps: 4,
+            button: pinion_rpc::DragButton::Left,
         }];
         let _ = core.drain_deferred_inputs(&inputs);
         // The drag ends with pointer_up at the final position. The
@@ -1912,6 +1966,7 @@ mod tests {
             to_x: 200.0,
             to_y: 200.0,
             steps: 0,
+            button: pinion_rpc::DragButton::Left,
         }];
         assert!(core.drain_deferred_inputs(&inputs));
         assert_eq!(*core.cached_state(), ButtonState::Hover);

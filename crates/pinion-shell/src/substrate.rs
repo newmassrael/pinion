@@ -44,13 +44,13 @@ use pinion_a11y::{
 use pinion_core::event::WheelDelta;
 use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
-    dispatch_parsed, parse_request, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
+    dispatch_parsed, parse_request, DeferredInput, DispatchContext, DragButton, LayoutNode, PreviewLedger,
     Request,
 };
 use pinion_runtime::{
     clamp_frame_dt, compute_layout, compute_layout_with_scroll_dirty, rect_for_tag,
     walk_scene_and_drain_immediate, CommandExecutor, CoreShell, DispatchTail,
-    FocusManager, IntentQueue, Modifiers, PointerId, Touch, TouchPhase,
+    FocusManager, IntentQueue, MiddleRelease, Modifiers, PointerId, Touch, TouchPhase,
 };
 use pinion_text::LayoutCache;
 
@@ -1040,6 +1040,53 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
+    /// R881 §5.35 §5.49 — winit `MouseInput { Middle, Pressed }`
+    /// dispatch. Opens the router's middle-button gesture for the
+    /// addressed window: pan targets (hover `External` + deepest
+    /// scrollable) are pinned at the press point, and the paste that
+    /// pre-R881 fired here is deferred until the [`pinion_runtime::InputRouter`]
+    /// resolves the press as a click-in-place — see
+    /// [`Self::middle_released_for_window`].
+    ///
+    /// Single-window wrapper: [`Self::middle_pressed`].
+    pub fn middle_pressed_for_window(&mut self, window_id: &str, pid: PointerId) {
+        self.core.middle_down_for_window(window_id, pid);
+    }
+
+    /// R881 §5.35 — single-window wrapper around
+    /// [`Self::middle_pressed_for_window`].
+    pub fn middle_pressed(&mut self, pid: PointerId) {
+        self.middle_pressed_for_window(pinion_runtime::DEFAULT_WINDOW, pid);
+    }
+
+    /// R881 §5.35 §5.49 — winit `MouseInput { Middle, Released }`
+    /// dispatch. Closes the router's middle gesture and acts on its
+    /// click-vs-pan determination (the R880 `DragLatch` SSOT, judged
+    /// router-side):
+    ///
+    /// * [`MiddleRelease::Click`] — press-release in place: run the
+    ///   R56.2.e paste funnel ([`Self::middle_click`]). Release-paste is
+    ///   the xterm / Qt convention and keeps a paste off every pan.
+    /// * [`MiddleRelease::Pan`] — the drag already panned move-by-move;
+    ///   nothing fires on release.
+    /// * [`MiddleRelease::NoPress`] — spurious release, or the gesture
+    ///   was revoked by `PointerCancel`; a cancelled press must not
+    ///   paste.
+    ///
+    /// Single-window wrapper: [`Self::middle_released`].
+    pub fn middle_released_for_window(&mut self, window_id: &str, pid: PointerId) {
+        match self.core.middle_up_for_window(window_id, pid) {
+            MiddleRelease::Click => self.middle_click(),
+            MiddleRelease::Pan | MiddleRelease::NoPress => {}
+        }
+    }
+
+    /// R881 §5.35 — single-window wrapper around
+    /// [`Self::middle_released_for_window`].
+    pub fn middle_released(&mut self, pid: PointerId) {
+        self.middle_released_for_window(pinion_runtime::DEFAULT_WINDOW, pid);
+    }
+
     /// R772 §5.53 §5.38 — route a secondary-button (right-click) press
     /// through [`WidgetView::apply_secondary_click`], anchoring a context
     /// menu at the cursor. Reads the addressed window's cached cursor
@@ -1255,7 +1302,21 @@ impl<V: WidgetView> ShellCore<V> {
         x: f64,
         y: f64,
     ) {
-        let tail = self.core.cursor_moved_for_window(window_id, pid, x, y);
+        // R881 §5.35 §5.49 — thread the out-of-band modifier cache so a
+        // live middle pan's wheel-vocabulary dispatch sees held chords
+        // (`Ctrl`+middle-drag zooms a canvas exactly as `Ctrl`+wheel
+        // does); the returned flag is the pan repaint cue, mirroring
+        // `wheel_for_window`.
+        let (tail, pan_dispatched) = self.core.cursor_moved_for_window_with_modifiers(
+            window_id,
+            pid,
+            x,
+            y,
+            self.modifiers,
+        );
+        if pan_dispatched {
+            self.request_redraw();
+        }
         self.handle_tail(&tail);
         // R763 §5.36 §5.22 — extend an in-flight pointer text selection
         // to the new cursor byte (no-op unless a press armed a drag).
@@ -1747,33 +1808,21 @@ impl<V: WidgetView> ShellCore<V> {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
                     self.handle_character_key(character);
                 }
-                // R660 §5.49 — `scene/drag` mirror: press at `from`,
-                // march cursor linearly to `to` across `steps` frames
-                // (each one forwarded to `InputRouter::cursor_moved`
-                // under the R51.34 capture lock so the receiving
-                // widget's `pointer_move` arc runs identically to a
-                // real-mouse drag), then release. `steps == 0` lands
-                // as a press / release at `from` (degenerate but
-                // well-defined — RPC client gets exactly what it
-                // asked for).
                 DeferredInput::Drag {
                     from_x,
                     from_y,
                     to_x,
                     to_y,
                     steps,
+                    button,
                 } => {
-                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, from_x, from_y);
-                    self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
-                    if steps > 0 {
-                        for step in 1..=steps {
-                            let t = f64::from(step) / f64::from(steps);
-                            let x = from_x + (to_x - from_x) * t;
-                            let y = from_y + (to_y - from_y) * t;
-                            self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
-                        }
-                    }
-                    self.mouse_released_for_window(window_id, PointerId::MOUSE);
+                    self.drain_drag_for_window(
+                        window_id,
+                        (from_x, from_y),
+                        (to_x, to_y),
+                        steps,
+                        button,
+                    );
                 }
                 // R770 §5.49 §5.15 — OS file drag-drop mirrors. Each runs
                 // the matching `WidgetView` file hook in the root-owner
@@ -1792,6 +1841,50 @@ impl<V: WidgetView> ShellCore<V> {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// R660 §5.49 — the `scene/drag` drain arm: press at `from`, march
+    /// the cursor linearly to `to` across `steps` frames (each one
+    /// forwarded to `InputRouter::cursor_moved` under the R51.34
+    /// capture lock so the receiving widget's `pointer_move` arc runs
+    /// identically to a real-mouse drag), then release. `steps == 0`
+    /// lands as a press / release at `from` (degenerate but
+    /// well-defined — the RPC client gets exactly what it asked for).
+    /// Extracted from [`Self::drain_deferred_inputs_for_window`] to
+    /// keep that dispatcher under the workspace `too_many_lines`
+    /// ceiling (the app.rs extract convention).
+    ///
+    /// R881 §5.35 §5.49 — `button` selects the gesture pair the march
+    /// runs between: the left press/release arc (capture lock / `DnD` /
+    /// text select), or the middle pair (drag-to-pan, paste on
+    /// release-in-place) — the same shell methods the native winit
+    /// `MouseInput { Middle }` arms call, per
+    /// [[r47-class-incident-prevention]].
+    fn drain_drag_for_window(
+        &mut self,
+        window_id: &str,
+        from: (f64, f64),
+        to: (f64, f64),
+        steps: u32,
+        button: DragButton,
+    ) {
+        self.cursor_moved_for_window(window_id, PointerId::MOUSE, from.0, from.1);
+        match button {
+            DragButton::Left => self.mouse_pressed_for_window(window_id, PointerId::MOUSE),
+            DragButton::Middle => self.middle_pressed_for_window(window_id, PointerId::MOUSE),
+        }
+        if steps > 0 {
+            for step in 1..=steps {
+                let t = f64::from(step) / f64::from(steps);
+                let x = from.0 + (to.0 - from.0) * t;
+                let y = from.1 + (to.1 - from.1) * t;
+                self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+            }
+        }
+        match button {
+            DragButton::Left => self.mouse_released_for_window(window_id, PointerId::MOUSE),
+            DragButton::Middle => self.middle_released_for_window(window_id, PointerId::MOUSE),
         }
     }
 
