@@ -76,10 +76,28 @@ pub enum WheelDelta {
     Pixels { dx: f32, dy: f32 },
     /// Discrete line delta on each axis. Standard for legacy
     /// notched mouse wheels that report one click at a time. The
-    /// runtime multiplies by a configurable line-height to derive
-    /// pixel offsets. Sign convention matches [`Self::Pixels`].
+    /// runtime multiplies by [`LINE_HEIGHT_PX`] to derive pixel
+    /// offsets. Sign convention matches [`Self::Pixels`].
     Lines { dx: f32, dy: f32 },
 }
+
+/// (R51.186 §5.45 R55.C.2; crate-home moved here R877) Default
+/// line-height in logical pixels used to convert
+/// [`WheelDelta::Lines`] into pixel offsets. The 16-pixel value
+/// matches the W3C `WheelEvent` default (`devicePixelRatio == 1.0`)
+/// and Chromium / Firefox / Safari on every desktop platform.
+///
+/// R877 — this constant is part of the input-forwarding *contract*:
+/// [`External::wheel`](crate::external::External::wheel) hands `Lines`
+/// deltas pre-scaled by it, so a consumer recovering notch counts
+/// (`dy / LINE_HEIGHT_PX` for a per-notch zoom exponent) must read the
+/// SAME constant the router scales by. It therefore lives beside
+/// [`WheelDelta`] in `pinion-core` (the contract crate), not in the
+/// runtime that happens to apply it ([[helper-crate-home-ssot-axis]]).
+/// A per-widget override (custom line-height for monospace text
+/// containers) is a carry-forward sub-axis (R55.C.4) that lands on top
+/// without breaking this API.
+pub const LINE_HEIGHT_PX: f32 = 16.0;
 
 /// Keyboard input. The `key` field is a placeholder until §5.13 settles
 /// the keycode taxonomy (W3C UI Events vs winit virtual key vs raw HID).

@@ -560,9 +560,11 @@ pub trait External: core::fmt::Debug {
     /// forwarding leg the pointer hooks left open). The framework's
     /// [`InputRouter`](crate#) offers a wheel event to the `External`
     /// resolved from the tag under the cursor *before* falling back to
-    /// the `Scene::Scroll` dispatch — the W3C model where the innermost
-    /// wheel listener may consume the event ahead of the scroll
-    /// container chain.
+    /// the `Scene::Scroll` dispatch — the W3C model where a wheel
+    /// listener on the event path may consume (`preventDefault`) ahead
+    /// of the scroll default action; the offered widget can be an
+    /// ancestor of a deeper `Scroll` (the canvas-hijack pattern), and
+    /// declining preserves the inner scroll chain.
     ///
     /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect
     ///   [`capture_normalize`](Self::capture_normalize) selects for

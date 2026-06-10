@@ -36285,6 +36285,48 @@
         "marquee multi-select reserves LMB background-drag (deliberately left free)"
       ]
     },
+    "R877.1": {
+      "decision_summary": "Session audit remediation: wheel line-height constant homed in the contract crate; single batched viewport writer; wheel-offer doc precision",
+      "changes_bullets": [
+        "LINE_HEIGHT_PX crate-home moved to pinion-core::event (beside WheelDelta); runtime path kept as re-export",
+        "example WHEEL_NOTCH_PX hardcode (16.0) replaced by the contract constant import",
+        "example apply_viewport: one batched writer for zoom + world maxima + offset (set_zoom_anchored / frame_all 2-copy folded)",
+        "wheel-offer docs corrected: listener-before-default (ancestor canvas-hijack), not innermost-first"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green",
+        "clippy (-D pedantic, vello): clean",
+        "r877 demo PASS on fresh release binary"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.49",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "clamp_node_y bottom-edge asymmetry (WORLD - HEADER_H - 8 keeps header on-world, body may overhang): inherited pre-R877 shape, cosmetic"
+      ],
+      "publishable_decision_summary": "Session audit remediation: wheel line-height constant homed in the contract crate; single batched viewport writer; wheel-offer doc precision",
+      "publishable_changes_bullets": [
+        "LINE_HEIGHT_PX crate-home moved to pinion-core::event (beside WheelDelta); runtime path kept as re-export",
+        "example WHEEL_NOTCH_PX hardcode (16.0) replaced by the contract constant import",
+        "example apply_viewport: one batched writer for zoom + world maxima + offset (set_zoom_anchored / frame_all 2-copy folded)",
+        "wheel-offer docs corrected: listener-before-default (ancestor canvas-hijack), not innermost-first"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green",
+        "clippy (-D pedantic, vello): clean",
+        "r877 demo PASS on fresh release binary"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.49",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "clamp_node_y bottom-edge asymmetry (WORLD - HEADER_H - 8 keeps header on-world, body may overhang): inherited pre-R877 shape, cosmetic"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

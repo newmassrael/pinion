@@ -880,8 +880,11 @@ impl InputRouter {
     }
 
     /// R877 §5.15 §5.49 — wheel dispatch carrying the held keyboard
-    /// `modifiers`. Two-stage routing, innermost-listener-first (the
-    /// W3C wheel model):
+    /// `modifiers`. Two-stage routing, listener-before-default (the
+    /// W3C model where any wheel listener on the event path may
+    /// `preventDefault` ahead of the scroll default action — the
+    /// offered External can be an ANCESTOR of a deeper `Scroll`, the
+    /// canvas-hijack pattern; declining preserves the inner chain):
     ///
     /// 1. **`External` offer** — resolve the hover target tag under
     ///    the pointer's last-known cursor, find its primary
@@ -1513,21 +1516,13 @@ fn floor_clamp_u32(v: f64) -> u32 {
     v.max(0.0) as u32
 }
 
-/// (R51.186 §5.45 R55.C.2) Default line-height in logical pixels
-/// used to convert
-/// [`WheelDelta::Lines`](pinion_core::event::WheelDelta::Lines)
-/// into the integer scroll offset
-/// [`ScrollState::scroll_by`](pinion_core::widgets::scroll::ScrollState::scroll_by)
-/// expects. The 16-pixel value matches the W3C `WheelEvent`
-/// default (`window.devicePixelRatio == 1.0`) and Chromium /
-/// Firefox / Safari `wheel` event handling on every desktop
-/// platform — callers and tests reading wheel-driven offset
-/// deltas can rely on the value as the framework constant. A
-/// per-widget override (custom line-height for monospace text
-/// containers, etc.) is a carry-forward sub-axis (R55.C.4) that
-/// lands on top of this constant without breaking the existing
-/// API surface.
-pub const LINE_HEIGHT_PX: f32 = 16.0;
+/// R877 — re-export of the contract constant from its crate home
+/// ([`pinion_core::event::LINE_HEIGHT_PX`], moved there because
+/// [`External::wheel`](pinion_core::external::External::wheel)
+/// consumers must read the SAME factor the router scales `Lines` by);
+/// the `pinion_runtime::input::LINE_HEIGHT_PX` path stays valid for
+/// existing callers and tests.
+pub use pinion_core::event::LINE_HEIGHT_PX;
 
 /// (R51.187 §5.45 R55.C.3) Integer mirror of [`LINE_HEIGHT_PX`]
 /// for the arrow-key step in

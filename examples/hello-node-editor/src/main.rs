@@ -114,6 +114,7 @@ use pinion_a11y::{
     toolbar_button_nodes, AccessNode, AccessState, AriaRole, ToolbarControl, WidgetA11y,
 };
 use pinion_core::composite_tag::{split_send_payload, split_subindex};
+use pinion_core::event::LINE_HEIGHT_PX;
 use pinion_core::external::{
     int_of, Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint,
     External, ExternalIntrospect, IntrospectSchema, IntrospectValue, InterveneError, InvokeError,
@@ -227,13 +228,10 @@ const WORLD: i32 = 2048;
 const ZOOM_MIN: f64 = 0.5;
 const ZOOM_MAX: f64 = 4.0;
 /// R877 — zoom factor per wheel notch (`Ctrl`+wheel) and per keyboard
-/// step (`Ctrl`+`=` / `Ctrl`+`-`).
+/// step (`Ctrl`+`=` / `Ctrl`+`-`). `dy / LINE_HEIGHT_PX` recovers the
+/// notch count for the zoom exponent ([`External::wheel`] hands `Lines`
+/// deltas pre-scaled by that same contract constant).
 const ZOOM_STEP: f64 = 1.2;
-/// R877 — logical pixels one wheel notch arrives as ([`External::wheel`]
-/// hands `Lines` deltas pre-scaled by the framework's 16-px W3C default
-/// line height), so `dy / WHEEL_NOTCH_PX` recovers the notch count the
-/// zoom exponent wants.
-const WHEEL_NOTCH_PX: f64 = 16.0;
 /// R877 — margin (screen px) `frame_all` keeps around the node bbox.
 const FRAME_MARGIN: i32 = 24;
 
@@ -1024,6 +1022,17 @@ impl NodeGraphExternal {
         }
         let (ox, oy) = self.scroll.offset();
         let (gx, gy) = ((f64::from(ox) + sx) / old, (f64::from(oy) + sy) / old);
+        self.apply_viewport(zoom, gx * zoom - sx, gy * zoom - sy);
+        true
+    }
+
+    /// The single viewport writer: zoom + world maxima + pan offset land in
+    /// ONE reactive batch ([[signal-batch-atomic-multi-axis-update]]), so no
+    /// paint can observe a zoom whose maxima (or offset) belong to the old
+    /// scale. The maxima formula (`WORLD·zoom − canvas`) has this one home;
+    /// the layout pass re-derives the identical bounds from the declared
+    /// world extent on the next frame.
+    fn apply_viewport(&self, zoom: f64, ox: f64, oy: f64) {
         batch(|| {
             self.zoom.set(zoom);
             let content = wpx(WORLD, zoom);
@@ -1031,9 +1040,8 @@ impl NodeGraphExternal {
                 content - i32::try_from(WIN_W).unwrap_or(0),
                 content - i32::try_from(WIN_H).unwrap_or(0),
             );
-            self.scroll.scroll_to(round_i32(gx * zoom - sx), round_i32(gy * zoom - sy));
+            self.scroll.scroll_to(round_i32(ox), round_i32(oy));
         });
-        true
     }
 
     /// Centre-anchored zoom step (keyboard `Ctrl`+`=` / `Ctrl`+`-` /
@@ -1067,18 +1075,11 @@ impl NodeGraphExternal {
         let fit_h = f64::from(i32::try_from(WIN_H).unwrap_or(0) - 2 * FRAME_MARGIN) / bh;
         let zoom = fit_w.min(fit_h).clamp(ZOOM_MIN, ZOOM_MAX);
         let (cx, cy) = (f64::from(min_x + max_x) / 2.0, f64::from(min_y + max_y) / 2.0);
-        batch(|| {
-            self.zoom.set(zoom);
-            let content = wpx(WORLD, zoom);
-            self.scroll.set_max(
-                content - i32::try_from(WIN_W).unwrap_or(0),
-                content - i32::try_from(WIN_H).unwrap_or(0),
-            );
-            self.scroll.scroll_to(
-                round_i32(cx * zoom - f64::from(WIN_W) / 2.0),
-                round_i32(cy * zoom - f64::from(WIN_H) / 2.0),
-            );
-        });
+        self.apply_viewport(
+            zoom,
+            cx * zoom - f64::from(WIN_W) / 2.0,
+            cy * zoom - f64::from(WIN_H) / 2.0,
+        );
         true
     }
 
@@ -1593,7 +1594,7 @@ impl External for NodeGraphExternal {
             return false;
         }
         if modifiers.control_key() {
-            let factor = ZOOM_STEP.powf(-f64::from(dy) / WHEEL_NOTCH_PX);
+            let factor = ZOOM_STEP.powf(-f64::from(dy) / f64::from(LINE_HEIGHT_PX));
             let sx = f64::from(x_rel) * f64::from(WIN_W);
             let sy = f64::from(y_rel) * f64::from(WIN_H);
             self.set_zoom_anchored(self.zoom.get() * factor, sx, sy);
