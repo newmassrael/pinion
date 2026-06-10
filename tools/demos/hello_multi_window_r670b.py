@@ -50,29 +50,8 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
-    wait_until,
+    wait_snap,
 )
-
-
-def _inspector_snap_with(tf, needle: str):
-    """Window-scoped inspector snapshot once it renders `needle` (R883
-    zero-flake gate — both windows' stored paint caches re-render on a
-    state mutation, so this normally passes on the first poll)."""
-    def poll():
-        snap = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        if snap is not None and _walk_for_text(snap.result, needle):
-            return snap
-        return None
-
-    return poll
 
 
 def _walk_for_text(node, needle: str) -> bool:
@@ -106,46 +85,35 @@ def body() -> None:
         ), f"default-scope snapshot must contain main_btn: {snap_default!r}"
 
         # ── (2) Explicit {window: "main"} (R670.B atomic 1) ─────────
-        snap_main = tf.request(
-            "scene/snapshot",
-            {"window": "main", "path": "", "from": "paint", "viewport": {"w": 320, "h": 200}},
-        )
-        assert snap_main is not None
+        snap_main = tf.snapshot(source="paint", viewport=(320, 200), window="main")
         assert (
-            find_by_tag(snap_main.result, "main_btn") is not None
-        ), f"main snapshot must contain main_btn: {snap_main.result!r}"
+            find_by_tag(snap_main, "main_btn") is not None
+        ), f"main snapshot must contain main_btn: {snap_main!r}"
         # The main view does NOT contain the inspector tag.
-        assert find_by_tag(snap_main.result, "inspector_tree") is None, (
+        assert find_by_tag(snap_main, "inspector_tree") is None, (
             "main view must not leak inspector content"
         )
 
         # ── (3) Explicit {window: "inspector"} per-window scope ─────
-        snap_inspector = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
+        snap_inspector = tf.snapshot(
+            source="paint", viewport=(280, 140), window="inspector"
         )
-        assert snap_inspector is not None
         # Inspector view carries the state-debug text tag.
         assert (
-            find_by_tag(snap_inspector.result, "inspector_tree") is not None
-        ), f"inspector snapshot must contain inspector_tree: {snap_inspector.result!r}"
+            find_by_tag(snap_inspector, "inspector_tree") is not None
+        ), f"inspector snapshot must contain inspector_tree: {snap_inspector!r}"
         # Inspector view does NOT contain the main button tag.
         assert (
-            find_by_tag(snap_inspector.result, "main_btn") is None
+            find_by_tag(snap_inspector, "main_btn") is None
         ), "inspector view must not contain main button (different view_for_window branch)"
 
         # ── (4) Inspector reflects initial state ────────────────────
         # Fresh boot → ButtonState::Idle. Inspector text should
         # render "Idle".
-        assert _walk_for_text(snap_inspector.result, "Idle"), (
+        assert _walk_for_text(snap_inspector, "Idle"), (
             "inspector view must render initial state 'Idle'"
         )
-        assert not _walk_for_text(snap_inspector.result, "Hover"), (
+        assert not _walk_for_text(snap_inspector, "Hover"), (
             "fresh-boot inspector must not yet show Hover"
         )
 
@@ -162,8 +130,11 @@ def body() -> None:
         tf.click(path="main_btn")
         # Re-snapshot inspector — state should now be Hover (cursor
         # rests on button rect post-click).
-        wait_until(
-            _inspector_snap_with(tf, "Hover"),
+        wait_snap(
+            tf,
+            lambda s: _walk_for_text(s, "Hover"),
+            viewport=(280, 140),
+            window="inspector",
             desc="after main click, inspector must mirror Hover state",
         )
 
@@ -172,18 +143,13 @@ def body() -> None:
         # id rather than hard-erroring. AI clients targeting a
         # not-yet-defined window see the primary's scene + can
         # detect the fallback by comparing returned tags.
-        snap_ghost = tf.request(
-            "scene/snapshot",
-            {
-                "window": "definitely_not_a_real_window",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 320, "h": 200},
-            },
+        snap_ghost = tf.snapshot(
+            source="paint",
+            viewport=(320, 200),
+            window="definitely_not_a_real_window",
         )
-        assert snap_ghost is not None
         assert (
-            find_by_tag(snap_ghost.result, "main_btn") is not None
+            find_by_tag(snap_ghost, "main_btn") is not None
         ), "ghost id falls back to primary window (main_btn must be present)"
 
         # ── (7) scene/key on inspector window is rejected gracefully ─
@@ -203,19 +169,25 @@ def body() -> None:
         # ButtonExternal at the scene root. State should flip to
         # Disabled; inspector should mirror the new value.
         tf.invoke("/external/send", "Disable")
-        wait_until(
-            _inspector_snap_with(tf, "Disabled"),
+        wait_snap(
+            tf,
+            lambda s: _walk_for_text(s, "Disabled"),
+            viewport=(280, 140),
+            window="inspector",
             desc="inspector must mirror Disabled state after scene/invoke",
         )
 
         # ── (9) Re-enable via scene/invoke ──────────────────────────
         tf.invoke("/external/send", "Enable")
         # State is now Idle (Disabled → Idle on Enable per Button SCXML).
-        snap_inspector_reenabled = wait_until(
-            _inspector_snap_with(tf, "Idle"),
+        snap_inspector_reenabled = wait_snap(
+            tf,
+            lambda s: _walk_for_text(s, "Idle"),
+            viewport=(280, 140),
+            window="inspector",
             desc="inspector must mirror Idle after re-enable",
         )
-        assert not _walk_for_text(snap_inspector_reenabled.result, "Disabled"), (
+        assert not _walk_for_text(snap_inspector_reenabled, "Disabled"), (
             "Disabled must clear after re-enable"
         )
 
@@ -248,12 +220,10 @@ def body() -> None:
         )
 
         # ── (12) Final smoke: re-fetch main snapshot, confirm fresh ─
-        snap_main_final = tf.request(
-            "scene/snapshot",
-            {"window": "main", "path": "", "from": "paint", "viewport": {"w": 320, "h": 200}},
+        snap_main_final = tf.snapshot(
+            source="paint", viewport=(320, 200), window="main"
         )
-        assert snap_main_final is not None
-        assert find_by_tag(snap_main_final.result, "main_btn") is not None
+        assert find_by_tag(snap_main_final, "main_btn") is not None
 
 
 if __name__ == "__main__":

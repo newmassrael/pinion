@@ -38,7 +38,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
-    wait_until,
+    wait_snap,
 )
 
 
@@ -72,21 +72,13 @@ def _state_row_text(inspector_snap) -> str:
 def _wait_state_row(tf, predicate, desc: str):
     """Inspector snapshot once `predicate(state_row_text)` is truthy
     (R883 zero-flake)."""
-    def poll():
-        resp = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        if resp is not None and predicate(_state_row_text(resp.result)):
-            return resp
-        return None
-
-    return wait_until(poll, desc=desc)
+    return wait_snap(
+        tf,
+        lambda s: predicate(_state_row_text(s)),
+        viewport=(280, 140),
+        window="inspector",
+        desc=desc,
+    )
 
 
 
@@ -130,7 +122,7 @@ def body() -> None:
             tf, lambda label: "Idle" in label or "Hover" in label,
             "after Disable->Enable the State row reflects a race-free state",
         )
-        label = _state_row_text(ins_enabled.result)
+        label = _state_row_text(ins_enabled)
         # After Enable the SCXML routes through Hover (cursor still
         # over button) or Idle (depending on whether router state
         # carried the hover_target through the Disabled excursion).
@@ -168,7 +160,7 @@ def body() -> None:
             tf, lambda label: label.startswith("State:"),
             "inspector State row still renders after the inspector-scoped click",
         )
-        label = _state_row_text(ins_after_inspector_click.result)
+        label = _state_row_text(ins_after_inspector_click)
         # State row still reflects main's deterministic state — the
         # inspector-scoped click never reached main's SCXML.
         assert label.startswith("State:"), (
@@ -211,36 +203,22 @@ def body() -> None:
         )
 
         # ── (F) Cross-window structure pin — main vs inspector ──────
-        snap_main = tf.request(
-            "scene/snapshot",
-            {
-                "window": "main",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 320, "h": 200},
-            },
-        )
-        snap_inspector = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
+        snap_main = tf.snapshot(source="paint", viewport=(320, 200), window="main")
+        snap_inspector = tf.snapshot(
+            source="paint", viewport=(280, 140), window="inspector"
         )
         assert snap_main is not None
         assert snap_inspector is not None
-        assert find_by_tag(snap_main.result, "main_btn") is not None, (
+        assert find_by_tag(snap_main, "main_btn") is not None, (
             "main window scene still carries main_btn"
         )
-        assert find_by_tag(snap_inspector.result, "inspector_tree") is not None, (
+        assert find_by_tag(snap_inspector, "inspector_tree") is not None, (
             "inspector window scene still carries inspector_tree"
         )
-        assert find_by_tag(snap_main.result, "inspector_tree") is None, (
+        assert find_by_tag(snap_main, "inspector_tree") is None, (
             "main window must not leak inspector_tree"
         )
-        assert find_by_tag(snap_inspector.result, "main_btn") is None, (
+        assert find_by_tag(snap_inspector, "main_btn") is None, (
             "inspector window must not carry main_btn as Container tag"
         )
 

@@ -78,13 +78,9 @@ _INSPECTOR_H = 320
 
 def _snap_main(tf) -> dict:
     """Read the main window's paint scene at the canonical viewport."""
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "main", "from": "paint",
-         "viewport": {"w": _MAIN_W, "h": _MAIN_H}},
+    return tf.snapshot(
+        source="paint", viewport=(_MAIN_W, _MAIN_H), window="main",
     )
-    assert resp is not None
-    return resp.result
 
 
 def _query_hover_slot(tf) -> Any:

@@ -384,6 +384,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         *,
         source: str = "state",
         viewport: Optional[tuple[int, int]] = None,
+        window: Optional[str] = None,
     ) -> Any:
         """`scene/snapshot` typed wrapper.
 
@@ -391,12 +392,36 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         `External`). `source="paint"` dumps the paint scene produced
         by `V::view` at `viewport` (default 720x480) — see R51.194
         §5.49 §5.45 for the wire shape.
+
+        `window` (R883.1) scopes the snapshot to a named window spec
+        (the R670.B `{window: "<id>"}` wire param). `None` keeps the
+        primary-window default. Pre-R883.1 every multi-window demo
+        hand-rolled the raw `scene/snapshot` envelope just to add this
+        one key — the wrapper now mirrors the full wire surface.
         """
         params: dict[str, Any] = {"path": path, "from": source}
         if viewport is not None:
             params["viewport"] = {"w": viewport[0], "h": viewport[1]}
+        if window is not None:
+            params["window"] = window
         resp = self.request("scene/snapshot", params)
         assert resp is not None
+        return resp.result
+
+    def cache_stats(self, *, window: Optional[str] = None) -> dict[str, Any]:
+        """`scene/cache_stats` typed wrapper (R682.B §5.16 / R883.1).
+
+        Returns the per-window `FragmentCacheStats` snapshot. The
+        `paint_count` field is the canonical "a real frame landed"
+        observable — only `AppShell::render_window` advances it, so
+        gating on it (see [`wait_paint_beyond`]) replaces every
+        frame-timing guess in continuous-paint demos.
+        """
+        params: dict[str, Any] = {}
+        if window is not None:
+            params["window"] = window
+        resp = self.request("scene/cache_stats", params)
+        assert resp is not None and isinstance(resp.result, dict)
         return resp.result
 
     def intents(self) -> list[Any]:
@@ -867,6 +892,7 @@ def wait_snap(
     *,
     source: str = "paint",
     viewport: Optional[tuple[int, int]] = None,
+    window: Optional[str] = None,
     timeout: float = 8.0,
     interval: float = 0.04,
     desc: str = "snapshot condition",
@@ -878,10 +904,66 @@ def wait_snap(
     race). The paint-read peer of [`wait_query`]: gate on the first
     condition the demo asserts about the post-action frame, then keep
     the remaining assertions plain against the returned snap.
+
+    `window` (R883.1) addresses a named window spec — the one home for
+    the window-scoped polling every multi-window demo previously
+    hand-rolled. A window that may not EXIST yet (e.g. a dock tear-off
+    minting it mid-demo) still needs a caller-side `RpcError` guard;
+    an absent window is an error, not a not-yet state, by default.
     """
     def poll() -> Any:
-        snap = tf.snapshot(source=source, viewport=viewport)
+        snap = tf.snapshot(source=source, viewport=viewport, window=window)
         return snap if predicate(snap) else None
+
+    return wait_until(poll, timeout=timeout, interval=interval, desc=desc)
+
+
+def wait_paint_beyond(
+    tf: "RpcSubprocess",
+    baseline: int,
+    *,
+    window: Optional[str] = None,
+    timeout: float = 8.0,
+    interval: float = 0.04,
+    desc: Optional[str] = None,
+) -> None:
+    """Poll `scene/cache_stats` until `paint_count` strictly exceeds
+    `baseline` (R883.1). Real paint cycles fire only on winit's
+    `RedrawRequested` — asynchronous to RPC dispatch — so the observed
+    frame counter, not wall-clock, is the gate for "a frame landed"
+    (continuous-paint / immediate-mode demos)."""
+    wait_until(
+        lambda: int(tf.cache_stats(window=window)["paint_count"]) > baseline,
+        timeout=timeout,
+        interval=interval,
+        desc=desc or f"paint_count advances past {baseline}",
+    )
+
+
+def wait_json_file(
+    path: Path | str,
+    predicate,
+    *,
+    timeout: float = 8.0,
+    interval: float = 0.04,
+    desc: str = "persisted JSON condition",
+) -> Any:
+    """Poll a JSON file until it is readable AND `predicate(blob)` is
+    truthy; returns the matching blob (R883.1).
+
+    The persistence substrate writes via atomic rename (R665), so a
+    poll observes whole blobs only — a not-yet-written or garbage file
+    simply polls again, while a predicate exception stays loud (a
+    malformed-but-valid-JSON blob is a real failure, not a race).
+    """
+    target = Path(path)
+
+    def poll() -> Any:
+        try:
+            blob = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return blob if predicate(blob) else None
 
     return wait_until(poll, timeout=timeout, interval=interval, desc=desc)
 

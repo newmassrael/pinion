@@ -36971,6 +36971,58 @@
         "shell; the original demo never observed it. Audit candidate."
       ]
     },
+    "R883.1": {
+      "decision_summary": "Session-review adversarial audit remediation of R883: the window-scoped snapshot polling decision moves into the harness (snapshot/wait_snap gain the window= wire param the demos were hand-rolling in 8 places), cache_stats gets its missing typed wrapper with wait_paint_beyond as the frame-landed gate, and the duplicated persisted-blob poller folds into wait_json_file — restoring one-home-per-decision across the demo suite.",
+      "changes_bullets": [
+        "snapshot() gains window= param; cache_stats() typed wrapper added (wire-coverage gap)",
+        "wait_snap gains window=; wait_paint_beyond + wait_json_file lifted into rpc_verify",
+        "8 multi-window demos: hand-rolled window-scoped snapshot pollers/envelopes collapsed",
+        "wait_blob 2-copy (todomvc r665/r666) folded onto wait_json_file",
+        "paint_count gates (r681/r827/r831/r682) folded onto wait_paint_beyond/cache_stats",
+        "r675 stale \"wrapper lacks window param\" comment + triple-snapshot cruft removed",
+        "r682 _force_paint docstring corrected to match its body; r806 bogus noqa dropped"
+      ],
+      "verification_bullets": [
+        "aggregate check-count audit: 6070 (pre-R883) -> 6079 (post) — no assertion weakened",
+        "all 17 touched demos re-run individually: [demo] PASS",
+        "repo-wide grep: zero raw scene/snapshot or scene/cache_stats envelopes left in demos",
+        "python3 -m py_compile over all demos: clean"
+      ],
+      "impact_refs": [
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "click/drag/key typed wrappers still lack the window= param (r672/r683 keep raw",
+        "window-scoped envelopes for input methods) — extend when a 2nd consumer needs it",
+        "wait_query keeps its own small loop (not wait_until-composed) for the expected/got",
+        "diagnostic; acceptable idiom duplication, revisit only if a 3rd polling shape lands"
+      ],
+      "publishable_decision_summary": "Session-review adversarial audit remediation of R883: the window-scoped snapshot polling decision moves into the harness (snapshot/wait_snap gain the window= wire param the demos were hand-rolling in 8 places), cache_stats gets its missing typed wrapper with wait_paint_beyond as the frame-landed gate, and the duplicated persisted-blob poller folds into wait_json_file — restoring one-home-per-decision across the demo suite.",
+      "publishable_changes_bullets": [
+        "snapshot() gains window= param; cache_stats() typed wrapper added (wire-coverage gap)",
+        "wait_snap gains window=; wait_paint_beyond + wait_json_file lifted into rpc_verify",
+        "8 multi-window demos: hand-rolled window-scoped snapshot pollers/envelopes collapsed",
+        "wait_blob 2-copy (todomvc r665/r666) folded onto wait_json_file",
+        "paint_count gates (r681/r827/r831/r682) folded onto wait_paint_beyond/cache_stats",
+        "r675 stale \"wrapper lacks window param\" comment + triple-snapshot cruft removed",
+        "r682 _force_paint docstring corrected to match its body; r806 bogus noqa dropped"
+      ],
+      "publishable_verification_bullets": [
+        "aggregate check-count audit: 6070 (pre-R883) -> 6079 (post) — no assertion weakened",
+        "all 17 touched demos re-run individually: [demo] PASS",
+        "repo-wide grep: zero raw scene/snapshot or scene/cache_stats envelopes left in demos",
+        "python3 -m py_compile over all demos: clean"
+      ],
+      "publishable_impact_refs": [
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "click/drag/key typed wrappers still lack the window= param (r672/r683 keep raw",
+        "window-scoped envelopes for input methods) — extend when a 2nd consumer needs it",
+        "wait_query keeps its own small loop (not wait_until-composed) for the expected/got",
+        "diagnostic; acceptable idiom duplication, revisit only if a 3rd polling shape lands"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

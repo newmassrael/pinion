@@ -58,7 +58,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
-    wait_until,
+    wait_snap,
 )
 
 
@@ -71,23 +71,13 @@ _INSPECTOR_H = 320
 
 
 def _snap_inspector(tf) -> dict:
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "inspector", "from": "paint",
-         "viewport": {"w": _INSPECTOR_W, "h": _INSPECTOR_H}},
+    return tf.snapshot(
+        source="paint", viewport=(_INSPECTOR_W, _INSPECTOR_H), window="inspector"
     )
-    assert resp is not None
-    return resp.result
 
 
 def _snap_main(tf) -> dict:
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "main", "from": "paint",
-         "viewport": {"w": 320, "h": 200}},
-    )
-    assert resp is not None
-    return resp.result
+    return tf.snapshot(source="paint", viewport=(320, 200), window="main")
 
 
 def _pane_text_rows(snapshot) -> list[str]:
@@ -110,12 +100,14 @@ def _pane_text_rows(snapshot) -> list[str]:
 def _wait_rows(tf, predicate, desc: str) -> list[str]:
     """Poll the inspector pane rows until `predicate(rows)` is truthy
     (R883 zero-flake); returns the matching rows."""
-    return wait_until(
-        lambda: (lambda rows: rows if predicate(rows) else None)(
-            _pane_text_rows(_snap_inspector(tf))
-        ),
+    snap = wait_snap(
+        tf,
+        lambda s: predicate(_pane_text_rows(s)),
+        viewport=(_INSPECTOR_W, _INSPECTOR_H),
+        window="inspector",
         desc=desc,
     )
+    return _pane_text_rows(snap)
 
 
 def body() -> None:

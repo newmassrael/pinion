@@ -63,7 +63,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_until  # noqa: E402
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_json_file, wait_until  # noqa: E402
 
 # Tags — kept stable across todomvc rounds R655-R666.
 TF_TAG = "main_textfield"
@@ -168,20 +168,10 @@ def add_todo(tf: RpcSubprocess, body: str) -> None:
     submit_enter(tf, target=TF_TAG)
 
 
-def wait_blob(storage_dir: Path, predicate, desc: str):
-    """Poll the persisted blob until readable AND `predicate(blob)` is
-    truthy (R883 zero-flake). Atomic-rename writes mean a poll observes
-    whole blobs only."""
-    def poll():
-        if not storage_path(storage_dir).exists():
-            return None
-        try:
-            blob = read_state_blob(storage_dir)
-        except (json.JSONDecodeError, OSError, KeyError):
-            return None
-        return blob if predicate(blob) else None
-
-    return wait_until(poll, desc=desc)
+def wait_blob(storage_dir: Path, predicate, desc: str) -> dict[str, Any]:
+    """Poll the persisted blob via the harness JSON-file gate (R883.1
+    — atomic-rename polling decision lives in rpc_verify, one home)."""
+    return wait_json_file(storage_path(storage_dir), predicate, desc=desc)
 
 
 

@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcError, RpcSubprocess, run_demo, wait_until  # noqa: E402
+from rpc_verify import RpcError, RpcSubprocess, run_demo, wait_snap, wait_until  # noqa: E402
 
 
 # ─── constants mirrored from the binding ────────────────────────────
@@ -153,13 +153,7 @@ _FLOATING_PREFIX = "torn-"
 
 
 def _snapshot_window(tf: RpcSubprocess, window: str, w: int, h: int) -> Any:
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": window, "from": "paint",
-         "viewport": {"w": w, "h": h}},
-    )
-    assert resp is not None
-    return resp.result
+    return tf.snapshot(source="paint", viewport=(w, h), window=window)
 
 
 def _snap_main(tf: RpcSubprocess) -> Any:
@@ -191,9 +185,8 @@ def _wait_floating(tf: RpcSubprocess, panel_id: str) -> Any:
 def _wait_main(tf: RpcSubprocess, predicate, desc: str) -> Any:
     """Poll the main window's paint snapshot until `predicate(snap)`
     holds; return the matching snapshot (R883 zero-flake gate)."""
-    return wait_until(
-        lambda: (lambda s: s if predicate(s) else None)(_snap_main(tf)),
-        desc=desc,
+    return wait_snap(
+        tf, predicate, viewport=(_MAIN_W, _MAIN_H), window="main", desc=desc
     )
 
 

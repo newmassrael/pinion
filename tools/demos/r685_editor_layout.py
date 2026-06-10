@@ -77,12 +77,7 @@ _SPLIT_INNER_H_RATIO_DEFAULT = 0.78
 
 
 def _snapshot(tf: RpcSubprocess) -> Any:
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "from": "paint", "viewport": {"w": _MAIN_W, "h": _MAIN_H}},
-    )
-    assert resp is not None
-    return resp.result
+    return tf.snapshot(source="paint", viewport=(_MAIN_W, _MAIN_H))
 
 
 def _query(tf: RpcSubprocess, path: str) -> Any:

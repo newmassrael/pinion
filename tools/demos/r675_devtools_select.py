@@ -61,23 +61,21 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_snap,
     wait_until,
 )
 
 
 def _main_snap(tf):
-    return tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "main", "from": "paint",
-         "viewport": {"w": 320, "h": 200}},
-    ).result
+    return tf.snapshot(source="paint", viewport=(320, 200), window="main")
 
 
 def _wait_main_banner(tf, needle: str, desc: str):
-    """Main-window snapshot once `needle` renders (R883 zero-flake)."""
-    return wait_until(
-        lambda: (lambda s: s if _walk_for_text(s, needle) else None)(_main_snap(tf)),
-        desc=desc,
+    """Main-window snapshot once `needle` renders (R883 zero-flake;
+    window-scoped polling lives in the harness `wait_snap`, R883.1)."""
+    return wait_snap(
+        tf, lambda s: _walk_for_text(s, needle),
+        viewport=(320, 200), window="main", desc=desc,
     )
 
 
@@ -152,26 +150,8 @@ def body() -> None:
         # (A1) inspector tree is paint-side reachable + carries the
         # composite-row tag prefix the click router consumes.
         snap_insp0 = tf.snapshot(
-            source="paint",
-            viewport=(280, 140),
+            source="paint", viewport=(280, 140), window="inspector",
         )
-        # R670.B per-window dispatch — explicitly request inspector
-        snap_insp0 = tf.snapshot(
-            path="",
-            source="paint",
-            viewport=(280, 140),
-        )
-        # Query the inspector-specific window via the {window} param.
-        # rpc_verify.snapshot doesn't expose window param directly;
-        # build the raw request through .request for this targeted
-        # read.
-        resp_insp = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "inspector", "from": "paint",
-             "viewport": {"w": 280, "h": 140}},
-        )
-        assert resp_insp is not None
-        snap_insp0 = resp_insp.result
         assert find_by_tag(snap_insp0, "inspector_tree") is not None, (
             "inspector_tree root must paint"
         )
@@ -191,13 +171,10 @@ def body() -> None:
         )
 
         # ── (B) main window baseline — no selection banner ────────
-        resp_main = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "main", "from": "paint",
-             "viewport": {"w": 320, "h": 200}},
+        snap_main0 = tf.snapshot(
+            source="paint", viewport=(320, 200),
+            window="main",
         )
-        assert resp_main is not None
-        snap_main0 = resp_main.result
         assert not _walk_for_text(snap_main0, "Selected:"), (
             "fresh boot main window must NOT render the selection banner"
         )
@@ -221,12 +198,11 @@ def body() -> None:
         )
 
         # ── (D) inspector shows focus highlight on the selected row ─
-        resp_insp = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "inspector", "from": "paint",
-             "viewport": {"w": 280, "h": 140}},
+        snap_insp_now = tf.snapshot(
+            source="paint", viewport=(280, 140),
+            window="inspector",
         )
-        snap_insp1 = resp_insp.result
+        snap_insp1 = snap_insp_now
         focus1 = _focused_inspector_row(snap_insp1)
         assert focus1 == "state", (
             f"inspector must highlight the 'state' row after selection; "
@@ -257,12 +233,11 @@ def body() -> None:
         )
 
         # Inspector focus highlight moves to the new selection.
-        resp_insp = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "inspector", "from": "paint",
-             "viewport": {"w": 280, "h": 140}},
+        snap_insp_now = tf.snapshot(
+            source="paint", viewport=(280, 140),
+            window="inspector",
         )
-        snap_insp2 = resp_insp.result
+        snap_insp2 = snap_insp_now
         focus2 = _focused_inspector_row(snap_insp2)
         assert focus2 == "main", (
             f"inspector focus must move to 'main' row; got: {focus2!r}"
@@ -277,12 +252,11 @@ def body() -> None:
             lambda: tf.query("/inspector_tree/external/pressed_id") is None,
             desc="pressed_id must clear on mismatched Up (drag-off)",
         )
-        resp_insp = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "inspector", "from": "paint",
-             "viewport": {"w": 280, "h": 140}},
+        snap_insp_now = tf.snapshot(
+            source="paint", viewport=(280, 140),
+            window="inspector",
         )
-        focus_dragoff = _focused_inspector_row(resp_insp.result)
+        focus_dragoff = _focused_inspector_row(snap_insp_now)
         assert focus_dragoff == prev_selection, (
             f"drag-off must NOT mutate selection; "
             f"focus was {prev_selection!r}, became {focus_dragoff!r}"
@@ -298,12 +272,11 @@ def body() -> None:
             "PointerCancel on pressed row must clear the slot"
         )
         # Selection still at "main" (no commit).
-        resp_insp = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "inspector", "from": "paint",
-             "viewport": {"w": 280, "h": 140}},
+        snap_insp_now = tf.snapshot(
+            source="paint", viewport=(280, 140),
+            window="inspector",
         )
-        focus_cancel = _focused_inspector_row(resp_insp.result)
+        focus_cancel = _focused_inspector_row(snap_insp_now)
         assert focus_cancel == "main", (
             f"PointerCancel must NOT commit; focus stays {focus_cancel!r}"
         )
@@ -321,12 +294,11 @@ def body() -> None:
         main_state_after_click = tf.query("/external/state")
 
         # ── (I) inspector tree reflects updated button state ──────
-        resp_insp = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "inspector", "from": "paint",
-             "viewport": {"w": 280, "h": 140}},
+        snap_insp_now = tf.snapshot(
+            source="paint", viewport=(280, 140),
+            window="inspector",
         )
-        snap_insp3 = resp_insp.result
+        snap_insp3 = snap_insp_now
         assert _walk_for_text(snap_insp3, f"State: {main_state_after_click}"), (
             f"inspector 'State: …' leaf must reflect new button state "
             f"{main_state_after_click!r}"
@@ -347,12 +319,11 @@ def body() -> None:
         # is "the inspector→main bridge keeps working through main-
         # window operations", which is still satisfied; the specific
         # selection value is a R679-driven enrichment.
-        resp_main = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "main", "from": "paint",
-             "viewport": {"w": 320, "h": 200}},
+        snap_main_now = tf.snapshot(
+            source="paint", viewport=(320, 200),
+            window="main",
         )
-        snap_main_final = resp_main.result
+        snap_main_final = snap_main_now
         has_inspector_banner = _walk_for_text(snap_main_final, "Selected: main")
         has_button_banner = _walk_for_text(
             snap_main_final, "Selected: Container/Container[main_btn]"
@@ -386,17 +357,16 @@ def body() -> None:
             tf, "Selected: 0/0",
             "deep-path selection (0/0) must propagate to main banner",
         )
-        resp_insp = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "inspector", "from": "paint",
-             "viewport": {"w": 280, "h": 140}},
+        snap_insp_now = tf.snapshot(
+            source="paint", viewport=(280, 140),
+            window="inspector",
         )
         # The deep path "0/0" doesn't correspond to a visible
         # inspector tree row (inspector emits "state" + "main" +
         # nested main-scene rows with deeper paths). The shared
         # signal still updates — only the focus highlight goes
         # silent when no row matches.
-        focus_deep = _focused_inspector_row(resp_insp.result)
+        focus_deep = _focused_inspector_row(snap_insp_now)
         assert focus_deep is None or focus_deep == "0/0", (
             f"focus highlight on unknown row gracefully no-ops or "
             f"matches the row when present; got: {focus_deep!r}"

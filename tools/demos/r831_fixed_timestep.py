@@ -48,6 +48,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_paint_beyond,
     wait_until,
 )
 
@@ -130,12 +131,9 @@ def _tick_expect_frozen(tf: RpcSubprocess, dt: float) -> None:
     still requests one repaint (which accumulates the time); gate on the
     paint counter so that repaint has LANDED before the caller asserts
     no motion (R883 zero-flake)."""
-    before = int(tf.request("scene/cache_stats", {}).result["paint_count"])
+    before = int(tf.cache_stats()["paint_count"])
     tf.tick(dt)
-    wait_until(
-        lambda: int(tf.request("scene/cache_stats", {}).result["paint_count"]) > before,
-        desc="sub-fixed tick's repaint landed",
-    )
+    wait_paint_beyond(tf, before, desc="sub-fixed tick's repaint landed")
 
 
 def body() -> None:

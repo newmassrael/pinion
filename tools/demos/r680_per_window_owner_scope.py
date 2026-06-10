@@ -96,24 +96,12 @@ from rpc_verify import (  # noqa: E402
 
 def _snap_main(tf) -> dict:
     """Read the main window's paint scene at canonical viewport."""
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "main", "from": "paint",
-         "viewport": {"w": 600, "h": 400}},
-    )
-    assert resp is not None
-    return resp.result
+    return tf.snapshot(source="paint", viewport=(600, 400), window="main")
 
 
 def _snap_inspector(tf) -> dict:
     """Read the inspector window's paint scene at canonical viewport."""
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "inspector", "from": "paint",
-         "viewport": {"w": 480, "h": 320}},
-    )
-    assert resp is not None
-    return resp.result
+    return tf.snapshot(source="paint", viewport=(480, 320), window="inspector")
 
 
 def _walk_collect_text(node, out: list[str]) -> None:
@@ -287,14 +275,11 @@ def body() -> None:
         from rpc_verify import RpcError  # noqa: PLC0415
         unknown_handled = False
         try:
-            resp_unknown = tf.request(
-                "scene/snapshot",
-                {"path": "", "window": "never-exists", "from": "paint"},
-            )
+            snap_unknown = tf.snapshot(source="paint", window="never-exists")
             # Some dispatchers may fall back to primary if the window
             # is unknown; either typed-error or fallback-result is
             # acceptable here, as long as no panic / no crash.
-            unknown_handled = resp_unknown is not None
+            unknown_handled = snap_unknown is not None
         except RpcError:
             # Typed JSON-RPC error envelope is the canonical signal.
             unknown_handled = True
@@ -372,12 +357,7 @@ def body() -> None:
         # window_owners[DEFAULT_WINDOW] field aliases to root_owner.
         # The legacy path must observe identical scene as the
         # explicit {window: "main"} path.
-        resp_default = tf.request(
-            "scene/snapshot",
-            {"path": "", "from": "paint", "viewport": {"w": 600, "h": 400}},
-        )
-        assert resp_default is not None
-        snap_default = resp_default.result
+        snap_default = tf.snapshot(source="paint", viewport=(600, 400))
         assert snap_default is not None, (
             "single-window scene/snapshot (no window param) returns scene"
         )

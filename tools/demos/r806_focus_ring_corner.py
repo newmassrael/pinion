@@ -167,7 +167,7 @@ def _pixel_check_file_ring() -> bool:
             capture_output=True, timeout=15)
         if r.returncode != 0 or not Path(SHOT).exists():
             return None
-        im = Image.open(SHOT).convert("RGB")  # noqa: shadows nothing — per-grab image
+        im = Image.open(SHOT).convert("RGB")
         px = im.load()
         W, H = im.size
 

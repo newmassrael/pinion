@@ -40,7 +40,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
-    wait_until,
+    wait_snap,
 )
 
 
@@ -63,21 +63,13 @@ def _walk_for_text(node, needle: str) -> bool:
 
 def _wait_inspector_with(tf, needle: str, desc: str):
     """Inspector-window snapshot once `needle` renders (R883 zero-flake)."""
-    def poll():
-        resp = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        if resp is not None and _walk_for_text(resp.result, needle):
-            return resp
-        return None
-
-    return wait_until(poll, desc=desc)
+    return wait_snap(
+        tf,
+        lambda s: _walk_for_text(s, needle),
+        viewport=(280, 140),
+        window="inspector",
+        desc=desc,
+    )
 
 def _collect_tags(node) -> list[str]:
     """Depth-first walk collecting all Container tags."""
@@ -97,17 +89,10 @@ def _collect_tags(node) -> list[str]:
 def body() -> None:
     with RpcSubprocess("hello-multi-window", boot_grace=1.5) as tf:
         # ── (A) substrate shape ────────────────────────────────────
-        inspector = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
+        result = tf.snapshot(
+            source="paint", viewport=(280, 140), window="inspector"
         )
-        assert inspector is not None, "scene/snapshot inspector must succeed"
-        result = inspector.result
+        assert result is not None, "scene/snapshot inspector must succeed"
 
         # (A1) TreeView root tag is present (the R671 `inspector_tree`
         # anchor; the R670.B `inspector_state_text` Container is
@@ -248,9 +233,8 @@ def body() -> None:
 
         # (C3) Snapshot with explicit window param parses + threads
         # `{window}` cleanly — both window IDs produce per-spec views.
-        snap_main_window = tf.request(
-            "scene/snapshot",
-            {"window": "main", "path": "", "from": "paint", "viewport": {"w": 320, "h": 200}},
+        snap_main_window = tf.snapshot(
+            source="paint", viewport=(320, 200), window="main"
         )
         assert snap_main_window is not None, (
             "scene/snapshot {window:main} must succeed post-single-parse"
@@ -269,7 +253,7 @@ def body() -> None:
         # main-scene branch — it's the visible button caption, not
         # the state name — so we narrow by checking the State row
         # composite tag specifically.)
-        state_row = find_by_tag(ins_hover.result, "inspector_tree#state")
+        state_row = find_by_tag(ins_hover, "inspector_tree#state")
         assert state_row is not None
         assert _walk_for_text(state_row, "Hover")
         assert not _walk_for_text(state_row, "Idle"), (
@@ -285,12 +269,12 @@ def body() -> None:
         )
         # (D4) The Container[main_btn] subtree still shows up — the
         # whole main scene is mirrored regardless of state.
-        assert _walk_for_text(ins_disabled.result, "main_btn"), (
+        assert _walk_for_text(ins_disabled, "main_btn"), (
             "Disabled state still mirrors the main scene structure"
         )
         # (D5) The button label text changes to "Disabled" when the
         # state goes Disabled (per the existing view_main fn body).
-        assert _walk_for_text(ins_disabled.result, '"Disabled"'), (
+        assert _walk_for_text(ins_disabled, '"Disabled"'), (
             "Disabled state's button label is rendered as a Text leaf"
         )
 
@@ -302,7 +286,7 @@ def body() -> None:
             "after Enable, inspector State row must read Idle again",
         )
         # (D7) Disabled tag is gone from the State row.
-        state_row_re = find_by_tag(ins_re_idle.result, "inspector_tree#state")
+        state_row_re = find_by_tag(ins_re_idle, "inspector_tree#state")
         assert state_row_re is not None
         assert not _walk_for_text(state_row_re, "Disabled"), (
             "State row must drop Disabled label after Enable"
@@ -310,37 +294,24 @@ def body() -> None:
 
         # (D8) Main window still shows the button widget — multi-
         # window paint independence pin.
-        snap_main_final = tf.request(
-            "scene/snapshot",
-            {
-                "window": "main",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 320, "h": 200},
-            },
+        snap_main_final = tf.snapshot(
+            source="paint", viewport=(320, 200), window="main"
         )
-        assert snap_main_final is not None
-        assert find_by_tag(snap_main_final.result, "main_btn") is not None, (
+        assert find_by_tag(snap_main_final, "main_btn") is not None, (
             "main window scene/snapshot still resolves main_btn"
         )
 
         # (D9) inspector_tree tag absent from main view (per-window
         # paint separation pin).
         assert (
-            find_by_tag(snap_main_final.result, "inspector_tree") is None
+            find_by_tag(snap_main_final, "inspector_tree") is None
         ), "inspector_tree must not leak into main window paint"
 
         # (D10) main_btn tag absent from inspector view's root scope
         # — the TreeView's row label contains the *string* "main_btn"
         # but the actual Container tag is `inspector_tree#…`.
-        ins_final = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
+        ins_final = tf.snapshot(
+            source="paint", viewport=(280, 140), window="inspector"
         )
         assert ins_final is not None
         # The literal main_btn Container tag exists only inside the
@@ -348,7 +319,7 @@ def body() -> None:
         # inspector tree. The string appears in a Text node of the
         # inspector's row label (visible), but that's a text
         # rendering, not a tagged Container.
-        ins_tags = _collect_tags(ins_final.result)
+        ins_tags = _collect_tags(ins_final)
         assert "main_btn" not in ins_tags, (
             f"inspector view must not carry main_btn as a Container tag: {ins_tags!r}"
         )

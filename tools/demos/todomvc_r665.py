@@ -51,7 +51,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_until  # noqa: E402
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_json_file, wait_until  # noqa: E402
 
 TF_TAG = "main_textfield"
 EDIT_TF_TAG = "todo_edit"
@@ -79,20 +79,9 @@ def submit_enter(tf: RpcSubprocess, target: str) -> None:
 
 
 def wait_blob(storage_dir: Path, predicate, desc: str) -> dict[str, Any]:
-    """Poll the persisted blob until readable AND `predicate(blob)` is
-    truthy (R883 zero-flake). The save Effect writes via atomic rename,
-    so a poll observes whole blobs only; a not-yet-written / garbage
-    file simply polls again."""
-    def poll():
-        if not storage_path(storage_dir).exists():
-            return None
-        try:
-            blob = read_state_blob(storage_dir)
-        except (json.JSONDecodeError, OSError, KeyError):
-            return None
-        return blob if predicate(blob) else None
-
-    return wait_until(poll, desc=desc)
+    """Poll the persisted blob via the harness JSON-file gate (R883.1
+    — atomic-rename polling decision lives in rpc_verify, one home)."""
+    return wait_json_file(storage_path(storage_dir), predicate, desc=desc)
 
 
 def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:

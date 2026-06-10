@@ -61,7 +61,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     run_demo,
     wait_query,
-    wait_until,
+    wait_snap,
 )
 
 
@@ -81,40 +81,34 @@ _INSPECTOR_H = 320
 # Row height per `TreeViewStyle::m3_default` is 48 px.
 
 
-def _wait_snap_window(tf, snap_fn, predicate, desc: str) -> dict:
-    """Poll a window-scoped snapshot until `predicate(snap)` holds (R883).
+def _wait_main(tf, predicate, desc: str) -> dict:
+    """Poll the main window's paint snapshot (R883.1 — window-scoped
+    polling lives in the harness `wait_snap`)."""
+    return wait_snap(
+        tf, predicate, viewport=(_MAIN_W, _MAIN_H), window="main", desc=desc,
+    )
 
-    `wait_snap` covers the single-window `tf.snapshot(...)` form only;
-    the main/inspector snapshots here carry a `window` scope, so poll
-    the custom readers through `wait_until` and return the matching
-    snap so follow-up asserts read the same observed frame."""
-    def poll():
-        snap = snap_fn(tf)
-        return snap if predicate(snap) else None
 
-    return wait_until(poll, desc=desc)
+def _wait_inspector(tf, predicate, desc: str) -> dict:
+    """Poll the inspector window's paint snapshot (R883.1)."""
+    return wait_snap(
+        tf, predicate, viewport=(_INSPECTOR_W, _INSPECTOR_H),
+        window="inspector", desc=desc,
+    )
 
 
 def _snap_main(tf) -> dict:
     """Read the main window's paint scene at the canonical viewport."""
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "main", "from": "paint",
-         "viewport": {"w": _MAIN_W, "h": _MAIN_H}},
+    return tf.snapshot(
+        source="paint", viewport=(_MAIN_W, _MAIN_H), window="main",
     )
-    assert resp is not None
-    return resp.result
 
 
 def _snap_inspector(tf) -> dict:
     """Read the inspector window's paint scene at canonical viewport."""
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "inspector", "from": "paint",
-         "viewport": {"w": _INSPECTOR_W, "h": _INSPECTOR_H}},
+    return tf.snapshot(
+        source="paint", viewport=(_INSPECTOR_W, _INSPECTOR_H), window="inspector",
     )
-    assert resp is not None
-    return resp.result
 
 
 def _query_router_last_clicked(tf) -> Any:
@@ -243,8 +237,8 @@ def body() -> None:
         # ── (C) Inspector → main arc (R675 baseline regression pin) ─
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
         # Main scene paints the selection wrap (Error red).
-        snap_main_c = _wait_snap_window(
-            tf, _snap_main,
+        snap_main_c = _wait_main(
+            tf,
             lambda s: len(_collect_borders(s)) == 1,
             "post inspector-click = 1 selection wrap",
         )
@@ -327,8 +321,8 @@ def body() -> None:
         # only). Verify the *visible* end-state instead — gate on the
         # inspector row's focus state-layer, which is uniquely
         # post-click (the alt path left this row transparent).
-        snap_inspector_e = _wait_snap_window(
-            tf, _snap_inspector,
+        snap_inspector_e = _wait_inspector(
+            tf,
             lambda s: (lambda f: f is not None and not _is_transparent(f))(
                 _find_row_fill_by_tag(s, row_tag)
             ),
@@ -349,8 +343,8 @@ def body() -> None:
         # ── (F) Bidirectional alternation — latest write wins ──────
         # Inspector writes A.
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        _wait_snap_window(
-            tf, _snap_inspector,
+        _wait_inspector(
+            tf,
             lambda s: (lambda f: f is not None and not _is_transparent(f))(
                 _find_row_fill_by_tag(s, row_tag)
             ),
@@ -364,8 +358,8 @@ def body() -> None:
         # tree (banner Text shows only when a selection is set, and
         # the tree mirror walks the raw scene). Confirm the original
         # button row lost its focus state-layer.
-        _wait_snap_window(
-            tf, _snap_inspector,
+        _wait_inspector(
+            tf,
             lambda s: (lambda f: f is None or _is_transparent(f))(
                 _find_row_fill_by_tag(s, row_tag)
             ),
@@ -374,8 +368,8 @@ def body() -> None:
 
         # Inspector writes button again — wins.
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        _wait_snap_window(
-            tf, _snap_inspector,
+        _wait_inspector(
+            tf,
             lambda s: (lambda f: f is not None and not _is_transparent(f))(
                 _find_row_fill_by_tag(s, row_tag)
             ),

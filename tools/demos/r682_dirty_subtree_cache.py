@@ -122,21 +122,13 @@ def seed_env(n: int):
 
 def _snap(tf) -> dict:
     """Read the binding's paint scene at canonical viewport."""
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "from": "paint", "viewport": {"w": _WIN_W, "h": _WIN_H}},
-    )
-    assert resp is not None
-    return resp.result
+    return tf.snapshot(source="paint", viewport=(_WIN_W, _WIN_H))
 
 
 def _cache_stats(tf) -> dict:
-    """Read the per-window FragmentCacheStats via the R682.B
-    scene/cache_stats RPC surface."""
-    resp = tf.request("scene/cache_stats", {})
-    assert resp is not None, "scene/cache_stats must return a typed snapshot"
-    assert isinstance(resp.result, dict), "outcome must be a dict"
-    return resp.result
+    """Read the per-window FragmentCacheStats via the harness typed
+    wrapper (R883.1 — the raw envelope moved into rpc_verify)."""
+    return tf.cache_stats()
 
 
 def _count_item_containers(snap: dict) -> int:
@@ -164,20 +156,12 @@ def _count_item_containers(snap: dict) -> int:
 
 
 def _force_paint(tf) -> None:
-    """Best-effort drive of an additional paint cycle so the
-    `FragmentCache.end_paint()` counter advances. `scene/snapshot`
-    invokes the paint producer closure (which re-runs `V::view` +
-    `compute_layout`) but does NOT itself go through
-    `AppShell::render_window` → `to_vello_cached` → `end_paint`.
-    Actual paint cycles fire only on winit's `RedrawRequested`,
-    which the AppShell arms when a redraw flag is set (animation
-    tick / immediate-mode polled cadence / explicit
-    `request_redraw_for_window`). Steady-state todomvc has no
-    animation driving continuous repaints, so we drive a benign
-    input (mouse hover via cursor_moved through the deferred-input
-    inbox) — the InputRouter's pointer-state mutation arms a
-    redraw without altering the scene's observable shape.
-    """
+    """Best-effort extra paint-producer pass. `scene/snapshot` re-runs
+    `V::view` + `compute_layout` (and re-stores the frame, R705) but
+    does NOT itself run `AppShell::render_window`, so `paint_count`
+    may or may not advance — callers that NEED a real frame gate on
+    [`_wait_paint_beyond`] instead. Used where the follow-up asserts
+    are deliberately tolerant of how many GPU frames landed."""
     _snap(tf)
 
 

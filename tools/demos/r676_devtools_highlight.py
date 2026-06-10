@@ -65,6 +65,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_snap,
     wait_until,
 )
 
@@ -181,31 +182,18 @@ def _border_color(node) -> tuple[int, int, int, int] | None:
 
 
 def _snap_main(tf) -> dict:
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "main", "from": "paint",
-         "viewport": {"w": 320, "h": 200}},
-    )
-    assert resp is not None
-    return resp.result
+    return tf.snapshot(source="paint", viewport=(320, 200), window="main")
 
 
 def _snap_inspector(tf) -> dict:
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "window": "inspector", "from": "paint",
-         "viewport": {"w": 280, "h": 140}},
-    )
-    assert resp is not None
-    return resp.result
+    return tf.snapshot(source="paint", viewport=(280, 140), window="inspector")
 
 
 def _wait_main(tf, predicate, desc: str) -> dict:
     """Main-window snapshot once `predicate(snap)` holds (R883 zero-flake)."""
-    def poll():
-        snap = _snap_main(tf)
-        return snap if predicate(snap) else None
-    return wait_until(poll, desc=desc)
+    return wait_snap(
+        tf, predicate, viewport=(320, 200), window="main", desc=desc
+    )
 
 
 def body() -> None:

@@ -88,6 +88,7 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     node_center,
     run_demo,
+    wait_paint_beyond,
     wait_until,
 )
 
@@ -103,12 +104,7 @@ _WIN_H = 420
 
 def _snap(tf) -> dict:
     """Read the binding's paint scene at canonical viewport."""
-    resp = tf.request(
-        "scene/snapshot",
-        {"path": "", "from": "paint", "viewport": {"w": _WIN_W, "h": _WIN_H}},
-    )
-    assert resp is not None
-    return resp.result
+    return tf.snapshot(source="paint", viewport=(_WIN_W, _WIN_H))
 
 
 def _walk_immediate_node(scene: Any) -> dict | None:
@@ -181,12 +177,8 @@ def body() -> None:
         # writes the per-paint `dt` into the node's `last_dt`
         # sidecar. Gate on the paint counter so at least one real
         # frame landed before sampling it (R883 zero-flake).
-        def _paint_count() -> int:
-            return int(tf.request("scene/cache_stats", {}).result["paint_count"])
-
-        _pc0 = _paint_count()
-        wait_until(
-            lambda: _paint_count() > _pc0,
+        wait_paint_beyond(
+            tf, int(tf.cache_stats()["paint_count"]),
             desc="a continuous-mode frame landed before sampling last_dt",
         )
         snap_b = _snap(tf)
@@ -262,9 +254,8 @@ def body() -> None:
         # continuous repaint.
         for _ in range(3):
             # Observed-state gate on the continuous paint clock (R883).
-            _pcn = _paint_count()
-            wait_until(
-                lambda: _paint_count() > _pcn,
+            wait_paint_beyond(
+                tf, int(tf.cache_stats()["paint_count"]),
                 desc="continuous paint clock advanced a frame",
             )
             snap_f = _snap(tf)

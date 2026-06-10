@@ -58,6 +58,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_paint_beyond,
     wait_until,
 )
 
@@ -223,15 +224,11 @@ def body() -> None:
         )
 
         # ── (F) Continuous paint clock without input ─────────────────
-        def _paint_count() -> int:
-            return int(tf.request("scene/cache_stats", {}).result["paint_count"])
-
         for _ in range(3):
             # Observed-state gate on the continuous paint clock: a real
             # frame must land between samples (R883 zero-flake).
-            before = _paint_count()
-            wait_until(
-                lambda: _paint_count() > before,
+            wait_paint_beyond(
+                tf, int(tf.cache_stats()["paint_count"]),
                 desc="continuous paint clock advanced a frame",
             )
             snap_f = _snap(tf)
