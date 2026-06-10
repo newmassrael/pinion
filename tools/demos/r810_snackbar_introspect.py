@@ -31,7 +31,6 @@ through show / auto-dismiss / re-show / explicit-dismiss.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -104,10 +103,13 @@ def body() -> None:
         # ── (D) the live countdown is RPC-observable (monotone down) ──
         prev = rnum(REM)
         for step in range(3):
-            time.sleep(0.3)
-            cur = rnum(REM)
-            assert cur is not None, "remaining stays queryable as a number while shown"
-            assert cur < prev, f"step {step}: live countdown decreases over time ({cur} < {prev})"
+            # Observed-state polling on the wall-clock countdown (R883
+            # zero-flake): wait for the live value to drop below the
+            # previous sample instead of betting on a fixed sleep.
+            cur = wait_until(
+                lambda: (lambda v: v if v is not None and v < prev else None)(rnum(REM)),
+                desc=f"step {step}: live countdown decreases over time",
+            )
             assert_eq(d.query(VIS), True, f"step {step}: still shown mid-countdown")
             prev = cur
 

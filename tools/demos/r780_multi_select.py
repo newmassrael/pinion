@@ -36,7 +36,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -49,6 +48,8 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_query,
+    wait_until,
 )
 
 EXAMPLE = "hello-multi-select"
@@ -57,7 +58,6 @@ N = 10_000
 PITCH = 32
 SCROLL_TAG = "vlist_scroll"
 LIST_TAG = "vlist"
-PAUSE = 0.12
 
 
 def present_rows(snap) -> set[int]:
@@ -90,7 +90,6 @@ def mod_key(tf, name: str, *, shift: bool = False, ctrl: bool = False) -> None:
     tf.modifiers(shift=shift, ctrl=ctrl)
     tf.key(path=LIST_TAG, name=name)
     tf.modifiers()  # release so the next plain key is unmodified
-    time.sleep(PAUSE)
 
 
 def body() -> None:
@@ -112,45 +111,49 @@ def body() -> None:
 
         # ── (B) plain nav: move + replace (single-select-style) ─────
         tf.request("focus/set", {"tag": LIST_TAG})
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == LIST_TAG,
+            desc="list focused for keyboard nav",
+        )
         tf.key(path=LIST_TAG, name="ArrowDown")  # from nothing → row 0
-        time.sleep(PAUSE)
-        assert_eq(selection(tf), [0], "first ArrowDown selects just row 0")
+        wait_query(tf, "/external/selection", [0], desc="first ArrowDown selects just row 0")
         tf.key(path=LIST_TAG, name="ArrowDown")
         tf.key(path=LIST_TAG, name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(selection(tf), [2], "plain nav replaces — never accumulates")
+        wait_query(tf, "/external/selection", [2], desc="plain nav replaces — never accumulates")
         assert_eq(cursor(tf), 2, "active row is 2")
         assert_eq(tf.query("/external/anchor"), 2, "plain move sets the anchor to 2")
 
         # ── (C) Shift-range: extend the contiguous span from anchor ─
         mod_key(tf, "ArrowDown", shift=True)
-        assert_eq(selection(tf), [2, 3], "Shift+Down extends the range from anchor 2")
+        wait_query(tf, "/external/selection", [2, 3],
+                   desc="Shift+Down extends the range from anchor 2")
         mod_key(tf, "ArrowDown", shift=True)
-        assert_eq(selection(tf), [2, 3, 4], "Shift+Down grows the span")
+        wait_query(tf, "/external/selection", [2, 3, 4], desc="Shift+Down grows the span")
         assert_eq(tf.query("/external/anchor"), 2, "the anchor stays put while extending")
         assert_eq(cursor(tf), 4, "the navigated end is the active row")
         mod_key(tf, "ArrowUp", shift=True)
-        assert_eq(selection(tf), [2, 3], "Shift+Up shrinks the span back toward the anchor")
+        wait_query(tf, "/external/selection", [2, 3],
+                   desc="Shift+Up shrinks the span back toward the anchor")
         # End the anchored span at the bottom: contiguous from 2 to last.
         mod_key(tf, "End", shift=True)
-        assert_eq(len(selection(tf)), N - 2, "Shift+End extends the span to the last row")
+        wait_until(lambda: len(selection(tf)) == N - 2,
+                   desc="Shift+End extends the span to the last row")
         assert_eq(cursor(tf), N - 1, "active row is the last")
 
         # ── (D) Ctrl+A select-all, then a plain move collapses ──────
         mod_key(tf, "a", ctrl=True)
-        assert_eq(len(selection(tf)), N, "Ctrl+A selects every row")
+        wait_until(lambda: len(selection(tf)) == N, desc="Ctrl+A selects every row")
         sel = selection(tf)
         assert sel[0] == 0 and sel[-1] == N - 1, "the full span 0..9999 is selected"
         tf.key(path=LIST_TAG, name="Home")  # plain move
-        time.sleep(PAUSE)
-        assert_eq(selection(tf), [0], "a plain move replaces the whole set with one row")
+        wait_query(tf, "/external/selection", [0],
+                   desc="a plain move replaces the whole set with one row")
 
         # ── (E) Ctrl+Space toggles the active row's membership ──────
         mod_key(tf, " ", ctrl=True)
-        assert_eq(selection(tf), [], "Ctrl+Space toggles the active row 0 OFF")
+        wait_query(tf, "/external/selection", [], desc="Ctrl+Space toggles the active row 0 OFF")
         mod_key(tf, " ", ctrl=True)
-        assert_eq(selection(tf), [0], "Ctrl+Space toggles row 0 back ON")
+        wait_query(tf, "/external/selection", [0], desc="Ctrl+Space toggles row 0 back ON")
 
         # ── (F) RPC funnel: invoke + intervene the set ──────────────
         assert_eq(tf.invoke("/external/clear", None), None, "clear empties the set")
@@ -179,9 +182,10 @@ def body() -> None:
 
         # ── (G) scroll-into-view at scale (the headline) ────────────
         tf.key(path=LIST_TAG, name="Home")  # anchor = 0
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/anchor", 0, desc="Home re-anchored at row 0")
         mod_key(tf, "End", shift=True)  # span the whole dataset
-        assert_eq(len(selection(tf)), N, "Shift+End spans all 10,000 from the top anchor")
+        wait_until(lambda: len(selection(tf)) == N,
+                   desc="Shift+End spans all 10,000 from the top anchor")
         snap = tf.snapshot(source="paint", viewport=WIN)
         deep_offset = scroll_offset(snap)
         assert deep_offset > 300_000, f"Shift+End scrolled deep, offset {deep_offset}"

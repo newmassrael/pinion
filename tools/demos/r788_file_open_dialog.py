@@ -47,7 +47,6 @@ file-row inks by R787 (hello-file-browser); R788 is their composition.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -57,11 +56,13 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_snap,
+    wait_until,
 )
 
 EXAMPLE = "hello-file-open-dialog"
 VIEWPORT = (600, 600)
-PAUSE = 0.12
 
 TRIGGER = "open_file"
 DIR = "fb_dir"
@@ -136,9 +137,8 @@ def body() -> None:
 
         # ── (B) open via trigger click ──────────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        snap = _snap(tf)
-        assert _present(snap, SCRIM), "scrim appears on open"
+        snap = wait_snap(tf, lambda s: _present(s, SCRIM),
+                         viewport=VIEWPORT, desc="scrim appears on open")
         assert _present(snap, PANEL), "panel appears on open"
         assert _present(snap, OK), "OK action present"
         assert _present(snap, CANCEL), "Cancel action present"
@@ -166,14 +166,14 @@ def body() -> None:
         assert_eq(tf.query(dpath("selected")), None, "no selection before arrowing")
         # End jumps to the last row (a file) — selection follows focus.
         tf.key(path=DIR, name="End")
-        time.sleep(PAUSE)
-        end_sel = tf.query(dpath("selected"))
+        end_sel = wait_until(lambda: tf.query(dpath("selected")),
+                             desc="End landed on + selected a row")
         assert end_sel and not end_sel.endswith("/"), f"End landed on + selected a file ({end_sel})"
         ok_enabled_fill = _fill(_snap(tf), OK)
         # Home jumps to the first row (a directory) — the selection clears.
         tf.key(path=DIR, name="Home")
-        time.sleep(PAUSE)
-        assert_eq(tf.query(dpath("selected")), None, "a directory row under the cursor clears selection")
+        wait_query(tf, dpath("selected"), None,
+                   desc="a directory row under the cursor clears selection")
         ok_disabled_fill = _fill(_snap(tf), OK)
         assert ok_enabled_fill != ok_disabled_fill, "the OK gate tracks selection-follows-focus"
 
@@ -191,28 +191,24 @@ def body() -> None:
             raise AssertionError(f"{name} not in listing")
 
         tf.click(path=f"{DIR}#{row_index('assets')}")
-        time.sleep(PAUSE)
-        assert_eq(tf.query(dpath("cwd")), "/proj/assets", "clicking a directory row descends")
+        wait_query(tf, dpath("cwd"), "/proj/assets", desc="clicking a directory row descends")
         tf.click(path=f"{DIR}#up")
-        time.sleep(PAUSE)
-        assert_eq(tf.query(dpath("cwd")), "/proj", "clicking the parent affordance climbs")
+        wait_query(tf, dpath("cwd"), "/proj", desc="clicking the parent affordance climbs")
 
         # ── (F) OK gated on a selection (disabled until a pick) ─────
         assert_eq(tf.query(dpath("selected")), None, "no selection yet")
         ok_disabled_fill = _fill(_snap(tf), OK)
         # An OK click with nothing picked is a no-op (dialog stays open).
         tf.click(path=OK)
-        time.sleep(PAUSE)
-        assert _present(_snap(tf), PANEL), "OK with no selection does not close the dialog"
-        assert_eq(_chosen_line(_snap(tf)), "Chosen: (none)", "OK no-op chose nothing")
+        snap = wait_snap(tf, lambda s: _present(s, PANEL), viewport=VIEWPORT,
+                         desc="OK with no selection does not close the dialog")
+        assert_eq(_chosen_line(snap), "Chosen: (none)", "OK no-op chose nothing")
 
         # ── (G) select a file → OK enables (Accent) ─────────────────
         cargo_row = row_index("Cargo.toml")
         tf.click(path=f"{DIR}#{cargo_row}")
-        time.sleep(PAUSE)
-        assert_eq(
-            tf.query(dpath("selected")), "/proj/Cargo.toml", "clicking a file row selects it"
-        )
+        wait_query(tf, dpath("selected"), "/proj/Cargo.toml",
+                   desc="clicking a file row selects it")
         snap = _snap(tf)
         ok_enabled_fill = _fill(snap, OK)
         assert ok_enabled_fill != ok_disabled_fill, (
@@ -228,22 +224,20 @@ def body() -> None:
 
         # ── (H) scrim blocks (no light-dismiss) ─────────────────────
         tf.click(path=SCRIM)
-        time.sleep(PAUSE)
-        assert _present(_snap(tf), PANEL), "backdrop click does NOT dismiss the modal"
+        wait_snap(tf, lambda s: _present(s, PANEL), viewport=VIEWPORT,
+                  desc="backdrop click does NOT dismiss the modal")
 
         # ── (I) Cancel closes without choosing ──────────────────────
         tf.click(path=CANCEL)
-        time.sleep(PAUSE)
-        snap = _snap(tf)
-        assert not _present(snap, PANEL), "Cancel closes the dialog"
+        snap = wait_snap(tf, lambda s: not _present(s, PANEL),
+                         viewport=VIEWPORT, desc="Cancel closes the dialog")
         assert not _present(snap, SCRIM), "scrim gone after Cancel"
         assert_eq(_chosen_line(snap), "Chosen: (none)", "Cancel did not choose")
         assert_eq(_focused(tf), TRIGGER, "focus restored to the trigger on close")
 
         # ── (J) confirm: re-open, select via invoke, click OK ───────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert_eq(tf.query(dpath("cwd")), "/proj", "re-open resets the browser to the root")
+        wait_query(tf, dpath("cwd"), "/proj", desc="re-open resets the browser to the root")
         assert_eq(tf.query(dpath("selected")), None, "re-open cleared the prior selection")
         assert_eq(
             tf.invoke(dpath("select"), "README.md"),
@@ -251,20 +245,17 @@ def body() -> None:
             "select returns the picked path",
         )
         tf.click(path=OK)
-        time.sleep(PAUSE)
-        snap = _snap(tf)
-        assert not _present(snap, PANEL), "OK with a selection closes the dialog"
+        snap = wait_snap(tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+                         desc="OK with a selection closes the dialog")
         assert_eq(_chosen_line(snap), "Chosen: /proj/README.md", "OK recorded the chosen path")
         assert_eq(_focused(tf), TRIGGER, "focus restored after confirm")
 
         # ── (K) Escape dismisses as a cancel ────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert _present(_snap(tf), PANEL), "re-opened"
+        wait_snap(tf, lambda s: _present(s, PANEL), viewport=VIEWPORT, desc="re-opened")
         tf.key(path=PANEL, name="Escape")
-        time.sleep(PAUSE)
-        snap = _snap(tf)
-        assert not _present(snap, PANEL), "Escape dismisses the dialog"
+        snap = wait_snap(tf, lambda s: not _present(s, PANEL),
+                         viewport=VIEWPORT, desc="Escape dismisses the dialog")
         # Escape is a cancel: the prior chosen path is unchanged, not cleared.
         assert_eq(_chosen_line(snap), "Chosen: /proj/README.md", "Escape did not choose anew")
         assert_eq(_focused(tf), TRIGGER, "focus restored after Escape")

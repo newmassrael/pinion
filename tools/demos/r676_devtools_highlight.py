@@ -58,7 +58,6 @@ R676 atomic (3) verification scope (≥ 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -66,6 +65,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_until,
 )
 
 
@@ -200,6 +200,14 @@ def _snap_inspector(tf) -> dict:
     return resp.result
 
 
+def _wait_main(tf, predicate, desc: str) -> dict:
+    """Main-window snapshot once `predicate(snap)` holds (R883 zero-flake)."""
+    def poll():
+        snap = _snap_main(tf)
+        return snap if predicate(snap) else None
+    return wait_until(poll, desc=desc)
+
+
 def body() -> None:
     with RpcSubprocess("hello-multi-window", boot_grace=1.5) as tf:
         # ── (A) Path-stable indexing baseline ─────────────────────
@@ -247,11 +255,10 @@ def body() -> None:
 
         # ── (B) Inspector click on the tagged button row ──────────
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(0.25)
-
-        snap_main_b = _snap_main(tf)
-        assert _walk_for_text(snap_main_b, f"Selected: {_BUTTON_PATH}"), (
-            f"banner must reflect the selected button path {_BUTTON_PATH!r}"
+        snap_main_b = _wait_main(
+            tf,
+            lambda s: _walk_for_text(s, f"Selected: {_BUTTON_PATH}"),
+            desc=f"banner must reflect the selected button path {_BUTTON_PATH!r}",
         )
         assert _scene_has_stroked_border(snap_main_b), (
             "tagged-path selection must paint a stroked Border overlay"
@@ -285,10 +292,10 @@ def body() -> None:
 
         # ── (C) Inspector-only id `state` → no overlay, banner OK ──
         tf.invoke("/inspector_tree/external/click", "state")
-        time.sleep(0.25)
-        snap_main_c = _snap_main(tf)
-        assert _walk_for_text(snap_main_c, "Selected: state"), (
-            "banner must reflect 'state' selection"
+        snap_main_c = _wait_main(
+            tf,
+            lambda s: _walk_for_text(s, "Selected: state"),
+            desc="banner must reflect 'state' selection",
         )
         assert not _scene_has_stroked_border(snap_main_c), (
             "inspector-only 'state' must not paint a highlight overlay"
@@ -299,10 +306,10 @@ def body() -> None:
 
         # ── (D) Root selection wraps the outer container ──────────
         tf.invoke("/inspector_tree/external/click", _VIEW_MAIN_ROOT_PATH)
-        time.sleep(0.25)
-        snap_main_d = _snap_main(tf)
-        assert _walk_for_text(snap_main_d, f"Selected: {_VIEW_MAIN_ROOT_PATH}"), (
-            f"banner must reflect root selection {_VIEW_MAIN_ROOT_PATH!r}"
+        snap_main_d = _wait_main(
+            tf,
+            lambda s: _walk_for_text(s, f"Selected: {_VIEW_MAIN_ROOT_PATH}"),
+            desc=f"banner must reflect root selection {_VIEW_MAIN_ROOT_PATH!r}",
         )
         assert _scene_has_stroked_border(snap_main_d), (
             "root selection must paint the highlight overlay"
@@ -320,19 +327,22 @@ def body() -> None:
         # tests so we can observe the wrap persisting under state
         # changes.
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(0.25)
-
-        snap_main_e0 = _snap_main(tf)
+        snap_main_e0 = _wait_main(
+            tf,
+            lambda s: _wrapper_child_tag(_find_wrapper_container(s)) == "main_btn",
+            desc="re-selected button must light up the highlight overlay",
+        )
         assert _scene_has_stroked_border(snap_main_e0), (
             "re-selected button must light up the highlight overlay"
         )
 
-        # Disable via keybinding d.
+        # Disable via keybinding d. The asserted property (the overlay
+        # persisting) equals its pre-key value, so no observed-state
+        # gate exists; the dispatch commits before the response.
         tf.request(
             "scene/key",
             {"window": "main", "key": "d", "path": "main_btn"},
         )
-        time.sleep(0.20)
         snap_main_e1 = _snap_main(tf)
         # Button state change → button repaint with Disabled fill,
         # but the highlight wrapper stays.
@@ -344,12 +354,11 @@ def body() -> None:
             "wrapper continues to enclose the tagged button across state mutation"
         )
 
-        # Re-enable.
+        # Re-enable. Same no-change shape as the d press above.
         tf.request(
             "scene/key",
             {"window": "main", "key": "e", "path": "main_btn"},
         )
-        time.sleep(0.20)
         snap_main_e2 = _snap_main(tf)
         assert _scene_has_stroked_border(snap_main_e2), (
             "Enable state change must NOT clear the highlight overlay"
@@ -373,15 +382,15 @@ def body() -> None:
             "/inspector_tree/external/send",
             f"{_LABEL_PATH}:PointerUp",
         )
-        time.sleep(0.25)
-        pressed_after = tf.query("/inspector_tree/external/pressed_id")
-        assert pressed_after is None, (
-            "pressed_id clears after matched Down/Up commit"
+        wait_until(
+            lambda: tf.query("/inspector_tree/external/pressed_id") is None,
+            desc="pressed_id clears after matched Down/Up commit",
         )
 
-        snap_main_f = _snap_main(tf)
-        assert _walk_for_text(snap_main_f, f"Selected: {_LABEL_PATH}"), (
-            f"banner must reflect the label-path selection {_LABEL_PATH!r}"
+        snap_main_f = _wait_main(
+            tf,
+            lambda s: _walk_for_text(s, f"Selected: {_LABEL_PATH}"),
+            desc=f"banner must reflect the label-path selection {_LABEL_PATH!r}",
         )
         # The label text is a Scene::Text — it gets wrapped inside
         # the button container. The wrapper has a stroked Border;
@@ -398,16 +407,21 @@ def body() -> None:
         # Re-select the button and toggle d/e/d/e — verify the
         # highlight overlay is present at every step.
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(0.20)
+        _wait_main(
+            tf,
+            lambda s: _wrapper_child_tag(_find_wrapper_container(s)) == "main_btn",
+            desc="button re-selected for the survival cycle",
+        )
+        # The highlight-persistence asserts are no-change reads (the
+        # overlay is up before each keypress); the dispatch commits
+        # before the response, so plain snapshots observe post-key.
         for cycle in range(2):
             tf.request("scene/key", {"window": "main", "key": "d", "path": "main_btn"})
-            time.sleep(0.10)
             snap_d = _snap_main(tf)
             assert _scene_has_stroked_border(snap_d), (
                 f"highlight must survive Disable in cycle {cycle}"
             )
             tf.request("scene/key", {"window": "main", "key": "e", "path": "main_btn"})
-            time.sleep(0.10)
             snap_e = _snap_main(tf)
             assert _scene_has_stroked_border(snap_e), (
                 f"highlight must survive Enable in cycle {cycle}"
@@ -444,10 +458,10 @@ def body() -> None:
         # but the overlay stays absent. This pins the soft-signal
         # contract — clients carrying stale state degrade gracefully.
         tf.invoke("/inspector_tree/external/click", "0/0")
-        time.sleep(0.20)
-        snap_main_i = _snap_main(tf)
-        assert _walk_for_text(snap_main_i, "Selected: 0/0"), (
-            "banner mirrors the raw payload regardless of resolution"
+        snap_main_i = _wait_main(
+            tf,
+            lambda s: _walk_for_text(s, "Selected: 0/0"),
+            desc="banner mirrors the raw payload regardless of resolution",
         )
         assert not _scene_has_stroked_border(snap_main_i), (
             "stale pre-R676 sibling-index path must not paint a highlight"
@@ -458,10 +472,10 @@ def body() -> None:
         # (highlight goes silent, banner stays). Demonstrates the
         # selection is volatile mutable state, not a one-way commit.
         tf.invoke("/inspector_tree/external/click", "main")
-        time.sleep(0.20)
-        snap_main_j = _snap_main(tf)
-        assert _walk_for_text(snap_main_j, "Selected: main"), (
-            "banner shows the new inspector-only selection"
+        snap_main_j = _wait_main(
+            tf,
+            lambda s: _walk_for_text(s, "Selected: main"),
+            desc="banner shows the new inspector-only selection",
         )
         assert not _scene_has_stroked_border(snap_main_j), (
             "switching to inspector-only id must clear the highlight overlay"

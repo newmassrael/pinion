@@ -30,17 +30,22 @@ Run from the workspace root:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, find_by_tag, run_demo
+from rpc_verify import (
+    RpcSubprocess,
+    assert_eq,
+    find_by_tag,
+    run_demo,
+    wait_query,
+    wait_until,
+)
 
 TA_TAG = "main_textarea"
 VIEWPORT = (480, 320)
 SEED = "first line\nsecond line\nthird line"  # 33 bytes, 3 lines
-SETTLE = 0.06
 
 # A short line that fits within the 344 px inner width (one visual line).
 SHORT = "abc def"
@@ -118,7 +123,6 @@ def text(ta: RpcSubprocess) -> str:
 
 def key(ta: RpcSubprocess, name: str) -> None:
     ta.key(path=TA_TAG, name=name)
-    time.sleep(SETTLE)
 
 
 def key_ctrl(ta: RpcSubprocess, name: str) -> None:
@@ -142,7 +146,10 @@ def replace_all(ta: RpcSubprocess, body: str) -> None:
     holding exactly `body`."""
     select_all(ta)
     ta.text(body, path=TA_TAG)
-    time.sleep(SETTLE)
+    wait_until(
+        lambda: text(ta) == body,
+        desc="replace_all: typed body landed in the buffer",
+    )
 
 
 def visual_line_count_from_start(ta: RpcSubprocess) -> int:
@@ -177,8 +184,7 @@ def body() -> None:
         assert_eq(selection(ta), None, "no selection on boot")
 
         ta.request("focus/set", {"tag": TA_TAG})
-        time.sleep(0.05)
-        assert_eq(ta.query("/external/state"), "Focused", "focused after focus/set")
+        wait_query(ta, "/external/state", "Focused", desc="focused after focus/set")
 
         # ── Ctrl+A select-all covers the whole seeded buffer ─────────
         select_all(ta)
@@ -240,14 +246,19 @@ def body() -> None:
 
         # Click the FIRST visual line near its left edge -> near byte 0.
         ta.click(at=(fx + 2, line_y(0)))
-        time.sleep(SETTLE)
+        wait_until(
+            lambda: caret(ta) <= 2,
+            desc="click on visual line 0 left edge lands near byte 0",
+        )
         c_top = caret(ta)
-        assert c_top <= 2, f"click on visual line 0 left edge lands near byte 0 (got {c_top})"
 
         # Click the SECOND visual line -> a byte strictly inside the
         # single logical line (the wrapped portion), not the end.
         ta.click(at=(fx + 2, line_y(1)))
-        time.sleep(SETTLE)
+        wait_until(
+            lambda: caret(ta) > c_top,
+            desc="click on visual line 1 lands past the top-line byte",
+        )
         c_mid = caret(ta)
         assert 0 < c_mid < len(LONG), (
             f"click on visual line 1 lands mid-string (byte {c_mid} in 1..{len(LONG) - 1})"
@@ -273,15 +284,19 @@ def body() -> None:
 
         # ── drag-select the whole wrapped block ──────────────────────
         ta.click(at=(fx + 2, line_y(0)))
-        time.sleep(SETTLE)
+        wait_until(
+            lambda: caret(ta) <= 2,
+            desc="pre-drag click re-homes the caret to the line start",
+        )
         ta.drag(
             from_at=(fx + 2, line_y(0)),
             to_at=(fx + fw - 2, line_y(2)),
             steps=12,
         )
-        time.sleep(SETTLE)
-        sel = selection(ta)
-        assert sel is not None, "multi-visual-line drag produces a selection"
+        sel = wait_until(
+            lambda: selection(ta),
+            desc="multi-visual-line drag produces a selection",
+        )
         assert sel["start"] <= 1, f"drag selection starts near the line start (got {sel['start']})"
         assert sel["end"] > c_mid, (
             f"drag across 3 visual lines reaches past visual line 1 (end {sel['end']} > {c_mid})"
@@ -351,11 +366,16 @@ def body() -> None:
         # scrolled-in line, not the buffer start (byte 0). Without the
         # offset the click would resolve to the first line.
         key_ctrl(ta, "End")
-        time.sleep(SETTLE)
-        assert scroll_geometry(ta)["offset_y"] > 0, "scrolled at the document end before hit-test"
+        wait_until(
+            lambda: scroll_geometry(ta)["offset_y"] > 0,
+            desc="scrolled at the document end before hit-test",
+        )
         (hx, hy, hw, hh) = field_rect(ta)
         ta.click(at=(hx + 5, hy + 12))  # near the top of the visible box
-        time.sleep(SETTLE)
+        wait_until(
+            lambda: caret(ta) > 10,
+            desc="click near the viewport top resolves through the scroll offset",
+        )
         c_hit = caret(ta)
         assert c_hit > 10, (
             f"click near the viewport top at scroll lands on a scrolled-in line, "

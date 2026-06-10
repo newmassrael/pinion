@@ -37,7 +37,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -50,6 +49,7 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_snap,
     wait_until,
 )
 
@@ -66,7 +66,6 @@ FROZEN_HEADER_TAG = "tgrid_fhrow"
 SCROLL_HEADER_TAG = "tgrid_hrow"
 V_SCROLL_TAG = "tgrid_scroll"
 H_SCROLL_TAG = "tgrid_hscroll"
-PAUSE = 0.12
 
 
 def hscroll_node(snap):
@@ -195,9 +194,8 @@ def body() -> None:
         # minus the frozen tree column); scroll a meaningful fraction first.
         D = 80
         tf.scroll(H_SCROLL_TAG, to=(D, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(offset_x(snap), D, "horizontal scroll advanced offset_x")
+        snap = wait_snap(tf, lambda s: offset_x(s) == D, viewport=WIN,
+                         desc="horizontal scroll advanced offset_x")
         assert_eq(offset_y(snap), 0, "vertical offset unchanged by horizontal scroll")
         rects2 = abs_rects_of(snap)
         # Frozen name column DID NOT MOVE.
@@ -222,8 +220,8 @@ def body() -> None:
         # fail here), and the frozen name column is STILL pinned at boot x
         # while the metadata strip shifts by the full max offset.
         tf.scroll(H_SCROLL_TAG, to=(10 ** 9, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
+        snap = wait_snap(tf, lambda s: offset_x(s) > D, viewport=WIN,
+                         desc="scroll-to-max advanced past D")
         max_x = offset_x(snap)
         assert max_x > D, f"scroll-to-max advanced past D ({max_x} > {D})"
         rects_max = abs_rects_of(snap)
@@ -234,9 +232,8 @@ def body() -> None:
 
         # Reset horizontal.
         tf.scroll(H_SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(offset_x(snap), 0, "horizontal scrolled back to 0")
+        snap = wait_snap(tf, lambda s: offset_x(s) == 0, viewport=WIN,
+                         desc="horizontal scrolled back to 0")
         rects_reset = abs_rects_of(snap)
         assert_eq(x_of(rects_reset, data_strip("f0")), f0_strip_x_boot,
                   "metadata strip back at boot x after reset")
@@ -246,9 +243,8 @@ def body() -> None:
         header_y = y_of(rects_reset, FROZEN_HEADER_TAG)
         ROW_PITCH = 48
         tf.scroll(V_SCROLL_TAG, to=(0, ROW_PITCH * 4))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(offset_y(snap), ROW_PITCH * 4, "vertical scroll advanced offset_y")
+        snap = wait_snap(tf, lambda s: offset_y(s) == ROW_PITCH * 4, viewport=WIN,
+                         desc="vertical scroll advanced offset_y")
         assert_eq(offset_x(snap), 0, "horizontal offset unaffected by vertical scroll")
         rects4 = abs_rects_of(snap)
         # A row visible in both panes keeps EQUAL y across name cell + strip.
@@ -262,9 +258,8 @@ def body() -> None:
         assert_eq(y_of(rects4, FROZEN_HEADER_TAG), header_y, "frozen header Y unchanged by v-scroll")
 
         tf.scroll(V_SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(offset_y(snap), 0, "vertical scrolled back to top")
+        wait_snap(tf, lambda s: offset_y(s) == 0, viewport=WIN,
+                  desc="vertical scrolled back to top")
 
         # ── (D) expand / collapse ───────────────────────────────────
         assert_eq(row_count(tf), BOOT_ROWS, "row_count back at boot before collapse")

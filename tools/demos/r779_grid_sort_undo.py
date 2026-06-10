@@ -28,7 +28,6 @@ selection (held by source index) is untouched by sort undo (selection ⊥ sort).
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -37,6 +36,8 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    wait_query,
+    wait_snap,
 )
 
 EXAMPLE = "hello-grid-sort"
@@ -45,7 +46,6 @@ N = 10_000
 GRID_TAG = "vtbl"
 SORT_TAG = "vsort"
 UNDO = "/vtbl_undo_stack/external"
-PAUSE = 0.12
 
 
 def grid_sort(d):
@@ -74,8 +74,8 @@ def body() -> None:
 
         # ── (B) record: header click + invoke + intervene push edits ────
         tf.click(path="vsort#h0")  # Name ascending
-        time.sleep(PAUSE)
-        assert_eq(grid_sort(tf), "0:ascending", "header click sorted Name ascending")
+        wait_query(tf, "/vsort/external/sort", "0:ascending",
+                   desc="header click sorted Name ascending")
         assert_eq(tf.query(f"{UNDO}/count"), 1, "header-click sort recorded one edit")
         assert_eq(tf.query(f"{UNDO}/can_undo"), True, "the sort is undoable")
         assert tf.query(f"{UNDO}/undo_label").startswith("Sort"), "the edit is labelled a Sort"
@@ -118,14 +118,13 @@ def body() -> None:
 
         # ── (D) selection ⊥ sort-undo ───────────────────────────────────
         tf.intervene("/vsort/external/sort", "none")  # back to identity for a stable click
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert "vtbl#2_0" in abs_rects_of(snap), "cell vtbl#2_0 visible for the click test"
+        wait_snap(tf, lambda s: "vtbl#2_0" in abs_rects_of(s), viewport=WIN,
+                  desc="cell vtbl#2_0 visible for the click test")
         tf.click(path="vtbl#2_0")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 2, "selected source row 2")
+        wait_query(tf, "/external/selected", 2, desc="selected source row 2")
         tf.click(path="vsort#h0")  # sort, recorded
-        time.sleep(PAUSE)
+        wait_query(tf, "/vsort/external/sort", "0:ascending",
+                   desc="header click re-sorted (gate before the no-change read)")
         assert_eq(selected(tf), 2, "selection survives the sort")
         tf.invoke(f"{UNDO}/undo", None)  # undo the sort
         assert_eq(selected(tf), 2, "selection is untouched by sort-undo (selection ⊥ sort)")

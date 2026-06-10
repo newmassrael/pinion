@@ -30,7 +30,6 @@ group reorder); group collapse + row selection coexist and survive the sort.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -39,6 +38,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    wait_query,
 )
 
 EXAMPLE = "hello-grouped-grid-sort"
@@ -52,7 +52,6 @@ GRID_TAG = "ggrid"
 GROUP_TAG = "ggrp"
 SORT_TAG = "gsort"
 SCROLL_TAG = "ggrid_scroll"
-PAUSE = 0.12
 
 
 def data_sources(snap) -> list[int]:
@@ -97,17 +96,16 @@ def body() -> None:
         assert_eq(gs(tf, "sort"), "0:descending", "Name column sorted descending")
         assert_eq(gs(tf, "sort_col"), 0, "active sort column is 0 (Name)")
         assert_eq(gs(tf, "sort_dir"), "descending", "active sort direction is descending")
-        time.sleep(PAUSE)
         # Source 9999 (group 9999 % 6 == 3) leads the descending flatten — the
         # grouping re-derived over the grid's new order (R844 pointer memo).
-        assert_eq(gg(tf, "group_at.0"), 3, "highest source's group (3) leads after Name-desc")
+        wait_query(tf, f"/{GROUP_TAG}/external/group_at.0", 3,
+                   desc="highest source's group (3) leads after Name-desc")
         assert_eq(gg(tf, "source_at.1"), 9999, "source 9999 is the first descending member")
         assert_eq(gg(tf, "visible_len"), VISIBLE_BOOT, "sorting does not change visible_len")
 
         # ── (C) select the now-leading row ───────────────────────────────
         tf.click(path=f"{GRID_TAG}#9999")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/selected"), 9999, "click selected row source 9999")
+        wait_query(tf, "/external/selected", 9999, desc="click selected row source 9999")
 
         # ── (D) collapse the leading group: hide its rows, keep selection ─
         shrunk = VISIBLE_BOOT - MEMBERS[3]  # group 3 = 1667 -> 8339

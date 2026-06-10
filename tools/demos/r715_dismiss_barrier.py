@@ -48,7 +48,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -60,6 +59,9 @@ from rpc_verify import (  # noqa: E402
     png_pixel,
     read_png_rgba8,
     run_demo,
+    wait_query,
+    wait_snap,
+    wait_until,
 )
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -70,7 +72,6 @@ DROPDOWN = "menu_dropdown"
 # A point well below the title strip and clear of menu 0's left-aligned
 # dropdown — a bare click here lands on the transparent barrier.
 OUTSIDE_POINT = (480.0, 280.0)
-PAUSE = 0.12
 
 COMBO_VIEWPORT = (560, 420)
 COMBO_TRIGGER = "combo_trigger"
@@ -96,9 +97,8 @@ def _menu_body() -> None:
 
         # ── (B) open paints the transparent barrier below the bar ───
         tf.click(path="menu#t0")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/open", 0, desc="click File -> open 0")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(_open(tf), 0, "click File -> open 0")
         assert _present(snap, DROPDOWN), "open: dropdown painted"
         barrier = find_by_tag(snap, MENU_BARRIER)
         assert barrier is not None, "open: dismiss barrier painted"
@@ -114,18 +114,15 @@ def _menu_body() -> None:
 
         # ── (C) click-outside dismiss (by tag, then by coordinate) ──
         tf.click(path=MENU_BARRIER)  # routed: menu#barrier -> send("barrier:PointerUp")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/open", None, desc="click on barrier tag dismisses the menu")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(_open(tf), None, "click on barrier tag dismisses the menu")
         assert not _present(snap, MENU_BARRIER), "barrier gone after click-outside"
         assert not _present(snap, DROPDOWN), "dropdown gone after click-outside"
 
         tf.click(path="menu#t1")
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), 1, "re-open Edit for the coordinate click-outside")
+        wait_query(tf, "/external/open", 1, desc="re-open Edit for the coordinate click-outside")
         tf.click(at=OUTSIDE_POINT)  # bare coordinate over the barrier region
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), None, "bare click outside the dropdown dismisses")
+        wait_query(tf, "/external/open", None, desc="bare click outside the dropdown dismisses")
 
         # Barrier dismiss is NOT an activation: it fires no `command`.
         needle = "shell: intent menu.command"
@@ -135,42 +132,37 @@ def _menu_body() -> None:
 
         # ── (D) the title strip stays clickable ABOVE the barrier ───
         tf.click(path="menu#t0")
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), 0, "open File")
+        wait_query(tf, "/external/open", 0, desc="open File")
         tf.click(path="menu#t1")  # a sibling title sits above the barrier
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), 1, "clicking a sibling title SWITCHES menus, not dismiss")
+        wait_query(tf, "/external/open", 1, desc="clicking a sibling title SWITCHES menus, not dismiss")
         tf.click(path="menu#t2")
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), 2, "switch again to View")
+        wait_query(tf, "/external/open", 2, desc="switch again to View")
         tf.click(path="menu#t2")  # re-click open title toggles closed
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), None, "re-click the open title still toggle-closes")
+        wait_query(tf, "/external/open", None, desc="re-click the open title still toggle-closes")
 
         # ── (E) substrate arm: only PointerUp on the barrier closes ─
         tf.click(path="menu#t0")
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), 0, "open File for the substrate-arm probe")
+        wait_query(tf, "/external/open", 0, desc="open File for the substrate-arm probe")
+        # The two inert sends are no-change verifications (open stays 0)
+        # — no gate is possible; the dispatch commits before the response.
         tf.invoke("/external/send", "barrier:PointerEnter")
-        time.sleep(PAUSE)
         assert_eq(_open(tf), 0, "PointerEnter over the barrier is inert")
         tf.invoke("/external/send", "barrier:PointerDown")
-        time.sleep(PAUSE)
         assert_eq(_open(tf), 0, "PointerDown over the barrier is inert")
         out = tf.invoke("/external/send", "barrier:PointerUp")
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), None, "barrier:PointerUp closes the menu")
+        wait_query(tf, "/external/open", None, desc="barrier:PointerUp closes the menu")
         assert_eq(out, None, "send returns the now-closed open index (null)")
 
         # ── (F) Escape dismiss still works ──────────────────────────
         tf.request("focus/set", {"tag": "menu"})
-        time.sleep(0.1)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == "menu",
+            desc="menubar owns shell focus",
+        )
         tf.key(path="menu", name="ArrowDown")  # open focused menu
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), 0, "ArrowDown reopens File")
+        wait_query(tf, "/external/open", 0, desc="ArrowDown reopens File")
         tf.key(path="menu", name="Escape")
-        time.sleep(PAUSE)
-        assert_eq(_open(tf), None, "Escape still closes (unchanged by R715)")
+        wait_query(tf, "/external/open", None, desc="Escape still closes (unchanged by R715)")
 
 
 def _combobox_body() -> None:
@@ -181,18 +173,20 @@ def _combobox_body() -> None:
         assert not _present(snap, COMBO_BARRIER), "combobox closed: no barrier"
 
         tf.click(path=COMBO_TRIGGER)
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=COMBO_VIEWPORT)
-        assert _present(snap, COMBO_PANEL), "combobox opens on trigger click"
+        snap = wait_snap(
+            tf, lambda s: _present(s, COMBO_PANEL), viewport=COMBO_VIEWPORT,
+            desc="combobox opens on trigger click",
+        )
         barrier = find_by_tag(snap, COMBO_BARRIER)
         assert barrier is not None, "combobox open: shared dismiss barrier painted"
         fill = (barrier.get("style") or {}).get("fill") or {}
         assert_eq(int(fill.get("a", -1)), 0, "combobox barrier is transparent (shared shape)")
 
         tf.click(path=COMBO_BARRIER)
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=COMBO_VIEWPORT)
-        assert not _present(snap, COMBO_PANEL), "combobox click-outside dismisses (retrofit intact)"
+        snap = wait_snap(
+            tf, lambda s: not _present(s, COMBO_PANEL), viewport=COMBO_VIEWPORT,
+            desc="combobox click-outside dismisses (retrofit intact)",
+        )
         assert not _present(snap, COMBO_BARRIER), "combobox barrier gone after dismiss"
 
 

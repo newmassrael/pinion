@@ -35,17 +35,15 @@ against the `/external/selection` introspect slot.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_query, wait_snap, wait_until
 
 PROFILE_TAG = "profile_display_name"
 NAV_TAG = "nav_rail"
 NUM_TAG = "num_input"
-PAUSE = 0.08
 
 
 def _sel(tf, tag):
@@ -64,7 +62,6 @@ def _clear(tf, tag, n=48):
     tf.key(path=tag, name="End")
     for _ in range(n):
         tf.key(path=tag, name="Backspace")
-    time.sleep(PAUSE)
 
 
 def _shift(tf, tag, name, count=1):
@@ -74,7 +71,6 @@ def _shift(tf, tag, name, count=1):
     for _ in range(count):
         tf.key(path=tag, name=name)
     tf.modifiers()
-    time.sleep(PAUSE)
 
 
 def profile_field(tf) -> None:
@@ -82,32 +78,29 @@ def profile_field(tf) -> None:
     # active (nav#2) — switch to it via the RadioGroup composite tag
     # (R51.42) before the paint-scene focus lookup.
     tf.click(path=f"{NAV_TAG}#2")
-    time.sleep(PAUSE)
-    snap = tf.snapshot(viewport=(720, 480))
     import json as _json
-    assert_eq(
-        PROFILE_TAG in _json.dumps(snap),
-        True,
-        "profile field present after nav switch",
+    wait_snap(
+        tf,
+        lambda s: PROFILE_TAG in _json.dumps(s),
+        source="state",
+        viewport=(720, 480),
+        desc="profile field present after nav switch",
     )
 
     # Focus the profile display-name field (an extra-external TextField).
     tf.request("focus/set", {"tag": PROFILE_TAG})
-    time.sleep(PAUSE)
-    assert_eq(
-        tf.request("focus/get").result.get("focused"),
-        PROFILE_TAG,
-        "profile field focused",
+    wait_until(
+        lambda: tf.request("focus/get").result.get("focused") == PROFILE_TAG,
+        desc="profile field focused",
     )
 
     # Deterministic reset, then seed a known buffer through scene/text.
     _clear(tf, PROFILE_TAG)
-    assert_eq(_text(tf, PROFILE_TAG), "", "profile field cleared to empty")
+    wait_query(tf, f"/{PROFILE_TAG}/external/text", "", desc="profile field cleared to empty")
     assert_eq(_sel(tf, PROFILE_TAG), None, "empty field has no selection")
 
     tf.text("Lovelace", path=PROFILE_TAG)
-    time.sleep(PAUSE)
-    assert_eq(_text(tf, PROFILE_TAG), "Lovelace", "profile buffer seeded")
+    wait_query(tf, f"/{PROFILE_TAG}/external/text", "Lovelace", desc="profile buffer seeded")
     assert_eq(tf.query(f"/{PROFILE_TAG}/external/caret"), 8, "caret at end (8)")
     assert_eq(_sel(tf, PROFILE_TAG), None, "no selection after plain typing")
 
@@ -115,36 +108,40 @@ def profile_field(tf) -> None:
     #    bare-Text hand-roll dropped). One step at a time so the range
     #    growth is visible.
     _shift(tf, PROFILE_TAG, "ArrowLeft", 1)
-    assert_eq(_sel(tf, PROFILE_TAG), {"start": 7, "end": 8}, "Shift+Left -> {7,8}")
+    wait_query(tf, f"/{PROFILE_TAG}/external/selection", {"start": 7, "end": 8},
+               desc="Shift+Left -> {7,8}")
     _shift(tf, PROFILE_TAG, "ArrowLeft", 1)
-    assert_eq(_sel(tf, PROFILE_TAG), {"start": 6, "end": 8}, "Shift+Left -> {6,8}")
+    wait_query(tf, f"/{PROFILE_TAG}/external/selection", {"start": 6, "end": 8},
+               desc="Shift+Left -> {6,8}")
     _shift(tf, PROFILE_TAG, "ArrowLeft", 2)
-    assert_eq(_sel(tf, PROFILE_TAG), {"start": 4, "end": 8}, "Shift+Left x2 -> {4,8}")
+    wait_query(tf, f"/{PROFILE_TAG}/external/selection", {"start": 4, "end": 8},
+               desc="Shift+Left x2 -> {4,8}")
     assert_eq(tf.query(f"/{PROFILE_TAG}/external/caret"), 4, "caret rode to 4")
 
     # ── Shift+Home grows the selection to the buffer start.
     _shift(tf, PROFILE_TAG, "Home", 1)
-    assert_eq(_sel(tf, PROFILE_TAG), {"start": 0, "end": 8}, "Shift+Home -> {0,8}")
+    wait_query(tf, f"/{PROFILE_TAG}/external/selection", {"start": 0, "end": 8},
+               desc="Shift+Home -> {0,8}")
 
     # ── A plain (unmodified) ArrowRight collapses the selection — proving
     #    the modifier gate is real, not "always select".
     tf.key(path=PROFILE_TAG, name="ArrowRight")
-    time.sleep(PAUSE)
-    assert_eq(_sel(tf, PROFILE_TAG), None, "plain ArrowRight collapses selection")
+    wait_query(tf, f"/{PROFILE_TAG}/external/selection", None,
+               desc="plain ArrowRight collapses selection")
 
     # ── From the left edge, Shift+End selects forward to the end.
     tf.key(path=PROFILE_TAG, name="Home")
-    time.sleep(PAUSE)
-    assert_eq(tf.query(f"/{PROFILE_TAG}/external/caret"), 0, "Home -> caret 0")
+    wait_query(tf, f"/{PROFILE_TAG}/external/caret", 0, desc="Home -> caret 0")
     assert_eq(_sel(tf, PROFILE_TAG), None, "Home (plain) leaves no selection")
     _shift(tf, PROFILE_TAG, "End", 1)
-    assert_eq(_sel(tf, PROFILE_TAG), {"start": 0, "end": 8}, "Shift+End -> {0,8}")
+    wait_query(tf, f"/{PROFILE_TAG}/external/selection", {"start": 0, "end": 8},
+               desc="Shift+End -> {0,8}")
 
     # ── Backspace on the full selection drains the buffer (selection-aware
     #    delete reached because the range exists at all).
     tf.key(path=PROFILE_TAG, name="Backspace")
-    time.sleep(PAUSE)
-    assert_eq(_text(tf, PROFILE_TAG), "", "Backspace on full selection clears buffer")
+    wait_query(tf, f"/{PROFILE_TAG}/external/text", "",
+               desc="Backspace on full selection clears buffer")
     assert_eq(_sel(tf, PROFILE_TAG), None, "no selection after drain")
 
 
@@ -152,40 +149,39 @@ def number_field(tf) -> None:
     # Focus the numeric field (primary External), reset, seed "640" — the
     # raw typed text is retained pre-Enter (the editable-spinbutton SSOT).
     tf.request("focus/set", {"tag": NUM_TAG})
-    time.sleep(PAUSE)
-    assert_eq(
-        tf.request("focus/get").result.get("focused"),
-        NUM_TAG,
-        "numeric field focused",
+    wait_until(
+        lambda: tf.request("focus/get").result.get("focused") == NUM_TAG,
+        desc="numeric field focused",
     )
     _clear(tf, NUM_TAG, n=12)
-    assert_eq(_text(tf, NUM_TAG), "", "numeric field cleared")
+    wait_query(tf, f"/{NUM_TAG}/external/text", "", desc="numeric field cleared")
 
     tf.text("640", path=NUM_TAG)
-    time.sleep(PAUSE)
-    assert_eq(_text(tf, NUM_TAG), "640", "numeric buffer seeded to '640'")
+    wait_query(tf, f"/{NUM_TAG}/external/text", "640", desc="numeric buffer seeded to '640'")
     assert_eq(tf.query(f"/{NUM_TAG}/external/caret"), 3, "numeric caret at end (3)")
     assert_eq(_sel(tf, NUM_TAG), None, "no selection after typing digits")
 
     # ── Shift+ArrowLeft extends selection through the numeric binding's
     #    caret-key arm (the path that pre-R804 dropped the Shift bit).
     _shift(tf, NUM_TAG, "ArrowLeft", 1)
-    assert_eq(_sel(tf, NUM_TAG), {"start": 2, "end": 3}, "numeric Shift+Left -> {2,3}")
+    wait_query(tf, f"/{NUM_TAG}/external/selection", {"start": 2, "end": 3},
+               desc="numeric Shift+Left -> {2,3}")
     _shift(tf, NUM_TAG, "ArrowLeft", 2)
-    assert_eq(_sel(tf, NUM_TAG), {"start": 0, "end": 3}, "numeric Shift+Left x2 -> {0,3}")
+    wait_query(tf, f"/{NUM_TAG}/external/selection", {"start": 0, "end": 3},
+               desc="numeric Shift+Left x2 -> {0,3}")
     assert_eq(tf.query(f"/{NUM_TAG}/external/caret"), 0, "numeric caret rode to 0")
 
     # ── Plain ArrowRight collapses (modifier gate is real here too).
     tf.key(path=NUM_TAG, name="ArrowRight")
-    time.sleep(PAUSE)
-    assert_eq(_sel(tf, NUM_TAG), None, "numeric plain ArrowRight collapses")
+    wait_query(tf, f"/{NUM_TAG}/external/selection", None,
+               desc="numeric plain ArrowRight collapses")
 
     # ── Shift+End from the start re-selects the whole number.
     tf.key(path=NUM_TAG, name="Home")
-    time.sleep(PAUSE)
-    assert_eq(tf.query(f"/{NUM_TAG}/external/caret"), 0, "numeric Home -> 0")
+    wait_query(tf, f"/{NUM_TAG}/external/caret", 0, desc="numeric Home -> 0")
     _shift(tf, NUM_TAG, "End", 1)
-    assert_eq(_sel(tf, NUM_TAG), {"start": 0, "end": 3}, "numeric Shift+End -> {0,3}")
+    wait_query(tf, f"/{NUM_TAG}/external/selection", {"start": 0, "end": 3},
+               desc="numeric Shift+End -> {0,3}")
 
 
 def body() -> None:

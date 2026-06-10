@@ -106,13 +106,20 @@ def body() -> None:
         # two reads spaced apart must be identical (no wall-clock motion).
         def _frozen_pair() -> bool:
             a = (_pos(tf), _bounces(tf))
+            # wall-clock semantic: proving the sim clock FROZE needs two
+            # samples spaced by a real-time window (absence of motion has
+            # no positive observable to gate on); the outer wait_until
+            # keeps retrying until the pair stabilises.
             time.sleep(0.12)
             b = (_pos(tf), _bounces(tf))
             return a == b
         wait_until(_frozen_pair, timeout=6.0, interval=0.05,
                    desc="paint clock settles to frozen after set_fps(0)")
         p0, b0 = _pos(tf), _bounces(tf)
-        time.sleep(0.5)  # a long wall-clock window with NO tick
+        # wall-clock semantic: a real-time window with NO tick — the
+        # paused-clock no-drift proof needs wall time to elapse; there
+        # is no positive observable for "nothing happened".
+        time.sleep(0.5)
         p1, b1 = _pos(tf), _bounces(tf)
         assert abs(p1 - p0) < 1e-6, f"paused pos must not drift: {p0} -> {p1}"
         assert b1 == b0, f"paused bounces must not change: {b0} -> {b1}"

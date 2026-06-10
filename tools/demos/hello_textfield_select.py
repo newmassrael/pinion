@@ -22,12 +22,11 @@ visible-consumer demo uses; no rebuild is needed across rounds.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_query
 
 
 TF_TAG = "main_textfield"
@@ -55,8 +54,7 @@ def run_body(tf: RpcSubprocess) -> None:
     # Focus the field so subsequent apply_key dispatch resolves the
     # field as the focused widget.
     focus_set(tf, TF_TAG)
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/state"), "Focused", "post-focus state")
+    wait_query(tf, "/external/state", "Focused", desc="post-focus state")
 
     # Type "hello world" verbatim.
     for ch in "hello world":
@@ -67,8 +65,7 @@ def run_body(tf: RpcSubprocess) -> None:
             True,
             f"invoke('key', {key!r}) recognized",
         )
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/text"), "hello world", "post-typing text")
+    wait_query(tf, "/external/text", "hello world", desc="post-typing text")
     assert_eq(tf.query("/external/caret"), 11, "post-typing caret at end")
     assert_eq(
         tf.query("/external/selection"),
@@ -85,8 +82,7 @@ def run_body(tf: RpcSubprocess) -> None:
             True,
             f"Shift+ArrowLeft towards {expected_end}",
         )
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/caret"), 6, "after 5x Shift+ArrowLeft caret")
+    wait_query(tf, "/external/caret", 6, desc="after 5x Shift+ArrowLeft caret")
     sel = tf.query("/external/selection")
     assert_eq(sel, {"start": 6, "end": 11}, "selection range after Shift+ArrowLeft")
 
@@ -96,8 +92,7 @@ def run_body(tf: RpcSubprocess) -> None:
         True,
         "plain ArrowLeft on a selection collapses",
     )
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/caret"), 6, "ArrowLeft lands at selection start")
+    wait_query(tf, "/external/caret", 6, desc="ArrowLeft lands at selection start")
     assert_eq(
         tf.query("/external/selection"),
         None,
@@ -106,11 +101,9 @@ def run_body(tf: RpcSubprocess) -> None:
 
     # ── R56.1.f.3: intervene("selection", Json) sets both ends.
     tf.intervene("/external/selection", {"start": 0, "end": 5})
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/selection"),
-        {"start": 0, "end": 5},
-        "intervene selection round-trip",
+    wait_query(
+        tf, "/external/selection", {"start": 0, "end": 5},
+        desc="intervene selection round-trip",
     )
 
     # ── R56.1.f.1 type-to-replace: a printable keystroke with active
@@ -126,8 +119,7 @@ def run_body(tf: RpcSubprocess) -> None:
         True,
         "type 'i' continues after replacement",
     )
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/text"), "Hi world", "type-to-replace produced 'Hi world'")
+    wait_query(tf, "/external/text", "Hi world", desc="type-to-replace produced 'Hi world'")
     assert_eq(tf.query("/external/caret"), 2, "caret at end of replacement")
     assert_eq(
         tf.query("/external/selection"),
@@ -141,11 +133,9 @@ def run_body(tf: RpcSubprocess) -> None:
         True,
         "Ctrl+A select-all recognized",
     )
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/selection"),
-        {"start": 0, "end": 8},
-        "Ctrl+A selects entire 'Hi world'",
+    wait_query(
+        tf, "/external/selection", {"start": 0, "end": 8},
+        desc="Ctrl+A selects entire 'Hi world'",
     )
     assert_eq(tf.query("/external/caret"), 8, "Ctrl+A leaves caret at end")
 
@@ -155,22 +145,19 @@ def run_body(tf: RpcSubprocess) -> None:
         True,
         "Backspace on full selection",
     )
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/text"), "", "buffer cleared")
+    wait_query(tf, "/external/text", "", desc="buffer cleared")
     assert_eq(tf.query("/external/caret"), 0, "caret at zero")
     assert_eq(tf.query("/external/selection"), None, "no selection post-drain")
 
     # ── intervene("selection", null) is a no-op idempotent on the
     # already-collapsed caret — the wire shape must still be accepted.
     tf.intervene("/external/selection", None)
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/selection"), None, "null intervene keeps collapsed")
+    wait_query(tf, "/external/selection", None, desc="null intervene keeps collapsed")
 
     # Blur — selection state persists in the underlying TextEditState
     # but the SCXML reports Idle.
     focus_set(tf, None)
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/state"), "Idle", "post-blur state")
+    wait_query(tf, "/external/state", "Idle", desc="post-blur state")
 
 
 if __name__ == "__main__":

@@ -35,7 +35,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -48,12 +47,13 @@ from rpc_verify import (
     read_png_rgba8,
     png_pixel,
     run_demo,
+    wait_query,
+    wait_until,
 )
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent
 TA_TAG = "main_textarea"
 VIEWPORT = (480, 320)
-SETTLE = 0.06
 
 # Seeded runs (byte ranges over "first line\nsecond line\nthird line").
 RED = (0xD0, 0x28, 0x28)    # "first"  [0, 5)
@@ -72,7 +72,6 @@ def text(ta: RpcSubprocess) -> str:
 
 def key(ta: RpcSubprocess, name: str) -> None:
     ta.key(path=TA_TAG, name=name)
-    time.sleep(SETTLE)
 
 
 def key_ctrl(ta: RpcSubprocess, name: str) -> None:
@@ -165,8 +164,7 @@ def body() -> None:
         field_rect = rects[TA_TAG]
 
         ta.request("focus/set", {"tag": TA_TAG})
-        time.sleep(0.05)
-        assert_eq(ta.query("/external/state"), "Focused", "focused")
+        wait_query(ta, "/external/state", "Focused", desc="focused")
 
         # Run-aware geometry: a click on the second line's styled word
         # ("second", bytes 11..17) resolves to a byte inside that span —
@@ -174,7 +172,10 @@ def body() -> None:
         # ([[two-text-layouts-paint-vs-geometry]]).
         fx, fy = field_rect[0], field_rect[1]
         ta.click(at=(fx + 28, fy + 8 + 25 + 12))  # line 1, ~into "second"
-        time.sleep(SETTLE)
+        wait_until(
+            lambda: 11 <= caret(ta) <= 17,
+            desc="click on the green 'second' word lands inside its run",
+        )
         c_second = caret(ta)
         assert 11 <= c_second <= 17, (
             f"click on the green 'second' word lands inside its run (byte {c_second} in 11..17)"
@@ -186,8 +187,10 @@ def body() -> None:
 
         # Insert a glyph before "first": every run shifts right by 1.
         ta.text("Z", path=TA_TAG)
-        time.sleep(SETTLE)
-        assert_eq(text(ta), "Zfirst line\nsecond line\nthird line", "Z inserted at the start")
+        wait_until(
+            lambda: text(ta) == "Zfirst line\nsecond line\nthird line",
+            desc="Z inserted at the start",
+        )
         assert_eq(caret(ta), 1, "caret advanced past the inserted glyph")
         assert_eq(
             run_spans(ta),

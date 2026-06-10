@@ -24,7 +24,6 @@ ScrollState saturates against `max_y`. Hello-listbox's content is
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -34,6 +33,7 @@ from rpc_verify import (
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_until,
 )
 
 
@@ -58,17 +58,23 @@ def body() -> None:
         assert_eq(offset_y(listbox), 0, "initial offset_y")
 
         listbox.scroll(SCROLL_TAG, to=(0, 100))
-        time.sleep(0.1)
-        assert_eq(offset_y(listbox), 100, "post-scroll_to offset_y")
+        wait_until(
+            lambda: offset_y(listbox) == 100,
+            desc="post-scroll_to offset_y",
+        )
 
         listbox.scroll(SCROLL_TAG, by=(0, -50))
-        time.sleep(0.1)
-        assert_eq(offset_y(listbox), 50, "post-scroll_by offset_y")
+        wait_until(
+            lambda: offset_y(listbox) == 50,
+            desc="post-scroll_by offset_y",
+        )
 
         # Clamp boundary — request way past max, expect saturate to max.
         listbox.scroll(SCROLL_TAG, to=(0, 9999))
-        time.sleep(0.1)
-        clamped = offset_y(listbox)
+        clamped = wait_until(
+            lambda: (lambda o: o if o > 50 else None)(offset_y(listbox)),
+            desc="clamp-to-max advanced past 50",
+        )
         if clamped <= 50 or clamped > 500:
             raise AssertionError(
                 f"clamp-to-max offset_y: expected 50 < n <= max_y, got {clamped}"

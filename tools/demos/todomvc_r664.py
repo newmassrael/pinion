@@ -30,13 +30,18 @@ Coverage:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, isolated_storage_dir, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    assert_eq,
+    isolated_storage_dir,
+    run_demo,
+    wait_until,
+)
 
 TF_TAG = "main_textfield"
 EDIT_TF_TAG = "todo_edit"
@@ -45,7 +50,6 @@ TOGGLE_TAG = "todo_toggle"
 LIST_TAG = "todo_list"
 VIEWPORT_W = 480
 VIEWPORT_H = 720
-EDIT_PAUSE = 0.2
 
 
 def focus_set(tf: RpcSubprocess, tag: str | None) -> None:
@@ -59,12 +63,10 @@ def type_text_into_focused(tf: RpcSubprocess, text: str, tag: str) -> None:
     embedded TextField key handler)."""
     for ch in text:
         tf.key(path=tag, name=ch)
-    time.sleep(0.05)
 
 
 def submit_enter(tf: RpcSubprocess, target: str) -> None:
     tf.key(path=target, name="Enter")
-    time.sleep(EDIT_PAUSE)
 
 
 def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:
@@ -173,7 +175,12 @@ def row_text_node(tf: RpcSubprocess, item_id: int) -> dict[str, Any] | None:
 def backspace_n(tf: RpcSubprocess, n: int, tag: str) -> None:
     for _ in range(n):
         tf.key(path=tag, name="Backspace")
-    time.sleep(0.05)
+
+
+def row_strikethrough(tf: RpcSubprocess, item_id: int) -> bool:
+    node = row_text_node(tf, item_id)
+    deco = ((node or {}).get("style") or {}).get("decoration") or {}
+    return deco.get("strikethrough") is True
 
 
 def body() -> None:
@@ -191,13 +198,15 @@ def _body_impl() -> None:
 
         # ── (2) Add three rows ─────────────────────────────────────
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
         for text in ("alpha", "beta", "gamma"):
             type_text_into_focused(tf, text, TF_TAG)
             submit_enter(tf, target=TF_TAG)
 
+        wait_until(
+            lambda: len(collect_item_ids(tf)) == 3,
+            desc="three rows visible after submits",
+        )
         ids = collect_item_ids(tf)
-        assert_eq(len(ids), 3, "three rows visible after submits")
 
         # ── (3) Steady state: editor not painted ───────────────────
         snap = tf.snapshot(source="paint", viewport=(VIEWPORT_W, VIEWPORT_H))
@@ -208,8 +217,10 @@ def _body_impl() -> None:
         # ── (4) Double-click row[1] → enter edit ───────────────────
         target_id = ids[1]
         tf.double_click(path=f"{ITEM_TAG}#{target_id}")
-        time.sleep(EDIT_PAUSE)
-        assert_eq(editing_id(tf), target_id, "row[1] entered edit mode")
+        wait_until(
+            lambda: editing_id(tf) == target_id,
+            desc="row[1] entered edit mode",
+        )
 
         # Editor paints inline; row text node is gone for that row.
         snap = tf.snapshot(source="paint", viewport=(VIEWPORT_W, VIEWPORT_H))
@@ -229,11 +240,20 @@ def _body_impl() -> None:
         # confirm by typing keys and observing they land in the
         # editor's TextEditState (not the main TF_TAG buffer).
         backspace_n(tf, len("beta"), EDIT_TF_TAG)
-        assert_eq(editor_text(tf), "", "editor buffer cleared by Backspace")
+        wait_until(
+            lambda: editor_text(tf) == "",
+            desc="editor buffer cleared by Backspace",
+        )
         type_text_into_focused(tf, "BETA-edited", EDIT_TF_TAG)
-        assert_eq(editor_text(tf), "BETA-edited", "editor buffer updated")
+        wait_until(
+            lambda: editor_text(tf) == "BETA-edited",
+            desc="editor buffer updated",
+        )
         submit_enter(tf, target=EDIT_TF_TAG)
-        assert_eq(editing_id(tf), None, "Enter commit clears editing_id")
+        wait_until(
+            lambda: editing_id(tf) is None,
+            desc="Enter commit clears editing_id",
+        )
         assert_eq(
             row_text(tf, target_id),
             "BETA-edited",
@@ -243,15 +263,22 @@ def _body_impl() -> None:
         # ── (6) Escape cancels — row untouched ─────────────────────
         cancel_id = ids[2]
         tf.double_click(path=f"{ITEM_TAG}#{cancel_id}")
-        time.sleep(EDIT_PAUSE)
-        assert_eq(editing_id(tf), cancel_id, "row[2] re-entered edit")
+        wait_until(
+            lambda: editing_id(tf) == cancel_id,
+            desc="row[2] re-entered edit",
+        )
         # Wipe the editor buffer + type garbage that should not commit.
         backspace_n(tf, len("gamma"), EDIT_TF_TAG)
         type_text_into_focused(tf, "discard-me", EDIT_TF_TAG)
-        assert_eq(editor_text(tf), "discard-me", "garbage typed into editor")
+        wait_until(
+            lambda: editor_text(tf) == "discard-me",
+            desc="garbage typed into editor",
+        )
         tf.key(path=EDIT_TF_TAG, name="Escape")
-        time.sleep(EDIT_PAUSE)
-        assert_eq(editing_id(tf), None, "Escape clears editing_id")
+        wait_until(
+            lambda: editing_id(tf) is None,
+            desc="Escape clears editing_id",
+        )
         assert_eq(
             row_text(tf, cancel_id),
             "gamma",
@@ -261,12 +288,9 @@ def _body_impl() -> None:
         # ── (7) Single-click toggle → strikethrough decoration ─────
         first_id = ids[0]
         tf.click(path=f"{TOGGLE_TAG}#{first_id}")
-        time.sleep(EDIT_PAUSE)
-        node = row_text_node(tf, first_id)
-        assert node is not None, "row[0] text node present after toggle"
-        deco = (node.get("style") or {}).get("decoration") or {}
-        assert deco.get("strikethrough") is True, (
-            f"completed row text must carry strikethrough; got {deco!r}"
+        wait_until(
+            lambda: row_strikethrough(tf, first_id),
+            desc="completed row text must carry strikethrough",
         )
 
         # Confirm the active rows still have no strikethrough.
@@ -281,12 +305,20 @@ def _body_impl() -> None:
 
         # ── (8) Erase-to-delete (TasteJS canonical) ────────────────
         tf.double_click(path=f"{ITEM_TAG}#{target_id}")
-        time.sleep(EDIT_PAUSE)
-        assert_eq(editing_id(tf), target_id, "row[1] re-entered edit")
+        wait_until(
+            lambda: editing_id(tf) == target_id,
+            desc="row[1] re-entered edit",
+        )
         backspace_n(tf, len("BETA-edited"), EDIT_TF_TAG)
-        assert_eq(editor_text(tf), "", "editor cleared for erase-delete")
+        wait_until(
+            lambda: editor_text(tf) == "",
+            desc="editor cleared for erase-delete",
+        )
         submit_enter(tf, target=EDIT_TF_TAG)
-        assert_eq(editing_id(tf), None, "edit cleared after erase-commit")
+        wait_until(
+            lambda: editing_id(tf) is None,
+            desc="edit cleared after erase-commit",
+        )
         post_ids = collect_item_ids(tf)
         assert target_id not in post_ids, "row removed by erase-to-delete"
         assert_eq(len(post_ids), 2, "two rows remain after delete")
@@ -298,8 +330,10 @@ def _body_impl() -> None:
         # text bleeding into the next edit).
         survivor = post_ids[1]
         tf.double_click(path=f"{ITEM_TAG}#{survivor}")
-        time.sleep(EDIT_PAUSE)
-        assert_eq(editing_id(tf), survivor, "re-entry double-click activates")
+        wait_until(
+            lambda: editing_id(tf) == survivor,
+            desc="re-entry double-click activates",
+        )
         # Editor seeded with row text (NOT the leftover from the last
         # erase-to-delete session).
         snap_state = tf.snapshot(source="state")
@@ -309,8 +343,10 @@ def _body_impl() -> None:
             f"re-entry editor must seed with row text; got {seeded!r}"
         )
         tf.key(path=EDIT_TF_TAG, name="Escape")
-        time.sleep(EDIT_PAUSE)
-        assert_eq(editing_id(tf), None, "re-entry edit cancellable")
+        wait_until(
+            lambda: editing_id(tf) is None,
+            desc="re-entry edit cancellable",
+        )
         # Editor buffer wiped on cancel — next edit starts blank if
         # not re-seeded.
         snap_state = tf.snapshot(source="state")
@@ -330,11 +366,12 @@ def _body_impl() -> None:
 
         # ── (11) Main field still works post-edit cycles ───────────
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
         type_text_into_focused(tf, "epilogue", TF_TAG)
         submit_enter(tf, target=TF_TAG)
-        final_ids = collect_item_ids(tf)
-        assert_eq(len(final_ids), 3, "main field accepts new entry post-edit")
+        wait_until(
+            lambda: len(collect_item_ids(tf)) == 3,
+            desc="main field accepts new entry post-edit",
+        )
 
         # ── (12) The completed row[0] survived the cycles ───────────
         # Toggle is reactive, double-click on text triggers edit, not toggle.

@@ -41,7 +41,6 @@ Verified (>= 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -55,7 +54,6 @@ from rpc_verify import (  # noqa: E402
 )
 
 VIEWPORT = (460, 820)
-PAUSE = 0.10
 
 GRID = "property_grid"
 EDIT = "property_grid_edit"
@@ -159,7 +157,7 @@ def body() -> None:
         wait_until(lambda: tf.query(f"/{CAT}/external/cursor") == last, timeout=4.0,
                    interval=0.03, desc="End -> last visual row")
         tf.key(path=GRID, name="ArrowDown")
-        time.sleep(PAUSE)
+        # Clamp no-op: the dispatch commits before the response.
         assert_eq(tf.query(f"/{CAT}/external/cursor"), last, "ArrowDown at bottom clamps")
 
         # ── (F) editing inside a category still works ────────────────

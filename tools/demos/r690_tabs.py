@@ -26,7 +26,6 @@ R690 atomic 4 verification scope (>=30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -35,6 +34,8 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_until,
 )
 
 VIEWPORT = (520, 320)
@@ -122,55 +123,47 @@ def body() -> None:
 
         # ── (C) click selection swaps indicator + panel ─────────────
         tf.click(path="tabs#2")
-        time.sleep(0.12)
+        wait_query(tf, "/external/selected_index", 2, desc="click tab 2 -> selected 2")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(tf.query("/external/selected_index"), 2, "click tab 2 -> selected 2")
         assert_eq(_selected_indicator_index(snap), 2, "indicator moved to tab 2")
         assert PANEL_LEAD[2] in _panel_text(snap), "panel shows Advanced body after click"
         assert PANEL_LEAD[0] not in _panel_text(snap), "panel no longer shows General body"
 
         tf.click(path="tabs#1")
-        time.sleep(0.12)
+        wait_query(tf, "/external/selected_index", 1, desc="click tab 1 -> selected 1")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(tf.query("/external/selected_index"), 1, "click tab 1 -> selected 1")
         assert_eq(_selected_indicator_index(snap), 1, "indicator moved to tab 1")
         assert PANEL_LEAD[1] in _panel_text(snap), "panel shows Appearance body after click"
 
         tf.click(path="tabs#0")
-        time.sleep(0.12)
-        assert_eq(tf.query("/external/selected_index"), 0, "click tab 0 -> selected 0")
+        wait_query(tf, "/external/selected_index", 0, desc="click tab 0 -> selected 0")
 
         # ── (E) keyboard roving (automatic activation) ──────────────
         # Focus the TabList (the WAI-ARIA single tab stop) the way a
         # Tab keypress would, then drive Arrow/Home/End.
         tf.request("focus/set", {"tag": "tabs"})
-        time.sleep(0.1)
-        focus_state = tf.request("focus/get").result
-        assert_eq(focus_state.get("focused"), "tabs", "TabList owns focus")
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == "tabs",
+            desc="TabList owns focus",
+        )
 
         tf.key(path="tabs", name="ArrowRight")
-        time.sleep(0.12)
-        assert_eq(tf.query("/external/selected_index"), 1, "ArrowRight: 0 -> 1")
+        wait_query(tf, "/external/selected_index", 1, desc="ArrowRight: 0 -> 1")
 
         tf.key(path="tabs", name="ArrowRight")
-        time.sleep(0.12)
-        assert_eq(tf.query("/external/selected_index"), 2, "ArrowRight: 1 -> 2")
+        wait_query(tf, "/external/selected_index", 2, desc="ArrowRight: 1 -> 2")
 
         tf.key(path="tabs", name="ArrowRight")
-        time.sleep(0.12)
-        assert_eq(tf.query("/external/selected_index"), 0, "ArrowRight wraps: 2 -> 0")
+        wait_query(tf, "/external/selected_index", 0, desc="ArrowRight wraps: 2 -> 0")
 
         tf.key(path="tabs", name="ArrowLeft")
-        time.sleep(0.12)
-        assert_eq(tf.query("/external/selected_index"), 2, "ArrowLeft wraps: 0 -> 2")
+        wait_query(tf, "/external/selected_index", 2, desc="ArrowLeft wraps: 0 -> 2")
 
         tf.key(path="tabs", name="Home")
-        time.sleep(0.12)
-        assert_eq(tf.query("/external/selected_index"), 0, "Home -> first tab")
+        wait_query(tf, "/external/selected_index", 0, desc="Home -> first tab")
 
         tf.key(path="tabs", name="End")
-        time.sleep(0.12)
-        assert_eq(tf.query("/external/selected_index"), 2, "End -> last tab")
+        wait_query(tf, "/external/selected_index", 2, desc="End -> last tab")
 
         # Keyboard selection reflects in the paint indicator too.
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
@@ -178,8 +171,7 @@ def body() -> None:
         assert PANEL_LEAD[2] in _panel_text(snap), "panel follows keyboard to Advanced body"
 
         tf.key(path="tabs", name="ArrowLeft")
-        time.sleep(0.12)
-        assert_eq(tf.query("/external/selected_index"), 1, "ArrowLeft: 2 -> 1")
+        wait_query(tf, "/external/selected_index", 1, desc="ArrowLeft: 2 -> 1")
 
 
 if __name__ == "__main__":

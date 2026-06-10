@@ -37,7 +37,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -49,13 +48,13 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_until,
 )
 
 EXAMPLE = "hello-multi-select"
 WIN = (380, 480)
 N = 10_000
 LIST_TAG = "vlist"
-PAUSE = 0.12
 
 
 def selection(d) -> list[int]:
@@ -79,7 +78,6 @@ def click_row(tf, row: int, *, shift: bool = False, ctrl: bool = False) -> None:
     tf.click(path=f"{LIST_TAG}#{row}")
     if shift or ctrl:
         tf.modifiers()  # release
-    time.sleep(PAUSE)
 
 
 def body() -> None:
@@ -139,12 +137,17 @@ def body() -> None:
 
         # ── (F) keyboard composes with the mouse (R780 + R781) ──────
         tf.request("focus/set", {"tag": LIST_TAG})
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == LIST_TAG,
+            desc="list owns focus",
+        )
         tf.modifiers(ctrl=True)
         tf.key(path=LIST_TAG, name="a")  # Ctrl+A
         tf.modifiers()
-        time.sleep(PAUSE)
-        assert_eq(len(selection(tf)), N, "Ctrl+A still selects all alongside the mouse path")
+        wait_until(
+            lambda: len(selection(tf)) == N,
+            desc="Ctrl+A still selects all alongside the mouse path",
+        )
         # A plain click then collapses the keyboard select-all back to one.
         click_row(tf, 3)
         assert_eq(selection(tf), [3], "a plain click after Ctrl+A replaces with one row")

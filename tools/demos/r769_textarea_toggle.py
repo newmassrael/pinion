@@ -37,7 +37,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -50,13 +49,13 @@ from rpc_verify import (
     read_png_rgba8,
     png_pixel,
     run_demo,
+    wait_query,
     wait_until,
 )
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent
 TA_TAG = "main_textarea"
 VIEWPORT = (480, 320)
-SETTLE = 0.06
 
 RED = (0xD0, 0x28, 0x28)
 GREEN = (0x1F, 0x8A, 0x34)
@@ -111,13 +110,11 @@ def caret(ta: RpcSubprocess) -> int:
 
 def select(ta: RpcSubprocess, start: int, end: int) -> None:
     ta.intervene("/external/selection", {"start": start, "end": end})
-    time.sleep(SETTLE)
 
 
 def click_tag(ta: RpcSubprocess, rect: tuple[int, int, int, int]) -> None:
     x, y, w, h = rect
     ta.click(at=(x + w / 2, y + h / 2))
-    time.sleep(SETTLE)
 
 
 def capture_screenshot() -> Path:
@@ -163,14 +160,16 @@ def body() -> None:
         assert_eq(run_at(ta, 0)["style"]["font_weight"], 400, "'first' seed is normal weight")
 
         ta.request("focus/set", {"tag": TA_TAG})
-        time.sleep(0.05)
-        assert_eq(ta.query("/external/state"), "Focused", "field focused")
+        wait_query(ta, "/external/state", "Focused", desc="field focused")
 
         # ── Phase 2 — bold the red "first": weight flips, colour kept ──
         select(ta, 0, 5)
         click_tag(ta, sw_rects[TB_BOLD])
+        wait_until(
+            lambda: (lambda r: r is not None and r["style"]["font_weight"] == 700)(run_at(ta, 0)),
+            desc="merge made 'first' bold",
+        )
         first = run_at(ta, 0)
-        assert_eq(first["style"]["font_weight"], 700, "merge made 'first' bold")
         assert_eq(_color(first["style"]), RED, "bold KEPT the red colour (mergeCharFormat point)")
         assert_eq((first["start"], first["end"]), (0, 5), "the run span is unchanged")
         assert_eq(text(ta), SEED_TEXT, "toggle never edits the text")
@@ -178,7 +177,10 @@ def body() -> None:
         # ── Phase 3 — second B click toggles bold back off ────────────
         select(ta, 0, 5)
         click_tag(ta, sw_rects[TB_BOLD])
-        assert_eq(run_at(ta, 0)["style"]["font_weight"], 400, "second B click un-bolds")
+        wait_until(
+            lambda: (lambda r: r is not None and r["style"]["font_weight"] == 400)(run_at(ta, 0)),
+            desc="second B click un-bolds",
+        )
         assert_eq(_color(run_at(ta, 0)["style"]), RED, "un-bold still keeps red")
 
         # ── Phase 3b — AI-semantic bold via apply-style full style (R770.1)
@@ -208,9 +210,14 @@ def body() -> None:
         click_tag(ta, sw_rects[TB_BOLD])
         select(ta, 11, 17)
         click_tag(ta, sw_rects[TB_ITALIC])
+        wait_until(
+            lambda: (lambda r: r is not None and r["style"].get("font_style") == "Italic")(
+                run_at(ta, 11)
+            ),
+            desc="'second' is also italic (orthogonal)",
+        )
         second = run_at(ta, 11)
         assert_eq(second["style"]["font_weight"], 700, "'second' is bold")
-        assert_eq(second["style"]["font_style"], "Italic", "'second' is also italic (orthogonal)")
         assert_eq(_color(second["style"]), GREEN, "'second' kept its green through both merges")
 
         # ── Phase 5 — bold UNSTYLED bytes resolves against base ───────
@@ -218,8 +225,9 @@ def body() -> None:
         assert run_at(ta, 7) is None, "byte 7 starts unstyled"
         select(ta, 5, 10)
         click_tag(ta, sw_rects[TB_BOLD])
+        wait_until(lambda: run_at(ta, 7) is not None,
+                   desc="bolding plain text materialised a run")
         gap = run_at(ta, 7)
-        assert gap is not None, "bolding plain text materialised a run"
         assert_eq(gap["style"]["font_weight"], 700, "materialised run is bold")
         assert _color(gap["style"]) not in (RED, GREEN, BLUE), "gap took the field base ink, not a seed colour"
 
@@ -230,9 +238,8 @@ def body() -> None:
         click_tag(ta, sw_rects[TB_BOLD])  # ensure all bold now
         fx, fy = field_rect[0], field_rect[1]
         ta.click(at=(fx + 28, fy + 8 + 25 + 12))  # into bold "second" line
-        time.sleep(SETTLE)
-        c = caret(ta)
-        assert 11 <= c <= 17, f"click on bold 'second' lands inside its run (byte {c} in 11..17)"
+        wait_until(lambda: 11 <= caret(ta) <= 17,
+                   desc="click on bold 'second' lands inside its run (byte in 11..17)")
         assert_eq(text(ta), SEED_TEXT, "every toggle left the text byte-identical")
 
     # ── Phase 7 — live-pixel: swatches + seed inks render at boot ─────

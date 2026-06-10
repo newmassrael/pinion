@@ -157,27 +157,45 @@ def _pixel_check_file_ring() -> bool:
         return False
     ax, ay = geom
 
-    r = subprocess.run(
-        ["ffmpeg", "-y", "-f", "x11grab", "-video_size", "1920x1080",
-         "-i", os.environ.get("DISPLAY", ":0") + ".0", "-frames:v", "1", SHOT],
-        capture_output=True, timeout=15)
-    if r.returncode != 0 or not Path(SHOT).exists():
-        return False
-
     from PIL import Image
-    im = Image.open(SHOT).convert("RGB")
-    px = im.load()
-    W, H = im.size
 
-    def blue(x, y):
-        if not (0 <= x < W and 0 <= y < H):
+    def _grab_blues():
+        """One x11grab + blue-pixel scan; None when the grab failed."""
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-f", "x11grab", "-video_size", "1920x1080",
+             "-i", os.environ.get("DISPLAY", ":0") + ".0", "-frames:v", "1", SHOT],
+            capture_output=True, timeout=15)
+        if r.returncode != 0 or not Path(SHOT).exists():
+            return None
+        im = Image.open(SHOT).convert("RGB")  # noqa: shadows nothing — per-grab image
+        px = im.load()
+        W, H = im.size
+
+        def blue(x, y):
+            if not (0 <= x < W and 0 <= y < H):
+                return False
+            rr, gg, bb = px[x, y]
+            return (abs(rr - RING_BLUE[0]) <= 40 and abs(gg - RING_BLUE[1]) <= 40
+                    and abs(bb - RING_BLUE[2]) <= 40)
+
+        found = [(x, y) for y in range(ay, min(ay + 80, H))
+                 for x in range(ax, min(ax + 130, W)) if blue(x, y)]
+        return found, blue
+
+    # R883 zero-flake: presentation to the real screen is async with no
+    # RPC observable — poll the SCREEN by re-grabbing until the ring is
+    # locatable (or the deadline turns it into the loud assert below).
+    grabbed = _grab_blues()
+    if grabbed is None:
+        return False
+    blues, blue = grabbed
+    deadline = time.monotonic() + 10.0
+    while len(blues) <= 40 and time.monotonic() < deadline:
+        time.sleep(0.25)  # re-grab poll interval
+        grabbed = _grab_blues()
+        if grabbed is None:
             return False
-        rr, gg, bb = px[x, y]
-        return (abs(rr - RING_BLUE[0]) <= 40 and abs(gg - RING_BLUE[1]) <= 40
-                and abs(bb - RING_BLUE[2]) <= 40)
-
-    blues = [(x, y) for y in range(ay, min(ay + 80, H))
-             for x in range(ax, min(ax + 130, W)) if blue(x, y)]
+        blues, blue = grabbed
     assert len(blues) > 40, f"File ring not located on screen ({len(blues)} px)"
     minx = min(p[0] for p in blues)
     maxx = max(p[0] for p in blues)
@@ -221,9 +239,6 @@ def body() -> None:
             # Focus the menubar: closed + focused -> ring on the bar_focus
             # title (File, the top-LEFT-flush corner case).
             app.request("focus/set", {"tag": BAR})
-            for _ in range(3):
-                app.snapshot(source="paint", viewport=VIEWPORT)
-                time.sleep(0.1)
             _check_title(app, 0)
 
             # Pixel verification of the File corner ring while it is focused
@@ -233,11 +248,9 @@ def body() -> None:
 
             # Arrow across the remaining top-flush titles (top clamp only).
             app.key(path=BAR, name="ArrowRight")
-            time.sleep(0.1)
             _check_title(app, 1)
 
             app.key(path=BAR, name="ArrowRight")
-            time.sleep(0.1)
             _check_title(app, 2)
 
             # Control: a non-flush focused node keeps the full symmetric
@@ -246,7 +259,6 @@ def body() -> None:
             # clear of the top edge), so its ring is NOT top-clamped.
             app.key(path=BAR, name="ArrowLeft")  # t2 -> wrap to t0 (File)
             app.key(path=BAR, name="ArrowDown")  # open File, active item 0
-            time.sleep(0.15)
             snap = app.snapshot(source="paint", viewport=VIEWPORT)
             rects = abs_rects_of(snap)
             item = rects.get("menu#i0")

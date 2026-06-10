@@ -35,7 +35,6 @@ Verified (>= 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -48,7 +47,6 @@ from rpc_verify import (  # noqa: E402
 )
 
 VIEWPORT = (460, 320)
-PAUSE = 0.10
 
 GRID = "data_grid"
 EDIT = "data_grid_edit"
@@ -96,15 +94,15 @@ def body() -> None:
         wait_until(lambda: tf.query("/external/focused_col") == 4, timeout=4.0,
                    interval=0.03, desc="End -> last column")
         tf.key(path=GRID, name="ArrowRight")
-        time.sleep(PAUSE)
+        # Clamp no-op: the dispatch commits before the response.
         assert_eq(tf.query("/external/focused_col"), 4, "Right at last col clamps")
         tf.key(path=GRID, name="Home")
         wait_until(lambda: tf.query("/external/focused_col") == 0, timeout=4.0,
                    interval=0.03, desc="Home -> col 0")
         for _ in range(6):
             tf.key(path=GRID, name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focused_row"), 3, "ArrowDown clamps at last row")
+        wait_until(lambda: tf.query("/external/focused_row") == 3, timeout=4.0,
+                   interval=0.03, desc="ArrowDown clamps at last row")
 
         # ── (C) bool toggle: Space on focused, then single-click ─────
         tf.intervene("/external/focused_row", 2)

@@ -53,7 +53,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -67,11 +66,11 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_until,
 )
 
 EXAMPLE = "hello-tab-reorder"
 VIEWPORT = (520, 300)
-PAUSE = 0.1
 TAG = "tabreorder"
 PANEL = "tabreorder_panel"
 N = 4
@@ -123,7 +122,6 @@ def drag_onto(tf, src: str, dst: str, frac_x: float) -> None:
     frm = (float(sx + sw // 2), float(sy + sh // 2))
     to = (float(dx + int(dw * frac_x)), float(dy + dh // 2))
     tf.drag(from_at=frm, to_at=to, steps=8)
-    time.sleep(PAUSE)
 
 
 def near_rgb(a: tuple, b: tuple, tol: int = 8) -> bool:
@@ -147,7 +145,10 @@ def body() -> None:
         # ── (B) reorder by horizontal drag ──────────────────────────
         # Drag tab 0 (Scene, id 0) onto the RIGHT half of tab 2 → gap 3.
         drag_onto(tf, "tabreorder#0", "tabreorder#2", 0.75)
-        assert_eq(order(tf), [1, 2, 0, 3], "Scene dropped after tab 2")
+        wait_until(
+            lambda: order(tf) == [1, 2, 0, 3],
+            desc="Scene dropped after tab 2",
+        )
         assert_eq(labels(tf), labels_for([1, 2, 0, 3]), "labels track reorder #1")
         assert_eq(selected_id(tf), 0, "dragged tab (Scene) stays selected by id")
         assert_eq(selected_visual(tf), 2, "selected tab now sits at visual 2")
@@ -156,7 +157,10 @@ def body() -> None:
         # Order is [1,2,0,3]. Drag the last tab (visual 3 = Assets, id 3)
         # onto the LEFT half of tab 0 → gap 0 (move to the front).
         drag_onto(tf, "tabreorder#3", "tabreorder#0", 0.25)
-        assert_eq(order(tf), [3, 1, 2, 0], "Assets dropped at the front")
+        wait_until(
+            lambda: order(tf) == [3, 1, 2, 0],
+            desc="Assets dropped at the front",
+        )
         assert_eq(selected_id(tf), 3, "dragging Assets activated it")
         assert_eq(selected_visual(tf), 0, "Assets now at visual 0")
 
@@ -171,38 +175,63 @@ def body() -> None:
         # Select Shader (id 2) by clicking its current visual position.
         vis_of_2 = order(tf).index(2)
         tf.click(path=f"tabreorder#{vis_of_2}")
-        time.sleep(PAUSE)
-        assert_eq(selected_id(tf), 2, "clicked Shader is selected")
+        wait_until(lambda: selected_id(tf) == 2, desc="clicked Shader is selected")
 
         # ── (E) keyboard (Arrow activates; Space-grab + Arrow reorders) ─
         assert_eq(tf.request("focus/get").result.get("focused"), TAG,
                   "click on a tab focuses the strip")
         # Home anchors the cursor at visual 0 deterministically (a prior
         # drag left it at an unknown position) and activates that tab.
-        tf.key(path=TAG, name="Home"); time.sleep(PAUSE)
+        tf.key(path=TAG, name="Home")
+        wait_until(
+            lambda: selected_id(tf) == order(tf)[0],
+            desc="Home activates the first tab",
+        )
         o0 = order(tf)
-        assert_eq(selected_id(tf), o0[0], "Home activates the first tab")
-        tf.key(path=TAG, name="ArrowRight"); time.sleep(PAUSE)
-        assert_eq(selected_id(tf), order(tf)[1], "ArrowRight activates the next tab")
+        tf.key(path=TAG, name="ArrowRight")
+        wait_until(
+            lambda: selected_id(tf) == order(tf)[1],
+            desc="ArrowRight activates the next tab",
+        )
         assert_eq(order(tf), o0, "navigation does not reorder")
         # Back to visual 0, grab, move right — a move from 0 always reorders.
-        tf.key(path=TAG, name="Home"); time.sleep(PAUSE)
+        tf.key(path=TAG, name="Home")
+        wait_until(
+            lambda: selected_id(tf) == order(tf)[0],
+            desc="Home re-anchors the cursor at visual 0",
+        )
         grab_sel = selected_id(tf)
-        tf.key(path=TAG, name=" "); time.sleep(PAUSE)
-        assert tf.query("/external/grabbed") is True, "Space grabs the focused tab"
+        tf.key(path=TAG, name=" ")
+        wait_until(
+            lambda: tf.query("/external/grabbed") is True,
+            desc="Space grabs the focused tab",
+        )
         ord_grab = order(tf)
-        tf.key(path=TAG, name="ArrowRight"); time.sleep(PAUSE)
-        assert order(tf) != ord_grab, "grabbed ArrowRight reorders the tab"
+        tf.key(path=TAG, name="ArrowRight")
+        wait_until(
+            lambda: order(tf) != ord_grab,
+            desc="grabbed ArrowRight reorders the tab",
+        )
         assert_eq(selected_id(tf), grab_sel, "the grabbed (moved) tab stays selected")
-        tf.key(path=TAG, name=" "); time.sleep(PAUSE)
-        assert tf.query("/external/grabbed") is False, "Space drops the grab"
+        tf.key(path=TAG, name=" ")
+        wait_until(
+            lambda: tf.query("/external/grabbed") is False,
+            desc="Space drops the grab",
+        )
         # Escape reverts a grab (cursor is now at visual 1 after the move).
         pre = order(tf)
-        tf.key(path=TAG, name=" "); time.sleep(PAUSE)
-        tf.key(path=TAG, name="End"); time.sleep(PAUSE)
-        assert order(tf) != pre, "grabbed End moved the tab"
-        tf.key(path=TAG, name="Escape"); time.sleep(PAUSE)
-        assert tf.query("/external/grabbed") is False, "Escape drops the grab"
+        tf.key(path=TAG, name=" ")
+        wait_until(
+            lambda: tf.query("/external/grabbed") is True,
+            desc="Space re-grabs for the Escape arc",
+        )
+        tf.key(path=TAG, name="End")
+        wait_until(lambda: order(tf) != pre, desc="grabbed End moved the tab")
+        tf.key(path=TAG, name="Escape")
+        wait_until(
+            lambda: tf.query("/external/grabbed") is False,
+            desc="Escape drops the grab",
+        )
         assert_eq(order(tf), pre, "Escape reverts to the pre-grab order")
 
         # ── (F) introspection round-trip + rejections ───────────────

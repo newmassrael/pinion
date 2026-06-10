@@ -32,13 +32,19 @@ from __future__ import annotations
 
 import re
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, isolated_storage_dir, run_demo
+from rpc_verify import (
+    RpcSubprocess,
+    assert_eq,
+    isolated_storage_dir,
+    run_demo,
+    wait_snap,
+    wait_until,
+)
 
 TF_TAG = "main_textfield"
 LIST_TAG = "todo_list"
@@ -55,12 +61,10 @@ def type_text(tf: RpcSubprocess, text: str) -> None:
     for ch in text:
         result = tf.invoke("/external/key", ch)
         assert_eq(result, True, f"invoke('key', {ch!r}) recognized")
-    time.sleep(0.05)
 
 
 def submit_enter(tf: RpcSubprocess) -> None:
     tf.key(path=TF_TAG, name="Enter")
-    time.sleep(0.1)
 
 
 def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:
@@ -169,22 +173,26 @@ def _body_impl() -> None:
 
         # ── (1) Add 5 todos ────────────────────────────────────────
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == TF_TAG,
+            desc="textfield focused before typing",
+        )
         for word in ("alpha", "beta", "gamma", "delta", "epsilon"):
             type_text(tf, word)
             submit_enter(tf)
-        assert_eq(visible_count(tf), 5, "R660: 5 items visible under All")
+        wait_until(
+            lambda: visible_count(tf) == 5,
+            desc="R660: 5 items visible under All",
+        )
 
         # ── (2) R660-1 walk-back — paint-click filter buttons drive
         # RadioGroupExternal via the composite-tag wire, which fires
         # the "selected" intent → V::update writes Signal<FilterMode>
         # → paint re-runs with the new filter mode ──────────────────
         tf.click(path="todo_filter#0")  # Active
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            0,
-            "R660-1: paint click → RadioGroup.activate → reducer write → Active",
+        wait_until(
+            lambda: active_filter_index(tf) == 0,
+            desc="R660-1: paint click → RadioGroup.activate → reducer write → Active",
         )
         toggle_target_ids: list[int] = []
         rows_before_active = list_rows(tf)
@@ -205,19 +213,15 @@ def _body_impl() -> None:
         # Toggle alpha + gamma completed via paint-click.
         tf.click(path=f"todo_toggle#{toggle_target_ids[0]}")
         tf.click(path=f"todo_toggle#{toggle_target_ids[2]}")
-        time.sleep(0.1)
-        assert_eq(
-            visible_count(tf),
-            3,
-            "R660: Active filter hides 2 completed",
+        wait_until(
+            lambda: visible_count(tf) == 3,
+            desc="R660: Active filter hides 2 completed",
         )
 
         tf.click(path="todo_filter#1")  # Completed
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            1,
-            "R660-1: filter cycle Completed engaged",
+        wait_until(
+            lambda: active_filter_index(tf) == 1,
+            desc="R660-1: filter cycle Completed engaged",
         )
         assert_eq(
             visible_count(tf),
@@ -226,11 +230,9 @@ def _body_impl() -> None:
         )
 
         tf.click(path="todo_filter#2")  # All
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            2,
-            "R660-1: filter cycle All engaged",
+        wait_until(
+            lambda: active_filter_index(tf) == 2,
+            desc="R660-1: filter cycle All engaged",
         )
 
         # ── (3) R660-6 substrate maturity check — verify the
@@ -244,11 +246,9 @@ def _body_impl() -> None:
         # turn and asserting the engaged-index moves.
         for target in (0, 1, 2):
             tf.click(path=f"todo_filter#{target}")
-            time.sleep(0.15)
-            assert_eq(
-                active_filter_index(tf),
-                target,
-                f"R660-6: composite-tag wire clicks todo_filter#{target} → engaged",
+            wait_until(
+                lambda: active_filter_index(tf) == target,
+                desc=f"R660-6: composite-tag wire clicks todo_filter#{target} → engaged",
             )
 
         # ── (4) R660-1 keyboard cycle — Arrow Right + Arrow Left ────
@@ -259,59 +259,48 @@ def _body_impl() -> None:
         # for `scene/key` does not bounce the hover state across
         # different segment rows mid-cycle.
         focus_set(tf, FILTER_TAG)
-        time.sleep(0.1)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == FILTER_TAG,
+            desc="filter group focused for keyboard cycle",
+        )
         # ArrowRight on All (index 2) wraps to 0 → Active engages.
         tf.key(path=FILTER_TAG, name="ArrowRight")
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            0,
-            "R660-1: ArrowRight wraps All → Active (W3C cycle convention)",
+        wait_until(
+            lambda: active_filter_index(tf) == 0,
+            desc="R660-1: ArrowRight wraps All → Active (W3C cycle convention)",
         )
         tf.key(path=FILTER_TAG, name="ArrowRight")
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            1,
-            "R660-1: ArrowRight cycles Active → Completed",
+        wait_until(
+            lambda: active_filter_index(tf) == 1,
+            desc="R660-1: ArrowRight cycles Active → Completed",
         )
         tf.key(path=FILTER_TAG, name="ArrowLeft")
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            0,
-            "R660-1: ArrowLeft cycles Completed → Active",
+        wait_until(
+            lambda: active_filter_index(tf) == 0,
+            desc="R660-1: ArrowLeft cycles Completed → Active",
         )
         tf.key(path=FILTER_TAG, name="End")
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            2,
-            "R660-1: End jumps to All (last index)",
+        wait_until(
+            lambda: active_filter_index(tf) == 2,
+            desc="R660-1: End jumps to All (last index)",
         )
         tf.key(path=FILTER_TAG, name="Home")
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            0,
-            "R660-1: Home jumps to Active (first index)",
+        wait_until(
+            lambda: active_filter_index(tf) == 0,
+            desc="R660-1: Home jumps to Active (first index)",
         )
         # Space activation = idempotent commit on the addressed row.
         tf.key(path=FILTER_TAG, name="Space")
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            0,
-            "R660-1: Space activation is idempotent on already-selected row",
+        wait_until(
+            lambda: active_filter_index(tf) == 0,
+            desc="R660-1: Space activation is idempotent on already-selected row",
         )
 
         # ── (5) Reset filter to All; verify visible list grew ──────
         tf.key(path=FILTER_TAG, name="End")
-        time.sleep(0.15)
-        assert_eq(
-            active_filter_index(tf),
-            2,
-            "R660-1: End → All again",
+        wait_until(
+            lambda: active_filter_index(tf) == 2,
+            desc="R660-1: End → All again",
         )
         assert_eq(
             visible_count(tf),
@@ -323,11 +312,17 @@ def _body_impl() -> None:
         # Add 5 more entries so the list overflows the LIST_VIEWPORT_H
         # window and the scrollbar thumb actually shrinks.
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == TF_TAG,
+            desc="textfield re-focused for the second batch",
+        )
         for word in ("zeta", "eta", "theta", "iota", "kappa"):
             type_text(tf, word)
             submit_enter(tf)
-        assert_eq(visible_count(tf), 10, "R660: list grew to 10 under All")
+        wait_until(
+            lambda: visible_count(tf) == 10,
+            desc="R660: list grew to 10 under All",
+        )
 
         # Walk the layout: the scrollbar peer's post-layout rect gives
         # the (x, y, w, h) for the drag origin / target.
@@ -359,7 +354,6 @@ def _body_impl() -> None:
             to_at=(thumb_centre_x, drag_end_y),
             steps=6,
         )
-        time.sleep(0.2)
         offset_after: Any = None
         try:
             offset_after = tf.query(f"/external/{SCROLLBAR_TAG}/state")
@@ -384,7 +378,21 @@ def _body_impl() -> None:
         # This is the AI-first introspection surface for "scrollbar
         # drag actually scrolled the content" without needing the v1
         # multi-External path syntax.
-        snap_post_drag = tf.snapshot(source="paint", viewport=(480, 720))
+        def _thumb_moved_down(snap: dict[str, Any]) -> bool:
+            node = find_node_by_tag(snap, SCROLLBAR_TAG)
+            if node is None:
+                return False
+            kids = node.get("children") or []
+            if not kids:
+                return False
+            return int((kids[0].get("rect") or {}).get("y") or 0) > sb_y + 4
+
+        snap_post_drag = wait_snap(
+            tf,
+            _thumb_moved_down,
+            viewport=(480, 720),
+            desc="R660-3: drag moved the scrollbar thumb down",
+        )
         sb_node_post = find_node_by_tag(snap_post_drag, SCROLLBAR_TAG)
         assert sb_node_post is not None, "scrollbar peer survives drag"
         thumb_post = (sb_node_post.get("children") or [])[0]
@@ -440,11 +448,9 @@ def _body_impl() -> None:
         # on the §5.20 channel per R51_88_external_reactivate_same.)
         active_before = active_filter_index(tf)
         tf.click(path=f"todo_filter#{active_before}")
-        time.sleep(0.1)
-        assert_eq(
-            active_filter_index(tf),
-            active_before,
-            "R660 carry: idempotent click on engaged filter is no-op",
+        wait_until(
+            lambda: active_filter_index(tf) == active_before,
+            desc="R660 carry: idempotent click on engaged filter is no-op",
         )
 
 

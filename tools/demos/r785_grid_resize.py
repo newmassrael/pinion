@@ -24,7 +24,6 @@ The decisive witness is scene-as-data (§2 #7), no pixels required:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -45,7 +44,6 @@ ROW_H = 36
 TABLE_TAG = "ghs"
 H_SCROLL_TAG = "ghs_hscroll"
 COLS_TAG = "ghs_cols"
-PAUSE = 0.12
 
 
 def col_path(slot: str) -> str:
@@ -62,17 +60,26 @@ def cell_x(rects, tag: str) -> int:
     return rects[tag][0]
 
 
+def _hscroll_offset_x(tf) -> int:
+    snap = tf.snapshot(source="paint", viewport=WIN)
+    node = find_by_tag(snap, H_SCROLL_TAG)
+    assert node is not None, "horizontal scroll present"
+    return int(node.get("offset_x", -1))
+
+
 def hscroll_max_x(tf) -> int:
     """Scroll the outer horizontal scroll to the clamp and read offset_x =
     total_w - viewport_w (R784): the live h-scroll extent."""
     tf.scroll(H_SCROLL_TAG, to=(10 ** 9, 0))
-    time.sleep(PAUSE)
-    snap = tf.snapshot(source="paint", viewport=WIN)
-    node = find_by_tag(snap, H_SCROLL_TAG)
-    assert node is not None, "horizontal scroll present"
-    offset = int(node.get("offset_x", -1))
+    offset = wait_until(
+        lambda: (lambda o: o if o > 0 else None)(_hscroll_offset_x(tf)),
+        desc="h-scroll clamps at a positive max offset",
+    )
     tf.scroll(H_SCROLL_TAG, to=(0, 0))  # reset
-    time.sleep(PAUSE)
+    wait_until(
+        lambda: _hscroll_offset_x(tf) == 0,
+        desc="h-scroll reset back to 0",
+    )
     return offset
 
 

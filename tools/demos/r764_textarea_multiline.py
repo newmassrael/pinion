@@ -27,17 +27,22 @@ Run from the workspace root:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, find_by_tag, run_demo
+from rpc_verify import (
+    RpcSubprocess,
+    assert_eq,
+    find_by_tag,
+    run_demo,
+    wait_query,
+    wait_until,
+)
 
 TA_TAG = "main_textarea"
 VIEWPORT = (480, 320)
 SEED = "first line\nsecond line\nthird line"  # 33 bytes, 3 lines
-SETTLE = 0.06
 
 
 def field_rect(ta: RpcSubprocess):
@@ -58,7 +63,6 @@ def selection(ta: RpcSubprocess):
 
 def key(ta: RpcSubprocess, name: str) -> None:
     ta.key(path=TA_TAG, name=name)
-    time.sleep(SETTLE)
 
 
 def body() -> None:
@@ -71,8 +75,7 @@ def body() -> None:
         assert_eq(selection(ta), None, "no selection on boot")
 
         ta.request("focus/set", {"tag": TA_TAG})
-        time.sleep(0.05)
-        assert_eq(ta.query("/external/state"), "Focused", "focused after focus/set")
+        wait_query(ta, "/external/state", "Focused", desc="focused after focus/set")
 
         # ── vertical caret navigation (column 0 → line starts) ───────
         key(ta, "ArrowDown")
@@ -99,17 +102,22 @@ def body() -> None:
 
         # ── click-to-position lands on the clicked line ──────────────
         ta.click(at=(fx + 2, line_y(1)))
-        time.sleep(SETTLE)
-        c1 = caret(ta)
-        assert 11 <= c1 <= 22, f"click on line 1 lands on line 1 (byte {c1} in 11..22)"
+        wait_until(
+            lambda: 11 <= caret(ta) <= 22,
+            desc="click on line 1 lands on line 1 (byte in 11..22)",
+        )
         ta.click(at=(fx + 2, line_y(2)))
-        time.sleep(SETTLE)
-        c2 = caret(ta)
-        assert 23 <= c2 <= 33, f"click on line 2 lands on line 2 (byte {c2} in 23..33)"
+        wait_until(
+            lambda: 23 <= caret(ta) <= 33,
+            desc="click on line 2 lands on line 2 (byte in 23..33)",
+        )
 
         # ── Shift+ArrowDown extends the selection one line ───────────
         ta.click(at=(fx + 2, line_y(0)))  # caret to line 0 start
-        time.sleep(SETTLE)
+        wait_until(
+            lambda: caret(ta) <= 1,
+            desc="click re-homes the caret to line 0 start",
+        )
         assert_eq(selection(ta), None, "selection cleared before shift-nav")
         c_before = caret(ta)
         ta.modifiers(shift=True)
@@ -123,15 +131,19 @@ def body() -> None:
 
         # ── multi-line drag selection (line 0 -> line 2) ─────────────
         ta.click(at=(fx + 2, line_y(0)))  # clear selection
-        time.sleep(SETTLE)
+        wait_until(
+            lambda: selection(ta) is None,
+            desc="pre-drag click clears the selection",
+        )
         ta.drag(
             from_at=(fx + 2, line_y(0)),
             to_at=(fx + fw - 2, line_y(2)),
             steps=10,
         )
-        time.sleep(SETTLE)
-        sel = selection(ta)
-        assert sel is not None, "multi-line drag produces a selection"
+        sel = wait_until(
+            lambda: selection(ta),
+            desc="multi-line drag produces a selection",
+        )
         assert sel["start"] <= 1, f"drag selection starts near line 0 start (got {sel['start']})"
         assert sel["end"] >= 23, f"drag selection reaches line 2 (end {sel['end']} >= 23)"
         span = ta.query("/external/text")[sel["start"]:sel["end"]]
@@ -140,7 +152,10 @@ def body() -> None:
 
         # ── Enter inserts a newline ──────────────────────────────────
         ta.click(at=(fx + 2, line_y(0)))  # caret to line 0
-        time.sleep(SETTLE)
+        wait_until(
+            lambda: caret(ta) <= 10,
+            desc="click re-homes the caret to line 0",
+        )
         c0 = caret(ta)
         before_text = ta.query("/external/text")
         before_lines = before_text.count("\n") + 1
@@ -152,8 +167,10 @@ def body() -> None:
 
         # ── typing after newline inserts on the new line ─────────────
         assert_eq(ta.invoke("/external/key", "Z"), True, "type Z after the newline")
-        time.sleep(SETTLE)
-        assert_eq(caret(ta), c0 + 2, "caret advances past the typed char")
+        wait_until(
+            lambda: caret(ta) == c0 + 2,
+            desc="caret advances past the typed char",
+        )
 
 
 if __name__ == "__main__":

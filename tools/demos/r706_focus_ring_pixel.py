@@ -126,7 +126,6 @@ def _ring_and_panel(png_path: str):
 def body() -> None:
     with isolated_storage_dir("r706-focus-ring-pixel"):
         with RpcSubprocess("hello-datepicker", visible_window=True) as d:
-            time.sleep(0.6)
             # Single Tab stop + roving active descendant: focus the grid
             # root, then drive the cursor to day 3 (Home -> day 1, then two
             # ArrowRights). Day 3 of May 2026 is the Sunday column (the
@@ -135,21 +134,31 @@ def body() -> None:
             d.key(path=DP, name="Home")
             d.key(path=DP, name="ArrowRight")
             d.key(path=DP, name="ArrowRight")
-            # Force a couple of paints so the ring overlay settles.
-            for _ in range(3):
-                d.snapshot(source="paint", viewport=VIEWPORT)
-                time.sleep(0.15)
-            r = subprocess.run(
-                ["ffmpeg", "-y", "-f", "x11grab", "-video_size", "1920x1080",
-                 "-i", os.environ.get("DISPLAY", ":0") + ".0",
-                 "-frames:v", "1", SHOT],
-                capture_output=True, timeout=15,
-            )
-            if r.returncode != 0 or not Path(SHOT).exists():
+
+            # R883 zero-flake: window MAPPING + compositor presentation
+            # are async with no RPC observable, so poll the SCREEN —
+            # re-grab until the ring + panel are locatable (or time out
+            # into the original graceful SKIP).
+            def _grab_ok() -> bool:
+                r = subprocess.run(
+                    ["ffmpeg", "-y", "-f", "x11grab", "-video_size", "1920x1080",
+                     "-i", os.environ.get("DISPLAY", ":0") + ".0",
+                     "-frames:v", "1", SHOT],
+                    capture_output=True, timeout=15,
+                )
+                return r.returncode == 0 and Path(SHOT).exists()
+
+            if not _grab_ok():
                 print("SKIP: ffmpeg x11grab failed (no capturable display)")
                 return
 
             located = _ring_and_panel(SHOT)
+            deadline = time.monotonic() + 10.0
+            while located is None and time.monotonic() < deadline:
+                time.sleep(0.25)  # re-grab poll interval
+                if not _grab_ok():
+                    break
+                located = _ring_and_panel(SHOT)
             if located is None:
                 print("SKIP: could not locate ring / calendar panel in capture")
                 return

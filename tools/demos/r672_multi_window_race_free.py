@@ -31,7 +31,6 @@ R672 atomic 3 verification scope (≥20 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -39,6 +38,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_until,
 )
 
 
@@ -69,6 +69,27 @@ def _state_row_text(inspector_snap) -> str:
     return ""
 
 
+def _wait_state_row(tf, predicate, desc: str):
+    """Inspector snapshot once `predicate(state_row_text)` is truthy
+    (R883 zero-flake)."""
+    def poll():
+        resp = tf.request(
+            "scene/snapshot",
+            {
+                "window": "inspector",
+                "path": "",
+                "from": "paint",
+                "viewport": {"w": 280, "h": 140},
+            },
+        )
+        if resp is not None and predicate(_state_row_text(resp.result)):
+            return resp
+        return None
+
+    return wait_until(poll, desc=desc)
+
+
+
 def body() -> None:
     with RpcSubprocess("hello-multi-window", boot_grace=1.5) as tf:
         # ── (A) scene/click race-free first verification ────────────
@@ -79,22 +100,9 @@ def body() -> None:
         # scopes pointer state per window; the cross-window click
         # resolves deterministically.
         tf.click(path="main_btn")
-        time.sleep(0.25)
-        ins_after_click = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        assert ins_after_click is not None
-        label_after_click = _state_row_text(ins_after_click.result)
-        assert "Hover" in label_after_click, (
-            f"scene/click {{window:'main'}} must deterministically "
-            f"transition state to Hover post-R672; State row read: "
-            f"{label_after_click!r}"
+        _wait_state_row(
+            tf, lambda label: "Hover" in label,
+            "scene/click {window:'main'} deterministically transitions to Hover",
         )
 
         # ── (B) scene/click {window: "main"} after forced inspector
@@ -106,19 +114,9 @@ def body() -> None:
         # against main's tree regardless of which window painted
         # most recently.
         tf.invoke("/external/send", "Disable")
-        time.sleep(0.3)
-        ins_dis_check = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        assert ins_dis_check is not None
-        assert "Disabled" in _state_row_text(ins_dis_check.result), (
-            "inspector must repaint to show Disabled"
+        _wait_state_row(
+            tf, lambda label: "Disabled" in label,
+            "inspector must repaint to show Disabled",
         )
         # Re-enable; state goes Disabled → Idle. InputRouter cursor on
         # main_btn from the previous click still tracks, so a fresh
@@ -128,17 +126,10 @@ def body() -> None:
         # so we verify via the Disable/Enable arc rather than another
         # click race here.
         tf.invoke("/external/send", "Enable")
-        time.sleep(0.3)
-        ins_enabled = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
+        ins_enabled = _wait_state_row(
+            tf, lambda label: "Idle" in label or "Hover" in label,
+            "after Disable->Enable the State row reflects a race-free state",
         )
-        assert ins_enabled is not None
         label = _state_row_text(ins_enabled.result)
         # After Enable the SCXML routes through Hover (cursor still
         # over button) or Idle (depending on whether router state
@@ -171,17 +162,12 @@ def body() -> None:
         assert click_inspector is None or hasattr(click_inspector, "result"), (
             "scene/click {window:'inspector'} must not crash"
         )
-        time.sleep(0.25)
-        ins_after_inspector_click = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
+        # No-change verification: the inspector-scoped click drained
+        # inside its dispatch, so a plain read reflects the outcome.
+        ins_after_inspector_click = _wait_state_row(
+            tf, lambda label: label.startswith("State:"),
+            "inspector State row still renders after the inspector-scoped click",
         )
-        assert ins_after_inspector_click is not None
         label = _state_row_text(ins_after_inspector_click.result)
         # State row still reflects main's deterministic state — the
         # inspector-scoped click never reached main's SCXML.
@@ -219,20 +205,9 @@ def body() -> None:
         # Smoke that scene/invoke still works (no race conditions
         # from the refactor on the External dispatch arc).
         tf.invoke("/external/send", "Disable")
-        time.sleep(0.25)
-        ins_dis = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        assert ins_dis is not None
-        assert _walk_for_text(ins_dis.result, "Disabled"), (
-            f"Disable invoke mirror in inspector: "
-            f"{_state_row_text(ins_dis.result)!r}"
+        _wait_state_row(
+            tf, lambda label: "Disabled" in label,
+            "Disable invoke mirror in inspector",
         )
 
         # ── (F) Cross-window structure pin — main vs inspector ──────

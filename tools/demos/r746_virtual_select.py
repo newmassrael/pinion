@@ -33,7 +33,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -45,6 +44,8 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     read_png_rgba8,
     run_demo,
+    wait_snap,
+    wait_until,
     sample_png_points,
 )
 
@@ -56,7 +57,6 @@ VP_H = 384  # 12 rows
 OVERSCAN = 3
 SCROLL_TAG = "vlist_scroll"
 LIST_TAG = "vlist"
-PAUSE = 0.12
 
 
 def visible_window(offset: int, vp_h: int, n: int, pitch: int, overscan: int) -> set[int]:
@@ -109,24 +109,25 @@ def body() -> None:
 
         # ── (B) click-to-select a visible row ───────────────────────
         tf.click(path=f"{LIST_TAG}#3")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 3, "click selected row 3")
+        wait_until(lambda: selected(tf) == 3, desc="click selected row 3")
         # Clicking another visible row MOVES the single selection.
         tf.click(path=f"{LIST_TAG}#6")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 6, "click row 6 moves selection (single-select)")
+        wait_until(
+            lambda: selected(tf) == 6,
+            desc="click row 6 moves selection (single-select)",
+        )
         # Re-select row 3 for the orthogonality test.
         tf.click(path=f"{LIST_TAG}#3")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 3, "back to row 3")
+        wait_until(lambda: selected(tf) == 3, desc="back to row 3")
 
         # ── (C) selection ⊥ virtualization ─────────────────────────
         # Scroll far enough that row 3 leaves the window AND the tree.
         tf.scroll(SCROLL_TAG, to=(0, 4000))  # 125 rows down
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
+        snap = wait_snap(
+            tf, lambda s: 3 not in present_rows(s), viewport=WIN,
+            desc="row 3 has left the rendered window (and the tree)",
+        )
         rows_deep = present_rows(snap)
-        assert 3 not in rows_deep, "row 3 has left the rendered window (and the tree)"
         assert_eq(selected(tf), 3, "selection SURVIVES though the row is unmaterialized")
 
         # AI-first: select a deep row that never existed at boot.
@@ -134,18 +135,20 @@ def body() -> None:
         assert_eq(selected(tf), 5000, "deep row 5000 selected without materialization")
         # Scroll to it; it renders, and the selection is consistent.
         tf.scroll(SCROLL_TAG, to=(0, 5000 * PITCH - VP_H // 2))
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert 5000 in present_rows(snap), "row 5000 now rendered after scrolling to it"
+        snap = wait_snap(
+            tf, lambda s: 5000 in present_rows(s), viewport=WIN,
+            desc="row 5000 now rendered after scrolling to it",
+        )
         assert_eq(selected(tf), 5000, "selection still 5000")
 
         # Scroll back to the top; row 3 renders again, selection unchanged
         # (we re-select 3 first to prove the round-trip from a deep state).
         tf.invoke("/external/select", 3)
         tf.scroll(SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert 3 in present_rows(snap), "row 3 rendered again at the top"
+        snap = wait_snap(
+            tf, lambda s: 3 in present_rows(s), viewport=WIN,
+            desc="row 3 rendered again at the top",
+        )
         assert_eq(selected(tf), 3, "selection intact across the full scroll round-trip")
         assert_eq(present_rows(snap), expected, "top window restored exactly")
 

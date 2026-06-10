@@ -35,7 +35,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -48,6 +47,8 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_query,
+    wait_until,
 )
 
 EXAMPLE = "hello-virtual-nav"
@@ -57,7 +58,6 @@ PITCH = 32
 OVERSCAN = 3
 SCROLL_TAG = "vlist_scroll"
 LIST_TAG = "vlist"
-PAUSE = 0.12
 
 
 def present_rows(snap) -> set[int]:
@@ -95,47 +95,48 @@ def body() -> None:
 
         # ── (B) keyboard navigation (selection-follows-focus) ───────
         tf.request("focus/set", {"tag": LIST_TAG})
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == LIST_TAG,
+            desc="list owns focus",
+        )
 
         # First ArrowDown from no selection lands on row 0.
         tf.key(path=LIST_TAG, name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 0, "first ArrowDown selects row 0")
+        wait_query(tf, "/external/selected", 0, desc="first ArrowDown selects row 0")
         tf.key(path=LIST_TAG, name="ArrowDown")
         tf.key(path=LIST_TAG, name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 2, "two more ArrowDowns advance to row 2")
+        wait_query(tf, "/external/selected", 2, desc="two more ArrowDowns advance to row 2")
         tf.key(path=LIST_TAG, name="ArrowUp")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 1, "ArrowUp steps back to row 1")
+        wait_query(tf, "/external/selected", 1, desc="ArrowUp steps back to row 1")
 
         # ArrowUp clamps at the top (no wrap to the last row).
         tf.key(path=LIST_TAG, name="Home")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 0, "Home jumps to the first row")
+        wait_query(tf, "/external/selected", 0, desc="Home jumps to the first row")
         tf.key(path=LIST_TAG, name="ArrowUp")
-        time.sleep(PAUSE)
+        # Clamp no-op: the dispatch commits before the response.
         assert_eq(selected(tf), 0, "ArrowUp at the top clamps (no wrap)")
         assert_eq(scroll_offset(tf.snapshot(source="paint", viewport=WIN)), 0, "still at top")
 
         # PageDown steps by a whole viewport-ful (more than one row), stays
         # in range; PageUp is the symmetric reverse.
         tf.key(path=LIST_TAG, name="PageDown")
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: isinstance(selected(tf), int) and selected(tf) > 1,
+            desc="PageDown steps by a page (>1 row)",
+        )
         after_page = selected(tf)
-        assert isinstance(after_page, int) and after_page > 1, \
-            f"PageDown steps by a page (>1 row), got {after_page}"
         assert after_page < N, "PageDown stays in range"
         tf.key(path=LIST_TAG, name="PageUp")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 0, "PageUp from one page down returns to the top")
+        wait_query(
+            tf, "/external/selected", 0,
+            desc="PageUp from one page down returns to the top",
+        )
 
         # ── (C) scroll-into-view at scale (the headline) ────────────
         # End selects the last row — never materialized at offset 0 — and
         # the offset jumps so it becomes a rendered node.
         tf.key(path=LIST_TAG, name="End")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), N - 1, "End selects the last row 9999")
+        wait_query(tf, "/external/selected", N - 1, desc="End selects the last row 9999")
         snap = tf.snapshot(source="paint", viewport=WIN)
         deep_offset = scroll_offset(snap)
         assert deep_offset > 300_000, f"End scrolled deep into the list, offset {deep_offset}"
@@ -146,27 +147,28 @@ def body() -> None:
 
         # Home brings the deep selection back to the top in one key.
         tf.key(path=LIST_TAG, name="Home")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 0, "Home selects row 0 from the bottom")
+        wait_query(tf, "/external/selected", 0, desc="Home selects row 0 from the bottom")
         snap = tf.snapshot(source="paint", viewport=WIN)
         assert_eq(scroll_offset(snap), 0, "Home scrolled the selection back into view (top)")
         assert 0 in present_rows(snap), "row 0 rendered again at the top"
 
         # ArrowDown from the last row clamps (prove the End clamp too).
         tf.key(path=LIST_TAG, name="End")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/selected", N - 1, desc="End re-selects the last row")
         tf.key(path=LIST_TAG, name="ArrowDown")
-        time.sleep(PAUSE)
+        # Clamp no-op: plain read after the committed dispatch.
         assert_eq(selected(tf), N - 1, "ArrowDown at the last row clamps (no wrap)")
 
         # ── (D) pointer + RPC paths still work alongside the keyboard ─
         tf.key(path=LIST_TAG, name="Home")  # bring the window back up
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/selected", 0, desc="Home re-homes the window")
         snap = tf.snapshot(source="paint", viewport=WIN)
         assert 4 in present_rows(snap), "row 4 visible for the click test"
         tf.click(path=f"{LIST_TAG}#4")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 4, "pointer click still selects (unaffected by keyboard wiring)")
+        wait_query(
+            tf, "/external/selected", 4,
+            desc="pointer click still selects (unaffected by keyboard wiring)",
+        )
         # AI-first deep select via invoke, then clear.
         assert_eq(tf.invoke("/external/select", 5000), 5000, "invoke select 5000 returns 5000")
         assert_eq(selected(tf), 5000, "deep row selected via RPC without materialization")

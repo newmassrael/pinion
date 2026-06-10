@@ -44,13 +44,18 @@ from __future__ import annotations
 
 import re
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, isolated_storage_dir, run_demo
+from rpc_verify import (
+    RpcSubprocess,
+    assert_eq,
+    isolated_storage_dir,
+    run_demo,
+    wait_until,
+)
 
 TF_TAG = "main_textfield"
 LIST_TAG = "todo_list"
@@ -64,18 +69,20 @@ TOGGLE_GLYPH_CHECKED = "☑"
 
 def focus_set(tf: RpcSubprocess, tag: str | None) -> None:
     tf.request("focus/set", {"tag": tag})
+    wait_until(
+        lambda: tf.request("focus/get").result.get("focused") == tag,
+        desc=f"focus/set settled on {tag!r}",
+    )
 
 
 def type_text(tf: RpcSubprocess, text: str) -> None:
     for ch in text:
         result = tf.invoke("/external/key", ch)
         assert_eq(result, True, f"invoke('key', {ch!r}) recognized")
-    time.sleep(0.05)
 
 
 def submit_enter(tf: RpcSubprocess) -> None:
     tf.key(path=TF_TAG, name="Enter")
-    time.sleep(0.1)
 
 
 def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:
@@ -212,15 +219,13 @@ def _body_impl() -> None:
 
         # ── (2) Add 5 items, toggle 3 to completed ────────────────
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
         for word in ("alpha", "beta", "gamma", "delta", "epsilon"):
             type_text(tf, word)
             submit_enter(tf)
 
-        assert_eq(
-            visible_count(tf),
-            5,
-            "5 items visible under default All filter",
+        wait_until(
+            lambda: visible_count(tf) == 5,
+            desc="5 items visible under default All filter",
         )
 
         ids = [get_item_id(tf, i) for i in range(5)]
@@ -228,23 +233,18 @@ def _body_impl() -> None:
         tf.click(path=f"todo_toggle#{ids[0]}")
         tf.click(path=f"todo_toggle#{ids[2]}")
         tf.click(path=f"todo_toggle#{ids[4]}")
-        time.sleep(0.1)
 
         # Header reflects the pre-filter R658 shape (visible == total).
-        assert_eq(
-            list_header_text(tf),
-            "Todos (3 of 5 completed)",
-            "R659: pre-filter header retains R658 shape",
+        wait_until(
+            lambda: list_header_text(tf) == "Todos (3 of 5 completed)",
+            desc="R659: pre-filter header retains R658 shape",
         )
 
         # ── (3) Click Active filter → 2 uncompleted visible ───────
         tf.click(path="todo_filter#0")
-        time.sleep(0.1)
-
-        assert_eq(
-            visible_count(tf),
-            2,
-            "R659: Active filter hides 3 completed",
+        wait_until(
+            lambda: visible_count(tf) == 2,
+            desc="R659: Active filter hides 3 completed",
         )
         assert_eq(
             list_header_text(tf),
@@ -260,12 +260,9 @@ def _body_impl() -> None:
 
         # ── (4) Click Completed filter → 3 completed visible ──────
         tf.click(path="todo_filter#1")
-        time.sleep(0.1)
-
-        assert_eq(
-            visible_count(tf),
-            3,
-            "R659: Completed filter shows 3 completed",
+        wait_until(
+            lambda: visible_count(tf) == 3,
+            desc="R659: Completed filter shows 3 completed",
         )
         assert_eq(
             list_header_text(tf),
@@ -280,12 +277,9 @@ def _body_impl() -> None:
 
         # ── (5) Click All filter → 5 visible again ────────────────
         tf.click(path="todo_filter#2")
-        time.sleep(0.1)
-
-        assert_eq(
-            visible_count(tf),
-            5,
-            "R659: All filter restores full list",
+        wait_until(
+            lambda: visible_count(tf) == 5,
+            desc="R659: All filter restores full list",
         )
         assert_eq(
             list_header_text(tf),
@@ -300,17 +294,16 @@ def _body_impl() -> None:
 
         # ── (6) Active filter again, then All — cycle test ────────
         tf.click(path="todo_filter#0")  # Active
-        time.sleep(0.1)
-        assert_eq(
-            active_filter_index(tf),
-            0,
-            "R659: filter cycle — back to Active",
+        wait_until(
+            lambda: active_filter_index(tf) == 0,
+            desc="R659: filter cycle — back to Active",
         )
         assert_eq(visible_count(tf), 2, "R659: 2 visible under Active again")
 
         # ── (7) Click already-engaged button (no-op via Signal eq) ─
+        # No-change verification: the click dispatch commits before the
+        # response, so a plain read suffices (no observable state changes).
         tf.click(path="todo_filter#0")
-        time.sleep(0.1)
         assert_eq(
             visible_count(tf),
             2,
@@ -318,16 +311,21 @@ def _body_impl() -> None:
         )
 
         tf.click(path="todo_filter#2")  # back to All
-        time.sleep(0.1)
+        wait_until(
+            lambda: active_filter_index(tf) == 2,
+            desc="R659: back to All before the next adds",
+        )
 
         # ── (8) Add 5 more entries → 10 total → confirm scroll ────
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
         for word in ("zeta", "eta", "theta", "iota", "kappa"):
             type_text(tf, word)
             submit_enter(tf)
 
-        assert_eq(visible_count(tf), 10, "R659: list grew to 10 under All filter")
+        wait_until(
+            lambda: visible_count(tf) == 10,
+            desc="R659: list grew to 10 under All filter",
+        )
         assert_eq(
             list_header_text(tf),
             "Todos (3 of 10 completed)",
@@ -361,15 +359,16 @@ def _body_impl() -> None:
 
         # ── (10) R658 stable-id invariant under filter cycle ──────
         tf.click(path="todo_filter#1")  # Completed
-        time.sleep(0.1)
-        assert_eq(
-            visible_count(tf),
-            3,
-            "R659: 3 completed across the 5-add cycle",
+        wait_until(
+            lambda: visible_count(tf) == 3,
+            desc="R659: 3 completed across the 5-add cycle",
         )
 
         tf.click(path="todo_filter#2")  # back to All
-        time.sleep(0.1)
+        wait_until(
+            lambda: visible_count(tf) == 10,
+            desc="R659: All restores the 10 rows before the id walk",
+        )
 
         ids_after = [get_item_id(tf, i) for i in range(10)]
         assert ids[0] in ids_after, (

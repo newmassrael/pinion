@@ -34,7 +34,6 @@ already proven end-to-end with live pixels by r786 (column resize) / r794
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -43,12 +42,12 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    wait_until,
 )
 
 EXAMPLE = "hello-property-grid"
 GRID = "property_grid"
 VIEWPORT = (460, 820)
-PAUSE = 0.10
 
 # The scrub sensitivities mirror the binding consts (GRID_W_PX = 400,
 # SCRUB_FLOAT_PER_PX = 0.01, SCRUB_INT_PX_PER_STEP = 8).
@@ -86,7 +85,6 @@ def scrub(tf, source: int, dx: int) -> None:
     cx = x + int(w * 0.6)
     cy = y + h // 2
     tf.drag(from_at=(float(cx), float(cy)), to_at=(float(cx + dx), float(cy)), steps=10)
-    time.sleep(PAUSE)
 
 
 def expected_float_delta(gw: int, dx: int) -> float:
@@ -144,7 +142,8 @@ def body() -> None:
         # ── (G) a click (no move) does not scrub and does not edit ──
         before = gq(tf, "value.5")
         tf.click(path=f"{GRID}#5")
-        time.sleep(PAUSE)
+        # No-op verification: the dispatch commits before the RPC
+        # response, so a plain read after the click IS the post-click state.
         assert_eq(gq(tf, "value.5"), before, "a click leaves the value unchanged")
         assert_eq(gq(tf, "scrubbing"), False, "a click never calibrates a scrub")
         assert_eq(gq(tf, "editing"), None, "a single click on a numeric row does not edit")
@@ -157,8 +156,10 @@ def body() -> None:
 
         # ── (I) double-click still opens the inline editor ──────────
         tf.double_click(path=f"{GRID}#5")
-        time.sleep(PAUSE)
-        assert_eq(gq(tf, "editing"), 5, "double-click opens the editor on Health (the edit path is intact)")
+        wait_until(
+            lambda: gq(tf, "editing") == 5,
+            desc="double-click opens the editor on Health (the edit path is intact)",
+        )
 
 
 if __name__ == "__main__":

@@ -28,12 +28,11 @@ retired by the same fix.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_query
 
 
 def body() -> None:
@@ -42,13 +41,7 @@ def body() -> None:
         assert_eq(initial, False, "initial /external/value")
 
         toggle.click(path="main_toggle")
-        # The deferred-input drain runs on the dispatcher's return
-        # path, so a brief sleep lets the next paint cycle settle
-        # before the value query lands.
-        time.sleep(0.1)
-
-        after = toggle.query("/external/value")
-        assert_eq(after, True, "post-click /external/value")
+        wait_query(toggle, "/external/value", True, desc="post-click /external/value")
 
 
 if __name__ == "__main__":

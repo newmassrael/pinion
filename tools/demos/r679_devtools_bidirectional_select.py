@@ -52,12 +52,17 @@ R679 atomic 3 verification scope (≥ 35 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcError, RpcSubprocess, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcError,
+    RpcSubprocess,
+    run_demo,
+    wait_query,
+    wait_until,
+)
 
 
 # R679 §5.16 — the same path constants the binding hard-codes;
@@ -74,7 +79,20 @@ _INSPECTOR_H = 320
 # M3 Lists tokens — focused inspector row paints
 # SurfaceContainerHighest. Non-focused rows stay transparent.
 # Row height per `TreeViewStyle::m3_default` is 48 px.
-_SETTLE_SEC = 0.25
+
+
+def _wait_snap_window(tf, snap_fn, predicate, desc: str) -> dict:
+    """Poll a window-scoped snapshot until `predicate(snap)` holds (R883).
+
+    `wait_snap` covers the single-window `tf.snapshot(...)` form only;
+    the main/inspector snapshots here carry a `window` scope, so poll
+    the custom readers through `wait_until` and return the matching
+    snap so follow-up asserts read the same observed frame."""
+    def poll():
+        snap = snap_fn(tf)
+        return snap if predicate(snap) else None
+
+    return wait_until(poll, desc=desc)
 
 
 def _snap_main(tf) -> dict:
@@ -224,13 +242,13 @@ def body() -> None:
 
         # ── (C) Inspector → main arc (R675 baseline regression pin) ─
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(_SETTLE_SEC)
         # Main scene paints the selection wrap (Error red).
-        snap_main_c = _snap_main(tf)
-        borders_c = _collect_borders(snap_main_c)
-        assert len(borders_c) == 1, (
-            f"post inspector-click = 1 selection wrap; got: {borders_c!r}"
+        snap_main_c = _wait_snap_window(
+            tf, _snap_main,
+            lambda s: len(_collect_borders(s)) == 1,
+            "post inspector-click = 1 selection wrap",
         )
+        borders_c = _collect_borders(snap_main_c)
         selection_color = _border_color_tuple(borders_c[0])
         assert selection_color[3] == 255, (
             f"selection border must be opaque; got: {selection_color!r}"
@@ -255,12 +273,10 @@ def body() -> None:
         # explicit deselect; here we use a fresh write to assert the
         # write-side mechanism works independently).
         tf.invoke("/main_click_router/external/click", _BUTTON_PATH)
-        time.sleep(_SETTLE_SEC)
         # Slot mirror updated.
-        router_after_d = _query_router_last_clicked(tf)
-        assert router_after_d == _BUTTON_PATH, (
-            f"main_click_router last_clicked must mirror invoke arg; "
-            f"got: {router_after_d!r}"
+        wait_query(
+            tf, "/main_click_router/external/last_clicked", _BUTTON_PATH,
+            desc="main_click_router last_clicked must mirror invoke arg",
         )
         # Main wrap still present (same path was written).
         snap_main_d = _snap_main(tf)
@@ -290,9 +306,11 @@ def body() -> None:
         # observe the button click overriding it (rather than just
         # confirming no-change).
         tf.invoke("/main_click_router/external/click", _ALT_PATH)
-        time.sleep(_SETTLE_SEC)
         # Verify the alt write landed in the router mirror.
-        assert _query_router_last_clicked(tf) == _ALT_PATH
+        wait_query(
+            tf, "/main_click_router/external/last_clicked", _ALT_PATH,
+            desc="alt write landed in the router mirror",
+        )
 
         # Click on the button via paint-side input. The `tf.click`
         # helper is single-window only; for multi-window bindings we
@@ -302,12 +320,20 @@ def body() -> None:
         # cycle at its centre — same arc winit's MouseInput would
         # drive on a real user click.
         tf.request("scene/click", {"window": "main", "path": "main_btn"})
-        time.sleep(_SETTLE_SEC * 2)
         # Reducer's main_btn.click arm wrote MAIN_BUTTON_RAW_PATH.
         # The router's last_clicked slot is NOT updated by this arc
         # (it's the inspector's TreeViewFocus that observes the
         # Signal change; the router is the AI-invoke entry point
-        # only). Verify the *visible* end-state instead.
+        # only). Verify the *visible* end-state instead — gate on the
+        # inspector row's focus state-layer, which is uniquely
+        # post-click (the alt path left this row transparent).
+        snap_inspector_e = _wait_snap_window(
+            tf, _snap_inspector,
+            lambda s: (lambda f: f is not None and not _is_transparent(f))(
+                _find_row_fill_by_tag(s, row_tag)
+            ),
+            "inspector row paints focus state-layer post button-click",
+        )
         snap_main_e = _snap_main(tf)
         borders_e = _collect_borders(snap_main_e)
         # The button click landed → selected_path now points at the
@@ -319,55 +345,49 @@ def body() -> None:
         assert _border_color_tuple(borders_e[0]) == selection_color, (
             "button-click wrap colour must be Error red (= selection)"
         )
-        # Inspector row paints focus state-layer.
-        snap_inspector_e = _snap_inspector(tf)
-        focused_fill_e = _find_row_fill_by_tag(snap_inspector_e, row_tag)
-        assert focused_fill_e is not None
-        assert not _is_transparent(focused_fill_e), (
-            f"inspector row must paint focus state-layer post button-click; "
-            f"got: {focused_fill_e!r}"
-        )
 
         # ── (F) Bidirectional alternation — latest write wins ──────
         # Inspector writes A.
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(_SETTLE_SEC)
-        snap_f1 = _snap_inspector(tf)
-        fill_f1 = _find_row_fill_by_tag(snap_f1, row_tag)
-        assert fill_f1 is not None and not _is_transparent(fill_f1), (
-            "alternation step 1: inspector arc wrote selection"
+        _wait_snap_window(
+            tf, _snap_inspector,
+            lambda s: (lambda f: f is not None and not _is_transparent(f))(
+                _find_row_fill_by_tag(s, row_tag)
+            ),
+            "alternation step 1: inspector arc wrote selection",
         )
 
         # Main router writes the alt path B.
         tf.invoke("/main_click_router/external/click", _ALT_PATH)
-        time.sleep(_SETTLE_SEC)
         # Inspector row that *was* selected (button) is now NOT
         # focused; alt path might not even resolve in the inspector
         # tree (banner Text shows only when a selection is set, and
         # the tree mirror walks the raw scene). Confirm the original
         # button row lost its focus state-layer.
-        snap_f2 = _snap_inspector(tf)
-        fill_f2_button = _find_row_fill_by_tag(snap_f2, row_tag)
-        assert fill_f2_button is None or _is_transparent(fill_f2_button), (
-            f"alternation step 2: button row should no longer be focused; "
-            f"got: {fill_f2_button!r}"
+        _wait_snap_window(
+            tf, _snap_inspector,
+            lambda s: (lambda f: f is None or _is_transparent(f))(
+                _find_row_fill_by_tag(s, row_tag)
+            ),
+            "alternation step 2: button row should no longer be focused",
         )
 
         # Inspector writes button again — wins.
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(_SETTLE_SEC)
-        snap_f3 = _snap_inspector(tf)
-        fill_f3 = _find_row_fill_by_tag(snap_f3, row_tag)
-        assert fill_f3 is not None and not _is_transparent(fill_f3), (
-            "alternation step 3: latest inspector write wins"
+        _wait_snap_window(
+            tf, _snap_inspector,
+            lambda s: (lambda f: f is not None and not _is_transparent(f))(
+                _find_row_fill_by_tag(s, row_tag)
+            ),
+            "alternation step 3: latest inspector write wins",
         )
 
         # ── (G) AI-driven deselect — Null payload ─────────────────
         tf.invoke("/main_click_router/external/click", None)
-        time.sleep(_SETTLE_SEC)
         # Router slot cleared.
-        assert _query_router_last_clicked(tf) is None, (
-            "Null invoke must clear last_clicked"
+        wait_query(
+            tf, "/main_click_router/external/last_clicked", None,
+            desc="Null invoke must clear last_clicked",
         )
         # Main scene → no selection wrap.
         snap_main_g = _snap_main(tf)
@@ -387,14 +407,14 @@ def body() -> None:
         # Sequential writes followed by reads confirm the mirror is
         # the source-of-truth at the AI plane.
         tf.invoke("/main_click_router/external/click", "Container")
-        time.sleep(_SETTLE_SEC)
-        assert _query_router_last_clicked(tf) == "Container"
+        wait_query(tf, "/main_click_router/external/last_clicked", "Container",
+                   desc="mirror reflects 'Container'")
         tf.invoke("/main_click_router/external/click", "Container/Text[0]")
-        time.sleep(_SETTLE_SEC)
-        assert _query_router_last_clicked(tf) == "Container/Text[0]"
+        wait_query(tf, "/main_click_router/external/last_clicked", "Container/Text[0]",
+                   desc="mirror reflects 'Container/Text[0]'")
         tf.invoke("/main_click_router/external/click", None)
-        time.sleep(_SETTLE_SEC)
-        assert _query_router_last_clicked(tf) is None
+        wait_query(tf, "/main_click_router/external/last_clicked", None,
+                   desc="mirror reflects the Null clear")
 
         # ── (I) Intervene on last_clicked is read-only ────────────
         # Substrate enforces schema convention: query channels are

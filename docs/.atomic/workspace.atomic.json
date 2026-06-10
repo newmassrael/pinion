@@ -36909,6 +36909,68 @@
         "blur/missed-release gesture revocation sweep now includes left pan (raised exposure)"
       ]
     },
+    "R883": {
+      "decision_summary": "Demo zero-flake migration: every fixed action-to-assert time.sleep across the 116 sleep-bearing tools/demos scripts replaced with observed-state polling gates (wait_query/wait_snap/wait_stderr lifted into rpc_verify atop wait_until), grounded on the verified synchronous dispatch contract (effects commit before the RPC response); only genuinely wall-clock-semantic sleeps remain, each commented.",
+      "changes_bullets": [
+        "rpc_verify gains wait_query / wait_snap / wait_stderr typed gates atop wait_until",
+        "all 116 sleep-bearing demos migrated: action-assert pairs now poll observed state",
+        "~840 fixed time.sleep sites removed; asserts preserved or strengthened, none weakened",
+        "no-change/clamp checks documented as plain reads (dispatch commits pre-response)",
+        "live-pixel demos (r706/r707/r786/r794/r806) poll the screen via ffmpeg re-grab loops",
+        "immediate-mode demos gate on scene/cache_stats paint_count instead of frame guesses",
+        "semantic wall-clock sleeps kept + commented: r809 typeahead expiry, frozen-clock windows",
+        "r794 native drag gates on live drop_target introspection instead of press/march timing"
+      ],
+      "verification_bullets": [
+        "every migrated demo run individually against the release binary: [demo] PASS",
+        "full sweep tools/sweep_headless.sh: 186/188 PASS",
+        "2 failures (r774/r775) are the pre-existing local-WM hidden-window resize quirk",
+        "r774/r775 verified PASS with PINION_HIDDEN_WINDOW=0; unmodified HEAD fails identically",
+        "grep over tools/demos: 15 sleeps remain, all wall-clock-semantic or poll intervals, commented",
+        "python3 -m py_compile over all demos: clean; no Rust changes (clippy gate untouched)"
+      ],
+      "impact_refs": [
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "harness boot_grace remains a fixed 0.8 s startup delay (not a flake source; latency-only) — candidate to fold into the readiness poll",
+        "frozen-clock absence proofs (r829/r830/r831) and typeahead-gap inputs (r809) are inherently wall-clock; revisit only if a deterministic-clock signal for \"no motion\" lands",
+        "vendor/sce python tests still use fixed sleeps (upstream, out of scope per submodule policy)",
+        "hello-multi-window d/e keybinding never reaches the ButtonExternal (found while gating",
+        "r676): character-key -> V::keybinding -> forward chain appears broken in the multi-window",
+        "shell; the original demo never observed it. Audit candidate."
+      ],
+      "publishable_decision_summary": "Demo zero-flake migration: every fixed action-to-assert time.sleep across the 116 sleep-bearing tools/demos scripts replaced with observed-state polling gates (wait_query/wait_snap/wait_stderr lifted into rpc_verify atop wait_until), grounded on the verified synchronous dispatch contract (effects commit before the RPC response); only genuinely wall-clock-semantic sleeps remain, each commented.",
+      "publishable_changes_bullets": [
+        "rpc_verify gains wait_query / wait_snap / wait_stderr typed gates atop wait_until",
+        "all 116 sleep-bearing demos migrated: action-assert pairs now poll observed state",
+        "~840 fixed time.sleep sites removed; asserts preserved or strengthened, none weakened",
+        "no-change/clamp checks documented as plain reads (dispatch commits pre-response)",
+        "live-pixel demos (r706/r707/r786/r794/r806) poll the screen via ffmpeg re-grab loops",
+        "immediate-mode demos gate on scene/cache_stats paint_count instead of frame guesses",
+        "semantic wall-clock sleeps kept + commented: r809 typeahead expiry, frozen-clock windows",
+        "r794 native drag gates on live drop_target introspection instead of press/march timing"
+      ],
+      "publishable_verification_bullets": [
+        "every migrated demo run individually against the release binary: [demo] PASS",
+        "full sweep tools/sweep_headless.sh: 186/188 PASS",
+        "2 failures (r774/r775) are the pre-existing local-WM hidden-window resize quirk",
+        "r774/r775 verified PASS with PINION_HIDDEN_WINDOW=0; unmodified HEAD fails identically",
+        "grep over tools/demos: 15 sleeps remain, all wall-clock-semantic or poll intervals, commented",
+        "python3 -m py_compile over all demos: clean; no Rust changes (clippy gate untouched)"
+      ],
+      "publishable_impact_refs": [
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "harness boot_grace remains a fixed 0.8 s startup delay (not a flake source; latency-only) — candidate to fold into the readiness poll",
+        "frozen-clock absence proofs (r829/r830/r831) and typeahead-gap inputs (r809) are inherently wall-clock; revisit only if a deterministic-clock signal for \"no motion\" lands",
+        "vendor/sce python tests still use fixed sleeps (upstream, out of scope per submodule policy)",
+        "hello-multi-window d/e keybinding never reaches the ButtonExternal (found while gating",
+        "r676): character-key -> V::keybinding -> forward chain appears broken in the multi-window",
+        "shell; the original demo never observed it. Audit candidate."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -50047,6 +50109,8 @@
   "confirmation_events": {},
   "frames": {},
   "branches": {},
+  "entities": {},
+  "predicates": {},
   "narrative_facts": {},
-  "schema_version": 14
+  "schema_version": 19
 }

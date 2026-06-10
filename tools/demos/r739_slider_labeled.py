@@ -44,7 +44,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -58,11 +57,11 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_until,
 )
 
 EXAMPLE = "hello-slider-labeled"
 VIEWPORT = (360, 240)
-PAUSE = 0.1
 TAG = "bright_slider"
 READOUT = "bright_readout"
 STATUS = "bright_status"
@@ -109,45 +108,80 @@ def body() -> None:
 
         # ── (A2) every named stop is reachable + named ──────────────
         tf.request("focus/set", {"tag": TAG})
-        tf.key(path=TAG, name="Home"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.0), "Home seeds the 0.0 (Off) floor"
+        tf.key(path=TAG, name="Home")
+        wait_until(
+            lambda: near(_value(tf), 0.0),
+            desc="Home seeds the 0.0 (Off) floor",
+        )
         assert_eq(_readout(tf), "Off", "0.0 stop is named Off")
         for expected_v, expected_label in (
             (0.25, "Low"), (0.5, "Medium"), (0.75, "High"), (1.0, "Max"),
         ):
-            tf.key(path=TAG, name="ArrowRight"); time.sleep(PAUSE)
-            assert near(_value(tf), expected_v), f"stop {expected_v}, got {_value(tf)}"
+            tf.key(path=TAG, name="ArrowRight")
+            wait_until(
+                lambda: near(_value(tf), expected_v),
+                desc=f"stop {expected_v} reached",
+            )
             assert_eq(_readout(tf), expected_label, f"{expected_v} named {expected_label}")
         # Restore the START stop for section (B).
-        tf.intervene("/external/value", 0.5); time.sleep(PAUSE)
-        assert_eq(_readout(tf), "Medium", "restored to Medium for section B")
+        tf.intervene("/external/value", 0.5)
+        wait_until(
+            lambda: _readout(tf) == "Medium",
+            desc="restored to Medium for section B",
+        )
 
         # ── (B) keyboard stepping (one stop per arrow) ──────────────
         tf.request("focus/set", {"tag": TAG})
         assert_eq(tf.request("focus/get").result.get("focused"), TAG, "track focused")
-        tf.key(path=TAG, name="ArrowRight"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.75) and _readout(tf) == "High", "ArrowRight Medium -> High"
-        tf.key(path=TAG, name="ArrowLeft"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.5) and _readout(tf) == "Medium", "ArrowLeft High -> Medium"
-        tf.key(path=TAG, name="ArrowDown"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.25) and _readout(tf) == "Low", "ArrowDown aliases ArrowLeft"
-        tf.key(path=TAG, name="ArrowUp"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.5) and _readout(tf) == "Medium", "ArrowUp aliases ArrowRight"
-        tf.key(path=TAG, name="End"); time.sleep(PAUSE)
-        assert near(_value(tf), 1.0) and _readout(tf) == "Max", "End -> Max stop"
-        tf.key(path=TAG, name="ArrowRight"); time.sleep(PAUSE)
+        tf.key(path=TAG, name="ArrowRight")
+        wait_until(
+            lambda: near(_value(tf), 0.75) and _readout(tf) == "High",
+            desc="ArrowRight Medium -> High",
+        )
+        tf.key(path=TAG, name="ArrowLeft")
+        wait_until(
+            lambda: near(_value(tf), 0.5) and _readout(tf) == "Medium",
+            desc="ArrowLeft High -> Medium",
+        )
+        tf.key(path=TAG, name="ArrowDown")
+        wait_until(
+            lambda: near(_value(tf), 0.25) and _readout(tf) == "Low",
+            desc="ArrowDown aliases ArrowLeft",
+        )
+        tf.key(path=TAG, name="ArrowUp")
+        wait_until(
+            lambda: near(_value(tf), 0.5) and _readout(tf) == "Medium",
+            desc="ArrowUp aliases ArrowRight",
+        )
+        tf.key(path=TAG, name="End")
+        wait_until(
+            lambda: near(_value(tf), 1.0) and _readout(tf) == "Max",
+            desc="End -> Max stop",
+        )
+        tf.key(path=TAG, name="ArrowRight")
+        # Clamp no-op: plain read after the committed dispatch.
         assert near(_value(tf), 1.0) and _readout(tf) == "Max", "ArrowRight at Max clamps"
-        tf.key(path=TAG, name="Home"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.0) and _readout(tf) == "Off", "Home -> Off stop"
-        tf.key(path=TAG, name="ArrowLeft"); time.sleep(PAUSE)
+        tf.key(path=TAG, name="Home")
+        wait_until(
+            lambda: near(_value(tf), 0.0) and _readout(tf) == "Off",
+            desc="Home -> Off stop",
+        )
+        tf.key(path=TAG, name="ArrowLeft")
+        # Clamp no-op: plain read after the committed dispatch.
         assert near(_value(tf), 0.0) and _readout(tf) == "Off", "ArrowLeft at Off clamps"
 
         # ── (C) off-grid intervene snaps (substrate funnel) ─────────
-        tf.intervene("/external/value", 0.66); time.sleep(PAUSE)
-        assert near(_value(tf), 0.75), f"intervene 0.66 snaps to 0.75, got {_value(tf)}"
+        tf.intervene("/external/value", 0.66)
+        wait_until(
+            lambda: near(_value(tf), 0.75),
+            desc="intervene 0.66 snaps to 0.75",
+        )
         assert_eq(_readout(tf), "High", "snapped readout names High")
-        tf.intervene("/external/value", 0.1); time.sleep(PAUSE)
-        assert near(_value(tf), 0.0), "intervene 0.1 snaps to 0.0"
+        tf.intervene("/external/value", 0.1)
+        wait_until(
+            lambda: near(_value(tf), 0.0),
+            desc="intervene 0.1 snaps to 0.0",
+        )
         assert_eq(_readout(tf), "Off", "snapped readout names Off")
 
         # ── (D) drag snaps to a stop (substrate funnel covers pointer).
@@ -165,12 +199,18 @@ def body() -> None:
             return near(round(v / 0.25) * 0.25, v)
 
         tf.drag(from_path=TAG, to_at=(float(tx + tw - 4), float(cy)), steps=6)
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: on_grid(_value(tf)) and _value(tf) > 0.5,
+            desc="rightward drag lands on a high stop",
+        )
         right_val = _value(tf)
         assert on_grid(right_val), f"rightward drag lands on a stop, got {right_val}"
         assert _readout(tf) in LABELS, f"readout names the dragged stop, got {_readout(tf)!r}"
         tf.drag(from_path=TAG, to_at=(float(tx + 4), float(cy)), steps=6)
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: on_grid(_value(tf)) and _value(tf) < right_val,
+            desc="leftward drag lands on a lower stop",
+        )
         left_val = _value(tf)
         assert on_grid(left_val), f"leftward drag lands on a stop, got {left_val}"
         assert right_val > left_val, "rightward drag yields a larger value than leftward"

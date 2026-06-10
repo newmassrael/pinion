@@ -29,7 +29,6 @@ is a window pinion does not own; this one is a pinion scene.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -38,11 +37,11 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_until,
 )
 
 EXAMPLE = "hello-file-manager"
 VIEWPORT = (480, 540)
-PAUSE = 0.12
 
 DIR = "fb_dir"
 NEWDIR = "fm_newdir"
@@ -102,8 +101,10 @@ def body() -> None:
 
         # ── (B) Rename gate — selecting a row enables it ────────────
         tf.click(path=f"{DIR}#{row_index(tf, 'README.md')}")
-        time.sleep(PAUSE)
-        assert_eq(tf.query(dpath("selected")), "/proj/README.md", "row click selected the file")
+        wait_until(
+            lambda: tf.query(dpath("selected")) == "/proj/README.md",
+            desc="row click selected the file",
+        )
         enabled_fill = rename_fill(tf)
         assert enabled_fill != disabled_fill, (
             f"Rename fill changes when a selection enables it: "
@@ -113,8 +114,10 @@ def body() -> None:
         # ── (C) Rename by CLICK enters edit mode ────────────────────
         sel_idx = row_index(tf, "README.md")
         tf.click(path=RENAME)
-        time.sleep(PAUSE)
-        assert present(tf, NAME_TF), "the rename field appears in the row"
+        wait_until(
+            lambda: present(tf, NAME_TF),
+            desc="the rename field appears in the row",
+        )
         assert not present(tf, f"{DIR}#{sel_idx}"), "the selected file_row is replaced by the field"
         assert_eq(tf.query(npath("text")), "README.md", "field pre-filled with the current name")
         assert_eq(focused(tf), NAME_TF, "focus moved to the rename field")
@@ -123,30 +126,44 @@ def body() -> None:
         tf.intervene(npath("text"), "")
         assert_eq(tf.query(npath("text")), "", "field cleared")
         tf.text("NOTES.md", path=NAME_TF)
-        time.sleep(PAUSE)
-        assert_eq(tf.query(npath("text")), "NOTES.md", "typed characters land in the field")
+        wait_until(
+            lambda: tf.query(npath("text")) == "NOTES.md",
+            desc="typed characters land in the field",
+        )
         tf.key(path=NAME_TF, name="Enter")
-        time.sleep(PAUSE)
-        assert "NOTES.md" in names(tf), f"Enter renamed the file; got {names(tf)}"
+        wait_until(
+            lambda: "NOTES.md" in names(tf),
+            desc="Enter renamed the file",
+        )
         assert "README.md" not in names(tf), "old name gone"
         assert_eq(tf.query(dpath("selected")), "/proj/NOTES.md", "selection follows the rename")
         assert not present(tf, NAME_TF), "edit mode exits on commit (field gone)"
 
         # ── (E) F2 starts a rename with a selection ─────────────────
         tf.click(path=f"{DIR}#{row_index(tf, 'Cargo.toml')}")
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: tf.query(dpath("selected")) == "/proj/Cargo.toml",
+            desc="row click selected Cargo.toml",
+        )
         tf.key(path=RENAME, name="F2")
-        time.sleep(PAUSE)
-        assert present(tf, NAME_TF), "F2 starts the inline rename"
+        wait_until(
+            lambda: present(tf, NAME_TF),
+            desc="F2 starts the inline rename",
+        )
         assert_eq(tf.query(npath("text")), "Cargo.toml", "F2 pre-fills the field")
 
         # ── (F) Escape cancels without renaming ─────────────────────
         tf.intervene(npath("text"), "")
         tf.text("WONT.toml", path=NAME_TF)
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: tf.query(npath("text")) == "WONT.toml",
+            desc="typed cancel-bait landed in the field",
+        )
         tf.key(path=NAME_TF, name="Escape")
-        time.sleep(PAUSE)
-        assert not present(tf, NAME_TF), "Escape exits edit mode"
+        wait_until(
+            lambda: not present(tf, NAME_TF),
+            desc="Escape exits edit mode",
+        )
         assert "Cargo.toml" in names(tf), "Escape left the name unchanged"
         assert "WONT.toml" not in names(tf), "Escape renamed nothing"
 

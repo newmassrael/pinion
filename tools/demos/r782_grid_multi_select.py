@@ -41,7 +41,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -54,6 +53,7 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_until,
 )
 
 EXAMPLE = "hello-grid-multi-select"
@@ -62,7 +62,6 @@ N = 10_000
 ROW_H = 36
 SCROLL_TAG = "vtbl_scroll"
 TABLE_TAG = "vtbl"
-PAUSE = 0.12
 
 
 def selection(d) -> list[int]:
@@ -103,7 +102,11 @@ def click_cell(tf, row: int, col: int, *, shift: bool = False, ctrl: bool = Fals
     tf.click(path=f"{TABLE_TAG}#{row}_{col}")
     if shift or ctrl:
         tf.modifiers()  # release
-    time.sleep(PAUSE)
+
+
+def wait_selection(tf, expected: list[int], desc: str) -> None:
+    """Gate on the observed selection set (R883 zero-flake)."""
+    wait_until(lambda: selection(tf) == expected, desc=desc)
 
 
 def body() -> None:
@@ -128,7 +131,7 @@ def body() -> None:
 
         # ── (B) plain cell click selects one + sets the anchor ──────
         click_cell(tf, 4, 1)  # column 1 — irrelevant to row selection
-        assert_eq(selection(tf), [4], "plain click on any cell selects just row 4")
+        wait_selection(tf, [4], "plain click on any cell selects just row 4")
         assert_eq(cursor(tf), 4, "the active row is the clicked row")
         assert_eq(anchor(tf), 4, "plain click sets the anchor to 4")
         click_cell(tf, 4, 2)  # re-click a different column of the same row
@@ -136,45 +139,52 @@ def body() -> None:
 
         # ── (C) Ctrl-click accumulates, then toggles off ────────────
         click_cell(tf, 9, 0, ctrl=True)
-        assert_eq(selection(tf), [4, 9], "Ctrl-click accumulates row 9")
+        wait_selection(tf, [4, 9], "Ctrl-click accumulates row 9")
         assert_eq(cursor(tf), 9, "Ctrl-click moves the active row to 9")
         assert_eq(anchor(tf), 9, "Ctrl-click re-anchors at 9")
         click_cell(tf, 7, 2, ctrl=True)
-        assert_eq(selection(tf), [4, 7, 9], "Ctrl-click accumulates row 7")
+        wait_selection(tf, [4, 7, 9], "Ctrl-click accumulates row 7")
         assert_eq(anchor(tf), 7, "Ctrl-click re-anchors at 7")
         click_cell(tf, 7, 0, ctrl=True)
-        assert_eq(selection(tf), [4, 9], "Ctrl-click an existing member toggles it off")
+        wait_selection(tf, [4, 9], "Ctrl-click an existing member toggles it off")
         assert_eq(cursor(tf), 7, "the toggled row stays the active row")
 
         # ── (D) Shift-click extends the range from the anchor (7) ───
         click_cell(tf, 5, 1, shift=True)
-        assert_eq(selection(tf), [5, 6, 7], "Shift-click extends 5..7 from anchor 7, replacing")
+        wait_selection(tf, [5, 6, 7], "Shift-click extends 5..7 from anchor 7, replacing")
         assert_eq(anchor(tf), 7, "the anchor stays put while extending")
         assert_eq(cursor(tf), 5, "the navigated end is the active row")
         click_cell(tf, 9, 0, shift=True)
-        assert_eq(selection(tf), [7, 8, 9], "Shift-click re-extends 7..9, anchor still 7")
+        wait_selection(tf, [7, 8, 9], "Shift-click re-extends 7..9, anchor still 7")
         assert_eq(cursor(tf), 9, "the active row follows the new end")
 
         # ── (E) plain click resets, fresh Shift span ────────────────
         click_cell(tf, 2, 0)
-        assert_eq(selection(tf), [2], "a plain click replaces the whole set + re-anchors")
+        wait_selection(tf, [2], "a plain click replaces the whole set + re-anchors")
         assert_eq(anchor(tf), 2, "plain click re-anchors at 2")
         click_cell(tf, 0, 2, shift=True)
-        assert_eq(selection(tf), [0, 1, 2], "Shift-click spans 0..2 from the new anchor 2")
+        wait_selection(tf, [0, 1, 2], "Shift-click spans 0..2 from the new anchor 2")
         assert_eq(cursor(tf), 0, "the active row is the shift-clicked end")
 
         # ── (F) keyboard composes with the mouse + scrolls at scale ─
         tf.request("focus/set", {"tag": TABLE_TAG})
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == TABLE_TAG,
+            desc="grid owns focus",
+        )
         tf.modifiers(ctrl=True)
         tf.key(path=TABLE_TAG, name="a")  # Ctrl+A
         tf.modifiers()
-        time.sleep(PAUSE)
-        assert_eq(len(selection(tf)), N, "Ctrl+A selects all 10,000 rows alongside the mouse path")
+        wait_until(
+            lambda: len(selection(tf)) == N,
+            desc="Ctrl+A selects all 10,000 rows alongside the mouse path",
+        )
         # End moves the active row to 9999 and scrolls there (the set stays).
         tf.key(path=TABLE_TAG, name="End")
-        time.sleep(PAUSE)
-        assert_eq(cursor(tf), N - 1, "End moves the active row to the last row")
+        wait_until(
+            lambda: cursor(tf) == N - 1,
+            desc="End moves the active row to the last row",
+        )
         assert_eq(len(selection(tf)), 1, "plain nav (End) collapses the set to the active row")
         snap = tf.snapshot(source="paint", viewport=WIN)
         deep_offset = scroll_offset(snap)
@@ -187,8 +197,10 @@ def body() -> None:
         tf.modifiers(shift=True)
         tf.key(path=TABLE_TAG, name="Home")
         tf.modifiers()
-        time.sleep(PAUSE)
-        assert_eq(len(selection(tf)), N, "Shift+Home extends the full 0..9999 span")
+        wait_until(
+            lambda: len(selection(tf)) == N,
+            desc="Shift+Home extends the full 0..9999 span",
+        )
         assert_eq(cursor(tf), 0, "the active row is the top after Shift+Home")
         snap = tf.snapshot(source="paint", viewport=WIN)
         assert_eq(scroll_offset(snap), 0, "Shift+Home scrolled the active row back to the top")

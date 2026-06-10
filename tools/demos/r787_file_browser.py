@@ -41,7 +41,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -55,12 +54,12 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_until,
 )
 
 EXAMPLE = "hello-file-browser"
 VIEWPORT = (420, 460)
 DIR_TAG = "fb_dir"
-PAUSE = 0.1
 
 
 def dpath(slot: str) -> str:
@@ -129,17 +128,23 @@ def body() -> None:
             raise AssertionError(f"{name} not in listing")
 
         tf.click(path=f"{DIR_TAG}#{row_index(tf, 'assets')}")
-        time.sleep(PAUSE)
-        assert_eq(cwd(tf), "/proj/assets", "clicking a directory row descends")
+        wait_until(
+            lambda: cwd(tf) == "/proj/assets",
+            desc="clicking a directory row descends",
+        )
         assert_eq(count(tf), 2, "assets has 2 files")
         tf.click(path=f"{DIR_TAG}#up")
-        time.sleep(PAUSE)
-        assert_eq(cwd(tf), "/proj", "clicking the parent affordance climbs")
+        wait_until(
+            lambda: cwd(tf) == "/proj",
+            desc="clicking the parent affordance climbs",
+        )
 
         # ── (D) select a file (by click + by invoke) ────────────────
         tf.click(path=f"{DIR_TAG}#{row_index(tf, 'Cargo.toml')}")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), "/proj/Cargo.toml", "clicking a file row selects it")
+        wait_until(
+            lambda: selected(tf) == "/proj/Cargo.toml",
+            desc="clicking a file row selects it",
+        )
         # Re-select via the explicit invoke (the AI-first path).
         assert_eq(
             tf.invoke(dpath("select"), "README.md"),

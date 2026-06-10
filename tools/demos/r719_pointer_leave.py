@@ -40,7 +40,6 @@ Run from the workspace root.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -49,11 +48,11 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
 )
 
 TIP_VIEWPORT = (520, 360)
 ACC_VIEWPORT = (420, 440)
-PAUSE = 0.12
 
 AUTOSAVE = "autosave"
 OFFLINE = "offline"
@@ -83,35 +82,29 @@ def _tooltip_part() -> None:
 
         # ── (A) hover shows it; pointer_leave clears hover + hides it ──
         tf.hover(path=AUTOSAVE)
-        time.sleep(PAUSE)
-        assert_eq(_autosave(tf, "hovered"), True, "hover marks autosave hovered")
+        wait_query(tf, "/external/hovered", True, desc="hover marks autosave hovered")
         assert_eq(_autosave(tf, "visible"), True, "hover shows the autosave tooltip")
         assert _overlay(tf, AUTOSAVE_POP, TIP_VIEWPORT) is not None, "overlay painted while shown"
 
         tf.pointer_leave()
-        time.sleep(PAUSE)
-        assert_eq(_autosave(tf, "hovered"), False, "pointer_leave clears the hover")
+        wait_query(tf, "/external/hovered", False, desc="pointer_leave clears the hover")
         assert_eq(_autosave(tf, "visible"), False, "pointer_leave hides the hover tooltip")
         assert _overlay(tf, AUTOSAVE_POP, TIP_VIEWPORT) is None, "overlay gone after pointer_leave"
 
         # ── (B) idempotent: a second pointer_leave stays cleared ──────
         tf.pointer_leave()
-        time.sleep(PAUSE)
-        assert_eq(_autosave(tf, "hovered"), False, "second pointer_leave keeps hover clear")
+        wait_query(tf, "/external/hovered", False, desc="second pointer_leave keeps hover clear")
         assert_eq(_autosave(tf, "visible"), False, "second pointer_leave keeps it hidden")
 
         # ── (C) pointer-only: focus survives pointer_leave ────────────
         tf.request("focus/set", {"tag": AUTOSAVE})
-        time.sleep(PAUSE)
-        assert_eq(_autosave(tf, "focused"), True, "focus/set focuses autosave")
+        wait_query(tf, "/external/focused", True, desc="focus/set focuses autosave")
         assert_eq(_autosave(tf, "visible"), True, "keyboard focus shows the tooltip")
         # now ALSO hover it, then leave: hover clears, focus must remain.
         tf.hover(path=AUTOSAVE)
-        time.sleep(PAUSE)
-        assert_eq(_autosave(tf, "hovered"), True, "control hovered while focused")
+        wait_query(tf, "/external/hovered", True, desc="control hovered while focused")
         tf.pointer_leave()
-        time.sleep(PAUSE)
-        assert_eq(_autosave(tf, "hovered"), False, "pointer_leave clears hover")
+        wait_query(tf, "/external/hovered", False, desc="pointer_leave clears hover")
         assert_eq(_autosave(tf, "focused"), True, "pointer_leave leaves focus untouched")
         assert_eq(
             _autosave(tf, "visible"),
@@ -126,12 +119,11 @@ def _tooltip_part() -> None:
         # a clean, no-juggling start.
         assert_eq(_offline(tf, "visible"), False, "offline hidden while unfocused + unhovered")
         tf.hover(path=OFFLINE)
-        time.sleep(PAUSE)
-        assert_eq(_offline(tf, "hovered"), True, "extra external hovered")
+        wait_query(tf, f"/{OFFLINE}/external/hovered", True, desc="extra external hovered")
         assert_eq(_offline(tf, "visible"), True, "hover shows the offline tooltip")
         tf.pointer_leave()
-        time.sleep(PAUSE)
-        assert_eq(_offline(tf, "hovered"), False, "pointer_leave clears extra-external hover")
+        wait_query(tf, f"/{OFFLINE}/external/hovered", False,
+                   desc="pointer_leave clears extra-external hover")
         assert_eq(_offline(tf, "visible"), False, "pointer_leave hides the offline tooltip")
         assert _overlay(tf, OFFLINE_POP, TIP_VIEWPORT) is None, "offline overlay gone"
         # the leave is pointer-only: autosave's focus-held tooltip stands.
@@ -154,15 +146,15 @@ def _accordion_part() -> None:
             assert_eq(state(d, i), "Idle", f"sec {i} boots Idle (harness baseline)")
 
         d.hover(path=sec[1])
-        time.sleep(PAUSE)
-        assert_eq(state(d, 1), "Hover", "hover drives section 1 Idle -> Hover")
+        wait_query(d, f"/{sec[1]}/external/state", "Hover",
+                   desc="hover drives section 1 Idle -> Hover")
         assert_eq(state(d, 0), "Idle", "section 0 unaffected by hover on 1")
         assert_eq(state(d, 2), "Idle", "section 2 unaffected by hover on 1")
 
         tf_expanded_before = [expanded(d, i) for i in range(3)]
         d.pointer_leave()
-        time.sleep(PAUSE)
-        assert_eq(state(d, 1), "Idle", "pointer_leave returns section 1 to Idle")
+        wait_query(d, f"/{sec[1]}/external/state", "Idle",
+                   desc="pointer_leave returns section 1 to Idle")
         for i in range(3):
             assert_eq(
                 expanded(d, i),
@@ -172,11 +164,11 @@ def _accordion_part() -> None:
 
         # hover a different section, leave again — Hover never sticks.
         d.hover(path=sec[2])
-        time.sleep(PAUSE)
-        assert_eq(state(d, 2), "Hover", "hover drives section 2 -> Hover")
+        wait_query(d, f"/{sec[2]}/external/state", "Hover",
+                   desc="hover drives section 2 -> Hover")
         d.pointer_leave()
-        time.sleep(PAUSE)
-        assert_eq(state(d, 2), "Idle", "pointer_leave returns section 2 to Idle")
+        wait_query(d, f"/{sec[2]}/external/state", "Idle",
+                   desc="pointer_leave returns section 2 to Idle")
         assert_eq(state(d, 1), "Idle", "section 1 still Idle (no stuck hover)")
 
 

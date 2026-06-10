@@ -43,7 +43,6 @@ R674 atomic 3 verification scope (≥ 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -51,6 +50,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_until,
 )
 
 
@@ -98,8 +98,20 @@ def _focused_row_id(snapshot) -> str | None:
 
 def body() -> None:
     with RpcSubprocess("hello-tree-view", boot_grace=1.5) as tf:
+
+        def snap_now():
+            return tf.snapshot(source="paint", viewport=(480, 400))
+
+        def wait_rows(predicate, desc: str):
+            """Poll the paint snapshot until `predicate(row_tag_set)` holds;
+            return the matching snapshot (R883 zero-flake gate)."""
+            return wait_until(
+                lambda: (lambda s: s if predicate(set(_row_tags(s))) else None)(snap_now()),
+                desc=desc,
+            )
+
         # ── (A) FileTreeRowExternal substrate shape ────────────────
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
+        snap = snap_now()
         assert find_by_tag(snap, "file_tree") is not None, (
             "TreeView root must carry the file_tree tag"
         )
@@ -148,11 +160,9 @@ def body() -> None:
 
         # ── (B) click on docs branch expands it ────────────────────
         tf.click(path="file_tree#docs")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        rows1 = set(_row_tags(snap))
-        assert "file_tree#docs/README.md" in rows1, (
-            f"click on docs branch must expand; rows: {rows1!r}"
+        snap = wait_rows(
+            lambda rows: "file_tree#docs/README.md" in rows,
+            "click on docs branch must expand (docs/README.md visible)",
         )
 
         # (B1) pressed_id must drop back to null after the click (the
@@ -165,21 +175,20 @@ def body() -> None:
 
         # ── (C) second click collapses docs ────────────────────────
         tf.click(path="file_tree#docs")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        rows2 = set(_row_tags(snap))
-        assert "file_tree#docs/README.md" not in rows2, (
-            "second click on docs branch must collapse it"
+        snap = wait_rows(
+            lambda rows: "file_tree#docs/README.md" not in rows,
+            "second click on docs branch must collapse it",
         )
 
         # ── (D) click on a leaf row is a no-op ─────────────────────
         # src/main.rs is a leaf — clicking it must not change the
         # visible row set (the V::update reducer's
         # `toggle_expanded_in_signal` early-returns on leaves).
+        # No-op verification: the dispatch commits before the response,
+        # so the unchanged row set is readable directly (no gate possible).
         before_leaf = set(_row_tags(snap))
         tf.click(path="file_tree#src/main.rs")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
+        snap = snap_now()
         after_leaf = set(_row_tags(snap))
         assert before_leaf == after_leaf, (
             f"click on leaf row must not change visible row set; "
@@ -208,16 +217,17 @@ def body() -> None:
             "/file_tree/external/send",
             "tests:PointerUp",
         )
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
+        # pressed_id must be cleared after the mismatched Up (the gate
+        # ordering the no-change row check below).
+        wait_until(
+            lambda: tf.query("/file_tree/external/pressed_id") is None,
+            desc="pressed_id must clear on mismatched Up",
+        )
+        # No-op verification: the dispatch commits before the response.
+        snap = snap_now()
         rows_after_dragoff = set(_row_tags(snap))
         assert rows_before == rows_after_dragoff, (
             "drag-off (Down on A, Up on B) must not commit a click on either"
-        )
-        # pressed_id must be cleared after the mismatched Up.
-        pressed_after_dragoff = tf.query("/file_tree/external/pressed_id")
-        assert pressed_after_dragoff is None, (
-            f"pressed_id must clear on mismatched Up; got: {pressed_after_dragoff!r}"
         )
 
         # ── (F) PointerCancel mid-press aborts cleanly ─────────────
@@ -231,12 +241,11 @@ def body() -> None:
             "/file_tree/external/send",
             "tests:PointerCancel",
         )
-        time.sleep(0.2)
-        pressed_cancelled = tf.query("/file_tree/external/pressed_id")
-        assert pressed_cancelled is None, (
-            "PointerCancel on the pressed row must clear the slot"
+        wait_until(
+            lambda: tf.query("/file_tree/external/pressed_id") is None,
+            desc="PointerCancel on the pressed row must clear the slot",
         )
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
+        snap = snap_now()
         rows_after_cancel = set(_row_tags(snap))
         assert "file_tree#tests/integration.rs" not in rows_after_cancel, (
             "PointerCancel must NOT commit the click — tests stays collapsed"
@@ -246,49 +255,42 @@ def body() -> None:
         # AI-driven path — no coordinate / no Down/Up cycle, single
         # invoke synthesises the commit and emits the click intent
         # the reducer handles.
-        before_shortcut = set(_row_tags(snap))
         tf.invoke("/file_tree/external/click", "tests")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        after_shortcut = set(_row_tags(snap))
-        assert "file_tree#tests/integration.rs" in after_shortcut, (
-            f"direct `click` shortcut on tests must expand it; "
-            f"before: {before_shortcut!r}, after: {after_shortcut!r}"
+        snap = wait_rows(
+            lambda rows: "file_tree#tests/integration.rs" in rows,
+            "direct `click` shortcut on tests must expand it",
         )
         # Toggle back so subsequent assertions start from a known state.
         tf.invoke("/file_tree/external/click", "tests")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        assert "file_tree#tests/integration.rs" not in set(_row_tags(snap)), (
-            "second click shortcut must collapse tests"
+        snap = wait_rows(
+            lambda rows: "file_tree#tests/integration.rs" not in rows,
+            "second click shortcut must collapse tests",
         )
 
         # ── (H) kbd-toggle followed by click-toggle returns to base ─
         # Focus docs via Home + ArrowDown navigation; Space toggles
         # expand; click toggles again — net change should be zero.
-        snap0 = tf.snapshot(source="paint", viewport=(480, 400))
+        snap0 = snap_now()
         rows_base_h = set(_row_tags(snap0))
         # Navigate to docs (last row in the visible sequence).
         # R820.1 — the tree is now a focus-gated single tab stop; focus it
         # before driving keys (clicks route to the row External regardless).
         tf.request("focus/set", {"tag": "tree_root"})
         tf.key(at=(10.0, 10.0), name="End")
-        time.sleep(0.15)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        focus = _focused_row_id(snap)
-        assert focus == "docs", (
-            f"End must focus the last visible row (docs); got: {focus!r}"
+        wait_until(
+            lambda: (lambda s: s if _focused_row_id(s) == "docs" else None)(snap_now()),
+            desc="End must focus the last visible row (docs)",
         )
         tf.key(at=(10.0, 10.0), name="Space")  # kbd toggle → expand docs
-        time.sleep(0.2)
-        snap_after_space = tf.snapshot(source="paint", viewport=(480, 400))
-        rows_space = set(_row_tags(snap_after_space))
-        assert "file_tree#docs/README.md" in rows_space, (
-            "Space on docs (focused) must expand docs"
+        wait_rows(
+            lambda rows: "file_tree#docs/README.md" in rows,
+            "Space on docs (focused) must expand docs",
         )
         tf.click(path="file_tree#docs")  # click toggle → collapse docs
-        time.sleep(0.2)
-        snap_after_click = tf.snapshot(source="paint", viewport=(480, 400))
+        snap_after_click = wait_rows(
+            lambda rows: "file_tree#docs/README.md" not in rows,
+            "click toggle collapses docs again",
+        )
         rows_after_h = set(_row_tags(snap_after_click))
         assert rows_after_h == rows_base_h, (
             "Space toggle then click toggle on same row must be bit-identical "
@@ -303,11 +305,9 @@ def body() -> None:
         # the (still-focused) docs toggles it, exactly mirroring (H)
         # in the opposite order.
         tf.click(path="file_tree#docs")  # click toggle → expand docs
-        time.sleep(0.2)
-        snap_after_click2 = tf.snapshot(source="paint", viewport=(480, 400))
-        rows_click2 = set(_row_tags(snap_after_click2))
-        assert "file_tree#docs/README.md" in rows_click2, (
-            "first click on docs must expand it"
+        snap_after_click2 = wait_rows(
+            lambda rows: "file_tree#docs/README.md" in rows,
+            "first click on docs must expand it",
         )
         focus_after_click2 = _focused_row_id(snap_after_click2)
         assert focus_after_click2 == "docs", (
@@ -315,8 +315,10 @@ def body() -> None:
             f"got: {focus_after_click2!r}"
         )
         tf.key(at=(10.0, 10.0), name="Space")  # kbd toggle → collapse docs
-        time.sleep(0.2)
-        snap_after_inverse = tf.snapshot(source="paint", viewport=(480, 400))
+        snap_after_inverse = wait_rows(
+            lambda rows: "file_tree#docs/README.md" not in rows,
+            "Space toggle collapses docs again",
+        )
         rows_after_i = set(_row_tags(snap_after_inverse))
         assert rows_after_i == rows_base_h, (
             "click toggle then Space toggle on same row must be bit-identical; "

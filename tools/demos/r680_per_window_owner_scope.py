@@ -82,7 +82,6 @@ R680 atomic 4 verification scope (≥30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -91,9 +90,8 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_until,
 )
-
-_SETTLE_SEC = 0.20
 
 
 def _snap_main(tf) -> dict:
@@ -184,12 +182,11 @@ def body() -> None:
 
         # Click the button row via the typed shortcut.
         tf.invoke("/inspector_tree/external/click", "Container/Container[main_btn]")
-        time.sleep(_SETTLE_SEC)
-        snap_main_b = _snap_main(tf)
-        # Sanity — the main scene contains the button widget.
-        main_btn_b = _find_main_button(snap_main_b)
-        assert main_btn_b is not None, (
-            "main_btn must remain observable after cross-window click"
+        # Sanity — the main scene contains the button widget (polled
+        # window-scoped paint read, R883 zero-flake).
+        wait_until(
+            lambda: _find_main_button(_snap_main(tf)) is not None,
+            desc="main_btn must remain observable after cross-window click",
         )
 
         # ── (C) Per-window paint clock — basic operability ────────
@@ -253,11 +250,9 @@ def body() -> None:
             "scene/click",
             {"path": "main_btn", "window": "main"},
         )
-        time.sleep(_SETTLE_SEC)
-        snap_main_e = _snap_main(tf)
-        main_btn_e2 = _find_main_button(snap_main_e)
-        assert main_btn_e2 is not None, (
-            "post-click main_btn still observable (Phase A bit-identical)"
+        wait_until(
+            lambda: _find_main_button(_snap_main(tf)) is not None,
+            desc="post-click main_btn still observable (Phase A bit-identical)",
         )
 
         # ── (F) Two-window paint compound evidence ──────────────────
@@ -332,11 +327,9 @@ def body() -> None:
         # arms; the R680 substrate preserves the R675/R676/R678/R679
         # state-sharing pattern.
         tf.invoke("/main_click_router/external/click", None)
-        time.sleep(_SETTLE_SEC)
-        snap_main_i = _snap_main(tf)
-        main_btn_i = _find_main_button(snap_main_i)
-        assert main_btn_i is not None, (
-            "main_btn must remain observable after Null deselect"
+        wait_until(
+            lambda: _find_main_button(_snap_main(tf)) is not None,
+            desc="main_btn must remain observable after Null deselect",
         )
 
         # ── (J) Cross-window invoke round-trip ─────────────────────
@@ -345,14 +338,12 @@ def body() -> None:
         # substrate land. This pins the R679 bidirectional-select
         # invariant against the new per-window owner machinery.
         tf.invoke("/inspector_tree/external/click", "Container/Container[main_btn]")
-        time.sleep(_SETTLE_SEC)
-        snap_main_j = _snap_main(tf)
-        snap_inspector_j = _snap_inspector(tf)
-        main_btn_j = _find_main_button(snap_main_j)
-        inspector_tree_j = _find_inspector_tree(snap_inspector_j)
-        assert main_btn_j is not None, (
-            "main_btn observable through R679 cross-window arc"
+        wait_until(
+            lambda: _find_main_button(_snap_main(tf)) is not None,
+            desc="main_btn observable through R679 cross-window arc",
         )
+        snap_inspector_j = _snap_inspector(tf)
+        inspector_tree_j = _find_inspector_tree(snap_inspector_j)
         assert inspector_tree_j is not None, (
             "inspector_tree observable through R679 cross-window arc"
         )

@@ -51,7 +51,6 @@ R677 atomic (3) verification scope (≥ 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -59,6 +58,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_until,
 )
 
 
@@ -107,6 +107,17 @@ def _pane_text_rows(snapshot) -> list[str]:
     return out
 
 
+def _wait_rows(tf, predicate, desc: str) -> list[str]:
+    """Poll the inspector pane rows until `predicate(rows)` is truthy
+    (R883 zero-flake); returns the matching rows."""
+    return wait_until(
+        lambda: (lambda rows: rows if predicate(rows) else None)(
+            _pane_text_rows(_snap_inspector(tf))
+        ),
+        desc=desc,
+    )
+
+
 def body() -> None:
     with RpcSubprocess("hello-multi-window", boot_grace=1.5) as tf:
         # ── (A) Inspector window is 480×320 ───────────────────────
@@ -142,11 +153,9 @@ def body() -> None:
 
         # ── (D) Click tagged button row → Container field rows ────
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(0.25)
-        snap_d = _snap_inspector(tf)
-        rows_d = _pane_text_rows(snap_d)
-        assert "type: Container" in rows_d, (
-            f"button selection must produce 'type: Container'; got: {rows_d!r}"
+        rows_d = _wait_rows(
+            tf, lambda r: "type: Container" in r,
+            "button selection must produce 'type: Container'",
         )
         assert "tag: main_btn" in rows_d, (
             f"button selection must produce 'tag: main_btn'; got: {rows_d!r}"
@@ -166,11 +175,9 @@ def body() -> None:
 
         # ── (E) Click label Text leaf → Text field rows ───────────
         tf.invoke("/inspector_tree/external/click", _LABEL_PATH)
-        time.sleep(0.25)
-        snap_e = _snap_inspector(tf)
-        rows_e = _pane_text_rows(snap_e)
-        assert "type: Text" in rows_e, (
-            f"label selection must produce 'type: Text'; got: {rows_e!r}"
+        rows_e = _wait_rows(
+            tf, lambda r: "type: Text" in r,
+            "label selection must produce 'type: Text'",
         )
         assert any(r == 'content: "Click me!"' for r in rows_e), (
             f"label selection must produce content row; got: {rows_e!r}"
@@ -184,11 +191,9 @@ def body() -> None:
 
         # ── (F) Click root → untagged Container rows ──────────────
         tf.invoke("/inspector_tree/external/click", _VIEW_MAIN_ROOT_PATH)
-        time.sleep(0.25)
-        snap_f = _snap_inspector(tf)
-        rows_f = _pane_text_rows(snap_f)
-        assert "type: Container" in rows_f, (
-            f"root selection must produce 'type: Container'; got: {rows_f!r}"
+        rows_f = _wait_rows(
+            tf, lambda r: "type: Container" in r,
+            "root selection must produce 'type: Container'",
         )
         # Root is untagged; the banner Text now appears because
         # selection != None, so root has children = [banner Text, button Container] = 2.
@@ -203,42 +208,36 @@ def body() -> None:
 
         # ── (G) Inspector-only id `state` → placeholder ───────────
         tf.invoke("/inspector_tree/external/click", "state")
-        time.sleep(0.25)
-        snap_g = _snap_inspector(tf)
-        rows_g = _pane_text_rows(snap_g)
-        assert rows_g == ["(no selection)"], (
-            f"inspector-only 'state' must render placeholder; got: {rows_g!r}"
+        rows_g = _wait_rows(
+            tf, lambda r: r == ["(no selection)"],
+            "inspector-only 'state' must render placeholder",
         )
 
         # ── (H) Atomic replacement on selection change cycle ──────
         # button → label → state → button — verify each step shows
         # the correct rows (no stale state from previous selection).
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(0.20)
-        rows_h0 = _pane_text_rows(_snap_inspector(tf))
-        assert "tag: main_btn" in rows_h0, (
-            f"button rows must show after re-select; got: {rows_h0!r}"
+        rows_h0 = _wait_rows(
+            tf, lambda r: "tag: main_btn" in r,
+            "button rows must show after re-select",
         )
         tf.invoke("/inspector_tree/external/click", _LABEL_PATH)
-        time.sleep(0.20)
-        rows_h1 = _pane_text_rows(_snap_inspector(tf))
-        assert "type: Text" in rows_h1, (
-            f"label rows must replace button rows; got: {rows_h1!r}"
+        rows_h1 = _wait_rows(
+            tf, lambda r: "type: Text" in r,
+            "label rows must replace button rows",
         )
         assert "tag: main_btn" not in rows_h1, (
             f"button rows must be gone after re-select to label; got: {rows_h1!r}"
         )
         tf.invoke("/inspector_tree/external/click", "main")  # inspector-only
-        time.sleep(0.20)
-        rows_h2 = _pane_text_rows(_snap_inspector(tf))
-        assert rows_h2 == ["(no selection)"], (
-            f"inspector-only 'main' must drop to placeholder; got: {rows_h2!r}"
+        rows_h2 = _wait_rows(
+            tf, lambda r: r == ["(no selection)"],
+            "inspector-only 'main' must drop to placeholder",
         )
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(0.20)
-        rows_h3 = _pane_text_rows(_snap_inspector(tf))
-        assert "tag: main_btn" in rows_h3, (
-            f"re-select must restore button rows; got: {rows_h3!r}"
+        rows_h3 = _wait_rows(
+            tf, lambda r: "tag: main_btn" in r,
+            "re-select must restore button rows",
         )
 
         # ── (I) AI-driven send-wire matches typed click ───────────
@@ -252,10 +251,9 @@ def body() -> None:
             "/inspector_tree/external/send",
             f"{_LABEL_PATH}:PointerUp",
         )
-        time.sleep(0.25)
-        rows_i = _pane_text_rows(_snap_inspector(tf))
-        assert "type: Text" in rows_i, (
-            f"send-wire label select must produce Text rows; got: {rows_i!r}"
+        rows_i = _wait_rows(
+            tf, lambda r: "type: Text" in r,
+            "send-wire label select must produce Text rows",
         )
         assert any(r == 'content: "Click me!"' for r in rows_i), (
             f"send-wire label rows must include content; got: {rows_i!r}"
@@ -263,10 +261,9 @@ def body() -> None:
 
         # ── (J) State mutation preserves field rows ───────────────
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(0.20)
-        rows_idle = _pane_text_rows(_snap_inspector(tf))
-        assert "tag: main_btn" in rows_idle, (
-            f"button rows pre-Disable; got: {rows_idle!r}"
+        rows_idle = _wait_rows(
+            tf, lambda r: "tag: main_btn" in r,
+            "button rows pre-Disable",
         )
         # Find the style.fill row's value for comparison.
         fill_idle = next((r for r in rows_idle if r.startswith("style.fill: ")), None)
@@ -276,10 +273,9 @@ def body() -> None:
             "scene/key",
             {"window": "main", "key": "d", "path": "main_btn"},
         )
-        time.sleep(0.25)
-        rows_disabled = _pane_text_rows(_snap_inspector(tf))
-        assert "tag: main_btn" in rows_disabled, (
-            "button rows persist across Disable; tag-form path stays resolved"
+        rows_disabled = _wait_rows(
+            tf, lambda r: "tag: main_btn" in r,
+            "button rows persist across Disable; tag-form path stays resolved",
         )
         # The fill colour value should be different (Disabled paints
         # a different fill); the row shape is identical.
@@ -299,10 +295,9 @@ def body() -> None:
             "scene/key",
             {"window": "main", "key": "e", "path": "main_btn"},
         )
-        time.sleep(0.25)
-        rows_enabled = _pane_text_rows(_snap_inspector(tf))
-        assert "tag: main_btn" in rows_enabled, (
-            "Enable restores button rows; got: {rows_enabled!r}"
+        rows_enabled = _wait_rows(
+            tf, lambda r: "tag: main_btn" in r,
+            "Enable restores button rows",
         )
 
         # ── (K) Main window still works end-to-end ────────────────

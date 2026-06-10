@@ -44,7 +44,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -57,12 +56,12 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     read_png_rgba8,
     run_demo,
+    wait_until,
     sample_png_points,
 )
 
 EXAMPLE = "hello-dnd"
 VIEWPORT = (300, 260)
-PAUSE = 0.1
 TAG = "dnd"
 ROWS = [f"dnd#{i}" for i in range(4)]
 ITEM_LABELS = ["Alpha", "Bravo", "Charlie", "Delta"]
@@ -102,7 +101,6 @@ def drag_onto(tf, src: str, dst: str, frac_y: float) -> None:
     frm = (float(sx + sw // 2), float(sy + sh // 2))
     to = (float(dx + dw // 2), float(dy + int(dh * frac_y)))
     tf.drag(from_at=frm, to_at=to, steps=8)
-    time.sleep(PAUSE)
 
 
 def near_rgb(a: tuple, b: tuple, tol: int = 8) -> bool:
@@ -123,14 +121,20 @@ def body() -> None:
         # ── (B) reorder by drag ─────────────────────────────────────
         # Drag row 0 (Alpha) onto the LOWER half of row 2 → gap 3.
         drag_onto(tf, "dnd#0", "dnd#2", 0.75)
-        assert_eq(order(tf), [1, 2, 0, 3], "Alpha dropped below row 2")
+        wait_until(
+            lambda: order(tf) == [1, 2, 0, 3],
+            desc="Alpha dropped below row 2",
+        )
         assert_eq(labels(tf), labels_for([1, 2, 0, 3]), "labels track reorder #1")
         assert tf.query("/external/preview") is None, "preview cleared after drop"
 
         # Now order is [1,2,0,3]. Drag the last row (visual 3 = Delta)
         # onto the UPPER half of row 0 → gap 0 (move to the very top).
         drag_onto(tf, "dnd#3", "dnd#0", 0.25)
-        assert_eq(order(tf), [3, 1, 2, 0], "Delta dropped at the top")
+        wait_until(
+            lambda: order(tf) == [3, 1, 2, 0],
+            desc="Delta dropped at the top",
+        )
         assert_eq(labels(tf), labels_for([3, 1, 2, 0]), "labels track reorder #2")
 
         # ── (C) drop-on-self is a no-op ─────────────────────────────
@@ -145,26 +149,45 @@ def body() -> None:
         tf.click(path="dnd#0")
         assert_eq(tf.request("focus/get").result.get("focused"), TAG, "click on a row focuses the list")
         base = order(tf)
-        tf.key(path=TAG, name="ArrowDown"); time.sleep(PAUSE)  # cursor → row 0
-        assert_eq(tf.query("/external/focused_index"), 0, "ArrowDown sets the cursor")
+        tf.key(path=TAG, name="ArrowDown")  # cursor → row 0
+        wait_until(
+            lambda: tf.query("/external/focused_index") == 0,
+            desc="ArrowDown sets the cursor",
+        )
         assert_eq(order(tf), base, "navigating the cursor does not reorder")
         # Space picks up the focused row; ArrowDown moves it; Space drops.
-        tf.key(path=TAG, name=" "); time.sleep(PAUSE)
-        assert tf.query("/external/grabbed") is True, "Space grabs the focused row"
-        tf.key(path=TAG, name="ArrowDown"); time.sleep(PAUSE)
+        tf.key(path=TAG, name=" ")
+        wait_until(
+            lambda: tf.query("/external/grabbed") is True,
+            desc="Space grabs the focused row",
+        )
+        tf.key(path=TAG, name="ArrowDown")
+        wait_until(
+            lambda: order(tf) != base,
+            desc="grabbed ArrowDown reorders",
+        )
         moved = order(tf)
-        assert moved != base, f"grabbed ArrowDown reorders: {base} -> {moved}"
         assert_eq(tf.query("/external/focused_index"), 1, "cursor follows the grabbed row")
-        tf.key(path=TAG, name=" "); time.sleep(PAUSE)
-        assert tf.query("/external/grabbed") is False, "Space drops the grab"
+        tf.key(path=TAG, name=" ")
+        wait_until(
+            lambda: tf.query("/external/grabbed") is False,
+            desc="Space drops the grab",
+        )
         assert_eq(order(tf), moved, "dropped order is kept")
         # Escape cancels a grab, reverting to the pre-grab order.
         pre = order(tf)
-        tf.key(path=TAG, name=" "); time.sleep(PAUSE)          # grab (cursor at 1)
-        tf.key(path=TAG, name="End"); time.sleep(PAUSE)        # move grabbed row to bottom
-        assert order(tf) != pre, "grabbed End moved the row"
-        tf.key(path=TAG, name="Escape"); time.sleep(PAUSE)
-        assert tf.query("/external/grabbed") is False, "Escape drops the grab"
+        tf.key(path=TAG, name=" ")          # grab (cursor at 1)
+        wait_until(
+            lambda: tf.query("/external/grabbed") is True,
+            desc="Space re-grabs for the Escape arc",
+        )
+        tf.key(path=TAG, name="End")        # move grabbed row to bottom
+        wait_until(lambda: order(tf) != pre, desc="grabbed End moved the row")
+        tf.key(path=TAG, name="Escape")
+        wait_until(
+            lambda: tf.query("/external/grabbed") is False,
+            desc="Escape drops the grab",
+        )
         assert_eq(order(tf), pre, "Escape reverts to the pre-grab order")
 
         # ── (D) introspection round-trip + rejections ───────────────

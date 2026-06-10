@@ -41,7 +41,6 @@ the R789 write surface.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -51,11 +50,12 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_snap,
 )
 
 EXAMPLE = "hello-file-save-dialog"
 VIEWPORT = (600, 640)
-PAUSE = 0.12
 
 TRIGGER = "save_file"
 DIR = "fb_dir"
@@ -148,9 +148,12 @@ def body() -> None:
 
         # ── (B) open via trigger click ──────────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        snap = _snap(tf)
-        assert _present(snap, SCRIM), "scrim appears on open"
+        snap = wait_snap(
+            tf,
+            lambda s: _present(s, SCRIM),
+            viewport=VIEWPORT,
+            desc="scrim appears on open",
+        )
         assert _present(snap, PANEL), "panel appears on open"
         assert _present(snap, NAME), "filename field present in the body slot"
         assert _present(snap, SAVE), "Save action present"
@@ -184,22 +187,21 @@ def body() -> None:
         tf.intervene(npath("text"), "")
         assert_eq(_name_text(tf), "", "field cleared via intervene")
         tf.text("report.md", path=NAME)
-        time.sleep(PAUSE)
-        assert_eq(_name_text(tf), "report.md", "typed characters land in the field")
+        wait_query(tf, npath("text"), "report.md", desc="typed characters land in the field")
         assert_eq(tf.query(npath("caret")), len("report.md"), "caret advanced past the typed text")
 
         # ── (E) Save gated on a non-blank name ──────────────────────
         tf.intervene(npath("text"), "")
-        time.sleep(PAUSE)
+        wait_query(tf, npath("text"), "", desc="field cleared for the blank-name gate")
         save_disabled_fill = _fill(_snap(tf), SAVE)
-        # A Save click with a blank name is a no-op (dialog stays open).
+        # A Save click with a blank name is a no-op (dialog stays open) —
+        # the dispatch commits before the response, so read directly.
         tf.click(path=SAVE)
-        time.sleep(PAUSE)
         assert _present(_snap(tf), PANEL), "Save with a blank name does not close the dialog"
         assert_eq(_saved_line(_snap(tf)), "Saved: (none)", "blank Save wrote nothing")
         tf.request("focus/set", {"tag": NAME})
         tf.text("draft.md", path=NAME)
-        time.sleep(PAUSE)
+        wait_query(tf, npath("text"), "draft.md", desc="non-blank name typed for the gate")
         save_enabled_fill = _fill(_snap(tf), SAVE)
         assert save_enabled_fill != save_disabled_fill, (
             f"Save fill changes when enabled: disabled {save_disabled_fill} vs "
@@ -215,70 +217,88 @@ def body() -> None:
         # ── (G) clicking an existing file populates the filename ────
         readme = _row_index(tf, "README.md")
         tf.click(path=f"{DIR}#{readme}")
-        time.sleep(PAUSE)
-        assert_eq(
-            tf.query(dpath("selected")), "/proj/README.md", "clicking a file row selects it"
+        wait_query(
+            tf, dpath("selected"), "/proj/README.md", desc="clicking a file row selects it"
         )
-        assert_eq(
-            _name_text(tf),
+        wait_query(
+            tf,
+            npath("text"),
             "README.md",
-            "selecting a file mirrors its basename into the field (Save As convention)",
+            desc="selecting a file mirrors its basename into the field (Save As convention)",
         )
 
         # ── (H) scrim blocks (no light-dismiss) ─────────────────────
         tf.click(path=SCRIM)
-        time.sleep(PAUSE)
+        # Blocked no-op: the dispatch commits before the response, so the
+        # still-open dialog is readable directly (no gate for a non-change).
         assert _present(_snap(tf), PANEL), "backdrop click does NOT dismiss the modal"
 
         # ── (I) Cancel closes without writing ───────────────────────
         before = tf.query(dpath("count"))
         tf.click(path=CANCEL)
-        time.sleep(PAUSE)
-        snap = _snap(tf)
-        assert not _present(snap, PANEL), "Cancel closes the dialog"
+        snap = wait_snap(
+            tf,
+            lambda s: not _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="Cancel closes the dialog",
+        )
         assert not _present(snap, SCRIM), "scrim gone after Cancel"
         assert_eq(_saved_line(snap), "Saved: (none)", "Cancel did not save")
         assert_eq(_focused(tf), TRIGGER, "focus restored to the trigger on close")
 
         # ── (J) confirm: re-open, type a fresh name, click Save ─────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
+        wait_query(tf, npath("text"), DEFAULT_NAME, desc="re-open restores the default name")
         assert_eq(tf.query(dpath("cwd")), "/proj", "re-open resets the browser to the root")
-        assert_eq(_name_text(tf), DEFAULT_NAME, "re-open restores the default name")
         assert_eq(tf.query(dpath("count")), before, "no file was created by the cancelled flow")
         tf.request("focus/set", {"tag": NAME})
         tf.intervene(npath("text"), "")
         tf.text("fresh.txt", path=NAME)
-        time.sleep(PAUSE)
+        wait_query(tf, npath("text"), "fresh.txt", desc="fresh name typed before Save")
         tf.click(path=SAVE)
-        time.sleep(PAUSE)
-        snap = _snap(tf)
-        assert not _present(snap, PANEL), "Save with a name closes the dialog"
+        snap = wait_snap(
+            tf,
+            lambda s: not _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="Save with a name closes the dialog",
+        )
         assert_eq(_saved_line(snap), "Saved: /proj/fresh.txt", "Save recorded the written path")
         assert_eq(_focused(tf), TRIGGER, "focus restored after Save")
         # The write landed in the directory backing: re-open + verify the
         # saved file now appears in the /proj listing (count grew by one).
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert_eq(tf.query(dpath("count")), before + 1, "the saved file grew the listing by one")
+        wait_query(tf, dpath("count"), before + 1, desc="the saved file grew the listing by one")
         saved_idx = _row_index(tf, "fresh.txt")
         assert saved_idx >= 0, "the saved file appears in the directory listing"
         tf.key(path=PANEL, name="Escape")
-        time.sleep(PAUSE)
+        wait_snap(
+            tf,
+            lambda s: not _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="Escape closed before the subdirectory flow",
+        )
 
         # ── (K) save into a subdirectory, committed with Enter ──────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
+        wait_snap(
+            tf,
+            lambda s: _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="re-opened for the subdirectory save",
+        )
         assert_eq(tf.invoke(dpath("navigate"), "assets"), "/proj/assets", "descend into assets")
         tf.request("focus/set", {"tag": NAME})
         tf.intervene(npath("text"), "")
         tf.text("sprite.png", path=NAME)
-        time.sleep(PAUSE)
+        wait_query(tf, npath("text"), "sprite.png", desc="subdirectory name typed before Enter")
         # Enter in the focused name field is the dialog's default action.
         tf.key(path=NAME, name="Enter")
-        time.sleep(PAUSE)
-        snap = _snap(tf)
-        assert not _present(snap, PANEL), "Enter in the name field saves + closes"
+        snap = wait_snap(
+            tf,
+            lambda s: not _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="Enter in the name field saves + closes",
+        )
         assert_eq(
             _saved_line(snap),
             "Saved: /proj/assets/sprite.png",
@@ -287,12 +307,14 @@ def body() -> None:
 
         # ── (L) Escape dismisses as a cancel ────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert _present(_snap(tf), PANEL), "re-opened"
+        wait_snap(tf, lambda s: _present(s, PANEL), viewport=VIEWPORT, desc="re-opened")
         tf.key(path=PANEL, name="Escape")
-        time.sleep(PAUSE)
-        snap = _snap(tf)
-        assert not _present(snap, PANEL), "Escape dismisses the dialog"
+        snap = wait_snap(
+            tf,
+            lambda s: not _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="Escape dismisses the dialog",
+        )
         # Escape is a cancel: the prior saved path is unchanged, not cleared.
         assert_eq(
             _saved_line(snap),

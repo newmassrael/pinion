@@ -45,7 +45,6 @@ Verification scope (>= 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -164,7 +163,6 @@ def body() -> None:
         state_before = tf.query("/external/state")
         assert state_before in ("Idle", "Hover"), f"button state {state_before!r}"
         tf.click(path=_DISMISS_BTN_TAG)
-        time.sleep(0.1)
         snap_g = tf.snapshot("", source="paint", viewport=(_WIN_W, _WIN_H))
         assert find_by_tag(snap_g, _DISMISS_BTN_TAG) is not None
         # The driver keeps simulating underneath the retained click.

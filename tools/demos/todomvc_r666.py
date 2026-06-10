@@ -58,13 +58,12 @@ import os
 import shutil
 import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo  # noqa: E402
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_until  # noqa: E402
 
 # Tags — kept stable across todomvc rounds R655-R666.
 TF_TAG = "main_textfield"
@@ -77,7 +76,6 @@ LIST_TAG = "todo_list"
 FILTER_TAG = "todo_filter"
 VIEWPORT_W = 480
 VIEWPORT_H = 720
-EDIT_PAUSE = 0.2
 STATE_KEY = "todomvc.state"
 SCHEMA_VERSION = 1
 
@@ -158,7 +156,6 @@ def row_text(tf: RpcSubprocess, item_id: int) -> str | None:
 
 def submit_enter(tf: RpcSubprocess, target: str) -> None:
     tf.key(path=target, name="Enter")
-    time.sleep(EDIT_PAUSE)
 
 
 def add_todo(tf: RpcSubprocess, body: str) -> None:
@@ -167,10 +164,25 @@ def add_todo(tf: RpcSubprocess, body: str) -> None:
     routes through `handle_character_key` ↪ `V::keybinding` (no
     intercept for TextField) ↪ `apply_key` printable insert."""
     focus_set(tf, TF_TAG)
-    time.sleep(0.05)
     tf.text(body, path=TF_TAG)
-    time.sleep(0.05)
     submit_enter(tf, target=TF_TAG)
+
+
+def wait_blob(storage_dir: Path, predicate, desc: str):
+    """Poll the persisted blob until readable AND `predicate(blob)` is
+    truthy (R883 zero-flake). Atomic-rename writes mean a poll observes
+    whole blobs only."""
+    def poll():
+        if not storage_path(storage_dir).exists():
+            return None
+        try:
+            blob = read_state_blob(storage_dir)
+        except (json.JSONDecodeError, OSError, KeyError):
+            return None
+        return blob if predicate(blob) else None
+
+    return wait_until(poll, desc=desc)
+
 
 
 def body() -> None:
@@ -181,11 +193,10 @@ def body() -> None:
         # ──────────────────────────────────────────────────────────
         with make_subprocess(storage_dir) as tf:
             # ── (1) Boot 1: empty storage, defaults visible ────────
-            time.sleep(0.2)
-            assert storage_path(storage_dir).exists(), (
-                "R665 save Effect must materialize defaults at boot"
+            blob = wait_blob(
+                storage_dir, lambda b: True,
+                "R665 save Effect must materialize defaults at boot",
             )
-            blob = read_state_blob(storage_dir)
             assert_eq(
                 blob["schema_version"], SCHEMA_VERSION,
                 "(1.a) boot blob schema=1",
@@ -198,12 +209,13 @@ def body() -> None:
             # ── (2) Add three rows via R666 #3 character arc ───────
             for body_text in ("milk", "eggs", "bread"):
                 add_todo(tf, body_text)
-            time.sleep(EDIT_PAUSE)
+            wait_until(
+                lambda: len(collect_item_ids(tf)) == 3,
+                desc="(2.a) three rows materialised",
+            )
             ids = collect_item_ids(tf)
-            assert_eq(len(ids), 3, "(2.a) three rows materialised")
-            blob = read_state_blob(storage_dir)
-            assert_eq(
-                len(blob["todos"]), 3,
+            blob = wait_blob(
+                storage_dir, lambda b: len(b.get("todos", [])) == 3,
                 "(2.b) three rows persisted to disk",
             )
             assert_eq(
@@ -233,9 +245,9 @@ def body() -> None:
                 "(3.a) v1 invoke returns Bool(true) post-toggle "
                 "(row now completed)",
             )
-            time.sleep(EDIT_PAUSE)
-            assert row_completed(tf, row0_id), (
-                "(3.b) row[0] paint reflects completed=true after v1 invoke"
+            wait_until(
+                lambda: row_completed(tf, row0_id),
+                desc="(3.b) row[0] paint reflects completed=true after v1 invoke",
             )
             assert not row_completed(tf, row1_id), (
                 "(3.c) row[1] paint still un-completed (no cross-row leak)"
@@ -255,12 +267,9 @@ def body() -> None:
             # state machine cycles 0 → 1 → 2 → 0 on right-arrow with
             # the focused filter button.
             focus_set(tf, FILTER_TAG)
-            time.sleep(0.05)
             tf.key(path=FILTER_TAG, name="ArrowRight")
-            time.sleep(EDIT_PAUSE)
-            blob = read_state_blob(storage_dir)
-            assert_eq(
-                blob["filter"], "Active",
+            blob = wait_blob(
+                storage_dir, lambda b: b.get("filter") == "Active",
                 "(4.a) ArrowRight cycled filter All → Active",
             )
             ids_in_active = collect_item_ids(tf)
@@ -284,24 +293,25 @@ def body() -> None:
                 begin_result, True,
                 "(5.a) v1 invoke begin returns Bool(true) (row in edit mode)",
             )
-            time.sleep(EDIT_PAUSE)
-
             # ── (6) Backspace + retype via R666 #3 character arc ───
             # The edit TextField is pre-filled with "eggs"; clear it
             # by sending 4 backspaces, then type "tofu".
             for _ in range(4):
                 tf.key(path=EDIT_TF_TAG, name="Backspace")
-                time.sleep(0.02)
-            time.sleep(0.05)
             tf.text("tofu", path=EDIT_TF_TAG)
-            time.sleep(0.1)
 
             # ── (7) Enter commit ───────────────────────────────────
             tf.key(path=EDIT_TF_TAG, name="Enter")
-            time.sleep(EDIT_PAUSE)
 
             # ── (8) Verify post-edit row text ──────────────────────
-            blob = read_state_blob(storage_dir)
+            blob = wait_blob(
+                storage_dir,
+                lambda b: any(
+                    int(t["id"]) == row1_id and t["text"] == "tofu"
+                    for t in b.get("todos", [])
+                ),
+                "(8.a/8.b) edited row text persisted after commit",
+            )
             edited_row = next(
                 (t for t in blob["todos"] if int(t["id"]) == row1_id), None,
             )
@@ -351,8 +361,6 @@ def body() -> None:
         # Cycle 2 — relaunch + verify persistence + further mutations
         # ──────────────────────────────────────────────────────────
         with make_subprocess(storage_dir) as tf:
-            time.sleep(0.2)
-
             # ── (10) Relaunch — disk is the source of truth ────────
             blob = read_state_blob(storage_dir)
             persisted_ids = sorted(int(t["id"]) for t in blob["todos"])
@@ -402,8 +410,10 @@ def body() -> None:
 
             # ── (12) Add one more row via R666 #3 character arc ────
             add_todo(tf, "honey")
-            time.sleep(EDIT_PAUSE)
-            blob = read_state_blob(storage_dir)
+            blob = wait_blob(
+                storage_dir, lambda b: len(b.get("todos", [])) == 4,
+                "(12) honey row persisted",
+            )
             new_ids = [int(t["id"]) for t in blob["todos"]]
             fresh = [i for i in new_ids if i not in persisted_ids]
             assert_eq(
@@ -435,13 +445,9 @@ def body() -> None:
                 "(13.a) v1 invoke toggle returns Bool(false) post-toggle "
                 "(row now un-completed)",
             )
-            time.sleep(EDIT_PAUSE)
-            blob = read_state_blob(storage_dir)
-            new_completed = [
-                int(t["id"]) for t in blob["todos"] if t["completed"]
-            ]
-            assert_eq(
-                new_completed, [],
+            blob = wait_blob(
+                storage_dir,
+                lambda b: [int(t["id"]) for t in b.get("todos", []) if t["completed"]] == [],
                 "(13.b) no completed rows after toggling off the only one",
             )
             # Paint now shows row[0] (back to Active filter set).
@@ -462,10 +468,9 @@ def body() -> None:
                 "(14.a) v1 invoke delete returns Bool(true) "
                 "(row was present)",
             )
-            time.sleep(EDIT_PAUSE)
-            painted_after_delete = collect_item_ids(tf)
-            assert row2_id not in painted_after_delete, (
-                "(14.b) deleted row absent from painted scene"
+            wait_until(
+                lambda: row2_id not in collect_item_ids(tf),
+                desc="(14.b) deleted row absent from painted scene",
             )
             blob = read_state_blob(storage_dir)
             disk_ids_after_delete = [int(t["id"]) for t in blob["todos"]]
@@ -488,8 +493,6 @@ def body() -> None:
         # Cycle 3 — second relaunch verifies delete + toggle persist
         # ──────────────────────────────────────────────────────────
         with make_subprocess(storage_dir) as tf:
-            time.sleep(0.2)
-
             # ── (15) Second relaunch ──────────────────────────────
             blob = read_state_blob(storage_dir)
             cycle3_ids = sorted(int(t["id"]) for t in blob["todos"])

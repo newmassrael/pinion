@@ -45,7 +45,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -58,12 +57,13 @@ from rpc_verify import (
     read_png_rgba8,
     png_pixel,
     run_demo,
+    wait_query,
+    wait_until,
 )
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent
 TA_TAG = "main_textarea"
 VIEWPORT = (480, 320)
-SETTLE = 0.06
 
 RED = (0xD0, 0x28, 0x28)
 GREEN = (0x1F, 0x8A, 0x34)
@@ -127,19 +127,20 @@ def apply_style(ta: RpcSubprocess, start: int, end: int, rgb: tuple[int, int, in
         "/external/apply-style",
         {"start": start, "end": end, "fg": hex_of(rgb), "size": 16},
     )
-    time.sleep(SETTLE)
     return handled
 
 
 def clear_style(ta: RpcSubprocess, start: int, end: int) -> bool:
     handled = ta.invoke("/external/clear-style", {"start": start, "end": end})
-    time.sleep(SETTLE)
     return handled
 
 
 def select(ta: RpcSubprocess, start: int, end: int) -> None:
     ta.intervene("/external/selection", {"start": start, "end": end})
-    time.sleep(SETTLE)
+    wait_query(
+        ta, "/external/selection", {"start": start, "end": end},
+        desc="selection set via intervene",
+    )
 
 
 def capture_screenshot() -> Path:
@@ -220,16 +221,13 @@ def body() -> None:
 
         # ── Phase 3 — toolbar click recolours the selection ───────────
         ta.request("focus/set", {"tag": TA_TAG})
-        time.sleep(0.05)
-        assert_eq(ta.query("/external/state"), "Focused", "field focused")
+        wait_query(ta, "/external/state", "Focused", desc="field focused")
         select(ta, 11, 17)  # the green "second"
         rx, ry, rw, rh = sw_rects[SWATCHES[0][0]]  # the RED swatch (fmt_toolbar#2)
         ta.click(at=(rx + rw / 2, ry + rh / 2))  # click the RED swatch
-        time.sleep(SETTLE)
-        assert_eq(
-            _color(run_at(ta, 11)["style"]),
-            RED,
-            "clicking the red swatch recoloured the selected 'second' word",
+        wait_until(
+            lambda: (lambda r: r is not None and _color(r["style"]) == RED)(run_at(ta, 11)),
+            desc="clicking the red swatch recoloured the selected 'second' word",
         )
         assert_eq(ta.query("/external/state"), "Focused", "swatch click did not blur the field")
         assert_eq(text(ta), SEED_TEXT, "toolbar click never edits the text")
@@ -238,8 +236,10 @@ def body() -> None:
         select(ta, 11, 17)
         cx, cy, cw, ch = sw_rects[SW_CLEAR]
         ta.click(at=(cx + cw / 2, cy + ch / 2))
-        time.sleep(SETTLE)
-        assert run_at(ta, 13) is None, "clear swatch stripped the 'second' run"
+        wait_until(
+            lambda: run_at(ta, 13) is None,
+            desc="clear swatch stripped the 'second' run",
+        )
 
     # ── Phase 4 — live-pixel: swatches + seed inks render ─────────────
     assert field_rect is not None

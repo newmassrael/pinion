@@ -194,6 +194,10 @@ def body() -> None:
         await_focus("src")  # clamp to first
 
         # ── (G) type-ahead jumps by label ───────────────────────────
+        # wall-clock semantic: each gap lets the widget's 500 ms
+        # TYPEAHEAD_TIMEOUT (Instant-based, pinion-shell::typeahead)
+        # expire so every press below is a FRESH single-letter search,
+        # not a growing prefix. This is test INPUT, not a settle wait.
         time.sleep(TYPEAHEAD_GAP)
         press("t")
         await_focus("tests")
@@ -221,10 +225,10 @@ def body() -> None:
         await_focus("src/main.rs")
         rows_before = rows()
         press("ArrowRight")  # leaf → no row change
-        time.sleep(0.15)
+        # No-op verification: the dispatch commits before the RPC
+        # response, so a plain read after the key IS the post-key state.
         assert rows() == rows_before, "Arrow Right on a leaf must not change visible rows"
         press("Space")  # leaf → no row change
-        time.sleep(0.15)
         assert rows() == rows_before, "Space on a leaf must not change visible rows"
 
         # ── (I) header + footer chrome ──────────────────────────────

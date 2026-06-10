@@ -54,7 +54,6 @@ R675 atomic 3 verification scope (≥ 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -62,7 +61,24 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_until,
 )
+
+
+def _main_snap(tf):
+    return tf.request(
+        "scene/snapshot",
+        {"path": "", "window": "main", "from": "paint",
+         "viewport": {"w": 320, "h": 200}},
+    ).result
+
+
+def _wait_main_banner(tf, needle: str, desc: str):
+    """Main-window snapshot once `needle` renders (R883 zero-flake)."""
+    return wait_until(
+        lambda: (lambda s: s if _walk_for_text(s, needle) else None)(_main_snap(tf)),
+        desc=desc,
+    )
 
 
 def _walk_for_text(node, needle: str) -> bool:
@@ -196,16 +212,9 @@ def body() -> None:
         # the shared selected_path Signal; the next main paint shows
         # the banner.
         tf.invoke("/inspector_tree/external/click", "state")
-        time.sleep(0.25)
-
-        resp_main = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "main", "from": "paint",
-             "viewport": {"w": 320, "h": 200}},
-        )
-        snap_main1 = resp_main.result
-        assert _walk_for_text(snap_main1, "Selected: state"), (
-            "main window must render banner 'Selected: state' after invoke click"
+        snap_main1 = _wait_main_banner(
+            tf, "Selected: state",
+            "main window must render banner 'Selected: state' after invoke click",
         )
         assert find_by_tag(snap_main1, "main_btn") is not None, (
             "main_btn must still paint alongside the banner"
@@ -233,21 +242,14 @@ def body() -> None:
             f"pressed_id must arm mid-press; got: {pressed_armed!r}"
         )
         tf.invoke("/inspector_tree/external/send", "main:PointerUp")
-        time.sleep(0.25)
-
-        pressed_after = tf.query("/inspector_tree/external/pressed_id")
-        assert pressed_after is None, (
-            "pressed_id must clear after matched Down/Up commit"
+        wait_until(
+            lambda: tf.query("/inspector_tree/external/pressed_id") is None,
+            desc="pressed_id must clear after matched Down/Up commit",
         )
 
-        resp_main = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "main", "from": "paint",
-             "viewport": {"w": 320, "h": 200}},
-        )
-        snap_main2 = resp_main.result
-        assert _walk_for_text(snap_main2, "Selected: main"), (
-            "main banner must update to 'Selected: main' after composite-tag click"
+        snap_main2 = _wait_main_banner(
+            tf, "Selected: main",
+            "main banner must update to 'Selected: main' after composite-tag click",
         )
         # Previous "state" banner must NOT linger.
         assert not _walk_for_text(snap_main2, "Selected: state"), (
@@ -271,11 +273,9 @@ def body() -> None:
         prev_selection = focus2  # currently "main"
         tf.invoke("/inspector_tree/external/send", "state:PointerDown")
         tf.invoke("/inspector_tree/external/send", "main:PointerUp")
-        time.sleep(0.25)
-
-        pressed_dragoff = tf.query("/inspector_tree/external/pressed_id")
-        assert pressed_dragoff is None, (
-            "pressed_id must clear on mismatched Up (drag-off)"
+        wait_until(
+            lambda: tf.query("/inspector_tree/external/pressed_id") is None,
+            desc="pressed_id must clear on mismatched Up (drag-off)",
         )
         resp_insp = tf.request(
             "scene/snapshot",
@@ -313,14 +313,12 @@ def body() -> None:
         # depending on InputRouter dispatch). The main view must
         # still react to its primary External.
         tf.click(path="main_btn")
-        time.sleep(0.25)
-        # Read state via main's primary External.
-        main_state_after_click = tf.query("/external/state")
         # Button state should NOT be Idle anymore (Hover or Pressed).
-        assert main_state_after_click in ("Hover", "Pressed"), (
-            f"main button click must advance state from Idle; got: "
-            f"{main_state_after_click!r}"
+        wait_until(
+            lambda: tf.query("/external/state") in ("Hover", "Pressed"),
+            desc="main button click must advance state from Idle",
         )
+        main_state_after_click = tf.query("/external/state")
 
         # ── (I) inspector tree reflects updated button state ──────
         resp_insp = tf.request(
@@ -384,14 +382,9 @@ def body() -> None:
         # Pin the round-trip end-to-end by selecting a 3rd row id
         # and verifying both windows reflect it.
         tf.invoke("/inspector_tree/external/click", "0/0")
-        time.sleep(0.25)
-        resp_main = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "main", "from": "paint",
-             "viewport": {"w": 320, "h": 200}},
-        )
-        assert _walk_for_text(resp_main.result, "Selected: 0/0"), (
-            "deep-path selection (0/0) must propagate to main banner"
+        _wait_main_banner(
+            tf, "Selected: 0/0",
+            "deep-path selection (0/0) must propagate to main banner",
         )
         resp_insp = tf.request(
             "scene/snapshot",
@@ -423,15 +416,12 @@ def body() -> None:
         # id twice in a row is a no-op on the visible banner (same
         # Signal value; reactive equality-skip + UI consistency).
         tf.invoke("/inspector_tree/external/click", "state")
-        time.sleep(0.15)
-        tf.invoke("/inspector_tree/external/click", "state")
-        time.sleep(0.15)
-        resp_main = tf.request(
-            "scene/snapshot",
-            {"path": "", "window": "main", "from": "paint",
-             "viewport": {"w": 320, "h": 200}},
+        _wait_main_banner(
+            tf, "Selected: state",
+            "first idempotent click renders the banner",
         )
-        assert _walk_for_text(resp_main.result, "Selected: state"), (
+        tf.invoke("/inspector_tree/external/click", "state")
+        assert _walk_for_text(_main_snap(tf), "Selected: state"), (
             "idempotent selection must stabilise on the last invoked id"
         )
 
@@ -440,13 +430,7 @@ def body() -> None:
         # banner must keep rendering (Signal storage is the source
         # of truth, not transient).
         for _ in range(3):
-            time.sleep(0.05)
-            resp = tf.request(
-                "scene/snapshot",
-                {"path": "", "window": "main", "from": "paint",
-                 "viewport": {"w": 320, "h": 200}},
-            )
-            assert _walk_for_text(resp.result, "Selected: state"), (
+            assert _walk_for_text(_main_snap(tf), "Selected: state"), (
                 "selection banner must survive repeated paint cycles"
             )
 

@@ -58,13 +58,18 @@ from __future__ import annotations
 
 import re
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, isolated_storage_dir, run_demo
+from rpc_verify import (
+    RpcSubprocess,
+    assert_eq,
+    isolated_storage_dir,
+    run_demo,
+    wait_until,
+)
 
 TF_TAG = "main_textfield"
 LIST_TAG = "todo_list"
@@ -84,12 +89,14 @@ def type_text(tf: RpcSubprocess, text: str) -> None:
     for ch in text:
         result = tf.invoke("/external/key", ch)
         assert_eq(result, True, f"invoke('key', {ch!r}) recognized")
-    time.sleep(0.05)
 
 
 def submit_enter(tf: RpcSubprocess) -> None:
     tf.key(path=TF_TAG, name="Enter")
-    time.sleep(0.1)
+
+
+def completed_map(tf: RpcSubprocess) -> dict[int, bool]:
+    return {rid: c for (rid, _t, c) in list_items(tf)}
 
 
 def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:
@@ -252,13 +259,12 @@ def _body_impl() -> None:
 
         # ── (1) Focus + add three items ───────────────────────────
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
         for word in ("alpha", "beta", "gamma"):
             type_text(tf, word)
             submit_enter(tf)
 
+        wait_until(lambda: len(list_items(tf)) == 3, desc="three items present")
         items = list_items(tf)
-        assert_eq(len(items), 3, "three items present")
         assert_eq(
             [t for (_id, t, _c) in items],
             ["alpha", "beta", "gamma"],
@@ -282,7 +288,10 @@ def _body_impl() -> None:
 
         # ── (2) Click middle row's toggle → flip beta to completed ──
         tf.click(path=f"todo_toggle#{id_beta}")
-        time.sleep(0.1)
+        wait_until(
+            lambda: completed_map(tf).get(id_beta) is True,
+            desc="beta flipped to completed after toggle click",
+        )
 
         items_after_toggle = list_items(tf)
         assert_eq(
@@ -320,7 +329,10 @@ def _body_impl() -> None:
 
         # ── (3) Click beta toggle again → flips back to active ────
         tf.click(path=f"todo_toggle#{id_beta}")
-        time.sleep(0.1)
+        wait_until(
+            lambda: completed_map(tf).get(id_beta) is False,
+            desc="2nd toggle click flips beta back to active",
+        )
 
         items_after_unflip = list_items(tf)
         completed_after_unflip = {
@@ -339,9 +351,15 @@ def _body_impl() -> None:
 
         # ── (4) Toggle alpha + gamma → 2 of 3 completed ───────────
         tf.click(path=f"todo_toggle#{id_alpha}")
-        time.sleep(0.1)
+        wait_until(
+            lambda: completed_map(tf).get(id_alpha) is True,
+            desc="alpha completed after toggle click",
+        )
         tf.click(path=f"todo_toggle#{id_gamma}")
-        time.sleep(0.1)
+        wait_until(
+            lambda: completed_map(tf).get(id_gamma) is True,
+            desc="gamma completed after toggle click",
+        )
 
         items_mixed = list_items(tf)
         completed_mixed = {rid: c for (rid, _t, c) in items_mixed}
@@ -359,7 +377,10 @@ def _body_impl() -> None:
         # item still works, and the surviving items keep their
         # `completed` flag.
         tf.click(path=f"todo_delete#{id_alpha}")
-        time.sleep(0.1)
+        wait_until(
+            lambda: len(list_items(tf)) == 2,
+            desc="list shrank to 2 after deleting alpha",
+        )
 
         items_after_alpha_delete = list_items(tf)
         assert_eq(
@@ -402,8 +423,8 @@ def _body_impl() -> None:
             type_text(tf, word)
             submit_enter(tf)
 
+        wait_until(lambda: len(list_items(tf)) == 7, desc="list grew to 7 items")
         items_grown = list_items(tf)
-        assert_eq(len(items_grown), 7, "list grew to 7 items")
 
         snap_post_grow = tf.snapshot(source="paint", viewport=(480, 480))
         scroll_post = find_scroll_with_content_tag(snap_post_grow, LIST_TAG)

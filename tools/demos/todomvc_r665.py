@@ -46,13 +46,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo  # noqa: E402
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_until  # noqa: E402
 
 TF_TAG = "main_textfield"
 EDIT_TF_TAG = "todo_edit"
@@ -62,7 +61,6 @@ LIST_TAG = "todo_list"
 FILTER_TAG = "todo_filter"
 VIEWPORT_W = 480
 VIEWPORT_H = 720
-EDIT_PAUSE = 0.2
 STATE_KEY = "todomvc.state"
 SCHEMA_VERSION = 1
 
@@ -74,12 +72,27 @@ def focus_set(tf: RpcSubprocess, tag: str | None) -> None:
 def type_text_into_focused(tf: RpcSubprocess, text: str, tag: str) -> None:
     for ch in text:
         tf.key(path=tag, name=ch)
-    time.sleep(0.05)
 
 
 def submit_enter(tf: RpcSubprocess, target: str) -> None:
     tf.key(path=target, name="Enter")
-    time.sleep(EDIT_PAUSE)
+
+
+def wait_blob(storage_dir: Path, predicate, desc: str) -> dict[str, Any]:
+    """Poll the persisted blob until readable AND `predicate(blob)` is
+    truthy (R883 zero-flake). The save Effect writes via atomic rename,
+    so a poll observes whole blobs only; a not-yet-written / garbage
+    file simply polls again."""
+    def poll():
+        if not storage_path(storage_dir).exists():
+            return None
+        try:
+            blob = read_state_blob(storage_dir)
+        except (json.JSONDecodeError, OSError, KeyError):
+            return None
+        return blob if predicate(blob) else None
+
+    return wait_until(poll, desc=desc)
 
 
 def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:
@@ -177,13 +190,12 @@ def body() -> None:
         with make_subprocess(storage_dir) as tf:
             # Empty storage → no on-disk state at boot. The save
             # Effect's eager initial pass writes the defaults right
-            # after Owner::cache slot population; allow that to
-            # land before asserting on the file.
-            time.sleep(0.2)
-            assert storage_path(storage_dir).exists(), (
-                "save Effect must materialize the default blob on first boot"
+            # after Owner::cache slot population; poll the on-disk
+            # observable until that write lands.
+            blob = wait_blob(
+                storage_dir, lambda b: True,
+                "save Effect must materialize the default blob on first boot",
             )
-            blob = read_state_blob(storage_dir)
             assert_eq(blob["schema_version"], SCHEMA_VERSION, "fresh blob schema=1")
             assert_eq(blob["todos"], [], "fresh blob: empty todos")
             assert_eq(blob["filter"], "All", "fresh blob: default filter All")
@@ -192,26 +204,32 @@ def body() -> None:
 
             # ── (2) Add three rows + toggle + filter cycle ──────────
             focus_set(tf, TF_TAG)
-            time.sleep(0.05)
             for text in ("milk", "eggs", "bread"):
                 type_text_into_focused(tf, text, TF_TAG)
                 submit_enter(tf, target=TF_TAG)
-            time.sleep(EDIT_PAUSE)
+            wait_until(
+                lambda: len(collect_item_ids(tf)) == 3,
+                desc="3 rows added before persistence assertion",
+            )
             ids = collect_item_ids(tf)
-            assert_eq(len(ids), 3, "3 rows added before persistence assertion")
 
             # Toggle the first row → completion flag flips.
             first_id = ids[0]
             tf.click(path=f"{TOGGLE_TAG}#{first_id}")
-            time.sleep(EDIT_PAUSE)
-            assert row_completed(tf, first_id), "row[0] toggled to completed"
+            wait_until(
+                lambda: row_completed(tf, first_id),
+                desc="row[0] toggled to completed",
+            )
 
             # Cycle filter to Active.
             tf.click(path=f"{FILTER_TAG}#0")  # 0 = Active per FilterMode::to_index
-            time.sleep(EDIT_PAUSE)
 
             # ── (3) Schema shape after mutations ────────────────────
-            blob = read_state_blob(storage_dir)
+            blob = wait_blob(
+                storage_dir,
+                lambda b: b.get("filter") == "Active" and len(b.get("todos", [])) == 3,
+                "post-mutation blob carries filter=Active + 3 todos",
+            )
             assert_eq(blob["schema_version"], SCHEMA_VERSION, "post-mutation schema=1")
             todos = blob["todos"]
             assert isinstance(todos, list), "todos field is a list"
@@ -250,7 +268,6 @@ def body() -> None:
 
         # ── (4) Cycle 1 — relaunch with same storage dir ────────────
         with make_subprocess(storage_dir) as tf:
-            time.sleep(0.2)
             # Read the persisted blob (filter-independent) — paint
             # tree under filter=Active hides the completed row, so
             # the assertion needs the on-disk source of truth.
@@ -290,10 +307,12 @@ def body() -> None:
             # ── (5) next_id resumes from persisted value ────────────
             # Adding a new row uses the persisted next_id (not max + 1).
             focus_set(tf, TF_TAG)
-            time.sleep(0.05)
             type_text_into_focused(tf, "honey", TF_TAG)
             submit_enter(tf, target=TF_TAG)
-            time.sleep(EDIT_PAUSE)
+            wait_until(
+                lambda: len(collect_item_ids(tf)) == len(ids_after_active) + 1,
+                desc="submit adds one visible row under the Active filter",
+            )
             new_ids = collect_item_ids(tf)
             fresh = [i for i in new_ids if i not in saved_ids]
             assert_eq(len(fresh), 1, "exactly one freshly-allocated row id")
@@ -317,10 +336,15 @@ def body() -> None:
             # carries NO editing_id field (transient state).
             edit_target = fresh[0]
             tf.double_click(path=f"{ITEM_TAG}#{edit_target}")
-            time.sleep(EDIT_PAUSE)
-            # Force a save cycle by writing the same value back (the
-            # Effect already ran on the double-click's downstream
-            # mutations — read the blob now).
+            wait_until(
+                lambda: find_node_by_tag(
+                    tf.snapshot(source="paint", viewport=(VIEWPORT_W, VIEWPORT_H)),
+                    EDIT_TF_TAG,
+                ) is not None,
+                desc="double-click entered edit mode (inline editor paints)",
+            )
+            # The Effect already ran on the double-click's downstream
+            # mutations — read the blob now.
             blob = read_state_blob(storage_dir)
             assert "editing_id" not in blob, (
                 "editing_id must NOT appear in persisted schema"
@@ -339,17 +363,15 @@ def body() -> None:
             json.dumps(bogus), encoding="utf-8",
         )
         with make_subprocess(storage_dir) as tf:
-            time.sleep(0.2)
             ids_after = collect_item_ids(tf)
             assert_eq(
                 ids_after,
                 [],
                 "schema mismatch: rows reset to defaults",
             )
-            blob = read_state_blob(storage_dir)
-            assert_eq(
-                blob["schema_version"],
-                SCHEMA_VERSION,
+            blob = wait_blob(
+                storage_dir,
+                lambda b: b.get("schema_version") == SCHEMA_VERSION,
                 "schema mismatch: blob rewritten with current version",
             )
             assert_eq(blob["todos"], [], "schema mismatch: blob todos reset to []")
@@ -357,44 +379,44 @@ def body() -> None:
         # ── (8) Corrupted bytes — non-JSON garbage ─────────────────
         storage_path(storage_dir).write_text("not-json {{}}", encoding="utf-8")
         with make_subprocess(storage_dir) as tf:
-            time.sleep(0.2)
             ids_after = collect_item_ids(tf)
             assert_eq(ids_after, [], "corrupted bytes: rows reset to defaults")
-            blob = read_state_blob(storage_dir)
-            assert_eq(
-                blob["schema_version"],
-                SCHEMA_VERSION,
+            wait_blob(
+                storage_dir,
+                lambda b: b.get("schema_version") == SCHEMA_VERSION,
                 "corrupted bytes: blob rewritten with current version",
             )
 
         # ── (9) Delete cycles persist ──────────────────────────────
         with make_subprocess(storage_dir) as tf:
-            time.sleep(0.2)
             focus_set(tf, TF_TAG)
-            time.sleep(0.05)
             for text in ("alpha", "beta", "gamma"):
                 type_text_into_focused(tf, text, TF_TAG)
                 submit_enter(tf, target=TF_TAG)
-            time.sleep(EDIT_PAUSE)
+            wait_until(
+                lambda: len(collect_item_ids(tf)) == 3,
+                desc="delete-cycle: three rows seeded",
+            )
             ids = collect_item_ids(tf)
-            assert_eq(len(ids), 3, "delete-cycle: three rows seeded")
             # Delete row[0] and row[2] — survivor is row[1].
             survivor = ids[1]
             tf.click(path=f"todo_delete#{ids[0]}")
-            time.sleep(EDIT_PAUSE)
+            wait_until(
+                lambda: len(collect_item_ids(tf)) == 2,
+                desc="first delete shrank the list to 2",
+            )
             tf.click(path=f"todo_delete#{ids[2]}")
-            time.sleep(EDIT_PAUSE)
-            remaining = collect_item_ids(tf)
-            assert_eq(remaining, [survivor], "only survivor remains in-scene")
-            blob = read_state_blob(storage_dir)
-            assert_eq(
-                [int(t["id"]) for t in blob["todos"]],
-                [survivor],
+            wait_until(
+                lambda: collect_item_ids(tf) == [survivor],
+                desc="only survivor remains in-scene",
+            )
+            wait_blob(
+                storage_dir,
+                lambda b: [int(t["id"]) for t in b.get("todos", [])] == [survivor],
                 "blob carries only the survivor row",
             )
         # Relaunch: only the survivor persists.
         with make_subprocess(storage_dir) as tf:
-            time.sleep(0.2)
             ids_after = collect_item_ids(tf)
             assert_eq(
                 ids_after,
@@ -405,13 +427,13 @@ def body() -> None:
         # ── (10) Filter mode cycles persist ────────────────────────
         # Click filter#1 (Completed) → relaunch → still Completed.
         with make_subprocess(storage_dir) as tf:
-            time.sleep(0.2)
             tf.click(path=f"{FILTER_TAG}#1")  # 1 = Completed
-            time.sleep(EDIT_PAUSE)
-            blob = read_state_blob(storage_dir)
-            assert_eq(blob["filter"], "Completed", "filter Completed persisted")
+            wait_blob(
+                storage_dir,
+                lambda b: b.get("filter") == "Completed",
+                "filter Completed persisted",
+            )
         with make_subprocess(storage_dir) as tf:
-            time.sleep(0.2)
             blob = read_state_blob(storage_dir)
             assert_eq(
                 blob["filter"],
@@ -420,9 +442,11 @@ def body() -> None:
             )
             # Cycle to All.
             tf.click(path=f"{FILTER_TAG}#2")  # 2 = All
-            time.sleep(EDIT_PAUSE)
-            blob = read_state_blob(storage_dir)
-            assert_eq(blob["filter"], "All", "filter cycled to All")
+            wait_blob(
+                storage_dir,
+                lambda b: b.get("filter") == "All",
+                "filter cycled to All",
+            )
 
         # ── (11) PINION_STORAGE_DIR env override actually used ─────
         # The file landed under our tempdir — not under the canonical

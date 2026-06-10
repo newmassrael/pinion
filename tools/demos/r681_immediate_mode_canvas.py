@@ -79,7 +79,6 @@ R681 atomic 5 verification scope (≥30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -89,12 +88,11 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     node_center,
     run_demo,
+    wait_until,
 )
 
-# Settle interval between an action and the snapshot that observes
-# its effect — winit's RedrawRequested dispatch + Vello submit +
-# RPC ingress drain is a few ms; 100ms is comfortable margin.
-_SETTLE_SEC = 0.10
+# (R883: the old fixed settle interval was replaced by observed-state
+# gates — paint-counter polls + the synchronous dispatch contract.)
 
 # Canonical paint viewport for snapshot calls — matches the
 # binding's declared WIN_W / WIN_H so the post-layout rects in the
@@ -181,9 +179,16 @@ def body() -> None:
         # paint cycle. We can't directly read the angle (the driver
         # doesn't opt into ExternalIntrospect), but the substrate
         # writes the per-paint `dt` into the node's `last_dt`
-        # sidecar. After a few hundred milliseconds the sidecar
-        # should reflect a non-zero per-frame delta.
-        time.sleep(0.25)
+        # sidecar. Gate on the paint counter so at least one real
+        # frame landed before sampling it (R883 zero-flake).
+        def _paint_count() -> int:
+            return int(tf.request("scene/cache_stats", {}).result["paint_count"])
+
+        _pc0 = _paint_count()
+        wait_until(
+            lambda: _paint_count() > _pc0,
+            desc="a continuous-mode frame landed before sampling last_dt",
+        )
         snap_b = _snap(tf)
         imm_b = _walk_immediate_node(snap_b)
         assert imm_b is not None, "ImmediateModeNode survives wall-clock window"
@@ -211,7 +216,6 @@ def body() -> None:
         # ── (C) Retained-tree pointer routing through Button ─────
         cx, cy = node_center(btn)
         tf.click((cx, cy))
-        time.sleep(_SETTLE_SEC)
         snap_c = _snap(tf)
         btn_c = find_by_tag(snap_c, "canvas_btn")
         assert btn_c is not None, (
@@ -228,9 +232,11 @@ def body() -> None:
 
         # ── (D) Keyboard activation arc — Space on the Button ──
         tf.request("focus/set", {"tag": "canvas_btn"})
-        time.sleep(_SETTLE_SEC)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == "canvas_btn",
+            desc="canvas button owns focus",
+        )
         tf.key(path="canvas_btn", name="Space")
-        time.sleep(_SETTLE_SEC)
         snap_d = _snap(tf)
         btn_d = find_by_tag(snap_d, "canvas_btn")
         assert btn_d is not None, (
@@ -255,7 +261,12 @@ def body() -> None:
         # snapshots stay consistent (no degenerate scene) under
         # continuous repaint.
         for _ in range(3):
-            time.sleep(0.05)
+            # Observed-state gate on the continuous paint clock (R883).
+            _pcn = _paint_count()
+            wait_until(
+                lambda: _paint_count() > _pcn,
+                desc="continuous paint clock advanced a frame",
+            )
             snap_f = _snap(tf)
             assert isinstance(snap_f, dict) and snap_f
             assert find_by_tag(snap_f, "canvas_btn") is not None

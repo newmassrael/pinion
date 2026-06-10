@@ -24,7 +24,6 @@ yanked back to the editor's trigger.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -33,11 +32,12 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_until,
 )
 
 EXAMPLE = "hello-file-manager"
 VIEWPORT = (480, 540)
-PAUSE = 0.12
 
 DIR = "fb_dir"
 NEWDIR = "fm_newdir"
@@ -82,18 +82,16 @@ def focused(tf):
 def start_rename(tf, name: str) -> None:
     """Select `name` and enter inline rename (field focused, pre-filled)."""
     tf.click(path=f"{DIR}#{row_index(tf, name)}")
-    time.sleep(PAUSE)
+    wait_query(tf, dpath("selected"), f"/proj/{name}", desc=f"row {name} selected")
     tf.click(path=RENAME)
-    time.sleep(PAUSE)
-    assert present(tf, NAME_TF), "the rename field appears"
-    assert_eq(focused(tf), NAME_TF, "focus moved to the rename field")
+    wait_until(lambda: present(tf, NAME_TF), desc="the rename field appears")
+    wait_until(lambda: focused(tf) == NAME_TF, desc="focus moved to the rename field")
 
 
 def type_name(tf, new: str) -> None:
     tf.intervene(npath("text"), "")
     tf.text(new, path=NAME_TF)
-    time.sleep(PAUSE)
-    assert_eq(tf.query(npath("text")), new, "typed characters land in the field")
+    wait_query(tf, npath("text"), new, desc="typed characters land in the field")
 
 
 def body() -> None:
@@ -113,8 +111,7 @@ def body() -> None:
         assert present(tf, NAME_TF), "the field is live while editing"
         # Move focus to a toolbar button — the rename field blurs.
         tf.request("focus/set", {"tag": NEWDIR})
-        time.sleep(PAUSE)
-        assert "NOTES.md" in names(tf), f"blur committed the rename; got {names(tf)}"
+        wait_until(lambda: "NOTES.md" in names(tf), desc="blur committed the rename")
         assert "README.md" not in names(tf), "old name gone after blur-commit"
         assert_eq(count(tf), cnt, "a rename keeps the entry count (not an add/delete)")
         assert_eq(tf.query(dpath("selected")), "/proj/NOTES.md", "selection follows the rename")
@@ -124,18 +121,18 @@ def body() -> None:
         # ── (B2) a second blur (no edit in progress) is inert ───────
         before = names(tf)
         tf.request("focus/set", {"tag": RENAME})
-        time.sleep(PAUSE)
+        wait_until(lambda: focused(tf) == RENAME, desc="focus parked on Rename")
         tf.request("focus/set", {"tag": NEWDIR})
-        time.sleep(PAUSE)
+        wait_until(lambda: focused(tf) == NEWDIR, desc="the inert blur leaves focus put")
+        # Inert no-op: the dispatch commits before the response, so the
+        # unchanged listing is readable directly.
         assert_eq(names(tf), before, "blur with no edit in progress changes nothing")
-        assert_eq(focused(tf), NEWDIR, "the inert blur leaves focus put")
 
         # ── (C) Enter still commits + restores focus (unchanged) ────
         start_rename(tf, "NOTES.md")
         type_name(tf, "DONE.md")
         tf.key(path=NAME_TF, name="Enter")
-        time.sleep(PAUSE)
-        assert "DONE.md" in names(tf), "Enter still commits the rename"
+        wait_until(lambda: "DONE.md" in names(tf), desc="Enter still commits the rename")
         assert "NOTES.md" not in names(tf), "old name gone after Enter"
         assert_eq(count(tf), cnt, "Enter-commit keeps the entry count")
         assert not present(tf, NAME_TF), "Enter exits edit mode"
@@ -146,15 +143,16 @@ def body() -> None:
         type_name(tf, "WONT.md")
         assert_eq(tf.query(npath("text")), "WONT.md", "the discard-me text is in the field")
         tf.key(path=NAME_TF, name="Escape")
-        time.sleep(PAUSE)
-        assert not present(tf, NAME_TF), "Escape exits edit mode"
+        wait_until(lambda: not present(tf, NAME_TF), desc="Escape exits edit mode")
         assert "DONE.md" in names(tf), "Escape left the name unchanged"
         assert "WONT.md" not in names(tf), "Escape renamed nothing"
         assert_eq(count(tf), cnt, "Escape changes no entry count")
         # Escape restored focus to Rename; a later blur is inert (not editing).
         assert_eq(focused(tf), RENAME, "Escape restores focus to the Rename button")
         tf.request("focus/set", {"tag": NEWDIR})
-        time.sleep(PAUSE)
+        wait_until(lambda: focused(tf) == NEWDIR, desc="post-cancel blur moved focus")
+        # Inert no-op: the blur after a cancel commits nothing; the
+        # dispatch commits before the response, so read directly.
         assert "DONE.md" in names(tf), "post-cancel blur does not resurrect a commit"
         assert "WONT.md" not in names(tf), "post-cancel blur commits nothing"
 

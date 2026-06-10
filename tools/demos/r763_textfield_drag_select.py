@@ -39,17 +39,22 @@ Run from the workspace root:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, find_by_tag, run_demo
+from rpc_verify import (
+    RpcSubprocess,
+    assert_eq,
+    find_by_tag,
+    run_demo,
+    wait_query,
+    wait_until,
+)
 
 TF_TAG = "main_textfield"
 VIEWPORT = (420, 200)
 TEXT = "hello world"  # 11 ASCII bytes; caret end = 11
-SETTLE = 0.06  # let the deferred-input drain apply the gesture
 
 
 def field_rect(tf: RpcSubprocess):
@@ -79,9 +84,10 @@ def byte_at_x(tf: RpcSubprocess, x: float, y: float) -> int:
 
     Collapses any selection (a plain press), so callers use it to learn
     the byte a coordinate maps to BEFORE setting up a selection test.
+    The click dispatch commits its full effect chain before the response,
+    so the caret read directly after observes the post-click state.
     """
     tf.click(at=(x, y))
-    time.sleep(SETTLE)
     return caret(tf)
 
 
@@ -95,13 +101,11 @@ def body() -> None:
 
         # Focus + type the fixture text.
         tf.request("focus/set", {"tag": TF_TAG})
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/state"), "Focused", "focused after focus/set")
+        wait_query(tf, "/external/state", "Focused", desc="focused after focus/set")
         for ch in TEXT:
             key = "Space" if ch == " " else ch
             assert_eq(tf.invoke("/external/key", key), True, f"type {key!r}")
-        time.sleep(0.05)
-        assert_eq(text(tf), TEXT, "typed text")
+        wait_query(tf, "/external/text", TEXT, desc="typed text")
         assert_eq(caret(tf), len(TEXT), "caret at end after typing")
         assert_eq(selection(tf), None, "no selection after plain typing")
 
@@ -133,25 +137,21 @@ def body() -> None:
 
         # ── drag-to-select: left → right selects the whole text ───────
         tf.drag(from_at=(x_left, y_mid), to_at=(x_right, y_mid), steps=8)
-        time.sleep(SETTLE)
-        assert_eq(selection(tf), {"start": 0, "end": len(TEXT)}, "drag L→R selects all")
+        wait_query(tf, "/external/selection", {"start": 0, "end": len(TEXT)},
+                   desc="drag L→R selects all")
         assert_eq(caret(tf), len(TEXT), "drag focus end at right (caret 11)")
         cur = text(tf)
         assert_eq(cur[0:len(TEXT)], TEXT, "selection_text spans whole buffer")
 
         # ── plain click collapses the selection ──────────────────────
         tf.click(at=(x_left, y_mid))
-        time.sleep(SETTLE)
-        assert_eq(selection(tf), None, "plain click collapses selection")
+        wait_query(tf, "/external/selection", None, desc="plain click collapses selection")
         assert_eq(caret(tf), 0, "collapsed caret at click byte 0")
 
         # ── partial drag: left → interior x selects a prefix ──────────
-        tf.click(at=(x_left, y_mid))  # caret 0 anchor
-        time.sleep(SETTLE)
+        tf.click(at=(x_left, y_mid))  # caret 0 anchor (no-op re-anchor; commits pre-response)
         tf.drag(from_at=(x_left, y_mid), to_at=(x_mid, y_mid), steps=6)
-        time.sleep(SETTLE)
-        sel = selection(tf)
-        assert sel is not None, "partial drag produces a selection"
+        sel = wait_until(lambda: selection(tf), desc="partial drag produces a selection")
         assert_eq(sel["start"], 0, "partial drag start at byte 0")
         assert_eq(sel["end"], b_mid, "partial drag end matches probed interior byte")
         assert 0 < sel["end"] < len(TEXT), "partial selection is a strict interior prefix"
@@ -159,58 +159,52 @@ def body() -> None:
 
         # ── reversed drag: right → left normalizes start <= end ───────
         tf.drag(from_at=(x_right, y_mid), to_at=(x_left, y_mid), steps=8)
-        time.sleep(SETTLE)
-        assert_eq(selection(tf), {"start": 0, "end": len(TEXT)}, "reversed drag selects all")
+        wait_query(tf, "/external/selection", {"start": 0, "end": len(TEXT)},
+                   desc="reversed drag selects all")
         assert_eq(caret(tf), 0, "reversed drag focus end at left (caret 0)")
 
         # ── Shift-click extends from the current caret ────────────────
         tf.click(at=(x_left, y_mid))  # caret 0, no selection
-        time.sleep(SETTLE)
-        assert_eq(selection(tf), None, "pre-shift-click selection cleared")
+        wait_query(tf, "/external/selection", None, desc="pre-shift-click selection cleared")
         tf.modifiers(shift=True)
         tf.click(at=(x_right, y_mid))  # extend anchor(0) → focus(11)
         tf.modifiers()  # release Shift
-        time.sleep(SETTLE)
-        assert_eq(selection(tf), {"start": 0, "end": len(TEXT)}, "Shift-click extends to end")
+        wait_query(tf, "/external/selection", {"start": 0, "end": len(TEXT)},
+                   desc="Shift-click extends to end")
         assert_eq(caret(tf), len(TEXT), "Shift-click focus at right")
 
         # ── Shift-click again shrinks (anchor pinned, focus moves) ────
         tf.modifiers(shift=True)
         tf.click(at=(x_mid, y_mid))  # anchor stays 0, focus → b_mid
         tf.modifiers()
-        time.sleep(SETTLE)
-        sel = selection(tf)
-        assert sel is not None, "second Shift-click keeps a selection"
-        assert_eq(sel["start"], 0, "Shift-click anchor pinned at 0")
-        assert_eq(sel["end"], b_mid, "Shift-click focus moved to interior byte")
+        wait_query(tf, "/external/selection", {"start": 0, "end": b_mid},
+                   desc="second Shift-click keeps selection: anchor pinned 0, focus -> interior")
 
         # ── Shift-click with no prior selection latches the caret ─────
         tf.click(at=(x_mid, y_mid))  # caret = b_mid, collapsed
-        time.sleep(SETTLE)
-        assert_eq(selection(tf), None, "collapsed before latch test")
+        wait_query(tf, "/external/selection", None, desc="collapsed before latch test")
         assert_eq(caret(tf), b_mid, "caret at interior byte before latch")
         tf.modifiers(shift=True)
         tf.click(at=(x_left, y_mid))  # anchor latches b_mid, focus → 0
         tf.modifiers()
-        time.sleep(SETTLE)
-        assert_eq(selection(tf), {"start": 0, "end": b_mid}, "Shift-click latches caret as anchor")
+        wait_query(tf, "/external/selection", {"start": 0, "end": b_mid},
+                   desc="Shift-click latches caret as anchor")
         assert_eq(caret(tf), 0, "latch focus end at left")
 
         # ── modifiers persist until released: a click between a
         # shift-press and its release must NOT be re-read as shifted
         # once released. (release, then plain click collapses.)
         tf.click(at=(x_right, y_mid))
-        time.sleep(SETTLE)
-        assert_eq(selection(tf), None, "plain click after Shift released collapses")
+        wait_query(tf, "/external/selection", None,
+                   desc="plain click after Shift released collapses")
         assert_eq(caret(tf), len(TEXT), "plain click caret at right")
 
         # ── type-to-replace after a drag selection ────────────────────
         tf.drag(from_at=(x_left, y_mid), to_at=(x_right, y_mid), steps=8)
-        time.sleep(SETTLE)
-        assert_eq(selection(tf), {"start": 0, "end": len(TEXT)}, "select-all before replace")
+        wait_query(tf, "/external/selection", {"start": 0, "end": len(TEXT)},
+                   desc="select-all before replace")
         assert_eq(tf.invoke("/external/key", "X"), True, "type X over selection")
-        time.sleep(SETTLE)
-        assert_eq(text(tf), "X", "type-to-replace drained the selection")
+        wait_query(tf, "/external/text", "X", desc="type-to-replace drained the selection")
         assert_eq(caret(tf), 1, "caret after replacement char")
         assert_eq(selection(tf), None, "type-to-replace collapses selection")
 

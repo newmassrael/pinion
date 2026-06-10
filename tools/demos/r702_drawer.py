@@ -34,7 +34,6 @@ R702 atomic verification scope (>=30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -44,10 +43,11 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_snap,
+    wait_until,
 )
 
 VIEWPORT = (560, 380)
-PAUSE = 0.12
 
 TRIGGER = "drawer_trigger"
 SCRIM = "drawer_scrim"
@@ -117,9 +117,8 @@ def body() -> None:
 
         # ── (B) open via trigger click ──────────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert _present(snap, SCRIM), "scrim appears on open"
+        snap = wait_snap(tf, lambda s: _present(s, SCRIM), viewport=VIEWPORT,
+                         desc="scrim appears on open")
         assert _present(snap, PANEL), "panel appears on open"
         for i, tag in enumerate(NAV):
             assert _present(snap, tag), f"nav item {i} present on open"
@@ -164,9 +163,8 @@ def body() -> None:
 
         # ── (F) scrim LIGHT-DISMISS (the new behaviour) ─────────────
         tf.click(at=SCRIM_POINT)
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "scrim tap dismisses the drawer (light-dismiss)"
+        snap = wait_snap(tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+                         desc="scrim tap dismisses the drawer (light-dismiss)")
         assert not _present(snap, SCRIM), "scrim gone after light-dismiss"
         assert_eq(_active(tf), "Home", "scrim tap does NOT navigate (active unchanged)")
         assert_eq(_focused(tf), TRIGGER, "focus restored to the trigger after dismiss")
@@ -174,34 +172,28 @@ def body() -> None:
 
         # ── (G) selecting a destination navigates + closes ──────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert_eq(_focused(tf), NAV[0], "re-open auto-focuses item0 again")
+        wait_until(lambda: _focused(tf) == NAV[0], desc="re-open auto-focuses item0 again")
         tf.click(path=NAV[2])
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "selecting a destination closes the drawer"
+        wait_snap(tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+                  desc="selecting a destination closes the drawer")
         assert_eq(_active(tf), "Settings", "selected destination becomes active")
         assert_eq(_focused(tf), TRIGGER, "focus restored after selection")
 
         # ── (H) Escape dismisses without navigating ─────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert _present(tf.snapshot(source="paint", viewport=VIEWPORT), PANEL), "re-opened"
+        wait_snap(tf, lambda s: _present(s, PANEL), viewport=VIEWPORT, desc="re-opened")
         tf.key(path=PANEL, name="Escape")
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Escape dismisses the drawer"
+        wait_snap(tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+                  desc="Escape dismisses the drawer")
         assert_eq(_active(tf), "Settings", "Escape does NOT navigate (still Settings)")
         assert_eq(_focused(tf), TRIGGER, "focus restored after Escape")
 
         # ── (I) keyboard activate: Enter on the focused item ────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert_eq(_focused(tf), NAV[0], "re-open focuses item0")
+        wait_until(lambda: _focused(tf) == NAV[0], desc="re-open focuses item0")
         tf.key(path=PANEL, name="Enter")
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Enter on the focused item navigates + closes"
+        wait_snap(tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+                  desc="Enter on the focused item navigates + closes")
         assert_eq(_active(tf), "Home", "keyboard activate selected item0 = Home")
         assert_eq(_focused(tf), TRIGGER, "focus restored after keyboard activate")
 

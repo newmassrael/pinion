@@ -31,12 +31,11 @@ want to be addressable via their `WidgetCore::tag()`).
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_query, wait_until
 
 
 def body() -> None:
@@ -45,24 +44,27 @@ def body() -> None:
         assert_eq(initial, None, "initial focused_index unset")
 
         listbox.request("focus/set", {"tag": "main_list"})
-        time.sleep(0.05)
+        wait_until(
+            lambda: listbox.request("focus/get").result.get("focused") == "main_list",
+            desc="listbox owns focus",
+        )
 
         # First ArrowDown via composite path — None → 0 boundary.
         listbox.key(path="main_list", name="ArrowDown")
-        time.sleep(0.1)
-        assert_eq(
-            listbox.query("/external/focused_index"),
+        wait_query(
+            listbox,
+            "/external/focused_index",
             0,
-            "first ArrowDown via composite path lands focused_index=0",
+            desc="first ArrowDown via composite path lands focused_index=0",
         )
 
         # Second ArrowDown via composite path — 0 → 1 step.
         listbox.key(path="main_list", name="ArrowDown")
-        time.sleep(0.1)
-        assert_eq(
-            listbox.query("/external/focused_index"),
+        wait_query(
+            listbox,
+            "/external/focused_index",
             1,
-            "second ArrowDown via composite path advances focused_index=1",
+            desc="second ArrowDown via composite path advances focused_index=1",
         )
 
 

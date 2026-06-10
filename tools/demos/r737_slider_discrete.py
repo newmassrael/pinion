@@ -35,7 +35,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -49,11 +48,11 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_until,
 )
 
 EXAMPLE = "hello-slider-discrete"
 VIEWPORT = (360, 220)
-PAUSE = 0.1
 TAG = "disc_slider"
 STATUS = "disc_status"
 
@@ -94,45 +93,86 @@ def body() -> None:
         # ── (A2) all six discrete stops are reachable + on-grid ──────
         # From the 0.0 floor, five ArrowRights walk every tick to 1.0.
         tf.request("focus/set", {"tag": TAG})
-        tf.key(path=TAG, name="Home"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.0), "Home seeds the 0.0 floor for the stop walk"
+        tf.key(path=TAG, name="Home")
+        wait_until(
+            lambda: near(_value(tf), 0.0),
+            desc="Home seeds the 0.0 floor for the stop walk",
+        )
         for i, expected in enumerate((0.2, 0.4, 0.6, 0.8, 1.0), start=1):
-            tf.key(path=TAG, name="ArrowRight"); time.sleep(PAUSE)
-            assert near(_value(tf), expected), f"stop {i} = {expected}, got {_value(tf)}"
+            tf.key(path=TAG, name="ArrowRight")
+            wait_until(
+                lambda: near(_value(tf), expected),
+                desc=f"stop {i} = {expected}",
+            )
         # Restore the START tick so section (B) starts from the boot value.
-        tf.intervene("/external/value", 0.4); time.sleep(PAUSE)
-        assert near(_value(tf), 0.4), "restored to START tick for section B"
+        tf.intervene("/external/value", 0.4)
+        wait_until(
+            lambda: near(_value(tf), 0.4),
+            desc="restored to START tick for section B",
+        )
 
         # ── (B) keyboard stepping (one tick per arrow) ──────────────
         tf.request("focus/set", {"tag": TAG})
         assert_eq(tf.request("focus/get").result.get("focused"), TAG, "track focused")
-        tf.key(path=TAG, name="ArrowRight"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.6), f"ArrowRight 0.4 -> 0.6, got {_value(tf)}"
-        tf.key(path=TAG, name="ArrowRight"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.8), "ArrowRight 0.6 -> 0.8"
-        tf.key(path=TAG, name="ArrowLeft"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.6), "ArrowLeft 0.8 -> 0.6"
-        tf.key(path=TAG, name="ArrowDown"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.4), "ArrowDown aliases ArrowLeft (0.6 -> 0.4)"
-        tf.key(path=TAG, name="ArrowUp"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.6), "ArrowUp aliases ArrowRight (0.4 -> 0.6)"
-        tf.key(path=TAG, name="End"); time.sleep(PAUSE)
-        assert near(_value(tf), 1.0), "End -> max tick 1.0"
-        tf.key(path=TAG, name="ArrowRight"); time.sleep(PAUSE)
+        tf.key(path=TAG, name="ArrowRight")
+        wait_until(
+            lambda: near(_value(tf), 0.6),
+            desc="ArrowRight 0.4 -> 0.6",
+        )
+        tf.key(path=TAG, name="ArrowRight")
+        wait_until(
+            lambda: near(_value(tf), 0.8),
+            desc="ArrowRight 0.6 -> 0.8",
+        )
+        tf.key(path=TAG, name="ArrowLeft")
+        wait_until(
+            lambda: near(_value(tf), 0.6),
+            desc="ArrowLeft 0.8 -> 0.6",
+        )
+        tf.key(path=TAG, name="ArrowDown")
+        wait_until(
+            lambda: near(_value(tf), 0.4),
+            desc="ArrowDown aliases ArrowLeft (0.6 -> 0.4)",
+        )
+        tf.key(path=TAG, name="ArrowUp")
+        wait_until(
+            lambda: near(_value(tf), 0.6),
+            desc="ArrowUp aliases ArrowRight (0.4 -> 0.6)",
+        )
+        tf.key(path=TAG, name="End")
+        wait_until(
+            lambda: near(_value(tf), 1.0),
+            desc="End -> max tick 1.0",
+        )
+        tf.key(path=TAG, name="ArrowRight")
+        # Clamp no-op: plain read after the committed dispatch.
         assert near(_value(tf), 1.0), "ArrowRight at max clamps"
-        tf.key(path=TAG, name="Home"); time.sleep(PAUSE)
-        assert near(_value(tf), 0.0), "Home -> min tick 0.0"
-        tf.key(path=TAG, name="ArrowLeft"); time.sleep(PAUSE)
+        tf.key(path=TAG, name="Home")
+        wait_until(
+            lambda: near(_value(tf), 0.0),
+            desc="Home -> min tick 0.0",
+        )
+        tf.key(path=TAG, name="ArrowLeft")
+        # Clamp no-op: plain read after the committed dispatch.
         assert near(_value(tf), 0.0), "ArrowLeft at min clamps"
 
         # ── (C) off-grid intervene snaps (substrate funnel) ─────────
-        tf.intervene("/external/value", 0.71); time.sleep(PAUSE)
-        assert near(_value(tf), 0.8), f"intervene 0.71 snaps to 0.8, got {_value(tf)}"
-        tf.intervene("/external/value", 0.09); time.sleep(PAUSE)
-        assert near(_value(tf), 0.0), "intervene 0.09 snaps to 0.0"
-        tf.intervene("/external/value", 0.5); time.sleep(PAUSE)
+        tf.intervene("/external/value", 0.71)
+        wait_until(
+            lambda: near(_value(tf), 0.8),
+            desc="intervene 0.71 snaps to 0.8",
+        )
+        tf.intervene("/external/value", 0.09)
+        wait_until(
+            lambda: near(_value(tf), 0.0),
+            desc="intervene 0.09 snaps to 0.0",
+        )
+        tf.intervene("/external/value", 0.5)
         # 0.5/0.2 = 2.5 -> round-half-away -> 3 -> 0.6.
-        assert near(_value(tf), 0.6), f"intervene 0.5 snaps to 0.6, got {_value(tf)}"
+        wait_until(
+            lambda: near(_value(tf), 0.6),
+            desc="intervene 0.5 snaps to 0.6",
+        )
 
         # ── (D) drag snaps to a tick (the substrate funnel covers the
         #        pointer path too). The exact cursor->value mapping is
@@ -154,11 +194,17 @@ def body() -> None:
             return near(round(v / 0.2) * 0.2, v)
 
         tf.drag(from_path=TAG, to_at=(float(tx + tw - 4), float(cy)), steps=6)
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: on_grid(_value(tf)) and _value(tf) > 0.5,
+            desc="rightward drag lands on a high tick",
+        )
         right_val = _value(tf)
         assert on_grid(right_val), f"rightward drag lands on a tick, got {right_val}"
         tf.drag(from_path=TAG, to_at=(float(tx + 4), float(cy)), steps=6)
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: on_grid(_value(tf)) and _value(tf) < right_val,
+            desc="leftward drag lands on a lower tick",
+        )
         left_val = _value(tf)
         assert on_grid(left_val), f"leftward drag lands on a tick, got {left_val}"
         assert right_val > left_val, "rightward drag yields a larger value than leftward"

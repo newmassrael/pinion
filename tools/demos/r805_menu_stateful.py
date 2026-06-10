@@ -39,11 +39,13 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_stderr,
+    wait_until,
 )
 
 VIEWPORT = (520, 320)
 CHECK_GLYPH = "✓"
-PAUSE = 0.12
 
 
 def _all_text(node) -> list[str]:
@@ -71,6 +73,10 @@ def _assert_no_command(tf, label: str) -> None:
     """An inert row (separator / disabled) must NOT log a command. The
     command intent drains to stderr as `shell: intent menu.command ...`
     (the §5.20 single-consumer path, see r691_menu.py)."""
+    # wall-clock semantic: the ABSENCE of a stderr line has no observable
+    # event to gate on (the harness reads stderr through an async pump
+    # thread), so bound the negative check with a short settle instead.
+    time.sleep(0.15)
     tail = tf.stderr_tail(6)
     assert not any("shell: intent menu.command" in ln for ln in tail), (
         f"{label}: an inert row fired a command; stderr={tail!r}"
@@ -79,8 +85,7 @@ def _assert_no_command(tf, label: str) -> None:
 
 def _open(tf, m: int) -> None:
     tf.click(path=f"menu#t{m}")
-    time.sleep(PAUSE)
-    assert_eq(tf.query("/external/open"), m, f"menu {m} open")
+    wait_query(tf, "/external/open", m, desc=f"menu {m} open")
 
 
 def body() -> None:
@@ -109,11 +114,12 @@ def body() -> None:
 
         # ── (C) toggle Show Grid off: flips, emits command, closes ──
         tf.click(path="menu#i0")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), None, "activating a checkbox closes the menu")
-        tail = tf.stderr_tail(80)
-        assert any('menu.command payload=Text("2.0")' in ln for ln in tail), (
-            f"checkbox activation emits the command intent; stderr={tail[-5:]!r}"
+        wait_query(tf, "/external/open", None, desc="activating a checkbox closes the menu")
+        wait_stderr(
+            tf,
+            'menu.command payload=Text("2.0")',
+            n=80,
+            desc="checkbox activation emits the command intent",
         )
         assert_eq(tf.query("/external/checked.2.0"), False, "Show Grid toggled off")
         # Reopen — the new state persisted, and no glyph paints now.
@@ -122,56 +128,52 @@ def body() -> None:
         assert CHECK_GLYPH not in _dropdown_text(tf), "no glyph after toggling off"
         # Toggle Show Rulers on.
         tf.click(path="menu#i1")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/checked.2.1"), True, "Show Rulers toggled on")
+        wait_query(tf, "/external/checked.2.1", True, desc="Show Rulers toggled on")
 
         # ── (D) keyboard nav skips the separator ────────────────────
         tf.request("focus/set", {"tag": "menu"})
-        time.sleep(0.1)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == "menu",
+            desc="menubar owns focus",
+        )
         _open(tf, 2)
         assert_eq(tf.query("/external/active"), None, "mouse-open pre-highlights nothing")
         tf.key(path="menu", name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 0, "ArrowDown -> first item (0)")
+        wait_query(tf, "/external/active", 0, desc="ArrowDown -> first item (0)")
         tf.key(path="menu", name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 1, "ArrowDown -> 1 (Show Rulers)")
+        wait_query(tf, "/external/active", 1, desc="ArrowDown -> 1 (Show Rulers)")
         tf.key(path="menu", name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 3, "ArrowDown skips the separator (2) -> 3")
+        wait_query(tf, "/external/active", 3, desc="ArrowDown skips the separator (2) -> 3")
         tf.key(path="menu", name="Home")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 0, "Home -> first navigable")
+        wait_query(tf, "/external/active", 0, desc="Home -> first navigable")
         tf.key(path="menu", name="Escape")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/open", None, desc="Escape closes the menu")
 
         # ── (E) inert rows: separator + disabled fire no command ────
         _open(tf, 2)
+        # The hover + activate rows below are inert no-ops: the dispatch
+        # commits before the response, so the unchanged state is readable
+        # directly (no gate possible for an expected non-change).
         tf.invoke("/external/send", "i2:PointerEnter")  # hover the separator
-        time.sleep(PAUSE)
         assert_eq(tf.query("/external/active"), None, "hover does not highlight a separator")
         tf.click(path="menu#i2")  # activate the separator
-        time.sleep(PAUSE)
         assert_eq(tf.query("/external/open"), 2, "activating a separator leaves the menu open")
         _assert_no_command(tf, "separator activate")
         tf.key(path="menu", name="Escape")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/open", None, desc="Escape closes after the separator probe")
         # Disabled Redo in Edit.
         _open(tf, 1)
         tf.invoke("/external/send", "i1:PointerEnter")  # hover disabled Redo
-        time.sleep(PAUSE)
         assert_eq(tf.query("/external/active"), None, "hover does not highlight a disabled row")
         tf.click(path="menu#i1")  # activate disabled Redo
-        time.sleep(PAUSE)
         assert_eq(tf.query("/external/open"), 1, "activating a disabled row leaves the menu open")
         _assert_no_command(tf, "disabled activate")
         tf.key(path="menu", name="Escape")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/open", None, desc="Escape closes after the disabled probe")
 
         # ── (F) intervene sets a toggle programmatically, no command ─
         tf.intervene("/external/checked.2.0", True)
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/checked.2.0"), True, "intervene set checked")
+        wait_query(tf, "/external/checked.2.0", True, desc="intervene set checked")
         _assert_no_command(tf, "intervene checked")
 
         # ── (G) R805.1 — intervene checked on a non-checkbox is rejected ─

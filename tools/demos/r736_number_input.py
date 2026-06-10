@@ -47,7 +47,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -61,11 +60,12 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_query,
+    wait_until,
 )
 
 EXAMPLE = "hello-number-input"
 VIEWPORT = (420, 200)
-PAUSE = 0.12
 
 INPUT = "num_input"
 DEC = "num_dec"
@@ -90,15 +90,18 @@ def _focus_input(tf) -> None:
     tf.request("focus/set", {"tag": INPUT})
 
 
+def _wait_field(tf, expected: str, desc: str) -> None:
+    """Gate on the field-text SSOT reaching `expected` (R883 zero-flake)."""
+    wait_query(tf, f"/{INPUT}/external/text", expected, desc=desc)
+
+
 def _type(tf, text: str) -> None:
     tf.text(text, path=INPUT)
-    time.sleep(PAUSE)
 
 
 def _backspace(tf, n: int) -> None:
     for _ in range(n):
         tf.key(path=INPUT, name="Backspace")
-    time.sleep(PAUSE)
 
 
 def body() -> None:
@@ -116,93 +119,83 @@ def body() -> None:
         # ── (B) stepper clicks step the value ───────────────────────
         tf.click(path=INC)
         tf.pointer_leave()
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "17", "click + steps 16 -> 17")
+        _wait_field(tf, "17", "click + steps 16 -> 17")
         assert_eq(_status(tf), "Value: 17 px", "status follows the stepped value")
         tf.click(path=DEC)
         tf.pointer_leave()
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "16", "click − steps 17 -> 16")
+        _wait_field(tf, "16", "click − steps 17 -> 16")
         tf.click(path=DEC)
         tf.pointer_leave()
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "15", "click − again 16 -> 15")
+        _wait_field(tf, "15", "click − again 16 -> 15")
 
         # ── (C) keyboard stepping (arrows + page) ───────────────────
         _focus_input(tf)
-        assert_eq(tf.request("focus/get").result.get("focused"), INPUT, "input focused")
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == INPUT,
+            desc="input focused",
+        )
         tf.key(path=INPUT, name="ArrowUp")
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "16", "ArrowUp 15 -> 16")
+        _wait_field(tf, "16", "ArrowUp 15 -> 16")
         tf.key(path=INPUT, name="ArrowDown")
         tf.key(path=INPUT, name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "14", "ArrowDown x2 16 -> 14")
+        _wait_field(tf, "14", "ArrowDown x2 16 -> 14")
         tf.key(path=INPUT, name="PageUp")
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "26", "PageUp +12 14 -> 26")
+        _wait_field(tf, "26", "PageUp +12 14 -> 26")
         tf.key(path=INPUT, name="PageDown")
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "14", "PageDown -12 26 -> 14")
+        _wait_field(tf, "14", "PageDown -12 26 -> 14")
 
         # ── (D) clamp at the bounds ─────────────────────────────────
         # March up to / past MAX (72) with PageUp, confirm the clamp.
         for _ in range(10):
             tf.key(path=INPUT, name="PageUp")
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "72", "value clamps at MAX (72)")
+        _wait_field(tf, "72", "value clamps at MAX (72)")
         tf.key(path=INPUT, name="ArrowUp")
-        time.sleep(PAUSE)
+        # Clamp no-op: the dispatch commits before the response.
         assert_eq(_field_text(tf), "72", "ArrowUp at MAX is a no-op")
         for _ in range(10):
             tf.key(path=INPUT, name="PageDown")
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "8", "value clamps at MIN (8)")
+        _wait_field(tf, "8", "value clamps at MIN (8)")
         tf.key(path=INPUT, name="ArrowDown")
-        time.sleep(PAUSE)
+        # Clamp no-op: the dispatch commits before the response.
         assert_eq(_field_text(tf), "8", "ArrowDown at MIN is a no-op")
 
         # ── (E) type-to-edit + numeric keystroke gate ───────────────
         _focus_input(tf)
         _backspace(tf, 4)  # clear "8" (and any stragglers)
-        assert_eq(_field_text(tf), "", "field cleared by Backspace")
+        _wait_field(tf, "", "field cleared by Backspace")
         _type(tf, "24")
-        assert_eq(_field_text(tf), "24", "typed digits land in the field")
+        _wait_field(tf, "24", "typed digits land in the field")
         assert_eq(_status(tf), "Value: 24 px", "status reflects the typed value")
-        # A letter keystroke is dropped at the numeric gate.
+        # A letter keystroke is dropped at the numeric gate. Drop no-op:
+        # the dispatch commits before the response, so a plain read sees it.
         tf.key(path=INPUT, name="x")
-        time.sleep(PAUSE)
         assert_eq(_field_text(tf), "24", "letter dropped (numeric gate)")
         # A symbol keystroke is dropped too.
         tf.key(path=INPUT, name="$")
-        time.sleep(PAUSE)
         assert_eq(_field_text(tf), "24", "symbol dropped (numeric gate)")
 
         # ── (F) Enter normalises the typed text in place ────────────
         _focus_input(tf)
         _backspace(tf, 4)
         _type(tf, "099")  # verbose + over-range
-        assert_eq(_field_text(tf), "099", "raw typed text retained pre-Enter")
+        _wait_field(tf, "099", "raw typed text retained pre-Enter")
         tf.key(path=INPUT, name="Enter")
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "72", "Enter parses + clamps + reformats 099 -> 72")
+        _wait_field(tf, "72", "Enter parses + clamps + reformats 099 -> 72")
         assert_eq(_status(tf), "Value: 72 px", "status reflects the normalised value")
         # Below-range typed value normalises up to MIN.
         _focus_input(tf)
         _backspace(tf, 4)
         _type(tf, "3")
         tf.key(path=INPUT, name="Enter")
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "8", "Enter clamps below-range 3 -> MIN 8")
+        _wait_field(tf, "8", "Enter clamps below-range 3 -> MIN 8")
 
         # ── (G) value round-trips through digits (text = value SSOT) ─
         _focus_input(tf)
         _backspace(tf, 4)
         _type(tf, "50")
-        assert_eq(_field_text(tf), "50", "field text is the value store")
+        _wait_field(tf, "50", "field text is the value store")
         tf.key(path=INPUT, name="ArrowUp")
-        time.sleep(PAUSE)
-        assert_eq(_field_text(tf), "51", "stepping reads the typed text as the base")
+        _wait_field(tf, "51", "stepping reads the typed text as the base")
 
         # ── (H) negative — unknown introspect path is rejected ──────
         raised = False

@@ -33,7 +33,6 @@ Verified:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -42,11 +41,11 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_stderr,
     wait_until,
 )
 
 VIEWPORT = (560, 360)
-PAUSE = 0.12
 MENU_TITLES = ["File", "Edit", "View"]
 
 # doc introspect slots
@@ -123,9 +122,11 @@ def body() -> None:
         assert_eq(tf.query(EMPTY), False, "document no longer empty")
         assert tf.query(LEN) > 0, "content_len positive after Open Sample"
         assert_eq(tf.query(DIRTY), False, "Open Sample loads a clean document")
-        tail = tf.stderr_tail(80)
-        assert any('menu.command payload=Text("0.1")' in ln for ln in tail), (
-            f"Open Sample emits the command intent; stderr={tail[-5:]!r}"
+        wait_stderr(
+            tf,
+            'menu.command payload=Text("0.1")',
+            n=80,
+            desc="Open Sample emits the command intent",
         )
 
         # ── (C) Edit > Append Line (x2): grows + marks modified ──────
@@ -133,9 +134,11 @@ def body() -> None:
         wait_until(lambda: tf.query(LINES) == 4, timeout=4.0, interval=0.03,
                    desc="Append Line -> 4 lines")
         assert_eq(tf.query(DIRTY), True, "Append Line marks the document modified")
-        tail = tf.stderr_tail(40)
-        assert any('menu.command payload=Text("1.0")' in ln for ln in tail), (
-            "Append Line emits the command intent"
+        wait_stderr(
+            tf,
+            'menu.command payload=Text("1.0")',
+            n=40,
+            desc="Append Line emits the command intent",
         )
         _cmd(tf, 1, 0)
         wait_until(lambda: tf.query(LINES) == 5, timeout=4.0, interval=0.03,
@@ -199,8 +202,10 @@ def body() -> None:
 
         # ── (I) keyboard nav drives the menubar ──────────────────────
         tf.request("focus/set", {"tag": "menu"})
-        time.sleep(PAUSE)
-        assert_eq(tf.request("focus/get").result.get("focused"), "menu", "menubar owns focus")
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == "menu",
+            desc="menubar owns focus",
+        )
         start = tf.query("/external/bar_focus")
         nxt = (start + 1) % len(MENU_TITLES)
         tf.key(path="menu", name="ArrowRight")

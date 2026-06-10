@@ -37,7 +37,6 @@ R693 atomic verification scope (>=30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -47,10 +46,11 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_snap,
+    wait_until,
 )
 
 VIEWPORT = (520, 360)
-PAUSE = 0.12
 
 TRIGGER = "open_dialog"
 OK = "dialog_ok"
@@ -114,9 +114,12 @@ def body() -> None:
 
         # ── (B) open via trigger click ──────────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert _present(snap, SCRIM), "scrim appears on open"
+        snap = wait_snap(
+            tf,
+            lambda s: _present(s, SCRIM),
+            viewport=VIEWPORT,
+            desc="scrim appears on open",
+        )
         assert _present(snap, PANEL), "panel appears on open"
         assert _present(snap, OK), "Delete action button present"
         assert _present(snap, CANCEL), "Cancel action button present"
@@ -169,16 +172,20 @@ def body() -> None:
 
         # ── (F) scrim blocks (no light-dismiss) ─────────────────────
         tf.click(path=SCRIM)
-        time.sleep(PAUSE)
+        # Blocked no-op: the dispatch commits before the response, so the
+        # still-open dialog is readable directly (no gate for a non-change).
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert _present(snap, PANEL), "backdrop click does NOT dismiss the modal"
         assert "No action taken yet" in _status(snap), "no result from backdrop click"
 
         # ── (G) Cancel button closes + restores focus ───────────────
         tf.click(path=CANCEL)
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Cancel closes the dialog"
+        snap = wait_snap(
+            tf,
+            lambda s: not _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="Cancel closes the dialog",
+        )
         assert not _present(snap, SCRIM), "scrim gone after cancel"
         assert "Deletion cancelled" in _status(snap), "cancel result recorded"
         assert_eq(_focused(tf), TRIGGER, "focus restored to the trigger on close")
@@ -186,34 +193,41 @@ def body() -> None:
 
         # ── (H) Delete (OK) button confirms ─────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert_eq(_focused(tf), CANCEL, "re-open auto-focuses cancel again")
+        wait_until(lambda: _focused(tf) == CANCEL, desc="re-open auto-focuses cancel again")
         tf.click(path=OK)
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Delete closes the dialog"
+        snap = wait_snap(
+            tf,
+            lambda s: not _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="Delete closes the dialog",
+        )
         assert "File deleted" in _status(snap), "accept result recorded"
         assert_eq(_focused(tf), TRIGGER, "focus restored after confirm")
 
         # ── (I) Escape dismisses as cancel ──────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert _present(tf.snapshot(source="paint", viewport=VIEWPORT), PANEL), "re-opened"
+        wait_snap(tf, lambda s: _present(s, PANEL), viewport=VIEWPORT, desc="re-opened")
         tf.key(path=PANEL, name="Escape")
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Escape dismisses the dialog"
+        snap = wait_snap(
+            tf,
+            lambda s: not _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="Escape dismisses the dialog",
+        )
         assert "Deletion cancelled" in _status(snap), "Escape records a cancel"
         assert_eq(_focused(tf), TRIGGER, "focus restored after Escape")
 
         # ── (J) keyboard activate: Tab to Delete, Enter confirms ────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
+        wait_until(lambda: _focused(tf) == CANCEL, desc="re-open installs the trap")
         assert_eq(_focus_next(tf), OK, "Tab moves focus to Delete")
         tf.key(path=PANEL, name="Enter")
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Enter on focused Delete confirms + closes"
+        snap = wait_snap(
+            tf,
+            lambda s: not _present(s, PANEL),
+            viewport=VIEWPORT,
+            desc="Enter on focused Delete confirms + closes",
+        )
         assert "File deleted" in _status(snap), "keyboard confirm records accept"
         assert_eq(_focused(tf), TRIGGER, "focus restored after keyboard confirm")
 

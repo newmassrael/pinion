@@ -27,7 +27,6 @@ a coordinate. Pre-R51.202 the demo hand-rolled the viewport centre.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -37,6 +36,7 @@ from rpc_verify import (
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_snap,
 )
 
 
@@ -54,9 +54,20 @@ def body() -> None:
         assert_eq(scroll.get("offset_y"), 0, "initial offset_y")
 
         listbox.key(path="main_list_scroll", name="PageDown")
-        time.sleep(0.1)
 
-        after = listbox.snapshot(source="paint", viewport=(WIN_W, WIN_H))
+        def _scrolled_down(snap) -> bool:
+            node = find_by_tag(snap, "main_list_scroll")
+            if node is None:
+                return False
+            offset_y = node.get("offset_y")
+            return isinstance(offset_y, (int, float)) and offset_y > 0
+
+        after = wait_snap(
+            listbox,
+            _scrolled_down,
+            viewport=(WIN_W, WIN_H),
+            desc="post-PageDown offset_y > 0",
+        )
         after_scroll = find_by_tag(after, "main_list_scroll")
         if after_scroll is None:
             raise AssertionError("main_list_scroll tag vanished after key")

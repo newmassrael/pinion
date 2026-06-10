@@ -27,12 +27,11 @@ End-to-end RPC self-verify for the R56.1.g IME composition cascade:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_query
 
 
 TF_TAG = "main_textfield"
@@ -61,8 +60,7 @@ def run_body(tf: RpcSubprocess) -> None:
     # Focus the field so subsequent dispatch resolves the field
     # as the focused widget.
     focus_set(tf, TF_TAG)
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/state"), "Focused", "post-focus state")
+    wait_query(tf, "/external/state", "Focused", desc="post-focus state")
 
     # ── R56.1.g.2 invoke composition lifecycle: start.
     assert_eq(
@@ -70,11 +68,9 @@ def run_body(tf: RpcSubprocess) -> None:
         "Editing",
         "compositionstart drives SCXML Focused -> Editing",
     )
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/preedit"),
-        "",
-        "post-start preedit is empty string (compositionstart-before-update)",
+    wait_query(
+        tf, "/external/preedit", "",
+        desc="post-start preedit is empty string (compositionstart-before-update)",
     )
 
     # ── compositionupdate: set preedit to "h".
@@ -83,20 +79,16 @@ def run_body(tf: RpcSubprocess) -> None:
         "Editing",
         "compositionupdate keeps SCXML in Editing",
     )
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/preedit"),
-        "h",
-        "preedit reflects the latest update",
+    wait_query(
+        tf, "/external/preedit", "h",
+        desc="preedit reflects the latest update",
     )
 
     # Successive updates replace (not append) the preedit content.
     tf.invoke("/external/composition", {"action": "update", "data": "hi"})
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/preedit"),
-        "hi",
-        "successive update replaces preedit content",
+    wait_query(
+        tf, "/external/preedit", "hi",
+        desc="successive update replaces preedit content",
     )
 
     # ── compositionend with non-empty data commits the preedit.
@@ -105,8 +97,7 @@ def run_body(tf: RpcSubprocess) -> None:
         "Focused",
         "compositionend drives Editing -> Focused",
     )
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/text"), "hi", "preedit committed into text")
+    wait_query(tf, "/external/text", "hi", desc="preedit committed into text")
     assert_eq(tf.query("/external/caret"), 2, "caret advanced by 2 bytes")
     assert_eq(
         tf.query("/external/preedit"),
@@ -118,22 +109,18 @@ def run_body(tf: RpcSubprocess) -> None:
     # preedit, drives SCXML, no text inserted.
     tf.invoke("/external/composition", {"action": "start"})
     tf.invoke("/external/composition", {"action": "update", "data": "xyz"})
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/preedit"),
-        "xyz",
-        "preedit set before cancel-shape end",
+    wait_query(
+        tf, "/external/preedit", "xyz",
+        desc="preedit set before cancel-shape end",
     )
     assert_eq(
         tf.invoke("/external/composition", {"action": "end", "data": ""}),
         "Focused",
         "empty-data end transitions to Focused",
     )
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/text"),
-        "hi",
-        "no insertion on empty-data end (text unchanged)",
+    wait_query(
+        tf, "/external/text", "hi",
+        desc="no insertion on empty-data end (text unchanged)",
     )
     assert_eq(tf.query("/external/preedit"), None, "preedit cleared")
 
@@ -145,11 +132,9 @@ def run_body(tf: RpcSubprocess) -> None:
         "Focused",
         "cancel drives Editing -> Focused",
     )
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/text"),
-        "hi",
-        "cancel preserves the text buffer (no insertion)",
+    wait_query(
+        tf, "/external/text", "hi",
+        desc="cancel preserves the text buffer (no insertion)",
     )
     assert_eq(tf.query("/external/preedit"), None, "preedit cleared on cancel")
 
@@ -161,11 +146,9 @@ def run_body(tf: RpcSubprocess) -> None:
     tf.invoke("/external/composition", {"action": "update", "data": "ㅎ"})
     tf.invoke("/external/composition", {"action": "update", "data": "하"})
     tf.invoke("/external/composition", {"action": "end", "data": "한"})
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/text"),
-        "hi한",
-        "Korean 3-byte syllable committed at caret",
+    wait_query(
+        tf, "/external/text", "hi한",
+        desc="Korean 3-byte syllable committed at caret",
     )
     assert_eq(
         tf.query("/external/caret"),
@@ -175,22 +158,18 @@ def run_body(tf: RpcSubprocess) -> None:
 
     # ── intervene preedit auto-starts composition.
     tf.intervene("/external/preedit", "compose")
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/preedit"),
-        "compose",
-        "intervene preedit Text auto-starts + updates",
+    wait_query(
+        tf, "/external/preedit", "compose",
+        desc="intervene preedit Text auto-starts + updates",
     )
     # SCXML state unchanged by intervene (no BeginEdit drive).
     assert_eq(tf.query("/external/state"), "Focused", "intervene keeps SCXML stable")
 
     # ── intervene preedit null cancels composition.
     tf.intervene("/external/preedit", None)
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/preedit"),
-        None,
-        "intervene preedit Null cancels composition",
+    wait_query(
+        tf, "/external/preedit", None,
+        desc="intervene preedit Null cancels composition",
     )
 
     # ── commit-on-blur with non-empty preedit (R56.1.g.1 on_focus_change).
@@ -198,11 +177,9 @@ def run_body(tf: RpcSubprocess) -> None:
     # in-flight preedit must commit before SCXML reaches Idle.
     tf.invoke("/external/composition", {"action": "start"})
     tf.invoke("/external/composition", {"action": "update", "data": "x"})
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/preedit"), "x", "preedit before blur")
+    wait_query(tf, "/external/preedit", "x", desc="preedit before blur")
     focus_set(tf, None)
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/state"), "Idle", "post-blur state Idle")
+    wait_query(tf, "/external/state", "Idle", desc="post-blur state Idle")
     assert_eq(
         tf.query("/external/text"),
         "hi한x",

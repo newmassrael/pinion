@@ -22,12 +22,11 @@ keystroke dispatcher end-to-end without OS clipboard plumbing.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_query
 
 
 TF_TAG = "main_textfield"
@@ -44,66 +43,62 @@ def body() -> None:
 
 def run_body(tf: RpcSubprocess) -> None:
     focus_set(tf, TF_TAG)
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/state"), "Focused", "post-focus state")
+    wait_query(tf, "/external/state", "Focused", desc="post-focus state")
 
     # Seed the buffer with "hello world".
     for ch in "hello world":
         tf.invoke("/external/key", "Space" if ch == " " else ch)
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/text"), "hello world", "post-typing text")
+    wait_query(tf, "/external/text", "hello world", desc="post-typing text")
 
     # ── Ctrl+C: select first 5 chars then copy.
     tf.intervene("/external/selection", {"start": 0, "end": 5})
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/selection"),
-        {"start": 0, "end": 5},
-        "selection set via intervene",
+    wait_query(
+        tf, "/external/selection", {"start": 0, "end": 5},
+        desc="selection set via intervene",
     )
     assert_eq(
         tf.invoke("/external/key", {"key": "c", "ctrl": True}),
         True,
         "Ctrl+C recognized",
     )
-    time.sleep(0.05)
     # Selection survives copy (canonical UX).
-    assert_eq(
-        tf.query("/external/selection"),
-        {"start": 0, "end": 5},
-        "selection survives copy",
+    wait_query(
+        tf, "/external/selection", {"start": 0, "end": 5},
+        desc="selection survives copy",
     )
     # Text unchanged.
     assert_eq(tf.query("/external/text"), "hello world", "text unchanged by copy")
 
     # ── Ctrl+V at end: caret to end, clear selection, paste "hello".
     tf.invoke("/external/key", "End")
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/caret"), 11, "caret at end")
+    wait_query(tf, "/external/caret", 11, desc="caret at end")
     assert_eq(tf.query("/external/selection"), None, "no selection after End")
     assert_eq(
         tf.invoke("/external/key", {"key": "v", "ctrl": True}),
         True,
         "Ctrl+V recognized",
     )
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/text"),
-        "hello worldhello",
-        "Ctrl+V inserted clipboard at caret",
+    wait_query(
+        tf, "/external/text", "hello worldhello",
+        desc="Ctrl+V inserted clipboard at caret",
     )
     assert_eq(tf.query("/external/caret"), 16, "caret advanced past pasted text")
 
     # ── Ctrl+X: select last 5 chars and cut.
     tf.intervene("/external/selection", {"start": 11, "end": 16})
-    time.sleep(0.05)
+    wait_query(
+        tf, "/external/selection", {"start": 11, "end": 16},
+        desc="cut selection set via intervene",
+    )
     assert_eq(
         tf.invoke("/external/key", {"key": "x", "ctrl": True}),
         True,
         "Ctrl+X recognized",
     )
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/text"), "hello world", "cut drained selection from text")
+    wait_query(
+        tf, "/external/text", "hello world",
+        desc="cut drained selection from text",
+    )
     assert_eq(tf.query("/external/selection"), None, "selection cleared after cut")
     assert_eq(tf.query("/external/caret"), 11, "caret at cut start")
 
@@ -113,43 +108,43 @@ def run_body(tf: RpcSubprocess) -> None:
         True,
         "Ctrl+V after cut",
     )
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/text"),
-        "hello worldhello",
-        "Ctrl+V after Ctrl+X round-trips the payload",
+    wait_query(
+        tf, "/external/text", "hello worldhello",
+        desc="Ctrl+V after Ctrl+X round-trips the payload",
     )
 
     # ── Plain 'c' / 'x' / 'v' (no modifier) still insert literals.
     # Clear the buffer first via select-all + backspace.
     tf.invoke("/external/key", {"key": "a", "ctrl": True})
     tf.invoke("/external/key", "Backspace")
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/text"), "", "buffer cleared via select-all + backspace")
+    wait_query(
+        tf, "/external/text", "",
+        desc="buffer cleared via select-all + backspace",
+    )
     for ch in ["c", "x", "v"]:
         assert_eq(
             tf.invoke("/external/key", ch),
             True,
             f"plain {ch!r} inserts literally",
         )
-    time.sleep(0.05)
-    assert_eq(tf.query("/external/text"), "cxv", "plain c/x/v typed")
+    wait_query(tf, "/external/text", "cxv", desc="plain c/x/v typed")
 
     # ── Ctrl+C / Ctrl+V with an existing payload: paste replaces
     # selection (R56.1.f.1 type-to-replace through paste path).
     tf.intervene("/external/selection", {"start": 0, "end": 3})
-    time.sleep(0.05)
+    wait_query(
+        tf, "/external/selection", {"start": 0, "end": 3},
+        desc="paste-target selection set via intervene",
+    )
     # Clipboard still holds "hello" from the round-trip above.
     assert_eq(
         tf.invoke("/external/key", {"key": "v", "ctrl": True}),
         True,
         "Ctrl+V on active selection",
     )
-    time.sleep(0.05)
-    assert_eq(
-        tf.query("/external/text"),
-        "hello",
-        "Ctrl+V replaced 'cxv' selection with clipboard 'hello'",
+    wait_query(
+        tf, "/external/text", "hello",
+        desc="Ctrl+V replaced 'cxv' selection with clipboard 'hello'",
     )
 
     focus_set(tf, None)

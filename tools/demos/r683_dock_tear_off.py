@@ -40,12 +40,11 @@ Section roadmap (≥40 assertions across A–J):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcError, RpcSubprocess, run_demo  # noqa: E402
+from rpc_verify import RpcError, RpcSubprocess, run_demo, wait_until  # noqa: E402
 
 
 # ─── constants mirrored from the binding ────────────────────────────
@@ -149,8 +148,6 @@ _VIEWPORT_BTN_RAW_PATH = "Container/Container[viewport_btn]"
 # Floating-window id prefix the binding mints on tear-off.
 _FLOATING_PREFIX = "torn-"
 
-_SETTLE_SEC = 0.30
-
 
 # ─── snapshot + introspect helpers ──────────────────────────────────
 
@@ -171,6 +168,33 @@ def _snap_main(tf: RpcSubprocess) -> Any:
 
 def _snap_floating(tf: RpcSubprocess, panel_id: str) -> Any:
     return _snapshot_window(tf, f"{_FLOATING_PREFIX}{panel_id}", _FLOATING_W, _FLOATING_H)
+
+
+def _wait_floating(tf: RpcSubprocess, panel_id: str) -> Any:
+    """Gate on the torn-off floating window becoming RPC-addressable.
+
+    Window creation is genuinely asynchronous — the tear-off reducer
+    commits inside the drag dispatch, but the reconcile Effect spawns
+    the winit window afterwards. Poll a `{window: torn-<panel>}`-scoped
+    snapshot until it stops raising (R883 zero-flake)."""
+    def poll():
+        try:
+            return _snap_floating(tf, panel_id)
+        except RpcError:
+            return None
+
+    return wait_until(
+        poll, desc=f"floating window {_FLOATING_PREFIX}{panel_id} addressable"
+    )
+
+
+def _wait_main(tf: RpcSubprocess, predicate, desc: str) -> Any:
+    """Poll the main window's paint snapshot until `predicate(snap)`
+    holds; return the matching snapshot (R883 zero-flake gate)."""
+    return wait_until(
+        lambda: (lambda s: s if predicate(s) else None)(_snap_main(tf)),
+        desc=desc,
+    )
 
 
 def _query(tf: RpcSubprocess, path: str) -> Any:
@@ -391,7 +415,10 @@ def body() -> None:
             "to":   {"x": _MAIN_W * 0.6, "y": _MAIN_H * 0.5},
             "steps": 8,
         })
-        time.sleep(_SETTLE_SEC)
+        wait_until(
+            lambda: _query_splitter_ratio(tf, _MAIN_SPLITTER_TAG) != main_ratio_boot,
+            desc="main splitter ratio changes after drag",
+        )
         main_ratio_after_drag = _query_splitter_ratio(tf, _MAIN_SPLITTER_TAG)
         assert main_ratio_after_drag is not None
         assert main_ratio_after_drag != main_ratio_boot, (
@@ -407,7 +434,10 @@ def body() -> None:
             "to":   {"x": _MAIN_W * 0.2, "y": _MAIN_H * 0.5},
             "steps": 8,
         })
-        time.sleep(_SETTLE_SEC)
+        wait_until(
+            lambda: _query_splitter_ratio(tf, _MAIN_SPLITTER_TAG) != main_ratio_after_drag,
+            desc="main splitter ratio changes on drag-back",
+        )
         main_ratio_after_drag_back = _query_splitter_ratio(tf, _MAIN_SPLITTER_TAG)
         assert main_ratio_after_drag_back is not None
         assert main_ratio_after_drag_back != main_ratio_after_drag, (
@@ -428,9 +458,9 @@ def body() -> None:
             (_MAIN_W * 0.5, _MAIN_H * 0.5),
             steps=8,
         )
-        time.sleep(_SETTLE_SEC)
-        # The torn-inspector floating window now answers scene/snapshot.
-        snap_floating_inspector = _snap_floating(tf, _INSPECTOR_PANEL_TAG)
+        # The torn-inspector floating window now answers scene/snapshot
+        # (gated — window creation is async, see _wait_floating).
+        snap_floating_inspector = _wait_floating(tf, _INSPECTOR_PANEL_TAG)
         assert _scene_contains_tag(snap_floating_inspector, _INSPECTOR_PANEL_TAG), (
             "torn-inspector floating window must contain the inspector panel tag"
         )
@@ -439,12 +469,13 @@ def body() -> None:
         )
         # And the main dock now shows the inspector placeholder, not
         # the live inspector panel.
-        snap_d_main = _snap_main(tf)
+        snap_d_main = _wait_main(
+            tf,
+            lambda s: _scene_contains_tag(s, "inspector_placeholder"),
+            "main dock must paint the inspector placeholder after tear-off",
+        )
         assert not _scene_contains_tag(snap_d_main, _INSPECTOR_PANEL_TAG), (
             "main dock must drop the inspector panel after tear-off"
-        )
-        assert _scene_contains_tag(snap_d_main, "inspector_placeholder"), (
-            "main dock must paint the inspector placeholder after tear-off"
         )
         # Property + viewport panels still docked.
         assert _scene_contains_tag(snap_d_main, _PROPERTY_PANEL_TAG)
@@ -475,7 +506,6 @@ def body() -> None:
         # populates `last_paint_scene` so the subsequent drag
         # resolves the header tag against a real layout.
         _ = _snap_floating(tf, _INSPECTOR_PANEL_TAG)
-        time.sleep(_SETTLE_SEC)
         # Step 2: drag the floating panel's header past the 0.5
         # fraction of its 28-px height (= 14 px). Origin at the
         # composite header tag; target well past the threshold.
@@ -486,14 +516,14 @@ def body() -> None:
             (200.0, 200.0),
             steps=4,
         )
-        time.sleep(_SETTLE_SEC)
         # Main dock re-installs the inspector (the reducer's
         # `is_panel_floating(...)` toggle removed the WindowSpec; the
         # reconcile Effect dropped the floating winit window; the
         # main dock re-renders with the live panel back in its slot).
-        snap_e_main = _snap_main(tf)
-        assert _scene_contains_tag(snap_e_main, _INSPECTOR_PANEL_TAG), (
-            "main dock must re-install inspector panel after dock-back"
+        snap_e_main = _wait_main(
+            tf,
+            lambda s: _scene_contains_tag(s, _INSPECTOR_PANEL_TAG),
+            "main dock must re-install inspector panel after dock-back",
         )
         assert not _scene_contains_tag(snap_e_main, "inspector_placeholder"), (
             "main dock placeholder must disappear after dock-back"
@@ -510,12 +540,10 @@ def body() -> None:
         # The viewport tree mirrors as `Container/Container[viewport_btn]`
         # (raw path; tree row composite tag = `inspector_tree#{path}`).
         tf.invoke(f"/{_INSPECTOR_TREE_TAG}/external/click", _VIEWPORT_BTN_RAW_PATH)
-        time.sleep(_SETTLE_SEC)
-        snap_f_main = _snap_main(tf)
-        borders_f = _collect_borders(snap_f_main)
-        assert len(borders_f) >= 1, (
-            f"inspector click must paint at least one highlight wrap; "
-            f"got: {borders_f!r}"
+        snap_f_main = _wait_main(
+            tf,
+            lambda s: len(_collect_borders(s)) >= 1,
+            "inspector click must paint at least one highlight wrap",
         )
         # Inspector tree row paints the M3 focus state-layer (non-
         # transparent fill on the row tagged `inspector_tree#{path}`).
@@ -541,11 +569,10 @@ def body() -> None:
 
         # ── (G.2) Viewport router → cross-panel select ────────────
         tf.invoke(f"/{_VIEWPORT_CLICK_ROUTER_TAG}/external/click", "Container")
-        time.sleep(_SETTLE_SEC)
         # last_clicked mirror reflects the latest invoke.
-        last_clicked_g = _query_router_last_clicked(tf)
-        assert last_clicked_g == "Container", (
-            f"router last_clicked must mirror latest invoke; got: {last_clicked_g!r}"
+        wait_until(
+            lambda: _query_router_last_clicked(tf) == "Container",
+            desc="router last_clicked must mirror latest invoke",
         )
         snap_g = _snap_main(tf)
         # Inspector now focuses on `Container` row.
@@ -568,22 +595,22 @@ def body() -> None:
             (_MAIN_W * 0.5, _MAIN_H * 0.5),
             steps=8,
         )
-        time.sleep(_SETTLE_SEC)
-        snap_h1 = _snap_main(tf)
-        assert _scene_contains_tag(snap_h1, "property_placeholder"), (
-            "round-trip H1: property must show placeholder after tear-off"
+        _wait_main(
+            tf,
+            lambda s: _scene_contains_tag(s, "property_placeholder"),
+            "round-trip H1: property must show placeholder after tear-off",
         )
-        # Verify the floating window exists.
-        snap_floating_property = _snap_floating(tf, _PROPERTY_PANEL_TAG)
+        # Verify the floating window exists (creation is async — gated).
+        snap_floating_property = _wait_floating(tf, _PROPERTY_PANEL_TAG)
         assert _scene_contains_tag(snap_floating_property, _PROPERTY_PANEL_TAG)
         # Dock back via direct tear_off invoke (see section E for the
         # rationale — floating-window InputRouter is empty under
         # headless RPC).
         tf.invoke(f"/{_PROPERTY_PANEL_TAG}/external/tear_off", None)
-        time.sleep(_SETTLE_SEC)
-        snap_h2 = _snap_main(tf)
-        assert _scene_contains_tag(snap_h2, _PROPERTY_PANEL_TAG), (
-            "round-trip H2: property must re-install in main dock after dock-back"
+        _wait_main(
+            tf,
+            lambda s: _scene_contains_tag(s, _PROPERTY_PANEL_TAG),
+            "round-trip H2: property must re-install in main dock after dock-back",
         )
 
         # Round 2: tear off viewport → dock back.
@@ -594,16 +621,16 @@ def body() -> None:
             (_MAIN_W * 0.5, _MAIN_H * 0.5),
             steps=8,
         )
-        time.sleep(_SETTLE_SEC)
-        snap_h3 = _snap_main(tf)
-        assert _scene_contains_tag(snap_h3, "viewport_placeholder"), (
-            "round-trip H3: viewport must show placeholder after tear-off"
+        _wait_main(
+            tf,
+            lambda s: _scene_contains_tag(s, "viewport_placeholder"),
+            "round-trip H3: viewport must show placeholder after tear-off",
         )
         tf.invoke(f"/{_VIEWPORT_PANEL_TAG}/external/tear_off", None)
-        time.sleep(_SETTLE_SEC)
-        snap_h4 = _snap_main(tf)
-        assert _scene_contains_tag(snap_h4, _VIEWPORT_PANEL_TAG), (
-            "round-trip H4: viewport must re-install in main dock after dock-back"
+        _wait_main(
+            tf,
+            lambda s: _scene_contains_tag(s, _VIEWPORT_PANEL_TAG),
+            "round-trip H4: viewport must re-install in main dock after dock-back",
         )
 
         # ── (I) Multi-tear-off cascade — 4-window state ───────────
@@ -617,10 +644,14 @@ def body() -> None:
                 tf, "main", header_tag,
                 (_MAIN_W * 0.5, _MAIN_H * 0.5), steps=8,
             )
-            time.sleep(_SETTLE_SEC)
-        # All 3 floating windows answer scene/snapshot.
+            _wait_main(
+                tf,
+                lambda s, p=panel_id: _scene_contains_tag(s, f"{p}_placeholder"),
+                f"cascade: {panel_id} placeholder appears after tear-off",
+            )
+        # All 3 floating windows answer scene/snapshot (creation async — gated).
         for panel_id in (_INSPECTOR_PANEL_TAG, _PROPERTY_PANEL_TAG, _VIEWPORT_PANEL_TAG):
-            snap_floating_i = _snap_floating(tf, panel_id)
+            snap_floating_i = _wait_floating(tf, panel_id)
             assert _scene_contains_tag(snap_floating_i, panel_id), (
                 f"multi-tear-off cascade: {panel_id} floating window must exist"
             )
@@ -639,10 +670,9 @@ def body() -> None:
 
         # ── (J) Cleanup — deselect + dock all 3 back ──────────────
         tf.invoke(f"/{_VIEWPORT_CLICK_ROUTER_TAG}/external/click", None)
-        time.sleep(_SETTLE_SEC)
-        last_clicked_j = _query_router_last_clicked(tf)
-        assert last_clicked_j is None, (
-            f"Null invoke must clear router last_clicked; got: {last_clicked_j!r}"
+        wait_until(
+            lambda: _query_router_last_clicked(tf) is None,
+            desc="Null invoke must clear router last_clicked",
         )
         # Dock all 3 back via direct tear_off invoke (floating-window
         # InputRouter unavailable in headless RPC — see section E).
@@ -652,7 +682,11 @@ def body() -> None:
             _VIEWPORT_PANEL_TAG,
         ):
             tf.invoke(f"/{panel_id}/external/tear_off", None)
-            time.sleep(_SETTLE_SEC)
+            _wait_main(
+                tf,
+                lambda s, p=panel_id: _scene_contains_tag(s, p),
+                f"{panel_id} re-docked into the main window",
+            )
         # Verify return to baseline: all 3 panels docked, no
         # placeholders, no floating windows.
         snap_j = _snap_main(tf)

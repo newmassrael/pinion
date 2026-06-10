@@ -36,7 +36,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -48,6 +47,7 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_query,
     wait_until,
 )
 
@@ -64,7 +64,7 @@ OBJECTS_PER = 12
 EXPANDED_AT_BOOT = 3
 BOOT_ROWS = FOLDERS + EXPANDED_AT_BOOT * OBJECTS_PER
 AT = (12.0, 80.0)  # any in-window point; named keys route to the focused root
-PAUSE = 0.05
+CURSOR = f"/{STATE_TAG}/external/cursor"
 
 
 def name_cell(rid: str) -> str:
@@ -134,7 +134,6 @@ def body() -> None:
 
         def press(name: str):
             tf.key(at=AT, name=name)
-            time.sleep(PAUSE)
 
         # ── (A) boot: cursor on the first row, single tab stop, windowed ──
         snap = wait_until(
@@ -153,20 +152,24 @@ def body() -> None:
 
         # ── (B) Arrow Down/Up move the row cursor + clamp ────────────────
         press("ArrowDown")  # f0 (expanded) -> its first child f0-o0
-        assert_eq(cursor(), "f0-o0", "ArrowDown -> first child")
+        wait_query(tf, CURSOR, "f0-o0", desc="ArrowDown -> first child")
         press("ArrowUp")
-        assert_eq(cursor(), "f0", "ArrowUp -> back to the parent row")
+        wait_query(tf, CURSOR, "f0", desc="ArrowUp -> back to the parent row")
         press("ArrowUp")
+        # Clamp no-op: the dispatch commits before the response.
         assert_eq(cursor(), "f0", "ArrowUp clamps at the first row (no wrap)")
 
         # ── (C) Arrow Left/Right collapse + expand the focused folder ────
         before = row_count()
         press("ArrowLeft")  # collapse f0 (expanded at boot)
-        assert_eq(row_count(), before - OBJECTS_PER, "ArrowLeft collapsed f0")
+        wait_until(
+            lambda: row_count() == before - OBJECTS_PER,
+            desc="ArrowLeft collapsed f0",
+        )
         snap = snap_now()
         assert "f0-o0" not in present_name_ids(snap), "f0's children left the visible set"
         press("ArrowRight")  # re-expand f0
-        assert_eq(row_count(), before, "ArrowRight re-expanded f0")
+        wait_until(lambda: row_count() == before, desc="ArrowRight re-expanded f0")
 
         # ── (D) keyboard PERP virtualization: drive past the window ───────
         for _ in range(40):
@@ -190,7 +193,7 @@ def body() -> None:
 
         # ── Phase 2 — PIXELS: the cursor highlights BOTH panes ───────────
         press("Home")  # cursor back to f0, window to the top
-        assert_eq(cursor(), "f0", "Home -> cursor f0")
+        wait_query(tf, CURSOR, "f0", desc="Home -> cursor f0")
         snap = snap_now()
         rects = abs_rects_of(snap)
         img = read_png_rgba8(capture_screenshot())

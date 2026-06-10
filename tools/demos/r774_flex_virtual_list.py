@@ -46,7 +46,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -71,7 +70,6 @@ OVERSCAN = 3
 SCROLL_TAG = "flexlist_scroll"
 LIST_TAG = "flexlist"
 BAR_TAG = "flexlist_scrollbar"
-PAUSE = 0.12
 
 
 def measured_h(win_h: int) -> int:
@@ -198,10 +196,11 @@ def body() -> None:
 
         # ── (C) the window still slides at the (grown) viewport ─────
         tf.wheel(path=SCROLL_TAG, pixels=(0.0, 2000.0))
-        time.sleep(PAUSE)
-        snap = snap_now()
+        snap = wait_until(
+            lambda: (lambda s: s if scroll_offset(s) > 0 else None)(snap_now()),
+            desc="wheel advanced the offset",
+        )
         off1 = scroll_offset(snap)
-        assert off1 > 0, f"wheel advanced the offset, got {off1}"
         assert_eq(scroll_viewport_h(snap), big_vp, "clip unchanged by scrolling")
         rows1 = present_rows(snap)
         assert 0 not in rows1, "top row scrolled out after wheel"
@@ -210,9 +209,10 @@ def body() -> None:
         assert len(rows1) < 40, f"window stays small after wheel, got {len(rows1)}"
 
         tf.scroll(SCROLL_TAG, to=(0, 4000))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(scroll_offset(snap), 4000, "scroll-to landed at offset 4000")
+        snap = wait_until(
+            lambda: (lambda s: s if scroll_offset(s) == 4000 else None)(snap_now()),
+            desc="scroll-to landed at offset 4000",
+        )
         rows2 = present_rows(snap)
         assert_eq(rows2, visible_window(4000, big_vp, N, PITCH, OVERSCAN),
                   "deep band == windowing math")
@@ -221,19 +221,20 @@ def body() -> None:
 
         # Scroll to the very bottom — clamps to N*pitch - measured_viewport.
         tf.scroll(SCROLL_TAG, to=(0, 10**9))
-        time.sleep(PAUSE)
-        snap = snap_now()
         max_off = N * PITCH - big_vp
-        assert_eq(scroll_offset(snap), max_off,
-                  "offset clamps to N*pitch - measured_viewport (sizer drove max_y)")
+        snap = wait_until(
+            lambda: (lambda s: s if scroll_offset(s) == max_off else None)(snap_now()),
+            desc="offset clamps to N*pitch - measured_viewport (sizer drove max_y)",
+        )
         rows3 = present_rows(snap)
         assert 9999 in rows3, "the last row is reachable at the bottom"
         assert len(rows3) < 40, f"window small even at the bottom, got {len(rows3)}"
 
         tf.scroll(SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(scroll_offset(snap), 0, "scrolled back to top")
+        wait_until(
+            lambda: scroll_offset(snap_now()) == 0,
+            desc="scrolled back to top",
+        )
 
     # ── Phase 2 — live pixels (boot frame) ──────────────────────────
     snap, rects = _boot_snapshot_and_rects()

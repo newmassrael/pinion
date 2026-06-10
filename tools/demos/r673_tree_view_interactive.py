@@ -31,7 +31,6 @@ R673 atomic 3 verification scope (≥30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -39,7 +38,20 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_snap,
 )
+
+VIEWPORT = (480, 400)
+
+
+def _wait_focus(tf, row_id: str, desc: str):
+    """Gate on the focus highlight reaching `row_id` (R883 zero-flake)."""
+    return wait_snap(
+        tf,
+        lambda s: _focused_row_id(s) == row_id,
+        viewport=VIEWPORT,
+        desc=desc,
+    )
 
 
 def _walk_for_text(node, needle: str) -> bool:
@@ -143,76 +155,55 @@ def body() -> None:
 
         # ── (C) Arrow Down moves focus through visible rows ─────────
         tf.key(at=(10.0, 10.0), name="ArrowDown")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        focus = _focused_row_id(snap)
-        assert focus == "src/main.rs", (
-            f"ArrowDown from src → src/main.rs; got: {focus!r}"
-        )
+        _wait_focus(tf, "src/main.rs", "ArrowDown from src -> src/main.rs")
 
         tf.key(at=(10.0, 10.0), name="ArrowDown")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        focus = _focused_row_id(snap)
-        assert focus == "src/lib.rs", (
-            f"ArrowDown from main.rs → lib.rs; got: {focus!r}"
-        )
+        _wait_focus(tf, "src/lib.rs", "ArrowDown from main.rs -> lib.rs")
 
         # ── Arrow Up reverses direction ─────────────────────────────
         tf.key(at=(10.0, 10.0), name="ArrowUp")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        focus = _focused_row_id(snap)
-        assert focus == "src/main.rs", (
-            f"ArrowUp back to main.rs; got: {focus!r}"
-        )
+        _wait_focus(tf, "src/main.rs", "ArrowUp back to main.rs")
 
         # ── (G) Home jumps to first visible row ─────────────────────
         tf.key(at=(10.0, 10.0), name="Home")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        focus = _focused_row_id(snap)
-        assert focus == "src", f"Home → first visible (src); got: {focus!r}"
+        _wait_focus(tf, "src", "Home -> first visible (src)")
 
         # ── (G) End jumps to last visible row ───────────────────────
         tf.key(at=(10.0, 10.0), name="End")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        focus = _focused_row_id(snap)
-        assert focus == "docs", f"End → last visible (docs); got: {focus!r}"
+        _wait_focus(tf, "docs", "End -> last visible (docs)")
 
         # ── (D) Arrow Right expands the focused branch (docs) ───────
         tf.key(at=(10.0, 10.0), name="ArrowRight")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        rows = _row_tags(snap)
-        assert "file_tree#docs/README.md" in rows, (
-            f"ArrowRight on docs must expand it; rows: {rows!r}"
+        wait_snap(
+            tf,
+            lambda s: "file_tree#docs/README.md" in _row_tags(s),
+            viewport=VIEWPORT,
+            desc="ArrowRight on docs must expand it",
         )
 
         # ── (E) Arrow Left collapses the focused branch ─────────────
         tf.key(at=(10.0, 10.0), name="ArrowLeft")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        rows = _row_tags(snap)
-        assert "file_tree#docs/README.md" not in rows, (
-            "ArrowLeft on docs must collapse it"
+        wait_snap(
+            tf,
+            lambda s: "file_tree#docs/README.md" not in _row_tags(s),
+            viewport=VIEWPORT,
+            desc="ArrowLeft on docs must collapse it",
         )
 
         # ── (F) Space toggles expand on the focused branch ──────────
         tf.key(at=(10.0, 10.0), name="Space")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        rows = _row_tags(snap)
-        assert "file_tree#docs/README.md" in rows, (
-            "Space toggle on docs must expand it"
+        wait_snap(
+            tf,
+            lambda s: "file_tree#docs/README.md" in _row_tags(s),
+            viewport=VIEWPORT,
+            desc="Space toggle on docs must expand it",
         )
         tf.key(at=(10.0, 10.0), name="Space")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        rows = _row_tags(snap)
-        assert "file_tree#docs/README.md" not in rows, (
-            "Space toggle (2nd press) on docs must collapse it"
+        wait_snap(
+            tf,
+            lambda s: "file_tree#docs/README.md" not in _row_tags(s),
+            viewport=VIEWPORT,
+            desc="Space toggle (2nd press) on docs must collapse it",
         )
 
         # ── (H) Arrow Right on a leaf is a no-op (no children) ──────
@@ -221,18 +212,15 @@ def body() -> None:
         # are exercised in r809_tree_keyboard_waiaria.py. Here we keep
         # the one behaviour that is still a true in-place no-op.
         tf.key(at=(10.0, 10.0), name="Home")  # back to src
-        time.sleep(0.15)
+        _wait_focus(tf, "src", "Home back to src before leaf no-op")
         tf.key(at=(10.0, 10.0), name="ArrowDown")  # main.rs
-        time.sleep(0.15)
         tf.key(at=(10.0, 10.0), name="ArrowDown")  # lib.rs (leaf)
-        time.sleep(0.15)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
-        focus = _focused_row_id(snap)
-        assert focus == "src/lib.rs"
+        snap = _wait_focus(tf, "src/lib.rs", "two ArrowDown land on lib.rs leaf")
         rows_before = set(_row_tags(snap))
         tf.key(at=(10.0, 10.0), name="ArrowRight")
-        time.sleep(0.2)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
+        # No-op verification: the dispatch commits before the RPC
+        # response, so a plain read after the key IS the post-key state.
+        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert set(_row_tags(snap)) == rows_before, (
             "Arrow Right on leaf must not change visible rows"
         )
@@ -241,20 +229,22 @@ def body() -> None:
         # Navigate to tests.
         for _ in range(5):
             tf.key(at=(10.0, 10.0), name="ArrowDown")
-            time.sleep(0.1)
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
+        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         focus = _focused_row_id(snap)
         # Whichever row arrives, expand it; for tests we expect:
         if focus == "tests":
             tf.key(at=(10.0, 10.0), name="ArrowRight")
-            time.sleep(0.2)
-            snap = tf.snapshot(source="paint", viewport=(480, 400))
+            snap = wait_snap(
+                tf,
+                lambda s: "file_tree#tests/integration.rs" in _row_tags(s),
+                viewport=VIEWPORT,
+                desc="ArrowRight on tests expands its children",
+            )
             rows = _row_tags(snap)
-            assert "file_tree#tests/integration.rs" in rows
             assert "file_tree#tests/snapshot.rs" in rows
 
         # ── (I) header + footer text present ────────────────────────
-        snap = tf.snapshot(source="paint", viewport=(480, 400))
+        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert _walk_for_text(snap, "File explorer"), (
             "header text must render"
         )

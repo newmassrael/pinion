@@ -38,7 +38,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -51,7 +50,7 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
-    wait_until,
+    wait_snap,
 )
 
 EXAMPLE = "hello-grid-hscroll"
@@ -65,7 +64,6 @@ TABLE_TAG = "ghs"
 HEADER_TAG = "ghs_hrow"
 V_SCROLL_TAG = "ghs_scroll"
 H_SCROLL_TAG = "ghs_hscroll"
-PAUSE = 0.12
 
 
 def hscroll_node(snap):
@@ -151,9 +149,10 @@ def body() -> None:
         # ── (B) horizontal scroll => frozen-header sync ─────────────
         D = 200  # < max_x (1040 - vp_w), keeps col 2 fully visible
         tf.scroll(H_SCROLL_TAG, to=(D, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(offset_x(snap), D, "horizontal scroll advanced offset_x")
+        snap = wait_snap(
+            tf, lambda s: offset_x(s) == D, viewport=WIN,
+            desc="horizontal scroll advanced offset_x",
+        )
         assert_eq(offset_y(snap), 0, "vertical offset unchanged by horizontal scroll")
         rects2 = abs_rects_of(snap)
 
@@ -174,10 +173,10 @@ def body() -> None:
         # Scroll-to-max: clamps to total_w - viewport_w, reveals the
         # right-edge column, clips out the left-edge column.
         tf.scroll(H_SCROLL_TAG, to=(10 ** 9, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        max_x = TOTAL_W - hviewport_w(snap)
-        assert_eq(offset_x(snap), max_x, "offset_x clamps to total_w - viewport_w")
+        snap = wait_snap(
+            tf, lambda s: offset_x(s) == TOTAL_W - hviewport_w(s), viewport=WIN,
+            desc="offset_x clamps to total_w - viewport_w",
+        )
         rects3 = abs_rects_of(snap)
         assert x_visible(rects3["ghs_ch7"], vp_x, vp_w), \
             "right-edge column on-screen at max horizontal scroll"
@@ -189,9 +188,10 @@ def body() -> None:
 
         # Reset horizontal.
         tf.scroll(H_SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(offset_x(snap), 0, "horizontal scrolled back to 0")
+        snap = wait_snap(
+            tf, lambda s: offset_x(s) == 0, viewport=WIN,
+            desc="horizontal scrolled back to 0",
+        )
         rects_reset = abs_rects_of(snap)
         assert_eq(rects_reset["ghs_ch2"][0], h_ch2_boot, "header col 2 back at boot x after reset")
 
@@ -199,9 +199,10 @@ def body() -> None:
         header_x_before = rects_reset["ghs_ch2"][0]
         header_y_before = rects_reset["ghs_ch2"][1]
         tf.scroll(V_SCROLL_TAG, to=(0, 2000))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(offset_y(snap), 2000, "vertical scroll advanced offset_y")
+        snap = wait_snap(
+            tf, lambda s: offset_y(s) == 2000, viewport=WIN,
+            desc="vertical scroll advanced offset_y",
+        )
         assert_eq(offset_x(snap), 0, "horizontal offset unaffected by vertical scroll")
         rects4 = abs_rects_of(snap)
         assert "ghs_row0" not in rects4, "top data row scrolled out vertically"
@@ -211,9 +212,10 @@ def body() -> None:
         assert_eq(rects4["ghs_ch2"][1], header_y_before, "header Y unchanged by vertical scroll")
 
         tf.scroll(V_SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(offset_y(snap), 0, "vertical scrolled back to top")
+        wait_snap(
+            tf, lambda s: offset_y(s) == 0, viewport=WIN,
+            desc="vertical scrolled back to top",
+        )
 
     # ── Phase 2 — live pixels (boot frame) ──────────────────────────
     snap, rects = _boot_snapshot_and_rects()

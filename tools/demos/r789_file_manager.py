@@ -30,7 +30,6 @@ in pinion-platform-storage.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -39,11 +38,12 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_until,
 )
 
 EXAMPLE = "hello-file-manager"
 VIEWPORT = (460, 520)
-PAUSE = 0.12
 
 DIR = "fb_dir"
 NEWDIR = "fm_newdir"
@@ -96,23 +96,21 @@ def body() -> None:
 
         # ── (B) New Folder by CLICK (auto-named) ────────────────────
         tf.click(path=NEWDIR)
-        time.sleep(PAUSE)
-        assert "New Folder" in names(tf), f"click created New Folder; got {names(tf)}"
+        wait_until(lambda: "New Folder" in names(tf), desc="click created New Folder")
         assert_eq(count(tf), 5, "listing grew by one")
         tf.click(path=NEWDIR)
-        time.sleep(PAUSE)
-        assert "New Folder 2" in names(tf), "second click auto-names New Folder 2"
+        wait_until(lambda: "New Folder 2" in names(tf),
+                   desc="second click auto-names New Folder 2")
         assert_eq(count(tf), 6, "listing grew again")
 
         # ── (C) New File by CLICK ───────────────────────────────────
         tf.click(path=NEWFILE)
-        time.sleep(PAUSE)
-        assert "untitled.txt" in names(tf), f"click created untitled.txt; got {names(tf)}"
+        wait_until(lambda: "untitled.txt" in names(tf), desc="click created untitled.txt")
 
         # ── (D) Delete by CLICK (gated on a selection) ──────────────
         tf.click(path=f"{DIR}#{row_index(tf, 'README.md')}")
-        time.sleep(PAUSE)
-        assert_eq(tf.query(dpath("selected")), "/proj/README.md", "row click selected the file")
+        wait_query(tf, dpath("selected"), "/proj/README.md",
+                   desc="row click selected the file")
         enabled_fill = delete_fill(tf)
         assert enabled_fill != disabled_fill, (
             f"Delete fill changes when a selection enables it: "
@@ -120,8 +118,8 @@ def body() -> None:
         )
         before = count(tf)
         tf.click(path=DELETE)
-        time.sleep(PAUSE)
-        assert "README.md" not in names(tf), "Delete removed the selected file"
+        wait_until(lambda: "README.md" not in names(tf),
+                   desc="Delete removed the selected file")
         assert_eq(count(tf), before - 1, "listing shrank by one")
         assert_eq(tf.query(dpath("selected")), None, "selection cleared after delete")
 

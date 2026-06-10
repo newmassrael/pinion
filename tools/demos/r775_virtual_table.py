@@ -36,7 +36,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -61,7 +60,6 @@ OVERSCAN = 3
 TABLE_TAG = "vtbl"
 HEADER_TAG = "vtbl_hrow"
 SCROLL_TAG = "vtbl_scroll"
-PAUSE = 0.12
 
 
 def visible_window(offset: int, vp_h: int, n: int, pitch: int, overscan: int):
@@ -171,10 +169,11 @@ def body() -> None:
 
         # ── (C) the body slides, header frozen ──────────────────────
         tf.wheel(path=SCROLL_TAG, pixels=(0.0, 2000.0))
-        time.sleep(PAUSE)
-        snap = snap_now()
+        snap = wait_until(
+            lambda: (lambda s: s if scroll_offset(s) > 0 else None)(snap_now()),
+            desc="wheel advanced the body offset",
+        )
         off1 = scroll_offset(snap)
-        assert off1 > 0, f"wheel advanced the body offset, got {off1}"
         rects1 = abs_rects_of(snap)
         assert HEADER_TAG in rects1, "header stays present after wheel (frozen)"
         rows1 = present_rows(snap)
@@ -184,28 +183,30 @@ def body() -> None:
         assert len(rows1) < 40, f"body stays windowed after wheel, got {len(rows1)}"
 
         tf.scroll(SCROLL_TAG, to=(0, 4000))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(scroll_offset(snap), 4000, "scroll-to landed at offset 4000")
+        snap = wait_until(
+            lambda: (lambda s: s if scroll_offset(s) == 4000 else None)(snap_now()),
+            desc="scroll-to landed at offset 4000",
+        )
         rows2 = present_rows(snap)
         assert_eq(rows2, visible_window(4000, big_vp, N, ROW_H, OVERSCAN),
                   "deep band == windowing math")
         assert 0 not in rows2 and 9999 not in rows2, "only the mid band exists"
 
         tf.scroll(SCROLL_TAG, to=(0, 10**9))
-        time.sleep(PAUSE)
-        snap = snap_now()
         max_off = N * ROW_H - big_vp
-        assert_eq(scroll_offset(snap), max_off,
-                  "offset clamps to N*row_h - measured_clip (sizer drove max_y)")
+        snap = wait_until(
+            lambda: (lambda s: s if scroll_offset(s) == max_off else None)(snap_now()),
+            desc="offset clamps to N*row_h - measured_clip (sizer drove max_y)",
+        )
         rows3 = present_rows(snap)
         assert 9999 in rows3, "the last row is reachable at the bottom"
         assert HEADER_TAG in abs_rects_of(snap), "header still frozen at the bottom"
 
         tf.scroll(SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = snap_now()
-        assert_eq(scroll_offset(snap), 0, "scrolled back to top")
+        wait_until(
+            lambda: scroll_offset(snap_now()) == 0,
+            desc="scrolled back to top",
+        )
 
     # ── Phase 2 — live pixels (boot frame) ──────────────────────────
     snap, rects = _boot_snapshot_and_rects()

@@ -33,7 +33,6 @@ Per-window InputRouter is the canonical future fix.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -41,6 +40,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_until,
 )
 
 
@@ -59,6 +59,25 @@ def _walk_for_text(node, needle: str) -> bool:
                 return True
     return False
 
+
+
+def _wait_inspector_with(tf, needle: str, desc: str):
+    """Inspector-window snapshot once `needle` renders (R883 zero-flake)."""
+    def poll():
+        resp = tf.request(
+            "scene/snapshot",
+            {
+                "window": "inspector",
+                "path": "",
+                "from": "paint",
+                "viewport": {"w": 280, "h": 140},
+            },
+        )
+        if resp is not None and _walk_for_text(resp.result, needle):
+            return resp
+        return None
+
+    return wait_until(poll, desc=desc)
 
 def _collect_tags(node) -> list[str]:
     """Depth-first walk collecting all Container tags."""
@@ -240,20 +259,10 @@ def body() -> None:
         # ── (D) state mirror (race-immune via scene/invoke) ────────
         # Idle → Hover via PointerEnter (bypasses InputRouter race).
         tf.invoke("/external/send", "PointerEnter")
-        time.sleep(0.3)
-        ins_hover = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        assert ins_hover is not None
         # (D1) State row label updated.
-        assert _walk_for_text(ins_hover.result, "Hover"), (
-            f"after PointerEnter, inspector State row must read Hover: {ins_hover.result!r}"
+        ins_hover = _wait_inspector_with(
+            tf, "Hover",
+            "after PointerEnter, inspector State row must read Hover",
         )
         # (D2) Old state name no longer appears in the State row.
         # (The button-label text 'Click me!' still appears under the
@@ -269,20 +278,10 @@ def body() -> None:
 
         # Hover → Disabled via Disable.
         tf.invoke("/external/send", "Disable")
-        time.sleep(0.3)
-        ins_disabled = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        assert ins_disabled is not None
         # (D3) State row reads Disabled.
-        assert _walk_for_text(ins_disabled.result, "Disabled"), (
-            f"after Disable, inspector State row must read Disabled: {ins_disabled.result!r}"
+        ins_disabled = _wait_inspector_with(
+            tf, "Disabled",
+            "after Disable, inspector State row must read Disabled",
         )
         # (D4) The Container[main_btn] subtree still shows up — the
         # whole main scene is mirrored regardless of state.
@@ -297,20 +296,10 @@ def body() -> None:
 
         # Disabled → Idle via Enable.
         tf.invoke("/external/send", "Enable")
-        time.sleep(0.3)
-        ins_re_idle = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        assert ins_re_idle is not None
         # (D6) Re-enable transitions back to Idle.
-        assert _walk_for_text(ins_re_idle.result, "Idle"), (
-            f"after Enable, inspector State row must read Idle again: {ins_re_idle.result!r}"
+        ins_re_idle = _wait_inspector_with(
+            tf, "Idle",
+            "after Enable, inspector State row must read Idle again",
         )
         # (D7) Disabled tag is gone from the State row.
         state_row_re = find_by_tag(ins_re_idle.result, "inspector_tree#state")

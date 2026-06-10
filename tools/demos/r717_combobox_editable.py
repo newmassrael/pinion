@@ -50,7 +50,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -63,11 +62,12 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_snap,
+    wait_until,
 )
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent
 VIEWPORT = (560, 460)
-PAUSE = 0.12
 
 INPUT = "combo_input"
 OPTIONS = "combo_options"
@@ -112,13 +112,11 @@ def _type(tf, text: str) -> None:
     """Type `text` through the character-key arc (-> apply_key), the path
     the editable combobox's open/filter logic listens on."""
     tf.text(text, path=INPUT)
-    time.sleep(PAUSE)
 
 
 def _backspace(tf, n: int) -> None:
     for _ in range(n):
         tf.key(path=INPUT, name="Backspace")
-    time.sleep(PAUSE)
 
 
 def body() -> None:
@@ -159,20 +157,25 @@ def body() -> None:
         # steps to the next FILTERED option (1), then clamps there (the
         # last filtered match, NOT the absolute last option).
         tf.key(path=INPUT, name="ArrowDown")  # step within filter → Apricot (1)
-        time.sleep(PAUSE)
-        assert_eq(_focused_index(tf), 1, "ArrowDown steps to 2nd filtered match (1)")
+        wait_until(
+            lambda: _focused_index(tf) == 1,
+            desc="ArrowDown steps to 2nd filtered match (1)",
+        )
         tf.key(path=INPUT, name="ArrowDown")  # clamp at last FILTERED match (1)
-        time.sleep(PAUSE)
+        # Clamp no-op: plain read after the committed dispatch.
         assert_eq(_focused_index(tf), 1, "ArrowDown clamps at the last filtered match")
         tf.key(path=INPUT, name="ArrowUp")  # back to first filtered match (0)
-        time.sleep(PAUSE)
-        assert_eq(_focused_index(tf), 0, "ArrowUp steps back to the first filtered match")
+        wait_until(
+            lambda: _focused_index(tf) == 0,
+            desc="ArrowUp steps back to the first filtered match",
+        )
 
         # ── (D) commit a filtered option via click ──────────────────
         tf.click(path=opt(1))  # "Apricot"
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "committing an option closes the popup"
+        snap = wait_snap(
+            tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+            desc="committing an option closes the popup",
+        )
         assert not _present(snap, BARRIER), "barrier gone after commit"
         assert_eq(_selected_index(tf), 1, "listbox records the committed index")
         assert_eq(_status(tf), 'Value: "Apricot" | 1 match', "field value = committed label")
@@ -199,9 +202,10 @@ def body() -> None:
         _type(tf, "ch")  # Cherry(4) — re-opens
         assert _present(tf.snapshot(source="paint", viewport=VIEWPORT), PANEL), "re-opened by 'ch'"
         tf.key(path=INPUT, name="Escape")
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Escape dismisses the popup"
+        snap = wait_snap(
+            tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+            desc="Escape dismisses the popup",
+        )
         assert_eq(_status(tf), 'Value: "ch" | 1 match', "Escape leaves the typed text intact")
 
         # ── (G) click-OUTSIDE (barrier) dismiss ─────────────────────
@@ -209,9 +213,10 @@ def body() -> None:
         _type(tf, "e")  # widen ("che") still matches Cherry; popup re-opens
         assert _present(tf.snapshot(source="paint", viewport=VIEWPORT), PANEL), "re-opened for barrier test"
         tf.click(at=OUTSIDE_POINT)  # lands on the transparent barrier
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "click outside dismisses the popup"
+        snap = wait_snap(
+            tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+            desc="click outside dismisses the popup",
+        )
         assert_eq(_status(tf), 'Value: "che" | 1 match', "click-outside leaves text intact")
 
         # ── (H) keyboard Enter commit ───────────────────────────────
@@ -220,12 +225,15 @@ def body() -> None:
         _type(tf, "blue")  # Blueberry(3) only
         assert _present(tf.snapshot(source="paint", viewport=VIEWPORT), PANEL), "re-opened by 'blue'"
         tf.key(path=INPUT, name="ArrowDown")  # active descendant → 3
-        time.sleep(PAUSE)
-        assert_eq(_focused_index(tf), 3, "active descendant on the single 'blue' match")
+        wait_until(
+            lambda: _focused_index(tf) == 3,
+            desc="active descendant on the single 'blue' match",
+        )
         tf.key(path=INPUT, name="Enter")  # commit
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Enter commits + closes"
+        snap = wait_snap(
+            tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+            desc="Enter commits + closes",
+        )
         assert_eq(_selected_index(tf), 3, "Enter committed the active descendant")
         assert_eq(_status(tf), 'Value: "Blueberry" | 1 match', "field value = keyboard-committed label")
 

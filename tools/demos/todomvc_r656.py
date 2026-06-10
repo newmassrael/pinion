@@ -62,13 +62,20 @@ from __future__ import annotations
 
 import re
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcError, RpcSubprocess, assert_eq, isolated_storage_dir, run_demo
+from rpc_verify import (
+    RpcError,
+    RpcSubprocess,
+    assert_eq,
+    isolated_storage_dir,
+    run_demo,
+    wait_query,
+    wait_until,
+)
 
 TF_TAG = "main_textfield"
 LIST_TAG = "todo_list"
@@ -83,12 +90,12 @@ def type_text(tf: RpcSubprocess, text: str) -> None:
     for ch in text:
         result = tf.invoke("/external/key", ch)
         assert_eq(result, True, f"invoke('key', {ch!r}) recognized")
-    time.sleep(0.05)
 
 
 def submit_enter(tf: RpcSubprocess) -> None:
     tf.key(path=TF_TAG, name="Enter")
-    time.sleep(0.1)
+    # The submit's effect is gated at every call site (field cleared /
+    # list length observed) per the R883 zero-flake policy.
 
 
 def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:
@@ -178,21 +185,17 @@ def _body_impl() -> None:
 
         # ── (1) Focus + add three items ───────────────────────────
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/state"), "Focused", "post-focus state")
+        wait_query(tf, "/external/state", "Focused", desc="post-focus state")
 
         for word in ("alpha", "beta", "gamma"):
             type_text(tf, word)
-            assert_eq(
-                tf.query("/external/text"),
-                word,
-                f"typed {word!r}",
-            )
+            wait_query(tf, "/external/text", word, desc=f"typed {word!r}")
             submit_enter(tf)
-            assert_eq(
-                tf.query("/external/text"),
+            wait_query(
+                tf,
+                "/external/text",
                 "",
-                f"Enter clears field after {word!r}",
+                desc=f"Enter clears field after {word!r}",
             )
 
         items = list_items(tf)
@@ -227,14 +230,11 @@ def _body_impl() -> None:
         # PointerDown to TodoDeleteExternal.invoke("send",
         # "<id_beta>:PointerDown").
         tf.click(path=f"todo_delete#{id_beta}")
-        time.sleep(0.1)
-
-        items_after_middle_delete = list_items(tf)
-        assert_eq(
-            len(items_after_middle_delete),
-            2,
-            "list shrank after middle delete",
+        wait_until(
+            lambda: len(list_items(tf)) == 2,
+            desc="list shrank after middle delete",
         )
+        items_after_middle_delete = list_items(tf)
 
         # R656 STABLE-ID CONTRACT — surviving items keep their
         # ORIGINAL ids (NOT resequenced to a fresh array index).
@@ -263,14 +263,11 @@ def _body_impl() -> None:
 
         # ── (3) Delete the first remaining item ───────────────────
         tf.click(path=f"todo_delete#{id_alpha}")
-        time.sleep(0.1)
-
-        items_after_alpha_delete = list_items(tf)
-        assert_eq(
-            len(items_after_alpha_delete),
-            1,
-            "only one item left after alpha delete",
+        wait_until(
+            lambda: len(list_items(tf)) == 1,
+            desc="only one item left after alpha delete",
         )
+        items_after_alpha_delete = list_items(tf)
         assert_eq(
             items_after_alpha_delete[0],
             (id_gamma, "gamma"),
@@ -298,9 +295,15 @@ def _body_impl() -> None:
         for word in ("delta", "epsilon"):
             type_text(tf, word)
             submit_enter(tf)
+            wait_query(
+                tf,
+                "/external/text",
+                "",
+                desc=f"Enter clears field after {word!r}",
+            )
 
+        wait_until(lambda: len(list_items(tf)) == 3, desc="list grew back to 3 items")
         items_after_grow = list_items(tf)
-        assert_eq(len(items_after_grow), 3, "list grew back to 3 items")
         # Gamma is still index 0, then delta, then epsilon.
         assert_eq(
             [t for (_id, t) in items_after_grow],

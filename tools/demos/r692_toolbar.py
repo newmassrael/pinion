@@ -33,7 +33,6 @@ R692 atomic verification scope (>=30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -42,11 +41,14 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_snap,
+    wait_stderr,
+    wait_until,
 )
 
 VIEWPORT = (560, 220)
 LABELS = ["B", "I", "U", "Undo", "Redo"]
-PAUSE = 0.12
 
 
 def _find(node, tag):
@@ -101,12 +103,11 @@ def _assert_intent(tf, kind: str, payload: str, label: str) -> None:
     intent walk, which logs `shell: intent toolbar.<kind> payload=..`
     to stderr before the `scene/intents` RPC poll can race it (the
     §5.20 single-consumer drain, see `handle_tail`). So the stderr log
-    is the observable channel for input-driven activation intents."""
+    is the observable channel for input-driven activation intents —
+    polled, since the harness reads stderr through a pump thread
+    (R883 zero-flake)."""
     needle = f'shell: intent toolbar.{kind} payload=Text("{payload}")'
-    tail = tf.stderr_tail(80)
-    assert any(needle in ln for ln in tail), (
-        f"{label}: {kind} {payload!r} not logged; recent stderr={tail[-6:]!r}"
-    )
+    wait_stderr(tf, needle, n=80, desc=f"{label}: {kind} {payload!r} logged")
 
 
 def body() -> None:
@@ -131,91 +132,77 @@ def body() -> None:
 
         # ── (B) click Bold toggles its pressed bit ──────────────────
         tf.click(path="toolbar#0")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/pressed.0"), True, "click Bold -> pressed")
+        wait_query(tf, "/external/pressed.0", True, desc="click Bold -> pressed")
         assert_eq(tf.query("/external/focus"), 0, "click focuses the control")
         _assert_intent(tf, "toggle", "0.true", "Bold on")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert _is_filled(snap, "toolbar#0"), "pressed Bold paints the tonal fill"
 
         tf.click(path="toolbar#0")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/pressed.0"), False, "re-click Bold -> unpressed")
+        wait_query(tf, "/external/pressed.0", False, desc="re-click Bold -> unpressed")
         _assert_intent(tf, "toggle", "0.false", "Bold off")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert not _is_filled(snap, "toolbar#0"), "unpressed Bold paints transparent"
 
         # ── (C) toggles are independent ─────────────────────────────
         tf.click(path="toolbar#1")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/pressed.1"), True, "click Italic -> pressed")
+        wait_query(tf, "/external/pressed.1", True, desc="click Italic -> pressed")
         assert_eq(tf.query("/external/pressed.0"), False, "Italic does not disturb Bold")
         _assert_intent(tf, "toggle", "1.true", "Italic on")
         # Reset Italic for a clean keyboard section.
         tf.click(path="toolbar#1")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/pressed.1"), False, "re-click Italic -> unpressed")
+        wait_query(tf, "/external/pressed.1", False, desc="re-click Italic -> unpressed")
 
         # ── (D) command click fires command, no pressed change ──────
         tf.click(path="toolbar#3")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 3, "click Undo -> focus 3")
+        wait_query(tf, "/external/focus", 3, desc="click Undo -> focus 3")
         assert_eq(tf.query("/external/pressed.3"), False, "command has no pressed state")
         _assert_intent(tf, "command", "3", "Undo click")
 
         # ── (E) WAI-ARIA §3.4 keyboard roving ───────────────────────
         tf.request("focus/set", {"tag": "toolbar"})
-        time.sleep(0.1)
-        focus = tf.request("focus/get").result
-        assert_eq(focus.get("focused"), "toolbar", "toolbar owns focus")
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == "toolbar",
+            desc="toolbar owns focus",
+        )
 
         tf.key(path="toolbar", name="Home")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 0, "Home -> first control")
+        wait_query(tf, "/external/focus", 0, desc="Home -> first control")
         tf.key(path="toolbar", name="ArrowRight")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 1, "ArrowRight: 0 -> 1")
+        wait_query(tf, "/external/focus", 1, desc="ArrowRight: 0 -> 1")
         tf.key(path="toolbar", name="ArrowRight")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 2, "ArrowRight: 1 -> 2")
+        wait_query(tf, "/external/focus", 2, desc="ArrowRight: 1 -> 2")
         tf.key(path="toolbar", name="ArrowLeft")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 1, "ArrowLeft: 2 -> 1")
+        wait_query(tf, "/external/focus", 1, desc="ArrowLeft: 2 -> 1")
         tf.key(path="toolbar", name="End")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 4, "End -> last control")
+        wait_query(tf, "/external/focus", 4, desc="End -> last control")
         tf.key(path="toolbar", name="ArrowRight")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 0, "ArrowRight wraps: 4 -> 0")
+        wait_query(tf, "/external/focus", 0, desc="ArrowRight wraps: 4 -> 0")
         tf.key(path="toolbar", name="ArrowLeft")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 4, "ArrowLeft wraps: 0 -> 4")
+        wait_query(tf, "/external/focus", 4, desc="ArrowLeft wraps: 0 -> 4")
 
         # ── (F) keyboard activation ─────────────────────────────────
         tf.key(path="toolbar", name="Home")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 0, "back to Bold")
+        wait_query(tf, "/external/focus", 0, desc="back to Bold")
         tf.key(path="toolbar", name="Enter")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/pressed.0"), True, "Enter activates focused toggle")
+        wait_query(tf, "/external/pressed.0", True, desc="Enter activates focused toggle")
         _assert_intent(tf, "toggle", "0.true", "keyboard Bold on")
         tf.key(path="toolbar", name="End")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/focus", 4, desc="End -> Redo before Space")
         tf.key(path="toolbar", name="Space")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 4, "Space leaves command focused")
         _assert_intent(tf, "command", "4", "keyboard Redo")
+        assert_eq(tf.query("/external/focus"), 4, "Space leaves command focused")
 
         # ── (G) focus-ring paint follows the roving cursor ──────────
         tf.key(path="toolbar", name="Home")
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert _has_focus_ring(snap, "toolbar#0"), "roving cursor 0 draws the focus ring"
+        snap = wait_snap(
+            tf, lambda s: _has_focus_ring(s, "toolbar#0"), viewport=VIEWPORT,
+            desc="roving cursor 0 draws the focus ring",
+        )
         assert not _has_focus_ring(snap, "toolbar#2"), "non-cursor control has no ring"
         tf.key(path="toolbar", name="ArrowRight")
         tf.key(path="toolbar", name="ArrowRight")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/focus"), 2, "cursor at 2")
+        wait_query(tf, "/external/focus", 2, desc="cursor at 2")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert _has_focus_ring(snap, "toolbar#2"), "ring moved to control 2"
         assert not _has_focus_ring(snap, "toolbar#0"), "ring left control 0"

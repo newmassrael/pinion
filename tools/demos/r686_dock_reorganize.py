@@ -48,18 +48,16 @@ Section roadmap (>=40 assertions across A-H):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcError, RpcSubprocess, run_demo  # noqa: E402
+from rpc_verify import RpcError, RpcSubprocess, run_demo, wait_until  # noqa: E402
 
 # ─── constants mirrored from the binding / substrate ────────────────
 
 _MAIN_W = 1200
 _MAIN_H = 800
-_SETTLE_SEC = 0.15
 
 # Panel root tags (DockPanelStyle::m3_default(panel_id) → tag == id).
 _TOOLBAR = "toolbar"
@@ -234,8 +232,6 @@ def _section(label: str) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-dock-panels-editor") as tf:
-        time.sleep(_SETTLE_SEC)
-
         # ─── (A) substrate sanity ────────────────────────────────────
         _section("A: reorganize external sanity")
         topo = _topology(tf)
@@ -358,9 +354,11 @@ def body() -> None:
             {"from": {"x": from_x, "y": hy}, "to": {"x": to_x, "y": hy}, "steps": 4},
         )
         assert drag_resp is not None, "E2.5 scene/drag on the runtime splitter returns"
-        time.sleep(_SETTLE_SEC)
+        wait_until(
+            lambda: _splitter_ratio(tf, reorg_split) is not None,
+            desc="E2.6 ratio still readable post-drag",
+        )
         ratio_after = _splitter_ratio(tf, reorg_split)
-        assert ratio_after is not None, "E2.6 ratio still readable post-drag"
         assert 0.05 <= ratio_after <= 0.95, (
             f"E2.7 post-drag ratio {ratio_after} inside the splitter clamp"
         )

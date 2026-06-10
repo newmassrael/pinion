@@ -42,7 +42,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -54,6 +53,8 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_query,
+    wait_until,
 )
 
 EXAMPLE = "hello-grid-sort"
@@ -63,7 +64,6 @@ NCOLS = 3
 ROW_H = 36
 GRID_TAG = "vtbl"
 SORT_TAG = "vsort"
-PAUSE = 0.12
 
 CATEGORIES = ["Alpha", "Bravo", "Charlie", "Delta", "Echo"]
 
@@ -150,7 +150,6 @@ def body() -> None:
         assert_eq(tf.invoke("/vsort/external/cycle_sort", 0), "0:ascending", "cycle col 0 → asc")
         assert_eq(grid_sort(tf), "0:ascending", "sort is col 0 ascending")
         assert_eq(sort_col(tf), 0, "active sort column is 0")
-        time.sleep(PAUSE)
         assert_eq(source_at(tf, 0), 0, "asc Name visual 0 == Alpha source 0")
         assert_eq(source_at(tf, 1), 5, "asc Name visual 1 == Alpha source 5")
         assert_eq(source_at(tf, 2), 10, "asc Name visual 2 == Alpha source 10")
@@ -166,7 +165,6 @@ def body() -> None:
         # ── (C) numeric-aware sort column 1 (Score) ──────────────────────
         assert_eq(tf.invoke("/vsort/external/cycle_sort", 1), "1:ascending", "cycle col 1 → asc")
         assert_eq(sort_col(tf), 1, "active sort column is 1")
-        time.sleep(PAUSE)
         num = numeric_order(1)
         lex = lex_order(1)
         assert num != lex, "dataset: numeric and lexicographic Score orders differ"
@@ -186,13 +184,13 @@ def body() -> None:
         snap = tf.snapshot(source="paint", viewport=WIN)
         assert "vtbl#3_1" in abs_rects_of(snap), "cell vtbl#3_1 visible for the click test"
         tf.click(path="vtbl#3_1")  # column irrelevant to row selection
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 3, "clicking any cell of source row 3 selects it")
+        wait_query(tf, "/external/selected", 3,
+                   desc="clicking any cell of source row 3 selects it")
         # Sort by Name ascending: source 3 (a Delta) moves to a new visual
         # position but stays selected.
         tf.invoke("/vsort/external/cycle_sort", 0)
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 3, "selection survives the re-sort (still source 3)")
+        wait_query(tf, "/external/selected", 3,
+                   desc="selection survives the re-sort (still source 3)")
         new_pos = next(p for p in range(N) if source_at(tf, p) == 3)
         assert new_pos != 3, f"selected source 3 moved to a new visual position {new_pos}"
         tf.invoke("/vsort/external/cycle_sort", 0)  # desc
@@ -214,9 +212,9 @@ def body() -> None:
         # ── (F) clicked column header cycles like the RPC path ───────────
         before = grid_sort(tf)
         tf.click(path="vsort#h0")
-        time.sleep(PAUSE)
+        wait_until(lambda: grid_sort(tf) != before,
+                   desc=f"clicked header changed the sort (from {before!r})")
         after = grid_sort(tf)
-        assert before != after, f"clicked header changed the sort ({before} → {after})"
         assert_eq(after, "0:ascending", "clicked header h0 cycles column 0 ascending")
 
         # ── (G) admin restore round-trips the whole sort state ───────────

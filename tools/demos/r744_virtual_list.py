@@ -37,7 +37,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -50,6 +49,7 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_snap,
 )
 
 EXAMPLE = "hello-virtual-list"
@@ -61,7 +61,6 @@ OVERSCAN = 3
 SCROLL_TAG = "vlist_scroll"
 LIST_TAG = "vlist"
 BAR_TAG = "vlist_scrollbar"
-PAUSE = 0.12
 
 
 def visible_window(offset: int, vp_h: int, n: int, pitch: int, overscan: int):
@@ -134,10 +133,13 @@ def body() -> None:
 
         # ── (B) the window slides — real wheel input first ──────────
         tf.wheel(path=SCROLL_TAG, pixels=(0.0, 2000.0))
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
+        snap = wait_snap(
+            tf,
+            lambda s: scroll_offset(s) > 0,
+            viewport=WIN,
+            desc="wheel advanced the offset",
+        )
         off1 = scroll_offset(snap)
-        assert off1 > 0, f"wheel advanced the offset, got {off1}"
         rows1 = present_rows(snap)
         assert 0 not in rows1, "top row scrolled out of the window after wheel"
         assert_eq(rows1, visible_window(off1, VP_H, N, PITCH, OVERSCAN),
@@ -146,9 +148,12 @@ def body() -> None:
 
         # ── (B) precise programmatic scroll to a deep offset ────────
         tf.scroll(SCROLL_TAG, to=(0, 4000))  # 125 rows down at pitch 32
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert_eq(scroll_offset(snap), 4000, "scroll-to landed at offset 4000")
+        snap = wait_snap(
+            tf,
+            lambda s: scroll_offset(s) == 4000,
+            viewport=WIN,
+            desc="scroll-to landed at offset 4000",
+        )
         rows2 = present_rows(snap)
         expected2 = visible_window(4000, VP_H, N, PITCH, OVERSCAN)
         assert_eq(rows2, expected2, "deep band == windowing math (rows 122..139)")
@@ -158,11 +163,13 @@ def body() -> None:
 
         # ── (B) scroll to the very bottom — last row + clamped max ──
         tf.scroll(SCROLL_TAG, to=(0, 10**9))  # past the end → clamps
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
         max_off = N * PITCH - VP_H  # 320000 - 384 = 319616
-        assert_eq(scroll_offset(snap), max_off,
-                  "offset clamps to N*pitch - viewport (sizer drove max_y)")
+        snap = wait_snap(
+            tf,
+            lambda s: scroll_offset(s) == max_off,
+            viewport=WIN,
+            desc="offset clamps to N*pitch - viewport (sizer drove max_y)",
+        )
         rows3 = present_rows(snap)
         assert 9999 in rows3, "the last row is reachable at the bottom"
         assert_eq(rows3, visible_window(max_off, VP_H, N, PITCH, OVERSCAN),
@@ -171,9 +178,12 @@ def body() -> None:
 
         # ── scroll back to top restores the boot window ─────────────
         tf.scroll(SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert_eq(scroll_offset(snap), 0, "scrolled back to top")
+        snap = wait_snap(
+            tf,
+            lambda s: scroll_offset(s) == 0,
+            viewport=WIN,
+            desc="scrolled back to top",
+        )
         assert_eq(present_rows(snap), expected, "top window restored exactly")
 
     # ── Phase 2 — live pixels (boot frame) ──────────────────────────

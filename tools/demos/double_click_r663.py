@@ -21,13 +21,18 @@ new application widget.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, isolated_storage_dir, run_demo
+from rpc_verify import (
+    RpcSubprocess,
+    assert_eq,
+    isolated_storage_dir,
+    run_demo,
+    wait_until,
+)
 
 TF_TAG = "main_textfield"
 
@@ -39,12 +44,10 @@ def focus_set(tf: RpcSubprocess, tag: str | None) -> None:
 def type_text(tf: RpcSubprocess, text: str) -> None:
     for ch in text:
         tf.invoke("/external/key", ch)
-    time.sleep(0.05)
 
 
 def submit_enter(tf: RpcSubprocess) -> None:
     tf.key(path=TF_TAG, name="Enter")
-    time.sleep(0.1)
 
 
 def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:
@@ -64,7 +67,7 @@ def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:
     return None
 
 
-def first_item_id(tf: RpcSubprocess) -> int:
+def first_item_id(tf: RpcSubprocess) -> int | None:
     snap = tf.snapshot(source="paint", viewport=(480, 720))
     list_node = find_node_by_tag(snap, "todo_list")
     assert list_node is not None
@@ -74,7 +77,17 @@ def first_item_id(tf: RpcSubprocess) -> int:
         tag = row.get("tag")
         if isinstance(tag, str) and tag.startswith("todo_item#"):
             return int(tag.split("#", 1)[1])
-    raise AssertionError("no todo item found")
+    return None
+
+
+def toggle_glyph(tf: RpcSubprocess, toggle_tag: str) -> str | None:
+    """The toggle's painted glyph (☐ / ☑), or None when absent."""
+    snap = tf.snapshot(source="paint", viewport=(480, 720))
+    node = find_node_by_tag(snap, toggle_tag)
+    for tc in (node or {}).get("children") or []:
+        if tc.get("type") == "Text":
+            return tc.get("content")
+    return None
 
 
 def body() -> None:
@@ -93,38 +106,32 @@ def _body_impl() -> None:
 
         # ── (1) Add a single item ──────────────────────────────────
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
         type_text(tf, "alpha")
         submit_enter(tf)
 
-        item_id = first_item_id(tf)
+        item_id = wait_until(
+            lambda: first_item_id(tf),
+            desc="submitted row materializes in the list",
+        )
         toggle_tag = f"todo_toggle#{item_id}"
 
         # ── (2) Sanity: single click flips completed 0 → 1 ──────────
-        tf.click(path=toggle_tag)
-        time.sleep(0.15)
-        snap_post_single = tf.snapshot(source="paint", viewport=(480, 720))
         # The toggle glyph swap is the visible-state proof.
-        list_node = find_node_by_tag(snap_post_single, "todo_list")
-        assert list_node is not None
-        rows = list_node.get("children") or []
-        found_checked = False
-        for row in rows[1:]:
-            for ch in row.get("children") or []:
-                if ch.get("tag") == toggle_tag:
-                    text_children = ch.get("children") or []
-                    for tc in text_children:
-                        if tc.get("type") == "Text":
-                            content = tc.get("content") or ""
-                            if "☑" in content:  # ☑ checked
-                                found_checked = True
-        assert found_checked, (
-            "R663-precheck: single click flips toggle glyph to ☑ (state must be 'completed')"
+        tf.click(path=toggle_tag)
+        wait_until(
+            lambda: toggle_glyph(tf, toggle_tag) == "☑",  # ☑ checked
+            desc="R663-precheck: single click flips toggle glyph to checked",
         )
 
         # ── (3) Reset to unchecked via another single click ──────────
+        # (A toggle treats every press identically — detail=2 synthesis
+        # from fast consecutive same-target presses still flips per
+        # press, so no double-click separator is needed.)
         tf.click(path=toggle_tag)
-        time.sleep(0.15)
+        wait_until(
+            lambda: toggle_glyph(tf, toggle_tag) == "☐",  # ☐ unchecked
+            desc="reset single click flips the glyph back to unchecked",
+        )
 
         # ── (4) R663 double-click — fires 2 PointerDown cycles ──────
         # Toggle is the canonical "second-press reverts" semantic, so
@@ -134,21 +141,15 @@ def _body_impl() -> None:
         # the composite-tag wire to TodoToggleExternal, and the
         # external's invoke arm flipped `completed` twice (0→1→0).
         tf.double_click(path=toggle_tag)
-        time.sleep(0.2)
-
+        # No-net-change verification: the dispatch commits both
+        # press/release cycles before the RPC response, so a plain
+        # read after the double-click IS the post-double-click state.
         snap_post_double = tf.snapshot(source="paint", viewport=(480, 720))
         list_node = find_node_by_tag(snap_post_double, "todo_list")
         assert list_node is not None
         rows = list_node.get("children") or []
-        post_glyph = None
-        for row in rows[1:]:
-            for ch in row.get("children") or []:
-                if ch.get("tag") == toggle_tag:
-                    for tc in ch.get("children") or []:
-                        if tc.get("type") == "Text":
-                            post_glyph = tc.get("content")
         assert_eq(
-            post_glyph,
+            toggle_glyph(tf, toggle_tag),
             "☐",  # ☐ unchecked
             "R663: double-click fired 2x toggle → completed flipped 0→1→0",
         )
@@ -166,9 +167,8 @@ def _body_impl() -> None:
         cx = float(rect["x"]) + float(rect["w"]) / 2.0
         cy = float(rect["y"]) + float(rect["h"]) / 2.0
         tf.double_click(at=(cx, cy))
-        time.sleep(0.2)
-
-        # Same flip-back behaviour, just via at-coord path.
+        # Same flip-back behaviour, just via at-coord path (plain read —
+        # see the no-net-change note above).
         snap_post_at = tf.snapshot(source="paint", viewport=(480, 720))
         list_node = find_node_by_tag(snap_post_at, "todo_list")
         assert list_node is not None

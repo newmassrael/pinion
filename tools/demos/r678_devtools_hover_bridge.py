@@ -58,12 +58,11 @@ R678 atomic (3) verification scope (≥ 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcError, RpcSubprocess, run_demo  # noqa: E402
+from rpc_verify import RpcError, RpcSubprocess, run_demo, wait_until  # noqa: E402
 
 
 _VIEW_MAIN_ROOT_PATH = "Container"
@@ -75,7 +74,6 @@ _MAIN_H = 200
 _INSPECTOR_W = 480
 _INSPECTOR_H = 320
 
-_HOVER_SETTLE_SEC = 0.25
 
 
 def _snap_main(tf) -> dict:
@@ -182,10 +180,9 @@ def body() -> None:
 
         # ── (C) Typed Enter shortcut paints hover wrap ────────────
         tf.invoke("/inspector_tree/external/hover", _BUTTON_PATH)
-        time.sleep(_HOVER_SETTLE_SEC)
-        hover_after = _query_hover_slot(tf)
-        assert hover_after == _BUTTON_PATH, (
-            f"hover typed shortcut must set hovered_id; got: {hover_after!r}"
+        wait_until(
+            lambda: _query_hover_slot(tf) == _BUTTON_PATH,
+            desc="hover typed shortcut must set hovered_id",
         )
         snap_c = _snap_main(tf)
         borders_c = _collect_borders(snap_c)
@@ -212,9 +209,9 @@ def body() -> None:
 
         # ── (D) Typed Leave shortcut (Null payload) clears wrap ───
         tf.invoke("/inspector_tree/external/hover", None)
-        time.sleep(_HOVER_SETTLE_SEC)
-        assert _query_hover_slot(tf) is None, (
-            "Null hover invoke must clear hovered_id"
+        wait_until(
+            lambda: _query_hover_slot(tf) is None,
+            desc="Null hover invoke must clear hovered_id",
         )
         snap_d = _snap_main(tf)
         borders_d = _collect_borders(snap_d)
@@ -227,10 +224,9 @@ def body() -> None:
         # the InputRouter uses for real hover events. Should produce
         # bit-identical slot + paint output to the typed shortcut.
         tf.invoke("/inspector_tree/external/send", f"{_BUTTON_PATH}:PointerEnter")
-        time.sleep(_HOVER_SETTLE_SEC)
-        hover_send = _query_hover_slot(tf)
-        assert hover_send == _BUTTON_PATH, (
-            f"send-wire PointerEnter must set hovered_id; got: {hover_send!r}"
+        wait_until(
+            lambda: _query_hover_slot(tf) == _BUTTON_PATH,
+            desc="send-wire PointerEnter must set hovered_id",
         )
         snap_e_in = _snap_main(tf)
         borders_e_in = _collect_borders(snap_e_in)
@@ -242,8 +238,10 @@ def body() -> None:
         )
 
         tf.invoke("/inspector_tree/external/send", f"{_BUTTON_PATH}:PointerLeave")
-        time.sleep(_HOVER_SETTLE_SEC)
-        assert _query_hover_slot(tf) is None
+        wait_until(
+            lambda: _query_hover_slot(tf) is None,
+            desc="send-wire PointerLeave clears hovered_id",
+        )
         assert _collect_borders(_snap_main(tf)) == []
 
         # ── (F) Selection + hover on SAME node → selection wins ───
@@ -252,15 +250,18 @@ def body() -> None:
         # selection wrap; the hover wrap is suppressed per the
         # "selection wins on same node" rule.
         tf.invoke("/inspector_tree/external/click", _BUTTON_PATH)
-        time.sleep(_HOVER_SETTLE_SEC)
-        selection_borders = _collect_borders(_snap_main(tf))
-        assert len(selection_borders) == 1, (
-            f"post-select = 1 wrap (selection); got: {selection_borders!r}"
+        wait_until(
+            lambda: len(_collect_borders(_snap_main(tf))) == 1,
+            desc="post-select = 1 wrap (selection)",
         )
+        selection_borders = _collect_borders(_snap_main(tf))
         selection_color = _border_color_tuple(selection_borders[0])
 
         tf.invoke("/inspector_tree/external/hover", _BUTTON_PATH)
-        time.sleep(_HOVER_SETTLE_SEC)
+        wait_until(
+            lambda: _query_hover_slot(tf) == _BUTTON_PATH,
+            desc="same-node hover slot set",
+        )
         snap_f = _snap_main(tf)
         borders_f = _collect_borders(snap_f)
         assert len(borders_f) == 1, (
@@ -282,12 +283,11 @@ def body() -> None:
         # selected button) — both wraps should paint with distinct
         # colors.
         tf.invoke("/inspector_tree/external/hover", _VIEW_MAIN_ROOT_PATH)
-        time.sleep(_HOVER_SETTLE_SEC)
-        snap_g = _snap_main(tf)
-        borders_g = _collect_borders(snap_g)
-        assert len(borders_g) == 2, (
-            f"different-node select+hover = 2 wraps; got: {borders_g!r}"
+        wait_until(
+            lambda: len(_collect_borders(_snap_main(tf))) == 2,
+            desc="different-node select+hover = 2 wraps",
         )
+        borders_g = _collect_borders(_snap_main(tf))
         border_colors_g = {_border_color_tuple(b) for b in borders_g}
         assert selection_color in border_colors_g, (
             f"selection color (Error) must be in border set; "
@@ -307,9 +307,11 @@ def body() -> None:
         for stale_id in ("state", "main"):
             tf.invoke("/inspector_tree/external/click", stale_id)
             tf.invoke("/inspector_tree/external/hover", stale_id)
-            time.sleep(_HOVER_SETTLE_SEC)
-            snap_h = _snap_main(tf)
-            borders_h = _collect_borders(snap_h)
+            wait_until(
+                lambda: _query_hover_slot(tf) == stale_id,
+                desc="stale id stored in the hover slot",
+            )
+            borders_h = _collect_borders(_snap_main(tf))
             assert borders_h == [], (
                 f"inspector-only id {stale_id!r} must produce no wrap; "
                 f"got: {borders_h!r}"
@@ -318,7 +320,10 @@ def body() -> None:
         # ── (I) Stale path soft-fail (path doesn't resolve) ──────
         ghost_path = "Container/Container[ghost_tag_never_existed]"
         tf.invoke("/inspector_tree/external/hover", ghost_path)
-        time.sleep(_HOVER_SETTLE_SEC)
+        wait_until(
+            lambda: _query_hover_slot(tf) == ghost_path,
+            desc="ghost path stored without validation",
+        )
         # The slot is still set to the ghost id (the substrate
         # doesn't validate paths — it's the binding's view fn that
         # soft-fails on find_node_at_path returning None).
@@ -335,18 +340,22 @@ def body() -> None:
         # different ids — the substrate's slot is the second id, the
         # intent stream has Null then Text(second).
         tf.invoke("/inspector_tree/external/hover", None)
-        time.sleep(_HOVER_SETTLE_SEC)
+        wait_until(
+            lambda: _query_hover_slot(tf) is None,
+            desc="hover cleared before the W3C move sequence",
+        )
         # First Enter on button.
         tf.invoke("/inspector_tree/external/send", f"{_BUTTON_PATH}:PointerEnter")
-        time.sleep(_HOVER_SETTLE_SEC)
-        assert _query_hover_slot(tf) == _BUTTON_PATH
+        wait_until(
+            lambda: _query_hover_slot(tf) == _BUTTON_PATH,
+            desc="first Enter sets the hover slot",
+        )
         # W3C: Leave on old, then Enter on new.
         tf.invoke("/inspector_tree/external/send", f"{_BUTTON_PATH}:PointerLeave")
         tf.invoke("/inspector_tree/external/send", f"{_LABEL_PATH}:PointerEnter")
-        time.sleep(_HOVER_SETTLE_SEC)
-        slot_post_move = _query_hover_slot(tf)
-        assert slot_post_move == _LABEL_PATH, (
-            f"post-move hover slot must be the new target; got: {slot_post_move!r}"
+        wait_until(
+            lambda: _query_hover_slot(tf) == _LABEL_PATH,
+            desc="post-move hover slot must be the new target",
         )
 
         # ── (K) intervene on hovered_id is read-only ─────────────

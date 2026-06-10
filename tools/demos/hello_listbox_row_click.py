@@ -21,12 +21,11 @@ Sequence:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_query
 
 
 TARGET_ROW = 3
@@ -38,13 +37,14 @@ def body() -> None:
         assert_eq(initial, None, "initial selected_index")
 
         listbox.click(path=f"main_list#{TARGET_ROW}")
-        # The deferred-input drain runs on the dispatcher's return
-        # path, so a brief sleep lets the next paint cycle settle
-        # before the value query lands.
-        time.sleep(0.1)
-
-        after = listbox.query("/external/selected_index")
-        assert_eq(after, TARGET_ROW, f"post-click selected_index (row {TARGET_ROW})")
+        # The deferred-input drain commits on the dispatcher's return
+        # path; gate on the observed selection (R883 zero-flake).
+        wait_query(
+            listbox,
+            "/external/selected_index",
+            TARGET_ROW,
+            desc=f"post-click selected_index (row {TARGET_ROW})",
+        )
 
 
 if __name__ == "__main__":

@@ -39,7 +39,6 @@ screenshot, no code inference) per [[ai-first-rpc-introspection-obligation]]:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -48,10 +47,11 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_snap,
+    wait_until,
 )
 
 VIEWPORT = (520, 360)
-PAUSE = 0.12
 RING_TAG = "ai-overlay/focus-ring"
 RING_WIDTH = 2
 RING_OFFSET = 2
@@ -117,8 +117,10 @@ def body() -> None:
     with RpcSubprocess("hello-dialog", boot_grace=1.5) as tf:
         # ── (A)+(B)+(C) open + auto-focus Cancel: ring is introspectable
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert_eq(_focused(tf), CANCEL, "open auto-focuses Cancel")
+        wait_until(
+            lambda: _focused(tf) == CANCEL,
+            desc="open auto-focuses Cancel",
+        )
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         _expect_ring_around(snap, CANCEL, "Cancel focused")
 
@@ -132,7 +134,6 @@ def body() -> None:
 
         # ── (E) focus/next moves the ring Cancel -> Delete, no stale ring
         assert_eq(tf.request("focus/next").result.get("focused"), OK, "Tab -> Delete")
-        time.sleep(PAUSE)
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         _expect_ring_around(snap, OK, "Delete focused")
         assert_eq(_count_rings(snap), 1, "still exactly one ring after Tab")
@@ -145,7 +146,6 @@ def body() -> None:
 
         # back to Cancel (wrap) so the click target below is deterministic.
         assert_eq(tf.request("focus/next").result.get("focused"), CANCEL, "wrap -> Cancel")
-        time.sleep(PAUSE)
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         _expect_ring_around(snap, CANCEL, "Cancel re-focused")
 
@@ -162,10 +162,10 @@ def body() -> None:
         assert ring["rect"]["y"] <= cy <= ring["rect"]["y"] + ring["rect"]["h"], \
             "click point is under the ring overlay (y)"
         tf.click(at=(float(cx), float(cy)))
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert find_by_tag(snap, CANCEL) is None, \
-            "click reached Cancel through the ring -> dialog dismissed"
+        snap = wait_snap(
+            tf, lambda s: find_by_tag(s, CANCEL) is None, viewport=VIEWPORT,
+            desc="click reached Cancel through the ring -> dialog dismissed",
+        )
         assert_eq(
             _count_rings(snap),
             1 if find_by_tag(snap, RING_TAG) else 0,
@@ -187,8 +187,10 @@ def body() -> None:
         tcx = trig["rect"]["x"] + trig["rect"]["w"] // 2
         tcy = trig["rect"]["y"] + trig["rect"]["h"] // 2
         tf.click(at=(float(tcx), float(tcy)))
-        time.sleep(PAUSE)
-        assert_eq(_focused(tf), CANCEL, "trigger click reopened the dialog through its ring")
+        wait_until(
+            lambda: _focused(tf) == CANCEL,
+            desc="trigger click reopened the dialog through its ring",
+        )
 
 
 if __name__ == "__main__":

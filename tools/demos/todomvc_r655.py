@@ -41,13 +41,12 @@ across a process restart.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, isolated_storage_dir, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, isolated_storage_dir, run_demo, wait_query
 
 TF_TAG = "main_textfield"
 LIST_TAG = "todo_list"
@@ -68,7 +67,6 @@ def type_text(tf: RpcSubprocess, text: str) -> None:
         # (only happens for unrecognized W3C key names, not single
         # printable chars).
         assert_eq(result, True, f"invoke('key', {ch!r}) recognized")
-    time.sleep(0.05)
 
 
 def submit_enter(tf: RpcSubprocess) -> None:
@@ -77,7 +75,6 @@ def submit_enter(tf: RpcSubprocess) -> None:
     todomvc binding intercepts Enter BEFORE delegating to the
     textfield's invoke channel."""
     tf.key(path=TF_TAG, name="Enter")
-    time.sleep(0.1)
 
 
 def find_node_by_tag(node: dict[str, Any], tag: str) -> dict[str, Any] | None:
@@ -148,12 +145,7 @@ def _body_impl() -> None:
 
         # ── (1) Focus the textfield via focus mgr ─────────────────
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
-        assert_eq(
-            tf.query("/external/state"),
-            "Focused",
-            "post-focus state",
-        )
+        wait_query(tf, "/external/state", "Focused", desc="post-focus state")
 
         # ── (2) Type 'milk' + Enter ───────────────────────────────
         type_text(tf, "milk")
@@ -219,12 +211,7 @@ def _body_impl() -> None:
         # before continuing — three backspaces unwind the spaces.
         for _ in range(3):
             tf.invoke("/external/key", "Backspace")
-        time.sleep(0.05)
-        assert_eq(
-            tf.query("/external/text"),
-            "",
-            "field cleared via Backspace",
-        )
+        wait_query(tf, "/external/text", "", desc="field cleared via Backspace")
 
         # ── (5) Unicode entry ─────────────────────────────────────
         type_text(tf, "✓")

@@ -45,7 +45,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -59,11 +58,12 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_query,
+    wait_until,
 )
 
 EXAMPLE = "hello-range-slider"
 VIEWPORT = (400, 240)
-PAUSE = 0.1
 TAG = "range"
 LOW = "range#low"
 HIGH = "range#high"
@@ -106,7 +106,10 @@ def set_window(tf, lo: float, hi: float) -> None:
     tf.intervene("/external/low", 0.0)
     tf.intervene("/external/high", hi)
     tf.intervene("/external/low", lo)
-    time.sleep(PAUSE)
+    wait_until(
+        lambda: near(_low(tf), lo) and near(_high(tf), hi),
+        desc=f"set_window settled at [{lo}, {hi}]",
+    )
 
 
 def body() -> None:
@@ -131,51 +134,51 @@ def body() -> None:
         # ── (B) keyboard — the low thumb (Tab stop range#low) ───────
         tf.request("focus/set", {"tag": LOW})
         assert_eq(tf.request("focus/get").result.get("focused"), LOW, "low thumb focused")
-        tf.key(path=LOW, name="ArrowRight"); time.sleep(PAUSE)
-        assert near(_low(tf), 0.30), f"ArrowRight low 0.25 -> 0.30, got {_low(tf)}"
+        tf.key(path=LOW, name="ArrowRight")
+        wait_until(lambda: near(_low(tf), 0.30), desc="ArrowRight low 0.25 -> 0.30")
         assert near(_high(tf), 0.75), "high thumb untouched by low-thumb arrow"
         assert_eq(_active(tf), "low", "active follows the moved (low) thumb")
-        tf.key(path=LOW, name="ArrowLeft"); time.sleep(PAUSE)
-        assert near(_low(tf), 0.25), "ArrowLeft low 0.30 -> 0.25"
-        tf.key(path=LOW, name="ArrowUp"); time.sleep(PAUSE)
-        assert near(_low(tf), 0.30), "ArrowUp aliases ArrowRight (low 0.25 -> 0.30)"
-        tf.key(path=LOW, name="ArrowDown"); time.sleep(PAUSE)
-        assert near(_low(tf), 0.25), "ArrowDown aliases ArrowLeft (low 0.30 -> 0.25)"
+        tf.key(path=LOW, name="ArrowLeft")
+        wait_until(lambda: near(_low(tf), 0.25), desc="ArrowLeft low 0.30 -> 0.25")
+        tf.key(path=LOW, name="ArrowUp")
+        wait_until(lambda: near(_low(tf), 0.30), desc="ArrowUp aliases ArrowRight (low 0.25 -> 0.30)")
+        tf.key(path=LOW, name="ArrowDown")
+        wait_until(lambda: near(_low(tf), 0.25), desc="ArrowDown aliases ArrowLeft (low 0.30 -> 0.25)")
         # `End` on the low thumb clamps at the HIGH thumb, never at 1.0.
-        tf.key(path=LOW, name="End"); time.sleep(PAUSE)
-        assert near(_low(tf), 0.75), f"low End clamps at high (0.75), got {_low(tf)}"
+        tf.key(path=LOW, name="End")
+        wait_until(lambda: near(_low(tf), 0.75), desc="low End clamps at high (0.75)")
         assert near(_high(tf), 0.75), "high thumb still 0.75"
-        tf.key(path=LOW, name="Home"); time.sleep(PAUSE)
-        assert near(_low(tf), 0.0), "low Home -> 0.0"
-        tf.key(path=LOW, name="ArrowLeft"); time.sleep(PAUSE)
-        assert near(_low(tf), 0.0), "low ArrowLeft at floor clamps"
+        tf.key(path=LOW, name="Home")
+        wait_until(lambda: near(_low(tf), 0.0), desc="low Home -> 0.0")
+        tf.key(path=LOW, name="ArrowLeft")
+        wait_until(lambda: near(_low(tf), 0.0), desc="low ArrowLeft at floor clamps")
 
         # ── (C) keyboard — the high thumb (Tab stop range#high) ─────
         # Reset to a known window first via the admin intervene channel.
         set_window(tf, 0.25, 0.75)
         tf.request("focus/set", {"tag": HIGH})
         assert_eq(tf.request("focus/get").result.get("focused"), HIGH, "high thumb focused")
-        tf.key(path=HIGH, name="ArrowRight"); time.sleep(PAUSE)
-        assert near(_high(tf), 0.80), f"ArrowRight high 0.75 -> 0.80, got {_high(tf)}"
+        tf.key(path=HIGH, name="ArrowRight")
+        wait_until(lambda: near(_high(tf), 0.80), desc="ArrowRight high 0.75 -> 0.80")
         assert near(_low(tf), 0.25), "low thumb untouched by high-thumb arrow"
         assert_eq(_active(tf), "high", "active follows the moved (high) thumb")
-        tf.key(path=HIGH, name="End"); time.sleep(PAUSE)
-        assert near(_high(tf), 1.0), "high End -> 1.0"
-        tf.key(path=HIGH, name="ArrowRight"); time.sleep(PAUSE)
-        assert near(_high(tf), 1.0), "high ArrowRight at ceiling clamps"
+        tf.key(path=HIGH, name="End")
+        wait_until(lambda: near(_high(tf), 1.0), desc="high End -> 1.0")
+        tf.key(path=HIGH, name="ArrowRight")
+        wait_until(lambda: near(_high(tf), 1.0), desc="high ArrowRight at ceiling clamps")
         # `Home` on the high thumb clamps at the LOW thumb, never at 0.0.
-        tf.key(path=HIGH, name="Home"); time.sleep(PAUSE)
-        assert near(_high(tf), 0.25), f"high Home clamps at low (0.25), got {_high(tf)}"
+        tf.key(path=HIGH, name="Home")
+        wait_until(lambda: near(_high(tf), 0.25), desc="high Home clamps at low (0.25)")
         assert near(_low(tf), 0.25), "low thumb still 0.25"
 
         # ── (D) intervene monotonic clamp + read-only fields ────────
         set_window(tf, 0.3, 0.7)
         # High write below the low thumb clamps to the low value.
-        tf.intervene("/external/high", 0.1); time.sleep(PAUSE)
-        assert near(_high(tf), 0.3), f"high clamps at low (0.3), got {_high(tf)}"
+        tf.intervene("/external/high", 0.1)
+        wait_until(lambda: near(_high(tf), 0.3), desc="high clamps at low (0.3)")
         # Low write above the high thumb clamps to the high value.
-        tf.intervene("/external/low", 0.95); time.sleep(PAUSE)
-        assert near(_low(tf), 0.3), f"low clamps at high (0.3), got {_low(tf)}"
+        tf.intervene("/external/low", 0.95)
+        wait_until(lambda: near(_low(tf), 0.3), desc="low clamps at high (0.3)")
         # `active` is derived (read-only); `state` is SCXML-owned.
         for ro_path, ro_val in (("/external/active", "low"), ("/external/state", "Dragging")):
             raised = False
@@ -206,8 +209,8 @@ def body() -> None:
         # the track, so the LOW thumb (the one grabbed) moves toward the
         # cursor while the HIGH thumb stays and `active` reports `low`.
         tf.drag(from_path=LOW, to_at=(float(tx + int(0.42 * tw)), float(cy)), steps=8)
-        time.sleep(PAUSE)
-        assert_eq(_active(tf), "low", "grabbing the LOW thumb drives the LOW thumb")
+        wait_query(tf, "/external/active", "low",
+                   desc="grabbing the LOW thumb drives the LOW thumb")
         assert _low(tf) > 0.3 + 1e-3, f"low thumb moved RIGHT toward the cursor, got {_low(tf)}"
         assert near(_high(tf), 0.7), f"high thumb untouched by a low-thumb drag, got {_high(tf)}"
         assert _low(tf) <= _high(tf) + 1e-6, "monotonic low <= high after drag"
@@ -215,8 +218,8 @@ def body() -> None:
         # toward the cursor, the low thumb stays, active reports `high`.
         set_window(tf, 0.3, 0.7)
         tf.drag(from_path=HIGH, to_at=(float(tx + int(0.58 * tw)), float(cy)), steps=8)
-        time.sleep(PAUSE)
-        assert_eq(_active(tf), "high", "grabbing the HIGH thumb drives the HIGH thumb")
+        wait_query(tf, "/external/active", "high",
+                   desc="grabbing the HIGH thumb drives the HIGH thumb")
         assert _high(tf) < 0.7 - 1e-3, f"high thumb moved LEFT toward the cursor, got {_high(tf)}"
         assert near(_low(tf), 0.3), f"low thumb untouched by a high-thumb drag, got {_low(tf)}"
         assert _low(tf) <= _high(tf) + 1e-6, "monotonic low <= high after drag"

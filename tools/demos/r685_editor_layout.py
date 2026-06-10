@@ -37,12 +37,11 @@ Section roadmap (≥40 assertions across A–H):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcError, RpcSubprocess, run_demo  # noqa: E402
+from rpc_verify import RpcError, RpcSubprocess, run_demo, wait_until  # noqa: E402
 
 # ─── constants mirrored from the binding ────────────────────────────
 
@@ -72,8 +71,6 @@ _SPLIT_OUTER_RATIO_DEFAULT = 0.06
 _SPLIT_INNER_V_RATIO_DEFAULT = 0.78
 _SPLIT_MIDDLE_H_RATIO_DEFAULT = 0.18
 _SPLIT_INNER_H_RATIO_DEFAULT = 0.78
-
-_SETTLE_SEC = 0.30
 
 
 # ─── snapshot + introspect helpers ──────────────────────────────────
@@ -158,8 +155,6 @@ def _section(label: str) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-dock-panels-editor") as tf:
-        time.sleep(_SETTLE_SEC)
-
         # ─── (A) Substrate sanity ────────────────────────────────────
         _section("A: substrate sanity")
         scene = _snapshot(tf)
@@ -237,13 +232,12 @@ def body() -> None:
             {"path": _VIEWPORT_BTN_TAG},
         )
         assert click_resp is not None, "E.1 click RPC returns a response"
-        time.sleep(_SETTLE_SEC)
         # After a press + release the SCXML returns to Hover (the
         # canonical Pressed → Hover transition; the binding's
         # update reducer mirrors the click into the counter Signal).
-        post_state = _query_button_state(tf)
-        assert post_state in {"Hover", "Idle"}, (
-            f"E.2 post-click button state {post_state!r} settled to Hover/Idle"
+        wait_until(
+            lambda: _query_button_state(tf) in {"Hover", "Idle"},
+            desc="E.2 post-click button state settled to Hover/Idle",
         )
         # Second snapshot — counter text should reflect the
         # increment ("Clicks: 1" or higher).
@@ -308,9 +302,10 @@ def body() -> None:
             },
         )
         assert drag_resp is not None, "F.2 scene/drag returns a response"
-        time.sleep(_SETTLE_SEC)
-        ratio_after = _query_splitter_ratio(tf, _SPLIT_INNER_H_TAG)
-        assert ratio_after is not None, "F.3 inner-H ratio readable post-drag"
+        ratio_after = wait_until(
+            lambda: _query_splitter_ratio(tf, _SPLIT_INNER_H_TAG),
+            desc="F.3 inner-H ratio readable post-drag",
+        )
         # Ratio stays within the SplitterExternal default clamp
         # (0.05, 0.95). The drag may not change the ratio if the
         # cursor lands at the same fractional position; the

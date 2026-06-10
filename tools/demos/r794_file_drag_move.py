@@ -43,13 +43,13 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_until,
 )
 
 EXAMPLE = "hello-file-manager"
 VIEWPORT = (460, 520)
 WIN = (480, 540)  # the example's fixed window size (WIN_W x WIN_H)
 ACCENT = (0x19, 0x76, 0xD2)  # ColorRole::Accent (light) — the drop-target outline
-PAUSE = 0.18
 
 DIR = "fb_dir"
 
@@ -82,10 +82,10 @@ def row_tag(tf, name: str) -> str:
 
 
 def settle(tf) -> None:
-    """Force a fresh paint frame so the next `scene/drag` resolves row rects
-    against the *current* listing (drag endpoints come from the last painted
-    layout)."""
-    time.sleep(PAUSE)
+    """Refresh the painted layout so the next `scene/drag` resolves row
+    rects against the *current* listing. A paint snapshot re-runs the
+    producer and re-stores the frame inside its own dispatch (R705), so
+    no wall-clock wait is needed (R883 zero-flake)."""
     tf.snapshot(source="paint", viewport=VIEWPORT)
 
 
@@ -292,9 +292,25 @@ def native_live_pixel_guard() -> None:
             proc = subprocess.Popen(
                 [str(helper), str(cx0), str(cy0), str(cx1), str(cy1), "12", "1000"],
             )
-            time.sleep(0.75)  # press(80ms) + march(~240ms) done → mid-hold
-            _capture(ffmpeg, display, ww, wh, wx, wy, during_png)
+            # R883 zero-flake: gate on the LIVE drag introspection — the
+            # drop_target slot flips to the folder row once the native
+            # march arrives over it (mid-hold), replacing the fixed
+            # press+march timing guess.
+            wait_until(
+                lambda: tf.query(dpath("drop_target")) == f"row:{dst_idx}",
+                timeout=6.0, interval=0.04,
+                desc="native drag hold reports assets as the drop target",
+            )
             mid_drop = tf.query(dpath("drop_target"))  # introspect the live drag
+            # Poll the SCREEN during the hold until the Accent outline is
+            # presented (the stored-frame re-store is sync, the real
+            # present is not).
+            acc_before = _count_accent(before_png, row_region)
+            _capture(ffmpeg, display, ww, wh, wx, wy, during_png)
+            hold_deadline = time.monotonic() + 0.9
+            while (_count_accent(during_png, row_region) <= acc_before + 30
+                   and time.monotonic() < hold_deadline):
+                _capture(ffmpeg, display, ww, wh, wx, wy, during_png)
             try:
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -304,13 +320,15 @@ def native_live_pixel_guard() -> None:
             if proc.returncode != 0:
                 print(f"  PHASE 2 SKIP: XTest drag exited {proc.returncode} (no live X pointer?)")
                 return
-            time.sleep(1.2)  # >=1s settle so the after-frame is past mid-repaint
-            _capture(ffmpeg, display, ww, wh, wx, wy, after_png)
-
             # Witness 1 — the NATIVE pointer drove winit -> router -> drag_release,
             # so README.md moved into assets/ (the RPC path was untouched here).
-            assert "README.md" not in names(tf), \
-                "native drag must move README.md out of /proj via the winit path"
+            # Gate on the observed listing (the helper exited, but the
+            # X event delivery into winit is async).
+            wait_until(
+                lambda: "README.md" not in names(tf),
+                desc="native drag must move README.md out of /proj via the winit path",
+            )
+            _capture(ffmpeg, display, ww, wh, wx, wy, after_png)
             assert_eq(tf.invoke(dpath("navigate"), "assets"), "/proj/assets",
                       "navigate into the drop folder")
             assert "README.md" in names(tf), "README.md landed inside /proj/assets"
@@ -319,7 +337,6 @@ def native_live_pixel_guard() -> None:
             # the hold (the new R794 paint), and the live pixels actually changed.
             assert mid_drop == f"row:{dst_idx}", \
                 f"the held drag reports assets (row {dst_idx}) as the drop target, got {mid_drop}"
-            acc_before = _count_accent(before_png, row_region)
             acc_during = _count_accent(during_png, row_region)
             assert acc_during > acc_before + 30, (
                 f"the Accent drop outline must appear on the folder row during the drag: "

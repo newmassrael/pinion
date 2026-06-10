@@ -32,7 +32,6 @@ Run from the workspace root.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -42,10 +41,10 @@ from rpc_verify import (  # noqa: E402
     find_by_tag,
     rect_of,
     run_demo,
+    wait_until,
 )
 
 VIEWPORT = (520, 360)
-PAUSE = 0.12
 
 AUTOSAVE = "autosave"
 OFFLINE = "offline"
@@ -89,8 +88,10 @@ def _body() -> None:
         assert _overlay(tf, AUTOSAVE_POP) is None, "no autosave overlay while hidden"
 
         tf.hover(path=AUTOSAVE)
-        time.sleep(PAUSE)
-        assert_eq(_autosave_slot(tf, "visible"), True, "hover shows the autosave tooltip")
+        wait_until(
+            lambda: _autosave_slot(tf, "visible"),
+            desc="hover shows the autosave tooltip",
+        )
         assert_eq(_autosave_slot(tf, "hovered"), True, "autosave control is hovered")
         assert_eq(_autosave_slot(tf, "focused"), False, "hover does not focus")
 
@@ -106,7 +107,8 @@ def _body() -> None:
 
         # ── (B) hoverable: hovering the tooltip body keeps it shown ───
         tf.hover(path=AUTOSAVE_POP)
-        time.sleep(PAUSE)
+        # No-change verification (the dispatch commits before the RPC
+        # response): the tooltip must STILL be visible after a body hover.
         assert_eq(
             _autosave_slot(tf, "visible"),
             True,
@@ -116,17 +118,17 @@ def _body() -> None:
 
         # ── hover away hides it ───────────────────────────────────────
         tf.hover(at=EMPTY)
-        time.sleep(PAUSE)
-        assert_eq(_autosave_slot(tf, "visible"), False, "hover-away hides the tooltip")
+        wait_until(
+            lambda: not _autosave_slot(tf, "visible"),
+            desc="hover-away hides the tooltip",
+        )
         assert _overlay(tf, AUTOSAVE_POP) is None, "autosave overlay gone after hover-away"
 
         # ── (C) focus trigger + dismiss + latch reset ─────────────────
         tf.request("focus/set", {"tag": AUTOSAVE})
-        time.sleep(PAUSE)
-        assert_eq(
-            tf.request("focus/get").result.get("focused"),
-            AUTOSAVE,
-            "focus/set lands on the autosave control",
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == AUTOSAVE,
+            desc="focus/set lands on the autosave control",
         )
         assert_eq(_autosave_slot(tf, "focused"), True, "autosave control reports focus")
         assert_eq(_autosave_slot(tf, "visible"), True, "keyboard focus shows the tooltip")
@@ -135,27 +137,35 @@ def _body() -> None:
         # dismiss while focus stays (WCAG dismissible) — RPC action
         # channel, the same funnel the shell's Escape key uses.
         tf.invoke("/external/dismiss", None)
-        time.sleep(PAUSE)
-        assert_eq(_autosave_slot(tf, "dismissed"), True, "dismiss latch set")
+        wait_until(
+            lambda: _autosave_slot(tf, "dismissed"),
+            desc="dismiss latch set",
+        )
         assert_eq(_autosave_slot(tf, "visible"), False, "dismiss hides while still focused")
         assert _overlay(tf, AUTOSAVE_POP) is None, "dismissed overlay not painted"
         assert_eq(_autosave_slot(tf, "focused"), True, "focus unchanged by dismiss")
 
         # blur clears the latch so a later focus re-shows it.
         tf.request("focus/set", {"tag": OFFLINE})
-        time.sleep(PAUSE)
-        assert_eq(_autosave_slot(tf, "focused"), False, "focus moved off autosave")
+        wait_until(
+            lambda: not _autosave_slot(tf, "focused"),
+            desc="focus moved off autosave",
+        )
         assert_eq(_autosave_slot(tf, "dismissed"), False, "blur clears the dismiss latch")
         tf.request("focus/set", {"tag": AUTOSAVE})
-        time.sleep(PAUSE)
-        assert_eq(_autosave_slot(tf, "visible"), True, "re-focus after dismiss re-shows")
+        wait_until(
+            lambda: _autosave_slot(tf, "visible"),
+            desc="re-focus after dismiss re-shows",
+        )
         # park focus away from autosave for the offline checks.
         tf.request("focus/set", {"tag": OFFLINE})
-        time.sleep(PAUSE)
 
         # ── (D) flip + clamp (offline, low-right) ─────────────────────
         # offline already has focus from the park above -> tooltip shown.
-        assert_eq(_offline_slot(tf, "visible"), True, "offline tooltip shown on focus")
+        wait_until(
+            lambda: _offline_slot(tf, "visible"),
+            desc="offline tooltip shown on focus",
+        )
         node = _overlay(tf, OFFLINE_POP)
         assert node is not None, "offline overlay painted"
         assert_eq(_rect_tuple(node), OFFLINE_TIP_RECT, "offline tooltip flips + clamps")
@@ -172,15 +182,21 @@ def _body() -> None:
 
         # offline hover trigger also works (extra external, scene/hover).
         tf.request("focus/set", {"tag": AUTOSAVE})  # drop offline focus
-        time.sleep(PAUSE)
-        assert_eq(_offline_slot(tf, "visible"), False, "offline hidden after blur")
+        wait_until(
+            lambda: not _offline_slot(tf, "visible"),
+            desc="offline hidden after blur",
+        )
         tf.hover(path=OFFLINE)
-        time.sleep(PAUSE)
-        assert_eq(_offline_slot(tf, "visible"), True, "hover shows the offline tooltip")
+        wait_until(
+            lambda: _offline_slot(tf, "visible"),
+            desc="hover shows the offline tooltip",
+        )
         assert _overlay(tf, OFFLINE_POP) is not None, "hover-shown offline overlay painted"
         tf.hover(at=EMPTY)
-        time.sleep(PAUSE)
-        assert_eq(_offline_slot(tf, "visible"), False, "hover-away hides offline")
+        wait_until(
+            lambda: not _offline_slot(tf, "visible"),
+            desc="hover-away hides offline",
+        )
 
         # ── (E) Escape key dismiss (the real-keyboard funnel) ─────────
         # `scene/key "Escape"` routes through the shell's apply_key (the
@@ -189,18 +205,26 @@ def _body() -> None:
         # focus off autosave first so the dismiss latch's falling edge is
         # the hover-leave (not gated by a lingering focus episode).
         tf.request("focus/set", {"tag": OFFLINE})
-        time.sleep(PAUSE)
-        assert_eq(_autosave_slot(tf, "focused"), False, "autosave unfocused for the Escape test")
+        wait_until(
+            lambda: not _autosave_slot(tf, "focused"),
+            desc="autosave unfocused for the Escape test",
+        )
         tf.hover(path=AUTOSAVE)
-        time.sleep(PAUSE)
-        assert_eq(_autosave_slot(tf, "visible"), True, "hover re-shows autosave for Escape test")
+        wait_until(
+            lambda: _autosave_slot(tf, "visible"),
+            desc="hover re-shows autosave for Escape test",
+        )
         tf.key(path=AUTOSAVE, name="Escape")
-        time.sleep(PAUSE)
-        assert_eq(_autosave_slot(tf, "dismissed"), True, "Escape sets the dismiss latch")
+        wait_until(
+            lambda: _autosave_slot(tf, "dismissed"),
+            desc="Escape sets the dismiss latch",
+        )
         assert_eq(_autosave_slot(tf, "visible"), False, "Escape dismisses while still hovered")
         tf.hover(at=EMPTY)
-        time.sleep(PAUSE)
-        assert_eq(_autosave_slot(tf, "dismissed"), False, "hover-away clears latch after Escape")
+        wait_until(
+            lambda: not _autosave_slot(tf, "dismissed"),
+            desc="hover-away clears latch after Escape",
+        )
 
 
 if __name__ == "__main__":

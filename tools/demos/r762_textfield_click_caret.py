@@ -26,12 +26,11 @@ Run from the workspace root:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, find_by_tag, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, find_by_tag, run_demo, wait_query
 
 TF_TAG = "main_textfield"
 VIEWPORT = (420, 200)
@@ -48,9 +47,12 @@ def field_rect(tf: RpcSubprocess):
 
 
 def click_caret(tf: RpcSubprocess, x: float, y: float) -> int:
-    """Click at window (x, y) and return the resulting caret byte."""
+    """Click at window (x, y) and return the resulting caret byte.
+
+    The deferred-input drain commits inside the click dispatch (before
+    the RPC response), so the follow-up query reads the post-press
+    caret directly (R883 zero-flake)."""
     tf.click(at=(x, y))
-    time.sleep(0.06)  # let the deferred-input drain apply the press
     return tf.query("/external/caret")
 
 
@@ -63,13 +65,11 @@ def body() -> None:
 
         # Focus + type the fixture text.
         tf.request("focus/set", {"tag": TF_TAG})
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/state"), "Focused", "focused after focus/set")
+        wait_query(tf, "/external/state", "Focused", desc="focused after focus/set")
         for ch in TEXT:
             key = "Space" if ch == " " else ch
             assert_eq(tf.invoke("/external/key", key), True, f"type {key!r}")
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/text"), TEXT, "typed text")
+        wait_query(tf, "/external/text", TEXT, desc="typed text")
         assert_eq(tf.query("/external/caret"), len(TEXT), "caret at end after typing")
 
         (fx, fy, fw, fh) = field_rect(tf)
@@ -119,8 +119,7 @@ def body() -> None:
         # at 0, insert 'X', and the text gains a leading char.
         assert_eq(click_caret(tf, fx + 2, y_mid), 0, "caret to 0 for insert")
         assert_eq(tf.invoke("/external/key", "X"), True, "type X at caret 0")
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/text"), "X" + TEXT, "X inserted at front")
+        wait_query(tf, "/external/text", "X" + TEXT, desc="X inserted at front")
         assert_eq(tf.query("/external/caret"), 1, "caret after inserted X")
 
 

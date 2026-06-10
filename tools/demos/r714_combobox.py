@@ -47,7 +47,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -60,11 +59,12 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_snap,
+    wait_until,
 )
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent
 VIEWPORT = (560, 420)
-PAUSE = 0.12
 
 TRIGGER = "combo_trigger"
 OPTIONS = "combo_options"
@@ -138,9 +138,10 @@ def body() -> None:
 
         # ── (B) open via trigger click ──────────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert _present(snap, BARRIER), "transparent barrier appears on open"
+        snap = wait_snap(
+            tf, lambda s: _present(s, BARRIER), viewport=VIEWPORT,
+            desc="transparent barrier appears on open",
+        )
         assert _present(snap, PANEL), "dropdown panel appears on open"
         for i, t in enumerate(OPT):
             assert _present(snap, t), f"option {i} painted on open"
@@ -161,23 +162,32 @@ def body() -> None:
         tf.request("focus/set", {"tag": TRIGGER})
         assert_eq(tf.request("focus/get").result.get("focused"), TRIGGER, "trigger focused")
         tf.key(path=TRIGGER, name="ArrowDown")  # fresh open: lands on 0
-        time.sleep(PAUSE)
-        assert_eq(_focused_index(tf), 0, "first ArrowDown lands active descendant on 0")
+        wait_until(
+            lambda: _focused_index(tf) == 0,
+            desc="first ArrowDown lands active descendant on 0",
+        )
         tf.key(path=TRIGGER, name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(_focused_index(tf), 1, "ArrowDown steps active descendant to 1")
+        wait_until(
+            lambda: _focused_index(tf) == 1,
+            desc="ArrowDown steps active descendant to 1",
+        )
         tf.key(path=TRIGGER, name="End")
-        time.sleep(PAUSE)
-        assert_eq(_focused_index(tf), 4, "End jumps active descendant to last")
+        wait_until(
+            lambda: _focused_index(tf) == 4,
+            desc="End jumps active descendant to last",
+        )
         tf.key(path=TRIGGER, name="Home")
-        time.sleep(PAUSE)
-        assert_eq(_focused_index(tf), 0, "Home jumps active descendant to first")
+        wait_until(
+            lambda: _focused_index(tf) == 0,
+            desc="Home jumps active descendant to first",
+        )
 
         # ── (D) commit an option via click ──────────────────────────
         tf.click(path=OPT[2])  # "Medium"
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "committing an option closes the popup"
+        snap = wait_snap(
+            tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+            desc="committing an option closes the popup",
+        )
         assert not _present(snap, BARRIER), "barrier gone after commit"
         assert_eq(_selected_index(tf), 2, "listbox records the committed index")
         assert_eq(_value(tf), "Medium", "trigger value reflects the committed option")
@@ -187,40 +197,48 @@ def body() -> None:
 
         # ── (E) click-OUTSIDE (barrier) dismiss ─────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
-        assert _present(tf.snapshot(source="paint", viewport=VIEWPORT), PANEL), "re-opened"
+        wait_snap(
+            tf, lambda s: _present(s, PANEL), viewport=VIEWPORT,
+            desc="re-opened",
+        )
         tf.click(at=OUTSIDE_POINT)  # lands on the transparent barrier
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "click outside the panel dismisses the popup"
+        snap = wait_snap(
+            tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+            desc="click outside the panel dismisses the popup",
+        )
         assert not _present(snap, BARRIER), "barrier gone after click-outside dismiss"
         assert_eq(_selected_index(tf), 2, "click-outside does NOT change the selection")
         assert_eq(_value(tf), "Medium", "value unchanged by click-outside dismiss")
 
         # ── (F) Escape dismiss ──────────────────────────────────────
         tf.click(path=TRIGGER)
-        time.sleep(PAUSE)
+        wait_snap(
+            tf, lambda s: _present(s, PANEL), viewport=VIEWPORT,
+            desc="re-opened for Escape",
+        )
         tf.request("focus/set", {"tag": TRIGGER})
-        assert _present(tf.snapshot(source="paint", viewport=VIEWPORT), PANEL), "re-opened for Escape"
         tf.key(path=TRIGGER, name="Escape")
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Escape dismisses the popup"
+        snap = wait_snap(
+            tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+            desc="Escape dismisses the popup",
+        )
         assert_eq(_selected_index(tf), 2, "Escape does NOT change the selection")
 
         # ── (G) keyboard open + commit ──────────────────────────────
         tf.request("focus/set", {"tag": TRIGGER})
         tf.key(path=TRIGGER, name="ArrowDown")  # opens (closed -> open)
-        time.sleep(PAUSE)
-        assert _present(tf.snapshot(source="paint", viewport=VIEWPORT), PANEL), "ArrowDown opens closed combobox"
+        wait_snap(
+            tf, lambda s: _present(s, PANEL), viewport=VIEWPORT,
+            desc="ArrowDown opens closed combobox",
+        )
         tf.key(path=TRIGGER, name="ArrowDown")  # active descendant -> step
         tf.key(path=TRIGGER, name="ArrowDown")
-        time.sleep(PAUSE)
         idx_before = _focused_index(tf)
         tf.key(path=TRIGGER, name="Enter")  # commit the active option
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert not _present(snap, PANEL), "Enter commits + closes"
+        snap = wait_snap(
+            tf, lambda s: not _present(s, PANEL), viewport=VIEWPORT,
+            desc="Enter commits + closes",
+        )
         assert_eq(_selected_index(tf), idx_before, "Enter committed the active descendant")
         assert_eq(_value(tf), LABELS[idx_before], "value reflects keyboard commit")
 

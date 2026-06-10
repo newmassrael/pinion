@@ -32,7 +32,6 @@ R691 atomic verification scope (>=30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -41,6 +40,9 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_stderr,
+    wait_until,
 )
 
 VIEWPORT = (520, 320)
@@ -50,7 +52,6 @@ ITEMS = [
     ["Undo", "Redo", "Cut", "Copy", "Paste"],
     ["Zoom In", "Zoom Out", "Reset Zoom"],
 ]
-PAUSE = 0.12
 
 
 def _find(node, tag):
@@ -93,12 +94,10 @@ def _assert_command(tf, payload: str, label: str) -> None:
     intent walk, which logs `shell: intent menu.command payload=Text(..)`
     to stderr before the `scene/intents` RPC poll can race it (the §5.20
     single-consumer drain, see `handle_tail`). So the stderr log is the
-    observable channel for input-driven command intents."""
+    observable channel for input-driven command intents — polled, since
+    the harness reads stderr through a pump thread (R883 zero-flake)."""
     needle = f'shell: intent menu.command payload=Text("{payload}")'
-    tail = tf.stderr_tail(80)
-    assert any(needle in ln for ln in tail), (
-        f"{label}: command {payload!r} not logged; recent stderr={tail[-6:]!r}"
-    )
+    wait_stderr(tf, needle, n=80, desc=f"{label}: command {payload!r} logged")
 
 
 def body() -> None:
@@ -123,9 +122,8 @@ def body() -> None:
 
         # ── (B) click a title opens its dropdown ────────────────────
         tf.click(path="menu#t0")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/open", 0, desc="click File -> open 0")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(tf.query("/external/open"), 0, "click File -> open 0")
         assert _find(snap, "menu_dropdown") is not None, "dropdown appears when open"
         for i in range(len(ITEMS[0])):
             assert _find(snap, f"menu#i{i}") is not None, f"item menu#i{i} must exist"
@@ -144,31 +142,26 @@ def body() -> None:
 
         # ── (C) re-click the open title closes it ───────────────────
         tf.click(path="menu#t0")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/open", None, desc="re-click File -> closed")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(tf.query("/external/open"), None, "re-click File -> closed")
         assert _find(snap, "menu_dropdown") is None, "dropdown gone after close"
 
         # ── (D) switch menus ────────────────────────────────────────
         tf.click(path="menu#t1")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), 1, "click Edit -> open 1")
+        wait_query(tf, "/external/open", 1, desc="click Edit -> open 1")
         tf.click(path="menu#t2")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/open", 2, desc="click View -> switch to open 2")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
-        assert_eq(tf.query("/external/open"), 2, "click View -> switch to open 2")
         dd_text = _all_text(_find(snap, "menu_dropdown"))
         assert "Zoom In" in dd_text, "switched dropdown shows View items"
         tf.click(path="menu#t2")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), None, "re-click View -> closed")
+        wait_query(tf, "/external/open", None, desc="re-click View -> closed")
 
         # ── (E) hover highlights the active item, no activation ─────
         tf.click(path="menu#t0")
-        time.sleep(PAUSE)
+        wait_query(tf, "/external/open", 0, desc="click File -> reopen for hover")
         tf.invoke("/external/send", "i2:PointerEnter")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 2, "hover item 2 -> active 2")
+        wait_query(tf, "/external/active", 2, desc="hover item 2 -> active 2")
         assert_eq(tf.query("/external/open"), 0, "hover does not activate (menu stays open)")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert _is_filled(snap, "menu#i2"), "active item is highlighted"
@@ -176,66 +169,52 @@ def body() -> None:
 
         # ── (F) clicking an item fires command + closes ─────────────
         tf.click(path="menu#i1")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), None, "item click closes the menu")
+        wait_query(tf, "/external/open", None, desc="item click closes the menu")
         _assert_command(tf, "0.1", "item click")
 
         # ── (G) WAI-ARIA §3.5 keyboard model ────────────────────────
         tf.request("focus/set", {"tag": "menu"})
-        time.sleep(0.1)
-        focus = tf.request("focus/get").result
-        assert_eq(focus.get("focused"), "menu", "menubar owns focus")
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == "menu",
+            desc="menubar owns focus",
+        )
 
         tf.key(path="menu", name="ArrowRight")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/bar_focus"), 1, "ArrowRight: bar_focus 0 -> 1")
+        wait_query(tf, "/external/bar_focus", 1, desc="ArrowRight: bar_focus 0 -> 1")
         tf.key(path="menu", name="ArrowRight")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/bar_focus"), 2, "ArrowRight: 1 -> 2")
+        wait_query(tf, "/external/bar_focus", 2, desc="ArrowRight: 1 -> 2")
         tf.key(path="menu", name="ArrowRight")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/bar_focus"), 0, "ArrowRight wraps: 2 -> 0")
+        wait_query(tf, "/external/bar_focus", 0, desc="ArrowRight wraps: 2 -> 0")
         assert_eq(tf.query("/external/open"), None, "arrow nav while closed never opens")
 
         tf.key(path="menu", name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), 0, "ArrowDown opens focused menu")
+        wait_query(tf, "/external/open", 0, desc="ArrowDown opens focused menu")
         assert_eq(tf.query("/external/active"), 0, "open highlights first item")
         tf.key(path="menu", name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 1, "ArrowDown: item 0 -> 1")
+        wait_query(tf, "/external/active", 1, desc="ArrowDown: item 0 -> 1")
         tf.key(path="menu", name="ArrowUp")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 0, "ArrowUp: item 1 -> 0")
+        wait_query(tf, "/external/active", 0, desc="ArrowUp: item 1 -> 0")
         tf.key(path="menu", name="ArrowUp")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 3, "ArrowUp wraps: 0 -> last (3)")
+        wait_query(tf, "/external/active", 3, desc="ArrowUp wraps: 0 -> last (3)")
         tf.key(path="menu", name="Home")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 0, "Home -> first item")
+        wait_query(tf, "/external/active", 0, desc="Home -> first item")
         tf.key(path="menu", name="End")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/active"), 3, "End -> last item")
+        wait_query(tf, "/external/active", 3, desc="End -> last item")
 
         tf.key(path="menu", name="ArrowRight")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), 1, "ArrowRight in menu -> switch to Edit")
+        wait_query(tf, "/external/open", 1, desc="ArrowRight in menu -> switch to Edit")
         assert_eq(tf.query("/external/active"), 0, "switched menu highlights first")
         tf.key(path="menu", name="ArrowLeft")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), 0, "ArrowLeft in menu -> back to File")
+        wait_query(tf, "/external/open", 0, desc="ArrowLeft in menu -> back to File")
 
         tf.key(path="menu", name="Escape")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), None, "Escape closes the menu")
+        wait_query(tf, "/external/open", None, desc="Escape closes the menu")
 
         # Keyboard activation emits the command intent.
         tf.key(path="menu", name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), 0, "ArrowDown reopens File")
+        wait_query(tf, "/external/open", 0, desc="ArrowDown reopens File")
         tf.key(path="menu", name="Enter")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/open"), None, "Enter activates + closes")
+        wait_query(tf, "/external/open", None, desc="Enter activates + closes")
         _assert_command(tf, "0.0", "keyboard Enter")
 
 

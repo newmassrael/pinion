@@ -66,7 +66,6 @@ COL_W = 130
 TABLE_TAG = "ghs"
 H_SCROLL_TAG = "ghs_hscroll"
 COLS_TAG = "ghs_cols"
-PAUSE = 0.12
 
 
 def col_path(slot: str) -> str:
@@ -92,17 +91,26 @@ def cell_x(rects, tag: str) -> int:
     return rects[tag][0]
 
 
+def _hscroll_offset_x(tf) -> int:
+    snap = tf.snapshot(source="paint", viewport=WIN)
+    node = find_by_tag(snap, H_SCROLL_TAG)
+    assert node is not None, "horizontal scroll present"
+    return int(node.get("offset_x", -1))
+
+
 def hscroll_max_x(tf) -> int:
     """Scroll the outer horizontal scroll to the clamp; offset_x then reads the
     live extent (total_w - viewport_w, R784)."""
     tf.scroll(H_SCROLL_TAG, to=(10 ** 9, 0))
-    time.sleep(PAUSE)
-    snap = tf.snapshot(source="paint", viewport=WIN)
-    node = find_by_tag(snap, H_SCROLL_TAG)
-    assert node is not None, "horizontal scroll present"
-    offset = int(node.get("offset_x", -1))
+    offset = wait_until(
+        lambda: (lambda o: o if o > 0 else None)(_hscroll_offset_x(tf)),
+        desc="h-scroll clamps at a positive max offset",
+    )
     tf.scroll(H_SCROLL_TAG, to=(0, 0))  # reset
-    time.sleep(PAUSE)
+    wait_until(
+        lambda: _hscroll_offset_x(tf) == 0,
+        desc="h-scroll reset back to 0",
+    )
     return offset
 
 
@@ -118,7 +126,6 @@ def drag_grabber(tf, col: int, dx: int) -> None:
     frm = (float(gx + gw // 2), float(gy + gh // 2))
     to = (float(gx + gw // 2 + dx), float(gy + gh // 2))
     tf.drag(from_at=frm, to_at=to, steps=10)
-    time.sleep(PAUSE)
 
 
 def body() -> None:
@@ -306,9 +313,20 @@ def native_live_pixel_guard() -> None:
             if run.returncode != 0:
                 print(f"  PHASE 2 SKIP: XTest drag exited {run.returncode} (no live X pointer?)")
                 return
-            time.sleep(1.2)  # >=1s settle so the after-frame is past mid-repaint
+            # R883 zero-flake: gate on the observed width model (the X
+            # event delivery into winit is async), then poll the SCREEN
+            # until the presented pixels actually changed.
+            wait_until(
+                lambda: tf.query(col_path("width.2")) > w2_before,
+                desc="native drag widened col 2 through the winit path",
+            )
             w2_after = tf.query(col_path("width.2"))
             _capture(ffmpeg, display, ww, wh, wx, wy, after_png)
+            present_deadline = time.monotonic() + 10.0
+            while (_frac_pixels_changed(before_png, after_png) <= 0.01
+                   and time.monotonic() < present_deadline):
+                time.sleep(0.25)  # re-grab poll interval
+                _capture(ffmpeg, display, ww, wh, wx, wy, after_png)
 
             # Decisive witness: the NATIVE pointer drove the full winit -> router
             # -> capture -> pointer_move arc, so the width model grew (the RPC

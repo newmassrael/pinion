@@ -43,7 +43,6 @@ where the ring paints can never drift.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -54,6 +53,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_focus_ring_concentric,
     run_demo,
+    wait_until,
 )
 
 # Every GUI example that seeds a `FocusManager` tab order. TUI siblings
@@ -104,7 +104,8 @@ def _sweep_example(example: str) -> tuple[int, int]:
                 # modal trap member while the modal is closed, etc.) —
                 # skip; other tab stops still exercise the path.
                 continue
-            time.sleep(0.06)
+            # focus/set commits its repaint + paint re-store before the
+            # response (R705 dirty-on-mutation), so a plain read follows.
             snap = app.snapshot(source="paint")
             framed = assert_focus_ring_concentric(snap)
             if framed is not None:
@@ -121,13 +122,12 @@ def _sweep_scrolled_listbox() -> int:
     with RpcSubprocess("hello-listbox", boot_grace=1.0) as lb:
         lb.request("focus/set", {"tag": "main_list"})
         lb.request("scene/key", {"path": "main_list_scroll", "key": "PageDown"})
-        time.sleep(0.1)
         # focus a row within the scrolled-into-view window
         lb.request("scene/rewind", {"path": "/external/focused_index", "value": 5})
-        time.sleep(0.2)
-        snap = lb.snapshot(source="paint")
-        framed = assert_focus_ring_concentric(snap)
-        assert framed is not None, "scrolled listbox row must carry a ring"
+        framed = wait_until(
+            lambda: assert_focus_ring_concentric(lb.snapshot(source="paint")),
+            desc="scrolled listbox row must carry a ring",
+        )
         assert framed.startswith("main_list#"), f"framed wrong node: {framed}"
         checks += 1
     return checks

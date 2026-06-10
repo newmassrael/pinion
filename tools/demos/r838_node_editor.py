@@ -53,7 +53,6 @@ Verified (>= 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -66,7 +65,6 @@ from rpc_verify import (  # noqa: E402
 )
 
 VIEWPORT = (640, 420)
-PAUSE = 0.10
 
 G = "node_graph"
 
@@ -238,7 +236,6 @@ def body() -> None:
         edge_ids = _ids(tf, "edge_ids")
         assert edge_ids, "at least one edge remains"
         assert find_by_tag(snap, f"{G}#edge_{edge_ids[0]}") is not None, "a bezier edge painted"
-        time.sleep(PAUSE)
 
 
 if __name__ == "__main__":

@@ -83,7 +83,6 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -95,11 +94,8 @@ from rpc_verify import (  # noqa: E402
     isolated_storage_dir,
     node_center,
     run_demo,
+    wait_until,
 )
-
-# Settle interval after an action so the next paint cycle observes
-# the mutation.
-_SETTLE_SEC = 0.15
 
 # Stress consumer size — matches the R682.B SEED plan.
 _SEED_N = 100
@@ -183,7 +179,20 @@ def _force_paint(tf) -> None:
     redraw without altering the scene's observable shape.
     """
     _snap(tf)
-    time.sleep(_SETTLE_SEC)
+
+
+def _wait_paint_beyond(tf, baseline: int, desc: str) -> None:
+    """Drive redraw arcs until `paint_count` strictly exceeds `baseline`
+    (R883 zero-flake). Real paint cycles fire only on winit's
+    `RedrawRequested`, asynchronous to RPC dispatch — so the observed
+    counter, not wall-clock, is the gate."""
+    def advanced():
+        if _cache_stats(tf)["paint_count"] > baseline:
+            return True
+        _drive_redraw(tf)
+        return False
+
+    wait_until(advanced, desc=desc)
 
 
 def _drive_redraw(tf, x: int = 4, y: int = 4) -> None:
@@ -200,7 +209,6 @@ def _drive_redraw(tf, x: int = 4, y: int = 4) -> None:
         tf.request("scene/click", {"at": {"x": x, "y": y}})
     except Exception:  # noqa: BLE001
         pass
-    time.sleep(_SETTLE_SEC)
 
 
 def body() -> None:
@@ -352,12 +360,11 @@ def body() -> None:
                 # Fallback: invoke the radio group's set channel
                 # if scene/click resolution failed.
                 tf.invoke("todo_filter", ["set", 1])
-            time.sleep(_SETTLE_SEC)
-            _force_paint(tf)
-            stats_d = _cache_stats(tf)
-            assert stats_d["paint_count"] > stats_c["paint_count"], (
-                "filter change must advance paint_count"
+            _wait_paint_beyond(
+                tf, stats_c["paint_count"],
+                "filter change must advance paint_count",
             )
+            stats_d = _cache_stats(tf)
             # entries may shrink (filtered-out rows evict). Allow
             # equality (todomvc may keep them if root cacheability
             # bridges them differently) but assert no infinite
@@ -378,7 +385,9 @@ def body() -> None:
                 "elides None)"
             )
 
-            # Two more identical paints — damage should go to None
+            # Two more identical paints (best-effort — the follow-up
+            # damage-region asserts are deliberately tolerant of how
+            # many paints actually landed) — damage should go to None
             # once the cache reaches steady state on the filtered
             # shape.
             _force_paint(tf)

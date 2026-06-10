@@ -821,6 +821,96 @@ def wait_until(
         time.sleep(interval)
 
 
+def wait_query(
+    tf: "RpcSubprocess",
+    path: str,
+    expected: Any,
+    *,
+    timeout: float = 8.0,
+    interval: float = 0.04,
+    desc: Optional[str] = None,
+) -> None:
+    """Poll `tf.query(path)` until it equals `expected` (R883 zero-flake).
+
+    The typed convenience for the dominant demo shape — an action
+    followed by `assert_eq(tf.query(P), V, label)`. Subsumes the
+    assertion: returns once equal, raises `AssertionError` carrying the
+    last observed value on timeout, so the failure message keeps the
+    `expected X, got Y` diagnostics `assert_eq` gave. Use a raw
+    [`wait_until`] for non-equality predicates (`> 0`, set membership).
+
+    A dispatch over RPC commits its full effect chain (deferred-input
+    drain, intent `handle_tail`, the R705 dirty-on-mutation paint
+    re-store) before the response is written, so for plain state this
+    returns on the first poll; the polling is the [[zero-flake-policy]]
+    guard for the genuinely asynchronous paths (winit `scene/resize`
+    round trips, window create/close, native-input injection,
+    wall-clock animation) where a fixed sleep raced the event loop.
+    """
+    label = desc or f"query {path} == {expected!r}"
+    deadline = time.monotonic() + timeout
+    while True:
+        last = tf.query(path)
+        if last == expected:
+            return
+        if time.monotonic() >= deadline:
+            raise AssertionError(
+                f"{label}: expected {expected!r}, got {last!r} "
+                f"after {timeout}s"
+            )
+        time.sleep(interval)
+
+
+def wait_snap(
+    tf: "RpcSubprocess",
+    predicate,
+    *,
+    source: str = "paint",
+    viewport: Optional[tuple[int, int]] = None,
+    timeout: float = 8.0,
+    interval: float = 0.04,
+    desc: str = "snapshot condition",
+) -> Any:
+    """Poll `tf.snapshot(...)` until `predicate(snap)` is truthy (R883).
+
+    Returns the first snapshot satisfying the predicate so the caller's
+    follow-up assertions read the *same* observed frame (no re-fetch
+    race). The paint-read peer of [`wait_query`]: gate on the first
+    condition the demo asserts about the post-action frame, then keep
+    the remaining assertions plain against the returned snap.
+    """
+    def poll() -> Any:
+        snap = tf.snapshot(source=source, viewport=viewport)
+        return snap if predicate(snap) else None
+
+    return wait_until(poll, timeout=timeout, interval=interval, desc=desc)
+
+
+def wait_stderr(
+    tf: "RpcSubprocess",
+    needle: str,
+    *,
+    n: int = 120,
+    timeout: float = 8.0,
+    interval: float = 0.04,
+    desc: Optional[str] = None,
+) -> None:
+    """Poll `tf.stderr_tail(n)` until a line contains `needle` (R883).
+
+    The shell logs drained intents to stderr *during* the dispatch, but
+    the harness reads stderr through a pump thread — so "the RPC
+    response arrived" does not order the log line's arrival in
+    `_stderr_lines`. A fixed sleep raced that pump; polling the
+    observed tail is the [[zero-flake-policy]] form.
+    """
+    wait_until(
+        lambda: any(needle in ln for ln in tf.stderr_tail(n)),
+        timeout=timeout,
+        interval=interval,
+        desc=desc or f"stderr contains {needle!r}",
+    )
+
+
 def find_by_tag(snap: Any, tag: str) -> Optional[dict]:
     """Depth-first walk of a snapshot tree for the first node with this `tag`.
 

@@ -35,7 +35,6 @@ Driven across all four modal bindings:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -44,9 +43,9 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     run_demo,
+    wait_query,
 )
 
-PAUSE = 0.12
 VIEWPORT = (600, 600)
 
 # (example, trigger tag, panel tag, modal-introspect tag)
@@ -91,11 +90,9 @@ def drive(example: str, trigger: str, panel: str, state_tag: str) -> None:
 
         # ── (C) open via the trigger → open is True ─────────────────
         tf.click(path=trigger)
-        time.sleep(PAUSE)
-        assert_eq(
-            tf.query(op),
-            True,
-            f"{example}: open() (via the trigger reducer) flips the introspected flag",
+        wait_query(
+            tf, op, True,
+            desc=f"{example}: open() (via the trigger reducer) flips the introspected flag",
         )
         # The panel is now painted too — the scene-as-data path still works,
         # but the AI no longer has to walk for it.
@@ -112,11 +109,9 @@ def drive(example: str, trigger: str, panel: str, state_tag: str) -> None:
 
         # ── (D) Escape dismisses → open is False again ──────────────
         tf.key(path=panel, name="Escape")
-        time.sleep(PAUSE)
-        assert_eq(
-            tf.query(op),
-            False,
-            f"{example}: Escape closes — introspected flag round-trips with the lifecycle",
+        wait_query(
+            tf, op, False,
+            desc=f"{example}: Escape closes — introspected flag round-trips with the lifecycle",
         )
 
 

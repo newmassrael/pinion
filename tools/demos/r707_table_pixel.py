@@ -137,18 +137,24 @@ def _panel_left(png_path: str, ring_left: int, row_y: int):
 def body() -> int:
     with isolated_storage_dir("r707-table-pixel"):
         with RpcSubprocess("hello-table", visible_window=True) as d:
-            time.sleep(0.6)
             # Single Tab stop + 2-D roving: focus the grid, enter at (0, 0).
             d.request("focus/set", {"tag": T})
             d.key(path=T, name="ArrowDown")  # enter grid at row 0, col 0
-            for _ in range(3):
-                d.snapshot(source="paint", viewport=VIEWPORT)
-                time.sleep(0.15)
+
+            # R883 zero-flake: window mapping + presentation are async with
+            # no RPC observable — poll the SCREEN (re-grab until the ring
+            # is locatable, or time out into the original graceful SKIP).
             if not _capture(SHOT_A):
                 print("SKIP: ffmpeg x11grab failed (no capturable display)")
                 return 0
-
             ring_a = _find_ring(SHOT_A)
+            deadline = time.monotonic() + 10.0
+            while ring_a is None and time.monotonic() < deadline:
+                time.sleep(0.25)  # re-grab poll interval
+                if not _capture(SHOT_A):
+                    print("SKIP: ffmpeg x11grab failed (no capturable display)")
+                    return 0
+                ring_a = _find_ring(SHOT_A)
             if ring_a is None:
                 print("SKIP: could not locate the ring at column 0")
                 return 0
@@ -176,13 +182,19 @@ def body() -> int:
             # (2) DELTA: rove two columns right; the ring must move ~2 pitches.
             d.key(path=T, name="ArrowRight")
             d.key(path=T, name="ArrowRight")
-            for _ in range(3):
-                d.snapshot(source="paint", viewport=VIEWPORT)
-                time.sleep(0.15)
+            # Poll the screen until the ring is seen AWAY from column 0
+            # (a stale pre-present frame still shows it at rl0).
             if not _capture(SHOT_B):
                 print("SKIP: ffmpeg x11grab failed on the second capture")
                 return 0
             ring_b = _find_ring(SHOT_B)
+            deadline = time.monotonic() + 10.0
+            while (ring_b is None or ring_b[0] == rl0) and time.monotonic() < deadline:
+                time.sleep(0.25)  # re-grab poll interval
+                if not _capture(SHOT_B):
+                    print("SKIP: ffmpeg x11grab failed on the second capture")
+                    return 0
+                ring_b = _find_ring(SHOT_B)
             if ring_b is None:
                 print("SKIP: could not locate the ring at column 2")
                 return 0

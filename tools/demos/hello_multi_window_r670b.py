@@ -42,7 +42,6 @@ R670.B SEED `verification mandatory` checklist:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -51,7 +50,29 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_until,
 )
+
+
+def _inspector_snap_with(tf, needle: str):
+    """Window-scoped inspector snapshot once it renders `needle` (R883
+    zero-flake gate — both windows' stored paint caches re-render on a
+    state mutation, so this normally passes on the first poll)."""
+    def poll():
+        snap = tf.request(
+            "scene/snapshot",
+            {
+                "window": "inspector",
+                "path": "",
+                "from": "paint",
+                "viewport": {"w": 280, "h": 140},
+            },
+        )
+        if snap is not None and _walk_for_text(snap.result, needle):
+            return snap
+        return None
+
+    return poll
 
 
 def _walk_for_text(node, needle: str) -> bool:
@@ -139,24 +160,11 @@ def body() -> None:
         # hit-test against main's tree → main_btn hit
         # deterministically.
         tf.click(path="main_btn")
-        # Give the shell a paint cycle to update both windows' caches.
-        time.sleep(0.3)
-
         # Re-snapshot inspector — state should now be Hover (cursor
         # rests on button rect post-click).
-        snap_inspector_after = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        assert snap_inspector_after is not None
-        assert _walk_for_text(snap_inspector_after.result, "Hover"), (
-            f"after main click, inspector must mirror Hover state: "
-            f"{snap_inspector_after.result!r}"
+        wait_until(
+            _inspector_snap_with(tf, "Hover"),
+            desc="after main click, inspector must mirror Hover state",
         )
 
         # ── (6) Ghost window id falls back to primary ───────────────
@@ -187,7 +195,6 @@ def body() -> None:
         # stays alive (a panic would crash the subprocess).
         try:
             tf.key(at=(100.0, 60.0), name="Space")
-            time.sleep(0.1)
         except Exception:
             pass  # Best-effort — the main goal is no crash.
 
@@ -196,37 +203,17 @@ def body() -> None:
         # ButtonExternal at the scene root. State should flip to
         # Disabled; inspector should mirror the new value.
         tf.invoke("/external/send", "Disable")
-        time.sleep(0.3)
-        snap_inspector_disabled = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        assert snap_inspector_disabled is not None
-        assert _walk_for_text(snap_inspector_disabled.result, "Disabled"), (
-            "inspector must mirror Disabled state after scene/invoke"
+        wait_until(
+            _inspector_snap_with(tf, "Disabled"),
+            desc="inspector must mirror Disabled state after scene/invoke",
         )
 
         # ── (9) Re-enable via scene/invoke ──────────────────────────
         tf.invoke("/external/send", "Enable")
-        time.sleep(0.3)
-        snap_inspector_reenabled = tf.request(
-            "scene/snapshot",
-            {
-                "window": "inspector",
-                "path": "",
-                "from": "paint",
-                "viewport": {"w": 280, "h": 140},
-            },
-        )
-        assert snap_inspector_reenabled is not None
         # State is now Idle (Disabled → Idle on Enable per Button SCXML).
-        assert _walk_for_text(snap_inspector_reenabled.result, "Idle"), (
-            "inspector must mirror Idle after re-enable"
+        snap_inspector_reenabled = wait_until(
+            _inspector_snap_with(tf, "Idle"),
+            desc="inspector must mirror Idle after re-enable",
         )
         assert not _walk_for_text(snap_inspector_reenabled.result, "Disabled"), (
             "Disabled must clear after re-enable"

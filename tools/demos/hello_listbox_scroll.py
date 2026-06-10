@@ -22,7 +22,6 @@ collapses that into a single RPC call.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -32,6 +31,7 @@ from rpc_verify import (
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_snap,
 )
 
 
@@ -49,20 +49,22 @@ def body() -> None:
         assert_eq(scroll.get("offset_y"), 0, "initial offset_y")
 
         listbox.wheel(path="main_list_scroll", lines=(0.0, 3.0))
-        # The deferred-input drain runs on the dispatcher's return
-        # path, so a brief sleep lets winit's next user event tick
-        # process the redraw bump before the next snapshot lands.
-        time.sleep(0.1)
 
-        after = listbox.snapshot(source="paint", viewport=(WIN_W, WIN_H))
+        def _scrolled(snap):
+            node = find_by_tag(snap, "main_list_scroll")
+            offset_y = node.get("offset_y") if node is not None else None
+            return isinstance(offset_y, (int, float)) and offset_y > 0
+
+        # Gate on the observed post-wheel offset (R883 zero-flake).
+        after = wait_snap(
+            listbox,
+            _scrolled,
+            viewport=(WIN_W, WIN_H),
+            desc="post-wheel offset_y > 0",
+        )
         after_scroll = find_by_tag(after, "main_list_scroll")
         if after_scroll is None:
             raise AssertionError("main_list_scroll tag vanished after wheel")
-        after_offset_y = after_scroll.get("offset_y")
-        if not isinstance(after_offset_y, (int, float)) or after_offset_y <= 0:
-            raise AssertionError(
-                f"post-wheel offset_y: expected > 0, got {after_offset_y!r}"
-            )
         # Horizontal axis untouched — wheel was vertical-only.
         assert_eq(after_scroll.get("offset_x"), 0, "post-wheel offset_x")
 

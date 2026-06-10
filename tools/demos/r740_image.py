@@ -35,7 +35,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -48,11 +47,11 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_query,
 )
 
 EXAMPLE = "hello-image"
 VIEWPORT = (360, 300)
-PAUSE = 0.1
 FITS = {
     "img_fill": "Fill",
     "img_contain": "Contain",
@@ -97,10 +96,10 @@ def body() -> None:
         # ── (B) the toggle is live (RPC click flips the highlight) ──
         before = tf.query("/external/value")
         assert before is False, "highlight starts muted (value false)"
-        tf.click(path="main_toggle"); time.sleep(PAUSE)
-        assert tf.query("/external/value") is True, "click flips highlight to accent"
-        tf.click(path="main_toggle"); time.sleep(PAUSE)
-        assert tf.query("/external/value") is False, "second click flips back to muted"
+        tf.click(path="main_toggle")
+        wait_query(tf, "/external/value", True, desc="click flips highlight to accent")
+        tf.click(path="main_toggle")
+        wait_query(tf, "/external/value", False, desc="second click flips back to muted")
         assert_eq(tf.query("/external/state"), "Hover", "toggle settles in Hover after click")
 
     # ── Phase 2 — live pixels (boot frame) ──────────────────────────

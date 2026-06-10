@@ -36,7 +36,6 @@ and hides its data rows, but the selection (held by source index) is untouched
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -46,6 +45,8 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_snap,
+    wait_until,
 )
 
 EXAMPLE = "hello-grouped-list"
@@ -58,7 +59,6 @@ VISIBLE_BOOT = N + NGROUPS  # 10006
 LIST_TAG = "glist"
 GROUP_TAG = "ggroup"
 SCROLL_TAG = "glist_scroll"
-PAUSE = 0.12
 
 
 def present_sources(snap) -> list[int]:
@@ -132,8 +132,10 @@ def body() -> None:
 
         # ── (B) select by source index (click a data row) ───────────────
         tf.click(path=f"{LIST_TAG}#6")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 6, "click selected source 6 (a Mesh row)")
+        wait_until(
+            lambda: selected(tf) == 6,
+            desc="click selected source 6 (a Mesh row)",
+        )
 
         # ── (C) collapse a group: hides its data, keeps selection ───────
         shrunk = VISIBLE_BOOT - MEMBERS[0]  # 8339
@@ -144,9 +146,10 @@ def body() -> None:
         # The Texture header now follows the Mesh header directly (pos 1).
         assert_eq(g(tf, "kind_at.1"), "header", "collapsed: pos 1 is now a header")
         assert_eq(g(tf, "group_at.1"), 1, "pos 1 is group 1 (Texture) after collapse")
-        time.sleep(PAUSE)  # settle: let the collapse repaint before reading the paint scene
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert 6 not in present_sources(snap), "collapsed Mesh hides source 6's row"
+        snap = wait_snap(
+            tf, lambda s: 6 not in present_sources(s), viewport=WIN,
+            desc="collapsed Mesh hides source 6's row",
+        )
         assert 0 in present_headers(snap) and 1 in present_headers(snap), "headers adjacent now"
         assert_eq(selected(tf), 6, "selection survives the collapse (still source 6)")
 
@@ -154,9 +157,10 @@ def body() -> None:
         assert_eq(tf.invoke(f"/{GROUP_TAG}/external/toggle_group", 0), VISIBLE_BOOT, "expand → 10006")
         assert_eq(g(tf, "visible_len"), VISIBLE_BOOT, "view restored")
         tf.scroll(SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert 6 in present_sources(snap), "source 6 re-materializes at the top"
+        snap = wait_snap(
+            tf, lambda s: 6 in present_sources(s), viewport=WIN,
+            desc="source 6 re-materializes at the top",
+        )
         assert_eq(selected(tf), 6, "still selected after expand")
 
         # ── (E) collapse_all / expand_all ───────────────────────────────
@@ -184,8 +188,10 @@ def body() -> None:
         # offset 0); a real click on it routes the composite arc to the
         # GroupOrderExternal and collapses the group exactly like toggle_group.
         tf.click(path=f"{GROUP_TAG}#0")
-        time.sleep(PAUSE)
-        assert_eq(g(tf, "collapsed.0"), True, "clicked Mesh header collapsed it")
+        wait_until(
+            lambda: g(tf, "collapsed.0") is True,
+            desc="clicked Mesh header collapsed it",
+        )
         assert_eq(g(tf, "visible_len"), VISIBLE_BOOT - MEMBERS[0], "clicked collapse shrank the view")
 
 

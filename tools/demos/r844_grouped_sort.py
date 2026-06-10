@@ -34,7 +34,6 @@ selection (a source index) survives all three stages.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -43,6 +42,8 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    wait_snap,
+    wait_until,
 )
 
 EXAMPLE = "hello-grouped-sort"
@@ -56,7 +57,6 @@ SORT_TAG = "gsort"
 SCROLL_TAG = "glist_scroll"
 # group 0 (Mesh) members surviving filter category 0 = #{ i : i % 30 == 0 } = 334.
 G0_CAT0 = 334
-PAUSE = 0.12
 
 
 def present_sources(snap) -> list[int]:
@@ -104,13 +104,15 @@ def body() -> None:
 
         # ── (B) select by source index ───────────────────────────────────
         tf.click(path=f"{LIST_TAG}#0")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 0, "click selected source 0")
+        wait_until(lambda: selected(tf) == 0, desc="click selected source 0")
 
         # ── (C) sort descending: regroup over the new order ──────────────
         assert_eq(tf.invoke(f"/{SORT_TAG}/external/cycle_sort", None), "ascending", "cycle -> ascending")
         assert_eq(tf.invoke(f"/{SORT_TAG}/external/cycle_sort", None), "descending", "cycle -> descending")
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: gg(tf, "group_at.0") == 3,
+            desc="grouping re-derived over the descending order",
+        )
         # Descending by name = reverse source order: source 9999 leads; its
         # group is 9999 % 6 == 3. The grouping re-derived over the new upstream
         # order (the pointer-keyed memo recomputed).
@@ -126,8 +128,10 @@ def body() -> None:
         # ── (E) filter category 0: shrink groups, keep selection ─────────
         assert_eq(tf.invoke(f"/{SORT_TAG}/external/set_filter", 0), 2000, "category 0 -> 2000 rows")
         assert_eq(gs(tf, "view_len"), 2000, "upstream view_len reflects the filter")
-        time.sleep(PAUSE)
-        assert_eq(gg(tf, "visible_len"), NGROUPS + 2000, "6 headers + 2000 filtered rows")
+        wait_until(
+            lambda: gg(tf, "visible_len") == NGROUPS + 2000,
+            desc="6 headers + 2000 filtered rows",
+        )
         assert_eq(gg(tf, "group_at.0"), 0, "group 0 still leads (source 0 survives the filter)")
         assert_eq(gg(tf, "member_count_at.0"), G0_CAT0, "header reports the FILTERED member count")
         snap = tf.snapshot(source="paint", viewport=WIN)
@@ -149,9 +153,10 @@ def body() -> None:
         assert_eq(tf.invoke(f"/{SORT_TAG}/external/set_filter", None), N, "clear filter -> full view")
         assert_eq(gg(tf, "visible_len"), VISIBLE_BOOT, "view restored")
         tf.scroll(SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert 0 in present_sources(snap), "source 0 re-materializes at the top"
+        wait_snap(
+            tf, lambda s: 0 in present_sources(s), viewport=WIN,
+            desc="source 0 re-materializes at the top",
+        )
         assert_eq(selected(tf), 0, "still selected after the whole stack unwinds")
 
         # ── (H) clicked sort header cycles like the RPC path ─────────────
@@ -159,8 +164,10 @@ def body() -> None:
         # the header must cycle it to exactly ascending (not merely "change it").
         assert_eq(gs(tf, "sort_dir"), "none", "sort is unsorted before the clicked-header step")
         tf.click(path=f"{SORT_TAG}#cycle")
-        time.sleep(PAUSE)
-        assert_eq(gs(tf, "sort_dir"), "ascending", "clicked header cycled none -> ascending")
+        wait_until(
+            lambda: gs(tf, "sort_dir") == "ascending",
+            desc="clicked header cycled none -> ascending",
+        )
 
 
 if __name__ == "__main__":

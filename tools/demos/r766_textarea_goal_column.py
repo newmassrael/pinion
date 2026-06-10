@@ -38,16 +38,14 @@ Run from the workspace root:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, find_by_tag, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, find_by_tag, run_demo, wait_query, wait_until
 
 TA_TAG = "main_textarea"
 VIEWPORT = (480, 320)
-SETTLE = 0.06
 
 # Goal-column fixture: long / short / long, all one repeated glyph so a
 # column is an exact byte on the full lines.
@@ -78,7 +76,6 @@ def text(ta: RpcSubprocess) -> str:
 
 def key(ta: RpcSubprocess, name: str) -> None:
     ta.key(path=TA_TAG, name=name)
-    time.sleep(SETTLE)
 
 
 def key_shift(ta: RpcSubprocess, name: str) -> None:
@@ -102,7 +99,10 @@ def select_all(ta: RpcSubprocess) -> None:
 def replace_all(ta: RpcSubprocess, body: str) -> None:
     select_all(ta)
     ta.text(body, path=TA_TAG)
-    time.sleep(SETTLE)
+    wait_until(
+        lambda: text(ta) == body,
+        desc="replace_all: typed body landed in the buffer",
+    )
 
 
 def set_multiline(ta: RpcSubprocess, lines: list[str]) -> None:
@@ -116,7 +116,6 @@ def set_multiline(ta: RpcSubprocess, lines: list[str]) -> None:
         if i > 0:
             key(ta, "Enter")
         ta.text(ln, path=TA_TAG)
-        time.sleep(SETTLE)
 
 
 def goto_start(ta: RpcSubprocess) -> None:
@@ -166,8 +165,7 @@ def caret_paint_x(ta: RpcSubprocess):
 def body() -> None:
     with RpcSubprocess("hello-textarea", request_timeout=12.0) as ta:
         ta.request("focus/set", {"tag": TA_TAG})
-        time.sleep(0.05)
-        assert_eq(ta.query("/external/state"), "Focused", "focused after focus/set")
+        wait_query(ta, "/external/state", "Focused", desc="focused after focus/set")
 
         # ════════════════════════════════════════════════════════════
         #  (d) GOAL COLUMN — persists across a short line, both ways
@@ -231,7 +229,10 @@ def body() -> None:
         key(ta, "ArrowDown")  # short line clamps
         (fx, fy, fw, fh) = field_rect(ta)
         ta.click(at=(fx + 4, fy + 8 + 12))  # click line 0, near the left
-        time.sleep(SETTLE)
+        wait_until(
+            lambda: caret(ta) <= L0_START + 3,
+            desc="click landed on L0 near the start",
+        )
         c_click = caret(ta)
         assert c_click <= L0_START + 3, f"click landed on L0 near the start (byte {c_click})"
         key(ta, "ArrowDown")  # goal re-seeded from the click column
@@ -245,8 +246,10 @@ def body() -> None:
         goto_column(ta, 7)
         key(ta, "ArrowDown")  # short line
         ta.text("z", path=TA_TAG)  # insert resets the goal
-        time.sleep(SETTLE)
-        assert text(ta).count("z") == 1, "an edit inserted a glyph on the short line"
+        wait_until(
+            lambda: text(ta).count("z") == 1,
+            desc="an edit inserted a glyph on the short line",
+        )
 
         # ════════════════════════════════════════════════════════════
         #  (e) VISUAL-LINE Home / End on a hard-newline buffer

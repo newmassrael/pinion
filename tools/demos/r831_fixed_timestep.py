@@ -101,6 +101,9 @@ def _settle_frozen(tf: RpcSubprocess) -> tuple[float, int]:
     settled (pos, bounces)."""
     def _frozen_pair() -> bool:
         a = (_pos(tf), _bounces(tf))
+        # wall-clock semantic: frozen-clock proof needs two samples
+        # spaced by a real-time window (absence of motion has no
+        # positive observable); the outer wait_until retries.
         time.sleep(0.1)
         b = (_pos(tf), _bounces(tf))
         return a == b
@@ -124,10 +127,15 @@ def _tick_expect_motion(tf: RpcSubprocess, dt: float, pre_pos: float,
 
 def _tick_expect_frozen(tf: RpcSubprocess, dt: float) -> None:
     """Inject a SUB-FIXED tick that should release ZERO steps. The tick
-    still requests one repaint (which accumulates the time); wait a
-    window for that repaint, after which the caller asserts no motion."""
+    still requests one repaint (which accumulates the time); gate on the
+    paint counter so that repaint has LANDED before the caller asserts
+    no motion (R883 zero-flake)."""
+    before = int(tf.request("scene/cache_stats", {}).result["paint_count"])
     tf.tick(dt)
-    time.sleep(0.3)
+    wait_until(
+        lambda: int(tf.request("scene/cache_stats", {}).result["paint_count"]) > before,
+        desc="sub-fixed tick's repaint landed",
+    )
 
 
 def body() -> None:
@@ -147,7 +155,10 @@ def body() -> None:
         assert abs(abs(v0) - _BALL_SPEED) < 1e-3, (
             f"speed magnitude is invariant under reflection; saw {abs(v0)}"
         )
-        time.sleep(0.4)  # a wall-clock window with NO tick
+        # wall-clock semantic: a real-time window with NO tick — the
+        # paused-clock no-drift proof needs wall time to elapse; there
+        # is no positive observable for "nothing happened".
+        time.sleep(0.4)
         assert abs(_pos(tf) - p0) < 1e-6, "paused pos must not drift"
         assert _bounces(tf) == b0, "paused bounces must not change"
         assert abs(_vel(tf) - v0) < 1e-9, "paused velocity must not change"

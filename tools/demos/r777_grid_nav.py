@@ -36,7 +36,6 @@ import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -49,6 +48,8 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    wait_query,
+    wait_until,
 )
 
 EXAMPLE = "hello-grid-nav"
@@ -58,7 +59,6 @@ ROW_H = 36
 OVERSCAN = 3
 SCROLL_TAG = "vtbl_scroll"
 TABLE_TAG = "vtbl"
-PAUSE = 0.12
 
 
 def present_rows(snap) -> set[int]:
@@ -100,39 +100,41 @@ def body() -> None:
 
         # ── (B) keyboard navigation ─────────────────────────────────
         tf.request("focus/set", {"tag": TABLE_TAG})
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == TABLE_TAG,
+            desc="grid owns focus",
+        )
 
         tf.key(path=TABLE_TAG, name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 0, "first ArrowDown selects row 0")
+        wait_query(tf, "/external/selected", 0, desc="first ArrowDown selects row 0")
         tf.key(path=TABLE_TAG, name="ArrowDown")
         tf.key(path=TABLE_TAG, name="ArrowDown")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 2, "two more ArrowDowns advance to row 2")
+        wait_query(tf, "/external/selected", 2, desc="two more ArrowDowns advance to row 2")
         tf.key(path=TABLE_TAG, name="ArrowUp")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 1, "ArrowUp steps back to row 1")
+        wait_query(tf, "/external/selected", 1, desc="ArrowUp steps back to row 1")
         tf.key(path=TABLE_TAG, name="Home")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 0, "Home jumps to the first row")
+        wait_query(tf, "/external/selected", 0, desc="Home jumps to the first row")
         tf.key(path=TABLE_TAG, name="ArrowUp")
-        time.sleep(PAUSE)
+        # Clamp no-op: the dispatch commits before the response, so a
+        # plain read is the post-key state.
         assert_eq(selected(tf), 0, "ArrowUp at the top clamps (no wrap)")
 
         tf.key(path=TABLE_TAG, name="PageDown")
-        time.sleep(PAUSE)
+        wait_until(
+            lambda: isinstance(selected(tf), int) and selected(tf) > 1,
+            desc="PageDown steps by a page (>1 row)",
+        )
         after_page = selected(tf)
-        assert isinstance(after_page, int) and after_page > 1, \
-            f"PageDown steps by a page (>1 row), got {after_page}"
         assert after_page < N, "PageDown stays in range"
         tf.key(path=TABLE_TAG, name="PageUp")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 0, "PageUp from one page down returns to the top")
+        wait_query(
+            tf, "/external/selected", 0,
+            desc="PageUp from one page down returns to the top",
+        )
 
         # ── (C) scroll-into-view at scale (the headline) ────────────
         tf.key(path=TABLE_TAG, name="End")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), N - 1, "End selects the last row 9999")
+        wait_query(tf, "/external/selected", N - 1, desc="End selects the last row 9999")
         snap = tf.snapshot(source="paint", viewport=WIN)
         deep_offset = scroll_offset(snap)
         assert deep_offset > 300_000, f"End scrolled deep into the grid, offset {deep_offset}"
@@ -143,8 +145,7 @@ def body() -> None:
         assert len(deep_rows) < 30, f"still virtualized at the bottom, {len(deep_rows)} rows"
 
         tf.key(path=TABLE_TAG, name="Home")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 0, "Home selects row 0 from the bottom")
+        wait_query(tf, "/external/selected", 0, desc="Home selects row 0 from the bottom")
         snap = tf.snapshot(source="paint", viewport=WIN)
         assert_eq(scroll_offset(snap), 0, "Home scrolled the selection back into view (top)")
         assert 0 in present_rows(snap), "row 0 rendered again at the top"
@@ -155,8 +156,7 @@ def body() -> None:
         # Click the *second* column of row 4 — the column is irrelevant to
         # row selection (SelectRows).
         tf.click(path="vtbl#4_1")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 4, "clicking any cell of row 4 selects row 4")
+        wait_query(tf, "/external/selected", 4, desc="clicking any cell of row 4 selects row 4")
         # AI-first deep select via invoke, then clear.
         assert_eq(tf.invoke("/external/select", 5000), 5000, "invoke select 5000 returns 5000")
         assert_eq(selected(tf), 5000, "deep row selected via RPC without materialization")

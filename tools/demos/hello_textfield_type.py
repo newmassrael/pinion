@@ -43,12 +43,11 @@ R56.1.b.1 substrate cascade:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcSubprocess, assert_eq, run_demo
+from rpc_verify import RpcSubprocess, assert_eq, run_demo, wait_query
 
 
 TF_TAG = "main_textfield"
@@ -71,22 +70,19 @@ def body() -> None:
         # Focus the field via the focus mgr — exercises the R56.1.h
         # shell ↔ External::on_focus_change wire.
         focus_set(tf, TF_TAG)
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/state"), "Focused", "post-focus /external/state")
+        wait_query(tf, "/external/state", "Focused", desc="post-focus /external/state")
 
         # Type "hi" — two single-printable invocations.
         assert_eq(
             tf.invoke("/external/key", "h"), True, "invoke('key', 'h') recognized",
         )
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/text"), "h", "after 'h' /external/text")
+        wait_query(tf, "/external/text", "h", desc="after 'h' /external/text")
         assert_eq(tf.query("/external/caret"), 1, "after 'h' /external/caret")
 
         assert_eq(
             tf.invoke("/external/key", "i"), True, "invoke('key', 'i') recognized",
         )
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/text"), "hi", "after 'i' /external/text")
+        wait_query(tf, "/external/text", "hi", desc="after 'i' /external/text")
         assert_eq(tf.query("/external/caret"), 2, "after 'i' /external/caret")
 
         # Backspace — delete char left of caret.
@@ -95,8 +91,7 @@ def body() -> None:
             True,
             "invoke('key', 'Backspace') recognized",
         )
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/text"), "h", "after Backspace /external/text")
+        wait_query(tf, "/external/text", "h", desc="after Backspace /external/text")
         assert_eq(tf.query("/external/caret"), 1, "after Backspace /external/caret")
 
         # Home — caret to start.
@@ -105,8 +100,7 @@ def body() -> None:
             True,
             "invoke('key', 'Home') recognized",
         )
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/caret"), 0, "after Home /external/caret")
+        wait_query(tf, "/external/caret", 0, desc="after Home /external/caret")
         assert_eq(tf.query("/external/text"), "h", "after Home /external/text unchanged")
 
         # End — caret to end.
@@ -115,8 +109,7 @@ def body() -> None:
             True,
             "invoke('key', 'End') recognized",
         )
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/caret"), 1, "after End /external/caret")
+        wait_query(tf, "/external/caret", 1, desc="after End /external/caret")
 
         # Insert at end — caret advances past the existing 'h'.
         assert_eq(
@@ -124,8 +117,7 @@ def body() -> None:
             True,
             "invoke('key', 'a') recognized at end",
         )
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/text"), "ha", "after 'a' /external/text")
+        wait_query(tf, "/external/text", "ha", desc="after 'a' /external/text")
         assert_eq(tf.query("/external/caret"), 2, "after 'a' /external/caret")
 
         # ArrowLeft — caret moves one char left without text change.
@@ -134,8 +126,7 @@ def body() -> None:
             True,
             "invoke('key', 'ArrowLeft') recognized",
         )
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/caret"), 1, "after ArrowLeft /external/caret")
+        wait_query(tf, "/external/caret", 1, desc="after ArrowLeft /external/caret")
         assert_eq(tf.query("/external/text"), "ha", "text unchanged after ArrowLeft")
 
         # Delete — remove char at caret.
@@ -144,8 +135,7 @@ def body() -> None:
             True,
             "invoke('key', 'Delete') recognized",
         )
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/text"), "h", "after Delete /external/text")
+        wait_query(tf, "/external/text", "h", desc="after Delete /external/text")
         assert_eq(tf.query("/external/caret"), 1, "after Delete /external/caret")
 
         # Unrecognized key — F1 rejected per apply_key contract; the
@@ -155,14 +145,12 @@ def body() -> None:
             False,
             "invoke('key', 'F1') rejected (unrecognized)",
         )
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/text"), "h", "F1 leaves text unchanged")
+        wait_query(tf, "/external/text", "h", desc="F1 leaves text unchanged")
         assert_eq(tf.query("/external/caret"), 1, "F1 leaves caret unchanged")
 
         # Blur via focus/set null — SCXML transitions Focused → Idle.
         focus_set(tf, None)
-        time.sleep(0.05)
-        assert_eq(tf.query("/external/state"), "Idle", "post-blur /external/state")
+        wait_query(tf, "/external/state", "Idle", desc="post-blur /external/state")
         # Text content survives blur — TextEditState lives across the
         # focus mgr's mutations because the substrate keeps the same
         # Rc<TextEditState> for the binding's lifetime.

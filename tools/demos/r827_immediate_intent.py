@@ -50,7 +50,6 @@ Verification scope (>= 30 assertions):
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -64,7 +63,6 @@ from rpc_verify import (  # noqa: E402
 
 _WIN_W = 340
 _WIN_H = 360
-_SETTLE_SEC = 0.10
 
 _BALL_NODE_TAG = "ball"
 _DISMISS_BTN_TAG = "dismiss_btn"
@@ -188,7 +186,6 @@ def body() -> None:
             f"Button starts Idle/Hover; got {state_before!r}"
         )
         tf.click(path=_DISMISS_BTN_TAG)
-        time.sleep(_SETTLE_SEC)
         state_after = tf.query("/external/state")
         # A full press+release Material click resolves to Hover (cursor
         # remains on the button after release).
@@ -211,9 +208,11 @@ def body() -> None:
 
         # ── (D) Keyboard activation arc survives ─────────────────────
         tf.request("focus/set", {"tag": _DISMISS_BTN_TAG})
-        time.sleep(_SETTLE_SEC)
+        wait_until(
+            lambda: tf.request("focus/get").result.get("focused") == _DISMISS_BTN_TAG,
+            desc="dismiss button owns focus",
+        )
         tf.key(path=_DISMISS_BTN_TAG, name="Space")
-        time.sleep(_SETTLE_SEC)
         snap_d = _snap(tf)
         assert find_by_tag(snap_d, _DISMISS_BTN_TAG) is not None, (
             "Button must survive a Space keypress"
@@ -224,8 +223,17 @@ def body() -> None:
         )
 
         # ── (F) Continuous paint clock without input ─────────────────
+        def _paint_count() -> int:
+            return int(tf.request("scene/cache_stats", {}).result["paint_count"])
+
         for _ in range(3):
-            time.sleep(0.05)
+            # Observed-state gate on the continuous paint clock: a real
+            # frame must land between samples (R883 zero-flake).
+            before = _paint_count()
+            wait_until(
+                lambda: _paint_count() > before,
+                desc="continuous paint clock advanced a frame",
+            )
             snap_f = _snap(tf)
             assert isinstance(snap_f, dict) and snap_f
             assert find_by_tag(snap_f, _DISMISS_BTN_TAG) is not None

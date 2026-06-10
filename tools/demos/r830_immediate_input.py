@@ -103,6 +103,9 @@ def body() -> None:
 
         def _frozen() -> bool:
             a = (_pos(tf), _vel(tf))
+            # wall-clock semantic: frozen-clock proof needs two samples
+            # spaced by a real-time window (see r829); the outer
+            # wait_until retries until the pair stabilises.
             time.sleep(0.12)
             return a == (_pos(tf), _vel(tf))
         wait_until(_frozen, timeout=6.0, interval=0.05, desc="sim clock freezes after set_fps(0)")
@@ -144,7 +147,8 @@ def body() -> None:
         pos_before_btn = _pos(tf)
         clicks_before_btn = _retained_clicks(tf)
         tf.click(path=_BTN)
-        time.sleep(0.15)
+        # No-change verification on a frozen clock: the click dispatch
+        # commits before the RPC response, so plain reads follow.
         assert abs(_vel(tf) - vel_before_btn) < 1e-6, (
             "clicking the retained Button must not reach the ball driver"
         )

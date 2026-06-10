@@ -28,7 +28,6 @@ collapse.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -37,6 +36,8 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     run_demo,
+    wait_query,
+    wait_snap,
 )
 
 EXAMPLE = "hello-grouped-grid"
@@ -49,7 +50,6 @@ MEMBERS = [1667, 1667, 1667, 1667, 1666, 1666]
 GRID_TAG = "ggrid"
 GROUP_TAG = "ggrp"
 SCROLL_TAG = "ggrid_scroll"
-PAUSE = 0.12
 
 
 def data_sources(snap) -> list[int]:
@@ -103,8 +103,7 @@ def body() -> None:
 
         # ── (B) select a row (click the row; cells are transparent) ──────
         tf.click(path=f"{GRID_TAG}#0")
-        time.sleep(PAUSE)
-        assert_eq(tf.query("/external/selected"), 0, "click selected row source 0")
+        wait_query(tf, "/external/selected", 0, desc="click selected row source 0")
 
         # ── (C) collapse a group: hide its cell rows, keep selection ─────
         shrunk = VISIBLE_BOOT - MEMBERS[0]  # 8339
@@ -130,9 +129,10 @@ def body() -> None:
         assert "gcell_0_0" not in abs_rects_of(snap), "collapse_all: no cells rendered"
         assert_eq(tf.invoke(f"/{GROUP_TAG}/external/expand_all", None), VISIBLE_BOOT, "expand_all -> 10006")
         tf.scroll(SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert 0 in data_sources(snap), "source 0's row re-materializes"
+        snap = wait_snap(
+            tf, lambda s: 0 in data_sources(s), viewport=WIN,
+            desc="source 0's row re-materializes",
+        )
         for c in range(NCOLS):
             assert f"gcell_0_{c}" in abs_rects_of(snap), f"row 0 cell {c} re-materializes"
         assert_eq(tf.query("/external/selected"), 0, "still selected after expand")

@@ -30,7 +30,6 @@ in-flight read; `query node.<id>.title` reads the result back).
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -195,7 +194,6 @@ def body() -> None:
         tf.intervene("/external/viewport.zoom", 2.0)
         assert_eq(tf.query("/external/viewport.zoom"), 2.0, "canvas at 200%")
         tf.invoke("/external/frame_all", None)
-        time.sleep(0.1)
         begin_via_double_click(tf, 1)
         assert field_painted(tf), "the field paints inside the zoomed header"
         retype(tf, "Tint")

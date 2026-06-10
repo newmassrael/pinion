@@ -36,7 +36,6 @@ Run from the workspace root:
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -47,12 +46,13 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_until,
 )
 
 TA_TAG = "main_textarea"
 FMT = "fmt_toolbar"
 VIEWPORT = (480, 320)
-SETTLE = 0.08
 SEED = "first line\nsecond line\nthird line"
 RED = (0xD0, 0x28, 0x28)
 GREEN = (0x1F, 0x8A, 0x34)
@@ -105,13 +105,16 @@ def cell_fill(ta: RpcSubprocess, i: int) -> tuple[int, int, int]:
 
 def select(ta: RpcSubprocess, s: int, e: int) -> None:
     ta.intervene("/external/selection", {"start": s, "end": e})
-    time.sleep(SETTLE)
+    wait_query(
+        ta, "/external/selection", {"start": s, "end": e},
+        desc=f"selection {s}..{e} set",
+    )
 
 
 def click(ta: RpcSubprocess, rect: tuple[int, int, int, int]) -> None:
     x, y, w, h = rect
     ta.click(at=(x + w / 2, y + h / 2))
-    time.sleep(SETTLE)
+    # The click's effect is gated at each call site (R883 zero-flake).
 
 
 def body() -> None:
@@ -130,57 +133,84 @@ def body() -> None:
         assert xs == sorted(xs) and len(set(xs)) == 6, f"six controls in a row ({xs})"
 
         ta.request("focus/set", {"tag": TA_TAG})
-        time.sleep(SETTLE)
-        assert_eq(ta.query("/external/state"), "Focused", "field focused")
+        wait_query(ta, "/external/state", "Focused", desc="field focused")
 
         # ── (B) routed bold click: applies, keeps focus + selection ───
         select(ta, 0, 5)  # the red "first"
         assert_eq(ink(run_at(ta, 0)), RED, "'first' is red before")
         assert_eq(run_at(ta, 0)["style"]["font_weight"], 400, "'first' normal weight before")
         click(ta, rects[ctrl(0)])  # bold
-        assert_eq(run_at(ta, 0)["style"]["font_weight"], 700, "routed click bolded the selection")
+        wait_until(
+            lambda: (r := run_at(ta, 0)) is not None and r["style"]["font_weight"] == 700,
+            desc="routed click bolded the selection",
+        )
         assert_eq(ink(run_at(ta, 0)), RED, "merge kept the red colour (mergeCharFormat)")
         assert_eq(ta.query("/external/state"), "Focused", "the toolbar click did not steal focus")
         assert_eq(ta.query("/external/selection"), {"start": 0, "end": 5}, "selection survived the click")
         assert_eq(text(ta), SEED, "formatting never edits the text buffer")
         click(ta, rects[ctrl(0)])  # bold again → off
-        assert_eq(run_at(ta, 0)["style"]["font_weight"], 400, "a second click toggles bold off")
+        wait_until(
+            lambda: (r := run_at(ta, 0)) is not None and r["style"]["font_weight"] == 400,
+            desc="a second click toggles bold off",
+        )
 
         # ── (C) italic / colour swatch / clear all route the same way ──
         select(ta, 0, 5)
         click(ta, rects[ctrl(1)])  # italic
-        assert_eq(run_at(ta, 0)["style"]["font_style"], "Italic", "routed italic click")
+        wait_until(
+            lambda: (r := run_at(ta, 0)) is not None and r["style"]["font_style"] == "Italic",
+            desc="routed italic click",
+        )
         assert_eq(ink(run_at(ta, 0)), RED, "italic kept the colour too")
         click(ta, rects[ctrl(1)])  # italic off (reset)
-        assert_eq(run_at(ta, 0)["style"]["font_style"], "Normal", "italic toggled back off")
+        wait_until(
+            lambda: (r := run_at(ta, 0)) is not None and r["style"]["font_style"] == "Normal",
+            desc="italic toggled back off",
+        )
 
         select(ta, 11, 17)  # the green "second"
         assert_eq(ink(run_at(ta, 11)), GREEN, "'second' is green before the swatch")
         click(ta, rects[ctrl(2)])  # red swatch
-        assert_eq(ink(run_at(ta, 11)), RED, "red swatch recoloured the selection")
+        wait_until(
+            lambda: (r := run_at(ta, 11)) is not None and ink(r) == RED,
+            desc="red swatch recoloured the selection",
+        )
         assert_eq(text(ta), SEED, "the colour swatch never edits the text")
         select(ta, 11, 17)
         click(ta, rects[ctrl(5)])  # clear swatch
-        assert run_at(ta, 11) is None, "clear swatch stripped the run"
+        wait_until(
+            lambda: run_at(ta, 11) is None,
+            desc="clear swatch stripped the run",
+        )
 
         # ── (D) reflective pressed: the B cell tracks the selection ───
         select(ta, 23, 28)  # the blue "third" (not bold)
         inactive = cell_fill(ta, 0)
         assert_eq(cell_fill(ta, 1), inactive, "B and I share the inactive fill when neither applies")
         click(ta, rects[ctrl(0)])  # bold the selection
-        assert_eq(run_at(ta, 23)["style"]["font_weight"], 700, "'third' bolded")
+        wait_until(
+            lambda: (r := run_at(ta, 23)) is not None and r["style"]["font_weight"] == 700,
+            desc="'third' bolded",
+        )
         active = cell_fill(ta, 0)
         assert active != inactive, f"B cell paints a reflective active fill ({active} vs {inactive})"
         assert_eq(cell_fill(ta, 1), inactive, "the I cell stays inactive (selection is not italic)")
         click(ta, rects[ctrl(0)])  # un-bold (reset)
-        assert_eq(cell_fill(ta, 0), inactive, "un-bolding returns the B cell to the inactive fill")
+        wait_until(
+            lambda: cell_fill(ta, 0) == inactive,
+            desc="un-bolding returns the B cell to the inactive fill",
+        )
 
         # ── (E) a click with no selection is a no-op ──────────────────
         ta.invoke("/external/key", {"key": "Home", "ctrl": True})  # collapse to caret 0
-        time.sleep(SETTLE)
-        assert ta.query("/external/selection") is None, "no active selection"
+        wait_until(
+            lambda: ta.query("/external/selection") is None,
+            desc="no active selection",
+        )
         before = len(field_runs(ta))
         click(ta, rects[ctrl(0)])  # bold with no selection
+        # No-op verification: the dispatch commits before the response,
+        # so the unchanged runs are readable directly (no gate possible).
         assert_eq(len(field_runs(ta)), before, "a no-selection format click changes nothing")
         assert_eq(ta.query("/external/state"), "Focused", "still focused after the no-op click")
 

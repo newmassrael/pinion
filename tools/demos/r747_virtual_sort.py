@@ -36,7 +36,6 @@ identity does not.
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -46,6 +45,9 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_query,
+    wait_snap,
+    wait_until,
 )
 
 EXAMPLE = "hello-virtual-sort"
@@ -57,7 +59,6 @@ OVERSCAN = 3
 SCROLL_TAG = "vlist_scroll"
 LIST_TAG = "vlist"
 SORT_TAG = "vsort"
-PAUSE = 0.12
 
 
 def present_sources(snap) -> list[int]:
@@ -115,13 +116,11 @@ def body() -> None:
 
         # ── (B) select by source index ──────────────────────────────────
         tf.click(path=f"{LIST_TAG}#5")
-        time.sleep(PAUSE)
-        assert_eq(selected(tf), 5, "click selected source 5")
+        wait_query(tf, "/external/selected", 5, desc="click selected source 5")
 
         # ── (C) sort: ascending regroups into the Alpha block ───────────
         assert_eq(tf.invoke("/vsort/external/cycle_sort", None), "ascending", "cycle → ascending")
         assert_eq(sort_dir(tf), "ascending", "sort is ascending")
-        time.sleep(PAUSE)
         # The proxy order: Alpha sources (0,5,10,15,…) lead the view.
         assert_eq(source_at(tf, 0), 0, "ascending visual 0 == Alpha source 0")
         assert_eq(source_at(tf, 1), 5, "ascending visual 1 == Alpha source 5")
@@ -145,20 +144,23 @@ def body() -> None:
 
         # ── (D) selection ⊥ sort ⊥ virtualization ───────────────────────
         tf.invoke("/vsort/external/cycle_sort", None)  # ascending again
-        time.sleep(PAUSE)
         tf.scroll(SCROLL_TAG, to=(0, 4000))
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
-        assert 5 not in present_sources(snap), "source 5 left the window after scrolling"
+        wait_snap(tf, lambda s: 5 not in present_sources(s),
+                  viewport=WIN, desc="source 5 left the window after scrolling")
         assert_eq(selected(tf), 5, "selection survives though the row is unmaterialized")
         tf.scroll(SCROLL_TAG, to=(0, 0))
-        time.sleep(PAUSE)
 
         # ── (E) filter: shrink the view to one category ─────────────────
         assert_eq(tf.invoke("/vsort/external/set_filter", 1), 2000, "Bravo filter → 2000 rows")
         assert_eq(view_len(tf), 2000, "view_len reflects the filter")
-        time.sleep(PAUSE)
-        snap = tf.snapshot(source="paint", viewport=WIN)
+        snap = wait_snap(
+            tf,
+            lambda s: (lambda rows: bool(rows) and all(r % 5 == 1 for r in rows))(
+                present_sources(s)
+            ),
+            viewport=WIN,
+            desc="filtered window renders only Bravo sources",
+        )
         filt_rows = present_sources(snap)
         assert filt_rows, "filtered view still renders a window"
         assert all(s % 5 == 1 for s in filt_rows), f"every visible row is a Bravo source: {filt_rows}"
@@ -172,9 +174,8 @@ def body() -> None:
         # ── (F) clicked sort header cycles like the RPC path ────────────
         before = sort_dir(tf)
         tf.click(path=f"{SORT_TAG}#cycle")
-        time.sleep(PAUSE)
-        after = sort_dir(tf)
-        assert before != after, f"clicked sort header changed the sort ({before} → {after})"
+        wait_until(lambda: sort_dir(tf) != before,
+                   desc=f"clicked sort header changed the sort (from {before!r})")
 
         # ── (G) R748 §5.52: sort/filter changes are reversible ──────────
         # The ViewSortFilterExternal records every mutation onto a shared
