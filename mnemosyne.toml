@@ -31,6 +31,12 @@ comment_only = true
 # add-section-implementation bindings, so citation_unbound is expected.
 severity_missing = "reject"
 severity_binding = "info"
+# Mnemosyne R423 — label<->binding coherence gate: an exempt section
+# (out_of_scope_here / informational) carrying an implements/verifies
+# binding rejects as MisclassifiedCoverage. pinion is at zero violations
+# (the one exempt section, §5.53, has no bindings), so this only blocks
+# future misclassification.
+severity_classification = "reject"
 # Numeric form `<PREFIX> <doc-number> §<id>`. R379 added `#N` doc-numbers
 # (UAX #9) and multi-word prefixes matched as a token-boundary suffix
 # (CSS Color matches "W3C CSS Color 4 §8.1").
