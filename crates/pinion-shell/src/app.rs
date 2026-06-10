@@ -1645,7 +1645,25 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if event.state == ElementState::Pressed {
+                // R882 §5.39 §5.35 — held-key absolute state: BOTH edges
+                // feed the substrate's chord cache (pre-R882 the shell
+                // dropped `Released` entirely, so no "is Space held"
+                // fact existed). The winit `Key` converts to the same
+                // canonical string vocabulary the key dispatch uses
+                // (`named_key_str` — the §5.41 winit-free boundary);
+                // auto-repeat re-sends `Pressed`, which is idempotent
+                // against the cache. Dispatch stays press-edge-only.
+                let pressed = event.state == ElementState::Pressed;
+                match event.logical_key.as_ref() {
+                    Key::Named(named) => {
+                        if let Some(key_str) = named_key_str(named) {
+                            self.core.note_key_state(key_str, pressed);
+                        }
+                    }
+                    Key::Character(c) => self.core.note_key_state(c, pressed),
+                    _ => {}
+                }
+                if pressed {
                     self.handle_key_press(event_loop, &event.logical_key);
                 }
             }

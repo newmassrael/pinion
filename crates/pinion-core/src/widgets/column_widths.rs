@@ -34,6 +34,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use crate::composite_tag::split_send_payload;
 use crate::input::PointerWireEvent;
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
@@ -584,9 +585,10 @@ impl ExternalIntrospect for ColumnResizeExternal {
             return Err(InvokeError::UnknownPath);
         }
         let raw = args.as_str().ok_or(InvokeError::TypeMismatch)?;
-        // Composite payload: "<sub>:<Event>[:<mods>]" — the event is the 2nd
-        // segment (a bare "<Event>" is tolerated for the non-composite path).
-        let event = raw.split(':').nth(1).unwrap_or(raw);
+        // Composite payload: "<sub>:<Event>[:<mods>]" — decoded through the
+        // R880.1 `:` grammar SSOT; `None` covers the bare "<Event>" wire
+        // (the documented non-composite decode contract of the splitter).
+        let event = split_send_payload(raw).map_or(raw, |(_, event, _)| event);
         match PointerWireEvent::from_wire_name(event) {
             Some(PointerWireEvent::Up | PointerWireEvent::Cancel) => {
                 self.clear_drag();

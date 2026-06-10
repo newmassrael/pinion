@@ -520,12 +520,14 @@ fn scene_key_enqueues_arrow_down_into_inbox() {
     assert!(resp.error.is_none(), "{:?}", resp.error);
     assert_eq!(resp.result, Some(Value::Null));
     assert_eq!(inbox.len(), 1);
-    let DeferredInput::Key { x, y, ref key } = inbox[0] else {
+    let DeferredInput::Key { x, y, ref key, state } = inbox[0] else {
         panic!("expected Key variant, got {:?}", inbox[0]);
     };
     assert!((x - 180.0).abs() < f64::EPSILON);
     assert!((y - 160.0).abs() < f64::EPSILON);
     assert_eq!(key, "ArrowDown");
+    // R882 — `state` absent ⇒ the legacy atomic press.
+    assert_eq!(state, KeyWireState::Press);
 }
 
 #[test]
@@ -590,12 +592,14 @@ fn r666_scene_key_single_codepoint_routes_as_character_key() {
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     assert_eq!(inbox.len(), 1);
-    let DeferredInput::CharacterKey { x, y, ref character } = inbox[0] else {
+    let DeferredInput::CharacterKey { x, y, ref character, state } = inbox[0] else {
         panic!("expected CharacterKey, got {:?}", inbox[0]);
     };
     assert!((x - 10.0).abs() < f64::EPSILON);
     assert!((y - 20.0).abs() < f64::EPSILON);
     assert_eq!(character, "a");
+    // R882 — `state` absent ⇒ the legacy atomic press.
+    assert_eq!(state, KeyWireState::Press);
 }
 
 #[test]
@@ -618,6 +622,106 @@ fn r666_scene_key_space_codepoint_routes_as_character_key() {
         panic!("expected CharacterKey for U+0020 space, got {:?}", inbox[0]);
     };
     assert_eq!(character, " ");
+}
+
+// ---- R882 §5.49 §5.39 — scene/key state ("down" / "up") edges ----
+
+#[test]
+fn r882_scene_key_state_down_enqueues_down_edge() {
+    // `state: "down"` is the winit `Pressed` mirror: the drain updates
+    // the held-key cache AND dispatches, so the wire carries the edge.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":6.0},"key":"Space","state":"down"},"id":410}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::Key { ref key, state, .. } = inbox[0] else {
+        panic!("expected Key variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(key, "Space");
+    assert_eq!(state, KeyWireState::Down);
+}
+
+#[test]
+fn r882_scene_key_state_up_enqueues_up_edge() {
+    // `state: "up"` is the winit `Released` mirror — held-key cache
+    // update only, no dispatch (the drain's policy; the wire carries
+    // the edge). The single-codepoint discriminator still applies:
+    // a character key with an edge keeps the CharacterKey variant.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":6.0},"key":"Space","state":"up"},"id":411}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::Key { ref key, state, .. } = inbox[0] else {
+        panic!("expected Key variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(key, "Space");
+    assert_eq!(state, KeyWireState::Up);
+
+    // The single-codepoint discriminator still applies on the edge
+    // wire: a character key with `state` keeps the CharacterKey
+    // variant. Fresh context — the dispatcher consumes its inbox
+    // handle per call.
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":6.0},"key":"a","state":"up"},"id":412}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::CharacterKey { ref character, state, .. } = inbox[0] else {
+        panic!("expected CharacterKey variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(character, "a");
+    assert_eq!(state, KeyWireState::Up);
+}
+
+#[test]
+fn r882_scene_key_state_out_of_vocabulary_rejects() {
+    // A typo'd edge must reject loudly (invalid_params), never decay
+    // to a silent atomic press — the R773 closed-vocabulary rule.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    for bad in [r#""pressed""#, r#""DOWN""#, "3", r#""""#] {
+        // Fresh context per request — the dispatcher consumes its
+        // inbox handle per call, and each rejection must be the
+        // vocabulary's, not a missing-inbox artefact.
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/key","params":{{"at":{{"x":0.0,"y":0.0}},"key":"Space","state":{bad}}},"id":413}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        let err = resp.error.expect("out-of-vocabulary state must reject");
+        assert_eq!(err.code, -32602, "state={bad}");
+        let data = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+        assert!(data.contains("state"), "the rejection names the state param: {data:?}");
+        assert!(inbox.is_empty(), "rejected requests must enqueue nothing");
+    }
+}
+
+#[test]
+fn r882_key_wire_state_round_trips() {
+    // decode == inverse(encode), including the omitted-param Press.
+    for state in [KeyWireState::Press, KeyWireState::Down, KeyWireState::Up] {
+        assert_eq!(
+            KeyWireState::from_wire_param(state.as_wire_param()),
+            Some(state)
+        );
+    }
+    assert_eq!(KeyWireState::from_wire_param(None), Some(KeyWireState::Press));
+    assert_eq!(KeyWireState::from_wire_param(Some("sideways")), None);
+    assert_eq!(KeyWireState::default(), KeyWireState::Press);
 }
 
 #[test]
@@ -2287,7 +2391,7 @@ fn scene_key_path_resolves_to_tag_rect_center() {
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
     assert_eq!(inbox.len(), 1);
-    let DeferredInput::Key { x, y, ref key } = inbox[0] else {
+    let DeferredInput::Key { x, y, ref key, state: _ } = inbox[0] else {
         panic!("expected Key variant");
     };
     assert_eq!(key, "PageDown");

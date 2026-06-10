@@ -78,7 +78,7 @@ use pinion_core::scene::{ContainerNode, ExternalNode};
 use pinion_core::{Command, Owner, Scene, WidgetCore};
 
 use crate::command::CommandExecutor;
-use crate::input::{InputRouter, MiddleRelease, PointerId, Touch, TouchPhase};
+use crate::input::{InputRouter, PanRelease, PointerId, Touch, TouchPhase};
 use crate::intent_queue::{walk_scene_and_drain, IntentQueue};
 
 /// R51.122 §5.41 — backend-agnostic dispatch substrate.
@@ -1636,7 +1636,7 @@ impl<V: WidgetCore> CoreShell<V> {
 
     /// R881.1 §5.35 — single-window wrapper around
     /// [`Self::middle_up_for_window`].
-    pub fn middle_up(&mut self, pid: PointerId) -> MiddleRelease {
+    pub fn middle_up(&mut self, pid: PointerId) -> PanRelease {
         self.middle_up_for_window(DEFAULT_WINDOW, pid)
     }
 
@@ -1654,13 +1654,68 @@ impl<V: WidgetCore> CoreShell<V> {
 
     /// R881 §5.35 §5.49 — middle-button release for the addressed
     /// window. Closes the router's middle gesture and reports the
-    /// click-vs-pan determination ([`MiddleRelease`]); the shell runs
-    /// its paste funnel on [`MiddleRelease::Click`] only.
-    pub fn middle_up_for_window(&mut self, window_id: &str, pid: PointerId) -> MiddleRelease {
+    /// click-vs-pan determination ([`PanRelease`]); the shell runs
+    /// its paste funnel on [`PanRelease::Click`] only.
+    pub fn middle_up_for_window(&mut self, window_id: &str, pid: PointerId) -> PanRelease {
         self.routers
             .entry(window_id.to_owned())
             .or_default()
             .middle_up(pid)
+    }
+
+    /// R882 §5.35 §5.39 — route a left press into the addressed
+    /// window's pan channel (the shell's Space-hold chord — Figma /
+    /// Photoshop hand tool). Pan targets pin at the press point; no
+    /// widget sees a `PointerDown`. Single-window wrapper:
+    /// [`Self::left_pan_down`].
+    pub fn left_pan_down_for_window(&mut self, window_id: &str, pid: PointerId) {
+        self.routers
+            .entry(window_id.to_owned())
+            .or_default()
+            .left_pan_down(pid);
+    }
+
+    /// R882 §5.35 — single-window wrapper around
+    /// [`Self::left_pan_down_for_window`].
+    pub fn left_pan_down(&mut self, pid: PointerId) {
+        self.left_pan_down_for_window(DEFAULT_WINDOW, pid);
+    }
+
+    /// R882 §5.35 §5.39 — whether a left-opened pan gesture is in
+    /// flight on the addressed window for `pid`. The shell's left
+    /// release routes on this (gesture-capture: the release follows
+    /// the gesture, not the current chord state). Single-window
+    /// wrapper: [`Self::left_pan_in_flight`].
+    #[must_use]
+    pub fn left_pan_in_flight_for_window(&self, window_id: &str, pid: PointerId) -> bool {
+        self.routers
+            .get(window_id)
+            .is_some_and(|router| router.left_pan_in_flight(pid))
+    }
+
+    /// R882 §5.35 — single-window wrapper around
+    /// [`Self::left_pan_in_flight_for_window`].
+    #[must_use]
+    pub fn left_pan_in_flight(&self, pid: PointerId) -> bool {
+        self.left_pan_in_flight_for_window(DEFAULT_WINDOW, pid)
+    }
+
+    /// R882 §5.35 §5.39 — close a left-opened pan gesture on the
+    /// addressed window and report the click-vs-pan determination.
+    /// The left chord's `Click` (release-in-place) verdict is inert
+    /// shell policy — see [`PanRelease`]. Single-window wrapper:
+    /// [`Self::left_pan_up`].
+    pub fn left_pan_up_for_window(&mut self, window_id: &str, pid: PointerId) -> PanRelease {
+        self.routers
+            .entry(window_id.to_owned())
+            .or_default()
+            .left_pan_up(pid)
+    }
+
+    /// R882 §5.35 — single-window wrapper around
+    /// [`Self::left_pan_up_for_window`].
+    pub fn left_pan_up(&mut self, pid: PointerId) -> PanRelease {
+        self.left_pan_up_for_window(DEFAULT_WINDOW, pid)
     }
 
     /// R51.122 §5.41 — pointer leaves the surface for `pid` (winit's

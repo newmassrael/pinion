@@ -417,6 +417,91 @@ impl DragButton {
     }
 }
 
+/// R882 §5.49 §5.39 — which keyboard edge a `scene/key` injection
+/// mirrors. The winit `KeyboardInput` `ElementState` RPC peer: a
+/// physical key delivers a `Pressed` edge (dispatch + held-state
+/// cache update) and a `Released` edge (held-state cache update
+/// only); the pre-R882 `scene/key` wire had no edge concept and stays
+/// the default — an *atomic* logical keypress that dispatches without
+/// touching any held-key cache, so a legacy `scene/key {key:"Space"}`
+/// can never strand the shell's Space pan chord in the held state.
+///
+/// Wire form: the optional `state` param — absent ⇒ [`Self::Press`],
+/// `"down"` ⇒ [`Self::Down`], `"up"` ⇒ [`Self::Up`], anything else
+/// rejects with `invalid_params`. Encode
+/// ([`as_wire_param`](Self::as_wire_param)) and decode
+/// ([`from_wire_param`](Self::from_wire_param)) live as an adjacent
+/// pair — `decode == inverse(encode)` including the absence case, the
+/// R773 wire-vocabulary SSOT class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeyWireState {
+    /// The legacy atomic keypress (param absent) — dispatch the key,
+    /// leave every held-key cache untouched.
+    #[default]
+    Press,
+    /// `"down"` — the winit `Pressed` mirror: update the held-key
+    /// absolute-state cache, then dispatch the key exactly as
+    /// [`Self::Press`] would (a real key-down does both).
+    Down,
+    /// `"up"` — the winit `Released` mirror: update the held-key
+    /// cache; dispatch nothing (the native shell drops release edges
+    /// at the dispatch tier too).
+    Up,
+}
+
+impl KeyWireState {
+    /// Canonical wire form — `None` means the param is omitted (the
+    /// [`Self::Press`] default). Inverse of
+    /// [`from_wire_param`](Self::from_wire_param).
+    #[must_use]
+    pub fn as_wire_param(self) -> Option<&'static str> {
+        match self {
+            KeyWireState::Press => None,
+            KeyWireState::Down => Some("down"),
+            KeyWireState::Up => Some("up"),
+        }
+    }
+
+    /// Decode the optional `state` wire param; `None` for an
+    /// out-of-vocabulary value (the dispatcher rejects with
+    /// `invalid_params` so a typo surfaces at the call site, not as a
+    /// silent atomic press). Inverse of
+    /// [`as_wire_param`](Self::as_wire_param).
+    #[must_use]
+    pub fn from_wire_param(param: Option<&str>) -> Option<Self> {
+        match param {
+            None => Some(KeyWireState::Press),
+            Some("down") => Some(KeyWireState::Down),
+            Some("up") => Some(KeyWireState::Up),
+            Some(_) => None,
+        }
+    }
+
+    /// R882 — the held-key cache half of the drain policy: `Some(held)`
+    /// when this edge updates the shell's held-key absolute state
+    /// (`Down` ⇒ held, `Up` ⇒ released), `None` for the legacy atomic
+    /// [`Press`](Self::Press) (which must never touch the cache). One
+    /// home for the edge → cache decision so the GUI and TUI drains
+    /// cannot diverge.
+    #[must_use]
+    pub fn held_edge(self) -> Option<bool> {
+        match self {
+            KeyWireState::Press => None,
+            KeyWireState::Down => Some(true),
+            KeyWireState::Up => Some(false),
+        }
+    }
+
+    /// R882 — the dispatch half of the drain policy: every edge except
+    /// [`Up`](Self::Up) dispatches the key (a real key-down both
+    /// updates the cache and types; a release dispatches nothing — the
+    /// native winit arm drops release edges at the dispatch tier too).
+    #[must_use]
+    pub fn dispatches(self) -> bool {
+        !matches!(self, KeyWireState::Up)
+    }
+}
+
 /// R51.195 §5.49 §5.45 — single deferred-input entry. One per
 /// AI-injected event; the embedder drains the inbox once `dispatch`
 /// returns and feeds each entry into the matching shell substrate
@@ -466,7 +551,18 @@ pub enum DeferredInput {
     /// `" "`, `"漢"`) route as [`CharacterKey`](Self::CharacterKey)
     /// (the `Key::Character` arc); multi-char W3C named strings
     /// (`"Enter"`, `"ArrowUp"`, `"PageDown"`) land here.
-    Key { x: f64, y: f64, key: String },
+    ///
+    /// R882 §5.49 §5.39 — `state` carries the keyboard edge
+    /// ([`KeyWireState`]): the default `Press` is the legacy atomic
+    /// dispatch; `Down` / `Up` mirror the winit `Pressed` / `Released`
+    /// edges so an AI can hold a key (`note_key_state` — the Space
+    /// pan chord) exactly as a physical keyboard would.
+    Key {
+        x: f64,
+        y: f64,
+        key: String,
+        state: KeyWireState,
+    },
     /// R666 §5.37 §5.49 — `scene/key` character-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_character_key(character)` so the substrate first
@@ -481,7 +577,17 @@ pub enum DeferredInput {
     /// `handle_named_key` so single-character `V::keybinding`
     /// intercepts were invisible to RPC drivers
     /// (`[[scene-key-character-named-gap]]`). R666 closes the gap.
-    CharacterKey { x: f64, y: f64, character: String },
+    ///
+    /// R882 §5.49 §5.39 — `state` carries the keyboard edge; see
+    /// [`Key`](Self::Key). Held-key tracking keys on the canonical
+    /// string vocabulary, so the chord key is the *named* `"Space"`
+    /// (the winit boundary string), not the `" "` character.
+    CharacterKey {
+        x: f64,
+        y: f64,
+        character: String,
+        state: KeyWireState,
+    },
     /// R663 §5.49 — `scene/double_click` injection. Emits the W3C
     /// `UIEvent` `detail: 2` convention via two complete press/release
     /// cycles at `(x, y)` without an intervening cursor move so the
@@ -2271,7 +2377,16 @@ where
 
 /// R51.197 §5.49 §5.45 — `scene/key` typed dispatcher.
 ///
-/// Params: `{at: {x: f64, y: f64}, key: <W3C KeyboardEvent.key string>}`.
+/// Params: `{at: {x: f64, y: f64}, key: <W3C KeyboardEvent.key string>,
+/// state?: "down" | "up"}`.
+///
+/// R882 §5.49 §5.39 — the optional `state` param is the winit
+/// `KeyboardInput` edge peer ([`KeyWireState`]): `"down"` dispatches
+/// the key AND records it held (the shell's held-key absolute-state
+/// cache — `"Space"` arms the left-drag pan chord); `"up"` releases
+/// it without dispatching. Absent = the legacy atomic press, which
+/// never touches the held cache (an atomic press cannot strand the
+/// chord).
 ///
 /// Enqueues a [`DeferredInput`] entry on the dispatcher's inbox. The
 /// embedder drains the inbox after `dispatch` returns and applies
@@ -2314,6 +2429,22 @@ where
     if key.is_empty() {
         return Err(RpcError::invalid_params("params.key must not be empty"));
     }
+    // R882 §5.49 §5.39 — the optional keyboard edge: absent = the
+    // legacy atomic press; "down" / "up" mirror the winit Pressed /
+    // Released edges (held-key absolute state — the Space pan chord).
+    // Out-of-vocabulary values reject loudly (no silent atomic press).
+    let state_param = params.get("state");
+    let state = match state_param {
+        None => KeyWireState::Press,
+        Some(value) => {
+            let name = value.as_str().ok_or_else(|| {
+                RpcError::invalid_params("params.state must be a string (\"down\" | \"up\")")
+            })?;
+            KeyWireState::from_wire_param(Some(name)).ok_or_else(|| {
+                RpcError::invalid_params("params.state must be \"down\" or \"up\"")
+            })?
+        }
+    };
     // R51.202 §5.49 — key location is either an explicit cursor
     // coordinate or a tag lookup via the paint scene, mirroring
     // `scene/click`'s shape.
@@ -2333,12 +2464,14 @@ where
             x,
             y,
             character: key.to_owned(),
+            state,
         });
     } else {
         inbox.push(DeferredInput::Key {
             x,
             y,
             key: key.to_owned(),
+            state,
         });
     }
     Ok(Value::Null)

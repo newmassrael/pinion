@@ -36769,6 +36769,74 @@
         "TUI pointer modifiers + middle paste parity (pre-existing SS2 #6 carries, unchanged)"
       ]
     },
+    "R882": {
+      "decision_summary": "Space-hold left-drag pan via button-generalised R881 pan channel + held-key absolute state (HeldKeys) + scene/key down/up edge peer",
+      "changes_bullets": [
+        "router: MiddleGesture -> button-keyed PanGesture (one pan channel, PanButton Left|Middle)",
+        "MiddleRelease -> PanRelease rename; pan_up matches opening button (cross-button = NoPress)",
+        "new left_pan_down/left_pan_up/left_pan_in_flight + CoreShell per-window wrappers",
+        "ShellCore held-key absolute state: pinion-core HeldKeys (Space chord vocabulary SSOT)",
+        "winit KeyboardInput now feeds BOTH edges into note_key_state; window blur clears chord",
+        "Space-held left press routes to pan channel (no focus steal / widget Down); release",
+        "follows gesture-in-flight not chord state (gesture-capture)",
+        "scene/key gains state:\"down\"|\"up\" (KeyWireState, decode=inverse(encode), absent=atomic)",
+        "KeyWireState held_edge()/dispatches() = one edge-policy table for GUI+TUI drains",
+        "TUI parity: HeldKeys + pan routing; native key-release = crossterm baseline carry",
+        "audit fix: column_widths hand-rolled ':' decode -> split_send_payload SSOT"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (router 7 + shell 6 + rpc 4 + core 1 new tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "demo r882_space_pan.py PASS (13 asserts + 8 wait-gates, exact count)",
+        "regressions PASS: r881/r880/r879/r877 + r742/r743/r763 (fresh release builds)"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.39",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "text-edit-mode chord exemption (focused text widget suppresses Space pan) — needs a",
+        "focused-widget-is-text-class signal; no substrate exists (set_ime_allowed is static)",
+        "TUI native key-release edges = crossterm baseline protocol gap (kitty-only; 2#6 carry)",
+        "marquee edge auto-pan (R880 audit sub-axis c) — example-level Tickable, next candidate",
+        "blur/missed-release gesture revocation sweep (all gesture classes, R881 carry)",
+        "right-click context menu RPC peer (2#2 gap, R881.1 carry — lead candidate)"
+      ],
+      "publishable_decision_summary": "Space-hold left-drag pan via button-generalised R881 pan channel + held-key absolute state (HeldKeys) + scene/key down/up edge peer",
+      "publishable_changes_bullets": [
+        "router: MiddleGesture -> button-keyed PanGesture (one pan channel, PanButton Left|Middle)",
+        "MiddleRelease -> PanRelease rename; pan_up matches opening button (cross-button = NoPress)",
+        "new left_pan_down/left_pan_up/left_pan_in_flight + CoreShell per-window wrappers",
+        "ShellCore held-key absolute state: pinion-core HeldKeys (Space chord vocabulary SSOT)",
+        "winit KeyboardInput now feeds BOTH edges into note_key_state; window blur clears chord",
+        "Space-held left press routes to pan channel (no focus steal / widget Down); release",
+        "follows gesture-in-flight not chord state (gesture-capture)",
+        "scene/key gains state:\"down\"|\"up\" (KeyWireState, decode=inverse(encode), absent=atomic)",
+        "KeyWireState held_edge()/dispatches() = one edge-policy table for GUI+TUI drains",
+        "TUI parity: HeldKeys + pan routing; native key-release = crossterm baseline carry",
+        "audit fix: column_widths hand-rolled ':' decode -> split_send_payload SSOT"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (router 7 + shell 6 + rpc 4 + core 1 new tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "demo r882_space_pan.py PASS (13 asserts + 8 wait-gates, exact count)",
+        "regressions PASS: r881/r880/r879/r877 + r742/r743/r763 (fresh release builds)"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.39",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "text-edit-mode chord exemption (focused text widget suppresses Space pan) — needs a",
+        "focused-widget-is-text-class signal; no substrate exists (set_ime_allowed is static)",
+        "TUI native key-release edges = crossterm baseline protocol gap (kitty-only; 2#6 carry)",
+        "marquee edge auto-pan (R880 audit sub-axis c) — example-level Tickable, next candidate",
+        "blur/missed-release gesture revocation sweep (all gesture classes, R881 carry)",
+        "right-click context menu RPC peer (2#2 gap, R881.1 carry — lead candidate)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -49906,6 +49974,7 @@
   },
   "confirmation_events": {},
   "frames": {},
+  "branches": {},
   "narrative_facts": {},
-  "schema_version": 12
+  "schema_version": 14
 }

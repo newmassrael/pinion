@@ -87,6 +87,13 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// `scene` + `cached_state` + `router` + `intent_queue`
     /// plumbing.
     core: CoreShell<V>,
+    /// R882 §5.39 §5.35 — held-key chord cache
+    /// ([`pinion_core::HeldKeys`]), the Vello sibling's
+    /// `ShellCore::held_keys` mirror — the chord *vocabulary* decode
+    /// lives once in `pinion-core` so the two backends cannot diverge
+    /// (§2 #6). RPC-driven only on this backend (see
+    /// [`Self::note_key_state`]).
+    held_keys: pinion_core::HeldKeys,
     /// R670 §5.41 §5.40 §5.34 — preview lifecycle ledger, mirror of
     /// `pinion_shell::ShellCore::previews`. Plumbed into the
     /// `pinion_rpc::DispatchContext` by [`Self::dispatch_rpc`] so the
@@ -200,6 +207,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         focus.update_focusable_tags(tags);
         Self {
             core: CoreShell::new(),
+            held_keys: pinion_core::HeldKeys::default(),
             previews: PreviewLedger::default(),
             revision: SceneRevision::default(),
             focus,
@@ -459,16 +467,64 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// R51.117 §5.41 — pointer press (mouse left button down,
     /// crossterm-side). Returns `true` on visible state change
     /// (R51.124 §5.41).
+    ///
+    /// R882 §5.35 §5.39 — while the Space pan chord is held
+    /// ([`Self::note_key_state`]) the press enters the router's pan
+    /// channel instead (no widget `PointerDown`, no focus change),
+    /// mirroring the Vello sibling. On the TUI the chord is RPC-driven
+    /// only (`scene/key state:"down"`): crossterm delivers no key
+    /// release events on the baseline protocol (kitty-extension-only;
+    /// §2 #6 divergence carry, the same class as the paste axis).
     pub fn pointer_down(&mut self) -> bool {
+        if self.held_keys.space() {
+            self.core.left_pan_down(PointerId::MOUSE);
+            return false;
+        }
         let tail = self.core.pointer_down(PointerId::MOUSE);
         self.handle_tail(&tail)
     }
 
     /// R51.117 §5.41 — pointer release (mouse left button up).
     /// Returns `true` on visible state change (R51.124 §5.41).
+    ///
+    /// R882 §5.35 — a press that entered the pan channel resolves
+    /// there (gesture-capture: routing follows the gesture in flight,
+    /// not the current chord state); the left chord's release verdict
+    /// is inert — a latched pan already applied itself move-by-move.
     pub fn pointer_up(&mut self) -> bool {
+        if self.core.left_pan_in_flight(PointerId::MOUSE) {
+            let _ = self.core.left_pan_up(PointerId::MOUSE);
+            return false;
+        }
         let tail = self.core.pointer_up(PointerId::MOUSE);
         self.handle_tail(&tail)
+    }
+
+    /// R882 §5.39 — held-key absolute-state funnel, the Vello
+    /// sibling's `ShellCore::note_key_state` mirror. The TUI's only
+    /// producer is the `scene/key state:"down"/"up"` drain (crossterm
+    /// has no release edge on the baseline protocol); the chord
+    /// vocabulary decode lives once in [`pinion_core::HeldKeys`].
+    pub fn note_key_state(&mut self, key: &str, pressed: bool) {
+        self.held_keys.note(key, pressed);
+    }
+
+    /// R882 §5.49 §5.39 — the `scene/key` drain arm shared by the
+    /// named-key and character-key variants: the edge → cache /
+    /// dispatch policy is [`KeyWireState`](pinion_rpc::KeyWireState)'s
+    /// own (`held_edge` / `dispatches`), the same decision table the
+    /// Vello sibling's `drain_key_for_window` reads. The TUI's two
+    /// wire shapes share one dispatch entry (`dispatch_key`), so one
+    /// helper serves both arms.
+    fn drain_key_edge(&mut self, key: &str, state: pinion_rpc::KeyWireState) -> bool {
+        if let Some(held) = state.held_edge() {
+            self.note_key_state(key, held);
+        }
+        if state.dispatches() {
+            self.dispatch_key(key, pinion_core::Modifiers::default())
+        } else {
+            false
+        }
     }
 
     /// (R51.186 §5.45 R55.C.2) Mouse wheel dispatch — crossterm
@@ -556,23 +612,20 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                     state_changed |= self.pointer_down();
                     state_changed |= self.pointer_up();
                 }
-                pinion_rpc::DeferredInput::Key { x, y, ref key } => {
+                // R882 §5.49 §5.39 — `state` carries the keyboard edge;
+                // the shared edge policy lives in `drain_key_edge`.
+                pinion_rpc::DeferredInput::Key { x, y, ref key, state } => {
                     state_changed |= self.cursor_moved(x, y);
-                    state_changed |= self.dispatch_key(
-                        key,
-                        pinion_core::Modifiers::default(),
-                    );
+                    state_changed |= self.drain_key_edge(key, state);
                 }
                 pinion_rpc::DeferredInput::CharacterKey {
                     x,
                     y,
                     ref character,
+                    state,
                 } => {
                     state_changed |= self.cursor_moved(x, y);
-                    state_changed |= self.dispatch_key(
-                        character,
-                        pinion_core::Modifiers::default(),
-                    );
+                    state_changed |= self.drain_key_edge(character, state);
                 }
                 pinion_rpc::DeferredInput::Drag {
                     from_x,
@@ -1860,6 +1913,7 @@ mod tests {
             x: 8.0,
             y: 8.0,
             character: "d".to_string(),
+            state: pinion_rpc::KeyWireState::Press,
         }];
         assert!(core.drain_deferred_inputs(&inputs));
         assert_eq!(*core.cached_state(), ButtonState::Disabled);
@@ -1887,6 +1941,7 @@ mod tests {
             x: 8.0,
             y: 8.0,
             key: "Space".to_string(),
+            state: pinion_rpc::KeyWireState::Press,
         }];
         let _ = core.drain_deferred_inputs(&inputs);
         assert_eq!(*core.cached_state(), ButtonState::Hover);

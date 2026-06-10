@@ -42,15 +42,15 @@ use pinion_a11y::{
     PinionAccessAction, ROOT_NODE_ID,
 };
 use pinion_core::event::WheelDelta;
-use pinion_core::{Frame, Intent, Scene, SceneRevision};
+use pinion_core::{Frame, HeldKeys, Intent, Scene, SceneRevision};
 use pinion_rpc::{
-    dispatch_parsed, parse_request, DeferredInput, DispatchContext, DragButton, LayoutNode, PreviewLedger,
+    dispatch_parsed, parse_request, DeferredInput, DispatchContext, DragButton, KeyWireState, LayoutNode, PreviewLedger,
     Request,
 };
 use pinion_runtime::{
     clamp_frame_dt, compute_layout, compute_layout_with_scroll_dirty, rect_for_tag,
     walk_scene_and_drain_immediate, CommandExecutor, CoreShell, DispatchTail,
-    FocusManager, IntentQueue, MiddleRelease, Modifiers, PointerId, Touch, TouchPhase,
+    FocusManager, IntentQueue, PanRelease, Modifiers, PointerId, Touch, TouchPhase,
 };
 use pinion_text::LayoutCache;
 
@@ -146,6 +146,22 @@ pub struct ShellCore<V: WidgetView> {
     /// only the Shift bit via [`Self::modifiers_shift_key`];
     /// mutation happens through [`Self::set_modifiers`].
     modifiers: Modifiers,
+    /// R882 §5.39 §5.35 — held-key absolute state for the non-modifier
+    /// chord vocabulary ([`HeldKeys`] — the [`Self::modifiers`]
+    /// out-of-band pattern generalised past `ModifiersState`): winit
+    /// delivers `KeyboardInput` `Released` edges but the pre-R882 shell
+    /// dropped them, so no "is Space held right now" fact existed
+    /// anywhere. While the Space pan chord is held, a left press routes
+    /// into the router's pan channel instead of the widget press arc
+    /// (see [`Self::mouse_pressed_for_window`]). Fed by both edges of
+    /// the winit `KeyboardInput` arm and by the
+    /// `scene/key state:"down"/"up"` RPC peer through one funnel
+    /// ([`Self::note_key_state`]); cleared on window blur (the browser
+    /// convention — a keyup that raced the focus loss never arrives,
+    /// and a stuck chord would turn every left drag into a pan). The
+    /// chord *vocabulary* decode lives in `pinion-core` so the TUI
+    /// sibling can never diverge (§2 #6).
+    held_keys: HeldKeys,
     /// R47.3 §5.36 — owned [`LayoutCache`] (LRU 256). `paint_adapter`'s
     /// Text arm consults this cache for every `Scene::Text` it walks
     /// so the view fn's static labels shape once on first paint and
@@ -482,6 +498,7 @@ impl<V: WidgetView> ShellCore<V> {
             revision: SceneRevision::default(),
             focus,
             modifiers: Modifiers::empty(),
+            held_keys: HeldKeys::default(),
             text_cache: LayoutCache::new(),
             last_paint_layout: None,
             last_access_tag_map: HashMap::new(),
@@ -1011,7 +1028,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// R881 §5.35 — this is the paste *funnel*, no longer a press arm:
     /// [`Self::middle_released_for_window`] calls it when the router's
     /// `DragLatch` resolves the middle press as a release-in-place
-    /// ([`MiddleRelease::Click`]). A press that strayed into a
+    /// ([`PanRelease::Click`]). A press that strayed into a
     /// drag-to-pan never reaches here (pre-R881 the winit
     /// `{ Middle, Pressed }` arm called this directly, pasting at
     /// press time).
@@ -1065,20 +1082,20 @@ impl<V: WidgetView> ShellCore<V> {
     /// click-vs-pan determination (the R880 `DragLatch` SSOT, judged
     /// router-side):
     ///
-    /// * [`MiddleRelease::Click`] — press-release in place: run the
+    /// * [`PanRelease::Click`] — press-release in place: run the
     ///   R56.2.e paste funnel ([`Self::middle_click`]). Release-paste is
     ///   the xterm / Qt convention and keeps a paste off every pan.
-    /// * [`MiddleRelease::Pan`] — the drag already panned move-by-move;
+    /// * [`PanRelease::Pan`] — the drag already panned move-by-move;
     ///   nothing fires on release.
-    /// * [`MiddleRelease::NoPress`] — spurious release, or the gesture
+    /// * [`PanRelease::NoPress`] — spurious release, or the gesture
     ///   was revoked by `PointerCancel`; a cancelled press must not
     ///   paste.
     ///
     /// Single-window wrapper: [`Self::middle_released`].
     pub fn middle_released_for_window(&mut self, window_id: &str, pid: PointerId) {
         match self.core.middle_up_for_window(window_id, pid) {
-            MiddleRelease::Click => self.middle_click(),
-            MiddleRelease::Pan | MiddleRelease::NoPress => {}
+            PanRelease::Click => self.middle_click(),
+            PanRelease::Pan | PanRelease::NoPress => {}
         }
     }
 
@@ -1357,6 +1374,21 @@ impl<V: WidgetView> ShellCore<V> {
     /// the *binding-wide* hover target (whichever window the cursor
     /// last hovered).
     pub fn mouse_pressed_for_window(&mut self, window_id: &str, pid: PointerId) {
+        // R882 §5.35 §5.39 — Space-hold pan chord (the Figma / Photoshop
+        // hand tool): while Space is held, a left press enters the
+        // router's pan channel instead of the widget press arc — the
+        // R881 middle-pan machinery with the advance driven from the
+        // left-drag channel. Deliberately NONE of the press follow-ups
+        // run: no widget `PointerDown`, no click-to-focus (a pan must
+        // not steal focus), no caret positioning, no immediate-mode
+        // forward. The chord is read at press time only; the matching
+        // release routes by the gesture in flight (see
+        // [`Self::mouse_released_for_window`]), so lifting Space
+        // mid-pan never strands the gesture.
+        if self.held_keys.space() {
+            self.core.left_pan_down_for_window(window_id, pid);
+            return;
+        }
         let tail = self.core.pointer_down_for_window(window_id, pid);
         self.click_to_focus_for_window(window_id, pid);
         self.position_caret_after_press(window_id, pid);
@@ -1557,6 +1589,18 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R672 §5.35 §5.41 — per-window variant of [`Self::mouse_released`].
     pub fn mouse_released_for_window(&mut self, window_id: &str, pid: PointerId) {
+        // R882 §5.35 §5.39 — a left press that entered the pan channel
+        // resolves there: routing follows the *gesture in flight*, not
+        // the current chord state (gesture-capture — Space may have
+        // lifted mid-pan, the pan still owns the press). The verdict is
+        // deliberately unused: a release-in-place (`PanRelease::Click`)
+        // is inert for the left chord (Figma: Space+click does nothing —
+        // no focus, no selection, no activation), and a latched pan
+        // already applied itself move-by-move.
+        if self.core.left_pan_in_flight_for_window(window_id, pid) {
+            let _verdict = self.core.left_pan_up_for_window(window_id, pid);
+            return;
+        }
         // R781 §5.35 §5.41 — carry the held modifiers to the activate edge
         // so a Shift / Ctrl click reaches the composite send wire (a
         // multi-select coordinator extends / toggles; every other widget
@@ -1789,9 +1833,10 @@ impl<V: WidgetView> ShellCore<V> {
                         meta,
                     });
                 }
-                DeferredInput::Key { x, y, ref key } => {
-                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
-                    self.handle_named_key(key);
+                // R882 §5.49 §5.39 — `state` carries the keyboard edge;
+                // the shared policy lives in `drain_key_for_window`.
+                DeferredInput::Key { x, y, ref key, state } => {
+                    self.drain_key_for_window(window_id, (x, y), key, state, false);
                 }
                 // R666 §5.37 — `scene/key` single-codepoint arc. The
                 // dispatcher auto-detects character vs named keys by
@@ -1805,9 +1850,9 @@ impl<V: WidgetView> ShellCore<V> {
                     x,
                     y,
                     ref character,
+                    state,
                 } => {
-                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
-                    self.handle_character_key(character);
+                    self.drain_key_for_window(window_id, (x, y), character, state, true);
                 }
                 DeferredInput::Drag {
                     from_x,
@@ -1842,6 +1887,45 @@ impl<V: WidgetView> ShellCore<V> {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// R882 §5.49 §5.39 — the `scene/key` drain arm shared by the
+    /// named-key and character-key variants (one home for the edge
+    /// policy, so the two wire shapes cannot diverge): `state` carries
+    /// the keyboard edge — [`KeyWireState::Down`] mirrors winit
+    /// `Pressed` (held-key cache update THEN dispatch — a real
+    /// key-down does both), [`KeyWireState::Up`] mirrors `Released`
+    /// (cache update only; the native arm dispatches nothing on
+    /// release either), and the default [`KeyWireState::Press`] is the
+    /// legacy atomic keypress that never touches the cache (an atomic
+    /// press cannot strand the Space pan chord). One
+    /// [`Self::note_key_state`] funnel with the winit arm, so native
+    /// and RPC chords cannot diverge. `character` picks the dispatch
+    /// half: `handle_character_key` (the R666 single-codepoint
+    /// `V::keybinding` arc) vs `handle_named_key`.
+    fn drain_key_for_window(
+        &mut self,
+        window_id: &str,
+        at: (f64, f64),
+        key: &str,
+        state: KeyWireState,
+        character: bool,
+    ) {
+        self.cursor_moved_for_window(window_id, PointerId::MOUSE, at.0, at.1);
+        // The edge → cache / dispatch policy is `KeyWireState`'s own
+        // (`held_edge` / `dispatches`) so the TUI drain reads the same
+        // decision table.
+        if let Some(held) = state.held_edge() {
+            self.note_key_state(key, held);
+        }
+        if !state.dispatches() {
+            return;
+        }
+        if character {
+            self.handle_character_key(key);
+        } else {
+            self.handle_named_key(key);
         }
     }
 
@@ -1902,6 +1986,31 @@ impl<V: WidgetView> ShellCore<V> {
         self.modifiers = modifiers;
     }
 
+    /// R882 §5.39 §5.35 — held-key absolute-state funnel: record that
+    /// `key` (the canonical W3C `KeyboardEvent.key` string the winit
+    /// boundary's `named_key_str` emits) is now held / released. ONE
+    /// funnel for every producer — both edges of the winit
+    /// `KeyboardInput` arm and the `scene/key state:"down"/"up"` RPC
+    /// peer — so the native and AI-driven chord can never diverge.
+    /// The cache stores facts (which keys are physically down); the
+    /// *policy* mapping a held key to a verb lives at the consumer
+    /// (the left-press pan routing in
+    /// [`Self::mouse_pressed_for_window`]); the chord *vocabulary*
+    /// (which keys are tracked at all) lives once in
+    /// [`HeldKeys::note`].
+    pub fn note_key_state(&mut self, key: &str, pressed: bool) {
+        self.held_keys.note(key, pressed);
+    }
+
+    /// R882 §5.39 — whether the Space pan chord is currently held
+    /// (see [`Self::note_key_state`]). Read by the left-press routing
+    /// and by tests; release routing deliberately does NOT read this —
+    /// it follows the gesture in flight (gesture-capture).
+    #[must_use]
+    pub fn space_held(&self) -> bool {
+        self.held_keys.space()
+    }
+
     /// R51.80 §5.39 / R51.59 — winit `WindowEvent::Focused(true)`
     /// dispatch. ARIA Focus Order asks the framework to reinstate the
     /// previously-focused widget when the window regains focus (the
@@ -1916,8 +2025,17 @@ impl<V: WidgetView> ShellCore<V> {
     /// R51.80 §5.39 / R51.59 — winit `WindowEvent::Focused(false)`
     /// dispatch. Saves the currently-focused widget tag so a future
     /// [`Self::window_focused`] can restore it.
+    ///
+    /// R882 §5.39 — also clears the held-key chord cache: the matching
+    /// keyup goes to whichever window stole focus, never to us (the
+    /// browser missed-keyup convention), and a stranded Space chord
+    /// would turn every left drag after refocus into a pan. winit
+    /// re-delivers `ModifiersChanged` on refocus so [`Self::modifiers`]
+    /// resyncs itself; held keys have no such resync event, hence the
+    /// explicit clear.
     pub fn window_blurred(&mut self) {
         self.focus.save();
+        self.held_keys.clear();
     }
 
     /// R51.80 §5.16 §5.36 — compute one frame's paint scene from the

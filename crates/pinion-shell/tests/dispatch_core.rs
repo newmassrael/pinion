@@ -2255,7 +2255,7 @@ mod r56_2_e_apply_middle_click_wire {
     //! R881 §5.35 re-sequenced WHO calls the funnel: the winit
     //! `{ Middle, Pressed }` arm no longer pastes — `middle_click`
     //! fires from `ShellCore::middle_released_for_window` on the
-    //! router's release-in-place verdict (`MiddleRelease::Click`); a
+    //! router's release-in-place verdict (`PanRelease::Click`); a
     //! drag-to-pan never reaches it. That choreography is pinned by
     //! the `r881_middle_gesture_paste_on_release` mod below; the
     //! funnel mechanics pinned here are unchanged. The winit
@@ -2431,7 +2431,7 @@ mod r881_middle_gesture_paste_on_release {
     //! R881 §5.35 §5.49 — the middle-button press/release pair
     //! choreography at the `ShellCore` tier. Pre-R881 the winit
     //! `{ Middle, Pressed }` arm pasted immediately; R881 defers the
-    //! paste to a release-in-place (`MiddleRelease::Click` from the
+    //! paste to a release-in-place (`PanRelease::Click` from the
     //! router's `DragLatch`) so a drag-to-pan never pastes — and the
     //! paste funnel itself (`ShellCore::middle_click`, covered by the
     //! `r56_2_e` mod above) is unchanged, just re-sequenced.
@@ -2472,6 +2472,172 @@ mod r881_middle_gesture_paste_on_release {
         core.cursor_moved(PointerId::MOUSE, 60.0, 60.0);
         core.middle_released(PointerId::MOUSE);
         assert_eq!(paste_count(), 0, "a moved middle drag is a pan, never a paste");
+    }
+}
+
+mod r882_space_chord_pan {
+    //! R882 §5.35 §5.39 — the Space-hold pan chord at the `ShellCore`
+    //! tier (the Figma / Photoshop hand tool): while Space is held,
+    //! `mouse_pressed_for_window` routes the left press into the
+    //! router's pan channel instead of the widget press arc, and
+    //! `mouse_released_for_window` resolves by the *gesture in flight*
+    //! (gesture-capture), not the chord's current state.
+    //!
+    //! Observability trick: the middle-button paste funnel is the
+    //! discriminator. While ANY pan-class gesture owns the pointer, a
+    //! middle press is refused (R881.1 exclusivity → release =
+    //! `NoPress` → no paste); with no gesture in flight, a middle
+    //! press-release-in-place pastes once. So "did the left press open
+    //! a pan gesture?" is observable as "does a middle click paste?" —
+    //! no paint scene required.
+
+    use super::{reset_mocks, APPLY_MIDDLE_CLICK_LOG, TEST_LOCK, TestView};
+    use pinion_runtime::PointerId;
+    use pinion_shell::ShellCore;
+
+    fn paste_count() -> usize {
+        APPLY_MIDDLE_CLICK_LOG.lock().unwrap().len()
+    }
+
+    /// A middle press-release-in-place against `core`, reporting
+    /// whether it pasted — `false` means a live gesture owns the
+    /// pointer (the middle press was refused).
+    fn middle_click_pastes(core: &mut ShellCore<TestView>) -> bool {
+        let before = paste_count();
+        core.middle_pressed(PointerId::MOUSE);
+        core.middle_released(PointerId::MOUSE);
+        paste_count() > before
+    }
+
+    #[test]
+    fn r882_space_chord_routes_left_press_into_pan_channel() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
+        core.note_key_state("Space", true);
+        assert!(core.space_held());
+        core.mouse_pressed(PointerId::MOUSE);
+        assert!(
+            !middle_click_pastes(&mut core),
+            "the chorded left press opened a pan gesture, so the pointer is owned",
+        );
+        core.mouse_released(PointerId::MOUSE);
+        assert!(
+            middle_click_pastes(&mut core),
+            "the left release resolved the pan gesture and freed the pointer",
+        );
+    }
+
+    #[test]
+    fn r882_without_chord_a_hoverless_left_press_leaves_pointer_free() {
+        // Control for the discriminator above: the same press without
+        // the chord opens nothing (no hover target, no pan channel),
+        // so the middle click pastes — proving the refusal in the
+        // chord test comes from the pan gesture, not the left press
+        // itself.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
+        core.mouse_pressed(PointerId::MOUSE);
+        assert!(
+            middle_click_pastes(&mut core),
+            "an un-chorded hoverless press owns nothing — the middle click pastes",
+        );
+        core.mouse_released(PointerId::MOUSE);
+    }
+
+    #[test]
+    fn r882_chord_lift_mid_gesture_release_still_resolves_in_pan_channel() {
+        // Gesture-capture: releasing Space mid-pan must not re-route
+        // the left release into the widget arc — the gesture in
+        // flight, not the chord state, owns the routing.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
+        core.note_key_state("Space", true);
+        core.mouse_pressed(PointerId::MOUSE);
+        core.note_key_state("Space", false);
+        assert!(
+            !middle_click_pastes(&mut core),
+            "the pan gesture survives the chord lift",
+        );
+        core.mouse_released(PointerId::MOUSE);
+        assert!(
+            middle_click_pastes(&mut core),
+            "the release resolved in the pan channel even with the chord lifted",
+        );
+    }
+
+    #[test]
+    fn r882_window_blur_clears_the_chord() {
+        // The browser missed-keyup convention: the keyup after a focus
+        // loss goes to another window; a stranded chord would turn
+        // every post-refocus left drag into a pan.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.note_key_state("Space", true);
+        assert!(core.space_held());
+        core.window_blurred();
+        assert!(!core.space_held(), "blur clears the held chord");
+        // And behaviourally: a post-blur left press opens no pan.
+        core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
+        core.mouse_pressed(PointerId::MOUSE);
+        assert!(
+            middle_click_pastes(&mut core),
+            "after blur the left press is un-chorded again",
+        );
+        core.mouse_released(PointerId::MOUSE);
+    }
+
+    #[test]
+    fn r882_note_key_state_tracks_only_the_chord_vocabulary() {
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.note_key_state("a", true);
+        core.note_key_state("Enter", true);
+        assert!(!core.space_held(), "non-chord keys never arm the pan chord");
+        core.note_key_state("Space", true);
+        assert!(core.space_held());
+        // Auto-repeat re-sends the pressed edge — idempotent.
+        core.note_key_state("Space", true);
+        assert!(core.space_held());
+        core.note_key_state("Space", false);
+        assert!(!core.space_held());
+    }
+
+    #[test]
+    fn r882_rpc_scene_key_edges_drive_the_chord() {
+        // The wire peer: `scene/key state:"down"` arms the chord
+        // exactly as a physical Space press would; `state:"up"`
+        // releases it; the legacy edgeless form never touches it (an
+        // atomic press cannot strand the chord).
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        let mut no_resize = |_: u32, _: u32| {};
+        let down = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":5.0},"key":"Space","state":"down"},"id":1}"#;
+        let _ = core.dispatch_rpc(down, &mut no_resize);
+        assert!(core.space_held(), "scene/key state:down arms the chord");
+        let up = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":5.0},"key":"Space","state":"up"},"id":2}"#;
+        let _ = core.dispatch_rpc(up, &mut no_resize);
+        assert!(!core.space_held(), "scene/key state:up releases the chord");
+        let legacy = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"at":{"x":5.0,"y":5.0},"key":"Space"},"id":3}"#;
+        let _ = core.dispatch_rpc(legacy, &mut no_resize);
+        assert!(
+            !core.space_held(),
+            "the legacy atomic press never touches the held-key cache",
+        );
     }
 }
 

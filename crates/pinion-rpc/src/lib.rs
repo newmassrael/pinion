@@ -52,7 +52,7 @@ pub use commands::{
     list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,
 };
 pub use dispatch::{
-    dispatch, dispatch_parsed, parse_request, DeferredInput, DispatchContext, DragButton, Request, RequestId,
+    dispatch, dispatch_parsed, parse_request, DeferredInput, DispatchContext, DragButton, KeyWireState, Request, RequestId,
     Response, RpcError,
 };
 pub use dry_run::{dry_run, DryRunError};

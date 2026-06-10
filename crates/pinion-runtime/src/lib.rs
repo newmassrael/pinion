@@ -46,7 +46,7 @@ pub use command::{
 pub use core_shell::{CoreShell, DispatchTail, StateChange, DEFAULT_WINDOW};
 pub use focus::FocusManager;
 pub use frame_pacing::{clamp_frame_dt, substep, FixedTimestep, MAX_FRAME_DT_SECS};
-pub use input::{rect_for_tag, InputRouter, MiddleRelease, Modifiers, PointerId, Touch, TouchPhase};
+pub use input::{rect_for_tag, InputRouter, PanRelease, Modifiers, PointerId, Touch, TouchPhase};
 pub use intent_queue::{walk_scene_and_drain, walk_scene_and_drain_immediate, IntentQueue};
 pub use layout::{compute_layout, compute_layout_with_scroll_dirty};
 pub use paint_cache_stats::FragmentCacheStats;

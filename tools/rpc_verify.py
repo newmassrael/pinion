@@ -371,6 +371,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         *,
         path: Optional[str] = None,
         name: str = "",
+        state: Optional[str] = None,
     ) -> None:
         """`scene/key` typed wrapper (R51.197 / R51.202 §5.49 §5.45).
 
@@ -392,12 +393,20 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         pre-R666 [[scene-key-character-named-gap]] — single-character
         V::keybinding intercepts were previously invisible to RPC
         drivers because every scene/key request was treated as named.
+
+        R882 §5.49 §5.39 — `state="down"` / `state="up"` mirror the
+        winit KeyboardInput Pressed/Released edges (held-key absolute
+        state; "Space" arms the left-drag pan chord). `state=None`
+        keeps the legacy atomic press, which never touches the
+        held-key cache.
         """
         if not name:
             raise ValueError("key name must not be empty")
         if (at is None) == (path is None):
             raise ValueError("exactly one of `at` or `path` must be supplied")
         params: dict[str, Any] = {"key": name}
+        if state is not None:
+            params["state"] = state
         if at is not None:
             params["at"] = {"x": float(at[0]), "y": float(at[1])}
         else:

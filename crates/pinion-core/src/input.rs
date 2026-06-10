@@ -99,6 +99,57 @@ impl DragLatch {
     }
 }
 
+/// R882 §5.39 §5.35 — held-key absolute state for the **non-modifier
+/// chord vocabulary**: the [`Modifiers`] out-of-band cache pattern
+/// generalised past `ModifiersState`. Windowing systems deliver
+/// per-key press/release edges but no queryable "is this key held"
+/// fact, so the shell tracks it — and the *vocabulary* (which keys are
+/// chords at all) is a single cross-backend policy: a GUI that pans on
+/// held-`Space` while the TUI's cache forgot the key would be a §2 #6
+/// dual-invariant bug, so the decode lives once here in the contract
+/// crate (the [`DRAG_CLICK_THRESHOLD_PX`] /
+/// [[helper-crate-home-ssot-axis]] discipline), not per shell.
+///
+/// Tracked today: `Space` — the Figma / Photoshop / Krita hand-tool
+/// pan chord (left-drag pans while held). Closed-form like
+/// [`Modifiers`]: future chord keys (an `H` hand tool, a `Z` zoom
+/// chord) extend the struct by a `SemVer` minor bump.
+///
+/// Key strings are the canonical W3C `KeyboardEvent.key` vocabulary
+/// the named-key boundary emits (`"Space"`, not the `" "` character).
+/// Both producers — the winit `KeyboardInput` edges and the
+/// `scene/key state:"down"/"up"` RPC peer — feed [`Self::note`], so
+/// native and AI-driven chords can never diverge. Consumers clear the
+/// cache on window blur (the browser missed-keyup convention).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HeldKeys {
+    space: bool,
+}
+
+impl HeldKeys {
+    /// Record a key edge: `pressed = true` on key-down (auto-repeat
+    /// re-sends are idempotent), `false` on key-up. Keys outside the
+    /// chord vocabulary are ignored.
+    pub fn note(&mut self, key: &str, pressed: bool) {
+        if key == "Space" {
+            self.space = pressed;
+        }
+    }
+
+    /// Whether `Space` — the pan chord — is currently held.
+    #[must_use]
+    pub const fn space(self) -> bool {
+        self.space
+    }
+
+    /// Forget every held key — the window-blur arm (a keyup that
+    /// raced the focus loss never arrives; a stranded chord would
+    /// turn every later left drag into a pan).
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// R880.1 — the multi-select pointer-chord policy, decoded ONCE for every
 /// set-mutating click / marquee consumer: a command chord
 /// ([`Modifiers::command_key`] — `Ctrl`, or `Cmd` on macOS) **toggles**
@@ -564,7 +615,32 @@ mod tests {
     //! identity, and the `is_empty` predicate used by `apply_key`
     //! plain-keystroke branches.
 
-    use super::{is_activation_event, DragLatch, Modifiers, PointerWireEvent, KEYBOARD_ACTIVATE_EVENT};
+    use super::{
+        is_activation_event, DragLatch, HeldKeys, Modifiers, PointerWireEvent,
+        KEYBOARD_ACTIVATE_EVENT,
+    };
+
+    #[test]
+    fn r882_held_keys_tracks_the_space_chord_only() {
+        // The chord-vocabulary SSOT: `Space` arms the pan chord, any
+        // other key is ignored, auto-repeat is idempotent, and `clear`
+        // (the window-blur arm) forgets everything.
+        let mut held = HeldKeys::default();
+        assert!(!held.space());
+        held.note("a", true);
+        held.note("Enter", true);
+        held.note(" ", true);
+        assert!(!held.space(), "only the named \"Space\" string is the chord");
+        held.note("Space", true);
+        assert!(held.space());
+        held.note("Space", true);
+        assert!(held.space(), "auto-repeat is idempotent");
+        held.note("Space", false);
+        assert!(!held.space());
+        held.note("Space", true);
+        held.clear();
+        assert!(!held.space(), "clear() forgets the held chord");
+    }
 
     #[test]
     fn r880_drag_latch_is_sticky_past_threshold() {
