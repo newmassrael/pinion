@@ -304,9 +304,22 @@ def body() -> None:
         f"screenshot {img.width}x{img.height} != window {WIN}"
     cur = cursor_id(snap)
     assert cur is not None, "a row is focused in the screenshot frame"
+
+    def fully_visible(tag: str) -> bool:
+        # The virtualization window deliberately renders OVERSCAN rows
+        # past the viewport edges, so `present_ids` can include a row
+        # whose rect hangs below the fold — sampling its centre lands
+        # outside the screenshot (the CI 27268693324 / cold-boot flake:
+        # y ≈ 541 vs the 520 px window). Pixel contrast rows must be
+        # fully inside the captured frame.
+        x, y, w, h = rects[f"{TREE_TAG}#{tag}"]
+        return x >= 0 and y >= 0 and x + w <= WIN[0] and y + h <= WIN[1]
+
+    assert fully_visible(cur), "the boot cursor row (s0) sits fully in-frame"
     fx, fy, fw, fh = rects[f"{TREE_TAG}#{cur}"]
-    # An unfocused sibling row to contrast against.
-    other = next(t for t in present_ids(snap) if t != cur)
+    # An unfocused sibling row to contrast against — fully in-frame, so
+    # an overscan row at the fold can never be picked.
+    other = next(t for t in present_ids(snap) if t != cur and fully_visible(t))
     ox, oy, ow, oh = rects[f"{TREE_TAG}#{other}"]
     foc, unf = sample_png_points(img, [(fx + fw - 6, fy + fh // 2), (ox + ow - 6, oy + oh // 2)])
     assert foc != unf, f"focused row paints a distinct highlight, got {foc} vs {unf}"
