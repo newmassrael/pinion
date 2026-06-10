@@ -3427,12 +3427,13 @@ impl<V: WidgetView> ShellCore<V> {
     ///   → CommandExecutor::dispatch → tokio worker → Intent
     ///   → ProxyIntentSink::send → AppEvent::IntentArrived
     ///   → AppShell.user_event arm → ShellCore::dispatch_intent
-    ///   → Scene::External invoke("send", tag) → SCXML transition.
+    ///   → CoreShell::send_to_primary → SCXML transition.
     /// ```
     ///
     /// R51.159 first-cut routes the intent's tag through the same
     /// `invoke("send", Text(tag))` channel typed widget events use
-    /// ([`CoreShell::forward`]).
+    /// ([`CoreShell::forward`]); R884 lifted that send into the
+    /// shape-agnostic [`CoreShell::send_to_primary`] home.
     ///
     /// R51.172 §5.23 R27 design clarification — the
     /// [`Intent::payload`](pinion_core::Intent) is NOT threaded into
@@ -3463,16 +3464,12 @@ impl<V: WidgetView> ShellCore<V> {
         // then advance the SCXML statechart via `invoke("send", tag)`.
         // Mirrors the Elm/Iced ordering (Update before Cmd dispatch);
         // the substrate API queues the commands itself so dropping the
-        // return value here is correct.
+        // return value here is correct. R884 — the send routes through
+        // `CoreShell::send_to_primary` (the one shape-agnostic home);
+        // the pre-R884 inline bare-External root match silently skipped
+        // the send for every multi-External binding.
         let _ = self.core.route_intent_through_update(intent);
-        if let pinion_core::Scene::External(node) = self.core.scene_mut()
-            && let Some(intro) = node.handle.introspect_mut()
-        {
-            let _ = intro.invoke(
-                "send",
-                pinion_core::external::IntrospectValue::Text(intent.tag_str().to_string()),
-            );
-        }
+        self.core.send_to_primary(intent.tag_str());
         self.revision.bump();
         let tail = self.core.tail();
         self.handle_tail(&tail);

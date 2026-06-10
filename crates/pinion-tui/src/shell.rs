@@ -19,7 +19,7 @@
 //! 1. `crossterm::event::KeyEvent` → W3C `KeyboardEvent.key` string
 //!    via [`crate::input::key_str_from_event`].
 //! 2. `V::keybinding(key_str)` → if `Some(event)`, route through
-//!    `Scene::External::invoke("send", Text(V::event_name(event)))`.
+//!    `CoreShell::forward` (the R884 `send_to_primary` send home).
 //! 3. Otherwise `V::apply_key(&mut scene, Some(V::tag()), key_str)`
 //!    — widgets walk to their `Scene::External` and call
 //!    `intervene` / `invoke` themselves (`Slider` arrow-key value

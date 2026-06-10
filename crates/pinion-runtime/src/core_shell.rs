@@ -1403,24 +1403,40 @@ impl<V: WidgetCore> CoreShell<V> {
         DispatchTail { intents, state_change }
     }
 
-    /// R51.122 §5.41 — translate a typed widget event into the
-    /// symbolic `invoke("send", Text(<name>))` call on the scene's
-    /// `Scene::External`, then drain the dispatch tail.
+    /// R884 §5.41 §5.45 — invoke `send` with `name` on the *primary*
+    /// External's statechart, agnostic over the two state-scene root
+    /// shapes ([`Self::compose_root`]: bare `Scene::External(primary)`
+    /// vs `Scene::Container([primary, ...extras])`). One home for the
+    /// "advance the primary SCXML" decision — [`Self::forward`] and
+    /// both backends' `dispatch_intent` route through here.
     ///
-    /// Mirrors the pre-lift `pinion_shell::ShellCore::forward` +
-    /// `pinion_tui::ShellCoreTui::forward_event` shape. The `invoke`
-    /// `Result` is ignored (statechart-side rejection is a valid
-    /// SCXML outcome per the conservative-bump policy); the OCC
-    /// revision bump that the Vello shell applied after `forward`
-    /// stays in the Vello wrapper because the revision token is
-    /// Shell-specific.
-    pub fn forward(&mut self, event: V::Event) -> DispatchTail<V::State> {
-        let name = V::event_name(event);
-        if let Scene::External(node) = &mut self.scene
+    /// Pre-R884 the three call sites each matched the bare-External
+    /// root inline, so any binding with non-empty
+    /// `create_extra_externals` silently dropped the send — the
+    /// hello-multi-window `d` / `e` keybinding never reached the
+    /// `ButtonExternal` (R883 carry e). The `invoke` `Result` is
+    /// ignored (statechart-side rejection is a valid SCXML outcome
+    /// per the conservative-bump policy).
+    pub fn send_to_primary(&mut self, name: &str) {
+        if let Some(node) = self.scene.primary_external_mut()
             && let Some(intro) = node.handle.introspect_mut()
         {
             let _ = intro.invoke("send", IntrospectValue::Text(name.to_string()));
         }
+    }
+
+    /// R51.122 §5.41 — translate a typed widget event into the
+    /// symbolic `invoke("send", Text(<name>))` call on the primary
+    /// External ([`Self::send_to_primary`]), then drain the dispatch
+    /// tail.
+    ///
+    /// Mirrors the pre-lift `pinion_shell::ShellCore::forward` +
+    /// `pinion_tui::ShellCoreTui::forward_event` shape. The OCC
+    /// revision bump that the Vello shell applied after `forward`
+    /// stays in the Vello wrapper because the revision token is
+    /// Shell-specific.
+    pub fn forward(&mut self, event: V::Event) -> DispatchTail<V::State> {
+        self.send_to_primary(V::event_name(event));
         self.tail()
     }
 
@@ -2090,7 +2106,7 @@ mod tests {
     use super::*;
     use pinion_core::test_fixtures::ButtonFixture as TestButton;
     use pinion_core::widgets::button::{ButtonEvent, ButtonState};
-    use pinion_core::{Frame, WidgetStateName};
+    use pinion_core::Frame;
 
     #[test]
     fn constructor_seeds_cached_state_from_introspect() {
@@ -3146,72 +3162,17 @@ mod tests {
     // ─────────────────────────────────────────────────────────────────
 
     use pinion_core::scene::{BoxNode, Rect};
+    use pinion_core::test_fixtures::{ScrollbarMultiFixture, MULTI_FIXTURE_SCROLL_KEY as SB_KEY};
     use pinion_core::widget_core::ExtraExternal;
     use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
-    use pinion_core::widgets::scrollbar::ScrollBarExternal;
     use pinion_core::Color;
     use std::rc::Rc as TestRc;
 
-    /// (R55.D.5 §5.45) Test fixture: `ButtonFixture` semantics plus a
-    /// sibling [`ScrollBarExternal`] tagged `"sb"` whose
-    /// `Rc<ScrollState>` shares the cache key `"sb_state"` with what
-    /// the view fn would resolve. The state's `max_y` is seeded to
-    /// 100 inside the same factory closure so the substrate-side
-    /// composition test sees a non-zero scrollable range.
-    struct ScrollbarMultiFixture;
-
-    /// (R55.D.5 §5.45) Resolve the same `Rc<ScrollState>` the fixture's
-    /// `create_extra_externals` seeded. Lives outside the `WidgetCore`
-    /// impl block so tests can read the offset after dispatch without
-    /// reaching through the substrate's private state.
-    const SB_KEY: &str = "sb_state";
-
-    impl WidgetCore for ScrollbarMultiFixture {
-        type State = ButtonState;
-        type Event = ButtonEvent;
-
-        fn create_external() -> Box<dyn pinion_core::external::External> {
-            <TestButton as WidgetCore>::create_external()
-        }
-
-        fn create_extra_externals() -> Vec<ExtraExternal> {
-            let state = use_scroll_state(SB_KEY);
-            state.set_max(0, 100);
-            let bar = ScrollBarExternal::new().attach_state(state);
-            vec![ExtraExternal::new("sb", Box::new(bar))]
-        }
-
-        fn tag() -> &'static str {
-            "test_btn"
-        }
-
-        fn read_state(scene: &Scene) -> Self::State {
-            // R55.D.5 — multi-External composition wraps the primary
-            // External in a Container; walk to it by tag.
-            scene
-                .find_external_with_tag(<Self as WidgetCore>::tag())
-                .and_then(|n| n.handle.introspect())
-                .and_then(|i| i.query("state"))
-                .map_or(ButtonState::Idle, |v| match v {
-                    // R698.A §5.16 — route through the WidgetStateName SSOT
-                    // instead of a fixture-local string->state table.
-                    IntrospectValue::Text(s) => ButtonState::from_name_or_default(&s),
-                    _ => ButtonState::Idle,
-                })
-        }
-
-        fn view(state: Self::State, frame: &Frame) -> Scene {
-            <TestButton as WidgetCore>::view(state, frame)
-        }
-
-        fn event_name(event: Self::Event) -> &'static str {
-            <TestButton as WidgetCore>::event_name(event)
-        }
-
-        fn title() -> &'static str {
-            "MultiExternal"
-        }
-    }
+    // (R55.D.5 §5.45, lifted R884) `ScrollbarMultiFixture` + its
+    // shared `Owner::cache` key moved to `pinion_core::test_fixtures`
+    // so pinion-shell / pinion-tui pin the same Container-root
+    // dispatch invariant against the identical fixture (the R884
+    // `send_to_primary` producers span all three crates).
 
     #[test]
     fn r55_d5_default_extras_keeps_state_scene_external() {
@@ -3266,6 +3227,42 @@ mod tests {
         // the primary External and resolves the cached state from it.
         let core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
         assert_eq!(*core.cached_state(), ButtonState::Idle);
+    }
+
+    #[test]
+    fn r884_forward_reaches_primary_through_container_root() {
+        // R884 — typed-event forwarding must advance the primary
+        // statechart when extras wrap the state scene in a Container
+        // (`compose_root`). Pre-R884 `forward` matched the bare-
+        // External root only, so every multi-External binding
+        // silently dropped the send — hello-multi-window's `d` / `e`
+        // keybinding never reached the `ButtonExternal` (R883 carry).
+        let mut core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
+
+        let t = core.forward(ButtonEvent::Disable);
+        let sc = t.state_change.expect("Idle → Disabled through Container root");
+        assert_eq!(sc.before, ButtonState::Idle);
+        assert_eq!(sc.after, ButtonState::Disabled);
+
+        let t = core.forward(ButtonEvent::Enable);
+        let sc = t.state_change.expect("Disabled → Idle through Container root");
+        assert_eq!(sc.before, ButtonState::Disabled);
+        assert_eq!(sc.after, ButtonState::Idle);
+    }
+
+    #[test]
+    fn r884_send_to_primary_skips_extras_and_matches_forward() {
+        // R884 — `send_to_primary` is the one home of the send
+        // decision: the raw name string routed through it must land
+        // on the *primary* (DFS-first) External, not the extra. The
+        // intent-feedback arc both backends' `dispatch_intent` use is
+        // exactly this call followed by `tail()`.
+        let mut core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
+
+        core.send_to_primary("Disable");
+        let t = core.tail();
+        let sc = t.state_change.expect("send_to_primary must reach the button");
+        assert_eq!(sc.after, ButtonState::Disabled);
     }
 
     /// (R55.D.5 §5.45) Resolve the shared scroll state outside the

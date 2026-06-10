@@ -22,11 +22,18 @@
 //!
 //! [`ButtonFixture`]: pinion_core::test_fixtures::ButtonFixture
 
-use pinion_core::test_fixtures::{ButtonFixture, EchoButtonFixture};
+use pinion_core::test_fixtures::{ButtonFixture, EchoButtonFixture, ScrollbarMultiFixture};
 
 use crate::widget_a11y::WidgetA11y;
 
 impl WidgetA11y for ButtonFixture {}
+
+/// R884 §5.40 §5.45 — atomic-default `WidgetA11y` impl for the
+/// multi-External composition fixture [`ScrollbarMultiFixture`].
+/// Same default-empty shape as [`ButtonFixture`]; the orphan-rule
+/// placement rationale applies identically (trait lives here, the
+/// fixture lives in `pinion-core`).
+impl WidgetA11y for ScrollbarMultiFixture {}
 
 /// R51.168 §5.40 §5.23 — atomic-default `WidgetA11y` impl for the
 /// reducer test fixture [`EchoButtonFixture`]. Same default-empty

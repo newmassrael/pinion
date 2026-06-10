@@ -1028,7 +1028,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     ///   → CommandExecutor::dispatch → tokio worker → Intent
     ///   → MpscIntentSink::send → mpsc::Sender
     ///   → shell loop try_recv → ShellCoreTui::dispatch_intent
-    ///   → Scene::External invoke("send", tag) → SCXML transition.
+    ///   → CoreShell::send_to_primary → SCXML transition.
     /// ```
     ///
     /// Returns `true` when the SCXML transition shifted the visible
@@ -1054,16 +1054,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // any returned `Vec<Command>` lands on the root owner's queue,
         // then advance the SCXML statechart via `invoke("send", tag)`.
         // Mirrors the Vello path so both backends drive identical
-        // dispatch ordering.
+        // dispatch ordering. R884 — the send routes through
+        // `CoreShell::send_to_primary` (the one shape-agnostic home);
+        // the pre-R884 inline bare-External root match silently skipped
+        // the send for every multi-External binding.
         let _ = self.core.route_intent_through_update(intent);
-        if let Scene::External(node) = self.core.scene_mut()
-            && let Some(intro) = node.handle.introspect_mut()
-        {
-            let _ = intro.invoke(
-                "send",
-                pinion_core::external::IntrospectValue::Text(intent.tag_str().to_string()),
-            );
-        }
+        self.core.send_to_primary(intent.tag_str());
         let tail = self.core.tail();
         self.handle_tail(&tail)
     }
@@ -1777,6 +1773,35 @@ mod tests {
     // one and the drain-side one. A regression in either wiring
     // breaks the count.
     // ─────────────────────────────────────────────────────────────────
+
+    mod r884_container_root_send {
+        use super::*;
+        use pinion_core::external::IntrospectValue;
+        use pinion_core::test_fixtures::ScrollbarMultiFixture;
+        use pinion_core::widgets::button::ButtonState;
+
+        #[test]
+        fn dispatch_intent_reaches_primary_through_container_root() {
+            // R884 — TUI mirror of the pinion-shell producer test:
+            // the intent-feedback SCXML send must advance the primary
+            // statechart when extras wrap the state scene in a
+            // Container (`CoreShell::compose_root`). Pre-R884 this
+            // producer matched the bare-External root inline, so
+            // every multi-External binding silently dropped the send;
+            // the shape-agnostic home is `CoreShell::send_to_primary`.
+            let mut core: ShellCoreTui<ScrollbarMultiFixture> = ShellCoreTui::new();
+            assert_eq!(*core.cached_state(), ButtonState::Idle);
+
+            let intent = Intent::new_static("Disable", IntrospectValue::Null);
+            let repaint = core.dispatch_intent(&intent);
+            assert!(repaint, "visible state shift must request a repaint");
+            assert_eq!(
+                *core.cached_state(),
+                ButtonState::Disabled,
+                "dispatch_intent must reach the primary through the Container root",
+            );
+        }
+    }
 
     mod r51_169_handle_tail_drain_routing {
         use super::*;

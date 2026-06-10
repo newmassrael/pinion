@@ -29,7 +29,7 @@
 
 use core::fmt;
 
-use pinion_core::test_fixtures::EchoButtonFixture;
+use pinion_core::test_fixtures::{EchoButtonFixture, ScrollbarMultiFixture};
 
 use crate::{vello_renderer_impl, WidgetView};
 
@@ -110,6 +110,18 @@ vello_renderer_impl!(TestRenderer, TestRendererError);
 /// without rejecting the initial window dimensions; the wiring tests
 /// never paint, so the exact value is observationally inert.
 impl WidgetView for EchoButtonFixture {
+    type Renderer = TestRenderer;
+
+    fn initial_size_strategy() -> crate::SizeStrategy {
+        crate::SizeStrategy::Fixed { width: 8, height: 8 }
+    }
+}
+
+/// R884 §5.41 §5.45 — Vello-side `WidgetView` impl for the
+/// multi-External composition fixture, so the shell's
+/// `dispatch_intent` producer pins the Container-root send invariant
+/// (`CoreShell::send_to_primary`) through its own wiring path.
+impl WidgetView for ScrollbarMultiFixture {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> crate::SizeStrategy {

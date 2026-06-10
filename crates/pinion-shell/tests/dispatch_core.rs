@@ -1788,9 +1788,30 @@ mod r51_169_handle_tail_drain_routing {
 
 mod r51_175_shared_fixture_wiring {
     use pinion_core::external::IntrospectValue;
-    use pinion_core::test_fixtures::EchoButtonFixture;
+    use pinion_core::test_fixtures::{EchoButtonFixture, ScrollbarMultiFixture};
+    use pinion_core::widgets::button::ButtonState;
     use pinion_core::Intent;
     use pinion_shell::ShellCore;
+
+    #[test]
+    fn r884_dispatch_intent_reaches_primary_through_container_root() {
+        // R884 — the intent-feedback SCXML send must advance the
+        // primary statechart when extras wrap the state scene in a
+        // Container (`CoreShell::compose_root`). Pre-R884 this
+        // producer matched the bare-External root inline, so every
+        // multi-External binding silently dropped the send; the
+        // shape-agnostic home is `CoreShell::send_to_primary`.
+        let mut core = ShellCore::<ScrollbarMultiFixture>::new();
+        assert_eq!(*core.cached_state(), ButtonState::Idle);
+
+        let intent = Intent::new_static("Disable", IntrospectValue::Null);
+        core.dispatch_intent(&intent);
+        assert_eq!(
+            *core.cached_state(),
+            ButtonState::Disabled,
+            "dispatch_intent must reach the primary through the Container root",
+        );
+    }
 
     #[test]
     fn dispatch_intent_queues_reducer_command_on_root_owner() {

@@ -37023,6 +37023,62 @@
         "diagnostic; acceptable idiom duplication, revisit only if a 3rd polling shape lands"
       ]
     },
+    "R884": {
+      "decision_summary": "CoreShell::send_to_primary is the single shape-agnostic home of the primary-statechart send; forward and both backends' dispatch_intent route through it, fixing the silent multi-External Container-root drop",
+      "changes_bullets": [
+        "CoreShell::send_to_primary: shape-agnostic primary-statechart send via Scene::primary_external_mut",
+        "forward + pinion-shell/pinion-tui dispatch_intent route through it (3-copy inline root-match removed)",
+        "pre-R884 the inline `if let Scene::External(root)` silently dropped the send on Container roots",
+        "hello-multi-window d/e keybinding (R883 carry e) now reaches ButtonExternal end-to-end over RPC",
+        "ScrollbarMultiFixture + MULTI_FIXTURE_SCROLL_KEY lifted runtime tests -> pinion-core test_fixtures",
+        "orphan-rule trait impls added: WidgetA11y (a11y) / WidgetView (shell) / WidgetViewTui (tui)",
+        "4 producer regression tests: runtime forward+send_to_primary, shell+tui dispatch_intent",
+        "r676 demo: d/e toggles now gated on observed /external/state flips (wait_query, 6 new gates)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green incl. 4 new r884 tests (runtime 2 / shell 1 / tui 1)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean",
+        "demos PASS on fresh release builds: r676_devtools_highlight, todomvc_r666, r827_immediate_intent",
+        "todomvc + immediate-intent re-run pins no regression for multi-External intent-feedback consumers"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.45",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "R885 lead: input-state READ RPC peer (modifiers/held-keys write-only wire, R882.1 carry)",
+        "harness boot_grace fixed 0.8s latency-only join into readiness poll (R883 carry f, unchanged)",
+        "click/drag/key RPC wrappers window= param on 2nd consumer (R883.1 carry, unchanged)"
+      ],
+      "publishable_decision_summary": "CoreShell::send_to_primary is the single shape-agnostic home of the primary-statechart send; forward and both backends' dispatch_intent route through it, fixing the silent multi-External Container-root drop",
+      "publishable_changes_bullets": [
+        "CoreShell::send_to_primary: shape-agnostic primary-statechart send via Scene::primary_external_mut",
+        "forward + pinion-shell/pinion-tui dispatch_intent route through it (3-copy inline root-match removed)",
+        "pre-R884 the inline `if let Scene::External(root)` silently dropped the send on Container roots",
+        "hello-multi-window d/e keybinding (R883 carry e) now reaches ButtonExternal end-to-end over RPC",
+        "ScrollbarMultiFixture + MULTI_FIXTURE_SCROLL_KEY lifted runtime tests -> pinion-core test_fixtures",
+        "orphan-rule trait impls added: WidgetA11y (a11y) / WidgetView (shell) / WidgetViewTui (tui)",
+        "4 producer regression tests: runtime forward+send_to_primary, shell+tui dispatch_intent",
+        "r676 demo: d/e toggles now gated on observed /external/state flips (wait_query, 6 new gates)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green incl. 4 new r884 tests (runtime 2 / shell 1 / tui 1)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean",
+        "demos PASS on fresh release builds: r676_devtools_highlight, todomvc_r666, r827_immediate_intent",
+        "todomvc + immediate-intent re-run pins no regression for multi-External intent-feedback consumers"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.45",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R885 lead: input-state READ RPC peer (modifiers/held-keys write-only wire, R882.1 carry)",
+        "harness boot_grace fixed 0.8s latency-only join into readiness poll (R883 carry f, unchanged)",
+        "click/drag/key RPC wrappers window= param on 2nd consumer (R883.1 carry, unchanged)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

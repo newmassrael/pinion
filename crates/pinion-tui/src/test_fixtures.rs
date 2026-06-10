@@ -27,7 +27,7 @@
 //! type symbols and the supertrait impls are both in scope at the
 //! same time this impl compiles.
 
-use pinion_core::test_fixtures::{ButtonFixture, EchoButtonFixture};
+use pinion_core::test_fixtures::{ButtonFixture, EchoButtonFixture, ScrollbarMultiFixture};
 use ratatui::backend::TestBackend;
 
 use crate::widget::WidgetViewTui;
@@ -56,5 +56,13 @@ impl WidgetViewTui for ButtonFixture {
 /// `pinion_shell::test_fixtures` Vello-side impl byte-for-byte
 /// behaviourally.
 impl WidgetViewTui for EchoButtonFixture {
+    type Renderer = crate::TuiRenderer<TestBackend>;
+}
+
+/// R884 §5.41 §5.45 — TUI-side `WidgetViewTui` impl for the
+/// multi-External composition fixture, so the TUI `dispatch_intent`
+/// producer pins the Container-root send invariant
+/// (`CoreShell::send_to_primary`) through its own wiring path.
+impl WidgetViewTui for ScrollbarMultiFixture {
     type Renderer = crate::TuiRenderer<TestBackend>;
 }

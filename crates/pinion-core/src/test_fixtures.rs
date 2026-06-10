@@ -295,6 +295,79 @@ impl WidgetCore for ButtonFixture {
     }
 }
 
+/// (R55.D.5 §5.45, lifted R884) `Owner::cache` key for the shared
+/// [`ScrollState`](crate::widgets::scroll::ScrollState) the
+/// [`ScrollbarMultiFixture`]'s extra scrollbar External attaches.
+/// Tests resolve the same `Rc` via
+/// `root_owner.run(|| use_scroll_state(MULTI_FIXTURE_SCROLL_KEY))`
+/// to observe offsets after a dispatch.
+pub const MULTI_FIXTURE_SCROLL_KEY: &str = "sb_state";
+
+/// (R55.D.5 §5.45, lifted R884) Multi-External composition fixture:
+/// [`ButtonFixture`] semantics plus a sibling
+/// [`ScrollBarExternal`](crate::widgets::scrollbar::ScrollBarExternal)
+/// tagged `"sb"`, so [`WidgetCore::create_extra_externals`] is
+/// non-empty and the substrate's state scene composes as
+/// `Scene::Container([primary, scrollbar])` instead of the bare
+/// `Scene::External(primary)`.
+///
+/// Lifted out of `pinion-runtime::core_shell::tests` at R884 so all
+/// three dispatch producers pin the Container-root invariant against
+/// the same fixture: `CoreShell::forward` / `send_to_primary`
+/// (pinion-runtime), `ShellCore::dispatch_intent` (pinion-shell) and
+/// `ShellCoreTui::dispatch_intent` (pinion-tui) — the R884 bug class
+/// was exactly "framework send silently no-ops on a Container root",
+/// and a bare-External fixture cannot catch it.
+pub struct ScrollbarMultiFixture;
+
+impl WidgetCore for ScrollbarMultiFixture {
+    type State = ButtonState;
+    type Event = ButtonEvent;
+
+    fn create_external() -> Box<dyn External> {
+        <ButtonFixture as WidgetCore>::create_external()
+    }
+
+    fn create_extra_externals() -> Vec<crate::widget_core::ExtraExternal> {
+        let state = crate::widgets::scroll::use_scroll_state(MULTI_FIXTURE_SCROLL_KEY);
+        state.set_max(0, 100);
+        let bar = crate::widgets::scrollbar::ScrollBarExternal::new().attach_state(state);
+        vec![crate::widget_core::ExtraExternal::new("sb", Box::new(bar))]
+    }
+
+    fn tag() -> &'static str {
+        <ButtonFixture as WidgetCore>::tag()
+    }
+
+    fn read_state(scene: &Scene) -> Self::State {
+        // Multi-External composition wraps the primary External in a
+        // Container; walk to it by tag (R698.A §5.16 — state name
+        // resolution through the WidgetStateName SSOT).
+        scene
+            .find_external_with_tag(<Self as WidgetCore>::tag())
+            .and_then(|n| n.handle.introspect())
+            .and_then(|i| i.query("state"))
+            .map_or(ButtonState::Idle, |v| match v {
+                IntrospectValue::Text(s) => {
+                    <ButtonState as crate::WidgetStateName>::from_name_or_default(&s)
+                }
+                _ => ButtonState::Idle,
+            })
+    }
+
+    fn view(state: Self::State, frame: &Frame) -> Scene {
+        <ButtonFixture as WidgetCore>::view(state, frame)
+    }
+
+    fn event_name(event: Self::Event) -> &'static str {
+        <ButtonFixture as WidgetCore>::event_name(event)
+    }
+
+    fn title() -> &'static str {
+        "MultiExternal"
+    }
+}
+
 /// R51.167 §5.23 R27 — substrate-level reducer test fixture.
 ///
 /// Reuses [`ButtonFixture`]'s External / paint / `read_state` /

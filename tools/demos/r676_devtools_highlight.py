@@ -65,6 +65,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     find_by_tag,
     run_demo,
+    wait_query,
     wait_snap,
     wait_until,
 )
@@ -324,12 +325,20 @@ def body() -> None:
             "re-selected button must light up the highlight overlay"
         )
 
-        # Disable via keybinding d. The asserted property (the overlay
-        # persisting) equals its pre-key value, so no observed-state
-        # gate exists; the dispatch commits before the response.
+        # Disable via keybinding d. R884 — the keybinding reaches the
+        # primary ButtonExternal through the Container state-scene
+        # root (`CoreShell::send_to_primary`), so the demo gates on
+        # the *actual* state flip; pre-R884 the send was silently
+        # dropped and only the overlay no-change read was assertable.
         tf.request(
             "scene/key",
             {"window": "main", "key": "d", "path": "main_btn"},
+        )
+        wait_query(
+            tf,
+            "/external/state",
+            "Disabled",
+            desc="keybinding d must reach the ButtonExternal (R884)",
         )
         snap_main_e1 = _snap_main(tf)
         # Button state change → button repaint with Disabled fill,
@@ -342,10 +351,16 @@ def body() -> None:
             "wrapper continues to enclose the tagged button across state mutation"
         )
 
-        # Re-enable. Same no-change shape as the d press above.
+        # Re-enable, gated on the state flipping back.
         tf.request(
             "scene/key",
             {"window": "main", "key": "e", "path": "main_btn"},
+        )
+        wait_query(
+            tf,
+            "/external/state",
+            "Idle",
+            desc="keybinding e must re-enable the ButtonExternal (R884)",
         )
         snap_main_e2 = _snap_main(tf)
         assert _scene_has_stroked_border(snap_main_e2), (
@@ -400,16 +415,28 @@ def body() -> None:
             lambda s: _wrapper_child_tag(_find_wrapper_container(s)) == "main_btn",
             desc="button re-selected for the survival cycle",
         )
-        # The highlight-persistence asserts are no-change reads (the
-        # overlay is up before each keypress); the dispatch commits
-        # before the response, so plain snapshots observe post-key.
+        # R884 — each toggle gates on the observed ButtonExternal
+        # state flip (the keybinding now reaches the primary through
+        # the Container root), then asserts the overlay persisted.
         for cycle in range(2):
             tf.request("scene/key", {"window": "main", "key": "d", "path": "main_btn"})
+            wait_query(
+                tf,
+                "/external/state",
+                "Disabled",
+                desc=f"cycle {cycle}: d must disable the button (R884)",
+            )
             snap_d = _snap_main(tf)
             assert _scene_has_stroked_border(snap_d), (
                 f"highlight must survive Disable in cycle {cycle}"
             )
             tf.request("scene/key", {"window": "main", "key": "e", "path": "main_btn"})
+            wait_query(
+                tf,
+                "/external/state",
+                "Idle",
+                desc=f"cycle {cycle}: e must re-enable the button (R884)",
+            )
             snap_e = _snap_main(tf)
             assert _scene_has_stroked_border(snap_e), (
                 f"highlight must survive Enable in cycle {cycle}"
