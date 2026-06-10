@@ -191,13 +191,53 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # R881.1 — the baseline is also the readiness handshake: first
         # contact gets the generous `boot_timeout` (cold shader-cache
         # compile, see __init__), then the steady-state timeout resumes.
+        #
+        # R882.2 (zero-flake) — "the RPC answered" is NOT readiness:
+        # `pointer_leave` is a paint-free ACK, and the expensive cold
+        # path (lavapipe compiling the vello shader pipelines, several
+        # seconds on a cold CI runner) runs inside the FIRST redraw on
+        # the same event-loop thread. If that redraw starts AFTER the
+        # ACK, the demo's first real request queues behind the compile
+        # and dies on the 5s steady timeout (CI 27271079427, sweep
+        # slot 1). Readiness therefore = "the first windowed paint
+        # completed": poll `scene/cache_stats`, which the shell
+        # publishes only after a paint cycle, under the same boot
+        # budget — a poll that lands mid-compile simply waits, and a
+        # data response proves the loop survived a full frame.
         steady_timeout = self.request_timeout
         self.request_timeout = max(steady_timeout, self.boot_timeout)
         try:
-            self.pointer_leave()
-        except RpcError as exc:
-            if exc.code != -32601:
-                raise
+            stale_binary = False
+            try:
+                self.pointer_leave()
+            except RpcError as exc:
+                if exc.code != -32601:
+                    raise
+                # Pre-R719 target/release binary — no baseline, and no
+                # cache_stats method either; drive it best-effort.
+                stale_binary = True
+            if not stale_binary:
+                deadline = time.monotonic() + self.boot_timeout
+                while True:
+                    try:
+                        self.request("scene/cache_stats", {})
+                        break
+                    except RpcError as exc:
+                        if exc.code == -32601:
+                            break  # stale pre-R682 binary — best-effort
+                        not_painted = exc.code == -32602 and "unavailable" in (
+                            f"{exc.data or ''}{exc.message or ''}".lower()
+                        )
+                        if not not_painted:
+                            raise
+                        if time.monotonic() >= deadline:
+                            raise RpcError(
+                                -32099,
+                                "first paint never completed within "
+                                f"boot_timeout={self.boot_timeout}s",
+                                "\n".join(self._stderr_lines[-20:]),
+                            ) from exc
+                        time.sleep(0.05)
         finally:
             self.request_timeout = steady_timeout
         return self
