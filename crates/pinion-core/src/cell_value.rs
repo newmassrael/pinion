@@ -119,6 +119,32 @@ impl CellValue {
         }
     }
 
+    /// R886.1 §5.40 — the typed sort comparison for a sortable grid
+    /// column. Same-kind cells (the homogeneous-column invariant every
+    /// `CellKind`-columned grid holds) compare by their TYPE: `Bool`
+    /// `false < true` (semantic, not the accident of `"Off" < "On"`
+    /// label spelling), `Int` exactly (no f64 round-trip loss past
+    /// 2^53), `Float` via `total_cmp`, `Text` / `Choice` through the
+    /// numeric-aware [`cell_cmp`](crate::widgets::table::cell_cmp)
+    /// string SSOT. Cross-kind pairs (defensive — a well-formed column
+    /// never mixes) fall back to `cell_cmp` over the display text. A
+    /// total order in every arm, so `slice::sort_by` is panic-free.
+    ///
+    /// The typed model IS the sort SSOT for an editable grid; sorting
+    /// through `display()` stringification would re-derive the value a
+    /// layer down and tie the order to presentation labels.
+    #[must_use]
+    pub fn sort_cmp(&self, other: &Self) -> core::cmp::Ordering {
+        use crate::widgets::table::cell_cmp;
+        match (self, other) {
+            (CellValue::Bool(a), CellValue::Bool(b)) => a.cmp(b),
+            (CellValue::Int(a), CellValue::Int(b)) => a.cmp(b),
+            (CellValue::Float(a), CellValue::Float(b)) => a.total_cmp(b),
+            (CellValue::Text(a), CellValue::Text(b)) => cell_cmp(a, b),
+            (a, b) => cell_cmp(&a.display(), &b.display()),
+        }
+    }
+
     /// The text the inline editor is seeded with when the cell enters edit
     /// mode (the round-trip inverse of [`CellKind::parse`]). A `Choice` is
     /// popup-edited, not text-edited, so this is unused for it — it returns
@@ -500,5 +526,32 @@ mod tests {
             Err(InterveneError::OutOfRange),
         );
         assert_eq!(v.with_intervene(IntrospectValue::Int(5)), Err(InterveneError::TypeMismatch));
+    }
+
+    #[test]
+    fn r886_1_sort_cmp_compares_by_type_not_display() {
+        use core::cmp::Ordering;
+        // Bool: semantic false < true (display "Off" < "On" only by
+        // label accident — the typed compare must not depend on it).
+        assert_eq!(
+            CellValue::Bool(false).sort_cmp(&CellValue::Bool(true)),
+            Ordering::Less,
+        );
+        // Int: exact past 2^53 (an f64 round-trip would collapse these).
+        let big = 9_007_199_254_740_993_i64; // 2^53 + 1
+        assert_eq!(
+            CellValue::Int(big).sort_cmp(&CellValue::Int(big - 1)),
+            Ordering::Greater,
+        );
+        // Float: total_cmp (NaN cannot break totality).
+        assert_eq!(
+            CellValue::Float(f64::NAN).sort_cmp(&CellValue::Float(1.0)),
+            Ordering::Greater,
+        );
+        // Text: the numeric-aware cell_cmp SSOT ("9" < "12").
+        assert_eq!(
+            CellValue::Text("9".into()).sort_cmp(&CellValue::Text("12".into())),
+            Ordering::Less,
+        );
     }
 }

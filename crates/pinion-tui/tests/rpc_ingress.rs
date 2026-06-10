@@ -305,3 +305,30 @@ fn r885_input_state_reports_null_modifiers_and_real_held_keys() {
         "scene/key down must read back through the held-key cache: {response}",
     );
 }
+
+/// R886.1 §5.49 — the TUI cursor leg of `scene/input_state` is real
+/// (the session-review audit found it untested): a `scene/click`
+/// injection moves the `DEFAULT_WINDOW` router's mouse position, and
+/// the READ returns exactly that point.
+#[test]
+fn r886_1_input_state_cursor_follows_tui_click() {
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    let paint = core.compute_paint_scene();
+    core.finalize_paint_snapshot(&paint);
+    core.update_paint_scene(paint);
+
+    let read = r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state","params":{}}"#;
+    let response = core.dispatch_rpc(read).expect("read must respond");
+    assert!(
+        response.contains(r#""cursor":null"#),
+        "no cursor event at boot: {response}",
+    );
+
+    let click = r#"{"jsonrpc":"2.0","id":2,"method":"scene/click","params":{"at":{"x":7.0,"y":3.0}}}"#;
+    let _ = core.dispatch_rpc(click).expect("click must respond");
+    let response = core.dispatch_rpc(read).expect("read must respond");
+    assert!(
+        response.contains(r#""cursor":{"x":7.0,"y":3.0}"#),
+        "cursor follows the click injection: {response}",
+    );
+}

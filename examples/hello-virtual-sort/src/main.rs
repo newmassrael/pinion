@@ -175,11 +175,9 @@ fn build_row(source: usize, theme: &Theme, selected: Option<usize>) -> Scene {
 /// sort on click. Tagged `"vsort#cycle"` (R51.42 composite) so a click
 /// routes to the [`ViewSortFilterExternal`] anchor.
 fn sort_header(sort: Option<bool>, filter: Option<usize>, theme: &Theme) -> Scene {
-    let arrow = match sort {
-        None => "\u{2195}",        // ↕ unsorted
-        Some(true) => "\u{25B2}",  // ▲ ascending
-        Some(false) => "\u{25BC}", // ▼ descending
-    };
+    // R886.1 — directional pair from the glyph SSOT; the unsorted
+    // marker stays a per-consumer style choice.
+    let arrow = pinion_widget_paint::glyph::sort_glyph(sort).unwrap_or("\u{2195}");
     let filter_label = match filter {
         Some(c) => CATEGORIES[c % CATEGORIES.len()],
         None => "All",

@@ -879,21 +879,17 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // the affected widgets.
         let focus_before = self.focus.focused().map(str::to_owned);
         // R885 §5.49 — pre-resolve the out-of-band input-state
-        // snapshot for `scene/input_state`. `modifiers: None` is the
-        // honest TUI answer: crossterm delivers modifiers per-key-
-        // event only, the shell keeps no absolute cache (the
-        // `scene/modifiers` §2 #6 carry) — the wire surfaces `null`
-        // so an AI client can tell the axis is unavailable. Held
-        // keys are real (the RPC-owned `HeldKeys` cache, R882), the
-        // cursor is the primary router's last mouse position.
-        let input_state_snapshot = pinion_core::InputStateSnapshot {
-            modifiers: None,
-            held_keys: self.core.held_key_names(),
-            cursor: self.core.cursor_position_for_window(
-                pinion_runtime::DEFAULT_WINDOW,
-                pinion_runtime::PointerId::MOUSE,
-            ),
-        };
+        // snapshot for `scene/input_state` through the substrate's one
+        // resolution home (R886.1, `CoreShell::input_state_snapshot`).
+        // `modifiers: None` is the honest TUI answer: crossterm
+        // delivers modifiers per-key-event only, the shell keeps no
+        // absolute cache (the `scene/modifiers` §2 #6 carry) — the
+        // wire surfaces `null` so an AI client can tell the axis is
+        // unavailable. Held keys are real (the RPC-owned `HeldKeys`
+        // cache, R882); the TUI's single `DEFAULT_WINDOW` router is
+        // seeded at construction, so the snapshot is always `Some`.
+        let input_state_snapshot =
+            self.core.input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None);
         let resp_pair = {
             // Disjoint-field split mutable borrows. Mirror of the
             // pinion-shell substrate's `dispatch_rpc` borrow split.
@@ -943,7 +939,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             ctx = ctx.with_deferred_inputs(&mut deferred_inputs);
             // R885 §5.49 — install the pre-resolved input-state
             // snapshot for `scene/input_state`.
-            ctx = ctx.with_input_state(input_state_snapshot);
+            if let Some(snapshot) = input_state_snapshot {
+                ctx = ctx.with_input_state(snapshot);
+            }
             let resp = dispatch(&mut ctx, request);
             (resp, deferred_inputs)
         };

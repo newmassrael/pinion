@@ -361,9 +361,20 @@ impl Table {
 }
 
 /// R730 — numeric-aware cell comparison: two cells that both parse as
-/// `f64` compare numerically (so `"9" < "12"`); otherwise lexicographic
-/// (so `"Active" < "Done"`). A data grid that sorted a numeric column
-/// lexicographically (`"12" < "9"`) would be visibly wrong.
+/// `f64` compare numerically (so `"9" < "12"`); otherwise the spreadsheet
+/// two-class order — numbers sort before non-numbers, non-numbers compare
+/// lexicographically (so `"Active" < "Done"`). A data grid that sorted a
+/// numeric column lexicographically (`"12" < "9"`) would be visibly wrong.
+///
+/// R886.1 — the comparison is a **total order** (`slice::sort_by` panics
+/// on detected non-total comparators since Rust 1.81). The pre-R886.1
+/// shape fell back to lexicographic whenever EITHER side failed to parse,
+/// which is cyclic on mixed cells (`"9" < "10"` numeric, `"10" < "1z"`
+/// lex, `"1z" < "9"` lex). Read-only consumers had curated homogeneous
+/// columns so the cycle was unreachable; the R886 editable grid lets a
+/// user type arbitrary text into a sortable column, making totality a
+/// correctness requirement. `f64::total_cmp` keeps a literal `"NaN"`
+/// cell from re-breaking it.
 ///
 /// (R778 `pub` — the numeric comparator is the SSOT for both the eager
 /// [`Table::order`] and the virtualized data-grid sort coordinator
@@ -372,8 +383,10 @@ impl Table {
 #[must_use]
 pub fn cell_cmp(a: &str, b: &str) -> core::cmp::Ordering {
     match (a.trim().parse::<f64>(), b.trim().parse::<f64>()) {
-        (Ok(x), Ok(y)) => x.partial_cmp(&y).unwrap_or(core::cmp::Ordering::Equal),
-        _ => a.cmp(b),
+        (Ok(x), Ok(y)) => x.total_cmp(&y),
+        (Ok(_), Err(_)) => core::cmp::Ordering::Less,
+        (Err(_), Ok(_)) => core::cmp::Ordering::Greater,
+        (Err(_), Err(_)) => a.cmp(b),
     }
 }
 
@@ -984,6 +997,24 @@ impl ExternalIntrospect for TableExternal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn r886_1_cell_cmp_is_a_total_order_on_mixed_cells() {
+        // The pre-R886.1 cycle: "9" < "10" (numeric), "10" < "1z" (lex),
+        // "1z" < "9" (lex) — sort_by panics on such comparators since
+        // Rust 1.81. The total shape orders numbers before non-numbers,
+        // so the cycle is broken and a full sort cannot panic.
+        use core::cmp::Ordering;
+        assert_eq!(cell_cmp("9", "10"), Ordering::Less, "numeric pair");
+        assert_eq!(cell_cmp("10", "1z"), Ordering::Less, "number before text");
+        assert_eq!(cell_cmp("9", "1z"), Ordering::Less, "cycle arm inverted");
+        assert_eq!(cell_cmp("1z", "9"), Ordering::Greater);
+        // Full sort over the adversarial mix must not panic and must
+        // land numbers (numeric order) ahead of text (lexicographic).
+        let mut cells = vec!["1z", "10", "abc", "9", "NaN", "2"];
+        cells.sort_by(|a, b| cell_cmp(a, b));
+        assert_eq!(cells, ["2", "9", "10", "NaN", "1z", "abc"]);
+    }
 
     fn sample() -> Table {
         Table::new(

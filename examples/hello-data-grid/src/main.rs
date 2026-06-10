@@ -104,7 +104,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
 use pinion_core::widgets::grid_sort::{col_sort_dir, grid_sort_from_str, grid_sort_str};
-use pinion_core::widgets::table::{cell_cmp, cycle_col_sort, grid_order_by};
+use pinion_core::widgets::table::{cycle_col_sort, grid_order_by};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
@@ -173,27 +173,23 @@ fn idx(row: usize, col: usize) -> usize {
 
 // ─── column sort (R886 — the editable fold of the sort axis) ──────
 
-/// Active-column sort glyphs appended to the header label (named consts +
-/// `\u{}` escapes per the non-ASCII-literal rule). The same triangle pair
-/// every read-only grid header paints.
-const SORT_GLYPH_ASC: &str = " \u{25B2}";
-const SORT_GLYPH_DESC: &str = " \u{25BC}";
-
 /// R886 §5.40 — the visual → source row permutation for the live typed
 /// model. The editable grid's peer of [`GridSortState::order`]: that proxy
 /// owns a *static* materialized `String` dataset (its read-only consumers
 /// never mutate), while here the typed [`Signal`] model IS the SSOT and a
 /// committed edit must re-order the very next paint — so the order derives
-/// from the live model on read, through the same
-/// [`grid_order_by`] / [`cell_cmp`] SSOT every other grid sorts by
-/// (numeric-aware on the cells' display text). At `NROWS = 4` the
-/// permutation is recomputed per read; the memoized coordinator remains the
-/// scale path (`hello-grid-sort`, 10 000 rows).
+/// from the live model on read, through the [`grid_order_by`] permutation
+/// SSOT with the typed [`CellValue::sort_cmp`] comparator (R886.1 — the
+/// typed model sorts by its VALUES: `Bool` semantically, `Int` exactly,
+/// `Float` totally, `Text` via the numeric-aware `cell_cmp` string SSOT;
+/// stringifying first would tie the order to display labels). At
+/// `NROWS = 4` the permutation is recomputed per read; the memoized
+/// coordinator remains the scale path (`hello-grid-sort`, 10 000 rows).
 fn current_order(model: &[CellValue], sort: Option<(usize, bool)>) -> Vec<usize> {
     grid_order_by(
         NROWS,
         sort,
-        |col, a, b| cell_cmp(&model[idx(a, col)].display(), &model[idx(b, col)].display()),
+        |col, a, b| model[idx(a, col)].sort_cmp(&model[idx(b, col)]),
         |_| true,
     )
 }
@@ -404,10 +400,16 @@ impl ExternalIntrospect for DataGridExternal {
                 // visual position `pos` under the active sort (identity
                 // when unsorted) — the AI-side order introspection.
                 if let Some(pos_str) = path.strip_prefix("source_at.") {
-                    let pos: usize = pos_str.parse().ok()?;
+                    // R886.1 — the shared `source_at.` projection SSOT:
+                    // out-of-range / unparseable reports Null
+                    // (present-but-empty), never absence — the family
+                    // contract every sort proxy speaks.
                     let model = self.model.get();
                     let order = current_order(&model, self.sort.get());
-                    return order.get(pos).map(|&s| IntrospectValue::Int(int_of(s)));
+                    return Some(pinion_core::widgets::order_memo::source_at_value(
+                        pos_str,
+                        |p| order.get(p).copied(),
+                    ));
                 }
                 if let Some(col_str) = path.strip_prefix("col_name.") {
                     let col: usize = col_str.parse().ok()?;
@@ -546,13 +548,13 @@ impl ExternalIntrospect for DataGridExternal {
                 Ok(IntrospectValue::Bool(started))
             }
             // R886 — the RPC shortcut for a header click: cycle `col`'s
-            // sort (the `GridSortExternal::cycle_sort` wire-name mirror).
+            // sort. R886.1 — out-of-range `col` is a silent no-op
+            // returning the unchanged key, matching the
+            // `GridSortExternal::cycle_sort` / `cycle_col_sort` family
+            // contract it mirrors (one wire name, one edge semantics).
             "cycle_sort" => match args {
                 IntrospectValue::Int(i) => {
                     let col = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
-                    if col >= NCOLS {
-                        return Err(InvokeError::Rejected);
-                    }
                     self.sort.set(cycle_col_sort(self.sort.get(), col, NCOLS));
                     Ok(IntrospectValue::Text(grid_sort_str(self.sort.get())))
                 }
@@ -620,6 +622,10 @@ fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
     // destination. Identity mapping when unsorted (the pre-R886 behaviour,
     // bit-identical).
     let order = current_order(&use_data_model().get(), use_sort().get());
+    // `position` cannot miss today (the pass filter is `|_| true`, the
+    // cursor pre-clamped); when the filter fold lands, a filtered-out
+    // cursor must be re-anchored EXPLICITLY — the 0 fallback would
+    // silently teleport it to the visual top (R886.1 note).
     let vis = order.iter().position(|&s| s == row).unwrap_or(0);
     match key {
         "ArrowDown" => {
@@ -765,11 +771,9 @@ fn view_header(theme: &Theme, sort: Option<(usize, bool)>) -> Scene {
             // the header cell carries the composite `Header` send tag so a
             // click routes to the coordinator's sort cycle (the same
             // `h<col>` sub-key grammar the read-only grids use).
-            let glyph = match col_sort_dir(sort, col) {
-                Some(true) => SORT_GLYPH_ASC,
-                Some(false) => SORT_GLYPH_DESC,
-                None => "",
-            };
+            let glyph = pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, col))
+                .map(|g| format!(" {g}"))
+                .unwrap_or_default();
             Scene::Container(
                 ContainerNode::new(vec![Scene::Text(TextNode::styled(
                     format!("{label}{glyph}"),
@@ -791,6 +795,7 @@ fn view_header(theme: &Theme, sort: Option<(usize, bool)>) -> Scene {
         .collect();
     Scene::Container(
         ContainerNode::new(cells)
+            .with_tag("dg_header")
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest)))
             .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_align_items(AlignItems::Center)),
     )
@@ -830,8 +835,13 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
                 view_cell(row, col, value, focused, edit_active, &theme, (edit_state, edit_caret))
             })
             .collect();
+        // R886.1 — the painted row carries the same `dg_row<src>` tag its
+        // a11y `row` node uses, so AT row bounds attach (the columnheader
+        // parity applied to the row axis; pre-R886.1 the tags matched no
+        // painted node).
         rows.push(Scene::Container(
             ContainerNode::new(cells)
+                .with_tag(format!("dg_row{row}"))
                 .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_align_items(AlignItems::Center)),
         ));
     }
@@ -983,7 +993,12 @@ impl WidgetA11y for DataGridView {
             .iter()
             .enumerate()
             .map(|(col, label)| GridColumn {
-                tag: format!("dg_col{col}"),
+                // R886.1 — the a11y columnheader tag IS the painted
+                // clickable header tag, so `rect_for_tag` bounds attach
+                // and an AT activation routes to the sort wire (the
+                // hello-table / grouped-grid-sort parity; the R837-era
+                // `dg_col<n>` tags matched no painted node).
+                tag: format!("{GRID_TAG}#{}", GridSendKey::Header { col }.encode()),
                 label: (*label).to_owned(),
                 sort: col_sort_dir(sort, col).map(SortDirection::from_ascending),
             })
@@ -1361,6 +1376,14 @@ mod tests {
             // Out-of-range column clamps to unsorted (GridSortState mirror).
             assert_eq!(intro.intervene("sort", IntrospectValue::Text("9:ascending".to_owned())), Ok(()));
             assert_eq!(intro.query("sort"), Some(IntrospectValue::Text("none".to_owned())));
+            // R886.1 — out-of-range cycle_sort is the family's silent
+            // no-op returning the unchanged key (GridSortExternal
+            // contract), not a rejection.
+            let _ = intro.intervene("sort", IntrospectValue::Text("1:ascending".to_owned()));
+            assert_eq!(
+                intro.invoke("cycle_sort", IntrospectValue::Int(9)),
+                Ok(IntrospectValue::Text("1:ascending".to_owned())),
+            );
         });
     }
 
@@ -1376,8 +1399,8 @@ mod tests {
             let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), None);
             let header = nodes
                 .iter()
-                .find(|n| n.tag == "dg_col2")
-                .expect("Count columnheader present");
+                .find(|n| n.tag == format!("{GRID_TAG}#h2"))
+                .expect("Count columnheader present (painted-tag parity)");
             assert_eq!(header.sort, Some(SortDirection::Ascending), "aria-sort on the key col");
             // The rows follow the visual permutation [0, 3, 1, 2] so AT
             // linear navigation matches what sighted users see.

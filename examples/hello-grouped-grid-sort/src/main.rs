@@ -98,9 +98,9 @@ const AGG_KEY: &str = "ggs_aggregates";
 
 const GROUPS: [&str; 6] = ["Mesh", "Texture", "Material", "Sound", "Script", "Prefab"];
 
-const ARROW_ASC: &str = "\u{25B2}"; // ▲
-const ARROW_DESC: &str = "\u{25BC}"; // ▼
-const ARROW_NONE: &str = "\u{2195}"; // ↕ sortable, unsorted
+/// Unsorted-column marker — `U+2195` (style choice per consumer; the
+/// directional pair is the R886.1 `pinion_widget_paint::glyph` SSOT).
+const ARROW_NONE: &str = "\u{2195}";
 
 fn row_group(i: usize) -> usize {
     i % GROUPS.len()
@@ -244,11 +244,8 @@ fn use_grid_groups() -> Rc<GroupOrderState> {
 fn column_header_row(sort: Option<(usize, bool)>, theme: &Theme) -> Scene {
     let mut cells: Vec<Scene> = Vec::with_capacity(NCOLS);
     for (c, &name) in COLS.iter().enumerate() {
-        let glyph = match col_sort_dir(sort, c) {
-            Some(true) => ARROW_ASC,
-            Some(false) => ARROW_DESC,
-            None => ARROW_NONE,
-        };
+        let glyph = pinion_widget_paint::glyph::sort_glyph(col_sort_dir(sort, c))
+            .unwrap_or(ARROW_NONE);
         let label = Scene::Text(TextNode::styled(
             format!("{name} {glyph}"),
             Rect::default(),

@@ -3761,8 +3761,11 @@ fn cache_stats_error_to_rpc(err: &CacheStatsError) -> RpcError {
 ///   (`{shift, ctrl, alt, meta}`), or `null` when the backend keeps
 ///   no absolute modifier cache (the TUI §2 #6 carry) so an AI
 ///   client distinguishes "axis unavailable" from "none held".
-/// * `held_keys` — array of canonical named keys
-///   (`scene/key state:"down"` vocabulary, e.g. `"Space"`).
+/// * `held_keys` — array of canonical named keys from the held-chord
+///   cache ([`pinion_core::HeldKeys`] — the chord VOCABULARY subset of
+///   `scene/key state:"down"` writes, currently the `Space` pan chord;
+///   a non-chord key's down/up edge is accepted but never cached, so it
+///   reads back absent by design).
 /// * `cursor` — `{x, y}` of the dispatch-scoped window's last mouse
 ///   cursor position (what every `scene/click` / `scene/hover` /
 ///   `scene/drag` write moves), or `null` before the first cursor

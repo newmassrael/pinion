@@ -64,7 +64,12 @@ impl<K: PartialEq> OrderMemo<K> {
 /// source data index via `lookup` (the state's `source_at`). An out-of-range
 /// or unparseable position reports [`IntrospectValue::Null`] (present-but-empty),
 /// never absence — the caller has already matched the `source_at.` prefix.
-pub(crate) fn source_at_value(
+///
+/// R886.1 — `pub` (was `pub(crate)`): the editable data grid's bespoke
+/// sort projection speaks the same `source_at.<pos>` wire vocabulary, and
+/// re-implementing the edge semantics drifted to absence-on-out-of-range
+/// — the Null contract lives here so every speaker shares it.
+pub fn source_at_value(
     rest: &str,
     lookup: impl Fn(usize) -> Option<usize>,
 ) -> IntrospectValue {

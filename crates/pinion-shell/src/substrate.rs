@@ -868,28 +868,6 @@ impl<V: WidgetView> ShellCore<V> {
             .copied()
     }
 
-    /// R885 §5.49 — resolve the out-of-band input-state snapshot the
-    /// `scene/input_state` READ serializes. Modifiers come from the
-    /// shell's absolute cache (the R763 out-of-band channel), held
-    /// keys from the substrate `HeldKeys` cache (R882), cursor from
-    /// the addressed window's router (the state every click / hover /
-    /// drag write moves). `window_id: None` = the primary window,
-    /// matching every other dispatch default.
-    #[must_use]
-    pub fn input_state_snapshot_for_window(
-        &self,
-        window_id: Option<&str>,
-    ) -> pinion_core::InputStateSnapshot {
-        pinion_core::InputStateSnapshot {
-            modifiers: Some(self.modifiers),
-            held_keys: self.core.held_key_names(),
-            cursor: self.core.cursor_position_for_window(
-                window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW),
-                pinion_runtime::PointerId::MOUSE,
-            ),
-        }
-    }
-
     /// R682 §5.16 atomic 3 — iterator over every window key that has
     /// a published [`FragmentCacheStats`] snapshot. Demo + test
     /// harness consume this to verify per-window publish wiring
@@ -2873,8 +2851,14 @@ impl<V: WidgetView> ShellCore<V> {
         );
         // R885 §5.49 — pre-resolve the out-of-band input-state
         // snapshot for `scene/input_state` before the split-borrow
-        // block (the `cache_stats_for_window` pattern).
-        let input_state_for_window = self.input_state_snapshot_for_window(window_id);
+        // block (the `cache_stats_for_window` pattern). R886.1 — the
+        // resolution lives on `CoreShell::input_state_snapshot` (one
+        // home for both backends); `None` (unknown window) surfaces
+        // `InputStateUnavailable`, the cache-stats honesty parity.
+        let input_state_for_window = self.core.input_state_snapshot(
+            window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW),
+            Some(self.modifiers),
+        );
         // R684 atomic 3 §5.16 §5.41 §5.49 — record the viewport the
         // produce closure ran with so the post-dispatch finalize can
         // populate the addressed window's
@@ -3064,8 +3048,11 @@ impl<V: WidgetView> ShellCore<V> {
                 ctx = ctx.with_fragment_cache_stats(stats);
             }
             // R885 §5.49 — install the pre-resolved input-state
-            // snapshot for `scene/input_state`.
-            ctx = ctx.with_input_state(input_state_for_window);
+            // snapshot for `scene/input_state` (absent for an unknown
+            // window → `InputStateUnavailable`).
+            if let Some(snapshot) = input_state_for_window {
+                ctx = ctx.with_input_state(snapshot);
+            }
             let resp = dispatch_parsed(&mut ctx, request);
             (resp, deferred_inputs)
         };

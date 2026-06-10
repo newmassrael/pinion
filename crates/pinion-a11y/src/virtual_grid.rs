@@ -321,14 +321,12 @@ pub fn windowed_grid_nodes_sorted(
     for (col, label) in headers.iter().enumerate() {
         let mut ch = AccessNode::new(GridTag::col_header(grid_tag, col), AriaRole::ColumnHeader)
             .with_name(*label);
-        if let Some((active, ascending)) = sort {
-            if active == col {
-                ch = ch.with_sort(if ascending {
-                    SortDirection::Ascending
-                } else {
-                    SortDirection::Descending
-                });
-            }
+        // R886.1 — active-column decision + bool→direction through the
+        // two SSOTs (`col_sort_dir` / `SortDirection::from_ascending`);
+        // this builder was a surviving hand-rolled copy the R886 lift's
+        // self-grep missed (crate modules count too).
+        if let Some(asc) = pinion_core::widgets::grid_sort::col_sort_dir(sort, col) {
+            ch = ch.with_sort(SortDirection::from_ascending(asc));
         }
         nodes.push(ch);
     }

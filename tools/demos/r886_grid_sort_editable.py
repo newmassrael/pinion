@@ -21,7 +21,8 @@ Wire surface (all on /external = the grid coordinator):
   invoke cycle_sort <col>   -> the header-click RPC shortcut
   send "h<col>:PointerUp"   -> the composite header-click wire form
 
-Scope (exact count = 33 checks):
+Scope (exact count = 33 checks — in-body assert_eq + wait gates; the
+_focus_grid focus wait is setup, not a check):
   (A) boot: unsorted, identity order            [5]
   (B) header CLICK cycles asc -> desc -> none   [8]
   (C) arrow nav walks the visual order          [5]
@@ -182,12 +183,11 @@ def body() -> None:
         assert_eq(r, "2:descending", "invoke returns the post-cycle key")
         r = tf.invoke("/external/cycle_sort", 2)
         assert_eq(r, "none", "third cycle returns unsorted")
-        try:
-            tf.invoke("/external/cycle_sort", 9)
-            raise AssertionError("out-of-range cycle_sort must reject")
-        except Exception as err:  # noqa: BLE001 — RpcError shape varies
-            assert_eq(type(err).__name__ != "AssertionError", True,
-                      "out-of-range cycle_sort rejected")
+        # R886.1 — out-of-range col is the family's silent no-op (the
+        # GridSortExternal contract), returning the unchanged key.
+        tf.invoke("/external/cycle_sort", 1)
+        assert_eq(tf.invoke("/external/cycle_sort", 9), "1:ascending",
+                  "out-of-range cycle_sort is a no-op returning the key")
 
 
 def _snap_texts(snap) -> list:

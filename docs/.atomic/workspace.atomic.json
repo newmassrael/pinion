@@ -37183,6 +37183,68 @@
         "per-cell a11y roles + per-column clamp ranges stay 2nd-consumer deferred (unchanged R837 carry)"
       ]
     },
+    "R886.1": {
+      "decision_summary": "Session-review adversarial audit remediation: total-order cell comparator + typed CellValue::sort_cmp, painted-tag a11y parity for the data grid, completion of the col_sort_dir/glyph lifts into the two surviving framework copies, family wire-edge alignment (source_at Null / cycle_sort no-op), send_to_primary contract panic, and a single CoreShell home for the input-state snapshot resolution",
+      "changes_bullets": [
+        "session-review adversarial audit (2 subagents + grep/read re-verification) of R884/R885/R886",
+        "cell_cmp made a TOTAL order (numbers before non-numbers, f64::total_cmp) - the editable grid made",
+        "the old mixed-cell comparator cycle user-reachable (sort_by panics on non-total since Rust 1.81)",
+        "CellValue::sort_cmp typed comparator; data-grid sorts values not display strings (Bool semantic)",
+        "data-grid a11y columnheaders use the PAINTED composite tags (bounds attach + AT sort activation);",
+        "painted rows/header tagged dg_row<r>/dg_header so every a11y node has a painted peer",
+        "col_sort_dir/from_ascending adopted in the 2 surviving framework copies (virtual_grid, widget-paint)",
+        "sort glyph pair lifted to pinion_widget_paint::glyph (5 copies collapsed; none-arm stays per-consumer)",
+        "source_at_value pub + reused (Null-not-absence family contract); cycle_sort OOR = family silent no-op",
+        "send_to_primary missing-primary = contract panic (R685 convention); test rename de-overclaims",
+        "CoreShell::input_state_snapshot = ONE resolution home (GUI/TUI 2-copy glue collapsed);",
+        "unknown window -> None -> InputStateUnavailable (cache-stats honesty parity); TUI cursor leg test"
+      ],
+      "verification_bullets": [
+        "new tests: cell_cmp totality (cycle case), sort_cmp typed, snapshot known-window-only, TUI cursor leg",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "9 demos PASS on fresh release builds: r886/r837/r846/r885/r882/r676/r730/r747/r844"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.49",
+        "5.41",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "defer (reviewer over-reach or tracked): boot_grace latency (carry f), HeldKeys 2nd-chord-key table,",
+        "R778-ruling citation nuance in data-grid docstring (loose but substantively correct)"
+      ],
+      "publishable_decision_summary": "Session-review adversarial audit remediation: total-order cell comparator + typed CellValue::sort_cmp, painted-tag a11y parity for the data grid, completion of the col_sort_dir/glyph lifts into the two surviving framework copies, family wire-edge alignment (source_at Null / cycle_sort no-op), send_to_primary contract panic, and a single CoreShell home for the input-state snapshot resolution",
+      "publishable_changes_bullets": [
+        "session-review adversarial audit (2 subagents + grep/read re-verification) of R884/R885/R886",
+        "cell_cmp made a TOTAL order (numbers before non-numbers, f64::total_cmp) - the editable grid made",
+        "the old mixed-cell comparator cycle user-reachable (sort_by panics on non-total since Rust 1.81)",
+        "CellValue::sort_cmp typed comparator; data-grid sorts values not display strings (Bool semantic)",
+        "data-grid a11y columnheaders use the PAINTED composite tags (bounds attach + AT sort activation);",
+        "painted rows/header tagged dg_row<r>/dg_header so every a11y node has a painted peer",
+        "col_sort_dir/from_ascending adopted in the 2 surviving framework copies (virtual_grid, widget-paint)",
+        "sort glyph pair lifted to pinion_widget_paint::glyph (5 copies collapsed; none-arm stays per-consumer)",
+        "source_at_value pub + reused (Null-not-absence family contract); cycle_sort OOR = family silent no-op",
+        "send_to_primary missing-primary = contract panic (R685 convention); test rename de-overclaims",
+        "CoreShell::input_state_snapshot = ONE resolution home (GUI/TUI 2-copy glue collapsed);",
+        "unknown window -> None -> InputStateUnavailable (cache-stats honesty parity); TUI cursor leg test"
+      ],
+      "publishable_verification_bullets": [
+        "new tests: cell_cmp totality (cycle case), sort_cmp typed, snapshot known-window-only, TUI cursor leg",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "9 demos PASS on fresh release builds: r886/r837/r846/r885/r882/r676/r730/r747/r844"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.49",
+        "5.41",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "defer (reviewer over-reach or tracked): boot_grace latency (carry f), HeldKeys 2nd-chord-key table,",
+        "R778-ruling citation nuance in data-grid docstring (loose but substantively correct)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

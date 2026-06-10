@@ -255,12 +255,6 @@ fn resize_handle(tag: &str, col: usize, outline: Color, style: &TableStyle) -> S
     )
 }
 
-/// R730 §5.50 — sort-direction indicator glyphs shown on the active sort
-/// column's header (U+25B2 BLACK UP-POINTING TRIANGLE / U+25BC down).
-/// Named consts + escapes per the non-ASCII-source rule.
-const ASC_GLYPH: &str = "\u{25B2}";
-const DESC_GLYPH: &str = "\u{25BC}";
-
 /// R730 — one clickable column header. The outer container keeps the
 /// presentational `"<tag>_ch<col>"` tag (the binding's `access_node`
 /// walker attaches the `columnheader` node + bounds there, unchanged
@@ -293,18 +287,20 @@ fn header_cell(
         .with_role(TextRole::Presentational),
     );
     let mut inner_children = vec![label_node];
-    if let Some((c, ascending)) = sort {
-        if c == col {
-            let glyph = if ascending { ASC_GLYPH } else { DESC_GLYPH };
-            inner_children.push(Scene::Text(
-                TextNode::styled(
-                    glyph.to_string(),
-                    Rect::default(),
-                    TextStyle::new().with_size_px(style.header_size_px).with_fg(fg),
-                )
-                .with_role(TextRole::Presentational),
-            ));
-        }
+    // R886.1 — active-column decision + glyph through the two SSOTs
+    // (`col_sort_dir` / `glyph::sort_glyph`); this site was one of the
+    // five private copies of the pair.
+    if let Some(glyph) =
+        crate::glyph::sort_glyph(pinion_core::widgets::grid_sort::col_sort_dir(sort, col))
+    {
+        inner_children.push(Scene::Text(
+            TextNode::styled(
+                glyph.to_string(),
+                Rect::default(),
+                TextStyle::new().with_size_px(style.header_size_px).with_fg(fg),
+            )
+            .with_role(TextRole::Presentational),
+        ));
     }
     let inner = Scene::Container(
         ContainerNode::new(inner_children)
@@ -1185,7 +1181,7 @@ mod tests {
         });
         let mut t = Vec::new();
         collect_text(&unsorted, &mut t);
-        assert!(!t.iter().any(|s| s == ASC_GLYPH || s == DESC_GLYPH), "no glyph when unsorted");
+        assert!(!t.iter().any(|s| s == crate::glyph::SORT_ASCENDING || s == crate::glyph::SORT_DESCENDING), "no glyph when unsorted");
 
         let sorted = Owner::new().run(|| {
             view_table(
@@ -1200,8 +1196,8 @@ mod tests {
         });
         let mut t2 = Vec::new();
         collect_text(&sorted, &mut t2);
-        assert_eq!(t2.iter().filter(|s| *s == ASC_GLYPH).count(), 1, "one ascending glyph");
-        assert!(!t2.iter().any(|s| s == DESC_GLYPH), "no descending glyph for ascending sort");
+        assert_eq!(t2.iter().filter(|s| *s == crate::glyph::SORT_ASCENDING).count(), 1, "one ascending glyph");
+        assert!(!t2.iter().any(|s| s == crate::glyph::SORT_DESCENDING), "no descending glyph for ascending sort");
     }
 
     #[test]
@@ -1793,8 +1789,8 @@ mod tests {
         // Descending glyph on the active column only.
         let mut text = Vec::new();
         collect_text(&scene, &mut text);
-        assert_eq!(text.iter().filter(|s| *s == DESC_GLYPH).count(), 1, "one descending glyph");
-        assert!(!text.iter().any(|s| s == ASC_GLYPH), "no ascending glyph for a descending sort");
+        assert_eq!(text.iter().filter(|s| *s == crate::glyph::SORT_DESCENDING).count(), 1, "one descending glyph");
+        assert!(!text.iter().any(|s| s == crate::glyph::SORT_ASCENDING), "no ascending glyph for a descending sort");
     }
 
     #[test]

@@ -1309,6 +1309,31 @@ impl<V: WidgetCore> CoreShell<V> {
             .and_then(|r| r.cursor_position(pid))
     }
 
+    /// R886.1 §5.49 — the ONE home of the `scene/input_state` snapshot
+    /// resolution (pre-R886.1 the GUI shell had a named resolver and the
+    /// TUI an inline near-copy — the 2-site glue duplication smell). The
+    /// substrate owns the held-key + cursor legs; `modifiers` is the one
+    /// backend-supplied axis (the GUI's absolute cache vs the TUI's
+    /// honest `None` — crossterm has no absolute modifier state).
+    ///
+    /// Returns `None` for an UNKNOWN window id (no router entry), so the
+    /// wire surfaces `InputStateUnavailable` instead of aliasing a bogus
+    /// window onto `cursor: null` ("no cursor event yet") — the
+    /// `CacheStatsUnavailable` honesty parity.
+    #[must_use]
+    pub fn input_state_snapshot(
+        &self,
+        window_id: &str,
+        modifiers: Option<pinion_core::Modifiers>,
+    ) -> Option<pinion_core::InputStateSnapshot> {
+        let router = self.routers.get(window_id)?;
+        Some(pinion_core::InputStateSnapshot {
+            modifiers,
+            held_keys: self.held_keys.held_names(),
+            cursor: router.cursor_position(PointerId::MOUSE),
+        })
+    }
+
     /// (R684 §5.35 §5.41 §5.16) Per-window passthrough to
     /// [`InputRouter::has_last_paint_scene`] — `true` once the
     /// named window's router has received a paint scene via
@@ -1418,9 +1443,16 @@ impl<V: WidgetCore> CoreShell<V> {
     /// ignored (statechart-side rejection is a valid SCXML outcome
     /// per the conservative-bump policy).
     pub fn send_to_primary(&mut self, name: &str) {
-        if let Some(node) = self.scene.primary_external_mut()
-            && let Some(intro) = node.handle.introspect_mut()
-        {
+        // R886.1 — a missing primary is a `compose_root` contract breach,
+        // not a skippable state (the R685 Smell-6 convention: contract
+        // panic over fallback — a silent skip would re-arm the exact
+        // "silently dropped send" failure mode R884 closed). The
+        // `introspect_mut() == None` leg below IS a legitimate skip (an
+        // External that opts out of introspection).
+        let Some(node) = self.scene.primary_external_mut() else {
+            unreachable!("CoreShell state scene must contain the primary External (compose_root)")
+        };
+        if let Some(intro) = node.handle.introspect_mut() {
             let _ = intro.invoke("send", IntrospectValue::Text(name.to_string()));
         }
     }
@@ -3260,12 +3292,29 @@ mod tests {
     }
 
     #[test]
-    fn r884_send_to_primary_skips_extras_and_matches_forward() {
+    fn r886_1_input_state_snapshot_resolves_known_window_only() {
+        // The one resolution home: a known window yields the held +
+        // cursor legs with the backend-supplied modifiers axis; an
+        // unknown window yields None (the wire's InputStateUnavailable
+        // honesty — a bogus id must not alias onto "no cursor yet").
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        core.note_key_state("Space", true);
+        let snap = core
+            .input_state_snapshot(crate::DEFAULT_WINDOW, None)
+            .expect("default window router is seeded at construction");
+        assert_eq!(snap.held_keys, vec!["Space"]);
+        assert_eq!(snap.modifiers, None, "backend-supplied axis passes through");
+        assert!(core.input_state_snapshot("no-such-window", None).is_none());
+    }
+
+    #[test]
+    fn r884_send_to_primary_routes_the_name_to_the_primary() {
         // R884 — `send_to_primary` is the one home of the send
         // decision: the raw name string routed through it must land
-        // on the *primary* (DFS-first) External, not the extra. The
-        // intent-feedback arc both backends' `dispatch_intent` use is
-        // exactly this call followed by `tail()`.
+        // on the *primary* (DFS-first per `primary_external`, pinned
+        // by `r55_d5_primary_external_picks_button_not_scrollbar`)
+        // External. The intent-feedback arc both backends'
+        // `dispatch_intent` use is exactly this call + `tail()`.
         let mut core: CoreShell<ScrollbarMultiFixture> = CoreShell::new();
 
         core.send_to_primary("Disable");
