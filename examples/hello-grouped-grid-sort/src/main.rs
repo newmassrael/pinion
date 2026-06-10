@@ -51,7 +51,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::grid_sort::{use_grid_sort, GridSortExternal, GridSortState};
+use pinion_core::widgets::grid_sort::{col_sort_dir, use_grid_sort, GridSortExternal, GridSortState};
 use pinion_core::widgets::group_order::{
     use_group_order_with_source, GroupOrderExternal, GroupOrderState, GroupRow,
 };
@@ -237,15 +237,6 @@ fn use_grid_groups() -> Rc<GroupOrderState> {
         },
         move || grid.order(),
     )
-}
-
-/// The active sort direction of column `col`, or `None` when it is not the
-/// sort column (drives the header glyph + `aria-sort`).
-fn col_sort_dir(sort: Option<(usize, bool)>, col: usize) -> Option<bool> {
-    match sort {
-        Some((c, dir)) if c == col => Some(dir),
-        _ => None,
-    }
 }
 
 /// The clickable column-header row: each header (`gsort#h<col>`) shows its
@@ -466,9 +457,7 @@ impl WidgetA11y for GroupedGridSortView {
             .map(|(c, &name)| GridColumn {
                 tag: format!("{SORT_TAG}#h{c}"),
                 label: name.to_string(),
-                sort: col_sort_dir(sort, c).map(|asc| {
-                    if asc { SortDirection::Ascending } else { SortDirection::Descending }
-                }),
+                sort: col_sort_dir(sort, c).map(SortDirection::from_ascending),
             })
             .collect();
         let header_row_tag = format!("{SORT_TAG}#hrow");

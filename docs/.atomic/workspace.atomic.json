@@ -37129,6 +37129,60 @@
         "native-mouse mid-gesture observation is the documented additive axis on InputStateSnapshot"
       ]
     },
+    "R886": {
+      "decision_summary": "Column sort folds onto the editable data grid with all state source-keyed and only paint/a11y/navigation reading the derived order; shares the R778 free-fn SSOT + wire vocabulary, not the static-copy coordinator; col_sort_dir + SortDirection::from_ascending lifted at the 3-copy trigger",
+      "changes_bullets": [
+        "column sort folded onto the EDITABLE data grid (hello-data-grid): header click cycles via SSOT",
+        "R837 deferral re-read (R874 rule): blocker substrate (sort proxies R843-R855) landed -> fold round",
+        "design: ALL grid state source-keyed (cursor/edit latch/cell tags); paint+a11y+arrow-nav read order",
+        "edit-while-sorted: commit re-sorts the live typed model same-paint; cursor follows the source row",
+        "GridSortState NOT reused (owns static String copy; typed Signal model is the SSOT here) -",
+        "shared per R778 family ruling: grid_order_by/cycle_col_sort/cell_cmp free-fns + grid_sort_str vocab",
+        "wire: query sort / source_at.<pos>, intervene sort (clamp), invoke cycle_sort, send h<col>:PointerUp",
+        "a11y: aria-sort on the active columnheader; rows emitted in visual order",
+        "3b self-grep lift: col_sort_dir (grid_sort.rs) + SortDirection::from_ascending (a11y) -",
+        "3 hand-rolled copies collapsed (hello-table / hello-grouped-grid-sort / data-grid x2)"
+      ],
+      "verification_bullets": [
+        "5 new unit tests green (cycle+order / edit-while-sorted cursor-follow / visual nav / clamp / aria-sort)",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "demo r886_grid_sort_editable.py PASS (33 checks exact) + regressions r837/r730/r846 PASS (fresh release)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "editable-grid filter / grouping / frozen panes folds remain (sort landed; same fold pattern per axis)",
+        "per-cell a11y roles + per-column clamp ranges stay 2nd-consumer deferred (unchanged R837 carry)"
+      ],
+      "publishable_decision_summary": "Column sort folds onto the editable data grid with all state source-keyed and only paint/a11y/navigation reading the derived order; shares the R778 free-fn SSOT + wire vocabulary, not the static-copy coordinator; col_sort_dir + SortDirection::from_ascending lifted at the 3-copy trigger",
+      "publishable_changes_bullets": [
+        "column sort folded onto the EDITABLE data grid (hello-data-grid): header click cycles via SSOT",
+        "R837 deferral re-read (R874 rule): blocker substrate (sort proxies R843-R855) landed -> fold round",
+        "design: ALL grid state source-keyed (cursor/edit latch/cell tags); paint+a11y+arrow-nav read order",
+        "edit-while-sorted: commit re-sorts the live typed model same-paint; cursor follows the source row",
+        "GridSortState NOT reused (owns static String copy; typed Signal model is the SSOT here) -",
+        "shared per R778 family ruling: grid_order_by/cycle_col_sort/cell_cmp free-fns + grid_sort_str vocab",
+        "wire: query sort / source_at.<pos>, intervene sort (clamp), invoke cycle_sort, send h<col>:PointerUp",
+        "a11y: aria-sort on the active columnheader; rows emitted in visual order",
+        "3b self-grep lift: col_sort_dir (grid_sort.rs) + SortDirection::from_ascending (a11y) -",
+        "3 hand-rolled copies collapsed (hello-table / hello-grouped-grid-sort / data-grid x2)"
+      ],
+      "publishable_verification_bullets": [
+        "5 new unit tests green (cycle+order / edit-while-sorted cursor-follow / visual nav / clamp / aria-sort)",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "demo r886_grid_sort_editable.py PASS (33 checks exact) + regressions r837/r730/r846 PASS (fresh release)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "editable-grid filter / grouping / frozen panes folds remain (sort landed; same fold pattern per axis)",
+        "per-cell a11y roles + per-column clamp ranges stay 2nd-consumer deferred (unchanged R837 carry)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

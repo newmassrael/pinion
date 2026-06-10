@@ -73,6 +73,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
+use pinion_core::widgets::grid_sort::col_sort_dir;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::table::TableExternal;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
@@ -534,13 +535,7 @@ impl WidgetA11y for TableView {
             .map(|(col, label)| GridColumn {
                 tag: format!("{PRIMARY_TAG}_ch{col}"),
                 label: (*label).to_owned(),
-                sort: state.sort.and_then(|(sort_col, ascending)| {
-                    (sort_col == col).then_some(if ascending {
-                        SortDirection::Ascending
-                    } else {
-                        SortDirection::Descending
-                    })
-                }),
+                sort: col_sort_dir(state.sort, col).map(SortDirection::from_ascending),
             })
             .collect();
         let rows: Vec<GridRow> = state

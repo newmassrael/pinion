@@ -69,6 +69,20 @@ use crate::widgets::order_memo::{source_at_value, OrderMemo};
 use crate::widgets::table::{cell_cmp, cycle_col_sort, grid_order_by};
 use crate::widgets::view_order::{sort_dir_from_str, sort_dir_str};
 
+/// R886 §5.40 — the active sort direction of column `col`, or `None` when
+/// it is not the sort column. The one home of the "does THIS header show
+/// the glyph / carry `aria-sort`" decision every column-header builder
+/// needs; pre-R886 hello-grouped-grid-sort, hello-table and the R886
+/// editable data grid each hand-rolled the same match (the 3-copy lift
+/// trigger). Pairs with `SortDirection::from_ascending` on the a11y side.
+#[must_use]
+pub fn col_sort_dir(sort: Option<(usize, bool)>, col: usize) -> Option<bool> {
+    match sort {
+        Some((c, dir)) if c == col => Some(dir),
+        _ => None,
+    }
+}
+
 /// R778 §5.40 — render `(col, dir)` as a single wire string: `"none"` when
 /// unsorted, else `"<col>:<dir>"` (e.g. `"1:ascending"`). The compound form
 /// lets an admin / AI client read or restore the **whole** grid sort state in

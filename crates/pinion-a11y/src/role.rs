@@ -635,6 +635,16 @@ pub enum SortDirection {
 }
 
 impl SortDirection {
+    /// R886 §5.40 — the `ascending: bool` → direction bridge. Every grid
+    /// stores its sort key as `(col, ascending)` (the `grid_sort_str` wire
+    /// vocabulary); this is the one home of the bool → `aria-sort` mapping
+    /// the column-header builders previously each hand-rolled
+    /// (hello-table / hello-grouped-grid-sort / hello-data-grid).
+    #[must_use]
+    pub const fn from_ascending(ascending: bool) -> Self {
+        if ascending { Self::Ascending } else { Self::Descending }
+    }
+
     /// Lower to `accesskit::SortDirection`. The single bridge point so an
     /// `accesskit` minor bump rewrites only this arm.
     #[must_use]

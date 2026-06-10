@@ -56,17 +56,38 @@
 //! focused cell carries the roving `focused` flag (`aria-activedescendant`);
 //! the typed value is encoded in the cell name (`"Count: 24"`).
 //!
+//! ## Column sort (R886 — the editable fold)
+//!
+//! A clicked column header cycles unsorted → asc → desc → unsorted through
+//! the [`cycle_col_sort`] / [`grid_order_by`] / [`cell_cmp`] SSOT every
+//! read-only grid sorts by; the wire speaks the cross-grid
+//! [`grid_sort_str`] vocabulary (`query "sort"` / `intervene "sort"` /
+//! `invoke "cycle_sort"` / `query "source_at.<pos>"`). The fold's one design
+//! decision: ALL grid state stays **source-keyed** (cursor, edit latch,
+//! cell tags, `value.<row>.<col>` addressing) and only the paint / a11y row
+//! sequence + arrow navigation consult the derived visual order — so a
+//! committed edit that changes the active sort key moves its row on the
+//! very next paint while the cursor and the in-flight editor follow the
+//! source row (the Excel / Qt `QSortFilterProxyModel` behaviour). The
+//! [`GridSortState`] coordinator is deliberately NOT reused here: it owns a
+//! static materialized `String` dataset (right for its read-only 10k-row
+//! consumers), while this grid's typed `Signal` model is the SSOT — per the
+//! R778 family ruling the shared parts are exactly the free-fn SSOT +
+//! wire vocabulary, not the coordinator struct.
+//!
 //! ## Known gaps (honest carry, shared with R836)
 //!
 //! - Native checkbox / textbox cell roles (per-cell a11y role) — additive.
 //! - Per-column validation / clamp ranges — additive.
-//! - Column sort / filter / grouping / frozen panes — own substrate rounds
-//!   (the read-only catalog already has sort / filter / h-scroll; folding
-//!   them onto an *editable* grid is deferred).
+//! - Column filter / grouping / frozen panes on the *editable* grid —
+//!   remaining fold rounds (sort landed R886; the read-only catalog has
+//!   filter / grouping / frozen as separate substrate).
 
 use std::rc::Rc;
 
-use pinion_a11y::{grid_table_nodes, AccessNode, GridCell, GridColumn, GridRow, WidgetA11y};
+use pinion_a11y::{
+    grid_table_nodes, AccessNode, GridCell, GridColumn, GridRow, SortDirection, WidgetA11y,
+};
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::GridSendKey;
 use pinion_core::external::{
@@ -82,6 +103,8 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
+use pinion_core::widgets::grid_sort::{col_sort_dir, grid_sort_from_str, grid_sort_str};
+use pinion_core::widgets::table::{cell_cmp, cycle_col_sort, grid_order_by};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
@@ -148,6 +171,33 @@ fn idx(row: usize, col: usize) -> usize {
     row * NCOLS + col
 }
 
+// ─── column sort (R886 — the editable fold of the sort axis) ──────
+
+/// Active-column sort glyphs appended to the header label (named consts +
+/// `\u{}` escapes per the non-ASCII-literal rule). The same triangle pair
+/// every read-only grid header paints.
+const SORT_GLYPH_ASC: &str = " \u{25B2}";
+const SORT_GLYPH_DESC: &str = " \u{25BC}";
+
+/// R886 §5.40 — the visual → source row permutation for the live typed
+/// model. The editable grid's peer of [`GridSortState::order`]: that proxy
+/// owns a *static* materialized `String` dataset (its read-only consumers
+/// never mutate), while here the typed [`Signal`] model IS the SSOT and a
+/// committed edit must re-order the very next paint — so the order derives
+/// from the live model on read, through the same
+/// [`grid_order_by`] / [`cell_cmp`] SSOT every other grid sorts by
+/// (numeric-aware on the cells' display text). At `NROWS = 4` the
+/// permutation is recomputed per read; the memoized coordinator remains the
+/// scale path (`hello-grid-sort`, 10 000 rows).
+fn current_order(model: &[CellValue], sort: Option<(usize, bool)>) -> Vec<usize> {
+    grid_order_by(
+        NROWS,
+        sort,
+        |col, a, b| cell_cmp(&model[idx(a, col)].display(), &model[idx(b, col)].display()),
+        |_| true,
+    )
+}
+
 /// First-paint cell values (row-major). Each column's values match
 /// [`COL_KINDS`].
 fn default_cells() -> Vec<CellValue> {
@@ -191,6 +241,18 @@ fn use_editing_cell() -> Rc<Signal<Option<(usize, usize)>>> {
     owner.cache("data_grid.editing_cell", || Signal::new(None))
 }
 
+/// R886 — active column sort `(col, ascending)`, `None` = source order.
+/// The view + a11y tree subscribe by reading it, so a header-click cycle
+/// repaints exactly like a model edit. Every other grid state here is
+/// SOURCE-keyed (cursor, edit latch, cell addressing) — only the paint /
+/// a11y row sequence and arrow navigation consult the derived order, the
+/// [[virtualized-multiselect-state-window-independent]] discipline.
+#[must_use]
+fn use_sort() -> Rc<Signal<Option<(usize, bool)>>> {
+    let owner = Owner::current().expect("use_sort requires an active Owner scope");
+    owner.cache("data_grid.sort", || Signal::new(None))
+}
+
 // ─── grid coordinator External ────────────────────────────────────
 
 /// The data-grid coordinator. Holds `Rc` clones of the reactive holders
@@ -203,6 +265,8 @@ struct DataGridExternal {
     focused_col: Rc<Signal<usize>>,
     editing_cell: Rc<Signal<Option<(usize, usize)>>>,
     editor: Rc<TextEditState>,
+    /// R886 — the shared column-sort signal (`use_sort`).
+    sort: Rc<Signal<Option<(usize, bool)>>>,
 }
 
 impl DataGridExternal {
@@ -212,8 +276,9 @@ impl DataGridExternal {
         focused_col: Rc<Signal<usize>>,
         editing_cell: Rc<Signal<Option<(usize, usize)>>>,
         editor: Rc<TextEditState>,
+        sort: Rc<Signal<Option<(usize, bool)>>>,
     ) -> Self {
-        Self { model, focused_row, focused_col, editing_cell, editor }
+        Self { model, focused_row, focused_col, editing_cell, editor, sort }
     }
 
     /// Toggle the bool at `(row, col)`; no-op (returns `false`) unless the
@@ -268,6 +333,7 @@ impl core::fmt::Debug for DataGridExternal {
             .field("focused_row", &self.focused_row.get())
             .field("focused_col", &self.focused_col.get())
             .field("editing_cell", &self.editing_cell.get())
+            .field("sort", &self.sort.get())
             .finish_non_exhaustive()
     }
 }
@@ -306,9 +372,12 @@ impl ExternalIntrospect for DataGridExternal {
             ("col_name.<col>", "string"),
             ("col_kind.<col>", "string"),
             ("value.<row>.<col>", "json"),
+            ("sort", "string"),
+            ("source_at.<pos>", "int"),
             ("send", "string"),
             ("toggle", "json"),
             ("begin", "json"),
+            ("cycle_sort", "json"),
         ])
     }
 
@@ -326,7 +395,20 @@ impl ExternalIntrospect for DataGridExternal {
                 Some((_, col)) => IntrospectValue::Int(int_of(col)),
                 None => IntrospectValue::Null,
             }),
+            // R886 — the wire form is the cross-grid `grid_sort_str`
+            // vocabulary ("<col>:asc" / "<col>:desc" / "" = unsorted),
+            // byte-identical to the read-only sort proxies.
+            "sort" => Some(IntrospectValue::Text(grid_sort_str(self.sort.get()))),
             _ => {
+                // R886 — `source_at.<pos>`: the source row painted at
+                // visual position `pos` under the active sort (identity
+                // when unsorted) — the AI-side order introspection.
+                if let Some(pos_str) = path.strip_prefix("source_at.") {
+                    let pos: usize = pos_str.parse().ok()?;
+                    let model = self.model.get();
+                    let order = current_order(&model, self.sort.get());
+                    return order.get(pos).map(|&s| IntrospectValue::Int(int_of(s)));
+                }
                 if let Some(col_str) = path.strip_prefix("col_name.") {
                     let col: usize = col_str.parse().ok()?;
                     return COL_NAMES.get(col).map(|n| IntrospectValue::Text((*n).to_owned()));
@@ -368,6 +450,18 @@ impl ExternalIntrospect for DataGridExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
+            // R886 — admin / restore write of the sort key, in the same
+            // `grid_sort_from_str` vocabulary `query "sort"` emits
+            // (decode = inverse of encode). An out-of-range column clamps
+            // to unsorted, mirroring `GridSortState::set_sort`.
+            "sort" => match value {
+                IntrospectValue::Text(ref s) => {
+                    let sort = grid_sort_from_str(s).filter(|&(c, _)| c < NCOLS);
+                    self.sort.set(sort);
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
             _ => {
                 let Some(rest) = path.strip_prefix("value.") else {
                     return Err(InterveneError::UnknownPath);
@@ -405,23 +499,38 @@ impl ExternalIntrospect for DataGridExternal {
                     let (key, event_name, _mods) =
                         pinion_core::composite_tag::split_send_payload(s)
                             .ok_or(InvokeError::Rejected)?;
-                    let GridSendKey::Cell { row, col } =
-                        GridSendKey::parse(key).ok_or(InvokeError::Rejected)?
-                    else {
-                        return Err(InvokeError::Rejected);
-                    };
-                    if row >= NROWS || col >= NCOLS {
-                        return Err(InvokeError::Rejected);
-                    }
-                    match event_name {
-                        "PointerUp" => {
-                            self.focused_row.set(row);
-                            self.focused_col.set(col);
-                            self.toggle(row, col);
+                    match GridSendKey::parse(key).ok_or(InvokeError::Rejected)? {
+                        // R886 — a clicked column header cycles that
+                        // column's sort through the `cycle_col_sort` SSOT
+                        // (unsorted → asc → desc → unsorted; a different
+                        // column jumps to it ascending), exactly the
+                        // read-only grids' header behaviour.
+                        GridSendKey::Header { col } => {
+                            if col >= NCOLS {
+                                return Err(InvokeError::Rejected);
+                            }
+                            if event_name == "PointerUp" {
+                                self.sort.set(cycle_col_sort(self.sort.get(), col, NCOLS));
+                            }
                             Ok(IntrospectValue::Null)
                         }
-                        "DoubleClick" => Ok(IntrospectValue::Bool(self.begin_edit(row, col))),
-                        _ => Ok(IntrospectValue::Null),
+                        GridSendKey::Cell { row, col } => {
+                            if row >= NROWS || col >= NCOLS {
+                                return Err(InvokeError::Rejected);
+                            }
+                            match event_name {
+                                "PointerUp" => {
+                                    self.focused_row.set(row);
+                                    self.focused_col.set(col);
+                                    self.toggle(row, col);
+                                    Ok(IntrospectValue::Null)
+                                }
+                                "DoubleClick" => {
+                                    Ok(IntrospectValue::Bool(self.begin_edit(row, col)))
+                                }
+                                _ => Ok(IntrospectValue::Null),
+                            }
+                        }
                     }
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -436,6 +545,19 @@ impl ExternalIntrospect for DataGridExternal {
                 let started = self.begin_edit(self.focused_row.get(), self.focused_col.get());
                 Ok(IntrospectValue::Bool(started))
             }
+            // R886 — the RPC shortcut for a header click: cycle `col`'s
+            // sort (the `GridSortExternal::cycle_sort` wire-name mirror).
+            "cycle_sort" => match args {
+                IntrospectValue::Int(i) => {
+                    let col = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+                    if col >= NCOLS {
+                        return Err(InvokeError::Rejected);
+                    }
+                    self.sort.set(cycle_col_sort(self.sort.get(), col, NCOLS));
+                    Ok(IntrospectValue::Text(grid_sort_str(self.sort.get())))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -492,13 +614,20 @@ fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
     let col_sig = use_focused_col();
     let row = row_sig.get().min(NROWS - 1);
     let col = col_sig.get().min(NCOLS - 1);
+    // R886 — vertical navigation walks the sorted VISUAL sequence while the
+    // cursor itself stays SOURCE-keyed: resolve the cursor's visual position
+    // in the current order, step there, store the source row found at the
+    // destination. Identity mapping when unsorted (the pre-R886 behaviour,
+    // bit-identical).
+    let order = current_order(&use_data_model().get(), use_sort().get());
+    let vis = order.iter().position(|&s| s == row).unwrap_or(0);
     match key {
         "ArrowDown" => {
-            row_sig.set((row + 1).min(NROWS - 1));
+            row_sig.set(order[(vis + 1).min(order.len() - 1)]);
             true
         }
         "ArrowUp" => {
-            row_sig.set(row.saturating_sub(1));
+            row_sig.set(order[vis.saturating_sub(1)]);
             true
         }
         "ArrowRight" => {
@@ -627,19 +756,29 @@ fn view_cell(
 }
 
 /// The column-header row.
-fn view_header(theme: &Theme) -> Scene {
+fn view_header(theme: &Theme, sort: Option<(usize, bool)>) -> Scene {
     let cells: Vec<Scene> = COL_NAMES
         .iter()
         .enumerate()
         .map(|(col, label)| {
+            // R886 — the active sort column appends the direction glyph;
+            // the header cell carries the composite `Header` send tag so a
+            // click routes to the coordinator's sort cycle (the same
+            // `h<col>` sub-key grammar the read-only grids use).
+            let glyph = match col_sort_dir(sort, col) {
+                Some(true) => SORT_GLYPH_ASC,
+                Some(false) => SORT_GLYPH_DESC,
+                None => "",
+            };
             Scene::Container(
                 ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                    *label,
+                    format!("{label}{glyph}"),
                     Rect::default(),
                     TextStyle::new()
                         .with_size_px(HEADER_PX)
                         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
                 ))])
+                .with_tag(format!("{GRID_TAG}#{}", GridSendKey::Header { col }.encode()))
                 .with_layout(
                     LayoutStyle::new()
                         .flex(FlexDirection::Row)
@@ -665,6 +804,12 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let focused_row = use_focused_row().get();
     let focused_col = use_focused_col().get();
     let editing = use_editing_cell().get();
+    // R886 — paint rows in the sorted visual order; every cell keeps its
+    // SOURCE identity (tags, cursor, edit latch), so a committed edit that
+    // changes the sort key visibly moves its row on this very repaint while
+    // the cursor and any in-flight editor follow the source row.
+    let sort = use_sort().get();
+    let order = current_order(&model, sort);
 
     let title = Scene::Text(TextNode::styled(
         "Asset table",
@@ -675,8 +820,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     ));
 
     let mut rows: Vec<Scene> = Vec::with_capacity(NROWS + 1);
-    rows.push(view_header(&theme));
-    for row in 0..NROWS {
+    rows.push(view_header(&theme, sort));
+    for &row in &order {
         let cells: Vec<Scene> = (0..NCOLS)
             .map(|col| {
                 let value = &model[idx(row, col)];
@@ -737,7 +882,8 @@ impl WidgetCore for DataGridView {
         let focused_col = use_focused_col();
         let editing = use_editing_cell();
         let editor = use_text_edit_state(EDIT_TF_TAG);
-        Box::new(DataGridExternal::new(model, focused_row, focused_col, editing, editor))
+        let sort = use_sort();
+        Box::new(DataGridExternal::new(model, focused_row, focused_col, editing, editor, sort))
     }
 
     fn tag() -> &'static str {
@@ -828,17 +974,23 @@ impl WidgetA11y for DataGridView {
         let model = use_data_model().get();
         let focused_row = use_focused_row().get();
         let focused_col = use_focused_col().get();
+        // R886 — the active column announces `aria-sort` (WAI-ARIA 1.2
+        // §6.6.2) and the rows are emitted in the sorted visual order, so
+        // AT linear navigation matches what sighted users see.
+        let sort = use_sort().get();
+        let order = current_order(&model, sort);
         let columns: Vec<GridColumn> = COL_NAMES
             .iter()
             .enumerate()
             .map(|(col, label)| GridColumn {
                 tag: format!("dg_col{col}"),
                 label: (*label).to_owned(),
-                sort: None,
+                sort: col_sort_dir(sort, col).map(SortDirection::from_ascending),
             })
             .collect();
-        let rows: Vec<GridRow> = (0..NROWS)
-            .map(|row| GridRow {
+        let rows: Vec<GridRow> = order
+            .iter()
+            .map(|&row| GridRow {
                 tag: format!("dg_row{row}"),
                 selected: false,
                 state: RadioState::Idle,
@@ -1108,5 +1260,133 @@ mod tests {
             (TextFieldState::Idle, 0),
             &Frame::default(),
         );
+    }
+
+    #[test]
+    fn r886_header_click_cycles_sort_and_orders_view() {
+        // Count column (col 2) values: 1, 24, 99, 1 — asc keeps the equal
+        // keys in source order (stable): [0, 3, 1, 2]; desc reverses the
+        // comparison (not the slice): [2, 1, 0, 3].
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert_eq!(intro.query("sort"), Some(IntrospectValue::Text("none".to_owned())));
+            assert_eq!(intro.query("source_at.1"), Some(IntrospectValue::Int(1)), "identity");
+
+            let _ = intro.invoke("send", IntrospectValue::Text("h2:PointerUp".to_owned()));
+            assert_eq!(intro.query("sort"), Some(IntrospectValue::Text("2:ascending".to_owned())));
+            for (pos, src) in [(0, 0), (1, 3), (2, 1), (3, 2)] {
+                assert_eq!(
+                    intro.query(&format!("source_at.{pos}")),
+                    Some(IntrospectValue::Int(src)),
+                    "stable ascending order",
+                );
+            }
+
+            let _ = intro.invoke("send", IntrospectValue::Text("h2:PointerUp".to_owned()));
+            assert_eq!(intro.query("sort"), Some(IntrospectValue::Text("2:descending".to_owned())));
+            assert_eq!(intro.query("source_at.0"), Some(IntrospectValue::Int(2)));
+
+            let _ = intro.invoke("send", IntrospectValue::Text("h2:PointerUp".to_owned()));
+            assert_eq!(intro.query("sort"), Some(IntrospectValue::Text("none".to_owned())));
+        });
+    }
+
+    #[test]
+    fn r886_edit_while_sorted_reorders_and_cursor_follows_source() {
+        // The fold's payoff invariant: with Count ascending, raising row 0's
+        // Count from 1 to 500 moves that row to the visual bottom on the
+        // SAME model write (the order derives from the live model), while
+        // the source-keyed cursor stays on row 0 — Excel's "the cell I
+        // edited is still my cell" behaviour.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            let _ = intro.invoke("cycle_sort", IntrospectValue::Int(2));
+            let _ = intro.intervene("focused_row", IntrospectValue::Int(0));
+            let _ = intro.intervene("focused_col", IntrospectValue::Int(2));
+            assert_eq!(intro.invoke("begin", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+            use_text_edit_state(EDIT_TF_TAG).set_text("500".to_owned());
+            commit_edit(true);
+            let intro = grid_intro(&scene);
+            assert_eq!(intro.query("value.0.2"), Some(IntrospectValue::Int(500)), "source write");
+            assert_eq!(
+                intro.query("source_at.3"),
+                Some(IntrospectValue::Int(0)),
+                "edited row re-sorted to the visual bottom",
+            );
+            assert_eq!(
+                intro.query("focused_row"),
+                Some(IntrospectValue::Int(0)),
+                "cursor is source-keyed: it follows the moved row",
+            );
+        });
+    }
+
+    #[test]
+    fn r886_arrow_nav_walks_visual_order_not_source() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("cycle_sort", IntrospectValue::Int(2));
+            }
+            // Ascending Count order = [0, 3, 1, 2]; from source row 0
+            // (visual 0) ArrowDown must land on source row 3 (visual 1),
+            // not source row 1.
+            let m = Modifiers::empty();
+            assert!(DataGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", m));
+            assert_eq!(
+                grid_intro(&scene).query("focused_row"),
+                Some(IntrospectValue::Int(3)),
+                "ArrowDown steps the VISUAL sequence",
+            );
+            assert!(DataGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowUp", m));
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(0)));
+        });
+    }
+
+    #[test]
+    fn r886_sort_intervene_round_trips_and_clamps() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // decode = inverse of encode (the cross-grid wire vocabulary).
+            assert_eq!(intro.intervene("sort", IntrospectValue::Text("3:descending".to_owned())), Ok(()));
+            assert_eq!(intro.query("sort"), Some(IntrospectValue::Text("3:descending".to_owned())));
+            // Out-of-range column clamps to unsorted (GridSortState mirror).
+            assert_eq!(intro.intervene("sort", IntrospectValue::Text("9:ascending".to_owned())), Ok(()));
+            assert_eq!(intro.query("sort"), Some(IntrospectValue::Text("none".to_owned())));
+        });
+    }
+
+    #[test]
+    fn r886_access_node_announces_aria_sort_in_visual_order() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("cycle_sort", IntrospectValue::Int(2));
+            }
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), None);
+            let header = nodes
+                .iter()
+                .find(|n| n.tag == "dg_col2")
+                .expect("Count columnheader present");
+            assert_eq!(header.sort, Some(SortDirection::Ascending), "aria-sort on the key col");
+            // The rows follow the visual permutation [0, 3, 1, 2] so AT
+            // linear navigation matches what sighted users see.
+            let row_tags: Vec<&str> = nodes
+                .iter()
+                .filter(|n| n.tag.starts_with("dg_row"))
+                .map(|n| n.tag.as_str())
+                .collect();
+            assert_eq!(row_tags, ["dg_row0", "dg_row3", "dg_row1", "dg_row2"]);
+        });
     }
 }
