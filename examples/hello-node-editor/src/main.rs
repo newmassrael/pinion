@@ -37,20 +37,25 @@
 //!
 //! [`NodeGraphExternal`] (`node_graph`, the primary + the single keyboard Tab
 //! stop) owns the whole graph: the `Signal<Vec<GraphNode>>` node model, the
-//! `Signal<Vec<Edge>>` connection list, a single [`Selection`] sum type (node |
-//! edge | none — `Signal<Selection>`), and a live-drag preview. Nodes and edges
+//! `Signal<Vec<Edge>>` connection list, a single [`Selection`] sum type (node
+//! set | edge | none — `Signal<Selection>`; R879 generalised the node arm to a
+//! non-empty `BTreeSet`: plain click replaces, `Ctrl`+click toggles,
+//! `Shift`+click adds, and grabbing a selected node drags the whole group
+//! rigidly), and a live-drag preview. Nodes and edges
 //! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
 //! `edge_ids` / `node.<id>.{title,x,y,inputs,outputs}` / `edge.<id>` /
-//! `selected` / `selected_edge`; `intervene node.<id>.x` / `node.<id>.y` /
-//! `selected` / `selected_edge`; `invoke add_edge` / `remove_edge` /
+//! `selected` / `selected_ids` / `selected_edge`; `intervene node.<id>.x` /
+//! `node.<id>.y` / `node.<id>.title` / `selected` / `selected_ids` /
+//! `selected_edge`; `invoke add_edge` / `remove_edge` /
 //! `delete_node` / `delete_selected` / `nudge` / the pointer `send` wire.
 //!
 //! ## Keyboard (single Tab stop, the graph)
 //!
-//! Arrow keys nudge the selected node; `Delete` / `Backspace` removes the
-//! selection (node + its incident edges, or an edge); `Escape` clears it.
+//! Arrow keys nudge the selected node **set** (one undo step per burst);
+//! `Delete` / `Backspace` removes the selection (the node set + every
+//! incident edge as one undo step, or an edge); `Escape` clears it.
 //!
 //! ## a11y (R838 §5.40, R840 fix)
 //!
@@ -75,7 +80,7 @@
 //! - **Undo / redo** (R851 + R853): every edit is reversible on the shared
 //!   [`UndoStack`] — the **structural** edits (add node, delete node + its
 //!   incident edges, connect, disconnect) as [`GraphEdit`] deltas, and node
-//!   **moves** (drag / nudge / `intervene .x`) as [`MoveNodeCmd`]s. A drag is
+//!   **moves** (drag / nudge / `intervene .x`) as [`MoveNodesCmd`]s. A drag is
 //!   recorded as one move at gesture end; a keyboard nudge **burst** coalesces
 //!   to one undo step (the `UndoCommand::merge` hook). `Ctrl+Z` /
 //!   `Ctrl+Shift+Z` (`Ctrl+Y`) and the AI-first [`UndoStackExternal`] drive it.
@@ -114,11 +119,14 @@
 //!   through the `apply_rename` SSOT — the same path the AI-first
 //!   `intervene node.<id>.title` write-twin drives (`query renaming` is
 //!   the in-flight read).
-//! - Multi-select marquee — additive follow-up (LMB background-drag is
-//!   reserved for it, R877).
+//! - Multi-select marquee — the *gesture* is the remaining piece (LMB
+//!   background-drag stays reserved, R877; it needs the router to expose a
+//!   became-drag edge for background presses). The selection *model* it
+//!   writes into landed in R879 (`Selection::Nodes` + `selected_ids`).
 
 use std::borrow::Cow;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use pinion_a11y::{
@@ -308,7 +316,7 @@ fn ppt(x: i32, y: i32) -> PathPoint {
 /// node survives the deletion of *other* nodes. Positional indices (the R838
 /// model) invalidated every reference on each delete; this is the
 /// `hello-dock-panels-editor` stable-id discipline applied to the graph.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 struct NodeId(u32);
 
 /// Stable edge handle (R841), same discipline as [`NodeId`].
@@ -389,29 +397,68 @@ struct Preview {
     to: Option<(NodeId, usize)>,
 }
 
-/// What is selected — a node, an edge, or nothing. A sum type so "both a node
-/// and an edge selected" is unrepresentable; the handles are stable ids, so a
-/// selection survives an unrelated delete.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What is selected — a set of nodes, an edge, or nothing. A sum type so
+/// "both nodes and an edge selected" is unrepresentable; the handles are
+/// stable ids, so a selection survives an unrelated delete.
+///
+/// R879 — `Nodes` generalises the pre-R879 single `Node(NodeId)` to a
+/// non-empty [`BTreeSet`] (the marquee / `Ctrl`-click substrate; an
+/// unordered graph addresses by stable id, so the 1-D index+range
+/// [`pinion_core::widgets::virtual_select`] coordinator is the wrong
+/// abstraction here — the *policy* is mirrored, the repr is not). The
+/// non-empty invariant is upheld by [`Selection::from_nodes`]: an empty
+/// set collapses to `None`, so "selected but zero nodes" is also
+/// unrepresentable.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 enum Selection {
     None,
-    Node(NodeId),
+    Nodes(BTreeSet<NodeId>),
     Edge(EdgeId),
 }
 
 impl Selection {
-    /// The selected node id, if a node is selected.
-    fn node(self) -> Option<NodeId> {
+    /// A single-node selection.
+    fn single(id: NodeId) -> Self {
+        Selection::Nodes(BTreeSet::from([id]))
+    }
+
+    /// A node-set selection, collapsing an empty set to `None` (the
+    /// non-empty invariant's single construction funnel).
+    fn from_nodes(set: BTreeSet<NodeId>) -> Self {
+        if set.is_empty() {
+            Selection::None
+        } else {
+            Selection::Nodes(set)
+        }
+    }
+
+    /// The selected node id **when exactly one node is selected** — the
+    /// single-target operations' guard (rename / `query selected`): a
+    /// multi-selection has no unambiguous "the" node.
+    fn node(&self) -> Option<NodeId> {
         match self {
-            Selection::Node(id) => Some(id),
+            Selection::Nodes(set) if set.len() == 1 => set.first().copied(),
             _ => None,
         }
     }
 
-    /// The selected edge id, if an edge is selected.
-    fn edge(self) -> Option<EdgeId> {
+    /// The selected node set (empty for `None` / `Edge`).
+    fn nodes(&self) -> BTreeSet<NodeId> {
         match self {
-            Selection::Edge(id) => Some(id),
+            Selection::Nodes(set) => set.clone(),
+            _ => BTreeSet::new(),
+        }
+    }
+
+    /// Whether `id` is a selected node.
+    fn contains_node(&self, id: NodeId) -> bool {
+        matches!(self, Selection::Nodes(set) if set.contains(&id))
+    }
+
+    /// The selected edge id, if an edge is selected.
+    fn edge(&self) -> Option<EdgeId> {
+        match self {
+            Selection::Edge(id) => Some(*id),
             _ => None,
         }
     }
@@ -740,12 +787,16 @@ fn parse_quad(csv: &str) -> Option<(NodeId, usize, NodeId, usize)> {
 /// keeps the grab point pinned under the cursor instead of drifting — the
 /// canonical anchor model. `*_at_press` feeds the R853 one-move-per-gesture
 /// undo journal.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct NodeDragStart {
-    grab_dx: f64,
-    grab_dy: f64,
-    x_at_press: i32,
-    y_at_press: i32,
+    /// R879 — one entry per dragged member: `(id, grab_dx, grab_dy,
+    /// x_at_press, y_at_press)`. Grabbing a *selected* node drags the whole
+    /// selection rigidly (each member keeps its own graph-space grab
+    /// anchor); grabbing an unselected node drags just it (the Unreal /
+    /// QGraphicsView group-move convention). Id-sorted by construction
+    /// (selection-set order) so `end_gesture`'s journal entry matches
+    /// [`MoveNodesCmd::merge`]'s same-member ordering.
+    members: Vec<(NodeId, f64, f64, i32, i32)>,
 }
 
 /// What the most recent `PointerDown` landed on — read by `begin_drag` (an
@@ -843,12 +894,12 @@ impl UndoCommand for GraphEdit {
 
     fn redo(&self) {
         let d = &self.delta;
-        self.apply(&d.removed_nodes, &d.added_nodes, &d.removed_edges, &d.added_edges, self.sel_after);
+        self.apply(&d.removed_nodes, &d.added_nodes, &d.removed_edges, &d.added_edges, self.sel_after.clone());
     }
 
     fn undo(&self) {
         let d = &self.delta;
-        self.apply(&d.added_nodes, &d.removed_nodes, &d.added_edges, &d.removed_edges, self.sel_before);
+        self.apply(&d.added_nodes, &d.removed_nodes, &d.added_edges, &d.removed_edges, self.sel_before.clone());
     }
 }
 
@@ -861,63 +912,91 @@ impl UndoCommand for GraphEdit {
 /// editor behaviour). A drag is recorded as one *non*-coalescable move at gesture
 /// end (it is already the whole gesture), so it neither absorbs nor is absorbed
 /// by an adjacent nudge run.
-struct MoveNodeCmd {
+/// R879 — one journaled member move: `(id, before, after)` window positions.
+type NodeMove = (NodeId, (i32, i32), (i32, i32));
+
+/// R879 — generalises the R853 single-node `MoveNodeCmd`: one undo step
+/// holding one `(id, before, after)` per moved member, so a multi-select
+/// drag / nudge is exactly ONE journal entry (the Unreal / Qt group-move
+/// undo shape) while a single-node move is the one-element case.
+struct MoveNodesCmd {
     nodes: Rc<Signal<Vec<GraphNode>>>,
-    id: NodeId,
-    before: (i32, i32),
-    after: (i32, i32),
+    /// `(id, before, after)` per moved node — id-sorted by construction
+    /// (built from the selection's `BTreeSet` order), which `merge`'s
+    /// same-member check relies on.
+    moves: Vec<NodeMove>,
     coalescable: bool,
 }
 
-impl MoveNodeCmd {
-    /// Set the moved node's position (no clamp — `before` / `after` were
-    /// captured from already-clamped positions). A no-op if the node is absent
-    /// (a LIFO undo can never reach a move while the node is deleted, but the
-    /// signal write stays total either way).
-    fn set_pos(&self, pos: (i32, i32)) {
+impl MoveNodesCmd {
+    /// Set every member to its `before` (`to_after = false`) or `after`
+    /// position in one signal write (no clamp — both ends were captured
+    /// from already-clamped positions). An absent member is skipped (a
+    /// LIFO undo can never reach a move while the node is deleted, but
+    /// the signal write stays total either way).
+    fn set_all(&self, to_after: bool) {
         self.nodes.set_with(|prev| {
             let mut next = prev.clone();
-            if let Some(n) = next.iter_mut().find(|n| n.id == self.id) {
-                n.x = pos.0;
-                n.y = pos.1;
+            for (id, before, after) in &self.moves {
+                let pos = if to_after { after } else { before };
+                if let Some(n) = next.iter_mut().find(|n| n.id == *id) {
+                    n.x = pos.0;
+                    n.y = pos.1;
+                }
             }
             next
         });
     }
 }
 
-impl UndoCommand for MoveNodeCmd {
+impl UndoCommand for MoveNodesCmd {
     fn label(&self) -> Cow<'static, str> {
-        Cow::Borrowed("Move node")
+        if self.moves.len() == 1 {
+            Cow::Borrowed("Move node")
+        } else {
+            Cow::Owned(format!("Move {} nodes", self.moves.len()))
+        }
     }
 
     fn redo(&self) {
-        self.set_pos(self.after);
+        self.set_all(true);
     }
 
     fn undo(&self) {
-        self.set_pos(self.before);
+        self.set_all(false);
     }
 
     fn as_any(&self) -> Option<&dyn core::any::Any> {
         Some(self)
     }
 
-    /// Fold a contiguous same-node move into this one: extend `after` to the
-    /// successor's. Only when both ends are `coalescable` and target the same
-    /// node — so a drag (non-coalescable) breaks the run on either side, and a
-    /// move of a different node starts a fresh undo step.
+    /// Fold a contiguous same-member move into this one: extend each
+    /// `after` to the successor's. Only when both ends are `coalescable`,
+    /// target the identical member list, and are contiguous per member —
+    /// so a drag (non-coalescable) breaks the run on either side, and a
+    /// move of a different selection starts a fresh undo step.
     fn merge(&mut self, next: &dyn UndoCommand) -> bool {
-        let Some(next) = next.as_any().and_then(|a| a.downcast_ref::<MoveNodeCmd>()) else {
+        let Some(next) = next.as_any().and_then(|a| a.downcast_ref::<MoveNodesCmd>()) else {
             return false;
         };
-        // R856 — require contiguity (`self.after == next.before`) like the
-        // substrate's canonical `AddCmd::merge`: every current caller captures
-        // `before` from live state, so the run is contiguous by construction, but
-        // the guard keeps a future stale-`before` caller from folding a
+        if !(self.coalescable && next.coalescable && self.moves.len() == next.moves.len()) {
+            return false;
+        }
+        // R856 — require same member + contiguity (`self.after ==
+        // next.before`) per element, like the substrate's canonical
+        // `AddCmd::merge`: every current caller captures `before` from live
+        // state, so the run is contiguous by construction, but the guard
+        // keeps a future stale-`before` caller from folding a
         // non-contiguous run and losing the intermediate position on undo.
-        if self.coalescable && next.coalescable && self.id == next.id && self.after == next.before {
-            self.after = next.after;
+        let foldable = self
+            .moves
+            .iter()
+            .zip(&next.moves)
+            .all(|((id_a, _, after), (id_b, before, _))| id_a == id_b && after == before);
+        if foldable {
+            for (mine, theirs) in self.moves.iter_mut().zip(&next.moves) {
+                mine.2 = theirs.2;
+            }
             true
         } else {
             false
@@ -926,7 +1005,7 @@ impl UndoCommand for MoveNodeCmd {
 }
 
 /// R878 §5.52 — a reversible node **rename** (the title-edit `UndoCommand`,
-/// the [`MoveNodeCmd`] shape over the `title` field). Stores only the renamed
+/// the [`MoveNodesCmd`] shape over the `title` field). Stores only the renamed
 /// node's `before` / `after` title, so undo / redo is an O(1) field write —
 /// never a graph-wide delta ([[granular-undo-not-snapshot]]). A rename commits
 /// once per editing session (Enter / blur), so it does NOT opt into the
@@ -943,7 +1022,7 @@ struct RenameNodeCmd {
 impl RenameNodeCmd {
     /// Set the renamed node's title. A no-op if the node is absent (a LIFO
     /// undo can never reach a rename while the node is deleted, but the
-    /// signal write stays total either way — the [`MoveNodeCmd::set_pos`]
+    /// signal write stays total either way — the [`MoveNodesCmd::set_all`]
     /// discipline).
     fn set_title(&self, title: &str) {
         self.nodes.set_with(|prev| {
@@ -1013,7 +1092,12 @@ fn apply_rename(
 /// rather than re-deriving it on each replay.
 fn validate_after(sel: Selection, removed_nodes: &[NodeId], removed_edges: &[EdgeId]) -> Selection {
     match sel {
-        Selection::Node(id) if removed_nodes.contains(&id) => Selection::None,
+        // R879 — drop the removed members; an emptied set collapses to
+        // `None` through the construction funnel.
+        Selection::Nodes(mut members) => {
+            members.retain(|id| !removed_nodes.contains(id));
+            Selection::from_nodes(members)
+        }
         Selection::Edge(id) if removed_edges.contains(&id) => Selection::None,
         other => other,
     }
@@ -1075,7 +1159,7 @@ struct NodeGraphExternal {
     rename_editor: Rc<TextEditState>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<NodeId>>,
-    node_drag: Cell<Option<NodeDragStart>>,
+    node_drag: RefCell<Option<NodeDragStart>>,
     pending_press: Cell<PendingPress>,
     /// Edge under the most recent background press (the capture-seed
     /// `pointer_move` records it; a background `PointerUp` consumes it).
@@ -1106,7 +1190,7 @@ impl NodeGraphExternal {
             renaming: services.renaming,
             rename_editor: services.rename_editor,
             grabbed_node: Cell::new(None),
-            node_drag: Cell::new(None),
+            node_drag: RefCell::new(None),
             pending_press: Cell::new(PendingPress::None),
             pending_edge_hit: Cell::new(None),
         }
@@ -1235,15 +1319,28 @@ impl NodeGraphExternal {
         });
     }
 
-    /// R853 — journal a node move onto the undo stack. The position is already
-    /// applied (the live drag / nudge / intervene set it), so this `push_applied`s
-    /// the [`MoveNodeCmd`] without re-applying; the stack's coalescing folds a
-    /// contiguous `coalescable` run (a nudge burst) into one step.
-    fn record_move(&self, id: NodeId, before: (i32, i32), after: (i32, i32), coalescable: bool) {
-        if before == after {
+    /// R853/R879 — journal a (multi-)node move onto the undo stack as ONE
+    /// step. The positions are already applied (the live drag / nudge /
+    /// intervene set them), so this `push_applied`s the [`MoveNodesCmd`]
+    /// without re-applying; the stack's coalescing folds a contiguous
+    /// `coalescable` same-member run (a nudge burst) into one step.
+    /// Unmoved members are dropped; an all-unmoved set journals nothing.
+    fn record_moves(
+        &self,
+        mut moves: Vec<NodeMove>,
+        coalescable: bool,
+    ) {
+        moves.retain(|(_, before, after)| before != after);
+        if moves.is_empty() {
             return;
         }
-        self.undo.push_applied(MoveNodeCmd { nodes: Rc::clone(&self.nodes), id, before, after, coalescable });
+        self.undo.push_applied(MoveNodesCmd { nodes: Rc::clone(&self.nodes), moves, coalescable });
+    }
+
+    /// The single-node convenience over [`record_moves`](Self::record_moves)
+    /// (the `intervene node.<id>.x/.y` path).
+    fn record_move(&self, id: NodeId, before: (i32, i32), after: (i32, i32), coalescable: bool) {
+        self.record_moves(vec![(id, before, after)], coalescable);
     }
 
     /// R852 — snapshot the persistable graph (nodes + edges + the monotonic id
@@ -1372,7 +1469,7 @@ impl NodeGraphExternal {
             format!("Add {title}"),
             GraphDelta { added_nodes: vec![node], ..GraphDelta::default() },
             sel_before,
-            Selection::Node(id),
+            Selection::single(id),
         );
         Some(id)
     }
@@ -1416,7 +1513,7 @@ impl NodeGraphExternal {
         let sel_before = self.selection.get();
         // Displacing a wire may strand a selected edge — prune it post-edit.
         let removed_ids: Vec<EdgeId> = replaced.iter().map(|e| e.id).collect();
-        let sel_after = validate_after(sel_before, &[], &removed_ids);
+        let sel_after = validate_after(sel_before.clone(), &[], &removed_ids);
         self.record_edit(
             "Connect",
             GraphDelta { added_edges: vec![new_edge], removed_edges: replaced, ..GraphDelta::default() },
@@ -1433,7 +1530,7 @@ impl NodeGraphExternal {
             return false;
         };
         let sel_before = self.selection.get();
-        let sel_after = validate_after(sel_before, &[], &[id]);
+        let sel_after = validate_after(sel_before.clone(), &[], &[id]);
         self.record_edit(
             "Disconnect",
             GraphDelta { removed_edges: vec![edge], ..GraphDelta::default() },
@@ -1448,31 +1545,53 @@ impl NodeGraphExternal {
     /// R851 — the node *and* its incident edges are captured as a removed delta,
     /// so one Ctrl+Z restores the node together with every wire it carried.
     fn delete_node(&self, id: NodeId) -> bool {
-        let Some(node) = self.nodes.get().iter().find(|n| n.id == id).cloned() else {
+        self.delete_nodes(&BTreeSet::from([id]))
+    }
+
+    /// R879 — delete a node *set* plus every incident edge as ONE
+    /// [`GraphEdit`] (one undo step restores the whole group with its
+    /// stable ids — the multi-select `Delete` contract). Unknown ids are
+    /// skipped; an all-unknown set is a no-op `false`.
+    fn delete_nodes(&self, ids: &BTreeSet<NodeId>) -> bool {
+        let removed: Vec<GraphNode> =
+            self.nodes.get().iter().filter(|n| ids.contains(&n.id)).cloned().collect();
+        if removed.is_empty() {
             return false;
-        };
-        let incident: Vec<Edge> =
-            self.edges.get().iter().copied().filter(|e| e.from_node == id || e.to_node == id).collect();
+        }
+        let incident: Vec<Edge> = self
+            .edges
+            .get()
+            .iter()
+            .copied()
+            .filter(|e| ids.contains(&e.from_node) || ids.contains(&e.to_node))
+            .collect();
         let sel_before = self.selection.get();
+        let removed_ids: Vec<NodeId> = removed.iter().map(|n| n.id).collect();
         let incident_ids: Vec<EdgeId> = incident.iter().map(|e| e.id).collect();
-        let sel_after = validate_after(sel_before, &[id], &incident_ids);
+        let sel_after = validate_after(sel_before.clone(), &removed_ids, &incident_ids);
+        let label: Cow<'static, str> = if removed.len() == 1 {
+            Cow::Borrowed("Delete node")
+        } else {
+            Cow::Owned(format!("Delete {} nodes", removed.len()))
+        };
         self.record_edit(
-            "Delete node",
-            GraphDelta { removed_nodes: vec![node], removed_edges: incident, ..GraphDelta::default() },
+            label,
+            GraphDelta { removed_nodes: removed, removed_edges: incident, ..GraphDelta::default() },
             sel_before,
             sel_after,
         );
         self.grabbed_node.set(None);
-        self.node_drag.set(None);
+        *self.node_drag.borrow_mut() = None;
         true
     }
 
-    /// Delete whatever is selected — node or edge (the single `Selection` makes
-    /// the two cases exhaustive). The `Delete` key + RPC `delete_selected` share it.
+    /// Delete whatever is selected — the node set or an edge (the single
+    /// `Selection` makes the cases exhaustive). The `Delete` key + RPC
+    /// `delete_selected` share it.
     fn delete_selected(&self) -> bool {
         match self.selection.get() {
             Selection::Edge(e) => self.remove_edge(e),
-            Selection::Node(k) => self.delete_node(k),
+            Selection::Nodes(set) => self.delete_nodes(&set),
             Selection::None => false,
         }
     }
@@ -1509,18 +1628,31 @@ impl NodeGraphExternal {
     /// nudge journals a *coalescable* move, so a burst of arrow keys collapses to
     /// one undo step.
     fn nudge_selected(&self, dx: i32, dy: i32) -> bool {
-        let Some(id) = self.selection.get().node() else {
-            return false;
-        };
-        let Some(node) = self.node_by_id(id) else {
-            return false;
-        };
-        let before = (node.x, node.y);
-        if !self.set_node_pos(id, node.x + dx, node.y + dy) {
+        let members = self.selection.get().nodes();
+        if members.is_empty() {
             return false;
         }
-        let after = self.node_by_id(id).map_or(before, |n| (n.x, n.y));
-        self.record_move(id, before, after, true);
+        // R879 — move every selected member; ONE journal entry per
+        // keystroke, and the burst coalesces because the member list is
+        // identical across the run ([`MoveNodesCmd::merge`]). The signal
+        // writes batch so subscribers see one atomic group move.
+        let mut moves = Vec::with_capacity(members.len());
+        batch(|| {
+            for id in &members {
+                let Some(node) = self.node_by_id(*id) else {
+                    continue;
+                };
+                let before = (node.x, node.y);
+                if self.set_node_pos(*id, node.x + dx, node.y + dy) {
+                    let after = self.node_by_id(*id).map_or(before, |n| (n.x, n.y));
+                    moves.push((*id, before, after));
+                }
+            }
+        });
+        if moves.is_empty() {
+            return false;
+        }
+        self.record_moves(moves, true);
         true
     }
 
@@ -1529,8 +1661,62 @@ impl NodeGraphExternal {
     fn select_node(&self, id: Option<NodeId>) {
         let next = id
             .filter(|id| self.nodes.get().iter().any(|n| n.id == *id))
-            .map_or(Selection::None, Selection::Node);
+            .map_or(Selection::None, Selection::single);
         self.selection.set(next);
+    }
+
+    /// R879 — `Ctrl`-toggle `id`'s membership, leaving the rest of the node
+    /// selection intact (a prior edge selection is replaced — the sum type's
+    /// node-xor-edge rule). Removing the last member collapses to `None`
+    /// through the construction funnel. Unknown ids are ignored.
+    fn toggle_node(&self, id: NodeId) {
+        if !self.nodes.get().iter().any(|n| n.id == id) {
+            return;
+        }
+        let mut set = self.selection.get().nodes();
+        if !set.remove(&id) {
+            set.insert(id);
+        }
+        self.selection.set(Selection::from_nodes(set));
+    }
+
+    /// R879 — `Shift`-add `id` to the node selection (an unordered graph
+    /// has no range to extend, so Shift means "add" — the Unreal graph
+    /// convention). Unknown ids are ignored.
+    fn add_node_to_selection(&self, id: NodeId) {
+        if !self.nodes.get().iter().any(|n| n.id == id) {
+            return;
+        }
+        let mut set = self.selection.get().nodes();
+        set.insert(id);
+        self.selection.set(Selection::from_nodes(set));
+    }
+
+    /// R879 — the `intervene selected_ids` arm: a CSV of node ids replaces
+    /// the selection as a set ("" clears). Strict: every id must exist
+    /// (OutOfRange otherwise — the selection is unchanged), mirroring the
+    /// single `selected` slot's must-exist filter; the write twin of the
+    /// `selected_ids` query.
+    fn intervene_selected_ids(&self, value: &IntrospectValue) -> Result<(), InterveneError> {
+        let IntrospectValue::Text(csv) = value else {
+            return Err(InterveneError::TypeMismatch);
+        };
+        let trimmed = csv.trim();
+        if trimmed.is_empty() {
+            self.selection.set(Selection::None);
+            return Ok(());
+        }
+        let mut members = BTreeSet::new();
+        for token in trimmed.split(',') {
+            let raw: u32 = token.trim().parse().map_err(|_| InterveneError::TypeMismatch)?;
+            let id = NodeId(raw);
+            if !self.nodes.get().iter().any(|n| n.id == id) {
+                return Err(InterveneError::OutOfRange);
+            }
+            members.insert(id);
+        }
+        self.selection.set(Selection::from_nodes(members));
+        Ok(())
     }
 
     /// Select an edge by id (must exist).
@@ -1569,15 +1755,17 @@ impl NodeGraphExternal {
         // Decode via the canonical send-wire SSOT (`split_send_payload`):
         // a composite `"key:event[:mods]"` yields `(Some(key), event)`; a bare
         // `"event"` (canvas background) yields `(None, event)`.
-        let (sub, event) = match split_send_payload(payload) {
-            Some((key, event, _mods)) => (Some(key), event),
-            None => (None, payload),
+        // R879 — the R781 third wire segment (held modifiers) now matters:
+        // `Ctrl`+release toggles membership, `Shift`+release adds.
+        let (sub, event, mods) = match split_send_payload(payload) {
+            Some((key, event, mods)) => (Some(key), event, mods),
+            None => (None, payload, Modifiers::empty()),
         };
         match (sub, event) {
             (Some(s), "PointerDown") => {
                 if parse_node_sub(s).is_some() {
                     self.grabbed_node.set(parse_node_sub(s));
-                    self.node_drag.set(None);
+                    *self.node_drag.borrow_mut() = None;
                     self.pending_press.set(PendingPress::NodeBody);
                 } else if let Some((n, j)) = parse_oport_sub(s) {
                     self.pending_press.set(PendingPress::OutputPort(n, j));
@@ -1601,7 +1789,21 @@ impl NodeGraphExternal {
                 if let Some(kind) = parse_palette_sub(s) {
                     self.add_node(kind);
                 } else if let Some(n) = parse_node_sub(s) {
-                    self.select_node(Some(n));
+                    // R879 — modifier-aware select (the R781 wire segment):
+                    // Ctrl toggles, Shift adds, plain replaces. The capture
+                    // path delivers this release even after a real move
+                    // (unlike the router's routed-click suppression, R876),
+                    // so a *moved* gesture skips the selection mutation —
+                    // a group drag must not collapse the set it dragged.
+                    if !self.gesture_moved() {
+                        if mods.control_key() {
+                            self.toggle_node(n);
+                        } else if mods.shift_key() {
+                            self.add_node_to_selection(n);
+                        } else {
+                            self.select_node(Some(n));
+                        }
+                    }
                 }
                 self.end_gesture();
             }
@@ -1637,15 +1839,34 @@ impl NodeGraphExternal {
         IntrospectValue::Null
     }
 
+    /// R879 — whether the in-flight node gesture actually displaced any
+    /// member (press position != current position). Distinguishes a click
+    /// (select on release) from a drag (selection untouched) on the
+    /// capture path, where the release always reaches [`handle_send`].
+    fn gesture_moved(&self) -> bool {
+        self.node_drag.borrow().as_ref().is_some_and(|start| {
+            start.members.iter().any(|&(id, _, _, px, py)| {
+                self.node_by_id(id).is_some_and(|n| (n.x, n.y) != (px, py))
+            })
+        })
+    }
+
     fn end_gesture(&self) {
         // R853 — a completed node-body drag (a node was grabbed and a drag
         // snapshot taken) journals as ONE non-coalescable move: before = the grab
         // position, after = the release position. The intermediate `pointer_move`
         // writes are live preview only. Edge-connect drags arm `pending_press`,
         // not `grabbed_node`, so they never record a move here.
-        if let (Some(id), Some(start)) = (self.grabbed_node.get(), self.node_drag.get()) {
-            if let Some(node) = self.node_by_id(id) {
-                self.record_move(id, (start.x_at_press, start.y_at_press), (node.x, node.y), false);
+        if self.grabbed_node.get().is_some() {
+            if let Some(start) = self.node_drag.borrow().as_ref() {
+                let moves: Vec<NodeMove> = start
+                    .members
+                    .iter()
+                    .filter_map(|&(id, _, _, px, py)| {
+                        self.node_by_id(id).map(|n| (id, (px, py), (n.x, n.y)))
+                    })
+                    .collect();
+                self.record_moves(moves, false);
             }
         }
         self.reset_gesture();
@@ -1658,7 +1879,7 @@ impl NodeGraphExternal {
     /// the freshly-cleared undo history (the "load clears undo" contract).
     fn reset_gesture(&self) {
         self.grabbed_node.set(None);
-        self.node_drag.set(None);
+        *self.node_drag.borrow_mut() = None;
         self.pending_press.set(PendingPress::None);
         self.pending_edge_hit.set(None);
     }
@@ -1716,24 +1937,41 @@ impl External for NodeGraphExternal {
             }
             return;
         };
-        match self.node_drag.get() {
-            None => {
-                if let Some(n) = self.node_by_id(node) {
-                    self.node_drag.set(Some(NodeDragStart {
-                        grab_dx: f64::from(n.x) - gx,
-                        grab_dy: f64::from(n.y) - gy,
-                        x_at_press: n.x,
-                        y_at_press: n.y,
-                    }));
+        let snapshot_needed = self.node_drag.borrow().is_none();
+        if snapshot_needed {
+            // R879 — first capture move: snapshot the dragged member set.
+            // Grabbing a *selected* node drags the whole selection rigidly
+            // (per-member graph-space grab anchors); grabbing an unselected
+            // node drags just it, leaving the selection untouched (the
+            // Unreal / QGraphicsView convention).
+            let selection = self.selection.get();
+            let members: BTreeSet<NodeId> = if selection.contains_node(node) {
+                selection.nodes()
+            } else {
+                BTreeSet::from([node])
+            };
+            let snapshot: Vec<(NodeId, f64, f64, i32, i32)> = members
+                .iter()
+                .filter_map(|id| {
+                    self.node_by_id(*id)
+                        .map(|n| (*id, f64::from(n.x) - gx, f64::from(n.y) - gy, n.x, n.y))
+                })
+                .collect();
+            if !snapshot.is_empty() {
+                *self.node_drag.borrow_mut() = Some(NodeDragStart { members: snapshot });
+            }
+            return;
+        }
+        let start = self.node_drag.borrow();
+        if let Some(start) = start.as_ref() {
+            // Live preview: every member re-derives from the *current*
+            // cursor + its own grab anchor (zoom/pan-robust, R877); the
+            // per-frame writes batch into one atomic group move.
+            batch(|| {
+                for &(id, grab_dx, grab_dy, _, _) in &start.members {
+                    self.set_node_pos(id, round_i32(gx + grab_dx), round_i32(gy + grab_dy));
                 }
-            }
-            Some(start) => {
-                self.set_node_pos(
-                    node,
-                    round_i32(gx + start.grab_dx),
-                    round_i32(gy + start.grab_dy),
-                );
-            }
+            });
         }
     }
 
@@ -1824,6 +2062,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node_ids", "string"),
             ("edge_ids", "string"),
             ("selected", "int"),
+            ("selected_ids", "string"),
             ("selected_edge", "int"),
             ("renaming", "int"),
             ("begin_rename", "int"),
@@ -1863,10 +2102,18 @@ impl ExternalIntrospect for NodeGraphExternal {
             "edge_ids" => Some(IntrospectValue::Text(csv_ids(
                 self.edges.get().iter().map(|e| e.id.raw()),
             ))),
+            // R879 — `selected` answers the *single*-selection question:
+            // an Int only when exactly one node is selected (a multi-set
+            // has no unambiguous "the" node — read `selected_ids`).
             "selected" => Some(match self.selection.get().node() {
                 Some(id) => IntrospectValue::Int(i64::from(id.raw())),
                 None => IntrospectValue::Null,
             }),
+            // R879 — the multi-select read twin: CSV of the selected node
+            // ids in id order ("" when no node selection).
+            "selected_ids" => Some(IntrospectValue::Text(csv_ids(
+                self.selection.get().nodes().iter().map(|id| id.raw()),
+            ))),
             "selected_edge" => Some(match self.selection.get().edge() {
                 Some(id) => IntrospectValue::Int(i64::from(id.raw())),
                 None => IntrospectValue::Null,
@@ -1959,6 +2206,9 @@ impl ExternalIntrospect for NodeGraphExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             };
+        }
+        if path == "selected_ids" {
+            return self.intervene_selected_ids(&value);
         }
         if path == "selected_edge" {
             return match value {
@@ -2539,7 +2789,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let nodes = use_nodes().get();
     let edges = use_edges().get();
     let selection = use_selection().get();
-    let selected = selection.node();
+    let selected = selection.nodes();
     let selected_edge = selection.edge();
     let preview = use_preview().get();
     // R878 — which node paints the shared rename field instead of its title.
@@ -2577,7 +2827,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     for node in &nodes {
         world_children.push(view_node(
             node,
-            selected == Some(node.id),
+            selected.contains(&node.id),
             renaming == Some(node.id),
             state,
             &theme,
@@ -2612,8 +2862,10 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(16, 12)),
     ));
 
-    let sel_label = if let Some(id) = selected {
-        format!("node {}", node_ref(&nodes, id).map_or("—", |n| n.title.as_str()))
+    let sel_label = if selected.len() > 1 {
+        format!("{} nodes", selected.len())
+    } else if let Some(id) = selected.first() {
+        format!("node {}", node_ref(&nodes, *id).map_or("—", |n| n.title.as_str()))
     } else if let Some(e) = selected_edge {
         format!("edge {e}")
     } else {
@@ -2808,7 +3060,7 @@ impl WidgetA11y for NodeEditorView {
     /// on the RPC axis (`query edge.<i>`) per [[ai-first-rpc-introspection-obligation]].
     fn access_node(state: &RootState, focused: Option<&str>) -> Vec<AccessNode> {
         let nodes = use_nodes().get();
-        let selected = use_selection().get().node();
+        let selected = use_selection().get().nodes();
         let renaming = use_renaming().get();
         // R849/R850 — the editor lowers to a root with two regions: the add-node
         // palette (a `toolbar` of `button`s that create nodes) and the graph
@@ -2833,8 +3085,12 @@ impl WidgetA11y for NodeEditorView {
             .collect();
         let mut out = vec![root];
         out.extend(toolbar_button_nodes(PALETTE_TAG, "Add node", &controls, None));
+        // R879 — the canvas owns a multi-selection set; announce it
+        // (`aria-multiselectable`) so per-node `aria-selected` flags read
+        // as set membership, not a single highlight.
         let mut group = AccessNode::new(GRAPH_TAG, AriaRole::Group)
             .with_name("Node graph")
+            .with_multiselectable()
             .with_state(AccessState { focused: focused == Some(GRAPH_TAG), ..AccessState::default() });
         for node in &nodes {
             group = group.with_child(format!("{GRAPH_TAG}#node_{}", node.id));
@@ -2843,7 +3099,7 @@ impl WidgetA11y for NodeEditorView {
         for node in &nodes {
             let mut entry = AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
                 .with_name(format!("{} ({} in, {} out)", node.title, node.inputs, node.outputs))
-                .with_selected(selected == Some(node.id));
+                .with_selected(selected.contains(&node.id));
             // R878 — while this node is being renamed, the shared inline
             // field is its child textbox (the lifted `text_field_a11y_node`
             // SSOT). Gated on the SAME `renaming` predicate the paint uses,
@@ -3226,7 +3482,7 @@ mod tests {
             let _ = boot_scene();
             let coord = coordinator();
             coord.select_node(Some(NodeId(2)));
-            assert_eq!(use_selection().get(), Selection::Node(NodeId(2)));
+            assert_eq!(use_selection().get(), Selection::single(NodeId(2)));
             coord.select_edge(Some(EdgeId(1)));
             assert_eq!(
                 use_selection().get(),
@@ -3280,7 +3536,7 @@ mod tests {
             assert_eq!(edges.len(), 2, "Color's incident edge dropped");
             assert!(edges.iter().any(|e| e.id == EdgeId(0) && e.from_node == NodeId(0) && e.to_node == NodeId(2)));
             // The selection (Output id 3) is untouched — it did not shift.
-            assert_eq!(use_selection().get(), Selection::Node(NodeId(3)));
+            assert_eq!(use_selection().get(), Selection::single(NodeId(3)));
         });
     }
 
@@ -3320,7 +3576,7 @@ mod tests {
             let id = coord.add_node(2).expect("Multiply is a valid kind");
             assert_eq!(id, NodeId(first_dynamic_node_id()));
             assert_eq!(coord.node_count(), 5);
-            assert_eq!(use_selection().get(), Selection::Node(id), "the new node is selected");
+            assert_eq!(use_selection().get(), Selection::single(id), "the new node is selected");
             let n = coord.node_by_id(id).expect("new node present");
             assert_eq!(n.title, "Multiply");
             assert_eq!((n.inputs, n.outputs), (2, 1));
@@ -3461,7 +3717,7 @@ mod tests {
     fn r840_access_node_emits_group_not_ordered_list() {
         Owner::new().run(|| {
             let _scene = boot_scene();
-            use_selection().set(Selection::Node(NodeId(2)));
+            use_selection().set(Selection::single(NodeId(2)));
             let nodes = NodeEditorView::access_node(&IDLE_TF, Some(GRAPH_TAG));
             // R849 — root + palette toolbar + 5 palette buttons + graph group +
             // one generic per node.
@@ -3557,7 +3813,7 @@ mod tests {
             assert!(!stack.can_undo(), "boot: clean history");
             let id = coord.add_node(2).expect("Multiply"); // first dynamic id
             assert_eq!(coord.node_count(), 5);
-            assert_eq!(use_selection().get(), Selection::Node(id));
+            assert_eq!(use_selection().get(), Selection::single(id));
             assert!(stack.can_undo(), "the add is journaled");
             assert_eq!(stack.undo_label().as_deref(), Some("Add Multiply"));
 
@@ -3568,7 +3824,7 @@ mod tests {
 
             assert!(stack.redo(), "redo the add");
             assert_eq!(coord.node_count(), 5, "the node is back");
-            assert_eq!(use_selection().get(), Selection::Node(id), "and re-selected");
+            assert_eq!(use_selection().get(), Selection::single(id), "and re-selected");
             assert_eq!(coord.node_by_id(id).expect("present").id, id, "with the SAME stable id");
         });
     }
@@ -3913,12 +4169,8 @@ mod tests {
     /// `tf.drag`; here we drive the latches directly to test the recording).
     fn synth_drag(coord: &NodeGraphExternal, id: NodeId, before: (i32, i32), dx: i32, dy: i32) {
         coord.grabbed_node.set(Some(id));
-        coord.node_drag.set(Some(NodeDragStart {
-            grab_dx: 0.0,
-            grab_dy: 0.0,
-            x_at_press: before.0,
-            y_at_press: before.1,
-        }));
+        *coord.node_drag.borrow_mut() =
+            Some(NodeDragStart { members: vec![(id, 0.0, 0.0, before.0, before.1)] });
         coord.set_node_pos(id, before.0 + dx, before.1 + dy); // live preview write
         coord.end_gesture(); // commits one non-coalescable move
     }
@@ -3953,12 +4205,8 @@ mod tests {
             let id = NodeId(0);
             let before = pos_of(&coord, id);
             coord.grabbed_node.set(Some(id));
-            coord.node_drag.set(Some(NodeDragStart {
-                grab_dx: 0.0,
-                grab_dy: 0.0,
-                x_at_press: before.0,
-                y_at_press: before.1,
-            }));
+            *coord.node_drag.borrow_mut() =
+                Some(NodeDragStart { members: vec![(id, 0.0, 0.0, before.0, before.1)] });
             coord.set_node_pos(id, before.0 + 50, before.1 + 30);
             assert_eq!(stack.len(), 0, "nothing is journaled mid-drag");
             coord.end_gesture();
@@ -3999,16 +4247,12 @@ mod tests {
             let before = pos_of(&coord, id);
             // Arm an in-flight drag (grab + a live move), no release.
             coord.grabbed_node.set(Some(id));
-            coord.node_drag.set(Some(NodeDragStart {
-                grab_dx: 0.0,
-                grab_dy: 0.0,
-                x_at_press: before.0,
-                y_at_press: before.1,
-            }));
+            *coord.node_drag.borrow_mut() =
+                Some(NodeDragStart { members: vec![(id, 0.0, 0.0, before.0, before.1)] });
             coord.set_node_pos(id, before.0 + 40, before.1);
             assert!(coord.load_json(&snap), "load the snapshot mid-drag");
             assert!(!stack.can_undo(), "the opened document has a clean undo history");
-            assert_eq!(stack.len(), 0, "no spurious MoveNodeCmd was journaled across the load");
+            assert_eq!(stack.len(), 0, "no spurious MoveNodesCmd was journaled across the load");
         });
     }
 
@@ -4022,11 +4266,9 @@ mod tests {
             let stack = use_undo();
             let nodes = use_nodes();
             let id = NodeId(0);
-            let cmd = |before, after| MoveNodeCmd {
+            let cmd = |before, after| MoveNodesCmd {
                 nodes: std::rc::Rc::clone(&nodes),
-                id,
-                before,
-                after,
+                moves: vec![(id, before, after)],
                 coalescable: true,
             };
             stack.push_applied(cmd((0, 0), (100, 0)));
@@ -4405,7 +4647,7 @@ mod tests {
             assert_eq!(editor.caret(), "Multiply".len(), "caret parked at the end");
             // The trailing PointerUp (the second click's release) still selects.
             send(&mut scene, "node_2:PointerUp");
-            assert_eq!(use_selection().get(), Selection::Node(NodeId(2)));
+            assert_eq!(use_selection().get(), Selection::single(NodeId(2)));
             assert_eq!(use_renaming().get(), Some(NodeId(2)), "selection does not cancel the rename");
             // A background double-click begins nothing.
             send(&mut scene, "DoubleClick");
@@ -4449,7 +4691,7 @@ mod tests {
             end_rename_mode(false);
             assert_eq!(graph_intro(&scene).query("renaming"), Some(IntrospectValue::Null));
             // Null with a selection → the F2 path.
-            use_selection().set(Selection::Node(NodeId(3)));
+            use_selection().set(Selection::single(NodeId(3)));
             let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             assert_eq!(
@@ -4666,6 +4908,247 @@ mod tests {
                 host.children.iter().any(|c| c == RENAME_TF_TAG),
                 "the textbox is the renamed node's child",
             );
+        });
+    }
+    // ─── R879 multi-select ─────────────────────────────────────────
+
+    fn sel_set(ids: &[u32]) -> Selection {
+        Selection::from_nodes(ids.iter().map(|&i| NodeId(i)).collect())
+    }
+
+    #[test]
+    fn r879_modifier_clicks_toggle_add_replace() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Plain click replaces.
+            send(&mut scene, "node_0:PointerDown");
+            send(&mut scene, "node_0:PointerUp");
+            assert_eq!(use_selection().get(), Selection::single(NodeId(0)));
+            // Ctrl+click adds a second member (the R781 wire token).
+            send(&mut scene, "node_2:PointerDown:c");
+            send(&mut scene, "node_2:PointerUp:c");
+            assert_eq!(use_selection().get(), sel_set(&[0, 2]), "Ctrl toggles in");
+            // Ctrl+click on a member toggles it back out.
+            send(&mut scene, "node_0:PointerDown:c");
+            send(&mut scene, "node_0:PointerUp:c");
+            assert_eq!(use_selection().get(), Selection::single(NodeId(2)), "Ctrl toggles out");
+            // Shift+click adds (an unordered graph has no range).
+            send(&mut scene, "node_1:PointerDown:s");
+            send(&mut scene, "node_1:PointerUp:s");
+            assert_eq!(use_selection().get(), sel_set(&[1, 2]), "Shift adds");
+            // Shift+click on a member is idempotent (add, not toggle).
+            send(&mut scene, "node_1:PointerDown:s");
+            send(&mut scene, "node_1:PointerUp:s");
+            assert_eq!(use_selection().get(), sel_set(&[1, 2]), "Shift re-add is a no-op");
+            // Plain click collapses back to a single.
+            send(&mut scene, "node_3:PointerDown");
+            send(&mut scene, "node_3:PointerUp");
+            assert_eq!(use_selection().get(), Selection::single(NodeId(3)), "plain replaces");
+            // Toggling the last member out empties to None.
+            send(&mut scene, "node_3:PointerDown:c");
+            send(&mut scene, "node_3:PointerUp:c");
+            assert_eq!(use_selection().get(), Selection::None, "empty set collapses to None");
+        });
+    }
+
+    #[test]
+    fn r879_delete_selected_multi_is_one_undo_step() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            // Nodes 0 and 2: node 2 (Multiply) is incident to all 3 seed
+            // edges, node 0 (Texture) to edge 0 — union = all 3 edges.
+            use_selection().set(sel_set(&[0, 2]));
+            assert!(coord.delete_selected());
+            assert_eq!(coord.node_count(), 2, "both nodes gone");
+            assert_eq!(coord.edges.get().len(), 0, "all incident edges gone");
+            assert_eq!(use_selection().get(), Selection::None, "selection pruned");
+            assert_eq!(stack.undo_label().as_deref(), Some("Delete 2 nodes"));
+            assert_eq!(stack.len(), 1, "ONE journal entry for the whole group");
+            assert!(stack.undo());
+            assert_eq!(coord.node_count(), 4, "undo restores both nodes");
+            assert_eq!(coord.edges.get().len(), 3, "and every incident edge");
+            assert_eq!(use_selection().get(), sel_set(&[0, 2]), "and the selection");
+        });
+    }
+
+    #[test]
+    fn r879_multi_nudge_is_one_coalescing_step() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let a0 = pos_of(&coord, NodeId(0));
+            let a1 = pos_of(&coord, NodeId(1));
+            use_selection().set(sel_set(&[0, 1]));
+            assert!(coord.nudge_selected(NUDGE_STEP, 0));
+            assert!(coord.nudge_selected(NUDGE_STEP, 0));
+            assert_eq!(stack.len(), 1, "the burst coalesces to one step");
+            assert_eq!(stack.undo_label().as_deref(), Some("Move 2 nodes"));
+            assert_eq!(pos_of(&coord, NodeId(0)), (a0.0 + 2 * NUDGE_STEP, a0.1));
+            assert_eq!(pos_of(&coord, NodeId(1)), (a1.0 + 2 * NUDGE_STEP, a1.1));
+            assert!(stack.undo());
+            assert_eq!(pos_of(&coord, NodeId(0)), a0, "one undo restores member 0");
+            assert_eq!(pos_of(&coord, NodeId(1)), a1, "and member 1");
+            // A different selection starts a fresh step (no cross-set fold).
+            assert!(stack.redo());
+            use_selection().set(sel_set(&[0]));
+            assert!(coord.nudge_selected(0, NUDGE_STEP));
+            assert_eq!(stack.len(), 2, "a different member list never folds");
+        });
+    }
+
+    #[test]
+    fn r879_grabbing_a_selected_node_drags_the_group() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            let stack = use_undo();
+            let a0 = pos_of(&coord, NodeId(0));
+            let a1 = pos_of(&coord, NodeId(1));
+            use_selection().set(sel_set(&[0, 1]));
+            coord.grabbed_node.set(Some(NodeId(0)));
+            // First capture move snapshots the member set (both selected).
+            coord.pointer_move(0.5, 0.5);
+            assert_eq!(
+                coord.node_drag.borrow().as_ref().map(|d| d.members.len()),
+                Some(2),
+                "grabbing a selected node snapshots the whole selection",
+            );
+            // Second move drags the group rigidly.
+            coord.pointer_move(0.6, 0.5);
+            let b0 = pos_of(&coord, NodeId(0));
+            let b1 = pos_of(&coord, NodeId(1));
+            assert_eq!(
+                (b0.0 - a0.0, b0.1 - a0.1),
+                (b1.0 - a1.0, b1.1 - a1.1),
+                "both members move by the same delta",
+            );
+            assert!(b0 != a0, "the drag moved the group");
+            coord.handle_send("node_0:PointerUp");
+            assert_eq!(stack.len(), 1, "the whole group drag is ONE journal entry");
+            assert_eq!(stack.undo_label().as_deref(), Some("Move 2 nodes"));
+            assert!(stack.undo());
+            assert_eq!(pos_of(&coord, NodeId(0)), a0, "undo restores member 0");
+            assert_eq!(pos_of(&coord, NodeId(1)), a1, "and member 1");
+        });
+    }
+
+    #[test]
+    fn r879_grabbing_an_unselected_node_drags_only_it() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            let a1 = pos_of(&coord, NodeId(1));
+            use_selection().set(sel_set(&[0, 1]));
+            // Grab node 2 — NOT a member.
+            coord.grabbed_node.set(Some(NodeId(2)));
+            coord.pointer_move(0.5, 0.5);
+            assert_eq!(
+                coord.node_drag.borrow().as_ref().map(|d| d.members.len()),
+                Some(1),
+                "an unselected grab drags just the grabbed node",
+            );
+            coord.pointer_move(0.6, 0.6);
+            assert_eq!(pos_of(&coord, NodeId(1)), a1, "members of the selection stay put");
+            assert_eq!(use_selection().get(), sel_set(&[0, 1]), "the selection is untouched");
+            coord.handle_send("PointerUp");
+        });
+    }
+
+    #[test]
+    fn r879_selected_is_exact_one_and_selected_ids_is_the_set() {
+        Owner::new().run(|| {
+            let scene = boot_scene();
+            use_selection().set(sel_set(&[1, 3]));
+            let intro = graph_intro(&scene);
+            assert_eq!(
+                intro.query("selected"),
+                Some(IntrospectValue::Null),
+                "a multi-selection has no single `selected`",
+            );
+            assert_eq!(
+                intro.query("selected_ids"),
+                Some(IntrospectValue::Text("1,3".to_owned())),
+                "the set reads back as an id-ordered CSV",
+            );
+            use_selection().set(Selection::single(NodeId(2)));
+            assert_eq!(intro.query("selected"), Some(IntrospectValue::Int(2)));
+            assert_eq!(intro.query("selected_ids"), Some(IntrospectValue::Text("2".to_owned())));
+        });
+    }
+
+    #[test]
+    fn r879_intervene_selected_ids_is_the_strict_write_twin() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert_eq!(intro.intervene("selected_ids", IntrospectValue::Text("0, 2".to_owned())), Ok(()));
+            assert_eq!(use_selection().get(), sel_set(&[0, 2]), "CSV writes the set");
+            assert_eq!(
+                intro.intervene("selected_ids", IntrospectValue::Text("0,99".to_owned())),
+                Err(InterveneError::OutOfRange),
+                "an unknown member rejects the whole write",
+            );
+            assert_eq!(use_selection().get(), sel_set(&[0, 2]), "the rejected write changed nothing");
+            assert_eq!(
+                intro.intervene("selected_ids", IntrospectValue::Int(3)),
+                Err(InterveneError::TypeMismatch)
+            );
+            assert_eq!(intro.intervene("selected_ids", IntrospectValue::Text(String::new())), Ok(()));
+            assert_eq!(use_selection().get(), Selection::None, "an empty CSV clears");
+        });
+    }
+
+    #[test]
+    fn r879_partial_delete_prunes_only_removed_members() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            use_selection().set(sel_set(&[0, 1]));
+            assert!(coord.delete_node(NodeId(0)));
+            assert_eq!(
+                use_selection().get(),
+                Selection::single(NodeId(1)),
+                "the surviving member stays selected",
+            );
+        });
+    }
+
+    #[test]
+    fn r879_multi_selection_has_no_single_rename_target() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            use_selection().set(sel_set(&[0, 1]));
+            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert_eq!(
+                intro.invoke("begin_rename", IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(false)),
+                "F2 on a multi-selection is ambiguous and refuses",
+            );
+            assert_eq!(use_renaming().get(), None);
+        });
+    }
+
+    #[test]
+    fn r879_a11y_flags_every_selected_member() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            use_selection().set(sel_set(&[1, 3]));
+            let nodes = NodeEditorView::access_node(&IDLE_TF, Some(GRAPH_TAG));
+            let flag = |i: u32| {
+                nodes
+                    .iter()
+                    .find(|n| n.tag == format!("{GRAPH_TAG}#node_{i}"))
+                    .map(|n| n.selected)
+                    .expect("node entry present")
+            };
+            assert_eq!(flag(1), Some(true), "member 1 flagged");
+            assert_eq!(flag(3), Some(true), "member 3 flagged");
+            assert_eq!(flag(0), Some(false), "non-member unflagged");
         });
     }
 }

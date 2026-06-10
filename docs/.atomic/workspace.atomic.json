@@ -36401,6 +36401,70 @@
         "per-cell a11y roles for grid inline editors (dg/pg) remain additive carry (R836/R837)"
       ]
     },
+    "R879": {
+      "decision_summary": "Multi-selection model lands as the marquee substrate: the graph Selection generalizes to a stable-id node set with modifier-aware clicks, group delete/nudge/drag as single undo steps, and the selected_ids read/write RPC twins; the 1-D index virtual_select coordinator is judged a peer, not the substrate",
+      "changes_bullets": [
+        "Selection::Nodes(BTreeSet<NodeId>) generalizes the single-node arm (non-empty funnel)",
+        "plain click replaces, Ctrl+click toggles, Shift+click adds (R781 wire 3rd segment decode)",
+        "delete_selected over the set = ONE GraphEdit (\"Delete N nodes\"); undo restores group+edges",
+        "MoveNodesCmd generalizes MoveNodeCmd: group nudge/drag = one undo step, burst coalesces",
+        "grabbing a selected node drags the whole selection rigidly (per-member grab anchors)",
+        "gesture_moved guard: a moved capture-gesture release no longer mutates the selection",
+        "RPC: query selected_ids CSV + intervene selected_ids (strict, OutOfRange on unknown id)",
+        "query selected = exact-one Int (multi reads Null); begin_rename Null refuses on multi",
+        "a11y: graph group aria-multiselectable; per-member aria-selected; status \"N nodes\"",
+        "virtual_select 1-D index coordinator judged wrong abstraction for stable-id graph (peer)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 150 groups / 6128 tests green (10 new R879 tests)",
+        "clippy --workspace --all-targets -D pedantic (vello feature): clean",
+        "demo r879_node_multi_select.py PASS (30+ asserts: toggle/add/replace, group delete undo,",
+        "group nudge coalesce, rigid group drag, unselected drag isolation, CSV twin, F2 refuse)",
+        "node-editor regressions PASS: r838/r849/r851/r852/r853/r877/r878 (fresh release binary)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "marquee gesture itself: needs a background-press became-drag edge from the router",
+        "(LMB background-drag stays reserved, R877); the model it writes into landed here",
+        "Ctrl+A select-all keyboard verb: additive follow-up (Escape-clear exists)",
+        "drag-to-pan (Space/MMB) + edge-drag auto-pan: framework axis (R877 carry)"
+      ],
+      "publishable_decision_summary": "Multi-selection model lands as the marquee substrate: the graph Selection generalizes to a stable-id node set with modifier-aware clicks, group delete/nudge/drag as single undo steps, and the selected_ids read/write RPC twins; the 1-D index virtual_select coordinator is judged a peer, not the substrate",
+      "publishable_changes_bullets": [
+        "Selection::Nodes(BTreeSet<NodeId>) generalizes the single-node arm (non-empty funnel)",
+        "plain click replaces, Ctrl+click toggles, Shift+click adds (R781 wire 3rd segment decode)",
+        "delete_selected over the set = ONE GraphEdit (\"Delete N nodes\"); undo restores group+edges",
+        "MoveNodesCmd generalizes MoveNodeCmd: group nudge/drag = one undo step, burst coalesces",
+        "grabbing a selected node drags the whole selection rigidly (per-member grab anchors)",
+        "gesture_moved guard: a moved capture-gesture release no longer mutates the selection",
+        "RPC: query selected_ids CSV + intervene selected_ids (strict, OutOfRange on unknown id)",
+        "query selected = exact-one Int (multi reads Null); begin_rename Null refuses on multi",
+        "a11y: graph group aria-multiselectable; per-member aria-selected; status \"N nodes\"",
+        "virtual_select 1-D index coordinator judged wrong abstraction for stable-id graph (peer)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 150 groups / 6128 tests green (10 new R879 tests)",
+        "clippy --workspace --all-targets -D pedantic (vello feature): clean",
+        "demo r879_node_multi_select.py PASS (30+ asserts: toggle/add/replace, group delete undo,",
+        "group nudge coalesce, rigid group drag, unselected drag isolation, CSV twin, F2 refuse)",
+        "node-editor regressions PASS: r838/r849/r851/r852/r853/r877/r878 (fresh release binary)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "marquee gesture itself: needs a background-press became-drag edge from the router",
+        "(LMB background-drag stays reserved, R877); the model it writes into landed here",
+        "Ctrl+A select-all keyboard verb: additive follow-up (Escape-clear exists)",
+        "drag-to-pan (Space/MMB) + edge-drag auto-pan: framework axis (R877 carry)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
