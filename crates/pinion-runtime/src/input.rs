@@ -79,7 +79,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use pinion_core::composite_tag::split_subindex;
+use pinion_core::composite_tag::{compose_send_payload, split_subindex};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::{CaptureNormalize, DragPayload, DropPoint, IntrospectValue};
 use pinion_core::input::PointerWireEvent;
@@ -1285,18 +1285,18 @@ fn dispatch_send_mods(
     let Some(external) = find_external_by_tag(state_scene, primary) else {
         return;
     };
-    let bare_mods = !modifiers.is_empty() && external.handle.wants_bare_send_modifiers();
+    // The bare wire doubles as the SCXML event name, so it only carries the
+    // token under the target's opt-in; composite consumers all decode via
+    // the `split_send_payload` SSOT, so they take it unconditionally.
+    let wire_mods = if sub_index.is_some() || external.handle.wants_bare_send_modifiers() {
+        modifiers
+    } else {
+        Modifiers::empty()
+    };
     let Some(intro) = external.handle.introspect_mut() else {
         return;
     };
-    let payload = match sub_index {
-        Some(idx) if !modifiers.is_empty() => {
-            format!("{idx}:{event_name}:{}", modifiers.as_wire_token())
-        }
-        Some(idx) => format!("{idx}:{event_name}"),
-        None if bare_mods => format!(":{event_name}:{}", modifiers.as_wire_token()),
-        None => event_name.to_string(),
-    };
+    let payload = compose_send_payload(sub_index, event_name, wire_mods);
     let _ = intro.invoke("send", IntrospectValue::Text(payload));
 }
 

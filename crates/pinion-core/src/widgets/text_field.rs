@@ -335,7 +335,7 @@ pub fn apply_key(
             // emits `KeyCode::Char('a')` which the R51.111 bridge
             // maps to `"a"`). Both Ctrl (Linux/Win) and Meta (macOS)
             // count so the same binding fires on every desktop.
-            if (modifiers.control_key() || modifiers.meta_key())
+            if modifiers.command_key()
                 && !modifiers.alt_key()
                 && other == "a"
             {
@@ -351,7 +351,7 @@ pub fn apply_key(
             // handler can claim it. Consumed (returns `true`) even at a stack
             // boundary, so an attached field's Ctrl+Z never bubbles to a
             // global undo.
-            if (modifiers.control_key() || modifiers.meta_key())
+            if modifiers.command_key()
                 && !modifiers.alt_key()
                 && state.undo_stack().is_some()
             {
@@ -384,7 +384,7 @@ pub fn apply_key(
             // applications relying on raw AltGr printable variants
             // route them via a shell shortcut instead of through
             // text-input apply_key.
-            if modifiers.control_key() || modifiers.meta_key() {
+            if modifiers.command_key() {
                 return false;
             }
             match is_printable_key(other) {
@@ -1529,7 +1529,7 @@ impl TextFieldExternal {
         // when the visible mutation is a no-op (Ctrl+C with no
         // selection produces an empty copy — the key was *handled*,
         // matching the W3C `defaultPrevented` discipline).
-        if (modifiers.control_key() || modifiers.meta_key())
+        if modifiers.command_key()
             && !modifiers.alt_key()
         {
             if let (Some(state), Some(cb)) =

@@ -2575,10 +2575,14 @@ impl ExternalIntrospect for DockPanelExternal {
             return Err(InvokeError::UnknownPath);
         }
         let raw = args.as_str().ok_or(InvokeError::TypeMismatch)?;
-        // Split `"sub_index:Event"` into `(Some(sub_index), Event)` or
-        // `(None, raw_event)` if no `:` separator is present.
-        let (sub_index, event_name) = match raw.split_once(':') {
-            Some((sub, ev)) => (Some(sub), ev),
+        // Split `"sub_index:Event[:mods]"` into `(Some(sub_index), Event)`
+        // or `(None, raw_event)` if no `:` separator is present — via the
+        // R880.1 `split_send_payload` `:` grammar SSOT, so a held-modifier
+        // release ("t0:PointerUp:c") still resets the drag-arm state (the
+        // hand-rolled split_once read "PointerUp:c" as the event name and
+        // returned UnknownPath, skipping the Up arm's reset).
+        let (sub_index, event_name) = match pinion_core::composite_tag::split_send_payload(raw) {
+            Some((sub, ev, _mods)) => (Some(sub), ev),
             None => (None, raw),
         };
         match PointerWireEvent::from_wire_name(event_name) {
@@ -2808,6 +2812,20 @@ mod tests {
             .expect("invoke send PointerUp returns Ok");
         assert!(!ext.is_dragging());
         assert!(!ext.tear_off_fired());
+    }
+
+    #[test]
+    fn r880_1_pointer_up_with_modifier_segment_still_clears() {
+        // "t0:PointerUp:c" (the R781 modifier segment) must still reset the
+        // drag-arm state — the pre-R880.1 hand-rolled split read
+        // "PointerUp:c" as the event name, returned UnknownPath, and the
+        // Up arm's reset was skipped.
+        let mut ext = DockPanelExternal::new("p1", 0.5);
+        ext.pointer_move(0.3, 0.5);
+        assert!(ext.is_dragging());
+        ext.invoke("send", IntrospectValue::Text("t0:PointerUp:c".to_string()))
+            .expect("modifier-held release still parses");
+        assert!(!ext.is_dragging());
     }
 
     #[test]

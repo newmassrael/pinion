@@ -19,7 +19,8 @@ latch). Plus `Ctrl`+`A` / `invoke select_all`.
   (B) plain marquee over two nodes replaces the selection with the pair.
   (C) marquee selection is not an undo step (selection is transient).
   (D) an empty sweep clears.
-  (E) Ctrl-marquee toggles membership (in AND out, one sweep).
+  (E) Ctrl-marquee toggles membership (in AND out, one sweep);
+      Cmd/meta is a command chord too (R880.1 command_key).
   (F) Shift-marquee unions the hit set in.
   (G) an in-place background click still edge-selects (the R839 probe).
   (H) a *moved* background gesture never consumes the edge probe.
@@ -59,12 +60,12 @@ def ids(tf) -> str:
 
 
 def marquee(tf, frm: tuple[float, float], to: tuple[float, float], *,
-            ctrl: bool = False, shift: bool = False) -> None:
+            ctrl: bool = False, shift: bool = False, meta: bool = False) -> None:
     """A background sweep in graph coordinates, optionally modified."""
-    if ctrl or shift:
-        tf.modifiers(ctrl=ctrl, shift=shift)
+    if ctrl or shift or meta:
+        tf.modifiers(ctrl=ctrl, shift=shift, meta=meta)
     tf.drag(from_at=W(*frm), to_at=W(*to))
-    if ctrl or shift:
+    if ctrl or shift or meta:
         tf.modifiers()
 
 
@@ -92,6 +93,7 @@ def body() -> None:
         # ── (A) boot ────────────────────────────────────────────────
         assert_eq(ids(tf), "", "boot: empty selected_ids")
         assert_eq(tf.query("/external/selected"), None, "boot: no single selection")
+        assert_eq(tf.query("/external/selected_edge"), None, "boot: no edge selection")
         schema = tf.query("/external/$schema")
         slots = {entry["path"] for entry in schema}
         assert "select_all" in slots, f"select_all advertised, got {sorted(slots)}"
@@ -106,6 +108,8 @@ def body() -> None:
                    desc="plain marquee selects the swept pair")
         assert_eq(tf.query("/external/selected"), None,
                   "a marquee set has no single `selected`")
+        snap = tf.snapshot(source="paint", viewport=VIEWPORT)
+        assert "#marquee" not in str(snap), "rubber band cleared from the paint after release"
 
         # ── (C) selection is transient — never journaled ────────────
         assert_eq(tf.query("/node_undo/external/undo_label"), None,
@@ -125,6 +129,14 @@ def body() -> None:
         marquee(tf, (30, 145), (390, 260), ctrl=True)
         wait_until(lambda: ids(tf) == "0,2", timeout=4.0, interval=0.03,
                    desc="Ctrl-marquee toggles membership")
+
+        # ── (E2) Cmd/meta is a command chord too (R880.1 command_key) ──
+        marquee(tf, (460, 140), (620, 230), meta=True)
+        wait_until(lambda: ids(tf) == "0,2,3", timeout=4.0, interval=0.03,
+                   desc="meta-marquee toggles node 3 in (macOS Cmd)")
+        marquee(tf, (460, 140), (620, 230), meta=True)
+        wait_until(lambda: ids(tf) == "0,2", timeout=4.0, interval=0.03,
+                   desc="meta-marquee toggles node 3 back out")
 
         # ── (F) Shift-marquee unions ────────────────────────────────
         marquee(tf, (460, 140), (620, 230), shift=True)
@@ -165,10 +177,15 @@ def body() -> None:
         tf.modifiers()
         wait_until(lambda: ids(tf) == "0,1,2,3", timeout=4.0, interval=0.03,
                    desc="Ctrl+A selects every node")
+        assert_eq(tf.query("/external/selected"), None,
+                  "the full set has no single `selected`")
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         status = [t for t in texts_of(snap) if "selected:" in t]
-        assert status and "4 nodes" in status[0], \
+        assert status and "selected: 4 nodes" in status[0], \
             f"status line reports the full set, got {status}"
+        assert_eq(tf.query("/node_undo/external/undo_label"), "Move 2 nodes",
+                  "selection gestures stacked nothing on the journal "
+                  "(scene I's group move is still the top entry)")
         tf.key(path=G, name="Escape")
         wait_until(lambda: ids(tf) == "", timeout=4.0, interval=0.03,
                    desc="Escape clears the set")
@@ -176,6 +193,8 @@ def body() -> None:
         # ── (K) the AI-first invoke twin ────────────────────────────
         assert_eq(tf.invoke("/external/select_all", None), True, "invoke twin")
         assert_eq(ids(tf), "0,1,2,3", "every node selected via RPC")
+        assert_eq(tf.invoke("/external/select_all", None), True,
+                  "select_all is idempotent on a full selection")
 
 
 if __name__ == "__main__":

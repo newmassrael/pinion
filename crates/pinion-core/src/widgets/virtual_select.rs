@@ -460,18 +460,24 @@ impl VirtualSelectExternal {
         };
         if crate::input::is_activation_event(event_name) {
             // R781 §5.35 §5.40 — modifier-aware click selection, the pointer
-            // peer of the `nav_select_key` keyboard ops: `Ctrl`-click toggles
-            // the row's membership, `Shift`-click extends the range from the
-            // anchor, a plain click moves + replaces. In a single-select
-            // model `toggle` / `extend_to` collapse to a plain `select`, so a
-            // `Shift` / `Ctrl`-click on a single-select list still just
-            // selects — exactly the pre-R781 behaviour.
-            if modifiers.ctrl {
-                self.toggle(index);
-            } else if modifiers.shift {
-                self.extend_to(index);
-            } else {
-                self.select(index);
+            // peer of the `nav_select_key` keyboard ops, decoded through the
+            // R880.1 [`SelectionChord`](crate::input::SelectionChord) policy
+            // SSOT: `Ctrl`/`Cmd`-click toggles the row's membership,
+            // `Shift`-click extends the range from the anchor (the ordered-
+            // model meaning of *extend*), a plain click moves + replaces. In
+            // a single-select model `toggle` / `extend_to` collapse to a
+            // plain `select`, so a chorded click on a single-select list
+            // still just selects — exactly the pre-R781 behaviour.
+            match crate::input::SelectionChord::from_modifiers(modifiers) {
+                crate::input::SelectionChord::Toggle => {
+                    self.toggle(index);
+                }
+                crate::input::SelectionChord::Extend => {
+                    self.extend_to(index);
+                }
+                crate::input::SelectionChord::Replace => {
+                    self.select(index);
+                }
             }
         }
     }
@@ -852,14 +858,16 @@ pub fn nav_select_key(
 
     // Multi-select set ops that are *not* navigation: Ctrl+A select-all and
     // Ctrl+Space toggle-active. These handle the key (swallow it) without a
-    // navigation target / scroll.
-    if multi && modifiers.ctrl && key.eq_ignore_ascii_case("a") {
+    // navigation target / scroll. R880.1 — the chord gate is the
+    // [`Modifiers::command_key`] command predicate (Ctrl, or Cmd on macOS),
+    // matching the text-field select-all chord.
+    if multi && modifiers.command_key() && key.eq_ignore_ascii_case("a") {
         if let Some(intro) = node.handle.introspect_mut() {
             let _ = intro.invoke("select_all", IntrospectValue::Null);
         }
         return true;
     }
-    if multi && modifiers.ctrl && (key == " " || key == "Space") {
+    if multi && modifiers.command_key() && (key == " " || key == "Space") {
         if let (Some(intro), Some(c)) = (node.handle.introspect_mut(), current) {
             if let Ok(c) = i64::try_from(c) {
                 let _ = intro.invoke("toggle", IntrospectValue::Int(c));

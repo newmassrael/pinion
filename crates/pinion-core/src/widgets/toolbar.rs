@@ -348,12 +348,16 @@ impl ToolbarExternal {
         self.em.push(intent);
     }
 
-    /// Shared parse for the `send` wire payload `"<i>:<EventName>"`.
-    /// Returns the roving cursor as the round-trip outcome.
+    /// Shared parse for the `send` wire payload `"<i>:<EventName>[:<mods>]"`
+    /// via the [`parse_send_payload`](crate::composite_tag::parse_send_payload)
+    /// `:` grammar SSOT (R880.1 — the hand-rolled `split_once` read a
+    /// modifier-held release as the event name `"PointerUp:c"` and silently
+    /// rejected the activation). Returns the roving cursor as the
+    /// round-trip outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
-        let (idx_str, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
+        let (idx, event_name, _mods): (usize, &str, _) =
+            crate::composite_tag::parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
         let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
-        let idx: usize = idx_str.parse().map_err(|_| InvokeError::Rejected)?;
         self.send_item(idx, event);
         Ok(focus_value(self.focus()))
     }
@@ -745,6 +749,18 @@ mod tests {
         let mut e = ext();
         let out = e
             .invoke("send", IntrospectValue::Text("2:PointerUp".to_string()))
+            .unwrap();
+        assert_eq!(out, IntrospectValue::Int(2));
+    }
+
+    #[test]
+    fn r880_1_send_with_modifier_segment_still_activates() {
+        // The router emits "<i>:PointerUp:<token>" when modifiers are held
+        // (R781); the pre-R880.1 hand-rolled split read "PointerUp:c" as
+        // the event name and silently rejected a Ctrl+click.
+        let mut e = ext();
+        let out = e
+            .invoke("send", IntrospectValue::Text("2:PointerUp:c".to_string()))
             .unwrap();
         assert_eq!(out, IntrospectValue::Int(2));
     }

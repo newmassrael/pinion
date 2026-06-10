@@ -984,7 +984,12 @@ impl ExternalIntrospect for DirectoryExternal {
             // `is_activation_event` SSOT), so hover / press / leave are inert.
             "send" => {
                 let raw = args.as_str().ok_or(InvokeError::TypeMismatch)?;
-                let (sub, event) = raw.split_once(':').unwrap_or((raw, ""));
+                // R880.1 — the `split_send_payload` `:` grammar SSOT strips
+                // a held-modifier third segment ("3:PointerUp:c" activated
+                // nothing under the hand-rolled split_once). A bare payload
+                // (no `:`) keeps the pre-R880.1 inert shape.
+                let (sub, event, _mods) = crate::composite_tag::split_send_payload(raw)
+                    .unwrap_or((raw, "", crate::input::Modifiers::empty()));
                 // R794 — a `PointerDown` on a row arms a drag from it (the
                 // source the router's `begin_drag` reads). Only numeric row
                 // subs arm; the "up" breadcrumb is not a draggable source.
@@ -1192,6 +1197,17 @@ mod tests {
         let before = st.cwd();
         ext.invoke("send", IntrospectValue::Text("0:PointerEnter".into())).unwrap();
         assert_eq!(st.cwd(), before, "hover does not navigate");
+    }
+
+    #[test]
+    fn r880_1_row_click_with_modifier_segment_still_activates() {
+        // "0:PointerUp:c" (the R781 modifier segment) must still navigate —
+        // the pre-R880.1 hand-rolled split read "PointerUp:c" as the event
+        // name and the activation test silently failed.
+        let st = Rc::new(state());
+        let mut ext = DirectoryExternal::new(Rc::clone(&st));
+        ext.invoke("send", IntrospectValue::Text("0:PointerUp:c".into())).unwrap();
+        assert_eq!(st.cwd(), "/proj/src", "Ctrl+click still navigates");
     }
 
     #[test]

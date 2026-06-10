@@ -558,7 +558,12 @@ impl MenuBarExternal {
     /// `barrier` (R715 click-outside dismiss). Returns the open index as
     /// the round-trip outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
-        let (sub, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
+        // R880.1 — decode via the `split_send_payload` `:` grammar SSOT so a
+        // modifier-held release ("barrier:PointerUp:c") still parses (the
+        // hand-rolled split_once read "PointerUp:c" as the event name and a
+        // Ctrl+click outside the dropdown failed to dismiss it).
+        let (sub, event_name, _mods) =
+            crate::composite_tag::split_send_payload(payload).ok_or(InvokeError::Rejected)?;
         let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
         // R715 §5.16 — the transparent dismiss barrier (`<bar>#barrier`,
         // painted behind an open dropdown over the area below the title
@@ -1459,5 +1464,18 @@ mod tests {
         e.drain_intents(&mut |i| got.push(i));
         assert_eq!(got.len(), 1);
         assert_eq!(got[0].payload, IntrospectValue::Text("0.1".into()));
+    }
+
+    #[test]
+    fn r880_1_barrier_dismiss_survives_a_held_modifier() {
+        // The router emits "barrier:PointerUp:<token>" when modifiers are
+        // held (R781); the pre-R880.1 hand-rolled split read "PointerUp:c"
+        // as the event name, so a Ctrl+click outside the open dropdown
+        // failed to dismiss it.
+        let mut e = MenuBarExternal::with_items(vec![vec![MenuItem::command()]]);
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        assert_eq!(e.open_menu(), Some(0), "dropdown open");
+        e.invoke("send", IntrospectValue::Text("barrier:PointerUp:c".into())).unwrap();
+        assert_eq!(e.open_menu(), None, "Ctrl+click outside dismisses");
     }
 }

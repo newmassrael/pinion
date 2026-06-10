@@ -622,8 +622,13 @@ impl ExternalIntrospect for DatePickerExternal {
                         }
                         _ => {}
                     }
-                    let (key, event_name) =
-                        s.split_once(':').ok_or(InvokeError::Rejected)?;
+                    // R880.1 — the `split_send_payload` `:` grammar SSOT
+                    // strips a held-modifier third segment ("prev:PointerUp:c"
+                    // would otherwise read "PointerUp:c" as the event name
+                    // and the month-roll click was silently rejected).
+                    let (key, event_name, _mods) =
+                        crate::composite_tag::split_send_payload(s)
+                            .ok_or(InvokeError::Rejected)?;
                     // Composite nav sub-tags: a click on the paint
                     // `"<tag>#prev"` / `"<tag>#next"` button arrives here
                     // as `"prev:<EventName>"` / `"next:<EventName>"` (the
@@ -864,6 +869,19 @@ mod tests {
             let _ = p.invoke("send", IntrospectValue::Text(format!("next:{ev}")));
         }
         assert_eq!(p.displayed_month(), 5, "next cycle rolls forward one month once");
+    }
+
+    #[test]
+    fn r880_1_nav_click_with_modifier_segment_still_rolls() {
+        // "prev:PointerUp:c" (the R781 modifier segment) must still roll
+        // the month — the pre-R880.1 hand-rolled split read "PointerUp:c"
+        // as the event name and rejected the click.
+        let mut p = DatePickerExternal::new(2026, 5, None);
+        assert_eq!(
+            p.invoke("send", IntrospectValue::Text("prev:PointerUp:c".into())),
+            Ok(IntrospectValue::Null),
+        );
+        assert_eq!(p.displayed_month(), 4, "Ctrl+click still rolls the month");
     }
 
     #[test]

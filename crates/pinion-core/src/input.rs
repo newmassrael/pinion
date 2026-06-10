@@ -99,6 +99,45 @@ impl DragLatch {
     }
 }
 
+/// R880.1 — the multi-select pointer-chord policy, decoded ONCE for every
+/// set-mutating click / marquee consumer: a command chord
+/// ([`Modifiers::command_key`] — `Ctrl`, or `Cmd` on macOS) **toggles**
+/// membership; else `Shift` **extends**; else a plain interaction
+/// **replaces**. The chord→verb *precedence* is one policy — before this
+/// lift the identical if-chain lived in the list/grid coordinator
+/// (`VirtualSelectExternal`), the node-graph click, and the marquee
+/// release, and a divergence (one widget testing `Shift` first, one
+/// reading `Ctrl` without `Meta`) would be a cross-widget UX bug.
+///
+/// What *extend* means is the consumer's model decision and is
+/// deliberately not encoded here: an ordered list extends the range from
+/// its anchor (the W3C listbox / Qt `ExtendedSelection` convention), an
+/// unordered canvas unions the swept set in (the Unreal graph
+/// convention).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionChord {
+    /// No chord — replace the selection with the interaction's target.
+    Replace,
+    /// `Ctrl` / `Cmd` — toggle the target's membership.
+    Toggle,
+    /// `Shift` — extend (range on ordered models, union on unordered).
+    Extend,
+}
+
+impl SelectionChord {
+    /// Decode the held modifiers into the selection verb.
+    #[must_use]
+    pub const fn from_modifiers(mods: Modifiers) -> Self {
+        if mods.command_key() {
+            Self::Toggle
+        } else if mods.shift_key() {
+            Self::Extend
+        } else {
+            Self::Replace
+        }
+    }
+}
+
 /// R56.1.f.0 §5.13 — abstract modifier-key state, mirroring
 /// `winit::keyboard::ModifiersState` and W3C DOM Level 3
 /// `getModifierState` without the winit dependency. Four modifier
@@ -170,6 +209,18 @@ impl Modifiers {
     #[must_use]
     pub const fn meta_key(self) -> bool {
         self.meta
+    }
+
+    /// R880.1 — the **command-chord predicate**: `Ctrl` or `Meta` (the
+    /// macOS `Cmd` key reaches winit as `super`/meta). R879.1 ratified
+    /// `control_key() || meta_key()` as the gate for editor command chords
+    /// (`Ctrl/Cmd+A/C/X/V/Z`); the predicate was then re-derived inline at
+    /// every chord site (text field, field keymap, select-all, undo) —
+    /// this accessor is its one home, so no site can drift to a
+    /// Ctrl-only decode that leaves `Cmd` dead on macOS.
+    #[must_use]
+    pub const fn command_key(self) -> bool {
+        self.ctrl || self.meta
     }
 
     /// `true` iff no modifier is held — convenience for the canonical
@@ -496,7 +547,7 @@ pub fn edit_field_keymap(
             // arms even in an int / float editor. The pre-lift data-grid /
             // property-grid copies gated chords out (a latent defect the
             // R878 lift had faithfully preserved).
-            let is_command_chord = modifiers.control_key() || modifiers.meta_key();
+            let is_command_chord = modifiers.command_key();
             if is_command_chord || kind.accepts_keystroke(other) {
                 forward_key_to_field(scene, tag, other, modifiers)
             } else {
@@ -528,6 +579,24 @@ mod tests {
         assert!(latch.advance((15.0, 10.0)), "5px: past the threshold");
         assert!(latch.advance((10.0, 10.0)), "returning to the origin stays a drag");
         assert!(latch.live());
+    }
+
+    #[test]
+    fn r880_1_selection_chord_and_command_key_decode() {
+        use super::SelectionChord;
+        let m = |shift, ctrl, meta| Modifiers { shift, ctrl, alt: false, meta };
+        assert_eq!(SelectionChord::from_modifiers(m(false, false, false)), SelectionChord::Replace);
+        assert_eq!(SelectionChord::from_modifiers(m(false, true, false)), SelectionChord::Toggle);
+        assert_eq!(SelectionChord::from_modifiers(m(true, false, false)), SelectionChord::Extend);
+        // The command chord wins over Shift — ONE precedence for every
+        // selection consumer (list, grid, node canvas, marquee).
+        assert_eq!(SelectionChord::from_modifiers(m(true, true, false)), SelectionChord::Toggle);
+        // Cmd (meta) is a command chord too — the macOS convention the
+        // command_key predicate encodes (R879.1-ratified ctrl-or-meta).
+        assert_eq!(SelectionChord::from_modifiers(m(false, false, true)), SelectionChord::Toggle);
+        assert!(m(false, false, true).command_key());
+        assert!(m(false, true, false).command_key());
+        assert!(!m(true, false, false).command_key());
     }
 
     #[test]

@@ -36565,7 +36565,7 @@
       "publishable_verification_bullets": [
         "cargo test --workspace -j2: 150 groups green (r880 units: core 2, runtime 1, example 5)",
         "cargo clippy --workspace --all-targets (vello, -D pedantic): clean",
-        "tools/demos/r880_node_marquee_select.py PASS (30+ asserts, modifiers+drag RPC)",
+        "tools/demos/r880_node_marquee_select.py PASS (24 asserts at R880; raised to 33 in R880.1 — the original entry overclaimed 30+)",
         "node-editor regressions PASS: r838/r849/r851/r852/r853/r877/r878/r879"
       ],
       "publishable_impact_refs": [
@@ -36577,6 +36577,74 @@
         "drag-to-pan (Space/MMB) + edge-drag auto-pan deferred (documented R877 follow-up)",
         "marquee substrate lift deferred: 1st rubber-band consumer is example-local",
         "InputRouter SRP decomposition carry (R876) remains open"
+      ]
+    },
+    "R880.1": {
+      "decision_summary": "Session-review audit remediation (two adversarial reviewers, findings verified by grep+read). Real defects repaid inline: (1) the R781 composite modifier wire was silently broken at nine hand-rolled split_once(':') decoders - a held-modifier release read \"PointerUp:c\" as the event name, so Ctrl+click activation was dropped on toolbar/menu/context-menu/grid-sort/table/datepicker/file-browser/dock/data-grid; all nine now decode through the split_send_payload SSOT with per-widget regression tests, and the encoder is colocated as compose_send_payload. (2) The chord-to-verb precedence was a 3-copy (virtual_select + node click + marquee) - lifted as SelectionChord over the new Modifiers::command_key (ctrl-or-meta, the R879.1-ratified command predicate; Cmd now works on macOS for select-all/undo/save/zoom/toggle chords). (3) Node editor: a router PointerCancel leaked the marquee band and a stale drag latch (next press teleported the node) - cancel now reverts and resets without journaling; the background-press defensive clear is the full reset; the marquee rect clamps to the world so the painted band and the applied area are one value. (4) Honesty: the r880 demo claimed 30+ asserts but had 24 - raised to 33 (incl. a meta-chord scene) and the R880 store entry corrected via the publishable override ledger.",
+      "changes_bullets": [
+        "pinion-core: Modifiers::command_key (ctrl-or-meta) command-chord SSOT",
+        "pinion-core: SelectionChord lifts the 3-copy chord-to-verb precedence",
+        "pinion-core: compose_send_payload encode twin beside split_send_payload",
+        "pinion-runtime: dispatch_send_mods encodes via compose_send_payload",
+        "9-site hand-rolled send decode migrated to the split_send_payload SSOT",
+        "fixed: modifier-held composite clicks were silently dropped (8 widgets)",
+        "node editor: PointerCancel arm reverts the drag + drops every latch",
+        "node editor: background-press defensive clear is the FULL reset_gesture",
+        "node editor: marquee rect clamps to the world (paint == applied area)",
+        "node editor: GraphNode::right/bottom accessors; toggle_member kernel",
+        "demo: vacuous status assert fixed; asserts 24 -> 33 (meta-chord scene)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green (new: core 2, 8 widget regressions, example 2)",
+        "cargo clippy --workspace --all-targets (vello, -D pedantic): clean",
+        "demos PASS: r880 (33 asserts) + r838/r877/r878/r879 + r837 data-grid",
+        "migrated-widget demos PASS: r691 menu / r692 toolbar / r704 datepicker /",
+        "r772 contextmenu / r778 grid-sort / r787 file-browser / r683 dock",
+        "R880 entry verification bullet corrected (override ledger row anchored)"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.49",
+        "5.38",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "router pointer_cancel does not cancel an in-flight DnD drag_session (pre-existing; next input round)",
+        "set_graph mid-node-drag arms a transient phantom marquee (visual only; PendingPress poison state if it bites)",
+        "TUI shell passes no pointer modifiers (GUI/TUI dual divergence on the modifier wire; pre-existing axis)"
+      ],
+      "publishable_decision_summary": "Session-review audit remediation (two adversarial reviewers, findings verified by grep+read). Real defects repaid inline: (1) the R781 composite modifier wire was silently broken at nine hand-rolled split_once(':') decoders - a held-modifier release read \"PointerUp:c\" as the event name, so Ctrl+click activation was dropped on toolbar/menu/context-menu/grid-sort/table/datepicker/file-browser/dock/data-grid; all nine now decode through the split_send_payload SSOT with per-widget regression tests, and the encoder is colocated as compose_send_payload. (2) The chord-to-verb precedence was a 3-copy (virtual_select + node click + marquee) - lifted as SelectionChord over the new Modifiers::command_key (ctrl-or-meta, the R879.1-ratified command predicate; Cmd now works on macOS for select-all/undo/save/zoom/toggle chords). (3) Node editor: a router PointerCancel leaked the marquee band and a stale drag latch (next press teleported the node) - cancel now reverts and resets without journaling; the background-press defensive clear is the full reset; the marquee rect clamps to the world so the painted band and the applied area are one value. (4) Honesty: the r880 demo claimed 30+ asserts but had 24 - raised to 33 (incl. a meta-chord scene) and the R880 store entry corrected via the publishable override ledger.",
+      "publishable_changes_bullets": [
+        "pinion-core: Modifiers::command_key (ctrl-or-meta) command-chord SSOT",
+        "pinion-core: SelectionChord lifts the 3-copy chord-to-verb precedence",
+        "pinion-core: compose_send_payload encode twin beside split_send_payload",
+        "pinion-runtime: dispatch_send_mods encodes via compose_send_payload",
+        "9-site hand-rolled send decode migrated to the split_send_payload SSOT",
+        "fixed: modifier-held composite clicks were silently dropped (8 widgets)",
+        "node editor: PointerCancel arm reverts the drag + drops every latch",
+        "node editor: background-press defensive clear is the FULL reset_gesture",
+        "node editor: marquee rect clamps to the world (paint == applied area)",
+        "node editor: GraphNode::right/bottom accessors; toggle_member kernel",
+        "demo: vacuous status assert fixed; asserts 24 -> 33 (meta-chord scene)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green (new: core 2, 8 widget regressions, example 2)",
+        "cargo clippy --workspace --all-targets (vello, -D pedantic): clean",
+        "demos PASS: r880 (33 asserts) + r838/r877/r878/r879 + r837 data-grid",
+        "migrated-widget demos PASS: r691 menu / r692 toolbar / r704 datepicker /",
+        "r772 contextmenu / r778 grid-sort / r787 file-browser / r683 dock",
+        "R880 entry verification bullet corrected (override ledger row anchored)"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.49",
+        "5.38",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "router pointer_cancel does not cancel an in-flight DnD drag_session (pre-existing; next input round)",
+        "set_graph mid-node-drag arms a transient phantom marquee (visual only; PendingPress poison state if it bites)",
+        "TUI shell passes no pointer modifiers (GUI/TUI dual divergence on the modifier wire; pre-existing axis)"
       ]
     },
     "Round 1": {

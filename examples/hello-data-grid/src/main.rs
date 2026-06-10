@@ -398,7 +398,13 @@ impl ExternalIntrospect for DataGridExternal {
             // DoubleClick enters edit mode on an editable cell.
             "send" => match args {
                 IntrospectValue::Text(ref s) => {
-                    let (key, event_name) = s.split_once(':').ok_or(InvokeError::Rejected)?;
+                    // R880.1 — the `split_send_payload` `:` grammar SSOT
+                    // strips a held-modifier third segment (the hand-rolled
+                    // split_once read "PointerUp:c" as the event name and a
+                    // Ctrl+click on a cell was silently rejected).
+                    let (key, event_name, _mods) =
+                        pinion_core::composite_tag::split_send_payload(s)
+                            .ok_or(InvokeError::Rejected)?;
                     let GridSendKey::Cell { row, col } =
                         GridSendKey::parse(key).ok_or(InvokeError::Rejected)?
                     else {

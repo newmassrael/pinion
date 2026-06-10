@@ -87,6 +87,31 @@ pub fn split_send_payload(payload: &str) -> Option<(&str, &str, Modifiers)> {
     Some((key_str, event_name, modifiers))
 }
 
+/// R880.1 — the **encode twin** of [`split_send_payload`]: build the send
+/// wire from its three segments. `Some(key)` is a composite target (a
+/// `'#'` sub-index); `None` is a bare (background) target, which emits the
+/// colon-free event name unless modifiers are held, in which case the
+/// R880 empty-key three-segment wire `":<EventName>:<token>"` is produced.
+/// An empty modifier state always yields the back-compat form (no trailing
+/// segment).
+///
+/// One producer + one splitter in one module (the [`GridSendKey`] R773
+/// precedent: encoders and decoders share the grammar instead of
+/// re-deriving it inline), so the R781/R880 `:` grammar cannot fork — the
+/// runtime router is the wire's only emitter and goes through here.
+/// Callers gate *whether* to pass modifiers (the router's
+/// `wants_bare_send_modifiers` opt-in for bare targets); this fn only
+/// encodes.
+#[must_use]
+pub fn compose_send_payload(key: Option<&str>, event_name: &str, mods: Modifiers) -> String {
+    match (key, mods.is_empty()) {
+        (Some(key), false) => format!("{key}:{event_name}:{}", mods.as_wire_token()),
+        (Some(key), true) => format!("{key}:{event_name}"),
+        (None, false) => format!(":{event_name}:{}", mods.as_wire_token()),
+        (None, true) => event_name.to_string(),
+    }
+}
+
 /// Parse a R51.42 §5.35 composite-tag send payload
 /// `"<key>:<EventName>[:<mods>]"` into `(key, event_name, modifiers)`.
 ///
@@ -309,7 +334,7 @@ pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_send_payload, split_send_payload, split_subindex, GridSendKey, GridTag};
+    use super::{compose_send_payload, parse_send_payload, split_send_payload, split_subindex, GridSendKey, GridTag};
     use crate::input::Modifiers;
 
     const NONE: Modifiers = Modifiers::empty();
@@ -421,6 +446,25 @@ mod tests {
         // An unparseable modifier token rejects the whole payload.
         let bad: Option<(u64, &str, Modifiers)> = parse_send_payload("3:PointerUp:Move");
         assert_eq!(bad, None, "non-scam modifier token is malformed");
+    }
+
+    #[test]
+    fn r880_1_compose_round_trips_through_split() {
+        // The encode twin and the splitter share one grammar: every
+        // composed form decodes back to its inputs, and the bare
+        // modifier-free form is the colon-free back-compat wire
+        // (split answers None = bare event).
+        let ctrl = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+        assert_eq!(compose_send_payload(Some("4"), "PointerUp", ctrl), "4:PointerUp:c");
+        assert_eq!(
+            split_send_payload("4:PointerUp:c"),
+            Some(("4", "PointerUp", ctrl)),
+        );
+        assert_eq!(compose_send_payload(Some("4"), "PointerUp", NONE), "4:PointerUp");
+        assert_eq!(compose_send_payload(None, "PointerUp", ctrl), ":PointerUp:c");
+        assert_eq!(split_send_payload(":PointerUp:c"), Some(("", "PointerUp", ctrl)));
+        assert_eq!(compose_send_payload(None, "PointerUp", NONE), "PointerUp");
+        assert_eq!(split_send_payload("PointerUp"), None, "bare = no-split contract");
     }
 
     #[test]

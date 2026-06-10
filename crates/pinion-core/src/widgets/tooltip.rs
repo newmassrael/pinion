@@ -158,7 +158,13 @@ impl TooltipExternal {
     /// tooltip has a single hover posture regardless of which region the
     /// pointer is over.
     fn send(&mut self, name: &str) -> Result<(), InvokeError> {
-        let name = name.split_once(':').map_or(name, |(_sub, event)| event);
+        // R880.1 — strip the sub-index (and any held-modifier third
+        // segment) via the `split_send_payload` `:` grammar SSOT; the
+        // hand-rolled split_once would have read "PointerUp:c" as the
+        // event name (inert here since only Enter/Leave act, but every
+        // send decoder shares one grammar).
+        let name = crate::composite_tag::split_send_payload(name)
+            .map_or(name, |(_sub, event, _mods)| event);
         match PointerWireEvent::from_wire_name(name) {
             Some(PointerWireEvent::Enter) => self.pointer_enter(),
             Some(PointerWireEvent::Leave) => self.pointer_leave(),

@@ -847,3 +847,12 @@ reason = "R639 found paint_adapter corner_radius gap; original 'fill bit-exact s
 applied_in = "R639"
 content_hash_before = "a38e7e7d9fd03e4d0f3bcab73add3f9b0065478eb8271af6c35e08fc49b50bd1"
 content_hash_after = "0bcca3afcbce71411d0ed515cfa5138bbe0e954e52cd442db207d08f4ea9b088"
+
+[[publishable_override_ledger]]
+kind = "honesty-correction"
+target_id = "R880"
+fields = ["publishable_verification_bullets"]
+reason = "R880.1 session review found the demo assertion count overclaimed (24 actual vs the recorded 30+); corrected to state the R880-time count and the R880.1 fix"
+applied_in = "R880.1 audit remediation commit"
+content_hash_before = "9582e573c88987cfe68cc11b2e72bb303745c1bdd44ad298f7f202cc66582260"
+content_hash_after = "32753bc8ff1f8480ebbddd82b9d174f48a004cc2aca8ad96948f997d0702948d"

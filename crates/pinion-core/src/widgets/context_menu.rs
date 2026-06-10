@@ -257,7 +257,12 @@ impl ContextMenuExternal {
     /// click-outside dismiss). Returns the open flag as the round-trip
     /// outcome.
     fn dispatch_send(&mut self, payload: &str) -> Result<IntrospectValue, InvokeError> {
-        let (sub, event_name) = payload.split_once(':').ok_or(InvokeError::Rejected)?;
+        // R880.1 — decode via the `split_send_payload` `:` grammar SSOT so a
+        // modifier-held release ("barrier:PointerUp:c") still parses and a
+        // Ctrl+click outside the popup dismisses it (the hand-rolled
+        // split_once read "PointerUp:c" as the event name).
+        let (sub, event_name, _mods) =
+            crate::composite_tag::split_send_payload(payload).ok_or(InvokeError::Rejected)?;
         let event = PointerWireEvent::from_wire_name(event_name).ok_or(InvokeError::Rejected)?;
         // R715 §5.16 — the transparent dismiss barrier painted behind the
         // popup: a `PointerUp` outside the panel closes it. Other pointer
@@ -604,6 +609,18 @@ mod tests {
         let mut e = ext();
         e.dispatch_open_at("0,0").unwrap();
         let r = e.dispatch_send("barrier:PointerUp").unwrap();
+        assert_eq!(r, IntrospectValue::Bool(false));
+        assert!(!e.is_open());
+    }
+
+    #[test]
+    fn r880_1_barrier_dismiss_survives_a_held_modifier() {
+        // "barrier:PointerUp:c" (the R781 modifier segment) must still
+        // dismiss — the pre-R880.1 hand-rolled split read "PointerUp:c" as
+        // the event name and a Ctrl+click outside the popup left it open.
+        let mut e = ext();
+        e.dispatch_open_at("0,0").unwrap();
+        let r = e.dispatch_send("barrier:PointerUp:c").unwrap();
         assert_eq!(r, IntrospectValue::Bool(false));
         assert!(!e.is_open());
     }

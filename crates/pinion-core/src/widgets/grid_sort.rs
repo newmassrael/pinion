@@ -463,12 +463,15 @@ impl GridSortExternal {
     /// that column's sort; a cell key or any non-activation arc is a harmless
     /// no-op (sort ⊥ selection — cells are the selection coordinator's axis).
     fn handle_send(&self, payload: &str) {
-        let Some((key, event_name)) = payload.split_once(':') else {
+        // R880.1 — decode via the `split_send_payload` `:` grammar SSOT so a
+        // modifier-held header release ("h1:PointerUp:s") still cycles the
+        // sort (the hand-rolled split_once read "PointerUp:s" as the event
+        // name and the activation test silently failed).
+        let Some((key, event_name, _mods)) =
+            crate::composite_tag::split_send_payload(payload)
+        else {
             return;
         };
-        if event_name.is_empty() {
-            return;
-        }
         if let Some(crate::composite_tag::GridSendKey::Header { col }) =
             crate::composite_tag::GridSendKey::parse(key)
         {
@@ -779,6 +782,20 @@ mod tests {
         edit.undo();
         assert_eq!(st.sort(), Some((0, true)), "undo restores the captured before sort");
         assert_eq!(edit.label(), "Sort 1:descending");
+    }
+
+    #[test]
+    fn r880_1_header_click_with_modifier_segment_still_sorts() {
+        // The router emits "h0:PointerUp:<token>" when modifiers are held
+        // (R781); the pre-R880.1 hand-rolled split read "PointerUp:s" as
+        // the event name and the activation test silently failed.
+        let owner = Owner::new();
+        owner.run(|| {
+            let st = Rc::new(state());
+            let mut ext = GridSortExternal::new(Rc::clone(&st));
+            ext.invoke("send", IntrospectValue::Text("h0:PointerUp:s".into())).unwrap();
+            assert_eq!(st.sort(), Some((0, true)), "Shift+click still cycles the sort");
+        });
     }
 
     #[test]

@@ -156,7 +156,7 @@ use pinion_core::style::{
     Stroke, StrokeCap, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
-use pinion_core::{Color, Command, DragLatch, Frame, Modifiers, Scene, WidgetCore};
+use pinion_core::{Color, Command, DragLatch, Frame, Modifiers, Scene, SelectionChord, WidgetCore};
 use pinion_platform_storage::{use_app_storage, AppStorage};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::text_field as tf_paint;
@@ -378,6 +378,19 @@ impl GraphNode {
     fn height(&self) -> i32 {
         HEADER_H + self.rows() * PORT_PITCH + BODY_PAD
     }
+
+    /// R880.1 — the card's right extent in graph units. The bounds
+    /// expressions (`x + NODE_W` / `y + height()`) were re-derived at
+    /// three sites (frame_all, the marquee rect-hit, tests); the accessor
+    /// pair is their one home.
+    const fn right(&self) -> i32 {
+        self.x + NODE_W
+    }
+
+    /// R880.1 — the card's bottom extent in graph units.
+    fn bottom(&self) -> i32 {
+        self.y + self.height()
+    }
 }
 
 /// A directed connection (output port → input port), addressed by stable
@@ -530,7 +543,7 @@ fn input_port_center(node: &GraphNode, i: usize) -> (i32, i32) {
 
 /// Centre of output port `j` of `node`, in window coordinates.
 fn output_port_center(node: &GraphNode, j: usize) -> (i32, i32) {
-    (node.x + NODE_W - PORT_SIZE / 2, node.y + port_row_top(j) + PORT_SIZE / 2)
+    (node.right() - PORT_SIZE / 2, node.y + port_row_top(j) + PORT_SIZE / 2)
 }
 
 /// Cubic-bezier control points for a wire from output `from` to input `to`.
@@ -642,12 +655,22 @@ fn wfont(px: u32, zoom: f64) -> u32 {
 /// R880 — normalise two graph-space corners into `(x0, y0, x1, y1)` with
 /// `x0 <= x1`, `y0 <= y1`: the marquee's fixed press anchor + live cursor,
 /// in either drag direction.
+///
+/// R880.1 — corners clamp to the world extent `[0, WORLD]`: a captured
+/// cursor can stray off the canvas (negative / past-world graph coords),
+/// and the paint path floors negatives at 0 (`upx`) while keeping the
+/// size — an unclamped rect would paint a band wider than the area the
+/// release applies. Clamping HERE keeps the painted band and the rect-hit
+/// area one value (nodes live in `[0, WORLD]`, so the hit set is
+/// unchanged).
 fn corner_rect(a: (f64, f64), b: (f64, f64)) -> MarqueeRect {
+    let world = f64::from(WORLD);
+    let cl = |v: f64| round_i32(v.clamp(0.0, world));
     (
-        round_i32(a.0.min(b.0)),
-        round_i32(a.1.min(b.1)),
-        round_i32(a.0.max(b.0)),
-        round_i32(a.1.max(b.1)),
+        cl(a.0.min(b.0)),
+        cl(a.1.min(b.1)),
+        cl(a.0.max(b.0)),
+        cl(a.1.max(b.1)),
     )
 }
 
@@ -858,25 +881,12 @@ struct MarqueeStart {
     press_graph: (f64, f64),
 }
 
-/// R880 — the selection verb a modifier state picks, decoded ONCE for both
-/// set-mutating gestures: the node click (R879) and the marquee release.
-/// `Ctrl` toggles membership, else `Shift` adds (union), else plain
-/// replaces. A precedence divergence between the two gestures would be a
-/// policy bug, so neither re-derives it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SelectVerb {
-    Replace,
-    Toggle,
-    Add,
-}
-
-fn select_verb(mods: Modifiers) -> SelectVerb {
-    if mods.control_key() {
-        SelectVerb::Toggle
-    } else if mods.shift_key() {
-        SelectVerb::Add
-    } else {
-        SelectVerb::Replace
+/// R880.1 — flip `id`'s membership in a node set (the toggle kernel the
+/// `Ctrl`-click and the `Ctrl`-marquee share — one definition so the two
+/// chord consumers cannot drift).
+fn toggle_member(set: &mut BTreeSet<NodeId>, id: NodeId) {
+    if !set.remove(&id) {
+        set.insert(id);
     }
 }
 
@@ -1367,13 +1377,13 @@ impl NodeGraphExternal {
         };
         let mut min_x = first.x;
         let mut min_y = first.y;
-        let mut max_x = first.x + NODE_W;
-        let mut max_y = first.y + first.height();
+        let mut max_x = first.right();
+        let mut max_y = first.bottom();
         for n in &nodes {
             min_x = min_x.min(n.x);
             min_y = min_y.min(n.y);
-            max_x = max_x.max(n.x + NODE_W);
-            max_y = max_y.max(n.y + n.height());
+            max_x = max_x.max(n.right());
+            max_y = max_y.max(n.bottom());
         }
         let bw = f64::from((max_x - min_x).max(1));
         let bh = f64::from((max_y - min_y).max(1));
@@ -1767,9 +1777,7 @@ impl NodeGraphExternal {
             return;
         }
         let mut set = self.selection.get().nodes();
-        if !set.remove(&id) {
-            set.insert(id);
-        }
+        toggle_member(&mut set, id);
         self.selection.set(Selection::from_nodes(set));
     }
 
@@ -1800,8 +1808,9 @@ impl NodeGraphExternal {
     /// R880 — apply a completed marquee: every node whose card intersects
     /// the graph-space rect joins the hit set (Qt rubber-band / Unreal
     /// intersects semantics — touching counts). The release modifiers pick
-    /// the area form of the R879 click policy through the shared
-    /// [`select_verb`] decode: plain *replaces* the selection with the hit
+    /// the area form of the R879 click policy through the framework
+    /// [`SelectionChord`] decode (R880.1 — *extend* on an unordered canvas
+    /// means union): plain *replaces* the selection with the hit
     /// set (an empty sweep clears — the background-click deselect
     /// generalised to an area), `Ctrl` *toggles* each hit member, `Shift`
     /// *unions* the hit set in.
@@ -1811,25 +1820,23 @@ impl NodeGraphExternal {
             .nodes
             .get()
             .iter()
-            .filter(|n| n.x <= x1 && n.x + NODE_W >= x0 && n.y <= y1 && n.y + n.height() >= y0)
+            .filter(|n| n.x <= x1 && n.right() >= x0 && n.y <= y1 && n.bottom() >= y0)
             .map(|n| n.id)
             .collect();
-        let next = match select_verb(mods) {
-            SelectVerb::Toggle => {
+        let next = match SelectionChord::from_modifiers(mods) {
+            SelectionChord::Toggle => {
                 let mut set = self.selection.get().nodes();
                 for id in hit {
-                    if !set.remove(&id) {
-                        set.insert(id);
-                    }
+                    toggle_member(&mut set, id);
                 }
                 set
             }
-            SelectVerb::Add => {
+            SelectionChord::Extend => {
                 let mut set = self.selection.get().nodes();
                 set.extend(hit);
                 set
             }
-            SelectVerb::Replace => hit,
+            SelectionChord::Replace => hit,
         };
         self.selection.set(Selection::from_nodes(next));
     }
@@ -1937,17 +1944,17 @@ impl NodeGraphExternal {
                     self.add_node(kind);
                 } else if let Some(n) = parse_node_sub(s) {
                     // R879 — modifier-aware select (the R781 wire segment,
-                    // decoded through the shared `select_verb` policy). The
+                    // decoded through the framework `SelectionChord` policy SSOT (R880.1)). The
                     // capture path delivers this release even after a real
                     // move (unlike the router's routed-click suppression,
                     // R876), so a *moved* gesture skips the selection
                     // mutation — a group drag must not collapse the set it
                     // dragged.
                     if !self.gesture_moved() {
-                        match select_verb(mods) {
-                            SelectVerb::Toggle => self.toggle_node(n),
-                            SelectVerb::Add => self.add_node_to_selection(n),
-                            SelectVerb::Replace => self.select_node(Some(n)),
+                        match SelectionChord::from_modifiers(mods) {
+                            SelectionChord::Toggle => self.toggle_node(n),
+                            SelectionChord::Extend => self.add_node_to_selection(n),
+                            SelectionChord::Replace => self.select_node(Some(n)),
                         }
                     }
                 }
@@ -1973,12 +1980,30 @@ impl NodeGraphExternal {
                 self.end_gesture();
             }
             (None, "PointerDown") => {
-                self.pending_press.set(PendingPress::None);
-                self.pending_edge_hit.set(None);
-                // R880 — a fresh background press re-arms from its own
-                // capture seed (defensive: a leaked anchor from a lost
-                // release must not corrupt this gesture's dead zone).
-                *self.marquee.borrow_mut() = None;
+                // R880.1 — a fresh background press starts from a clean
+                // slate via the FULL gesture reset (defensive: a leaked
+                // anchor / grabbed node / painted band from a lost release
+                // must not corrupt this gesture — a half-clear left the
+                // stale rubber band painted and a stale `grabbed_node`
+                // teleporting its node onto the new press).
+                self.reset_gesture();
+            }
+            // R880.1 — the router revokes the gesture (touch cancel, system
+            // gesture steal): revert any live drag's members to their press
+            // positions and drop every latch WITHOUT journaling (a cancelled
+            // gesture never happened — `reset_gesture`, not `end_gesture`).
+            // Reaches here on both wires: bare ("PointerCancel", background
+            // marquee) and composite ("node_3:PointerCancel", node drag).
+            (_, "PointerCancel") => {
+                if let Some(start) = self.node_drag.borrow().as_ref() {
+                    batch(|| {
+                        for &(id, _, _, px, py) in &start.members {
+                            self.set_node_pos(id, px, py);
+                        }
+                    });
+                }
+                self.preview.set(None);
+                self.reset_gesture();
             }
             // R878 — a double-click on a node card opens the inline rename
             // editor (the R664/R790 todomvc dblclick-to-edit idiom; the
@@ -2217,7 +2242,7 @@ impl External for NodeGraphExternal {
         if !(0.0..=1.0).contains(&x_rel) || !(0.0..=1.0).contains(&y_rel) {
             return false;
         }
-        if modifiers.control_key() {
+        if modifiers.command_key() {
             let factor = ZOOM_STEP.powf(-f64::from(dy) / f64::from(LINE_HEIGHT_PX));
             let sx = f64::from(x_rel) * f64::from(WIN_W);
             let sy = f64::from(y_rel) * f64::from(WIN_H);
@@ -2601,7 +2626,7 @@ fn nudge_ok(intro: &mut dyn ExternalIntrospect, dx: i32, dy: i32) -> bool {
 /// `Ctrl+Shift+Z` / `Ctrl+Y` redo (the canonical editor pairing). `None` for any
 /// other combination, so the plain-key handling below still runs.
 fn undo_redo_verb(key: &str, modifiers: Modifiers) -> Option<&'static str> {
-    if !modifiers.control_key() {
+    if !modifiers.command_key() {
         return None;
     }
     match key.to_ascii_lowercase().as_str() {
@@ -2615,7 +2640,7 @@ fn undo_redo_verb(key: &str, modifiers: Modifiers) -> Option<&'static str> {
 /// R852 — map a held-`Ctrl` keystroke to a persistence verb on the graph
 /// coordinator: `Ctrl+S` saves, `Ctrl+O` opens (loads). `None` otherwise.
 fn save_load_verb(key: &str, modifiers: Modifiers) -> Option<&'static str> {
-    if !modifiers.control_key() {
+    if !modifiers.command_key() {
         return None;
     }
     match key.to_ascii_lowercase().as_str() {
@@ -2653,7 +2678,7 @@ enum ZoomKey {
 }
 
 fn zoom_verb(key: &str, modifiers: Modifiers) -> Option<ZoomKey> {
-    if !modifiers.control_key() {
+    if !modifiers.command_key() {
         return None;
     }
     match key {
@@ -2749,7 +2774,7 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     // R880 — Ctrl+A selects every node (the editor-canvas convention).
     // While a rename is in flight the focused field's keymap intercepts
     // its own Ctrl+A (select-all *text*) before the graph path runs.
-    if modifiers.control_key() && key.eq_ignore_ascii_case("a") {
+    if modifiers.command_key() && key.eq_ignore_ascii_case("a") {
         return matches!(
             intro.invoke("select_all", IntrospectValue::Null),
             Ok(IntrospectValue::Bool(true))
@@ -4085,6 +4110,48 @@ mod tests {
                 "empty graph: nothing to select",
             );
         });
+    }
+
+    #[test]
+    fn r880_1_pointer_cancel_reverts_drag_and_clears_marquee() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // A live marquee revoked by the system: band + anchor cleared,
+            // nothing journaled, selection untouched.
+            send(&mut scene, "PointerDown");
+            bg_move(&mut scene, 20.0, 50.0);
+            bg_move(&mut scene, 200.0, 260.0);
+            assert!(use_marquee_rect().get().is_some(), "band live");
+            send(&mut scene, "PointerCancel");
+            assert_eq!(use_marquee_rect().get(), None, "cancel clears the band");
+            assert_eq!(selected_ids_of(&scene), "", "cancel applies nothing");
+            // A live node drag revoked mid-move: members revert to their
+            // press positions, no undo step (a cancelled gesture never
+            // happened), and the latches drop.
+            let coord = coordinator();
+            let stack = use_undo();
+            let before = pos_of(&coord, NodeId(0));
+            coord.grabbed_node.set(Some(NodeId(0)));
+            *coord.node_drag.borrow_mut() = Some(NodeDragStart {
+                members: vec![(NodeId(0), 0.0, 0.0, before.0, before.1)],
+                latch: live_latch(),
+            });
+            coord.set_node_pos(NodeId(0), before.0 + 40, before.1 + 20);
+            let mut coord = coord;
+            let _ = coord.handle_send("node_0:PointerCancel");
+            assert_eq!(pos_of(&coord, NodeId(0)), before, "cancel reverts the move");
+            assert_eq!(stack.len(), 0, "a cancelled drag never journals");
+            assert_eq!(coord.grabbed_node.get(), None, "latches dropped");
+        });
+    }
+
+    #[test]
+    fn r880_1_marquee_rect_clamps_to_the_world() {
+        // A captured cursor straying off-canvas produces negative graph
+        // coords; the published rect clamps so the painted band and the
+        // applied area stay one value (upx floors negatives at paint).
+        let rect = corner_rect((-40.0, 100.0), (60.0, 5000.0));
+        assert_eq!(rect, (0, 100, 60, WORLD), "corners clamp to [0, WORLD]");
     }
 
     #[test]

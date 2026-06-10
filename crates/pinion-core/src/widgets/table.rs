@@ -911,8 +911,13 @@ impl ExternalIntrospect for TableExternal {
             // funnel). Returns the new selected row (or `Null`).
             "send" => match args {
                 IntrospectValue::Text(ref s) => {
-                    let (key, event_name) =
-                        s.split_once(':').ok_or(InvokeError::Rejected)?;
+                    // R880.1 — the `split_send_payload` `:` grammar SSOT
+                    // strips a held-modifier third segment (a hand-rolled
+                    // split_once read "PointerUp:c" as the event name and
+                    // a Ctrl+click on a cell/header was silently rejected).
+                    let (key, event_name, _mods) =
+                        crate::composite_tag::split_send_payload(s)
+                            .ok_or(InvokeError::Rejected)?;
                     // R730 §5.40 / R777.1 — the `'#'`-split sub-key is
                     // decoded by the shared `GridSendKey` SSOT (the same
                     // grammar the paint producer encodes and
@@ -1413,6 +1418,22 @@ mod tests {
         // invoke send returns Null in multi-mode (no single selected row).
         let r = ext.invoke("send", IntrospectValue::Text("0_0:PointerUp".to_string()));
         assert_eq!(r, Ok(IntrospectValue::Null));
+    }
+
+    #[test]
+    fn r880_1_cell_click_with_modifier_segment_still_selects() {
+        // "1_0:PointerUp:c" (the R781 modifier segment) must still drive
+        // the cell — the pre-R880.1 hand-rolled split read "PointerUp:c"
+        // as the event name and rejected the activation.
+        let mut ext = TableExternal::with_multiselect(
+            vec!["A".to_string()],
+            vec![vec!["1".to_string()], vec!["2".to_string()]],
+        );
+        for ev in ["PointerEnter", "PointerDown", "PointerUp:c"] {
+            let r = ext.invoke("send", IntrospectValue::Text(format!("1_0:{ev}")));
+            assert_eq!(r, Ok(IntrospectValue::Null), "{ev} accepted");
+        }
+        assert_eq!(ext.selected_rows(), vec![1], "Ctrl+click still toggles the row");
     }
 
     #[test]

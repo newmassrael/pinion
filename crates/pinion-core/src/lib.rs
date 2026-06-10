@@ -72,7 +72,7 @@ pub use widget_core::{WidgetCore, WidgetEventName, WidgetStateName, WidgetTag};
 pub use frame::Frame;
 pub use input::{
     edit_field_keymap, forward_key_to_field, CompositionEvent, DragLatch, Modifiers,
-    DRAG_CLICK_THRESHOLD_PX,
+    SelectionChord, DRAG_CLICK_THRESHOLD_PX,
 };
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
