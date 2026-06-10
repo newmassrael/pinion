@@ -105,12 +105,23 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         release: bool = True,
         boot_grace: float = 0.8,
         request_timeout: float = 5.0,
+        boot_timeout: float = 30.0,
         visible_window: bool = False,
     ) -> None:
         self.example = example
         self.release = release
         self.boot_grace = boot_grace
         self.request_timeout = request_timeout
+        # R881.1 CI fix — deadline for the FIRST request only (the R719
+        # boot-baseline `pointer_leave`, which doubles as the readiness
+        # handshake). The very first pinion process on a runner with a
+        # cold mesa/lavapipe shader cache compiles its pipelines before
+        # the event loop services RPC, deterministically exceeding the
+        # steady-state `request_timeout` (CI run 27256527715: sweep slot
+        # 1 timed out twice at 5s while the 186 cache-warm followers all
+        # answered in ~1s). Once the handshake answers, every subsequent
+        # request runs under the normal per-request timeout.
+        self.boot_timeout = boot_timeout
         # R835 §5.16 — by default the shell window is created UNMAPPED
         # (`PINION_HIDDEN_WINDOW`) so a local verification run renders the
         # full real pipeline (winit + GPU + Vello + present) WITHOUT a
@@ -177,11 +188,18 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # drives it (just without the baseline). Any other error fails
         # loud — a swallowed real failure would silently reintroduce the
         # very boot-hover flakiness this baseline exists to remove.
+        # R881.1 — the baseline is also the readiness handshake: first
+        # contact gets the generous `boot_timeout` (cold shader-cache
+        # compile, see __init__), then the steady-state timeout resumes.
+        steady_timeout = self.request_timeout
+        self.request_timeout = max(steady_timeout, self.boot_timeout)
         try:
             self.pointer_leave()
         except RpcError as exc:
             if exc.code != -32601:
                 raise
+        finally:
+            self.request_timeout = steady_timeout
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
