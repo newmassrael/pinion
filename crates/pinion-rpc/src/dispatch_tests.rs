@@ -860,10 +860,10 @@ fn r881_drag_button_wire_pair_round_trips() {
     // decode == inverse(encode) for the whole vocabulary; unknown
     // names decode to None (the R773 wire-vocabulary SSOT guard).
     for b in [DragButton::Left, DragButton::Middle] {
-        assert_eq!(DragButton::from_wire_str(b.as_wire_str()), Some(b));
+        assert_eq!(DragButton::from_wire_name(b.as_wire_name()), Some(b));
     }
-    assert_eq!(DragButton::from_wire_str("right"), None);
-    assert_eq!(DragButton::from_wire_str(""), None);
+    assert_eq!(DragButton::from_wire_name("right"), None);
+    assert_eq!(DragButton::from_wire_name(""), None);
     assert_eq!(DragButton::default(), DragButton::Left);
 }
 

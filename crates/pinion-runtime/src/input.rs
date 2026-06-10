@@ -355,6 +355,26 @@ pub struct InputRouter {
     /// convention), a latched move is drag-to-pan (Blender / Unreal /
     /// browser auto-scroll family). See [`MiddleGesture`].
     middle_gestures: HashMap<PointerId, MiddleGesture>,
+    /// R881.1 §5.35 — per-pointer wheel-side sub-pixel remainder (the
+    /// stage-2 carry of [`dispatch_wheel_two_stage`]). Keyed to the
+    /// scroll container it accumulated against via a [`Weak`] handle:
+    /// the carry resets when the pointer's resolved scroll target
+    /// changes (a remainder must never leak across containers — Qt's
+    /// accumulator discipline) and drops with the cursor on
+    /// [`cursor_left`](Self::cursor_left). The middle pan keeps its
+    /// remainder in its own gesture state instead — one carry per
+    /// contiguous delta stream, whichever producer owns the stream.
+    wheel_remainders: HashMap<PointerId, WheelRemainder>,
+}
+
+/// R881.1 §5.35 — one pointer's wheel remainder: the scroll container
+/// the fraction accumulated against (identity-compared on the next
+/// event; a dead `Weak` or a different container resets the carry) and
+/// the banked sub-pixel fraction per axis.
+#[derive(Debug)]
+struct WheelRemainder {
+    target: std::rc::Weak<ScrollState>,
+    frac: (f32, f32),
 }
 
 /// R881 §5.35 §5.49 — one held middle-button press. `pan` is `None`
@@ -583,11 +603,30 @@ impl InputRouter {
         // (single-pointer shells: 1 entry, negligible cost).
         let ids: Vec<PointerId> = self.cursors.keys().copied().collect();
         for id in ids {
-            if self.captured_targets.contains_key(&id) {
+            // R881.1 — ONE predicate for "a gesture owns this pointer's
+            // hover" across all three refresh producers (cursor_moved,
+            // cursor_left, this per-repaint walk). Pre-R881.1 this arm
+            // skipped only capture, so a DnD drag or a live middle pan
+            // saw Enter/Leave churn fire on every repaint as content
+            // slid under the cursor — the exact churn the gesture
+            // suppression exists to prevent (one-gate discipline).
+            if self.gesture_pins_hover(id) {
                 continue;
             }
             self.refresh_hover(id, state_scene);
         }
+    }
+
+    /// R881.1 §5.35 — whether an in-flight gesture owns `id`'s hover:
+    /// capture lock (R51.34), a `DnD` drag session (R742), or a live
+    /// middle pan (R881). While true, every hover-refresh producer
+    /// must leave the pinned hover untouched — the three gesture
+    /// classes share ONE predicate so no producer can drift to a
+    /// subset (the R873 one-gate discipline applied to hover).
+    fn gesture_pins_hover(&self, id: PointerId) -> bool {
+        self.captured_targets.contains_key(&id)
+            || self.drag_sessions.contains_key(&id)
+            || self.middle_pan_live(id)
     }
 
     /// R876 §5.49 §5.51 — advance the press-to-drag tracker for `id` against
@@ -630,7 +669,8 @@ impl InputRouter {
     ///
     /// Zero-modifier wrapper around
     /// [`cursor_moved_with_modifiers`](Self::cursor_moved_with_modifiers)
-    /// (tests, the TUI shell) — mirrors the
+    /// (tests; backends reach the modifier-threading variant through
+    /// `CoreShell`'s pair) — mirrors the
     /// [`pointer_up`](Self::pointer_up) /
     /// [`pointer_up_with_modifiers`](Self::pointer_up_with_modifiers)
     /// pair.
@@ -711,19 +751,46 @@ impl InputRouter {
     /// per-event, frozen per-gesture here so a pan can never hop
     /// containers mid-drag.
     pub fn middle_down(&mut self, id: PointerId) {
-        let pan = self.cursors.get(&id).copied().map(|origin| {
-            let scroll = self.last_paint_scene.as_ref().and_then(|paint| {
-                paint.scroll_state_at(floor_clamp_u32(origin.0), floor_clamp_u32(origin.1))
-            });
-            MiddlePanState {
-                latch: DragLatch::new(origin),
-                last: origin,
-                frac: (0.0, 0.0),
-                tag: self.hover_targets.get(&id).cloned(),
-                scroll,
-            }
-        });
+        // R881.1 §5.35 — gesture exclusivity: a pointer already owned
+        // by a left gesture (capture lock, DnD session, or a tracked
+        // press) does not open a middle gesture — panning a container
+        // *while* a slider drag or a DnD ride the same cursor would
+        // feed each gesture the other's motion. The trailing middle
+        // release then resolves `NoPress` (no paste mid-drag). And a
+        // middle gesture already open for `id` is never overwritten
+        // (one physical button cannot double-press; only an RPC
+        // injection racing a native hold can — first press wins, so an
+        // injected press cannot reset a live pan's latch back into the
+        // dead zone and turn the user's pan into a paste).
+        if self.captured_targets.contains_key(&id)
+            || self.drag_sessions.contains_key(&id)
+            || self.press_gestures.contains_key(&id)
+            || self.middle_gestures.contains_key(&id)
+        {
+            return;
+        }
+        let pan = self.cursors.get(&id).copied().map(|origin| self.pin_pan_targets(id, origin));
         self.middle_gestures.insert(id, MiddleGesture { pan });
+    }
+
+    /// R881.1 §5.35 — pin the pan state for a gesture whose origin is
+    /// `origin`: the dead-zone latch plus the two-stage targets (hover
+    /// `External` tag + deepest attached [`ScrollState`]) resolved at
+    /// that point. Shared by the press-time seed (`middle_down`) and
+    /// the first-move lazy seed (`advance_middle_pan` — a press that
+    /// arrived before any cursor seeds at the first position the
+    /// gesture learns).
+    fn pin_pan_targets(&self, id: PointerId, origin: (f64, f64)) -> MiddlePanState {
+        let scroll = self.last_paint_scene.as_ref().and_then(|paint| {
+            paint.scroll_state_at(floor_clamp_u32(origin.0), floor_clamp_u32(origin.1))
+        });
+        MiddlePanState {
+            latch: DragLatch::new(origin),
+            last: origin,
+            frac: (0.0, 0.0),
+            tag: self.hover_targets.get(&id).cloned(),
+            scroll,
+        }
     }
 
     /// R881 §5.35 §5.49 — close the middle-button gesture for `id`
@@ -773,9 +840,21 @@ impl InputRouter {
         modifiers: Modifiers,
         state_scene: &mut Scene,
     ) -> (bool, bool) {
+        // R881.1 — lazy seed: a press that arrived before any cursor
+        // for this pointer had no origin to latch against; the first
+        // move the gesture learns about IS its origin (so motion still
+        // disambiguates pan from click — the degraded press is not
+        // click-forever).
+        if self.middle_gestures.get(&id).is_some_and(|g| g.pan.is_none()) {
+            let pan = self.pin_pan_targets(id, (x, y));
+            if let Some(gesture) = self.middle_gestures.get_mut(&id) {
+                gesture.pan = Some(pan);
+            }
+            return (false, false);
+        }
         // Stage 0: advance the latch + compute the delta, then release
         // the gesture borrow before touching the paint scene.
-        let (dx, dy, tag, scroll) = {
+        let (dx, dy, tag, scroll, frac) = {
             let Some(pan) = self
                 .middle_gestures
                 .get_mut(&id)
@@ -794,37 +873,35 @@ impl InputRouter {
                           vocabulary's precision"
             )]
             let (dx, dy) = ((last_x - x) as f32, (last_y - y) as f32);
-            (dx, dy, pan.tag.clone(), pan.scroll.clone())
+            (dx, dy, pan.tag.clone(), pan.scroll.clone(), pan.frac)
         };
-        if dx == 0.0 && dy == 0.0 {
+        // R881.1 — mask Shift out of the pan's wheel-dialect dispatch.
+        // The Shift+wheel convention ("vertical notches drive x") is an
+        // axis REMAP for one-dimensional notch devices; a pan delta is
+        // already two-dimensional, so remapping it scrambles the grab
+        // semantics (vertical drag panning horizontally). Masking makes
+        // Shift+middle-drag a plain pan — exactly Blender's chord set.
+        // Ctrl / Cmd (zoom-class chords) pass through untouched.
+        let modifiers = Modifiers { shift: false, ..modifiers };
+        let Some(paint) = self.last_paint_scene.as_ref() else {
             return (true, false);
+        };
+        let (dispatched, new_frac) = dispatch_wheel_two_stage(
+            paint,
+            state_scene,
+            WheelDispatchArgs {
+                target_tag: tag.as_deref(),
+                scroll: scroll.as_ref(),
+                cursor: (x, y),
+                delta: (dx, dy),
+                modifiers,
+                frac,
+            },
+        );
+        if let Some(pan) = self.middle_gestures.get_mut(&id).and_then(|g| g.pan.as_mut()) {
+            pan.frac = new_frac;
         }
-        // Stage 1: pinned External offer (same helper as the wheel path
-        // — one dialect, two producers).
-        if let (Some(tag), Some(paint)) = (tag.as_deref(), self.last_paint_scene.as_ref()) {
-            if offer_wheel_to_external(paint, state_scene, tag, (x, y), (dx, dy), modifiers) {
-                return (true, true);
-            }
-        }
-        // Stage 2: pinned scroll container, with the sub-pixel
-        // remainder carried across moves (integer scroll offsets — the
-        // Qt wheel-remainder accumulator) so slow precise pans never
-        // stall on per-event rounding.
-        if let Some(state) = scroll {
-            let Some(pan) = self
-                .middle_gestures
-                .get_mut(&id)
-                .and_then(|g| g.pan.as_mut())
-            else {
-                return (true, false);
-            };
-            let (tx, ty) = (pan.frac.0 + dx, pan.frac.1 + dy);
-            let (ix, iy) = (tx.round(), ty.round());
-            pan.frac = (tx - ix, ty - iy);
-            state.scroll_by(round_clamp_i32(ix), round_clamp_i32(iy));
-            return (true, true);
-        }
-        (true, false)
+        (true, dispatched)
     }
 
     /// winit `CursorLeft` handler. Drops the cursor for `id` and
@@ -837,16 +914,17 @@ impl InputRouter {
     /// [`pointer_up`](Self::pointer_up).
     pub fn cursor_left(&mut self, id: PointerId, state_scene: &mut Scene) {
         self.cursors.remove(&id);
-        // R742 §5.51 — an in-flight drag suppresses the leave for the
-        // same reason capture does: the gesture survives the cursor
-        // straying outside the window and re-entering. R881 — a live
-        // middle pan is the same gesture class (the OS implicit grab
-        // keeps streaming motion while the button is held), so it pins
-        // the hover identically.
-        if self.captured_targets.contains_key(&id)
-            || self.drag_sessions.contains_key(&id)
-            || self.middle_pan_live(id)
-        {
+        // R881.1 — the wheel remainder accumulates one contiguous delta
+        // stream; the cursor leaving breaks it, so the carry drops with
+        // the cursor regardless of gesture state.
+        self.wheel_remainders.remove(&id);
+        // R742 §5.51 / R881 — an in-flight gesture (capture, DnD drag,
+        // live middle pan) suppresses the leave: the gesture survives
+        // the cursor straying outside the window and re-entering (the
+        // OS implicit grab keeps streaming motion while a button is
+        // held). R881.1 — same shared predicate as every other hover
+        // producer.
+        if self.gesture_pins_hover(id) {
             return;
         }
         if let Some(tag) = self.hover_targets.remove(&id) {
@@ -892,6 +970,16 @@ impl InputRouter {
     /// second press, unifying the native winit and RPC-injected paths
     /// at the framework tier per [[r47-class-incident-prevention]].
     pub fn pointer_down(&mut self, id: PointerId, state_scene: &mut Scene) {
+        // R881.1 §5.35 — gesture exclusivity: while a middle pan is
+        // live, the pan owns the pointer. The hover snapshot a left
+        // press would route by is stale the moment content slides
+        // under the cursor, so the press is swallowed (Qt ignores
+        // secondary-button presses during an active gesture); the
+        // matching release is swallowed in `pointer_up_with_modifiers`
+        // so no widget sees an Up without its Down.
+        if self.middle_pan_live(id) {
+            return;
+        }
         if let Some(tag) = self.hover_targets.get(&id).cloned() {
             dispatch_send(state_scene, &tag, PointerWireEvent::Down.as_wire_name());
             // R876 §5.49 §5.51 — open the click-vs-drag tracker for this
@@ -1013,6 +1101,17 @@ impl InputRouter {
         state_scene: &mut Scene,
         modifiers: Modifiers,
     ) {
+        // R881.1 §5.35 — gesture exclusivity, the release half: the
+        // matching `pointer_down` was swallowed while the middle pan
+        // owned the pointer, so this release must not dispatch either
+        // (a free-mode `PointerUp` with no prior `Down` would reach
+        // activation-edge decoders — `is_activation_event` — and
+        // click a widget that was never pressed). A left gesture
+        // cannot be in flight here: its press was refused, so there is
+        // no capture / drag / press tracker to close.
+        if self.middle_pan_live(id) {
+            return;
+        }
         // R876 §5.49 §5.51 — read the click-vs-drag SSOT for this press, then
         // close its tracker: the press ends here on every path (DnD commit,
         // capture release, free release). `became_drag` gates the DnD
@@ -1181,27 +1280,47 @@ impl InputRouter {
         // One unit conversion for both stages: the External offer reads
         // the fractional pair; the Scroll fallback rounds it.
         let (dx, dy) = wheel_delta_to_pixels_f32(delta);
-        // R877 — stage 1: offer the wheel to the hovered External. The
-        // hover target is the routed (possibly composite `widget#sub`)
-        // tag, so wheeling over a node card still reaches the canvas
-        // coordinator via its primary tag. R881 extracted the offer
-        // into `offer_wheel_to_external` so the middle-button pan arm
-        // dispatches through the identical mechanics (one dialect, two
-        // producers — divergence here would be a routing bug).
-        if let Some(target_tag) = self.hover_targets.get(&id).cloned() {
-            if offer_wheel_to_external(paint, state_scene, &target_tag, (x, y), (dx, dy), modifiers)
-            {
-                return true;
+        // R877 / R881.1 — per-event target resolution (hover tag +
+        // deepest scroll under the cursor); the precedence + the
+        // application math live ONCE in `dispatch_wheel_two_stage`,
+        // shared with the middle-pan producer (one dialect, two
+        // producers — divergence there would be a routing bug).
+        let target_tag = self.hover_targets.get(&id).cloned();
+        let scroll = paint.scroll_state_at(floor_clamp_u32(x), floor_clamp_u32(y));
+        // R881.1 — the wheel-side sub-pixel remainder (the same carry
+        // the pan gesture holds in its state): a slow high-DPI
+        // `PixelDelta` stream (0.4 px/event) must accumulate instead of
+        // rounding to zero forever. Per Qt's accumulator discipline the
+        // carry resets when the resolved scroll target changes — a
+        // remainder must never leak across containers.
+        let frac = match (self.wheel_remainders.get(&id), scroll.as_ref()) {
+            (Some(rem), Some(s)) if rem.target.upgrade().is_some_and(|t| Rc::ptr_eq(&t, s)) => {
+                rem.frac
+            }
+            _ => (0.0, 0.0),
+        };
+        let (dispatched, new_frac) = dispatch_wheel_two_stage(
+            paint,
+            state_scene,
+            WheelDispatchArgs {
+                target_tag: target_tag.as_deref(),
+                scroll: scroll.as_ref(),
+                cursor: (x, y),
+                delta: (dx, dy),
+                modifiers,
+                frac,
+            },
+        );
+        match scroll {
+            Some(s) => {
+                self.wheel_remainders
+                    .insert(id, WheelRemainder { target: Rc::downgrade(&s), frac: new_frac });
+            }
+            None => {
+                self.wheel_remainders.remove(&id);
             }
         }
-        // Stage 2: the pre-R877 Scroll dispatch, unchanged.
-        let xu = floor_clamp_u32(x);
-        let yu = floor_clamp_u32(y);
-        let Some(state) = paint.scroll_state_at(xu, yu) else {
-            return false;
-        };
-        state.scroll_by(round_clamp_i32(dx), round_clamp_i32(dy));
-        true
+        dispatched
     }
 
     /// (R51.187 §5.45 R55.C.3) Keyboard scroll input dispatch.
@@ -1631,14 +1750,81 @@ pub fn rect_for_tag(scene: &Scene, target_tag: &str) -> Option<Rect> {
 ///
 /// `None` when the chosen rect is absent from the paint scene (not yet
 /// laid out) — callers skip the forward.
+/// R881.1 §5.35 §5.49 — the resolved inputs of one wheel-dialect
+/// dispatch (see [`dispatch_wheel_two_stage`]). Callers own target
+/// *resolution* (per-event for the wheel, pinned-at-press for the
+/// middle pan — that difference is data); everything after resolution
+/// is the shared policy this struct feeds.
+#[derive(Clone, Copy)]
+struct WheelDispatchArgs<'a> {
+    /// Stage-1 recipient: the (possibly composite) hover / pinned tag.
+    target_tag: Option<&'a str>,
+    /// Stage-2 recipient: the deepest attached scroll container.
+    scroll: Option<&'a Rc<ScrollState>>,
+    /// Cursor in window-local logical px (the offer's normalise basis).
+    cursor: (f64, f64),
+    /// Pixel delta (W3C sign: positive scrolls down / right).
+    delta: (f32, f32),
+    /// Held keyboard modifiers, forwarded to the `External` offer.
+    modifiers: Modifiers,
+    /// Incoming sub-pixel remainder for the stage-2 integer rounding.
+    frac: (f32, f32),
+}
+
+/// R881.1 §5.35 §5.49 — ONE home for the wheel-dialect dispatch policy:
+/// offer the `External` first (a consuming canvas pans / zooms itself —
+/// the W3C listener-before-default model), else apply the delta to the
+/// scroll container through the sub-pixel remainder accumulator
+/// (integer scroll offsets round per event; the carry keeps a slow
+/// high-DPI stream moving — Qt's wheel-remainder discipline). Both
+/// producers — [`InputRouter::wheel_with_modifiers`] (per-event
+/// targets, remainder keyed per pointer with target-change reset) and
+/// the middle-pan arm (pinned targets, remainder in the gesture state)
+/// — delegate here, so the precedence and the application math cannot
+/// diverge (pre-R881.1 they already had: the remainder carry existed
+/// only on the pan copy, so the exact `PixelDelta` stream the docs
+/// cited stalled on the wheel path).
+///
+/// Returns `(dispatched, remaining_frac)`. `dispatched` is the repaint
+/// cue: `true` when the `External` consumed or the scroll moved by at
+/// least one integer pixel; a sub-pixel step banks into the remainder
+/// and reports `false` (nothing visible changed).
+fn dispatch_wheel_two_stage(
+    paint: &Scene,
+    state_scene: &mut Scene,
+    args: WheelDispatchArgs<'_>,
+) -> (bool, (f32, f32)) {
+    if let Some(tag) = args.target_tag {
+        if offer_wheel_to_external(
+            paint,
+            state_scene,
+            tag,
+            args.cursor,
+            args.delta,
+            args.modifiers,
+        ) {
+            return (true, args.frac);
+        }
+    }
+    let Some(state) = args.scroll else {
+        return (false, args.frac);
+    };
+    let (tx, ty) = (args.frac.0 + args.delta.0, args.frac.1 + args.delta.1);
+    let (ix, iy) = (tx.round(), ty.round());
+    let frac = (tx - ix, ty - iy);
+    if ix == 0.0 && iy == 0.0 {
+        return (false, frac);
+    }
+    state.scroll_by(round_clamp_i32(ix), round_clamp_i32(iy));
+    (true, frac)
+}
+
 /// R877 / R881 §5.35 §5.49 — the wheel-vocabulary `External` offer,
-/// shared verbatim between the per-event wheel path
-/// ([`InputRouter::wheel_with_modifiers`] stage 1, target = current
-/// hover) and the middle-button pan arm (target = the tag pinned at
-/// press). Resolves the (possibly composite) `target_tag`'s primary
-/// `External` in the state scene, normalises the cursor over the
-/// widget's [`CaptureNormalize`] basis, and offers the pixel delta +
-/// modifiers to [`External::wheel`](pinion_core::external::External::wheel).
+/// stage 1 of [`dispatch_wheel_two_stage`]. Resolves the (possibly
+/// composite) `target_tag`'s primary `External` in the state scene,
+/// normalises the cursor over the widget's [`CaptureNormalize`] basis,
+/// and offers the pixel delta + modifiers to
+/// [`External::wheel`](pinion_core::external::External::wheel).
 /// `true` = consumed (no scroll fallback may run).
 fn offer_wheel_to_external(
     paint: &Scene,
@@ -3508,8 +3694,8 @@ mod tests {
 
     // ─── R877 §5.15 §5.49 External wheel-offer tests ───────────────
 
-    /// One recorded [`External::wheel`] call: `(x_rel, y_rel, dx, dy, ctrl)`.
-    type WheelCall = (f32, f32, f32, f32, bool);
+    /// One recorded [`External::wheel`] call: `(x_rel, y_rel, dx, dy, modifiers)`.
+    type WheelCall = (f32, f32, f32, f32, Modifiers);
 
     /// Records every [`External::wheel`] call; consumes (returns
     /// `true`) iff `consume` is set — the two sides of the R877
@@ -3546,7 +3732,7 @@ mod tests {
             self.calls
                 .lock()
                 .expect("mutex poisoned")
-                .push((x_rel, y_rel, dx, dy, modifiers.control_key()));
+                .push((x_rel, y_rel, dx, dy, modifiers));
             self.consume
         }
     }
@@ -3615,12 +3801,12 @@ mod tests {
         assert_eq!(scroll.offset(), (0, 0), "consumed wheel must not also scroll");
         let recorded = calls.lock().expect("mutex poisoned").clone();
         assert_eq!(recorded.len(), 1);
-        let (x_rel, y_rel, dx, dy, ctrl) = recorded[0];
+        let (x_rel, y_rel, dx, dy, mods) = recorded[0];
         assert!((x_rel - 0.5).abs() < 1e-6, "x_rel {x_rel}");
         assert!((y_rel - 0.25).abs() < 1e-6, "y_rel {y_rel}");
         assert!((dx - 0.0).abs() < f32::EPSILON);
         assert!((dy - 2.0 * LINE_HEIGHT_PX).abs() < f32::EPSILON, "dy {dy}");
-        assert!(!ctrl);
+        assert!(mods.is_empty());
     }
 
     #[test]
@@ -3667,7 +3853,7 @@ mod tests {
         ));
         let recorded = calls.lock().expect("mutex poisoned").clone();
         assert_eq!(recorded.len(), 1);
-        assert!(recorded[0].4, "ctrl modifier must reach the External");
+        assert!(recorded[0].4.control_key(), "ctrl modifier must reach the External");
     }
 
     #[test]
@@ -3851,10 +4037,10 @@ mod tests {
         ));
         let recorded = calls.lock().expect("mutex poisoned").clone();
         assert_eq!(recorded.len(), 1);
-        let (_, _, dx, dy, got_ctrl) = recorded[0];
+        let (_, _, dx, dy, mods) = recorded[0];
         assert!((dx - 0.0).abs() < f32::EPSILON);
         assert!((dy - 30.0).abs() < f32::EPSILON, "delta = last - current, dy {dy}");
-        assert!(got_ctrl, "held modifiers reach the External's wheel arm");
+        assert!(mods.control_key(), "held modifiers reach the External's wheel arm");
         assert_eq!(scroll.offset(), (0, 0), "consumed offer skips the scroll fallback");
         assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
     }
@@ -3913,6 +4099,237 @@ mod tests {
         router.cursor_moved(PointerId::MOUSE, 50.0, 89.2, &mut state_scene);
         assert_eq!(scroll.offset(), (0, 11), "accumulated remainder lands");
         assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
+    }
+
+    // ─── R881.1 §5.35 adversarial-arm regressions (session audit) ──
+
+    #[test]
+    fn r881_1_repaint_hover_refresh_keeps_live_pan_pinned() {
+        // The third hover-refresh producer: every repaint runs
+        // `update_paint_scene` → `refresh_hover_for_all_active_pointers`,
+        // and a live pan repaints every move. Pre-R881.1 that walk
+        // skipped only capture, so panned content sliding under the
+        // cursor churned Enter/Leave once per frame — the exact churn
+        // the gesture suppression claims to prevent. One predicate
+        // (`gesture_pins_hover`) now gates all three producers.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, _calls) = WheelExternal::new(false);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        assert_eq!(router.hover_target(PointerId::MOUSE), Some("main_btn"));
+        router.middle_down(PointerId::MOUSE);
+        router.cursor_moved(PointerId::MOUSE, 30.0, 30.0, &mut state_scene);
+        // Mid-pan repaint (the per-frame publish): hover must stay
+        // pinned even though (30, 30) resolves to no tagged region.
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        assert_eq!(
+            router.hover_target(PointerId::MOUSE),
+            Some("main_btn"),
+            "per-repaint hover refresh must not churn a live pan's pinned hover",
+        );
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
+        // The first post-release repaint resettles hover normally.
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        assert_eq!(router.hover_target(PointerId::MOUSE), None);
+    }
+
+    #[test]
+    fn r881_1_left_press_and_release_swallowed_during_live_pan() {
+        // Gesture exclusivity: while the pan owns the pointer, a left
+        // press routes by a stale hover snapshot (content is moving),
+        // so press AND release are swallowed — no `PointerDown`, and
+        // no orphan `PointerUp` that an activation-edge decoder would
+        // read as a click. After release, clicks work again.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, sends) = CaptureExternal::new();
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        // Latch while staying over the button rect (80..120).
+        router.cursor_moved(PointerId::MOUSE, 110.0, 85.0, &mut state_scene);
+        sends.lock().expect("mutex poisoned").clear();
+        router.pointer_down(PointerId::MOUSE, &mut state_scene);
+        router.pointer_up(PointerId::MOUSE, &mut state_scene);
+        assert!(
+            sends.lock().expect("mutex poisoned").is_empty(),
+            "left press/release during a live pan dispatches nothing",
+        );
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
+        router.pointer_down(PointerId::MOUSE, &mut state_scene);
+        let recorded = sends.lock().expect("mutex poisoned").clone();
+        assert_eq!(
+            recorded,
+            vec!["PointerDown".to_owned()],
+            "after the pan releases, the pointer routes normally again",
+        );
+    }
+
+    #[test]
+    fn r881_1_middle_during_left_gesture_never_pans_or_pastes() {
+        // The other exclusivity direction: a pointer owned by a left
+        // gesture (here: a tracked press) refuses the middle gesture —
+        // its motion keeps feeding the left gesture only, and the
+        // trailing middle release reports NoPress (no paste mid-drag).
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, _sends) = CaptureExternal::new();
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        router.pointer_down(PointerId::MOUSE, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 30.0, &mut state_scene);
+        assert_eq!(scroll.offset(), (0, 0), "no pan rides a left-owned pointer");
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::NoPress);
+        router.pointer_up(PointerId::MOUSE, &mut state_scene);
+    }
+
+    #[test]
+    fn r881_1_second_middle_press_cannot_reset_a_live_pan() {
+        // First press wins: an RPC-injected middle press racing a
+        // native hold must not replace the live gesture (a fresh
+        // dead-zone latch would turn the user's pan into a paste at
+        // the injected release).
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        assert_eq!(
+            router.middle_up(PointerId::MOUSE),
+            MiddleRelease::Pan,
+            "the injected second press must not demote the live pan to a click",
+        );
+    }
+
+    #[test]
+    fn r881_1_cursorless_press_lazy_seeds_on_first_move() {
+        // A press before any cursor has no origin; the first move the
+        // gesture learns about IS the origin — motion past it still
+        // disambiguates pan from click (the degraded press is not
+        // click-forever), and a dead-zone wobble still pastes.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.middle_down(PointerId::MOUSE);
+        // First move seeds the origin (and pins targets there).
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene);
+        assert_eq!(scroll.offset(), (0, 30), "lazy-seeded pan pans from the seed origin");
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
+        // Dead-zone variant: seed then wobble → still a click.
+        router.middle_down(PointerId::MOUSE);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 61.0, &mut state_scene);
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Click);
+    }
+
+    #[test]
+    fn r881_1_shift_is_masked_from_the_pan_wheel_dialect() {
+        // Shift+wheel is an axis REMAP for 1-D notch devices; a pan
+        // delta is already 2-D, so the pan dispatch masks Shift
+        // (Shift+middle-drag = plain pan, the Blender chord) while
+        // zoom-class chords (Ctrl) pass through.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, calls) = WheelExternal::new(true);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        let chord = Modifiers { shift: true, ctrl: true, ..Modifiers::empty() };
+        assert!(router.cursor_moved_with_modifiers(
+            PointerId::MOUSE,
+            100.0,
+            60.0,
+            chord,
+            &mut state_scene,
+        ));
+        let recorded = calls.lock().expect("mutex poisoned").clone();
+        assert_eq!(recorded.len(), 1);
+        assert!(!recorded[0].4.shift_key(), "Shift is masked out of the pan dispatch");
+        assert!(recorded[0].4.control_key(), "zoom-class chords pass through");
+        assert_eq!(router.middle_up(PointerId::MOUSE), MiddleRelease::Pan);
+    }
+
+    #[test]
+    fn r881_1_wheel_pixel_remainder_accumulates_and_resets_on_target_change() {
+        // The R881.1 convergence: the wheel path shares the stage-2
+        // remainder accumulator (pre-R881.1 a slow high-DPI PixelDelta
+        // stream — 0.4 px/event — stalled forever on per-event
+        // rounding), and the carry resets when the pointer's resolved
+        // scroll target changes (a remainder never leaks containers).
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        let step = WheelDelta::Pixels { dx: 0.0, dy: 0.4 };
+        assert!(
+            !router.wheel(PointerId::MOUSE, step, &mut state_scene),
+            "a sub-pixel step banks into the remainder (nothing visible moved)",
+        );
+        assert_eq!(scroll.offset(), (0, 0));
+        assert!(router.wheel(PointerId::MOUSE, step, &mut state_scene));
+        assert_eq!(scroll.offset(), (0, 1), "0.4 + 0.4 rounds to one pixel");
+        // Wheeling with no scroll target under the cursor drops the
+        // carry; returning restarts the accumulation from zero.
+        router.cursor_moved(PointerId::MOUSE, 300.0, 300.0, &mut state_scene);
+        assert!(!router.wheel(PointerId::MOUSE, step, &mut state_scene));
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        assert!(!router.wheel(PointerId::MOUSE, step, &mut state_scene));
+        assert_eq!(
+            scroll.offset(),
+            (0, 1),
+            "the carry reset on target change — 0.4 alone moves nothing",
+        );
+        assert!(router.wheel(PointerId::MOUSE, step, &mut state_scene));
+        assert_eq!(scroll.offset(), (0, 2));
     }
 
     // ─── R51.187 §5.45 R55.C.3 keyboard scroll dispatch tests ─────

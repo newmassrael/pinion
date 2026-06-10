@@ -377,8 +377,8 @@ pub struct DispatchContext<'a> {
 /// gesture exists to expand to — `scene/click`-class context-menu
 /// injection is a different arc.
 ///
-/// Encode ([`as_wire_str`](Self::as_wire_str)) and decode
-/// ([`from_wire_str`](Self::from_wire_str)) live as an adjacent pair —
+/// Encode ([`as_wire_name`](Self::as_wire_name)) and decode
+/// ([`from_wire_name`](Self::from_wire_name)) live as an adjacent pair —
 /// `decode == inverse(encode)`, the R773 wire-vocabulary SSOT class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DragButton {
@@ -394,9 +394,9 @@ pub enum DragButton {
 
 impl DragButton {
     /// Canonical wire name — the single source the docs / errors quote.
-    /// Inverse of [`from_wire_str`](Self::from_wire_str).
+    /// Inverse of [`from_wire_name`](Self::from_wire_name).
     #[must_use]
-    pub fn as_wire_str(self) -> &'static str {
+    pub fn as_wire_name(self) -> &'static str {
         match self {
             DragButton::Left => "left",
             DragButton::Middle => "middle",
@@ -406,9 +406,9 @@ impl DragButton {
     /// Decode a wire button name; `None` for anything outside the
     /// vocabulary (the dispatcher rejects with `invalid_params` so a
     /// typo surfaces at the call site, not as a silent left-drag).
-    /// Inverse of [`as_wire_str`](Self::as_wire_str).
+    /// Inverse of [`as_wire_name`](Self::as_wire_name).
     #[must_use]
-    pub fn from_wire_str(name: &str) -> Option<Self> {
+    pub fn from_wire_name(name: &str) -> Option<Self> {
         match name {
             "left" => Some(DragButton::Left),
             "middle" => Some(DragButton::Middle),
@@ -1822,7 +1822,7 @@ where
         None => DragButton::default(),
         Some(v) => v
             .as_str()
-            .and_then(DragButton::from_wire_str)
+            .and_then(DragButton::from_wire_name)
             .ok_or_else(|| {
                 RpcError::invalid_params("params.button must be \"left\" or \"middle\"")
             })?,

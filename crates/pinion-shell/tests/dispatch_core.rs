@@ -2237,9 +2237,8 @@ mod r56_2_a_apply_composition_wire {
 }
 
 mod r56_2_e_apply_middle_click_wire {
-    //! R56.2.e §5.13 §5.22 — `ShellCore::middle_click` wiring
-    //! regression. Closes the `WindowEvent::MouseInput { Middle,
-    //! Pressed }` substrate path:
+    //! R56.2.e §5.13 §5.22 — `ShellCore::middle_click` (the paste
+    //! funnel) wiring regression:
     //!
     //! - Forwards the focused tag (via `FocusManager::focused()`) and
     //!   current modifier state to `CoreShell::apply_middle_click`.
@@ -2253,11 +2252,18 @@ mod r56_2_e_apply_middle_click_wire {
     //!   `apply_middle_click` handler resolve to the binding's root
     //!   scope.
     //!
-    //! The winit `MouseButton::Middle → ShellCore::middle_click()`
-    //! conversion lives in `pinion-shell::app::AppShell::window_event`
-    //! and has no observable substrate without a real winit
-    //! `EventLoop` — that arm is verified by inspection alongside the
-    //! R56.2.a `WindowEvent::Ime` arm.
+    //! R881 §5.35 re-sequenced WHO calls the funnel: the winit
+    //! `{ Middle, Pressed }` arm no longer pastes — `middle_click`
+    //! fires from `ShellCore::middle_released_for_window` on the
+    //! router's release-in-place verdict (`MiddleRelease::Click`); a
+    //! drag-to-pan never reaches it. That choreography is pinned by
+    //! the `r881_middle_gesture_paste_on_release` mod below; the
+    //! funnel mechanics pinned here are unchanged. The winit
+    //! `MouseButton::Middle` arms live in
+    //! `pinion-shell::app::AppShell::window_event` and have no
+    //! observable substrate without a real winit `EventLoop` — they
+    //! are verified by inspection alongside the R56.2.a
+    //! `WindowEvent::Ime` arm.
 
     use super::{
         reset_mocks, APPLY_MIDDLE_CLICK_LOG, APPLY_MIDDLE_CLICK_RETURNS,

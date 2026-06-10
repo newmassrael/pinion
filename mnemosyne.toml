@@ -860,8 +860,8 @@ content_hash_after = "32753bc8ff1f8480ebbddd82b9d174f48a004cc2aca8ad96948f997d07
 [[publishable_override_ledger]]
 kind = "honesty-correction"
 target_id = "R881"
-fields = ["publishable_verification_bullets"]
-reason = "Same-session self-audit found the demo assert count overclaimed (10 assert statements + 4 wait_until gates, recorded as 12); corrected per the R880.1 count-exactly discipline"
-applied_in = "R881 commit (amended in-place pre-push)"
+fields = ["publishable_changes_bullets", "publishable_verification_bullets"]
+reason = "Honesty correction completed across BOTH diverged publishable fields (R881.1 session audit found the first pass corrected only the verification half): demo assert count overclaimed as 12; exact count is 10 assert statements plus 4 observed-state wait_until gates (R880.1 count-exactly discipline). Audit halves stay frozen as written."
+applied_in = "R881.1 audit remediation commit"
 content_hash_before = "5fa9580b794e1a8932dd522b9b961ece0ac6c8ccf68d0c64d9e933dfde781bd4"
-content_hash_after = "6929845f52ed0af962ffad6f14c7e7dc08c80e2daaf62655683e0f321e57ea68"
+content_hash_after = "74b7a69110d3fe4215cea6ffb040f05f12133f9c975a699e54d60fb869233b6e"

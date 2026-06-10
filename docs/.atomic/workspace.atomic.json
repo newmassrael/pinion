@@ -36688,7 +36688,7 @@
         "pinion-rpc: scene/drag button param (\"left\"|\"middle\", DragButton wire pair, default left)",
         "pinion-tui: middle pair + drain parity (pan works; TUI paste stays a documented divergence carry)",
         "PointerCancel revokes the middle gesture (cancelled press never pastes)",
-        "tests: 8 router + 2 shell + 4 rpc; demo r881_middle_pan.py (12 asserts) + 8 regression demos PASS"
+        "tests: 8 router + 2 shell + 4 rpc; demo r881_middle_pan.py (10 asserts + 4 wait gates) + 8 regression demos PASS"
       ],
       "publishable_verification_bullets": [
         "cargo test --workspace -j2: 150 test groups green (8 new router + 2 shell + 4 rpc R881 tests)",
@@ -36707,6 +36707,66 @@
         "TUI middle paste parity (Click verdict is a documented no-op on TUI; terminal owns middle-paste at the terminal tier)",
         "TUI pointer modifiers absent (pre-existing SS2 #6 divergence; middle pan on TUI is plain-delta only)",
         "InputRouter SRP decomposition (R876 carry, large)"
+      ]
+    },
+    "R881.1": {
+      "decision_summary": "R881.1 SS5.35 SS5.49 - session-review audit remediation (two adversarial reviewers, findings verified by grep+read; user textbook-quality gate). Real defects repaid inline: (1) the R881 hover-pin invariant was FALSE in the live shell - the per-repaint hover refresh (refresh_hover_for_all_active_pointers) skipped only the capture lock, so a live middle pan (which repaints every move) churned PointerLeave/Enter into whatever slid under the cursor each frame, and DnD had the same pre-existing leak; all three hover-refresh producers now share ONE gesture_pins_hover predicate (capture OR DnD session OR live pan - the R873 one-gate discipline applied to hover), with a mid-pan update_paint_scene regression test that fails the pre-R881.1 router. (2) Cross-button gestures had no exclusivity decision at all: a left press during a live pan routed by a stale hover snapshot (content moving under the cursor) and could open a second concurrent gesture; now the pan owns the pointer (left press AND release swallowed - no orphan PointerUp reaching activation-edge decoders), and a pointer owned by a left gesture refuses middle_down (trailing release = NoPress, so no paste can fire mid-drag); a second middle press can never reset a live pan back into the dead zone (first press wins - an RPC injection racing a native hold cannot demote the user's pan to a paste). (3) The two-stage wheel precedence was a 2-copy whose stage-2 application had ALREADY diverged - the sub-pixel remainder carry existed only on the new pan copy while the original wheel path still stalled forever on the exact slow high-DPI PixelDelta stream the R881 docs cited; dispatch_wheel_two_stage now owns precedence + application math once (callers own only target RESOLUTION - per-event for wheel, pinned for pan, which is data not policy), the wheel side gaining a per-pointer remainder keyed to its scroll target (reset on target change per Qt accumulator discipline, dropped with the cursor). (4) Shift is masked from the pan dialect: Shift+wheel is an axis remap for 1-D notch devices and scrambled the 2-D grab semantics (vertical drag panning horizontally); Shift+MMB is now plain pan, the Blender chord. (5) A cursorless middle press lazy-seeds its origin on the first move instead of resolving Click after arbitrary motion. (6) API symmetry restored to the wheel precedent (plain cursor_moved pair returns the pan flag on every tier; plain CoreShell middle wrappers; TUI back on the plain pair), DragButton wire pair renamed to the as_wire_name/from_wire_name convention, the two docs still describing paste-at-press updated, and the 12-assert overclaim corrected in the second publishable store field the first correction missed.",
+      "changes_bullets": [
+        "pinion-runtime: gesture_pins_hover predicate - ONE gate for all three hover-refresh producers (per-repaint walk previously skipped only capture: live pan + DnD churned Enter/Leave every frame)",
+        "pinion-runtime: cross-button exclusivity - left press/release swallowed while a pan is live; middle_down refused while a left gesture (capture/DnD/tracked press) owns the pointer; second middle press cannot reset a live pan",
+        "pinion-runtime: dispatch_wheel_two_stage SSOT - precedence + stage-2 remainder math lifted out of the wheel/pan 2-copy; wheel path gains the per-pointer sub-pixel carry (PixelDelta stall fixed) with target-change + cursor-left reset",
+        "pinion-runtime: lazy-seed - a cursorless middle press seeds its pan origin on the first move (no longer click-forever)",
+        "pinion-runtime: Shift masked from the pan wheel-dialect (1-D axis-remap convention does not apply to a 2-D delta; Shift+MMB = plain pan, Blender)",
+        "pinion-runtime: CoreShell cursor_moved plain pair returns the pan flag on every tier (wheel precedent); plain middle_down/middle_up wrappers added; TUI uses the plain pair",
+        "pinion-rpc: DragButton wire pair renamed as_wire_name/from_wire_name (PointerWireEvent suffix convention)",
+        "docs: middle_click funnel + r56_2_e mod docstrings updated to the R881 release-paste sequencing",
+        "store: 12-assert overclaim corrected in BOTH publishable fields + ledger row extended",
+        "tests: 7 new adversarial-arm regressions (repaint hover pin / both exclusivity directions / first-press-wins / lazy seed / Shift mask / wheel remainder+reset)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green (15 R881-family router tests incl. 7 new)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean",
+        "demos fresh-release PASS: r881 + node 5 (r838/853/877/879/880) + DnD/left-drag 3 (r742/743/763)",
+        "mnemosyne validate-workspace: T1=0, divergence entries=73 ledger_rows=78 consistent"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "blur / missed-release gesture revocation (pre-existing class shared with the capture lock; a latched pan that never sees Released keeps panning - one blur-cancel arm should cover all gesture classes in one round)",
+        "RPC-injected input racing a live native gesture on the shared MOUSE pointer (pre-existing class; middle arms are now non-destructive - first press wins, no paste - but a drained left click mid-native-gesture still interleaves)",
+        "right-click context menu has no RPC peer at all (pre-existing SS2 #2 gap, bigger than scene/drag button - candidate lead for a future round)",
+        "TUI pointer modifiers + middle paste parity (pre-existing SS2 #6 carries, unchanged)"
+      ],
+      "publishable_decision_summary": "R881.1 SS5.35 SS5.49 - session-review audit remediation (two adversarial reviewers, findings verified by grep+read; user textbook-quality gate). Real defects repaid inline: (1) the R881 hover-pin invariant was FALSE in the live shell - the per-repaint hover refresh (refresh_hover_for_all_active_pointers) skipped only the capture lock, so a live middle pan (which repaints every move) churned PointerLeave/Enter into whatever slid under the cursor each frame, and DnD had the same pre-existing leak; all three hover-refresh producers now share ONE gesture_pins_hover predicate (capture OR DnD session OR live pan - the R873 one-gate discipline applied to hover), with a mid-pan update_paint_scene regression test that fails the pre-R881.1 router. (2) Cross-button gestures had no exclusivity decision at all: a left press during a live pan routed by a stale hover snapshot (content moving under the cursor) and could open a second concurrent gesture; now the pan owns the pointer (left press AND release swallowed - no orphan PointerUp reaching activation-edge decoders), and a pointer owned by a left gesture refuses middle_down (trailing release = NoPress, so no paste can fire mid-drag); a second middle press can never reset a live pan back into the dead zone (first press wins - an RPC injection racing a native hold cannot demote the user's pan to a paste). (3) The two-stage wheel precedence was a 2-copy whose stage-2 application had ALREADY diverged - the sub-pixel remainder carry existed only on the new pan copy while the original wheel path still stalled forever on the exact slow high-DPI PixelDelta stream the R881 docs cited; dispatch_wheel_two_stage now owns precedence + application math once (callers own only target RESOLUTION - per-event for wheel, pinned for pan, which is data not policy), the wheel side gaining a per-pointer remainder keyed to its scroll target (reset on target change per Qt accumulator discipline, dropped with the cursor). (4) Shift is masked from the pan dialect: Shift+wheel is an axis remap for 1-D notch devices and scrambled the 2-D grab semantics (vertical drag panning horizontally); Shift+MMB is now plain pan, the Blender chord. (5) A cursorless middle press lazy-seeds its origin on the first move instead of resolving Click after arbitrary motion. (6) API symmetry restored to the wheel precedent (plain cursor_moved pair returns the pan flag on every tier; plain CoreShell middle wrappers; TUI back on the plain pair), DragButton wire pair renamed to the as_wire_name/from_wire_name convention, the two docs still describing paste-at-press updated, and the 12-assert overclaim corrected in the second publishable store field the first correction missed.",
+      "publishable_changes_bullets": [
+        "pinion-runtime: gesture_pins_hover predicate - ONE gate for all three hover-refresh producers (per-repaint walk previously skipped only capture: live pan + DnD churned Enter/Leave every frame)",
+        "pinion-runtime: cross-button exclusivity - left press/release swallowed while a pan is live; middle_down refused while a left gesture (capture/DnD/tracked press) owns the pointer; second middle press cannot reset a live pan",
+        "pinion-runtime: dispatch_wheel_two_stage SSOT - precedence + stage-2 remainder math lifted out of the wheel/pan 2-copy; wheel path gains the per-pointer sub-pixel carry (PixelDelta stall fixed) with target-change + cursor-left reset",
+        "pinion-runtime: lazy-seed - a cursorless middle press seeds its pan origin on the first move (no longer click-forever)",
+        "pinion-runtime: Shift masked from the pan wheel-dialect (1-D axis-remap convention does not apply to a 2-D delta; Shift+MMB = plain pan, Blender)",
+        "pinion-runtime: CoreShell cursor_moved plain pair returns the pan flag on every tier (wheel precedent); plain middle_down/middle_up wrappers added; TUI uses the plain pair",
+        "pinion-rpc: DragButton wire pair renamed as_wire_name/from_wire_name (PointerWireEvent suffix convention)",
+        "docs: middle_click funnel + r56_2_e mod docstrings updated to the R881 release-paste sequencing",
+        "store: 12-assert overclaim corrected in BOTH publishable fields + ledger row extended",
+        "tests: 7 new adversarial-arm regressions (repaint hover pin / both exclusivity directions / first-press-wins / lazy seed / Shift mask / wheel remainder+reset)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green (15 R881-family router tests incl. 7 new)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean",
+        "demos fresh-release PASS: r881 + node 5 (r838/853/877/879/880) + DnD/left-drag 3 (r742/743/763)",
+        "mnemosyne validate-workspace: T1=0, divergence entries=73 ledger_rows=78 consistent"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "blur / missed-release gesture revocation (pre-existing class shared with the capture lock; a latched pan that never sees Released keeps panning - one blur-cancel arm should cover all gesture classes in one round)",
+        "RPC-injected input racing a live native gesture on the shared MOUSE pointer (pre-existing class; middle arms are now non-destructive - first press wins, no paste - but a drained left click mid-native-gesture still interleaves)",
+        "right-click context menu has no RPC peer at all (pre-existing SS2 #2 gap, bigger than scene/drag button - candidate lead for a future round)",
+        "TUI pointer modifiers + middle paste parity (pre-existing SS2 #6 carries, unchanged)"
       ]
     },
     "Round 1": {
@@ -49845,5 +49905,7 @@
     }
   },
   "confirmation_events": {},
-  "schema_version": 11
+  "frames": {},
+  "narrative_facts": {},
+  "schema_version": 12
 }

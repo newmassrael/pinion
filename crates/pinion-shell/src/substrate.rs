@@ -1000,20 +1000,21 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
-    /// R56.2.e §5.13 §5.22 — route a middle-mouse-button press
-    /// through [`WidgetView::apply_middle_click`] and, on handled
+    /// R56.2.e §5.13 §5.22 — route a middle-*click* through
+    /// [`WidgetView::apply_middle_click`] and, on handled
     /// (`Some(DispatchTail)` from [`CoreShell::apply_middle_click`]),
     /// run the same post-input bookkeeping as [`Self::apply_key`]:
     /// bump the §5.34 revision, drain pending intents via
     /// [`Self::handle_tail`] (which re-reads cached state and
     /// requests a redraw on visible change).
     ///
-    /// pinion-shell's `AppShell::window_event`
-    /// `WindowEvent::MouseInput { button: Middle, state: Pressed, .. }`
-    /// arm calls this method directly (no winit-event-to-pinion-event
-    /// conversion is needed — the middle-button press has no
-    /// payload beyond "happened" + the cached cursor position the
-    /// `InputRouter` already holds).
+    /// R881 §5.35 — this is the paste *funnel*, no longer a press arm:
+    /// [`Self::middle_released_for_window`] calls it when the router's
+    /// `DragLatch` resolves the middle press as a release-in-place
+    /// ([`MiddleRelease::Click`]). A press that strayed into a
+    /// drag-to-pan never reaches here (pre-R881 the winit
+    /// `{ Middle, Pressed }` arm called this directly, pasting at
+    /// press time).
     ///
     /// On the X11 / Wayland Linux desktops the canonical UX is
     /// "middle-click pastes the PRIMARY selection at the focused

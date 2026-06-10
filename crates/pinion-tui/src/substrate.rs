@@ -423,17 +423,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// the visible cached state (e.g. cursor entered a widget rect
     /// and the `Idle → Hover` transition fired).
     pub fn cursor_moved(&mut self, x: f64, y: f64) -> bool {
-        // R881 §5.35 — zero modifiers: the TUI pointer path carries no
-        // modifier chords yet (§2 #6 divergence carry, pre-existing).
-        // The second flag reports a live middle pan dispatching a
-        // scroll this move — repaint-relevant exactly like `wheel`.
-        let (tail, pan_dispatched) = self.core.cursor_moved_for_window_with_modifiers(
-            pinion_runtime::DEFAULT_WINDOW,
-            PointerId::MOUSE,
-            x,
-            y,
-            pinion_core::Modifiers::empty(),
-        );
+        // R881 §5.35 — the zero-modifier wrapper: the TUI pointer path
+        // carries no modifier chords yet (§2 #6 divergence carry,
+        // pre-existing). The second flag reports a live middle pan
+        // dispatching a scroll this move — repaint-relevant exactly
+        // like `wheel` (R881.1: the plain pair threads the flag too).
+        let (tail, pan_dispatched) = self.core.cursor_moved(PointerId::MOUSE, x, y);
         let state_changed = self.handle_tail(&tail);
         pan_dispatched || state_changed
     }
@@ -444,8 +439,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// middle gesture — pan targets pinned at the press point. Never a
     /// visible state change by itself.
     pub fn middle_pressed(&mut self) {
-        self.core
-            .middle_down_for_window(pinion_runtime::DEFAULT_WINDOW, PointerId::MOUSE);
+        self.core.middle_down(PointerId::MOUSE);
     }
 
     /// R881 §5.35 §5.49 — middle-button release. A latched gesture
@@ -458,9 +452,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// so `Click` is a documented no-op here. Returns `false` — no
     /// repaint originates at the release edge.
     pub fn middle_released(&mut self) -> bool {
-        let _ = self
-            .core
-            .middle_up_for_window(pinion_runtime::DEFAULT_WINDOW, PointerId::MOUSE);
+        let _ = self.core.middle_up(PointerId::MOUSE);
         false
     }
 

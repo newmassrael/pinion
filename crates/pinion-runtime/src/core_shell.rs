@@ -1575,7 +1575,7 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
         x: f64,
         y: f64,
-    ) -> DispatchTail<V::State> {
+    ) -> (DispatchTail<V::State>, bool) {
         self.cursor_moved_for_window(DEFAULT_WINDOW, pid, x, y)
     }
 
@@ -1583,13 +1583,19 @@ impl<V: WidgetCore> CoreShell<V> {
     /// Looks up (or lazy-creates) the addressed window's router and
     /// forwards through [`InputRouter::cursor_moved`]; only that
     /// router's `hover_target` / `cursors` maps mutate.
+    ///
+    /// R881.1 — every tier of the pair returns the pan-dispatched
+    /// repaint flag alongside the tail, mirroring the [`Self::wheel`] /
+    /// [`Self::wheel_for_window`] precedent: the zero-modifier wrappers
+    /// must not drop the flag (a TUI-class caller with no modifier
+    /// cache still needs the repaint cue).
     pub fn cursor_moved_for_window(
         &mut self,
         window_id: &str,
         pid: PointerId,
         x: f64,
         y: f64,
-    ) -> DispatchTail<V::State> {
+    ) -> (DispatchTail<V::State>, bool) {
         self.cursor_moved_for_window_with_modifiers(
             window_id,
             pid,
@@ -1597,7 +1603,6 @@ impl<V: WidgetCore> CoreShell<V> {
             y,
             pinion_core::Modifiers::empty(),
         )
-        .0
     }
 
     /// R881 §5.35 §5.49 — [`cursor_moved_for_window`](Self::cursor_moved_for_window)
@@ -1620,6 +1625,19 @@ impl<V: WidgetCore> CoreShell<V> {
             .or_default();
         let pan_dispatched = router.cursor_moved_with_modifiers(pid, x, y, modifiers, scene);
         (self.tail(), pan_dispatched)
+    }
+
+    /// R881.1 §5.35 — single-window wrapper around
+    /// [`Self::middle_down_for_window`] (the plain + `_for_window`
+    /// pair every other `CoreShell` input method exposes).
+    pub fn middle_down(&mut self, pid: PointerId) {
+        self.middle_down_for_window(DEFAULT_WINDOW, pid);
+    }
+
+    /// R881.1 §5.35 — single-window wrapper around
+    /// [`Self::middle_up_for_window`].
+    pub fn middle_up(&mut self, pid: PointerId) -> MiddleRelease {
+        self.middle_up_for_window(DEFAULT_WINDOW, pid)
     }
 
     /// R881 §5.35 §5.49 — middle-button press for the addressed window
@@ -2030,7 +2048,7 @@ mod tests {
         let paint = <TestButton as WidgetCore>::view(*core.cached_state(), &Frame::new());
         core.update_paint_scene(paint);
 
-        let t = core.cursor_moved(PointerId::MOUSE, 8.0, 8.0);
+        let (t, _) = core.cursor_moved(PointerId::MOUSE, 8.0, 8.0);
         assert_eq!(
             t.state_change.expect("Idle → Hover").after,
             ButtonState::Hover,
@@ -2162,7 +2180,7 @@ mod tests {
         // coord lands on the rect → Hover transition fires.
         let mut core: CoreShell<TestButton> = CoreShell::new();
 
-        let t = core.cursor_moved(PointerId::MOUSE, 8.0, 8.0);
+        let (t, _) = core.cursor_moved(PointerId::MOUSE, 8.0, 8.0);
         assert!(
             t.state_change.is_none(),
             "no paint scene → no hover transition",
@@ -2172,7 +2190,7 @@ mod tests {
         let paint = <TestButton as WidgetCore>::view(*core.cached_state(), &Frame::new());
         core.update_paint_scene(paint);
 
-        let t = core.cursor_moved(PointerId::MOUSE, 8.0, 8.0);
+        let (t, _) = core.cursor_moved(PointerId::MOUSE, 8.0, 8.0);
         assert_eq!(
             t.state_change.expect("Idle → Hover after paint").after,
             ButtonState::Hover,
