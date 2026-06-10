@@ -1476,6 +1476,11 @@ impl WidgetCore for SettingsPanelView {
         }
     }
 
+    /// Route IME composition to the profile field while it owns focus —
+    /// through the lifted R764.1 SSOT (R878 audit replaced a hand-rolled
+    /// copy of the reformat block; the SSOT's unknown-future-variant
+    /// policy — defer to the shell fallback — replaces this binding's
+    /// divergent collapse-to-cancel).
     fn apply_composition(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -1484,31 +1489,7 @@ impl WidgetCore for SettingsPanelView {
         if focused != Some(PROFILE_TF_TAG) {
             return false;
         }
-        let Some(node) = scene.find_external_with_tag_mut(PROFILE_TF_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        let args = match event {
-            pinion_core::CompositionEvent::Start => {
-                IntrospectValue::Json(serde_json::json!({ "action": "start" }))
-            }
-            pinion_core::CompositionEvent::Update(text) => IntrospectValue::Json(
-                serde_json::json!({ "action": "update", "data": text }),
-            ),
-            pinion_core::CompositionEvent::Commit(text) => IntrospectValue::Json(
-                serde_json::json!({ "action": "end", "data": text }),
-            ),
-            pinion_core::CompositionEvent::Cancel => {
-                IntrospectValue::Json(serde_json::json!({ "action": "cancel" }))
-            }
-            // `CompositionEvent` is non_exhaustive — collapse unknown
-            // future variants into the same `cancel` semantics so an
-            // IME spec extension never leaves the field mid-edit.
-            _ => IntrospectValue::Json(serde_json::json!({ "action": "cancel" })),
-        };
-        intro.invoke("composition", args).is_ok()
+        tf_paint::forward_composition_to_field(scene, PROFILE_TF_TAG, event)
     }
 }
 

@@ -1751,16 +1751,11 @@ impl TodoEditExternal {
         self.editing_id.set(Some(target_id));
         // R664 §5.16 — seed text + park caret at the end (`TasteJS`
         // canonical: double-click reveals the row text with the caret
-        // ready to append / Backspace from the trailing edge). The
-        // R56.1 [`TextEditState::set_text`] clamps the caret to the
-        // *previous* position, which is `0` on the first edit and the
-        // commit's leftover offset on subsequent edits — neither is
-        // the right "open the file at the end" UX, so we explicitly
-        // [`TextEditState::set_caret`] after seeding to land the caret
-        // on the trailing edge.
-        let len = item.text.len();
-        self.editor.set_text(item.text.clone());
-        self.editor.set_caret(len);
+        // ready to append / Backspace from the trailing edge). R878
+        // lifted this exact set_text + caret-at-end pair (and its
+        // stale-previous-caret rationale) into
+        // [`TextEditState::seed`] — this binding minted it.
+        self.editor.seed(item.text.clone());
         // R664 §5.39 — substrate drains this on the next
         // `handle_tail` call (which is the dispatch that delivered
         // the DoubleClick → invoke this method). Focus moves to the

@@ -36327,6 +36327,80 @@
         "clamp_node_y bottom-edge asymmetry (WORLD - HEADER_H - 8 keeps header on-world, body may overhang): inherited pre-R877 shape, cosmetic"
       ]
     },
+    "R878": {
+      "decision_summary": "Node rename inline-editor lands as the authorable graph's last verb via the shared TextField modal-member shape; the typed edit keymap and the seed-caret-at-end pair are lifted to pinion-core at their 3rd/10th consumer; three hand-rolled composition forwards fold onto the R764.1 SSOT",
+      "changes_bullets": [
+        "node-editor: inline node rename — dblclick a card / F2 on selection / invoke begin_rename",
+        "ONE shared TextFieldExternal extra (node_rename, R790 todomvc EDIT_TF modal-member shape)",
+        "Enter commits, Escape cancels, click-away commits via R793 blur intent; F2 = invoke funnel",
+        "RenameNodeCmd: O(1) undoable title edit (MoveNodeCmd shape); apply_rename = one mutation SSOT",
+        "intervene node.<id>.title = undoable write-twin (was ReadOnly); query renaming = in-flight read",
+        "lift: pinion_core::edit_field_keymap — Enter/Escape + caret whitelist + CellKind keystroke gate",
+        "data-grid + property-grid retrofit onto the lifted keymap (byte-identical 2-copy cleared)",
+        "lift: TextEditState::seed — set_text + caret-at-end pair, 10 hand-rolled sites retrofitted",
+        "audit: 3 hand-rolled apply_composition bodies -> forward_composition_to_field SSOT (R764.1)",
+        "audit fix: property-grid search box was IME-deaf (composition now focus-routed, todomvc shape)",
+        "a11y: rename field lowers via text_field_a11y_node, gated on the same predicate as paint",
+        "doc: stale add_node gap bullet cleared (landed R849)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 150 groups / 6118 tests green (10 new R878 + keymap + seed tests)",
+        "clippy --workspace --all-targets -D pedantic (vello feature): clean",
+        "demo r878_node_rename.py PASS (40+ asserts: dblclick/Enter/Escape/blur/F2/RPC pair/intervene",
+        "twin/undo-redo/migration/zoomed-canvas/save-load round-trip)",
+        "regressions PASS: r838/r849/r851/r852/r853/r877 node-editor; r836/r837 grids; r867-r875",
+        "property-grid; settings_panel r667-r669; r717/r736/r789/r790/r791; todomvc r664/r666"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22",
+        "5.40",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "marquee multi-select: LMB background-drag stays reserved (R877 carry)",
+        "drag-to-pan (Space/MMB) + edge-drag auto-pan: framework axis (R877 carry)",
+        "end-edit teardown trio (clear-latch + wipe + focus restore) audited NOT lifted: state-clear",
+        "diverges per binding (pg popup teardown), generic-over-T wrapper = net-zero pass-through",
+        "per-cell a11y roles for grid inline editors (dg/pg) remain additive carry (R836/R837)"
+      ],
+      "publishable_decision_summary": "Node rename inline-editor lands as the authorable graph's last verb via the shared TextField modal-member shape; the typed edit keymap and the seed-caret-at-end pair are lifted to pinion-core at their 3rd/10th consumer; three hand-rolled composition forwards fold onto the R764.1 SSOT",
+      "publishable_changes_bullets": [
+        "node-editor: inline node rename — dblclick a card / F2 on selection / invoke begin_rename",
+        "ONE shared TextFieldExternal extra (node_rename, R790 todomvc EDIT_TF modal-member shape)",
+        "Enter commits, Escape cancels, click-away commits via R793 blur intent; F2 = invoke funnel",
+        "RenameNodeCmd: O(1) undoable title edit (MoveNodeCmd shape); apply_rename = one mutation SSOT",
+        "intervene node.<id>.title = undoable write-twin (was ReadOnly); query renaming = in-flight read",
+        "lift: pinion_core::edit_field_keymap — Enter/Escape + caret whitelist + CellKind keystroke gate",
+        "data-grid + property-grid retrofit onto the lifted keymap (byte-identical 2-copy cleared)",
+        "lift: TextEditState::seed — set_text + caret-at-end pair, 10 hand-rolled sites retrofitted",
+        "audit: 3 hand-rolled apply_composition bodies -> forward_composition_to_field SSOT (R764.1)",
+        "audit fix: property-grid search box was IME-deaf (composition now focus-routed, todomvc shape)",
+        "a11y: rename field lowers via text_field_a11y_node, gated on the same predicate as paint",
+        "doc: stale add_node gap bullet cleared (landed R849)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 150 groups / 6118 tests green (10 new R878 + keymap + seed tests)",
+        "clippy --workspace --all-targets -D pedantic (vello feature): clean",
+        "demo r878_node_rename.py PASS (40+ asserts: dblclick/Enter/Escape/blur/F2/RPC pair/intervene",
+        "twin/undo-redo/migration/zoomed-canvas/save-load round-trip)",
+        "regressions PASS: r838/r849/r851/r852/r853/r877 node-editor; r836/r837 grids; r867-r875",
+        "property-grid; settings_panel r667-r669; r717/r736/r789/r790/r791; todomvc r664/r666"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22",
+        "5.40",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "marquee multi-select: LMB background-drag stays reserved (R877 carry)",
+        "drag-to-pan (Space/MMB) + edge-drag auto-pan: framework axis (R877 carry)",
+        "end-edit teardown trio (clear-latch + wipe + focus restore) audited NOT lifted: state-clear",
+        "diverges per binding (pg popup teardown), generic-over-T wrapper = net-zero pass-through",
+        "per-cell a11y roles for grid inline editors (dg/pg) remain additive carry (R836/R837)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

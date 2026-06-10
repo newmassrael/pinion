@@ -37,6 +37,7 @@
 //! tracking so empty `Preedit` triggers `Cancel` and `Disabled`
 //! cancels an in-flight session.
 
+use crate::cell_value::CellKind;
 use crate::external::IntrospectValue;
 use crate::scene::Scene;
 
@@ -383,6 +384,63 @@ pub fn forward_key_to_field(
     matches!(intro.invoke("key", args), Ok(IntrospectValue::Bool(true)))
 }
 
+/// R878 §5.38 §5.22 — the shared **typed inline-editor keymap** over a
+/// `TextField`-class External: the key dispatch a binding runs while its
+/// one shared inline editor owns focus. Pre-R878 this match was hand-rolled
+/// byte-identically in `hello-data-grid` (R837) and `hello-property-grid`
+/// (R836/R875); the node-rename editor (R878) is the third consumer, so the
+/// decision the block encodes is lifted here once:
+///
+/// * `Enter` runs the binding's `commit` policy, `Escape` its `cancel`
+///   policy (both are per-binding closures — *what* a commit writes and
+///   where focus returns stay binding decisions; W3C `aria-grid` /
+///   `QStyledItemDelegate` edit-mode convention).
+/// * The caret / deletion keys (`ArrowLeft` / `ArrowRight` / `Home` /
+///   `End` / `Backspace` / `Delete`) always reach the field via
+///   [`forward_key_to_field`] — editing motion never depends on the cell
+///   type.
+/// * Any other key passes the [`CellKind::accepts_keystroke`] gate first,
+///   so an int / float editor rejects letters at the keystroke edge (the
+///   R836 typed-editor contract) while a text editor accepts every
+///   printable. Rejected keys return `false` (defer to the shell fallback
+///   chain) — with the editor focused no sibling keymap consumes them, so
+///   a stray `ArrowUp` is inert rather than smuggled into the field.
+///
+/// The forward-all editors (todomvc `EDIT_TF_TAG`, `hello-file-manager`
+/// `RENAME_TF_TAG`) intentionally do NOT route here: their policy forwards
+/// *every* non-Enter/Escape key to the field (no whitelist, no kind gate),
+/// which is a different decision, not a missed consumer of this one.
+pub fn edit_field_keymap(
+    scene: &mut Scene,
+    tag: &str,
+    key: &str,
+    modifiers: Modifiers,
+    kind: CellKind,
+    commit: impl FnOnce(),
+    cancel: impl FnOnce(),
+) -> bool {
+    match key {
+        "Enter" => {
+            commit();
+            true
+        }
+        "Escape" => {
+            cancel();
+            true
+        }
+        "ArrowLeft" | "ArrowRight" | "Home" | "End" | "Backspace" | "Delete" => {
+            forward_key_to_field(scene, tag, key, modifiers)
+        }
+        other => {
+            if kind.accepts_keystroke(other) {
+                forward_key_to_field(scene, tag, other, modifiers)
+            } else {
+                false
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.f.0 §5.13 — `Modifiers` regression battery. Covers the
@@ -616,5 +674,118 @@ mod r56_2_a_composition_event_tests {
         assert_eq!(PointerWireEvent::from_wire_name("KeyboardActivate"), None);
         assert_eq!(PointerWireEvent::from_wire_name("DoubleClick"), None);
         assert_eq!(PointerWireEvent::from_wire_name(""), None);
+    }
+}
+
+#[cfg(test)]
+mod edit_field_keymap_tests {
+    //! R878 §5.38 — the lifted typed inline-editor keymap. The decision
+    //! surface (Enter / Escape interception, caret-key whitelist, the
+    //! `CellKind` keystroke gate) is covered here; the forwarding
+    //! plumbing itself is [`super::forward_key_to_field`], exercised
+    //! end-to-end by the data-grid / property-grid binding tests.
+
+    use std::cell::Cell;
+
+    use super::{edit_field_keymap, Modifiers};
+    use crate::cell_value::CellKind;
+    use crate::scene::{ContainerNode, Scene};
+
+    fn empty_scene() -> Scene {
+        Scene::Container(ContainerNode::new(Vec::new()))
+    }
+
+    #[test]
+    fn enter_runs_commit_only_and_consumes() {
+        let mut scene = empty_scene();
+        let committed = Cell::new(false);
+        let cancelled = Cell::new(false);
+        let handled = edit_field_keymap(
+            &mut scene,
+            "tf",
+            "Enter",
+            Modifiers::empty(),
+            CellKind::Text,
+            || committed.set(true),
+            || cancelled.set(true),
+        );
+        assert!(handled, "Enter is consumed by the keymap");
+        assert!(committed.get(), "Enter runs the commit policy");
+        assert!(!cancelled.get(), "Enter never cancels");
+    }
+
+    #[test]
+    fn escape_runs_cancel_only_and_consumes() {
+        let mut scene = empty_scene();
+        let committed = Cell::new(false);
+        let cancelled = Cell::new(false);
+        let handled = edit_field_keymap(
+            &mut scene,
+            "tf",
+            "Escape",
+            Modifiers::empty(),
+            CellKind::Int,
+            || committed.set(true),
+            || cancelled.set(true),
+        );
+        assert!(handled, "Escape is consumed by the keymap");
+        assert!(cancelled.get(), "Escape runs the cancel policy");
+        assert!(!committed.get(), "Escape never commits");
+    }
+
+    #[test]
+    fn gate_rejects_keystrokes_outside_the_kind() {
+        // An int editor rejects a letter at the keystroke edge — no
+        // closure fires and the key defers to the shell fallback chain.
+        let mut scene = empty_scene();
+        let touched = Cell::new(false);
+        let handled = edit_field_keymap(
+            &mut scene,
+            "tf",
+            "a",
+            Modifiers::empty(),
+            CellKind::Int,
+            || touched.set(true),
+            || touched.set(true),
+        );
+        assert!(!handled, "an int editor rejects a letter");
+        assert!(!touched.get(), "a rejected keystroke runs no policy");
+    }
+
+    #[test]
+    fn named_keys_outside_the_whitelist_defer() {
+        // `ArrowUp` is neither commit/cancel, whitelist, nor a single
+        // printable — it bubbles (inert while the editor owns focus).
+        let mut scene = empty_scene();
+        let handled = edit_field_keymap(
+            &mut scene,
+            "tf",
+            "ArrowUp",
+            Modifiers::empty(),
+            CellKind::Text,
+            || {},
+            || {},
+        );
+        assert!(!handled, "non-whitelist named keys defer to the fallback chain");
+    }
+
+    #[test]
+    fn whitelist_keys_forward_even_when_the_field_is_missing() {
+        // Caret / deletion keys route into `forward_key_to_field`; with
+        // no External under the tag the forward reports `false` (the
+        // shell fallback), never a panic.
+        let mut scene = empty_scene();
+        for key in ["ArrowLeft", "ArrowRight", "Home", "End", "Backspace", "Delete"] {
+            let handled = edit_field_keymap(
+                &mut scene,
+                "tf",
+                key,
+                Modifiers::empty(),
+                CellKind::Float,
+                || {},
+                || {},
+            );
+            assert!(!handled, "{key} forwards; a missing field reports unhandled");
+        }
     }
 }

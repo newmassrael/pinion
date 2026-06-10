@@ -185,8 +185,7 @@ fn enter_rename() {
     };
     let edit = rename_state();
     batch(|| {
-        edit.set_text(name.clone());
-        edit.set_caret(name.len());
+        edit.seed(name.clone());
         use_renaming().set(true);
     });
     pinion_core::focus_request::request(RENAME_TF_TAG);

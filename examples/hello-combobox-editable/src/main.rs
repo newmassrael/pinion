@@ -184,8 +184,7 @@ fn filter_indices(text: &str) -> Vec<usize> {
 fn commit_selection(idx: usize) {
     let label = LABELS[idx.min(N - 1)];
     let ts = use_text_edit_state(INPUT_TAG);
-    ts.set_text(label.to_string());
-    ts.set_caret(label.len());
+    ts.seed(label.to_string());
     close_combo();
 }
 

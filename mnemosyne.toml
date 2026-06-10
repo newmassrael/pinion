@@ -8,7 +8,15 @@
 
 [schema]
 changelog_titles = ["Changelog"]
-entry_id_prefix = "Round "
+# pinion R878 — Mnemosyne R424 started enforcing this prefix on append,
+# rejecting the live `R<NNN>` entry-id convention (R51.x .. R878) against
+# the "Round " value the R1 scaffold wrote. No single prefix fits pinion's
+# mixed vocabulary: "Round " rejects every modern append, and "R" turns the
+# validate-code-refs round-citation matcher loose on every `R<NNN>` source
+# comment (1797 false Missing rejects, measured). Empty = the documented
+# disable switch for the append gate; the citation matcher and the
+# atomic-store validators are unaffected (re-measured at zero).
+entry_id_prefix = ""
 
 [style]
 locale = "en"

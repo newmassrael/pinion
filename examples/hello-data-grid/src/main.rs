@@ -246,11 +246,9 @@ impl DataGridExternal {
         let Some(value) = model.get(idx(row, col)) else {
             return false;
         };
-        let text = value.edit_text();
-        let len = text.len();
         self.editing_cell.set(Some((row, col)));
-        self.editor.set_text(text);
-        self.editor.set_caret(len);
+        // R878 — `seed` = set_text + caret-at-end (the lifted pair).
+        self.editor.seed(value.edit_text());
         pinion_core::focus_request::request(EDIT_TF_TAG);
         true
     }
@@ -538,28 +536,22 @@ fn activate_focused(scene: &mut Scene, col: usize, allow_edit: bool) -> bool {
     }
 }
 
-/// Edit-mode keymap over the shared inline field.
+/// Edit-mode keymap over the shared inline field — the lifted
+/// [`pinion_core::edit_field_keymap`] SSOT (R878; this binding carried one
+/// of the two pre-lift copies). Commit / cancel stay binding policy; a
+/// defensive "no cell is editing" resolves to [`CellKind::Bool`] (accepts
+/// no keystroke), so only commit / cancel / caret keys remain meaningful.
 fn apply_key_edit(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
-    match key {
-        "Enter" => {
-            commit_edit(true);
-            true
-        }
-        "Escape" => {
-            cancel_edit();
-            true
-        }
-        "ArrowLeft" | "ArrowRight" | "Home" | "End" | "Backspace" | "Delete" => {
-            pinion_core::forward_key_to_field(scene, EDIT_TF_TAG, key, modifiers)
-        }
-        other => {
-            if editing_col_kind().is_some_and(|kind| kind.accepts_keystroke(other)) {
-                pinion_core::forward_key_to_field(scene, EDIT_TF_TAG, other, modifiers)
-            } else {
-                false
-            }
-        }
-    }
+    let kind = editing_col_kind().unwrap_or(CellKind::Bool);
+    pinion_core::edit_field_keymap(
+        scene,
+        EDIT_TF_TAG,
+        key,
+        modifiers,
+        kind,
+        || commit_edit(true),
+        cancel_edit,
+    )
 }
 
 // ─── paint ────────────────────────────────────────────────────────
@@ -807,6 +799,9 @@ impl WidgetCore for DataGridView {
         }
     }
 
+    /// Route IME composition to the inline editor while it owns focus —
+    /// through the lifted R764.1 SSOT (R878 audit replaced a hand-rolled
+    /// copy of the same reformat block).
     fn apply_composition(
         scene: &mut Scene,
         focused: Option<&str>,
@@ -815,25 +810,7 @@ impl WidgetCore for DataGridView {
         if focused != Some(EDIT_TF_TAG) {
             return false;
         }
-        let Some(node) = scene.find_external_with_tag_mut(EDIT_TF_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        let args = match event {
-            pinion_core::CompositionEvent::Start => {
-                IntrospectValue::Json(serde_json::json!({ "action": "start" }))
-            }
-            pinion_core::CompositionEvent::Update(text) => {
-                IntrospectValue::Json(serde_json::json!({ "action": "update", "data": text }))
-            }
-            pinion_core::CompositionEvent::Commit(text) => {
-                IntrospectValue::Json(serde_json::json!({ "action": "end", "data": text }))
-            }
-            _ => IntrospectValue::Json(serde_json::json!({ "action": "cancel" })),
-        };
-        intro.invoke("composition", args).is_ok()
+        tf_paint::forward_composition_to_field(scene, EDIT_TF_TAG, event)
     }
 }
 

@@ -192,8 +192,7 @@ fn commit_value(v: f32) {
     let c = clamp(v);
     let text = format_value(c);
     let ts = use_text_edit_state(INPUT_TAG);
-    ts.set_text(text.clone());
-    ts.set_caret(text.len());
+    ts.seed(text);
 }
 
 /// Whether `key` is a numeric keystroke allowed into the field: a digit,

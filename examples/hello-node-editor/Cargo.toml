@@ -25,6 +25,10 @@ serde = { workspace = true }
 # JSON (de)serialization of the persistable graph snapshot.
 serde_json = { workspace = true }
 pinion-platform-storage = { path = "../../crates/pinion-platform-storage", version = "0.0.1" }
+# R878 — the inline node-rename editor paints through the shared TextField
+# paint substrate (`view_field` / `read_text_field_state` /
+# `forward_composition_to_field`).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 
 [dev-dependencies]
 # composite-paint-root-tag regression helper.

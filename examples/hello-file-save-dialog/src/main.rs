@@ -256,10 +256,7 @@ fn use_filename_sync() -> Rc<FilenameSyncMarker> {
             // R791.1 — the leaf-name derivation is `DirectoryState`'s own
             // SSOT (`selected_name`), not a per-binding `basename`.
             if let Some(name) = dir.selected_name() {
-                batch(|| {
-                    edit.set_text(name.clone());
-                    edit.set_caret(name.len());
-                });
+                batch(|| edit.seed(name.clone()));
             }
         });
         FilenameSyncMarker { _effect: effect }
@@ -271,10 +268,7 @@ fn use_filename_sync() -> Rc<FilenameSyncMarker> {
 fn open_dialog() {
     directory().open_dir(ROOT_DIR);
     let edit = filename_state();
-    batch(|| {
-        edit.set_text(DEFAULT_NAME.to_owned());
-        edit.set_caret(DEFAULT_NAME.len());
-    });
+    batch(|| edit.seed(DEFAULT_NAME.to_owned()));
     modal().open(dialog_members());
 }
 

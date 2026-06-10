@@ -691,11 +691,9 @@ impl PropertyGridExternal {
         if !value.kind().is_text_editable() {
             return false;
         }
-        let text = value.edit_text();
-        let len = text.len();
         self.editing_row.set(Some(row));
-        self.editor.set_text(text);
-        self.editor.set_caret(len);
+        // R878 — `seed` = set_text + caret-at-end (the lifted pair).
+        self.editor.seed(value.edit_text());
         pinion_core::focus_request::request(EDIT_TF_TAG);
         true
     }
@@ -748,13 +746,10 @@ impl PropertyGridExternal {
             return false;
         };
         let cursor = COLOR_SWATCHES.iter().position(|(sw, _)| sw == c).unwrap_or(0);
-        let hex = c.to_hex();
-        let len = hex.len();
         self.editing_row.set(Some(row));
         self.popup_cursor.set(Some(cursor));
         self.popup_hover.set(None);
-        self.editor.set_text(hex);
-        self.editor.set_caret(len);
+        self.editor.seed(c.to_hex());
         true
     }
 
@@ -1282,31 +1277,23 @@ fn activate_source(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
     }
 }
 
-/// Edit-mode keymap over the shared inline field. Enter commits, Escape
-/// cancels, caret / deletion keys always reach the field, and printable keys
-/// pass the int / float keystroke gate (text rows accept everything).
+/// Edit-mode keymap over the shared inline field — the lifted
+/// [`pinion_core::edit_field_keymap`] SSOT (R878; this binding carried one
+/// of the two pre-lift copies): Enter commits, Escape cancels, caret /
+/// deletion keys always reach the field, printable keys pass the int /
+/// float keystroke gate (text rows accept everything). A defensive "no row
+/// is editing" resolves to [`CellKind::Bool`] (accepts no keystroke).
 fn apply_key_edit(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
-    match key {
-        "Enter" => {
-            commit_edit(true);
-            true
-        }
-        "Escape" => {
-            cancel_edit();
-            true
-        }
-        "ArrowLeft" | "ArrowRight" | "Home" | "End" | "Backspace" | "Delete" => {
-            pinion_core::forward_key_to_field(scene, EDIT_TF_TAG, key, modifiers)
-        }
-        other => {
-            let allowed = editing_kind().is_some_and(|kind| kind.accepts_keystroke(other));
-            if allowed {
-                pinion_core::forward_key_to_field(scene, EDIT_TF_TAG, other, modifiers)
-            } else {
-                false
-            }
-        }
-    }
+    let kind = editing_kind().unwrap_or(CellKind::Bool);
+    pinion_core::edit_field_keymap(
+        scene,
+        EDIT_TF_TAG,
+        key,
+        modifiers,
+        kind,
+        || commit_edit(true),
+        cancel_edit,
+    )
 }
 
 /// R872 — the search-box keymap (the live property filter). Every printable /
@@ -2006,33 +1993,22 @@ impl WidgetCore for PropertyGridView {
         }
     }
 
+    /// Route IME composition to whichever text field owns focus — the inline
+    /// cell editor or the R872 search box — through the lifted R764.1 SSOT
+    /// (the todomvc two-field shape). R878 audit: the pre-R878 hand-rolled
+    /// copy of the reformat block also only knew `EDIT_TF_TAG`, leaving the
+    /// search box IME-deaf; the focus-routed forward closes both.
     fn apply_composition(
         scene: &mut Scene,
         focused: Option<&str>,
         event: &pinion_core::CompositionEvent,
     ) -> bool {
-        if focused != Some(EDIT_TF_TAG) {
-            return false;
-        }
-        let Some(node) = scene.find_external_with_tag_mut(EDIT_TF_TAG) else {
-            return false;
+        let target = match focused {
+            Some(EDIT_TF_TAG) => EDIT_TF_TAG,
+            Some(SEARCH_TF_TAG) => SEARCH_TF_TAG,
+            _ => return false,
         };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        let args = match event {
-            pinion_core::CompositionEvent::Start => {
-                IntrospectValue::Json(serde_json::json!({ "action": "start" }))
-            }
-            pinion_core::CompositionEvent::Update(text) => {
-                IntrospectValue::Json(serde_json::json!({ "action": "update", "data": text }))
-            }
-            pinion_core::CompositionEvent::Commit(text) => {
-                IntrospectValue::Json(serde_json::json!({ "action": "end", "data": text }))
-            }
-            _ => IntrospectValue::Json(serde_json::json!({ "action": "cancel" })),
-        };
-        intro.invoke("composition", args).is_ok()
+        tf_paint::forward_composition_to_field(scene, target, event)
     }
 }
 

@@ -920,6 +920,20 @@ impl TextEditState {
         });
     }
 
+    /// R878 §5.22 — replace the buffer and park the caret at the **end**:
+    /// the programmatic "seed an inline editor" sequence (open-at-the-end,
+    /// ready to append / Backspace from the trailing edge — the todomvc
+    /// R664 begin-edit UX). [`set_text`](Self::set_text) alone clamps the
+    /// caret to its *previous* offset (`0` on a first edit, a stale
+    /// mid-string offset on later ones), so every seeding binding needed
+    /// this exact `set_text` + `set_caret(len)` pair — hand-rolled in 9+
+    /// sites before R878 lifted the decision here.
+    pub fn seed(&self, text: String) {
+        let len = text.len();
+        self.set_text(text);
+        self.set_caret(len);
+    }
+
     fn set_text_inner(&self, new_text: String) {
         self.goal_column.set(None);
         let new_len = new_text.len();
@@ -1806,6 +1820,22 @@ mod tests {
         assert_eq!(s.text(), "");
         assert_eq!(s.caret(), 0);
         assert_eq!(s.tag(), None);
+    }
+
+    #[test]
+    fn r878_seed_replaces_text_and_parks_caret_at_the_end() {
+        let s = TextEditState::new();
+        s.seed("Multiply".to_owned());
+        assert_eq!(s.text(), "Multiply");
+        assert_eq!(s.caret(), 8, "caret parks at the trailing edge");
+        // A re-seed after a mid-string caret still lands at the end —
+        // the stale-previous-caret trap `set_text` alone has.
+        s.set_caret(2);
+        s.seed("Color".to_owned());
+        assert_eq!(s.caret(), 5, "re-seed re-parks at the new end");
+        // Multi-byte: the end is a byte offset on a char boundary.
+        s.seed("caf\u{e9}".to_owned());
+        assert_eq!(s.caret(), 5, "UTF-8 end offset is byte-exact");
     }
 
     #[test]
