@@ -117,7 +117,7 @@ const DOUBLE_CLICK_DIST_PX: f64 = 5.0;
 /// constant itself to `pinion-core::input` (the contract crate): a
 /// capture-path External judging its own click-vs-drag (the node graph)
 /// measures against the same value ([[helper-crate-home-ssot-axis]]).
-use pinion_core::DRAG_CLICK_THRESHOLD_PX;
+use pinion_core::DragLatch;
 
 /// R51.38 §5.35 — pointer identity used by every [`InputRouter`]
 /// input method to route per-pointer cursor / hover / capture state.
@@ -330,9 +330,11 @@ pub struct InputRouter {
     /// R876 §5.49 §5.51 — per-pointer press-to-drag tracker: the single
     /// router answer to "has this held press strayed far enough to be a
     /// *drag* rather than a *click*?" Opened on [`pointer_down`](Self::pointer_down)
-    /// (origin = the press cursor), latched to `became_drag` the first time
-    /// [`cursor_moved`](Self::cursor_moved) sees the cursor leave that origin
-    /// by more than [`DRAG_CLICK_THRESHOLD_PX`] (Euclidean), cleared on
+    /// (origin = the press cursor), advanced by
+    /// [`cursor_moved`](Self::cursor_moved) (the R880 [`DragLatch`]
+    /// contract predicate — Euclidean over
+    /// [`DRAG_CLICK_THRESHOLD_PX`](pinion_core::DRAG_CLICK_THRESHOLD_PX)),
+    /// cleared on
     /// [`pointer_up`](Self::pointer_up). It unifies the two click-vs-drag
     /// consumers behind one metric + one threshold: the R794 trailing-click
     /// suppression (a moved drag must not also activate its source) and the
@@ -340,7 +342,7 @@ pub struct InputRouter {
     /// seed a `DoubleClick`). Covers every press flavour — capture
     /// (slider / scrub), `begin_drag` `DnD`, and plain free-mode — so no
     /// gesture path re-derives the determination ([[drag-release-trailing-pointerup-suppress]]).
-    press_gestures: HashMap<PointerId, PressGesture>,
+    press_gestures: HashMap<PointerId, DragLatch>,
 }
 
 /// R742 §5.51 — in-flight drag state owned by the [`InputRouter`].
@@ -357,25 +359,6 @@ struct DragSession {
     /// cross-widget target can match on it without the router re-deriving
     /// it.
     payload: DragPayload,
-}
-
-/// R876 §5.49 §5.51 — per-pointer press-to-drag state owned by the
-/// [`InputRouter`]'s `press_gestures` map. Opened on every
-/// [`pointer_down`](InputRouter::pointer_down) over a tagged target and
-/// closed on the matching [`pointer_up`](InputRouter::pointer_up); the
-/// click-vs-drag determination both the trailing-click suppression (R794)
-/// and the double-click detector (R875) read.
-#[derive(Clone, Copy, Debug)]
-struct PressGesture {
-    /// Absolute cursor (logical px) at the press that opened this gesture —
-    /// the anchor the [`DRAG_CLICK_THRESHOLD_PX`] drag-vs-click test measures
-    /// against.
-    origin: (f64, f64),
-    /// Latched `true` the first time the cursor strays past
-    /// [`DRAG_CLICK_THRESHOLD_PX`] from [`origin`](Self::origin). Once set it
-    /// never resets — a drag that wanders back to the press point is still a
-    /// drag, not a click (the Qt `startDragDistance` latch).
-    became_drag: bool,
 }
 
 impl InputRouter {
@@ -535,20 +518,15 @@ impl InputRouter {
     }
 
     /// R876 §5.49 §5.51 — advance the press-to-drag tracker for `id` against
-    /// its current cursor, latching `became_drag` the first time the press
-    /// strays past [`DRAG_CLICK_THRESHOLD_PX`] (Euclidean) from its origin.
-    /// No-op when no press is in flight for `id`. The single producer of the
-    /// click-vs-drag determination [`pointer_up`](Self::pointer_up) and the
-    /// double-click detector both consume — see [`press_became_drag`](Self::press_became_drag).
+    /// its current cursor (the R880 [`DragLatch`] contract predicate over
+    /// [`DRAG_CLICK_THRESHOLD_PX`](pinion_core::DRAG_CLICK_THRESHOLD_PX)).
+    /// No-op when no press is in flight for
+    /// `id`. The single producer of the click-vs-drag determination
+    /// [`pointer_up`](Self::pointer_up) and the double-click detector both
+    /// consume — see [`press_became_drag`](Self::press_became_drag).
     fn track_press_drag(&mut self, id: PointerId, x: f64, y: f64) {
         if let Some(gesture) = self.press_gestures.get_mut(&id) {
-            if !gesture.became_drag {
-                let dx = x - gesture.origin.0;
-                let dy = y - gesture.origin.1;
-                if dx.hypot(dy) > DRAG_CLICK_THRESHOLD_PX {
-                    gesture.became_drag = true;
-                }
-            }
+            gesture.advance((x, y));
         }
     }
 
@@ -558,7 +536,7 @@ impl InputRouter {
     /// query: a moved drag must neither activate its source on release (R794)
     /// nor seed a `DoubleClick` (R875).
     fn press_became_drag(&self, id: PointerId) -> bool {
-        self.press_gestures.get(&id).is_some_and(|g| g.became_drag)
+        self.press_gestures.get(&id).is_some_and(DragLatch::live)
     }
 
     /// winit `CursorMoved` handler. Stores the new cursor position
@@ -675,8 +653,7 @@ impl InputRouter {
             // pointer feeds both the trailing-click suppression and the
             // double-click detector.
             if let Some(&origin) = self.cursors.get(&id) {
-                self.press_gestures
-                    .insert(id, PressGesture { origin, became_drag: false });
+                self.press_gestures.insert(id, DragLatch::new(origin));
             }
             // R51.40 §5.35 — read the cached wants_capture bit
             // populated by the matching `refresh_hover` instead of
@@ -1287,9 +1264,17 @@ fn dispatch_send(state_scene: &mut Scene, target_tag: &str, event_name: &str) {
 /// (`"<idx>:<EventName>:<token>"`, e.g. `"4:PointerUp:sc"`) via
 /// [`Modifiers::as_wire_token`](pinion_core::input::Modifiers::as_wire_token);
 /// an empty modifier state emits the exact two-segment back-compat wire so
-/// every pre-R781 composite consumer is unaffected. A non-composite target
-/// (no sub-index) has no `<key>` to anchor modifiers to, so the token is
-/// omitted there.
+/// every pre-R781 composite consumer is unaffected.
+///
+/// R880 §5.35 §5.49 — a non-composite (background) target has no `<key>` to
+/// anchor modifiers to, and its bare payload doubles as the SCXML event name
+/// for the statechart-driven catalogue, so the modifier segment is gated on
+/// the target's
+/// [`External::wants_bare_send_modifiers`](pinion_core::external::External::wants_bare_send_modifiers)
+/// opt-in: when granted (and modifiers are held) the payload is the
+/// empty-key three-segment wire `":<EventName>:<token>"` — the same
+/// `split_send_payload` grammar, `""` as the key. Every non-opted target
+/// keeps the exact bare event name, held modifiers or not.
 fn dispatch_send_mods(
     state_scene: &mut Scene,
     target_tag: &str,
@@ -1300,6 +1285,7 @@ fn dispatch_send_mods(
     let Some(external) = find_external_by_tag(state_scene, primary) else {
         return;
     };
+    let bare_mods = !modifiers.is_empty() && external.handle.wants_bare_send_modifiers();
     let Some(intro) = external.handle.introspect_mut() else {
         return;
     };
@@ -1308,6 +1294,7 @@ fn dispatch_send_mods(
             format!("{idx}:{event_name}:{}", modifiers.as_wire_token())
         }
         Some(idx) => format!("{idx}:{event_name}"),
+        None if bare_mods => format!(":{event_name}:{}", modifiers.as_wire_token()),
         None => event_name.to_string(),
     };
     let _ = intro.invoke("send", IntrospectValue::Text(payload));
@@ -1912,6 +1899,10 @@ mod tests {
         // R738 — when true, `capture_normalize` returns
         // `CaptureNormalize::Primary` (range-slider-style whole-widget normalization).
         normalize_primary: bool,
+        // R880 — when true, opts in to the bare-target modifier wire
+        // (`wants_bare_send_modifiers`), so a background release with held
+        // modifiers reaches `send` as `":<EventName>:<token>"`.
+        bare_send_modifiers: bool,
     }
 
     impl DragCaptureExternal {
@@ -1927,10 +1918,18 @@ mod tests {
                     events: Arc::clone(&events),
                     moves: Arc::clone(&moves),
                     normalize_primary,
+                    bare_send_modifiers: false,
                 },
                 events,
                 moves,
             )
+        }
+
+        /// R880 — fixture variant opted in to the bare-target modifier wire.
+        fn with_bare_send_modifiers() -> (Self, EventLog, MoveLog) {
+            let (mut fixture, events, moves) = Self::new();
+            fixture.bare_send_modifiers = true;
+            (fixture, events, moves)
         }
     }
 
@@ -1962,6 +1961,9 @@ mod tests {
         }
         fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
             self.moves.lock().expect("mutex poisoned").push((x_rel, y_rel));
+        }
+        fn wants_bare_send_modifiers(&self) -> bool {
+            self.bare_send_modifiers
         }
         fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
             Some(self)
@@ -2069,6 +2071,49 @@ mod tests {
             ],
         );
         assert_eq!(router.captured_target(PointerId::MOUSE), None);
+    }
+
+    #[test]
+    fn r880_bare_send_modifiers_is_opt_in() {
+        // R880 §5.35 §5.49 — a NON-composite (background) release with held
+        // modifiers reaches the target as the empty-key three-segment wire
+        // `":PointerUp:c"` — but ONLY for an External that opts in via
+        // `wants_bare_send_modifiers` (the bare payload doubles as the SCXML
+        // event name everywhere else, so the default wire must stay exact).
+        let ctrl = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+
+        // Opted-in target: the modifier segment rides the bare wire.
+        let mut router = InputRouter::new();
+        let (capture, events, _moves) = DragCaptureExternal::with_bare_send_modifiers();
+        let mut state =
+            Scene::External(ExternalNode::new(Box::new(capture)).with_tag("main_slider"));
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up_with_modifiers(PointerId::MOUSE, &mut state, ctrl);
+        assert_eq!(
+            read(&events),
+            vec!["PointerEnter".to_string(), "PointerDown".into(), ":PointerUp:c".into()],
+        );
+        // A modifier-free release stays the colon-free back-compat wire
+        // even for an opted-in target.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(read(&events).last().map(String::as_str), Some("PointerUp"));
+
+        // Non-opted target: held modifiers leave the bare wire untouched
+        // (a Ctrl+click on a plain widget must stay an SCXML-matchable
+        // "PointerUp").
+        let mut router = InputRouter::new();
+        let (mut state, events, _moves) = state_with_slider();
+        let paint = paint_with_slider(200, 200, Rect::new(80, 80, 40, 40));
+        router.update_paint_scene(paint, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_up_with_modifiers(PointerId::MOUSE, &mut state, ctrl);
+        assert_eq!(read(&events).last().map(String::as_str), Some("PointerUp"));
     }
 
     #[test]

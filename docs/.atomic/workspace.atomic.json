@@ -36519,6 +36519,66 @@
         "keys the field recognizes; forced migration = behavior change without a defect)"
       ]
     },
+    "R880": {
+      "decision_summary": "Marquee multi-select gesture lands on the node editor: an LMB background-drag sweeps a rubber band whose rect-hit node set applies at release through the shared click-policy decode (plain replace / Ctrl toggle / Shift union). Framework axes: the bare (non-composite) send wire carries the R781 modifier token as an empty-key third segment gated on a new External::wants_bare_send_modifiers opt-in (zero blast radius - the bare payload doubles as the SCXML event name), and the click-vs-drag dead-zone predicate is lifted to pinion_core::DragLatch (router press tracker + node drag + marquee advance one latch). Plus Ctrl+A / invoke select_all.",
+      "changes_bullets": [
+        "pinion-core: External::wants_bare_send_modifiers opt-in (default false)",
+        "pinion-core: bare modifier wire \":<event>:<mods>\" via split_send_payload SSOT",
+        "pinion-core: DragLatch lifts the click-vs-drag predicate beside the constant",
+        "pinion-runtime: dispatch_send_mods gates the bare third segment on the opt-in",
+        "pinion-runtime: PressGesture replaced by the DragLatch contract predicate",
+        "hello-node-editor: LMB background-drag marquee (rect-hit select on release)",
+        "hello-node-editor: shared select_verb decode (click + marquee, one policy)",
+        "hello-node-editor: Ctrl toggles / Shift unions / plain replaces (area form)",
+        "hello-node-editor: Ctrl+A + invoke select_all; rubber-band paint #marquee tag",
+        "in-place background click keeps the R839 edge probe (DragLatch dead zone)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green (r880 units: core 2, runtime 1, example 5)",
+        "cargo clippy --workspace --all-targets (vello, -D pedantic): clean",
+        "tools/demos/r880_node_marquee_select.py PASS (30+ asserts, modifiers+drag RPC)",
+        "node-editor regressions PASS: r838/r849/r851/r852/r853/r877/r878/r879"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.49",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "drag-to-pan (Space/MMB) + edge-drag auto-pan deferred (documented R877 follow-up)",
+        "marquee substrate lift deferred: 1st rubber-band consumer is example-local",
+        "InputRouter SRP decomposition carry (R876) remains open"
+      ],
+      "publishable_decision_summary": "Marquee multi-select gesture lands on the node editor: an LMB background-drag sweeps a rubber band whose rect-hit node set applies at release through the shared click-policy decode (plain replace / Ctrl toggle / Shift union). Framework axes: the bare (non-composite) send wire carries the R781 modifier token as an empty-key third segment gated on a new External::wants_bare_send_modifiers opt-in (zero blast radius - the bare payload doubles as the SCXML event name), and the click-vs-drag dead-zone predicate is lifted to pinion_core::DragLatch (router press tracker + node drag + marquee advance one latch). Plus Ctrl+A / invoke select_all.",
+      "publishable_changes_bullets": [
+        "pinion-core: External::wants_bare_send_modifiers opt-in (default false)",
+        "pinion-core: bare modifier wire \":<event>:<mods>\" via split_send_payload SSOT",
+        "pinion-core: DragLatch lifts the click-vs-drag predicate beside the constant",
+        "pinion-runtime: dispatch_send_mods gates the bare third segment on the opt-in",
+        "pinion-runtime: PressGesture replaced by the DragLatch contract predicate",
+        "hello-node-editor: LMB background-drag marquee (rect-hit select on release)",
+        "hello-node-editor: shared select_verb decode (click + marquee, one policy)",
+        "hello-node-editor: Ctrl toggles / Shift unions / plain replaces (area form)",
+        "hello-node-editor: Ctrl+A + invoke select_all; rubber-band paint #marquee tag",
+        "in-place background click keeps the R839 edge probe (DragLatch dead zone)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 150 groups green (r880 units: core 2, runtime 1, example 5)",
+        "cargo clippy --workspace --all-targets (vello, -D pedantic): clean",
+        "tools/demos/r880_node_marquee_select.py PASS (30+ asserts, modifiers+drag RPC)",
+        "node-editor regressions PASS: r838/r849/r851/r852/r853/r877/r878/r879"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.49",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "drag-to-pan (Space/MMB) + edge-drag auto-pan deferred (documented R877 follow-up)",
+        "marquee substrate lift deferred: 1st rubber-band consumer is example-local",
+        "InputRouter SRP decomposition carry (R876) remains open"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -55,6 +55,50 @@ use crate::scene::Scene;
 /// the R877.1 `LINE_HEIGHT_PX` precedent).
 pub const DRAG_CLICK_THRESHOLD_PX: f64 = 4.0;
 
+/// R880 — the press-to-drag **latch** over [`DRAG_CLICK_THRESHOLD_PX`]: a
+/// press origin plus the sticky "became a drag" determination. The metric
+/// (Euclidean logical-px distance from the origin, strictly greater than
+/// the threshold) was re-derived at three sites — the runtime router's
+/// press tracker, the node-graph drag dead zone (R879.1) and its marquee
+/// twin — so the *predicate* joins the *constant* in the contract crate
+/// ([[helper-crate-home-ssot-axis]]); every consumer advances the same
+/// latch and can never disagree on what a click is.
+///
+/// Once latched the gesture stays a drag for its lifetime (W3C: a drag
+/// cancels the click/double-click cycle even if the cursor returns to the
+/// origin) — the latch is dropped with the press, never reset.
+#[derive(Clone, Copy, Debug)]
+pub struct DragLatch {
+    origin: (f64, f64),
+    live: bool,
+}
+
+impl DragLatch {
+    /// Open the latch at the press origin (logical px).
+    #[must_use]
+    pub const fn new(origin: (f64, f64)) -> Self {
+        Self { origin, live: false }
+    }
+
+    /// Advance with the current cursor (logical px, same space as the
+    /// origin); latches once the press strays past
+    /// [`DRAG_CLICK_THRESHOLD_PX`]. Returns the post-advance [`Self::live`].
+    pub fn advance(&mut self, cursor: (f64, f64)) -> bool {
+        if !self.live {
+            let dx = cursor.0 - self.origin.0;
+            let dy = cursor.1 - self.origin.1;
+            self.live = dx.hypot(dy) > DRAG_CLICK_THRESHOLD_PX;
+        }
+        self.live
+    }
+
+    /// Whether this press became a drag.
+    #[must_use]
+    pub const fn live(&self) -> bool {
+        self.live
+    }
+}
+
 /// R56.1.f.0 §5.13 — abstract modifier-key state, mirroring
 /// `winit::keyboard::ModifiersState` and W3C DOM Level 3
 /// `getModifierState` without the winit dependency. Four modifier
@@ -469,7 +513,22 @@ mod tests {
     //! identity, and the `is_empty` predicate used by `apply_key`
     //! plain-keystroke branches.
 
-    use super::{is_activation_event, Modifiers, PointerWireEvent, KEYBOARD_ACTIVATE_EVENT};
+    use super::{is_activation_event, DragLatch, Modifiers, PointerWireEvent, KEYBOARD_ACTIVATE_EVENT};
+
+    #[test]
+    fn r880_drag_latch_is_sticky_past_threshold() {
+        // The contract predicate over DRAG_CLICK_THRESHOLD_PX (4 logical
+        // px, Euclidean, strictly greater): a wobble inside the dead zone
+        // stays a click; once past, the gesture is a drag for its lifetime
+        // — even back at the origin (the Qt startDragDistance latch).
+        let mut latch = DragLatch::new((10.0, 10.0));
+        assert!(!latch.advance((12.0, 10.0)), "2px wobble: inside the dead zone");
+        assert!(!latch.advance((10.0, 14.0)), "exactly 4px: not yet a drag (strict)");
+        assert!(!latch.live());
+        assert!(latch.advance((15.0, 10.0)), "5px: past the threshold");
+        assert!(latch.advance((10.0, 10.0)), "returning to the origin stays a drag");
+        assert!(latch.live());
+    }
 
     #[test]
     fn r778_activation_edge_is_pointer_up_or_keyboard_activate() {

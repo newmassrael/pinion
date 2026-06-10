@@ -156,7 +156,7 @@ use pinion_core::style::{
     Stroke, StrokeCap, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
-use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore, DRAG_CLICK_THRESHOLD_PX};
+use pinion_core::{Color, Command, DragLatch, Frame, Modifiers, Scene, WidgetCore};
 use pinion_platform_storage::{use_app_storage, AppStorage};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::text_field as tf_paint;
@@ -245,6 +245,10 @@ const HEADER_H: i32 = 30;
 const PORT_PITCH: i32 = 28;
 const PORT_SIZE: i32 = 12;
 const BODY_PAD: i32 = 10;
+
+/// R880 — the marquee rubber band's fill alpha (a translucent wash of the
+/// accent; the border stays fully opaque).
+const MARQUEE_FILL_ALPHA: u8 = 40;
 
 // ─── R877 viewport (pan = ScrollState, zoom = shared Signal) ───────
 
@@ -635,6 +639,18 @@ fn wfont(px: u32, zoom: f64) -> u32 {
     upx(wpx(i32::try_from(px).unwrap_or(12), zoom).max(6))
 }
 
+/// R880 — normalise two graph-space corners into `(x0, y0, x1, y1)` with
+/// `x0 <= x1`, `y0 <= y1`: the marquee's fixed press anchor + live cursor,
+/// in either drag direction.
+fn corner_rect(a: (f64, f64), b: (f64, f64)) -> MarqueeRect {
+    (
+        round_i32(a.0.min(b.0)),
+        round_i32(a.1.min(b.1)),
+        round_i32(a.0.max(b.0)),
+        round_i32(a.1.max(b.1)),
+    )
+}
+
 // ─── reactive holders (Owner::cache, shared view ↔ coordinator) ────
 
 #[must_use]
@@ -659,6 +675,18 @@ fn use_selection() -> Rc<Signal<Selection>> {
 fn use_preview() -> Rc<Signal<Option<Preview>>> {
     let owner = Owner::current().expect("use_preview requires an active Owner scope");
     owner.cache("node_graph.preview", || Signal::new(None))
+}
+
+/// R880 — the live marquee rectangle in graph units, as normalised corners
+/// `(x0, y0, x1, y1)` (`None` while no marquee is in flight). Written by the
+/// coordinator's background-drag path once the press latches past the
+/// click-vs-drag dead zone; read by the view fn (which paints the rubber
+/// band — reading it subscribes the paint Effect, so every drag step
+/// repaints). Transient UI state, like [`use_preview`].
+#[must_use]
+fn use_marquee_rect() -> Rc<Signal<Option<MarqueeRect>>> {
+    let owner = Owner::current().expect("use_marquee_rect requires an active Owner scope");
+    owner.cache("node_graph.marquee", || Signal::new(None))
 }
 
 /// R878 — which node is being renamed inline (`None` when no rename is in
@@ -797,18 +825,59 @@ struct NodeDragStart {
     /// (selection-set order) so `end_gesture`'s journal entry matches
     /// [`MoveNodesCmd::merge`]'s same-member ordering.
     members: Vec<(NodeId, f64, f64, i32, i32)>,
-    /// The press cursor in screen px — the origin the dead-zone distance
-    /// is measured from.
-    press_screen: (f64, f64),
-    /// R879 audit fix — the press *became a drag*: the cursor strayed past
-    /// [`DRAG_CLICK_THRESHOLD_PX`] (the framework click-vs-drag contract
-    /// constant, the same metric the router's `became_drag` latch uses).
+    /// R879 audit fix / R880 — the dead zone: the framework [`DragLatch`]
+    /// (the SAME contract predicate the router and the marquee advance).
     /// Until it latches, members do NOT move (the Qt `startDragDistance`
     /// dead zone — a jittery click neither displaces nodes nor journals a
     /// move) and the release still selects (`gesture_moved` reads this
     /// SAME latch, so "the nodes moved" and "the release must not select"
     /// can never disagree).
-    live: bool,
+    latch: DragLatch,
+}
+
+/// R880 — a marquee rectangle in graph units as normalised corners
+/// `(x0, y0, x1, y1)` (`x0 <= x1`, `y0 <= y1`).
+type MarqueeRect = (i32, i32, i32, i32);
+
+/// R880 — snapshot taken on the capture seed of a *background* press (the
+/// marquee gesture's twin of [`NodeDragStart`]). The press anchor is held in
+/// both metric spaces: screen px for the [`DragLatch`] dead-zone test (the
+/// same framework contract predicate the router and the node drag advance)
+/// and graph units for the rubber-band rect (so a pan / zoom mid-marquee
+/// keeps the anchor pinned to the world, not the glass — the R877 anchor
+/// model).
+#[derive(Clone, Copy, Debug)]
+struct MarqueeStart {
+    /// The dead zone over the press cursor in screen px — the framework
+    /// [`DragLatch`] (the SAME contract predicate the router and the node
+    /// drag advance). The single predicate (R879.1 one-gate principle) for
+    /// both "paint the rubber band" and "the release applies the rect, not
+    /// the edge-click probe".
+    latch: DragLatch,
+    /// The press cursor in graph units — the rubber band's fixed corner.
+    press_graph: (f64, f64),
+}
+
+/// R880 — the selection verb a modifier state picks, decoded ONCE for both
+/// set-mutating gestures: the node click (R879) and the marquee release.
+/// `Ctrl` toggles membership, else `Shift` adds (union), else plain
+/// replaces. A precedence divergence between the two gestures would be a
+/// policy bug, so neither re-derives it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectVerb {
+    Replace,
+    Toggle,
+    Add,
+}
+
+fn select_verb(mods: Modifiers) -> SelectVerb {
+    if mods.control_key() {
+        SelectVerb::Toggle
+    } else if mods.shift_key() {
+        SelectVerb::Add
+    } else {
+        SelectVerb::Replace
+    }
 }
 
 /// What the most recent `PointerDown` landed on — read by `begin_drag` (an
@@ -1135,6 +1204,9 @@ struct GraphServices {
     /// ([`use_text_edit_state`]`(RENAME_TF_TAG)`) — `begin_rename` seeds it
     /// with the current title, a commit reads it back.
     rename_editor: Rc<TextEditState>,
+    /// R880 — the live marquee rect (shared with the view fn's rubber-band
+    /// paint; [`use_marquee_rect`]).
+    marquee_rect: Rc<Signal<Option<MarqueeRect>>>,
 }
 
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
@@ -1176,6 +1248,13 @@ struct NodeGraphExternal {
     /// Edge under the most recent background press (the capture-seed
     /// `pointer_move` records it; a background `PointerUp` consumes it).
     pending_edge_hit: Cell<Option<EdgeId>>,
+    /// R880 — the in-flight background gesture (the marquee's press anchor +
+    /// dead-zone latch; `None` while no background press is held).
+    marquee: RefCell<Option<MarqueeStart>>,
+    /// R880 — the shared marquee paint rect (the same Signal
+    /// [`use_marquee_rect`] hands the view fn). `Some` exactly while the
+    /// gesture's `live` latch is set.
+    marquee_rect: Rc<Signal<Option<MarqueeRect>>>,
 }
 
 impl NodeGraphExternal {
@@ -1201,10 +1280,12 @@ impl NodeGraphExternal {
             scroll: services.scroll,
             renaming: services.renaming,
             rename_editor: services.rename_editor,
+            marquee_rect: services.marquee_rect,
             grabbed_node: Cell::new(None),
             node_drag: RefCell::new(None),
             pending_press: Cell::new(PendingPress::None),
             pending_edge_hit: Cell::new(None),
+            marquee: RefCell::new(None),
         }
     }
 
@@ -1704,6 +1785,55 @@ impl NodeGraphExternal {
         self.selection.set(Selection::from_nodes(set));
     }
 
+    /// R880 — select every node (`Ctrl`+`A` / `invoke select_all` — the
+    /// editor-canvas convention). `false` on an empty graph (nothing to
+    /// select, selection unchanged).
+    fn select_all(&self) -> bool {
+        let all: BTreeSet<NodeId> = self.nodes.get().iter().map(|n| n.id).collect();
+        if all.is_empty() {
+            return false;
+        }
+        self.selection.set(Selection::from_nodes(all));
+        true
+    }
+
+    /// R880 — apply a completed marquee: every node whose card intersects
+    /// the graph-space rect joins the hit set (Qt rubber-band / Unreal
+    /// intersects semantics — touching counts). The release modifiers pick
+    /// the area form of the R879 click policy through the shared
+    /// [`select_verb`] decode: plain *replaces* the selection with the hit
+    /// set (an empty sweep clears — the background-click deselect
+    /// generalised to an area), `Ctrl` *toggles* each hit member, `Shift`
+    /// *unions* the hit set in.
+    fn apply_marquee(&self, rect: MarqueeRect, mods: Modifiers) {
+        let (x0, y0, x1, y1) = rect;
+        let hit: BTreeSet<NodeId> = self
+            .nodes
+            .get()
+            .iter()
+            .filter(|n| n.x <= x1 && n.x + NODE_W >= x0 && n.y <= y1 && n.y + n.height() >= y0)
+            .map(|n| n.id)
+            .collect();
+        let next = match select_verb(mods) {
+            SelectVerb::Toggle => {
+                let mut set = self.selection.get().nodes();
+                for id in hit {
+                    if !set.remove(&id) {
+                        set.insert(id);
+                    }
+                }
+                set
+            }
+            SelectVerb::Add => {
+                let mut set = self.selection.get().nodes();
+                set.extend(hit);
+                set
+            }
+            SelectVerb::Replace => hit,
+        };
+        self.selection.set(Selection::from_nodes(next));
+    }
+
     /// R879 — the `intervene selected_ids` arm: a CSV of node ids replaces
     /// the selection as a set ("" clears). Strict: every id must exist
     /// (OutOfRange otherwise — the selection is unchanged), mirroring the
@@ -1769,7 +1899,12 @@ impl NodeGraphExternal {
         // `"event"` (canvas background) yields `(None, event)`.
         // R879 — the R781 third wire segment (held modifiers) now matters:
         // `Ctrl`+release toggles membership, `Shift`+release adds.
+        // R880 — the empty-key wire `":event:mods"` is a *background* event
+        // with held modifiers (this coordinator opts in via
+        // `wants_bare_send_modifiers`, so a `Ctrl`/`Shift` marquee release
+        // carries its token).
         let (sub, event, mods) = match split_send_payload(payload) {
+            Some(("", event, mods)) => (None, event, mods),
             Some((key, event, mods)) => (Some(key), event, mods),
             None => (None, payload, Modifiers::empty()),
         };
@@ -1801,32 +1936,38 @@ impl NodeGraphExternal {
                 if let Some(kind) = parse_palette_sub(s) {
                     self.add_node(kind);
                 } else if let Some(n) = parse_node_sub(s) {
-                    // R879 — modifier-aware select (the R781 wire segment):
-                    // Ctrl toggles, Shift adds, plain replaces. The capture
-                    // path delivers this release even after a real move
-                    // (unlike the router's routed-click suppression, R876),
-                    // so a *moved* gesture skips the selection mutation —
-                    // a group drag must not collapse the set it dragged.
+                    // R879 — modifier-aware select (the R781 wire segment,
+                    // decoded through the shared `select_verb` policy). The
+                    // capture path delivers this release even after a real
+                    // move (unlike the router's routed-click suppression,
+                    // R876), so a *moved* gesture skips the selection
+                    // mutation — a group drag must not collapse the set it
+                    // dragged.
                     if !self.gesture_moved() {
-                        if mods.control_key() {
-                            self.toggle_node(n);
-                        } else if mods.shift_key() {
-                            self.add_node_to_selection(n);
-                        } else {
-                            self.select_node(Some(n));
+                        match select_verb(mods) {
+                            SelectVerb::Toggle => self.toggle_node(n),
+                            SelectVerb::Add => self.add_node_to_selection(n),
+                            SelectVerb::Replace => self.select_node(Some(n)),
                         }
                     }
                 }
                 self.end_gesture();
             }
             (None, "PointerUp") => {
-                // Background release: select the edge the capture-seed press
-                // probe landed on, else deselect everything. Only when no node
+                // Background release. A *live* marquee applies its rect-hit
+                // set (modifier-aware: plain replaces, `Ctrl` toggles,
+                // `Shift` unions — the click policy's area form); an
+                // in-place click selects the edge the capture-seed probe
+                // landed on, else deselects everything. Only when no node
                 // drag was armed.
                 if self.grabbed_node.get().is_none() {
-                    match self.pending_edge_hit.get() {
-                        Some(e) => self.select_edge(Some(e)),
-                        None => self.select_node(None),
+                    if let Some(rect) = self.live_marquee_rect() {
+                        self.apply_marquee(rect, mods);
+                    } else {
+                        match self.pending_edge_hit.get() {
+                            Some(e) => self.select_edge(Some(e)),
+                            None => self.select_node(None),
+                        }
                     }
                 }
                 self.end_gesture();
@@ -1834,6 +1975,10 @@ impl NodeGraphExternal {
             (None, "PointerDown") => {
                 self.pending_press.set(PendingPress::None);
                 self.pending_edge_hit.set(None);
+                // R880 — a fresh background press re-arms from its own
+                // capture seed (defensive: a leaked anchor from a lost
+                // release must not corrupt this gesture's dead zone).
+                *self.marquee.borrow_mut() = None;
             }
             // R878 — a double-click on a node card opens the inline rename
             // editor (the R664/R790 todomvc dblclick-to-edit idiom; the
@@ -1856,11 +2001,24 @@ impl NodeGraphExternal {
     /// nodes cannot have moved without it, and a release after it must not
     /// select). Distinguishes a click (select on release) from a drag
     /// (selection untouched) on the capture path, where the release always
-    /// reaches [`handle_send`]; measured against the framework
-    /// [`DRAG_CLICK_THRESHOLD_PX`] contract, so this binding and the
-    /// router can never disagree on what a click is.
+    /// reaches [`handle_send`]; measured by the framework [`DragLatch`]
+    /// contract predicate, so this binding and the router can never
+    /// disagree on what a click is.
     fn gesture_moved(&self) -> bool {
-        self.node_drag.borrow().as_ref().is_some_and(|start| start.live)
+        self.node_drag.borrow().as_ref().is_some_and(|start| start.latch.live())
+    }
+
+    /// R880 — the marquee rect to apply at a background release: `Some` only
+    /// once the gesture latched live (the SAME latch that publishes the
+    /// rubber-band paint — one predicate, so "a marquee is visible" and "the
+    /// release applies an area" can never disagree; the in-place click path
+    /// runs otherwise).
+    fn live_marquee_rect(&self) -> Option<MarqueeRect> {
+        if self.marquee.borrow().as_ref().is_some_and(|m| m.latch.live()) {
+            self.marquee_rect.get()
+        } else {
+            None
+        }
     }
 
     fn end_gesture(&self) {
@@ -1894,6 +2052,10 @@ impl NodeGraphExternal {
         *self.node_drag.borrow_mut() = None;
         self.pending_press.set(PendingPress::None);
         self.pending_edge_hit.set(None);
+        // R880 — drop the marquee anchor + rubber-band paint (equality-skip
+        // makes the idle-path clear a no-op repaint-wise).
+        *self.marquee.borrow_mut() = None;
+        self.marquee_rect.set(None);
     }
 }
 
@@ -1926,6 +2088,15 @@ impl External for NodeGraphExternal {
         true
     }
 
+    /// R880 — opt into the bare-target modifier wire: a background release
+    /// arrives as `":PointerUp:<token>"` when modifiers are held, so the
+    /// `Ctrl` / `Shift` marquee can union / toggle against the existing
+    /// selection (the same R781 token the composite node-click already
+    /// decodes).
+    fn wants_bare_send_modifiers(&self) -> bool {
+        true
+    }
+
     /// Normalise the captured cursor against the whole canvas (the primary
     /// `node_graph` rect = the window). The canvas does not move when a node
     /// does, so it is the stable pixel reference (R786 column-resize idiom).
@@ -1939,19 +2110,42 @@ impl External for NodeGraphExternal {
     /// viewport (R877 — robust to a pan / zoom landing mid-drag).
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         let (gx, gy) = self.cursor_graph(f64::from(x_rel), f64::from(y_rel));
-        let Some(node) = self.grabbed_node.get() else {
-            // Not dragging a node. A background press (the R51.35 capture seed
-            // forwards the press cursor here) probes for an edge under the
-            // click so a background `PointerUp` can select it. An input-port
-            // press is excluded via `PendingPress::InputPort`.
-            if self.pending_press.get() == PendingPress::None {
-                self.pending_edge_hit.set(self.hit_test_edge(gx, gy));
-            }
-            return;
-        };
         // The cursor in screen px (the dead-zone metric space — the same
         // logical-pixel space the router's click-vs-drag latch measures).
         let screen = (f64::from(x_rel) * f64::from(WIN_W), f64::from(y_rel) * f64::from(WIN_H));
+        let Some(node) = self.grabbed_node.get() else {
+            // Not dragging a node. A background press drives the marquee
+            // gesture; every other non-drag press (port / palette) is
+            // excluded via its `PendingPress` variant.
+            if self.pending_press.get() == PendingPress::None {
+                let mut marquee = self.marquee.borrow_mut();
+                match marquee.as_mut() {
+                    None => {
+                        // The R51.35 capture seed (the press cursor): anchor
+                        // the marquee and probe for an edge under the click
+                        // so an in-place background `PointerUp` can select it.
+                        *marquee = Some(MarqueeStart {
+                            latch: DragLatch::new(screen),
+                            press_graph: (gx, gy),
+                        });
+                        self.pending_edge_hit.set(self.hit_test_edge(gx, gy));
+                    }
+                    Some(start) => {
+                        // R880 — the dead zone: the SAME framework latch the
+                        // node drag and the router advance (a jittery
+                        // background click stays a click: edge-select /
+                        // deselect, no marquee).
+                        if !start.latch.advance(screen) {
+                            return;
+                        }
+                        // Live rubber band: publish the normalised
+                        // graph-space corners for the view fn's paint.
+                        self.marquee_rect.set(Some(corner_rect(start.press_graph, (gx, gy))));
+                    }
+                }
+            }
+            return;
+        };
         let snapshot_needed = self.node_drag.borrow().is_none();
         if snapshot_needed {
             // R879 — first capture move (the capture-seed forwards the press
@@ -1975,24 +2169,19 @@ impl External for NodeGraphExternal {
                 .collect();
             if !snapshot.is_empty() {
                 *self.node_drag.borrow_mut() =
-                    Some(NodeDragStart { members: snapshot, press_screen: screen, live: false });
+                    Some(NodeDragStart { members: snapshot, latch: DragLatch::new(screen) });
             }
             return;
         }
-        // R879 audit fix — the dead zone: nothing moves until the cursor
-        // strays past the framework click-vs-drag threshold from the press
-        // point (Qt `startDragDistance`; the router applies the same
-        // constant to routed clicks / DnD, this is the capture-path twin).
+        // R879 audit fix — the dead zone: nothing moves until the framework
+        // `DragLatch` (the SAME predicate the router applies to routed
+        // clicks / DnD) latches past the press point (Qt
+        // `startDragDistance`; this is the capture-path twin).
         {
             let mut start = self.node_drag.borrow_mut();
             if let Some(start) = start.as_mut() {
-                if !start.live {
-                    let dx = screen.0 - start.press_screen.0;
-                    let dy = screen.1 - start.press_screen.1;
-                    if dx.hypot(dy) <= DRAG_CLICK_THRESHOLD_PX {
-                        return;
-                    }
-                    start.live = true;
+                if !start.latch.advance(screen) {
+                    return;
                 }
             }
         }
@@ -2116,6 +2305,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("remove_edge", "int"),
             ("delete_node", "int"),
             ("delete_selected", "json"),
+            ("select_all", "json"),
             ("nudge", "string"),
             ("serialized", "string"),
             ("set_graph", "string"),
@@ -2350,6 +2540,9 @@ impl ExternalIntrospect for NodeGraphExternal {
                 _ => Err(InvokeError::TypeMismatch),
             },
             "delete_selected" => Ok(IntrospectValue::Bool(self.delete_selected())),
+            // R880 — select every node (the keyboard `Ctrl`+`A` twin).
+            // `false` on an empty graph.
+            "select_all" => Ok(IntrospectValue::Bool(self.select_all())),
             // R878 — open the inline rename editor: an `Int` targets that
             // node, `Null` targets the selection (the keyboard `F2` twin).
             // `false` on an unknown id / empty selection (graph unchanged).
@@ -2552,6 +2745,15 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     if let Some(verb) = save_load_verb(key, modifiers) {
         let _ = intro.invoke(verb, IntrospectValue::Null);
         return true;
+    }
+    // R880 — Ctrl+A selects every node (the editor-canvas convention).
+    // While a rename is in flight the focused field's keymap intercepts
+    // its own Ctrl+A (select-all *text*) before the graph path runs.
+    if modifiers.control_key() && key.eq_ignore_ascii_case("a") {
+        return matches!(
+            intro.invoke("select_all", IntrospectValue::Null),
+            Ok(IntrospectValue::Bool(true))
+        );
     }
     match key {
         "ArrowUp" => nudge_ok(intro, 0, -NUDGE_STEP),
@@ -2762,6 +2964,33 @@ fn view_node(
     )
 }
 
+/// R880 — the marquee rubber band: a translucent accent fill with a 1px
+/// accent border over the swept graph-space rect, projected through the
+/// zoom like every world coordinate. Pointer-transparent (it tracks the
+/// cursor, so it must never become the hit target under it — the R705
+/// decorative-overlay substrate) and tagged, so an AI client can observe
+/// the in-flight gesture through `scene/snapshot` (the `#preview` wire
+/// precedent).
+fn view_marquee(rect: MarqueeRect, theme: &Theme, zoom: f64) -> Scene {
+    let (x0, y0, x1, y1) = rect;
+    let accent = theme.resolve(ColorRole::Accent);
+    let fill = Color { a: MARQUEE_FILL_ALPHA, ..accent };
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag(format!("{GRAPH_TAG}#marquee"))
+            .with_style(BoxStyle::filled(fill).with_border(Border::new(accent, 1)))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(upx(wpx(x0, zoom)), upx(wpx(y0, zoom)))
+                    .with_size(Size::px(
+                        upx(wpx(x1 - x0, zoom).max(1)),
+                        upx(wpx(y1 - y0, zoom).max(1)),
+                    ))
+                    .with_pointer_transparent(true),
+            ),
+    )
+}
+
 /// R849 — the "add node" palette sidebar: a labelled column of clickable cards,
 /// one per [`PALETTE`] kind. Each card is a `node_graph#palette_<idx>` composite,
 /// so a click routes to the coordinator's `handle_send` (the same wire the
@@ -2869,6 +3098,13 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         ));
     }
 
+    // R880 — the live marquee rubber band layers over everything in the
+    // world (reading the Signal subscribes the paint Effect, so each drag
+    // step repaints the band).
+    if let Some(rect) = use_marquee_rect().get() {
+        world_children.push(view_marquee(rect, &theme, zoom));
+    }
+
     // R877 — the world surface: a fixed WORLD×WORLD extent (scaled by the
     // zoom) the nodes live on, panned by a `ScrollAxis::Both` scroll. The
     // declared size survives the measuring pass (the R877 layout rule for
@@ -2973,6 +3209,7 @@ impl WidgetCore for NodeEditorView {
                 scroll: use_canvas_scroll(),
                 renaming: use_renaming(),
                 rename_editor: use_text_edit_state(RENAME_TF_TAG),
+                marquee_rect: use_marquee_rect(),
             },
         ))
     }
@@ -3461,6 +3698,7 @@ mod tests {
                 scroll: use_canvas_scroll(),
                 renaming: use_renaming(),
                 rename_editor: use_text_edit_state(RENAME_TF_TAG),
+                marquee_rect: use_marquee_rect(),
             },
         )
     }
@@ -3731,6 +3969,134 @@ mod tests {
             }
             send(&mut scene, "PointerUp");
             assert_eq!(graph_intro(&scene).query("selected_edge"), Some(IntrospectValue::Null));
+        });
+    }
+
+    /// R880 — forward a background capture move at graph-space `(gx, gy)`
+    /// (zoom 1, pan 0: rel = graph / canvas).
+    #[allow(clippy::cast_possible_truncation)]
+    fn bg_move(scene: &mut Scene, gx: f64, gy: f64) {
+        let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+        node.handle
+            .pointer_move((gx / f64::from(WIN_W)) as f32, (gy / f64::from(WIN_H)) as f32);
+    }
+
+    fn selected_ids_of(scene: &Scene) -> String {
+        match graph_intro(scene).query("selected_ids") {
+            Some(IntrospectValue::Text(t)) => t,
+            other => panic!("expected Text at selected_ids, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r880_marquee_replaces_selection_with_rect_hit_set() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Background press at an empty corner of the sweep, drag down
+            // over nodes 0 (40, 70) and 1 (40, 210) — node 2 (x 250) and
+            // node 3 (x 470) stay outside.
+            send(&mut scene, "PointerDown");
+            bg_move(&mut scene, 20.0, 50.0); // capture seed (the press point)
+            bg_move(&mut scene, 200.0, 260.0); // past the dead zone -> live
+            assert!(
+                use_marquee_rect().get().is_some(),
+                "live marquee publishes the rubber-band rect",
+            );
+            send(&mut scene, "PointerUp");
+            assert_eq!(selected_ids_of(&scene), "0,1", "rect-hit set replaces");
+            assert_eq!(use_marquee_rect().get(), None, "band cleared on release");
+            // An empty sweep (no nodes inside) clears the selection — the
+            // background-click deselect generalised to an area.
+            send(&mut scene, "PointerDown");
+            bg_move(&mut scene, 600.0, 320.0);
+            bg_move(&mut scene, 700.0, 400.0);
+            send(&mut scene, "PointerUp");
+            assert_eq!(selected_ids_of(&scene), "", "empty sweep clears");
+        });
+    }
+
+    #[test]
+    fn r880_ctrl_marquee_toggles_and_shift_marquee_unions() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            use_selection().set(Selection::single(NodeId(0)));
+            // Ctrl-marquee over nodes 0 + 1: 0 toggles out, 1 toggles in.
+            // The release rides the R880 empty-key bare modifier wire.
+            send(&mut scene, "PointerDown");
+            bg_move(&mut scene, 20.0, 50.0);
+            bg_move(&mut scene, 200.0, 260.0);
+            send(&mut scene, ":PointerUp:c");
+            assert_eq!(selected_ids_of(&scene), "1", "ctrl toggles membership");
+            // Shift-marquee over node 2 only: unions in, 1 stays.
+            send(&mut scene, "PointerDown");
+            bg_move(&mut scene, 240.0, 100.0);
+            bg_move(&mut scene, 390.0, 180.0);
+            send(&mut scene, ":PointerUp:s");
+            assert_eq!(selected_ids_of(&scene), "1,2", "shift unions the hit set");
+        });
+    }
+
+    #[test]
+    fn r880_jittery_background_click_stays_a_click() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Press on edge 0's midpoint, wobble 2px (inside the
+            // DRAG_CLICK_THRESHOLD_PX dead zone), release: still the R839
+            // edge-click, never a marquee.
+            send(&mut scene, "PointerDown");
+            bg_move(&mut scene, 210.0, 134.0);
+            bg_move(&mut scene, 212.0, 134.0);
+            assert_eq!(use_marquee_rect().get(), None, "dead zone: no band");
+            send(&mut scene, "PointerUp");
+            assert_eq!(query_int(&scene, "selected_edge"), 0, "wire selected");
+            // A *moved* background gesture must NOT consume the edge probe:
+            // press near the wire, sweep away over empty space, release —
+            // the marquee applies (empty -> clear), the edge stays
+            // unselected.
+            send(&mut scene, "PointerDown");
+            bg_move(&mut scene, 210.0, 134.0);
+            bg_move(&mut scene, 600.0, 400.0);
+            send(&mut scene, "PointerUp");
+            assert_eq!(
+                graph_intro(&scene).query("selected_edge"),
+                Some(IntrospectValue::Null),
+                "moved gesture skips the edge-click probe",
+            );
+        });
+    }
+
+    #[test]
+    fn r880_select_all_via_invoke_and_ctrl_a() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let ctrl = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+            assert!(apply_key_graph(&mut scene, "a", ctrl), "Ctrl+A consumed");
+            assert_eq!(selected_ids_of(&scene), "0,1,2,3", "every node selected");
+            // Escape clears (the existing single-selection escape).
+            assert!(apply_key_graph(&mut scene, "Escape", Modifiers::empty()));
+            assert_eq!(selected_ids_of(&scene), "");
+            // The invoke twin answers false on an empty graph.
+            use_nodes().set(Vec::new());
+            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert_eq!(
+                intro.invoke("select_all", IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(false)),
+                "empty graph: nothing to select",
+            );
+        });
+    }
+
+    #[test]
+    fn r880_view_paints_the_live_marquee_band() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let marquee_tag = format!("{GRAPH_TAG}#marquee");
+            let idle = view(IDLE_TF, &Frame::new());
+            assert!(!idle.contains_tag(&marquee_tag), "no band while idle");
+            use_marquee_rect().set(Some((100, 100, 220, 200)));
+            let live = view(IDLE_TF, &Frame::new());
+            assert!(live.contains_tag(&marquee_tag), "live band painted");
         });
     }
 
@@ -4198,6 +4564,14 @@ mod tests {
         coord.node_by_id(id).map(|n| (n.x, n.y)).expect("node present")
     }
 
+    /// R880 — a [`DragLatch`] already past its dead zone (the synthetic
+    /// drags below model an in-flight *moved* gesture).
+    fn live_latch() -> DragLatch {
+        let mut latch = DragLatch::new((0.0, 0.0));
+        let _ = latch.advance((2.0 * pinion_core::DRAG_CLICK_THRESHOLD_PX, 0.0));
+        latch
+    }
+
     /// Arm + tear down a synthetic node-body drag from `before` to a `+delta`
     /// position (the real `pointer_move` rel-math is exercised by the demo's
     /// `tf.drag`; here we drive the latches directly to test the recording).
@@ -4205,8 +4579,7 @@ mod tests {
         coord.grabbed_node.set(Some(id));
         *coord.node_drag.borrow_mut() = Some(NodeDragStart {
             members: vec![(id, 0.0, 0.0, before.0, before.1)],
-            press_screen: (0.0, 0.0),
-            live: true,
+            latch: live_latch(),
         });
         coord.set_node_pos(id, before.0 + dx, before.1 + dy); // live preview write
         coord.end_gesture(); // commits one non-coalescable move
@@ -4244,8 +4617,7 @@ mod tests {
             coord.grabbed_node.set(Some(id));
             *coord.node_drag.borrow_mut() = Some(NodeDragStart {
                 members: vec![(id, 0.0, 0.0, before.0, before.1)],
-                press_screen: (0.0, 0.0),
-                live: true,
+                latch: live_latch(),
             });
             coord.set_node_pos(id, before.0 + 50, before.1 + 30);
             assert_eq!(stack.len(), 0, "nothing is journaled mid-drag");
@@ -4289,8 +4661,7 @@ mod tests {
             coord.grabbed_node.set(Some(id));
             *coord.node_drag.borrow_mut() = Some(NodeDragStart {
                 members: vec![(id, 0.0, 0.0, before.0, before.1)],
-                press_screen: (0.0, 0.0),
-                live: true,
+                latch: live_latch(),
             });
             coord.set_node_pos(id, before.0 + 40, before.1);
             assert!(coord.load_json(&snap), "load the snapshot mid-drag");

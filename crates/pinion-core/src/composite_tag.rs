@@ -64,6 +64,14 @@ use core::str::FromStr;
 /// `Pointer*` vocabulary), so the third `:` segment unambiguously belongs
 /// to the modifiers — R781 retires the pre-R781 "colon kept in the event
 /// suffix" behaviour, which never carried a real event name.
+///
+/// R880 — the key segment may be **empty**: `":<EventName>:<token>"` is the
+/// bare-target (background) modifier wire an
+/// [`External::wants_bare_send_modifiers`](crate::external::External::wants_bare_send_modifiers)
+/// opt-in receives. The empty key means "no sub-target"; consumers map it
+/// to their background arm. A bare send *without* held modifiers stays the
+/// colon-free `"<EventName>"` (this fn returns `None` for it — the
+/// established "`None` = bare event" decode contract).
 #[must_use]
 pub fn split_send_payload(payload: &str) -> Option<(&str, &str, Modifiers)> {
     let mut parts = payload.splitn(3, ':');
@@ -413,6 +421,21 @@ mod tests {
         // An unparseable modifier token rejects the whole payload.
         let bad: Option<(u64, &str, Modifiers)> = parse_send_payload("3:PointerUp:Move");
         assert_eq!(bad, None, "non-scam modifier token is malformed");
+    }
+
+    #[test]
+    fn r880_empty_key_is_the_bare_modifier_wire() {
+        // R880 — `":<EventName>:<token>"` is the background (bare-target)
+        // modifier wire a `wants_bare_send_modifiers` opt-in receives: the
+        // empty key segment means "no sub-target". Same `:` grammar SSOT,
+        // no special-casing in the splitter.
+        assert_eq!(
+            split_send_payload(":PointerUp:c"),
+            Some(("", "PointerUp", Modifiers { shift: false, ctrl: true, alt: false, meta: false })),
+        );
+        // A modifier-free bare event stays the colon-free back-compat wire:
+        // no `:` at all, so the splitter answers `None` (= bare event).
+        assert_eq!(split_send_payload("PointerUp"), None);
     }
 
     #[test]

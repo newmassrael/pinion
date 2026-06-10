@@ -512,6 +512,28 @@ pub trait External: core::fmt::Debug {
         false
     }
 
+    /// R880 §5.35 §5.49 — opt-in for the **bare** (non-composite) send wire
+    /// to carry the R781 held-modifier token. When `true`, a background
+    /// dispatch with a non-empty modifier state reaches `invoke("send", ...)`
+    /// as the three-segment wire `":<EventName>:<token>"` — the key segment
+    /// is *empty* (a background press has no sub-target), so
+    /// [`split_send_payload`](crate::composite_tag::split_send_payload)
+    /// decodes it through the exact same `:` grammar SSOT as a composite
+    /// send, with `""` as the key. An empty modifier state always emits the
+    /// plain `"<EventName>"` back-compat wire.
+    ///
+    /// Default `false`, because the bare payload doubles as the SCXML event
+    /// name for the entire statechart-driven catalogue — an un-gated wire
+    /// change would turn every `Ctrl`+click on a plain widget into an
+    /// unmatchable `":PointerUp:c"` statechart event. Only a coordinator
+    /// that decodes its own send wire (and needs background-release
+    /// modifiers — e.g. a `Ctrl`/`Shift` marquee) should opt in, exactly as
+    /// [`wants_pointer_capture`](Self::wants_pointer_capture) gates the
+    /// capture machinery.
+    fn wants_bare_send_modifiers(&self) -> bool {
+        false
+    }
+
     /// R738 §5.35 / R786 §5.35 — which post-layout rect the framework's
     /// [`InputRouter`](crate#) normalizes the dragged cursor against while this
     /// widget holds capture. One exhaustive [`CaptureNormalize`] decision —
