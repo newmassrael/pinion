@@ -156,7 +156,7 @@ use pinion_core::style::{
     Stroke, StrokeCap, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
-use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
+use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore, DRAG_CLICK_THRESHOLD_PX};
 use pinion_platform_storage::{use_app_storage, AppStorage};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::text_field as tf_paint;
@@ -797,6 +797,18 @@ struct NodeDragStart {
     /// (selection-set order) so `end_gesture`'s journal entry matches
     /// [`MoveNodesCmd::merge`]'s same-member ordering.
     members: Vec<(NodeId, f64, f64, i32, i32)>,
+    /// The press cursor in screen px — the origin the dead-zone distance
+    /// is measured from.
+    press_screen: (f64, f64),
+    /// R879 audit fix — the press *became a drag*: the cursor strayed past
+    /// [`DRAG_CLICK_THRESHOLD_PX`] (the framework click-vs-drag contract
+    /// constant, the same metric the router's `became_drag` latch uses).
+    /// Until it latches, members do NOT move (the Qt `startDragDistance`
+    /// dead zone — a jittery click neither displaces nodes nor journals a
+    /// move) and the release still selects (`gesture_moved` reads this
+    /// SAME latch, so "the nodes moved" and "the release must not select"
+    /// can never disagree).
+    live: bool,
 }
 
 /// What the most recent `PointerDown` landed on — read by `begin_drag` (an
@@ -1839,16 +1851,16 @@ impl NodeGraphExternal {
         IntrospectValue::Null
     }
 
-    /// R879 — whether the in-flight node gesture actually displaced any
-    /// member (press position != current position). Distinguishes a click
-    /// (select on release) from a drag (selection untouched) on the
-    /// capture path, where the release always reaches [`handle_send`].
+    /// R879 — whether the in-flight node gesture became a drag: the SAME
+    /// `live` latch that gates the members' movement (one predicate — the
+    /// nodes cannot have moved without it, and a release after it must not
+    /// select). Distinguishes a click (select on release) from a drag
+    /// (selection untouched) on the capture path, where the release always
+    /// reaches [`handle_send`]; measured against the framework
+    /// [`DRAG_CLICK_THRESHOLD_PX`] contract, so this binding and the
+    /// router can never disagree on what a click is.
     fn gesture_moved(&self) -> bool {
-        self.node_drag.borrow().as_ref().is_some_and(|start| {
-            start.members.iter().any(|&(id, _, _, px, py)| {
-                self.node_by_id(id).is_some_and(|n| (n.x, n.y) != (px, py))
-            })
-        })
+        self.node_drag.borrow().as_ref().is_some_and(|start| start.live)
     }
 
     fn end_gesture(&self) {
@@ -1937,13 +1949,17 @@ impl External for NodeGraphExternal {
             }
             return;
         };
+        // The cursor in screen px (the dead-zone metric space — the same
+        // logical-pixel space the router's click-vs-drag latch measures).
+        let screen = (f64::from(x_rel) * f64::from(WIN_W), f64::from(y_rel) * f64::from(WIN_H));
         let snapshot_needed = self.node_drag.borrow().is_none();
         if snapshot_needed {
-            // R879 — first capture move: snapshot the dragged member set.
-            // Grabbing a *selected* node drags the whole selection rigidly
-            // (per-member graph-space grab anchors); grabbing an unselected
-            // node drags just it, leaving the selection untouched (the
-            // Unreal / QGraphicsView convention).
+            // R879 — first capture move (the capture-seed forwards the press
+            // cursor): snapshot the dragged member set. Grabbing a *selected*
+            // node drags the whole selection rigidly (per-member graph-space
+            // grab anchors); grabbing an unselected node drags just it,
+            // leaving the selection untouched (the Unreal / QGraphicsView
+            // convention).
             let selection = self.selection.get();
             let members: BTreeSet<NodeId> = if selection.contains_node(node) {
                 selection.nodes()
@@ -1958,9 +1974,27 @@ impl External for NodeGraphExternal {
                 })
                 .collect();
             if !snapshot.is_empty() {
-                *self.node_drag.borrow_mut() = Some(NodeDragStart { members: snapshot });
+                *self.node_drag.borrow_mut() =
+                    Some(NodeDragStart { members: snapshot, press_screen: screen, live: false });
             }
             return;
+        }
+        // R879 audit fix — the dead zone: nothing moves until the cursor
+        // strays past the framework click-vs-drag threshold from the press
+        // point (Qt `startDragDistance`; the router applies the same
+        // constant to routed clicks / DnD, this is the capture-path twin).
+        {
+            let mut start = self.node_drag.borrow_mut();
+            if let Some(start) = start.as_mut() {
+                if !start.live {
+                    let dx = screen.0 - start.press_screen.0;
+                    let dy = screen.1 - start.press_screen.1;
+                    if dx.hypot(dy) <= DRAG_CLICK_THRESHOLD_PX {
+                        return;
+                    }
+                    start.live = true;
+                }
+            }
         }
         let start = self.node_drag.borrow();
         if let Some(start) = start.as_ref() {
@@ -4169,8 +4203,11 @@ mod tests {
     /// `tf.drag`; here we drive the latches directly to test the recording).
     fn synth_drag(coord: &NodeGraphExternal, id: NodeId, before: (i32, i32), dx: i32, dy: i32) {
         coord.grabbed_node.set(Some(id));
-        *coord.node_drag.borrow_mut() =
-            Some(NodeDragStart { members: vec![(id, 0.0, 0.0, before.0, before.1)] });
+        *coord.node_drag.borrow_mut() = Some(NodeDragStart {
+            members: vec![(id, 0.0, 0.0, before.0, before.1)],
+            press_screen: (0.0, 0.0),
+            live: true,
+        });
         coord.set_node_pos(id, before.0 + dx, before.1 + dy); // live preview write
         coord.end_gesture(); // commits one non-coalescable move
     }
@@ -4205,8 +4242,11 @@ mod tests {
             let id = NodeId(0);
             let before = pos_of(&coord, id);
             coord.grabbed_node.set(Some(id));
-            *coord.node_drag.borrow_mut() =
-                Some(NodeDragStart { members: vec![(id, 0.0, 0.0, before.0, before.1)] });
+            *coord.node_drag.borrow_mut() = Some(NodeDragStart {
+                members: vec![(id, 0.0, 0.0, before.0, before.1)],
+                press_screen: (0.0, 0.0),
+                live: true,
+            });
             coord.set_node_pos(id, before.0 + 50, before.1 + 30);
             assert_eq!(stack.len(), 0, "nothing is journaled mid-drag");
             coord.end_gesture();
@@ -4247,8 +4287,11 @@ mod tests {
             let before = pos_of(&coord, id);
             // Arm an in-flight drag (grab + a live move), no release.
             coord.grabbed_node.set(Some(id));
-            *coord.node_drag.borrow_mut() =
-                Some(NodeDragStart { members: vec![(id, 0.0, 0.0, before.0, before.1)] });
+            *coord.node_drag.borrow_mut() = Some(NodeDragStart {
+                members: vec![(id, 0.0, 0.0, before.0, before.1)],
+                press_screen: (0.0, 0.0),
+                live: true,
+            });
             coord.set_node_pos(id, before.0 + 40, before.1);
             assert!(coord.load_json(&snap), "load the snapshot mid-drag");
             assert!(!stack.can_undo(), "the opened document has a clean undo history");
@@ -5130,6 +5173,27 @@ mod tests {
                 "F2 on a multi-selection is ambiguous and refuses",
             );
             assert_eq!(use_renaming().get(), None);
+        });
+    }
+
+    #[test]
+    fn r879_jitter_click_neither_moves_nor_suppresses_select() {
+        // The dead zone (the framework DRAG_CLICK_THRESHOLD_PX contract): a
+        // press that wiggles under the threshold is a CLICK — the node does
+        // not move, nothing is journaled, and the release still selects.
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            let stack = use_undo();
+            let p0 = pos_of(&coord, NodeId(0));
+            coord.grabbed_node.set(Some(NodeId(0)));
+            coord.pointer_move(0.5, 0.5); // capture seed (press point)
+            coord.pointer_move(0.503, 0.5); // ~1.9 px — inside the dead zone
+            assert_eq!(pos_of(&coord, NodeId(0)), p0, "a jitter never displaces the node");
+            assert!(!coord.gesture_moved(), "inside the dead zone = still a click");
+            coord.handle_send("node_0:PointerUp");
+            assert_eq!(stack.len(), 0, "no move was journaled");
+            assert_eq!(use_selection().get(), Selection::single(NodeId(0)), "the click selects");
         });
     }
 

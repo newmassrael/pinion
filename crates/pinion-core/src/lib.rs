@@ -70,7 +70,9 @@ pub use renderer::WidgetRenderer;
 pub use external::External;
 pub use widget_core::{WidgetCore, WidgetEventName, WidgetStateName, WidgetTag};
 pub use frame::Frame;
-pub use input::{edit_field_keymap, forward_key_to_field, CompositionEvent, Modifiers};
+pub use input::{
+    edit_field_keymap, forward_key_to_field, CompositionEvent, Modifiers, DRAG_CLICK_THRESHOLD_PX,
+};
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
     is_simulating, use_local_task_pump, Computed, Effect, FetchToken, IntoIntrospectValue,

@@ -36465,6 +36465,60 @@
         "drag-to-pan (Space/MMB) + edge-drag auto-pan: framework axis (R877 carry)"
       ]
     },
+    "R879.1": {
+      "decision_summary": "User textbook-audit remediation: the capture-path click-vs-drag judgment aligns to the framework DRAG_CLICK_THRESHOLD_PX contract (lifted to pinion-core) with a drag dead zone whose live latch is the single predicate for both movement and release-select suppression; edit_field_keymap lets command chords bypass the kind gate",
+      "changes_bullets": [
+        "DRAG_CLICK_THRESHOLD_PX lifted runtime-private -> pinion_core::input contract constant",
+        "node-editor drag dead zone: members move only past the threshold (Qt startDragDistance)",
+        "gesture_moved reads the SAME live latch that gates movement (one predicate, no re-derive)",
+        "jitter click: no displacement, no journaled move, release still selects (new test)",
+        "edit_field_keymap: Ctrl/Meta chords bypass the kind gate (select-all/clipboard in",
+        "int/float editors; latent R837 defect the R878 lift had preserved; end-to-end test)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 150 groups / 6130 green (+2: chord bypass, jitter dead zone)",
+        "clippy --workspace --all-targets -D pedantic (vello): clean",
+        "demos PASS: r879/r878/r853/r877/r838 node-editor + r837 data-grid + r875 property-grid"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.49",
+        "5.51",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "R880 framework axis unchanged: router-side became-drag edge exposure for background",
+        "presses (marquee); the capture-path binding latch is the consumer it migrates onto",
+        "file-manager/todomvc forward-all rename keymaps stay bespoke (assessed: delta = named",
+        "keys the field recognizes; forced migration = behavior change without a defect)"
+      ],
+      "publishable_decision_summary": "User textbook-audit remediation: the capture-path click-vs-drag judgment aligns to the framework DRAG_CLICK_THRESHOLD_PX contract (lifted to pinion-core) with a drag dead zone whose live latch is the single predicate for both movement and release-select suppression; edit_field_keymap lets command chords bypass the kind gate",
+      "publishable_changes_bullets": [
+        "DRAG_CLICK_THRESHOLD_PX lifted runtime-private -> pinion_core::input contract constant",
+        "node-editor drag dead zone: members move only past the threshold (Qt startDragDistance)",
+        "gesture_moved reads the SAME live latch that gates movement (one predicate, no re-derive)",
+        "jitter click: no displacement, no journaled move, release still selects (new test)",
+        "edit_field_keymap: Ctrl/Meta chords bypass the kind gate (select-all/clipboard in",
+        "int/float editors; latent R837 defect the R878 lift had preserved; end-to-end test)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 150 groups / 6130 green (+2: chord bypass, jitter dead zone)",
+        "clippy --workspace --all-targets -D pedantic (vello): clean",
+        "demos PASS: r879/r878/r853/r877/r838 node-editor + r837 data-grid + r875 property-grid"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.49",
+        "5.51",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R880 framework axis unchanged: router-side became-drag edge exposure for background",
+        "presses (marquee); the capture-path binding latch is the consumer it migrates onto",
+        "file-manager/todomvc forward-all rename keymaps stay bespoke (assessed: delta = named",
+        "keys the field recognizes; forced migration = behavior change without a defect)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -41,6 +41,20 @@ use crate::cell_value::CellKind;
 use crate::external::IntrospectValue;
 use crate::scene::Scene;
 
+/// R876 §5.49 §5.51 / R879 — the press-to-drag distance (logical px,
+/// Euclidean): a press that strays past this from its origin *became a
+/// drag* (Qt `startDragDistance`, the DOM no-`click`-after-drag rule).
+/// The runtime's `InputRouter` is the primary judge (its `became_drag`
+/// latch gates the `DnD` trailing click and the double-click detector),
+/// but the determination is a framework *contract*: a capture-path
+/// External that must distinguish its own click from its own drag (the
+/// node-graph release-select suppression + drag dead zone) measures
+/// against the SAME constant, so the two paths can never disagree on
+/// what a click is. Lives in `pinion-core` (the contract crate), not the
+/// runtime that happens to apply it ([[helper-crate-home-ssot-axis]] —
+/// the R877.1 `LINE_HEIGHT_PX` precedent).
+pub const DRAG_CLICK_THRESHOLD_PX: f64 = 4.0;
+
 /// R56.1.f.0 §5.13 — abstract modifier-key state, mirroring
 /// `winit::keyboard::ModifiersState` and W3C DOM Level 3
 /// `getModifierState` without the winit dependency. Four modifier
@@ -432,7 +446,14 @@ pub fn edit_field_keymap(
             forward_key_to_field(scene, tag, key, modifiers)
         }
         other => {
-            if kind.accepts_keystroke(other) {
+            // R879 audit fix — a Ctrl/Meta chord is a *command* (select-all,
+            // clipboard), not text input: it bypasses the per-kind keystroke
+            // gate so `Ctrl+A` / `Ctrl+C` reach the field's modifier-aware
+            // arms even in an int / float editor. The pre-lift data-grid /
+            // property-grid copies gated chords out (a latent defect the
+            // R878 lift had faithfully preserved).
+            let is_command_chord = modifiers.control_key() || modifiers.meta_key();
+            if is_command_chord || kind.accepts_keystroke(other) {
                 forward_key_to_field(scene, tag, other, modifiers)
             } else {
                 false
@@ -731,6 +752,54 @@ mod edit_field_keymap_tests {
         assert!(handled, "Escape is consumed by the keymap");
         assert!(cancelled.get(), "Escape runs the cancel policy");
         assert!(!committed.get(), "Escape never commits");
+    }
+
+    #[test]
+    fn command_chords_bypass_the_kind_gate() {
+        // R879 audit fix — Ctrl+A in an int editor is select-all, not the
+        // letter "a": the chord reaches the field's modifier-aware arm and
+        // is RECOGNISED, where the plain letter dies at the gate. A live
+        // `TextFieldExternal` in the scene makes the two outcomes
+        // distinguishable (both would read `false` against a missing field).
+        use crate::reactive::Owner;
+        use crate::scene::ExternalNode;
+        use crate::widgets::text_edit::use_text_edit_state;
+        use crate::widgets::text_field::TextFieldExternal;
+        Owner::new().run(|| {
+            let editor = use_text_edit_state("tf");
+            editor.set_text("42".to_owned());
+            let mut scene = Scene::External(
+                ExternalNode::new(Box::new(
+                    TextFieldExternal::new().attach_state(editor.clone()),
+                ))
+                .with_tag("tf"),
+            );
+            let touched = Cell::new(false);
+            let chord = Modifiers { ctrl: true, ..Modifiers::empty() };
+            let handled = edit_field_keymap(
+                &mut scene,
+                "tf",
+                "a",
+                chord,
+                CellKind::Int,
+                || touched.set(true),
+                || touched.set(true),
+            );
+            assert!(handled, "Ctrl+A reaches the field's select-all arm in an int editor");
+            assert!(!touched.get(), "a chord is never commit/cancel");
+            assert_eq!(editor.selection_range(), Some((0, 2)), "and it actually selected all");
+            // The bare letter still dies at the int gate.
+            let bare = edit_field_keymap(
+                &mut scene,
+                "tf",
+                "a",
+                Modifiers::empty(),
+                CellKind::Int,
+                || touched.set(true),
+                || touched.set(true),
+            );
+            assert!(!bare, "the plain letter is still gated out");
+        });
     }
 
     #[test]

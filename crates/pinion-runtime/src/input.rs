@@ -111,10 +111,13 @@ const DOUBLE_CLICK_DIST_PX: f64 = 5.0;
 /// are mutually exclusive — Qt `startDragDistance`, the DOM "no `click`
 /// after a drag" rule). A press-release under this threshold is a click:
 /// the drop resolves to the source (a no-op) and the `PointerUp` fires so
-/// press-to-activate stays reachable. Owning this once at the router makes
-/// click-vs-drag a framework SSOT, so no click-activatable drag surface
-/// (file tree, asset browser, kanban) re-derives it per binding.
-const DRAG_CLICK_THRESHOLD_PX: f64 = 4.0;
+/// press-to-activate stays reachable. Owning this once makes click-vs-drag
+/// a framework SSOT, so no click-activatable drag surface (file tree,
+/// asset browser, kanban) re-derives it per binding. R879 relocated the
+/// constant itself to `pinion-core::input` (the contract crate): a
+/// capture-path External judging its own click-vs-drag (the node graph)
+/// measures against the same value ([[helper-crate-home-ssot-axis]]).
+use pinion_core::DRAG_CLICK_THRESHOLD_PX;
 
 /// R51.38 §5.35 — pointer identity used by every [`InputRouter`]
 /// input method to route per-pointer cursor / hover / capture state.
