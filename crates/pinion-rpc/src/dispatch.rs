@@ -366,6 +366,18 @@ pub struct DispatchContext<'a> {
     /// cases so the AI client can distinguish "no data yet" from
     /// "all zeros".
     pub fragment_cache_stats: Option<pinion_runtime::FragmentCacheStats>,
+
+    /// R885 §5.49 — out-of-band input state snapshot, resolved by the
+    /// embedder before dispatch (the [`Self::fragment_cache_stats`]
+    /// pattern: by-value, per the dispatch's window scope). Consumed
+    /// by `scene/input_state` — the READ peer of the
+    /// `scene/modifiers` / `scene/key state:"down"/"up"` / cursor-
+    /// positioning writes, closing the write-only-wire introspection
+    /// gap (§2 #2: every state an input write mutates must be
+    /// AI-readable). `None` surfaces `InputStateUnavailable`
+    /// (headless fixture / embedder opt-out), distinct from an
+    /// all-empty snapshot.
+    pub input_state: Option<pinion_core::InputStateSnapshot>,
 }
 
 /// R881 §5.35 §5.49 — which mouse button a `scene/drag` injection
@@ -752,6 +764,7 @@ impl<'a> DispatchContext<'a> {
             deferred_inputs: None,
             window_id: None,
             fragment_cache_stats: None,
+            input_state: None,
         }
     }
 
@@ -908,6 +921,15 @@ impl<'a> DispatchContext<'a> {
         self.fragment_cache_stats = Some(stats);
         self
     }
+
+    /// Builder: attach the embedder-resolved input-state snapshot
+    /// (R885 §5.49). Consumed by `scene/input_state`; absent →
+    /// `InputStateUnavailable`.
+    #[must_use]
+    pub fn with_input_state(mut self, snapshot: pinion_core::InputStateSnapshot) -> Self {
+        self.input_state = Some(snapshot);
+        self
+    }
 }
 
 /// Dispatch one JSON-RPC 2.0 frame against `ctx`.
@@ -1033,6 +1055,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // context for the dispatch lifetime; `scene/cache_stats` reads
     // the value, every other arm ignores it.
     let fragment_cache_stats = ctx.fragment_cache_stats;
+    // R885 §5.49 — embedder-resolved input-state snapshot; taken out
+    // for the dispatch lifetime (the slot is per-dispatch like the
+    // inbox), `scene/input_state` is the only consumer.
+    let input_state = ctx.input_state.take();
     // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
     // copy the optional reference out for the dispatch lifetime so
     // the registry slot itself is not consumed.
@@ -1278,6 +1304,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
         ),
         "scene/cache_stats" => (
             handle_scene_cache_stats(fragment_cache_stats),
+            HandlerKind::Read,
+        ),
+        "scene/input_state" => (
+            handle_scene_input_state(input_state),
             HandlerKind::Read,
         ),
         "scene/animate_settle" => (
@@ -3719,6 +3749,52 @@ fn cache_stats_error_to_rpc(err: &CacheStatsError) -> RpcError {
                 .with_data_string("CacheStatsUnavailable")
         }
     }
+}
+
+/// R885 §5.49 — `scene/input_state` typed handler: the READ peer of
+/// the out-of-band input writes. Serializes the embedder-resolved
+/// [`pinion_core::InputStateSnapshot`] with each field mirroring its
+/// write wire shape (read = inverse of write,
+/// [[wire-form-read-write-symmetry]]):
+///
+/// * `modifiers` — the `scene/modifiers` param object
+///   (`{shift, ctrl, alt, meta}`), or `null` when the backend keeps
+///   no absolute modifier cache (the TUI §2 #6 carry) so an AI
+///   client distinguishes "axis unavailable" from "none held".
+/// * `held_keys` — array of canonical named keys
+///   (`scene/key state:"down"` vocabulary, e.g. `"Space"`).
+/// * `cursor` — `{x, y}` of the dispatch-scoped window's last mouse
+///   cursor position (what every `scene/click` / `scene/hover` /
+///   `scene/drag` write moves), or `null` before the first cursor
+///   event.
+///
+/// Read-only — `HandlerKind::Read` upstream skips the
+/// [`SceneRevision`] bump.
+fn handle_scene_input_state(
+    snapshot: Option<pinion_core::InputStateSnapshot>,
+) -> Result<Value, RpcError> {
+    let Some(snap) = snapshot else {
+        return Err(
+            RpcError::invalid_params("input state unavailable for this dispatch")
+                .with_data_string("InputStateUnavailable"),
+        );
+    };
+    let modifiers = snap.modifiers.map_or(Value::Null, |m| {
+        serde_json::json!({
+            "shift": m.shift,
+            "ctrl": m.ctrl,
+            "alt": m.alt,
+            "meta": m.meta,
+        })
+    });
+    let cursor = snap
+        .cursor
+        .map_or(Value::Null, |(x, y)| serde_json::json!({ "x": x, "y": y }));
+    Ok(serde_json::json!({
+        "modifiers": modifiers,
+        "held_keys": snap.held_keys,
+        "cursor": cursor,
+    }))
 }
 
 /// R629 §5.28 — `scene/animate_settle` typed handler. 28th `scene/*`

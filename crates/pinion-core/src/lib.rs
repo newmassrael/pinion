@@ -71,8 +71,8 @@ pub use external::External;
 pub use widget_core::{WidgetCore, WidgetEventName, WidgetStateName, WidgetTag};
 pub use frame::Frame;
 pub use input::{
-    edit_field_keymap, forward_key_to_field, CompositionEvent, DragLatch, HeldKeys, Modifiers,
-    SelectionChord, DRAG_CLICK_THRESHOLD_PX,
+    edit_field_keymap, forward_key_to_field, CompositionEvent, DragLatch, HeldKeys,
+    InputStateSnapshot, Modifiers, SelectionChord, DRAG_CLICK_THRESHOLD_PX,
 };
 pub use intent::{Intent, IntentTag};
 pub use reactive::{

@@ -276,3 +276,32 @@ fn r670_dispatch_rpc_malformed_request_returns_error_response() {
         "malformed frame must produce a JSON-RPC error envelope: {response}",
     );
 }
+
+/// R885 §5.49 — `scene/input_state` on the TUI: `modifiers` is `null`
+/// (crossterm delivers modifiers per-key-event only; the shell keeps
+/// no absolute cache — the documented §2 #6 carry), while the
+/// held-key chord cache is real (RPC-owned, R882) so a
+/// `scene/key state:"down"` write reads back as `["Space"]`.
+#[test]
+fn r885_input_state_reports_null_modifiers_and_real_held_keys() {
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+
+    let read = r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state","params":{}}"#;
+    let response = core.dispatch_rpc(read).expect("read must respond");
+    assert!(
+        response.contains(r#""modifiers":null"#),
+        "TUI keeps no absolute modifier cache; the wire must say so: {response}",
+    );
+    assert!(
+        response.contains(r#""held_keys":[]"#),
+        "no chord key held at boot: {response}",
+    );
+
+    let down = r#"{"jsonrpc":"2.0","id":2,"method":"scene/key","params":{"key":"Space","state":"down","at":{"x":1.0,"y":1.0}}}"#;
+    let _ = core.dispatch_rpc(down).expect("write must respond");
+    let response = core.dispatch_rpc(read).expect("read must respond");
+    assert!(
+        response.contains(r#""held_keys":["Space"]"#),
+        "scene/key down must read back through the held-key cache: {response}",
+    );
+}

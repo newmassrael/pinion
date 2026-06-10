@@ -1715,6 +1715,15 @@ impl<V: WidgetCore> CoreShell<V> {
         self.held_keys.space()
     }
 
+    /// R885 §5.49 — canonical named spellings of the currently-held
+    /// chord keys ([`pinion_core::HeldKeys::held_names`]). The
+    /// backends' `scene/input_state` snapshot resolution reads this;
+    /// one accessor so neither shell touches the cache representation.
+    #[must_use]
+    pub fn held_key_names(&self) -> Vec<&'static str> {
+        self.held_keys.held_names()
+    }
+
     /// R882.1 §5.39 — forget every held key. The GUI shell calls this
     /// on window blur (the browser missed-keyup convention: the keyup
     /// after a focus loss goes to another window; a stranded chord

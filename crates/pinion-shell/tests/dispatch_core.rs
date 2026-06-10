@@ -3364,6 +3364,93 @@ mod r682_fragment_cache_stats_substrate {
 }
 
 // ─────────────────────────────────────────────────────────────
+// R885 §5.49 — scene/input_state RPC dispatch wire (READ peer of the
+// out-of-band input writes; each read mirrors its write shape)
+// ─────────────────────────────────────────────────────────────
+
+mod r885_input_state_rpc {
+    use pinion_shell::ShellCore;
+
+    use super::TestView;
+
+    fn req(method: &str, params: &str, id: u64) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","method":"{method}","params":{params},"id":{id}}}"#,
+        )
+    }
+
+    fn result(core: &mut ShellCore<TestView>, frame: &str) -> serde_json::Value {
+        let mut no_resize = |_: u32, _: u32| {};
+        let resp = core.dispatch_rpc(frame, &mut no_resize).expect("response");
+        let body: serde_json::Value = serde_json::from_str(&resp).expect("JSON");
+        body.get("result").expect("dispatch ok").clone()
+    }
+
+    #[test]
+    fn r885_read_mirrors_modifier_and_held_key_writes() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        super::reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+
+        // Boot: no modifier held, no chord key, no cursor event yet.
+        let r0 = result(&mut core, &req("scene/input_state", "{}", 1));
+        let mods0 = r0.get("modifiers").expect("GUI always tracks modifiers");
+        assert_eq!(mods0.get("ctrl"), Some(&serde_json::Value::Bool(false)));
+        assert_eq!(mods0.get("shift"), Some(&serde_json::Value::Bool(false)));
+        assert_eq!(r0.get("held_keys").unwrap().as_array().unwrap().len(), 0);
+        assert!(r0.get("cursor").unwrap().is_null(), "no cursor event yet");
+
+        // scene/modifiers write → read returns the same object shape.
+        let _ = result(
+            &mut core,
+            &req(
+                "scene/modifiers",
+                r#"{"shift":false,"ctrl":true,"alt":false,"meta":false}"#,
+                2,
+            ),
+        );
+        let r1 = result(&mut core, &req("scene/input_state", "{}", 3));
+        assert_eq!(
+            r1.get("modifiers").unwrap().get("ctrl"),
+            Some(&serde_json::Value::Bool(true)),
+            "read = inverse of the scene/modifiers write",
+        );
+
+        // scene/key state:"down" arms the chord cache; the read
+        // enumerates the canonical named spelling. The injection also
+        // lands a cursor move at the key's position.
+        let _ = result(
+            &mut core,
+            &req(
+                "scene/key",
+                r#"{"key":"Space","state":"down","at":{"x":4.0,"y":5.0}}"#,
+                4,
+            ),
+        );
+        let r2 = result(&mut core, &req("scene/input_state", "{}", 5));
+        assert_eq!(
+            r2.get("held_keys").unwrap().as_array().unwrap(),
+            &vec![serde_json::Value::String("Space".into())],
+        );
+        let cursor = r2.get("cursor").expect("cursor follows the key injection");
+        assert_eq!(cursor.get("x").and_then(serde_json::Value::as_f64), Some(4.0));
+        assert_eq!(cursor.get("y").and_then(serde_json::Value::as_f64), Some(5.0));
+
+        // Release clears the chord; the modifier cache is untouched.
+        let _ = result(
+            &mut core,
+            &req("scene/key", r#"{"key":"Space","state":"up"}"#, 6),
+        );
+        let r3 = result(&mut core, &req("scene/input_state", "{}", 7));
+        assert_eq!(r3.get("held_keys").unwrap().as_array().unwrap().len(), 0);
+        assert_eq!(
+            r3.get("modifiers").unwrap().get("ctrl"),
+            Some(&serde_json::Value::Bool(true)),
+            "held-key release must not disturb the modifier cache",
+        );
+    }
+}
+
 // R682.B §5.16 — scene/cache_stats RPC dispatch wire
 // ─────────────────────────────────────────────────────────────
 

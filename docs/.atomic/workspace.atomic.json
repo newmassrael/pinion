@@ -37079,6 +37079,56 @@
         "click/drag/key RPC wrappers window= param on 2nd consumer (R883.1 carry, unchanged)"
       ]
     },
+    "R885": {
+      "decision_summary": "scene/input_state is the READ peer of the out-of-band input writes (modifiers / held keys / cursor), each field mirroring its write wire shape; embedder-resolved snapshot per dispatch closes the write-only introspection gap",
+      "changes_bullets": [
+        "scene/input_state READ method: the peer of scene/modifiers / scene/key state / cursor writes",
+        "result mirrors write shapes: modifiers {shift,ctrl,alt,meta}|null, held_keys [named], cursor {x,y}|null",
+        "pinion_core::InputStateSnapshot (contract-crate home) + HeldKeys::held_names canonical enumeration",
+        "DispatchContext.input_state embedder-resolved pre-dispatch (fragment_cache_stats pattern)",
+        "GUI resolves modifiers from the R763 absolute cache; TUI surfaces modifiers:null (no cache, honest §2#6)",
+        "cursor = addressed window's router last mouse position (CoreShell::cursor_position_for_window)",
+        "closes the write-only-wire AI-first introspection violation (R882.1 carry, ★)"
+      ],
+      "verification_bullets": [
+        "new tests green: core held_names, shell wire round-trip, tui null-modifiers + held read-back",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "demo r885_input_state.py PASS (34 checks, exact count) + r882_space_pan regression PASS"
+      ],
+      "impact_refs": [
+        "5.49",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "TUI absolute modifier cache absent -> modifiers:null on the wire (documented §2#6 carry, unchanged)",
+        "gesture-in-flight (pan) state not in v1 snapshot: atomic RPC drags never observe one mid-flight;",
+        "native-mouse mid-gesture observation is the documented additive axis on InputStateSnapshot"
+      ],
+      "publishable_decision_summary": "scene/input_state is the READ peer of the out-of-band input writes (modifiers / held keys / cursor), each field mirroring its write wire shape; embedder-resolved snapshot per dispatch closes the write-only introspection gap",
+      "publishable_changes_bullets": [
+        "scene/input_state READ method: the peer of scene/modifiers / scene/key state / cursor writes",
+        "result mirrors write shapes: modifiers {shift,ctrl,alt,meta}|null, held_keys [named], cursor {x,y}|null",
+        "pinion_core::InputStateSnapshot (contract-crate home) + HeldKeys::held_names canonical enumeration",
+        "DispatchContext.input_state embedder-resolved pre-dispatch (fragment_cache_stats pattern)",
+        "GUI resolves modifiers from the R763 absolute cache; TUI surfaces modifiers:null (no cache, honest §2#6)",
+        "cursor = addressed window's router last mouse position (CoreShell::cursor_position_for_window)",
+        "closes the write-only-wire AI-first introspection violation (R882.1 carry, ★)"
+      ],
+      "publishable_verification_bullets": [
+        "new tests green: core held_names, shell wire round-trip, tui null-modifiers + held read-back",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "demo r885_input_state.py PASS (34 checks, exact count) + r882_space_pan regression PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.49",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TUI absolute modifier cache absent -> modifiers:null on the wire (documented §2#6 carry, unchanged)",
+        "gesture-in-flight (pan) state not in v1 snapshot: atomic RPC drags never observe one mid-flight;",
+        "native-mouse mid-gesture observation is the documented additive axis on InputStateSnapshot"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

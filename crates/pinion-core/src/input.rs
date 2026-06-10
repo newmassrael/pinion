@@ -159,6 +159,54 @@ impl HeldKeys {
     pub fn clear(&mut self) {
         *self = Self::default();
     }
+
+    /// R885 §5.49 — enumerate the currently-held chord keys by their
+    /// canonical *named* wire spelling (the `scene/key` vocabulary the
+    /// winit boundary emits — `"Space"`, never the W3C `" "`
+    /// character [`Self::note`] also tolerates on input). One home
+    /// for the held-set enumeration: the `scene/input_state` READ
+    /// peer serializes exactly this list, so the read is the inverse
+    /// of the `scene/key state:"down"` writes by construction.
+    #[must_use]
+    pub fn held_names(self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if self.space {
+            names.push("Space");
+        }
+        names
+    }
+}
+
+/// R885 §5.49 — by-value snapshot of the shell's out-of-band input
+/// state, resolved by the embedder before each RPC dispatch and
+/// consumed by the `scene/input_state` READ method (the
+/// `fragment_cache_stats` resolution pattern). Lives next to
+/// [`Modifiers`] / [`HeldKeys`] because it is pure contract data both
+/// backends produce and `pinion-rpc` serializes
+/// ([[helper-crate-home-ssot-axis]]).
+///
+/// Field shapes mirror their write peers (read = inverse of write):
+///
+/// * [`Self::modifiers`] — the `scene/modifiers` absolute cache.
+///   `None` = the backend keeps no absolute modifier state (the TUI:
+///   crossterm delivers modifiers per-key-event only; its
+///   `scene/modifiers` gap is the documented §2 #6 carry). The wire
+///   surfaces `null` so an AI client can tell "axis unavailable"
+///   from "no modifier held".
+/// * [`Self::held_keys`] — [`HeldKeys::held_names`], the
+///   `scene/key state:"down"/"up"` chord cache (both backends).
+/// * [`Self::cursor`] — the dispatch-scoped window's last mouse
+///   cursor position, the state every `scene/click` / `scene/hover` /
+///   `scene/drag` `x`/`y` writes. `None` until the first cursor
+///   event lands in that window.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct InputStateSnapshot {
+    /// Absolute modifier cache (`None` = backend tracks none).
+    pub modifiers: Option<Modifiers>,
+    /// Canonical named spellings of the held chord keys.
+    pub held_keys: Vec<&'static str>,
+    /// Last cursor position in the dispatch-scoped window.
+    pub cursor: Option<(f64, f64)>,
 }
 
 /// R880.1 — the multi-select pointer-chord policy, decoded ONCE for every
@@ -630,6 +678,20 @@ mod tests {
         is_activation_event, DragLatch, HeldKeys, Modifiers, PointerWireEvent,
         KEYBOARD_ACTIVATE_EVENT,
     };
+
+    #[test]
+    fn r885_held_names_enumerates_canonical_spellings() {
+        // The `scene/input_state` READ enumeration: empty when idle,
+        // the canonical *named* spelling ("Space") even when the
+        // chord was armed via the W3C `" "` character — the read is
+        // the inverse of the write vocabulary, not an echo of it.
+        let mut held = HeldKeys::default();
+        assert!(held.held_names().is_empty());
+        held.note(" ", true);
+        assert_eq!(held.held_names(), vec!["Space"]);
+        held.note("Space", false);
+        assert!(held.held_names().is_empty());
+    }
 
     #[test]
     fn r882_held_keys_tracks_the_space_chord_only() {
