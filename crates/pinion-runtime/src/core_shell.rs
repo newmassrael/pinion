@@ -75,7 +75,7 @@ use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Effect, Signal};
 use pinion_core::scene::{ContainerNode, ExternalNode};
-use pinion_core::{Command, Owner, Scene, WidgetCore};
+use pinion_core::{Command, HeldKeys, Owner, Scene, WidgetCore};
 
 use crate::command::CommandExecutor;
 use crate::input::{InputRouter, PanRelease, PointerId, Touch, TouchPhase};
@@ -139,6 +139,18 @@ pub struct CoreShell<V: WidgetCore> {
     /// `[[multi-window-input-router-race]]` documents the R670.B →
     /// R671 carry; R672 closes the foundation.
     routers: HashMap<String, InputRouter>,
+    /// R882.1 §5.39 §5.35 — held-key absolute state for the
+    /// non-modifier chord vocabulary ([`pinion_core::HeldKeys`]).
+    /// Lives HERE — not per backend shell — because the chord →
+    /// pan-channel routing it gates ([`Self::left_press_for_window`])
+    /// is substrate policy: the R882 first cut kept one cache per
+    /// shell and the routing branch duplicated GUI/TUI, the exact §2
+    /// #6 two-shells-own-one-policy divergence class the session
+    /// audit flagged. Backends remain thin edge producers
+    /// ([`Self::note_key_state`] from winit `KeyboardInput` / the
+    /// `scene/key state` drain) and blur consumers
+    /// ([`Self::clear_held_keys`]).
+    held_keys: HeldKeys,
     intent_queue: IntentQueue,
     /// R51.142 §5.28 — root reactive scope for this widget binding.
     ///
@@ -517,6 +529,7 @@ impl<V: WidgetCore> CoreShell<V> {
             scene,
             cached_state,
             routers,
+            held_keys: HeldKeys::default(),
             intent_queue: IntentQueue::new(),
             root_owner,
             frame_signal,
@@ -1657,65 +1670,135 @@ impl<V: WidgetCore> CoreShell<V> {
     /// click-vs-pan determination ([`PanRelease`]); the shell runs
     /// its paste funnel on [`PanRelease::Click`] only.
     pub fn middle_up_for_window(&mut self, window_id: &str, pid: PointerId) -> PanRelease {
+        // `.get_mut`, not `.entry().or_default()`: a release addressed
+        // to a window that never saw input must not allocate a router
+        // (R882.1 phantom-window hygiene; `NoPress` is the no-router
+        // answer by definition).
         self.routers
-            .entry(window_id.to_owned())
-            .or_default()
-            .middle_up(pid)
+            .get_mut(window_id)
+            .map_or(PanRelease::NoPress, |router| router.middle_up(pid))
     }
 
-    /// R882 §5.35 §5.39 — route a left press into the addressed
-    /// window's pan channel (the shell's Space-hold chord — Figma /
-    /// Photoshop hand tool). Pan targets pin at the press point; no
-    /// widget sees a `PointerDown`. Single-window wrapper:
-    /// [`Self::left_pan_down`].
-    pub fn left_pan_down_for_window(&mut self, window_id: &str, pid: PointerId) {
-        self.routers
-            .entry(window_id.to_owned())
-            .or_default()
-            .left_pan_down(pid);
+    /// R882.1 §5.39 §5.35 — held-key absolute-state funnel: record a
+    /// key edge from any producer (winit `KeyboardInput` both edges,
+    /// the `scene/key state:"down"/"up"` drain). The chord vocabulary
+    /// decode lives in [`pinion_core::HeldKeys::note`]; the routing
+    /// policy the cache gates lives in
+    /// [`Self::left_press_for_window`] — one home each, zero copies
+    /// per backend (§2 #6).
+    pub fn note_key_state(&mut self, key: &str, pressed: bool) {
+        self.held_keys.note(key, pressed);
     }
 
-    /// R882 §5.35 — single-window wrapper around
-    /// [`Self::left_pan_down_for_window`].
-    pub fn left_pan_down(&mut self, pid: PointerId) {
-        self.left_pan_down_for_window(DEFAULT_WINDOW, pid);
-    }
-
-    /// R882 §5.35 §5.39 — whether a left-opened pan gesture is in
-    /// flight on the addressed window for `pid`. The shell's left
-    /// release routes on this (gesture-capture: the release follows
-    /// the gesture, not the current chord state). Single-window
-    /// wrapper: [`Self::left_pan_in_flight`].
+    /// R882.1 §5.39 — whether the Space pan chord is currently held.
+    /// Read by tests and diagnostics; press routing consults the cache
+    /// internally and release routing deliberately does NOT (it
+    /// follows the gesture in flight — gesture-capture).
     #[must_use]
-    pub fn left_pan_in_flight_for_window(&self, window_id: &str, pid: PointerId) -> bool {
-        self.routers
-            .get(window_id)
-            .is_some_and(|router| router.left_pan_in_flight(pid))
+    pub fn space_held(&self) -> bool {
+        self.held_keys.space()
     }
 
-    /// R882 §5.35 — single-window wrapper around
-    /// [`Self::left_pan_in_flight_for_window`].
-    #[must_use]
-    pub fn left_pan_in_flight(&self, pid: PointerId) -> bool {
-        self.left_pan_in_flight_for_window(DEFAULT_WINDOW, pid)
+    /// R882.1 §5.39 — forget every held key. The GUI shell calls this
+    /// on window blur (the browser missed-keyup convention: the keyup
+    /// after a focus loss goes to another window; a stranded chord
+    /// would turn every post-refocus left drag into a pan). The TUI
+    /// has no blur event on the baseline crossterm protocol — its
+    /// cache is RPC-owned (§2 #6 carry).
+    pub fn clear_held_keys(&mut self) {
+        self.held_keys.clear();
     }
 
-    /// R882 §5.35 §5.39 — close a left-opened pan gesture on the
-    /// addressed window and report the click-vs-pan determination.
-    /// The left chord's `Click` (release-in-place) verdict is inert
-    /// shell policy — see [`PanRelease`]. Single-window wrapper:
-    /// [`Self::left_pan_up`].
-    pub fn left_pan_up_for_window(&mut self, window_id: &str, pid: PointerId) -> PanRelease {
-        self.routers
+    /// R882.1 §5.35 §5.39 — the LEFT-button **press front door**: one
+    /// substrate home for which arc a left press takes, so no backend
+    /// shell owns a copy of the policy (the R882 first cut duplicated
+    /// the branch GUI/TUI — the §2 #6 divergence class).
+    ///
+    /// * Space chord held → the press enters the router's pan channel
+    ///   ([`InputRouter::left_pan_down`], targets pinned at the press
+    ///   point) and `None` is returned: **no widget sees the press**,
+    ///   and the backend must skip its press follow-ups (click-to-
+    ///   focus, caret positioning, immediate-mode forward — a pan
+    ///   must not steal focus).
+    /// * A pan-class gesture already owns the pointer → the routed
+    ///   press is the router's to swallow (and count, so its release
+    ///   pairs with the refusal); `None` again — pre-R882.1 the
+    ///   follow-ups ran against the pinned stale hover and stole
+    ///   focus mid-pan.
+    /// * Otherwise → the normal widget press arc
+    ///   ([`Self::pointer_down_for_window`]); the returned tail is the
+    ///   backend's to run alongside its follow-ups.
+    ///
+    /// Single-window wrapper: [`Self::left_press`].
+    pub fn left_press_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> Option<DispatchTail<V::State>> {
+        let router = self
+            .routers
             .entry(window_id.to_owned())
-            .or_default()
-            .left_pan_up(pid)
+            .or_default();
+        if self.held_keys.space() {
+            router.left_pan_down(pid);
+            return None;
+        }
+        if router.pan_gesture_in_flight(pid) {
+            // The routed press is swallowed (and same-button-counted)
+            // inside `pointer_down`; dispatch it so the router's
+            // bookkeeping runs, then report the press as consumed.
+            let _ = self.pointer_down_for_window(window_id, pid);
+            return None;
+        }
+        Some(self.pointer_down_for_window(window_id, pid))
     }
 
-    /// R882 §5.35 — single-window wrapper around
-    /// [`Self::left_pan_up_for_window`].
-    pub fn left_pan_up(&mut self, pid: PointerId) -> PanRelease {
-        self.left_pan_up_for_window(DEFAULT_WINDOW, pid)
+    /// R882.1 §5.35 — single-window wrapper around
+    /// [`Self::left_press_for_window`].
+    pub fn left_press(&mut self, pid: PointerId) -> Option<DispatchTail<V::State>> {
+        self.left_press_for_window(DEFAULT_WINDOW, pid)
+    }
+
+    /// R882.1 §5.35 §5.39 — the LEFT-button **release front door**,
+    /// pairing [`Self::left_press_for_window`]. A left-opened pan
+    /// gesture in flight resolves in the pan channel (gesture-capture:
+    /// the gesture, not the current chord state, owns the routing —
+    /// lifting Space mid-pan never strands it; the router's refusal
+    /// counter pairs an injected same-button release with its
+    /// swallowed press so it cannot steal the live gesture). The left
+    /// chord's `Click` (release-in-place) verdict is inert policy —
+    /// see [`PanRelease`]. Returns `None` when the pan channel
+    /// consumed the release; otherwise the normal
+    /// [`Self::pointer_up_for_window_with_modifiers`] tail.
+    ///
+    /// Single-window wrapper: [`Self::left_release`].
+    pub fn left_release_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        modifiers: pinion_core::Modifiers,
+    ) -> Option<DispatchTail<V::State>> {
+        // `.get_mut`, not `.entry().or_default()`: a release addressed
+        // to a window that never saw input must not allocate a router
+        // (phantom-window hygiene — the release resolves as "nothing
+        // in flight" through the normal arc below).
+        if let Some(router) = self.routers.get_mut(window_id)
+            && router.left_pan_in_flight(pid)
+        {
+            let _ = router.left_pan_up(pid);
+            return None;
+        }
+        Some(self.pointer_up_for_window_with_modifiers(window_id, pid, modifiers))
+    }
+
+    /// R882.1 §5.35 — single-window wrapper around
+    /// [`Self::left_release_for_window`].
+    pub fn left_release(
+        &mut self,
+        pid: PointerId,
+        modifiers: pinion_core::Modifiers,
+    ) -> Option<DispatchTail<V::State>> {
+        self.left_release_for_window(DEFAULT_WINDOW, pid, modifiers)
     }
 
     /// R51.122 §5.41 — pointer leaves the surface for `pid` (winit's

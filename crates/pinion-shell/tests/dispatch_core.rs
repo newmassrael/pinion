@@ -2616,6 +2616,46 @@ mod r882_space_chord_pan {
     }
 
     #[test]
+    fn r882_1_injected_click_mid_pan_is_inert_and_native_release_resolves() {
+        // Session-audit regression (the same-button release-theft
+        // hole): a full injected click cycle (what the `scene/click`
+        // drain produces) landing mid-chord-pan must neither end the
+        // native gesture nor dispatch anything; only the native
+        // release frees the pointer. Observability: the middle-paste
+        // discriminator from the tests above.
+        let _g = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+
+        let mut core = ShellCore::<TestView>::new();
+        core.cursor_moved(PointerId::MOUSE, 50.0, 50.0);
+        core.note_key_state("Space", true);
+        core.mouse_pressed(PointerId::MOUSE);
+        // Injected click while the chord pan owns the pointer (chord
+        // still held — the drain's press takes the chord arc).
+        core.mouse_pressed(PointerId::MOUSE);
+        core.mouse_released(PointerId::MOUSE);
+        assert!(
+            !middle_click_pastes(&mut core),
+            "the injected pair must not consume the native pan gesture",
+        );
+        // And the chordless flavour (chord lifted mid-pan).
+        core.note_key_state("Space", false);
+        core.mouse_pressed(PointerId::MOUSE);
+        core.mouse_released(PointerId::MOUSE);
+        assert!(
+            !middle_click_pastes(&mut core),
+            "the chordless injected pair must not consume it either",
+        );
+        // The native release (the press that opened the gesture)
+        // resolves it and frees the pointer.
+        core.mouse_released(PointerId::MOUSE);
+        assert!(
+            middle_click_pastes(&mut core),
+            "the owning native release resolved the pan",
+        );
+    }
+
+    #[test]
     fn r882_rpc_scene_key_edges_drive_the_chord() {
         // The wire peer: `scene/key state:"down"` arms the chord
         // exactly as a physical Space press would; `state:"up"`

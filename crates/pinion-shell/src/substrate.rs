@@ -42,7 +42,7 @@ use pinion_a11y::{
     PinionAccessAction, ROOT_NODE_ID,
 };
 use pinion_core::event::WheelDelta;
-use pinion_core::{Frame, HeldKeys, Intent, Scene, SceneRevision};
+use pinion_core::{Frame, Intent, Scene, SceneRevision};
 use pinion_rpc::{
     dispatch_parsed, parse_request, DeferredInput, DispatchContext, DragButton, KeyWireState, LayoutNode, PreviewLedger,
     Request,
@@ -146,22 +146,6 @@ pub struct ShellCore<V: WidgetView> {
     /// only the Shift bit via [`Self::modifiers_shift_key`];
     /// mutation happens through [`Self::set_modifiers`].
     modifiers: Modifiers,
-    /// R882 §5.39 §5.35 — held-key absolute state for the non-modifier
-    /// chord vocabulary ([`HeldKeys`] — the [`Self::modifiers`]
-    /// out-of-band pattern generalised past `ModifiersState`): winit
-    /// delivers `KeyboardInput` `Released` edges but the pre-R882 shell
-    /// dropped them, so no "is Space held right now" fact existed
-    /// anywhere. While the Space pan chord is held, a left press routes
-    /// into the router's pan channel instead of the widget press arc
-    /// (see [`Self::mouse_pressed_for_window`]). Fed by both edges of
-    /// the winit `KeyboardInput` arm and by the
-    /// `scene/key state:"down"/"up"` RPC peer through one funnel
-    /// ([`Self::note_key_state`]); cleared on window blur (the browser
-    /// convention — a keyup that raced the focus loss never arrives,
-    /// and a stuck chord would turn every left drag into a pan). The
-    /// chord *vocabulary* decode lives in `pinion-core` so the TUI
-    /// sibling can never diverge (§2 #6).
-    held_keys: HeldKeys,
     /// R47.3 §5.36 — owned [`LayoutCache`] (LRU 256). `paint_adapter`'s
     /// Text arm consults this cache for every `Scene::Text` it walks
     /// so the view fn's static labels shape once on first paint and
@@ -498,7 +482,6 @@ impl<V: WidgetView> ShellCore<V> {
             revision: SceneRevision::default(),
             focus,
             modifiers: Modifiers::empty(),
-            held_keys: HeldKeys::default(),
             text_cache: LayoutCache::new(),
             last_paint_layout: None,
             last_access_tag_map: HashMap::new(),
@@ -1374,22 +1357,20 @@ impl<V: WidgetView> ShellCore<V> {
     /// the *binding-wide* hover target (whichever window the cursor
     /// last hovered).
     pub fn mouse_pressed_for_window(&mut self, window_id: &str, pid: PointerId) {
-        // R882 §5.35 §5.39 — Space-hold pan chord (the Figma / Photoshop
-        // hand tool): while Space is held, a left press enters the
-        // router's pan channel instead of the widget press arc — the
-        // R881 middle-pan machinery with the advance driven from the
-        // left-drag channel. Deliberately NONE of the press follow-ups
-        // run: no widget `PointerDown`, no click-to-focus (a pan must
-        // not steal focus), no caret positioning, no immediate-mode
-        // forward. The chord is read at press time only; the matching
-        // release routes by the gesture in flight (see
-        // [`Self::mouse_released_for_window`]), so lifting Space
-        // mid-pan never strands the gesture.
-        if self.held_keys.space() {
-            self.core.left_pan_down_for_window(window_id, pid);
+        // R882 / R882.1 §5.35 §5.39 — the press routes through the
+        // substrate's LEFT front door
+        // ([`CoreShell::left_press_for_window`]): the Space-hold pan
+        // chord (Figma / Photoshop hand tool) and the live-pan
+        // swallow are substrate policy, owned ONCE in `CoreShell`
+        // (the R882 first cut kept the branch per shell — the §2 #6
+        // divergence class). `None` = the pan channel consumed the
+        // press: no widget `PointerDown` and none of the press
+        // follow-ups below run — no click-to-focus (a pan must not
+        // steal focus), no caret positioning, no immediate-mode
+        // forward.
+        let Some(tail) = self.core.left_press_for_window(window_id, pid) else {
             return;
-        }
-        let tail = self.core.pointer_down_for_window(window_id, pid);
+        };
         self.click_to_focus_for_window(window_id, pid);
         self.position_caret_after_press(window_id, pid);
         self.forward_pointer_down_to_immediate(window_id, pid);
@@ -1589,27 +1570,24 @@ impl<V: WidgetView> ShellCore<V> {
 
     /// R672 §5.35 §5.41 — per-window variant of [`Self::mouse_released`].
     pub fn mouse_released_for_window(&mut self, window_id: &str, pid: PointerId) {
-        // R882 §5.35 §5.39 — a left press that entered the pan channel
-        // resolves there: routing follows the *gesture in flight*, not
-        // the current chord state (gesture-capture — Space may have
-        // lifted mid-pan, the pan still owns the press). The verdict is
-        // deliberately unused: a release-in-place (`PanRelease::Click`)
-        // is inert for the left chord (Figma: Space+click does nothing —
-        // no focus, no selection, no activation), and a latched pan
-        // already applied itself move-by-move.
-        if self.core.left_pan_in_flight_for_window(window_id, pid) {
-            let _verdict = self.core.left_pan_up_for_window(window_id, pid);
-            return;
-        }
-        // R781 §5.35 §5.41 — carry the held modifiers to the activate edge
-        // so a Shift / Ctrl click reaches the composite send wire (a
-        // multi-select coordinator extends / toggles; every other widget
-        // ignores it). The same `scene/modifiers` cache drives keyboard
-        // multi-select, so RPC `scene/modifiers` + `scene/click` and a
-        // native modified click are one path.
-        let tail = self
+        // R882 / R882.1 §5.35 §5.39 — the release routes through the
+        // substrate's LEFT front door
+        // ([`CoreShell::left_release_for_window`]): a left-opened pan
+        // gesture resolves in the pan channel (gesture-capture — the
+        // gesture, not the current chord state, owns the routing) and
+        // returns `None`. R781 §5.35 §5.41 — the routed arc carries
+        // the held modifiers to the activate edge so a Shift / Ctrl
+        // click reaches the composite send wire (a multi-select
+        // coordinator extends / toggles; every other widget ignores
+        // it). The same `scene/modifiers` cache drives keyboard
+        // multi-select, so RPC `scene/modifiers` + `scene/click` and
+        // a native modified click are one path.
+        let Some(tail) = self
             .core
-            .pointer_up_for_window_with_modifiers(window_id, pid, self.modifiers);
+            .left_release_for_window(window_id, pid, self.modifiers)
+        else {
+            return;
+        };
         self.handle_tail(&tail);
         // R763 §5.36 §5.22 — the press → move → release gesture ends;
         // the selection it produced persists in the TextEditState, but
@@ -1912,16 +1890,20 @@ impl<V: WidgetView> ShellCore<V> {
         state: KeyWireState,
         character: bool,
     ) {
-        self.cursor_moved_for_window(window_id, PointerId::MOUSE, at.0, at.1);
         // The edge → cache / dispatch policy is `KeyWireState`'s own
         // (`held_edge` / `dispatches`) so the TUI drain reads the same
-        // decision table.
+        // decision table. R882.1 — a release edge moves NO cursor
+        // either: a physical `Released` carries no position, and the
+        // leading cursor move would perturb a live pan / hover (the
+        // wire's `at` is optional for `state:"up"` for the same
+        // reason).
         if let Some(held) = state.held_edge() {
             self.note_key_state(key, held);
         }
         if !state.dispatches() {
             return;
         }
+        self.cursor_moved_for_window(window_id, PointerId::MOUSE, at.0, at.1);
         if character {
             self.handle_character_key(key);
         } else {
@@ -1992,23 +1974,23 @@ impl<V: WidgetView> ShellCore<V> {
     /// funnel for every producer — both edges of the winit
     /// `KeyboardInput` arm and the `scene/key state:"down"/"up"` RPC
     /// peer — so the native and AI-driven chord can never diverge.
-    /// The cache stores facts (which keys are physically down); the
-    /// *policy* mapping a held key to a verb lives at the consumer
-    /// (the left-press pan routing in
-    /// [`Self::mouse_pressed_for_window`]); the chord *vocabulary*
-    /// (which keys are tracked at all) lives once in
-    /// [`HeldKeys::note`].
+    /// The cache (and the routing policy it gates) lives in the
+    /// backend-agnostic substrate — R882.1 moved both into
+    /// [`CoreShell`](pinion_runtime::CoreShell) so the GUI and TUI
+    /// shells are pure edge producers with zero policy copies (§2 #6);
+    /// this is the winit-side forwarding funnel.
     pub fn note_key_state(&mut self, key: &str, pressed: bool) {
-        self.held_keys.note(key, pressed);
+        self.core.note_key_state(key, pressed);
     }
 
     /// R882 §5.39 — whether the Space pan chord is currently held
-    /// (see [`Self::note_key_state`]). Read by the left-press routing
-    /// and by tests; release routing deliberately does NOT read this —
-    /// it follows the gesture in flight (gesture-capture).
+    /// (see [`Self::note_key_state`]). Read by tests; press routing
+    /// consults the substrate cache internally and release routing
+    /// deliberately does NOT — it follows the gesture in flight
+    /// (gesture-capture).
     #[must_use]
     pub fn space_held(&self) -> bool {
-        self.held_keys.space()
+        self.core.space_held()
     }
 
     /// R51.80 §5.39 / R51.59 — winit `WindowEvent::Focused(true)`
@@ -2035,7 +2017,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// explicit clear.
     pub fn window_blurred(&mut self) {
         self.focus.save();
-        self.held_keys.clear();
+        self.core.clear_held_keys();
     }
 
     /// R51.80 §5.16 §5.36 — compute one frame's paint scene from the

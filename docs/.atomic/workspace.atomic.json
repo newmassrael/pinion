@@ -36837,6 +36837,78 @@
         "right-click context menu RPC peer (2#2 gap, R881.1 carry — lead candidate)"
       ]
     },
+    "R882.1": {
+      "decision_summary": "session-audit remediation: same-button release theft (swallowed-press counter), guard symmetry, chord policy CoreShell lift (2#6), positionless key-up, HeldKeys W3C peer",
+      "changes_bullets": [
+        "PanGesture.swallowed_presses: refused same-button press counted; its release pairs",
+        "with the refusal (NoPress) — injected click can no longer steal a live pan (L+M)",
+        "pointer_down/up guards widened latched-only -> any pan gesture (press-side symmetry",
+        "with pan_down; dead-zone coexistence with capture/press tracker closed)",
+        "chord policy lifted into CoreShell: held_keys + left_press/left_release front doors;",
+        "GUI/TUI shells = zero policy copies (2#6); press follow-ups (focus/caret/immediate)",
+        "skipped when pan channel consumes the press (mid-pan focus steal closed)",
+        "scene/key state:\"up\" = positionless (at/path optional; drains move no cursor on Up)",
+        "HeldKeys accepts W3C \" \" peer alongside \"Space\"; blur-clear doc scoped (TUI RPC-owned)",
+        "release wrappers .get_mut (no phantom-window router alloc); pan_up dead arm removed",
+        "column_widths SSOT decode fail-closed edge pinned by test; demo docstring scope note"
+      ],
+      "verification_bullets": [
+        "2 adversarial subagents (correctness + SSOT lenses); all findings re-verified by grep/read",
+        "cargo test --workspace -j2 green (runtime 336 incl. 3 new R882.1 + shell 7 + rpc 5 + core)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "demos PASS: r882 + r881/r880/r879/r877 + r742/r743/r763 (fresh release builds)"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.39",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "input-state READ RPC peer (modifiers + held keys are write-only wire; ai-first",
+        "introspection obligation -> dedicated wire-design round, not a session-end bolt-on)",
+        "multi-window chord semantics (binding-wide HeldKeys vs per-window routers; any-window",
+        "blur clears; X11 click-into-window B orders ButtonPress before FocusOut)",
+        "TUI FocusLost chord clear (crossterm focus-change capture unwired; cache RPC-owned)",
+        "Space-activation overlap joins text-edit exemption carry (Toggle/Button W3C Space",
+        "activation while chord held swallows the simultaneous click)",
+        "blur/missed-release gesture revocation sweep now includes left pan (raised exposure)"
+      ],
+      "publishable_decision_summary": "session-audit remediation: same-button release theft (swallowed-press counter), guard symmetry, chord policy CoreShell lift (2#6), positionless key-up, HeldKeys W3C peer",
+      "publishable_changes_bullets": [
+        "PanGesture.swallowed_presses: refused same-button press counted; its release pairs",
+        "with the refusal (NoPress) — injected click can no longer steal a live pan (L+M)",
+        "pointer_down/up guards widened latched-only -> any pan gesture (press-side symmetry",
+        "with pan_down; dead-zone coexistence with capture/press tracker closed)",
+        "chord policy lifted into CoreShell: held_keys + left_press/left_release front doors;",
+        "GUI/TUI shells = zero policy copies (2#6); press follow-ups (focus/caret/immediate)",
+        "skipped when pan channel consumes the press (mid-pan focus steal closed)",
+        "scene/key state:\"up\" = positionless (at/path optional; drains move no cursor on Up)",
+        "HeldKeys accepts W3C \" \" peer alongside \"Space\"; blur-clear doc scoped (TUI RPC-owned)",
+        "release wrappers .get_mut (no phantom-window router alloc); pan_up dead arm removed",
+        "column_widths SSOT decode fail-closed edge pinned by test; demo docstring scope note"
+      ],
+      "publishable_verification_bullets": [
+        "2 adversarial subagents (correctness + SSOT lenses); all findings re-verified by grep/read",
+        "cargo test --workspace -j2 green (runtime 336 incl. 3 new R882.1 + shell 7 + rpc 5 + core)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "demos PASS: r882 + r881/r880/r879/r877 + r742/r743/r763 (fresh release builds)"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.39",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "input-state READ RPC peer (modifiers + held keys are write-only wire; ai-first",
+        "introspection obligation -> dedicated wire-design round, not a session-end bolt-on)",
+        "multi-window chord semantics (binding-wide HeldKeys vs per-window routers; any-window",
+        "blur clears; X11 click-into-window B orders ButtonPress before FocusOut)",
+        "TUI FocusLost chord clear (crossterm focus-change capture unwired; cache RPC-owned)",
+        "Space-activation overlap joins text-edit exemption carry (Toggle/Button W3C Space",
+        "activation while chord held swallows the simultaneous click)",
+        "blur/missed-release gesture revocation sweep now includes left pan (raised exposure)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

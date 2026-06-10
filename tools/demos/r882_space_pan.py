@@ -25,6 +25,12 @@ the chord.
   (H) out-of-vocabulary state rejects with invalid_params; the chord
       still works after the rejection.
 
+Scope note: gesture-capture across a chord lift (Space released
+mid-pan keeps the pan) is pinned at the shell tier by unit test
+(`r882_chord_lift_mid_gesture_release_still_resolves_in_pan_channel`)
+— the atomic `scene/drag` wire cannot interleave a key edge inside a
+drag, so it is not demoable here.
+
 13 assertions (+8 observed-state wait_until gates).
 """
 

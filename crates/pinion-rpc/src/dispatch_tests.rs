@@ -685,6 +685,37 @@ fn r882_scene_key_state_up_enqueues_up_edge() {
 }
 
 #[test]
+fn r882_1_scene_key_state_up_is_positionless() {
+    // A release edge mirrors winit `Released`, which carries no
+    // cursor: `at`/`path` may be omitted for `state:"up"` (the drain
+    // dispatches nothing and moves no cursor for it). `state:"down"`
+    // still requires a position — it dispatches like a press.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"key":"Space","state":"up"},"id":420}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::Key { ref key, state, .. } = inbox[0] else {
+        panic!("expected Key variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(key, "Space");
+    assert_eq!(state, KeyWireState::Up);
+
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/key","params":{"key":"Space","state":"down"},"id":421}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("a dispatching edge still requires a position");
+    assert_eq!(err.code, -32602);
+    assert!(inbox.is_empty());
+}
+
+#[test]
 fn r882_scene_key_state_out_of_vocabulary_rejects() {
     // A typo'd edge must reject loudly (invalid_params), never decay
     // to a silent atomic press — the R773 closed-vocabulary rule.

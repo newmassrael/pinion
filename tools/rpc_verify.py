@@ -398,15 +398,23 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         winit KeyboardInput Pressed/Released edges (held-key absolute
         state; "Space" arms the left-drag pan chord). `state=None`
         keeps the legacy atomic press, which never touches the
-        held-key cache.
+        held-key cache. R882.1 — `state="up"` is positionless (a real
+        key release carries no cursor and dispatches nothing), so
+        `at`/`path` may both be omitted for it.
         """
         if not name:
             raise ValueError("key name must not be empty")
-        if (at is None) == (path is None):
+        if state == "up":
+            if at is not None and path is not None:
+                raise ValueError("supply at most one of `at` or `path`")
+        elif (at is None) == (path is None):
             raise ValueError("exactly one of `at` or `path` must be supplied")
         params: dict[str, Any] = {"key": name}
         if state is not None:
             params["state"] = state
+        if at is None and path is None:
+            self.request("scene/key", params)
+            return
         if at is not None:
             params["at"] = {"x": float(at[0]), "y": float(at[1])}
         else:

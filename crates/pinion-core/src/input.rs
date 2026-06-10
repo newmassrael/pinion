@@ -115,12 +115,23 @@ impl DragLatch {
 /// [`Modifiers`]: future chord keys (an `H` hand tool, a `Z` zoom
 /// chord) extend the struct by a `SemVer` minor bump.
 ///
-/// Key strings are the canonical W3C `KeyboardEvent.key` vocabulary
-/// the named-key boundary emits (`"Space"`, not the `" "` character).
-/// Both producers — the winit `KeyboardInput` edges and the
+/// Key strings: pinion's named-key boundaries emit `"Space"` (the
+/// winit `NamedKey` / crossterm-bridge spelling — both backends
+/// normalise to it), while the W3C `KeyboardEvent.key` value for the
+/// spacebar is the `" "` character — [`Self::note`] accepts BOTH, the
+/// same dual-spelling tolerance the listbox typeahead /
+/// `virtual_select` keystroke decoders already apply, so an RPC
+/// client speaking strict W3C cannot silently arm nothing. Both
+/// producers — the winit `KeyboardInput` edges and the
 /// `scene/key state:"down"/"up"` RPC peer — feed [`Self::note`], so
-/// native and AI-driven chords can never diverge. Consumers clear the
-/// cache on window blur (the browser missed-keyup convention).
+/// native and AI-driven chords can never diverge.
+///
+/// Lifetime: the GUI shell clears the cache on window blur (the
+/// browser missed-keyup convention — the keyup goes to whichever
+/// window stole focus). The TUI has no blur event on the baseline
+/// crossterm protocol, so its cache is RPC-owned and persists until
+/// the client releases it (`state:"up"`) — a documented §2 #6
+/// divergence carry, the same class as the TUI paste axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HeldKeys {
     space: bool,
@@ -131,7 +142,7 @@ impl HeldKeys {
     /// re-sends are idempotent), `false` on key-up. Keys outside the
     /// chord vocabulary are ignored.
     pub fn note(&mut self, key: &str, pressed: bool) {
-        if key == "Space" {
+        if key == "Space" || key == " " {
             self.space = pressed;
         }
     }
@@ -622,15 +633,21 @@ mod tests {
 
     #[test]
     fn r882_held_keys_tracks_the_space_chord_only() {
-        // The chord-vocabulary SSOT: `Space` arms the pan chord, any
-        // other key is ignored, auto-repeat is idempotent, and `clear`
-        // (the window-blur arm) forgets everything.
+        // The chord-vocabulary SSOT: `Space` (the pinion named-key
+        // spelling) and `" "` (the strict W3C `KeyboardEvent.key`
+        // value) BOTH arm the pan chord — the dual-spelling tolerance
+        // the keystroke decoders already apply; any other key is
+        // ignored, auto-repeat is idempotent, and `clear` (the
+        // window-blur arm) forgets everything.
         let mut held = HeldKeys::default();
         assert!(!held.space());
         held.note("a", true);
         held.note("Enter", true);
+        assert!(!held.space(), "non-space keys never arm the chord");
         held.note(" ", true);
-        assert!(!held.space(), "only the named \"Space\" string is the chord");
+        assert!(held.space(), "the W3C \" \" spelling arms the chord too");
+        held.note(" ", false);
+        assert!(!held.space());
         held.note("Space", true);
         assert!(held.space());
         held.note("Space", true);

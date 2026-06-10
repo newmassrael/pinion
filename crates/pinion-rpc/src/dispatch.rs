@@ -2447,8 +2447,19 @@ where
     };
     // R51.202 §5.49 — key location is either an explicit cursor
     // coordinate or a tag lookup via the paint scene, mirroring
-    // `scene/click`'s shape.
-    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
+    // `scene/click`'s shape. R882.1 — a `state:"up"` edge is
+    // positionless (the winit `Released` mirror carries no cursor and
+    // the drain dispatches nothing for it), so `at`/`path` is optional
+    // there; the placeholder coordinate is never consumed (the drain
+    // gates its cursor move on `dispatches()`).
+    let (x, y) = if state == KeyWireState::Up
+        && params.get("at").is_none()
+        && params.get("path").is_none()
+    {
+        (0.0, 0.0)
+    } else {
+        resolve_at_or_path(params, paint_producer, last_paint_layout)?
+    };
     // R666 §5.37 — single-codepoint vs multi-codepoint discriminator.
     // `chars().count()` is the Unicode-scalar-value count, so
     // pre-composed CJK syllables like `"안"` (one codepoint) still

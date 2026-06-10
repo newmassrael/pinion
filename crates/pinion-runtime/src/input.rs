@@ -409,6 +409,19 @@ struct PanGesture {
     /// The button that opened this gesture — release / in-flight
     /// queries match on it (R882).
     button: PanButton,
+    /// R882.1 §5.35 — count of *swallowed* same-button presses that
+    /// arrived while this gesture owned the pointer (an RPC injection
+    /// racing a native hold — one physical button cannot double-press).
+    /// Each such press is refused (first press wins), so its matching
+    /// release must NOT consume the gesture either: `pan_up` drains
+    /// this counter first and reports [`PanRelease::NoPress`] for the
+    /// stray pair. Without it, an injected same-button click mid-pan
+    /// would end the user's gesture early and the user's real release
+    /// would fall through as an orphan free-mode `PointerUp` — the
+    /// exact phantom-activation hazard the R881.1 exclusivity arms
+    /// exist to prevent (its cross-button half; this is the
+    /// same-button half).
+    swallowed_presses: u32,
     pan: Option<PanState>,
 }
 
@@ -811,15 +824,29 @@ impl InputRouter {
         // first press wins — an RPC injection racing a native hold
         // cannot reset a live pan's latch back into the dead zone and
         // turn the user's pan into a paste-click).
+        //
+        // R882.1 — a refused SAME-button press is additionally counted
+        // on the owning gesture so its matching release pairs with the
+        // refusal (`NoPress`) instead of consuming the live gesture —
+        // see [`PanGesture::swallowed_presses`].
+        if let Some(gesture) = self.pan_gestures.get_mut(&id) {
+            if gesture.button == button {
+                gesture.swallowed_presses += 1;
+            }
+            return;
+        }
         if self.captured_targets.contains_key(&id)
             || self.drag_sessions.contains_key(&id)
             || self.press_gestures.contains_key(&id)
-            || self.pan_gestures.contains_key(&id)
         {
             return;
         }
         let pan = self.cursors.get(&id).copied().map(|origin| self.pin_pan_targets(id, origin));
-        self.pan_gestures.insert(id, PanGesture { button, pan });
+        self.pan_gestures.insert(id, PanGesture {
+            button,
+            swallowed_presses: 0,
+            pan,
+        });
     }
 
     /// R881.1 §5.35 — pin the pan state for a gesture whose origin is
@@ -868,7 +895,7 @@ impl InputRouter {
     }
 
     /// R882 §5.35 — whether a left-opened pan gesture (latched or still
-    /// in its dead zone) is in flight for `id`. The shell's left-release
+    /// in its dead zone) is in flight for `id`. The left-release
     /// routing reads this: a press that entered the pan channel must
     /// resolve there even if the Space chord lifted mid-gesture.
     #[must_use]
@@ -878,26 +905,42 @@ impl InputRouter {
             .is_some_and(|g| g.button == PanButton::Left)
     }
 
+    /// R882.1 §5.35 — whether ANY pan-class gesture (either button,
+    /// latched or dead-zone) owns `id`. The shell-tier press front
+    /// door reads this to skip its press follow-ups (click-to-focus /
+    /// caret positioning / immediate-mode forward) for a press the
+    /// router is about to swallow — pre-R882.1 those follow-ups ran
+    /// on the pinned (stale) hover target and stole focus during a
+    /// live pan.
+    #[must_use]
+    pub fn pan_gesture_in_flight(&self, id: PointerId) -> bool {
+        self.pan_gestures.contains_key(&id)
+    }
+
     /// R881 / R882 §5.35 — the shared pan-channel release arm. Only a
     /// matching-button release consumes the gesture: a left release
     /// while a middle pan owns the pointer (or vice versa) resolves
     /// `NoPress` and leaves the gesture in flight — cross-button
     /// releases must not steal a live pan (R881.1 exclusivity, the
-    /// release half).
+    /// release half). R882.1 — a release pairing with a *swallowed*
+    /// same-button press (an RPC injection racing the native hold)
+    /// drains the gesture's refusal counter and resolves `NoPress`
+    /// too: only the press that opened the gesture may close it.
     fn pan_up(&mut self, id: PointerId, button: PanButton) -> PanRelease {
-        if self
-            .pan_gestures
-            .get(&id)
-            .is_none_or(|g| g.button != button)
-        {
+        let Some(gesture) = self.pan_gestures.get_mut(&id) else {
+            return PanRelease::NoPress;
+        };
+        if gesture.button != button {
             return PanRelease::NoPress;
         }
-        match self.pan_gestures.remove(&id) {
+        if gesture.swallowed_presses > 0 {
+            gesture.swallowed_presses -= 1;
+            return PanRelease::NoPress;
+        }
+        match self.pan_gestures.remove(&id).map(|g| g.pan) {
+            Some(Some(pan)) if pan.latch.live() => PanRelease::Pan,
+            Some(_) => PanRelease::Click,
             None => PanRelease::NoPress,
-            Some(gesture) => match gesture.pan {
-                Some(pan) if pan.latch.live() => PanRelease::Pan,
-                _ => PanRelease::Click,
-            },
         }
     }
 
@@ -1062,15 +1105,28 @@ impl InputRouter {
     /// second press, unifying the native winit and RPC-injected paths
     /// at the framework tier per [[r47-class-incident-prevention]].
     pub fn pointer_down(&mut self, id: PointerId, state_scene: &mut Scene) {
-        // R881.1 §5.35 — gesture exclusivity: while a pan (middle drag
-        // or R882 Space-chord left drag) is live, the pan owns the
-        // pointer. The hover snapshot a press would route by is stale
-        // the moment content slides under the cursor, so the press is
-        // swallowed (Qt ignores secondary-button presses during an
-        // active gesture); the matching release is swallowed in
-        // `pointer_up_with_modifiers` so no widget sees an Up without
-        // its Down.
-        if self.pan_live(id) {
+        // R881.1 §5.35 — gesture exclusivity: while a pan-class gesture
+        // (middle drag or R882 Space-chord left drag) owns the pointer,
+        // a routed press is swallowed. R882.1 widened the guard from
+        // latched-only (`pan_live`) to ANY in-flight pan gesture: a
+        // dead-zone pan press is already a gesture candidate, and
+        // letting a routed press open a capture / press tracker beside
+        // it would feed both gestures the same motion once the pan
+        // latches — the exact coexistence `pan_down`'s own guard
+        // refuses in the mirror direction (the guards must be
+        // symmetric or the exclusivity is one-way). The hover snapshot
+        // a press would route by is also stale the moment content
+        // slides under the cursor (Qt ignores secondary-button presses
+        // during an active gesture); the matching release is swallowed
+        // in `pointer_up_with_modifiers` so no widget sees an Up
+        // without its Down. A swallowed press on a LEFT-owned gesture
+        // is counted so its release pairs with the refusal instead of
+        // consuming the gesture (see [`PanGesture::swallowed_presses`];
+        // this arc IS the left-button channel — middle has its own).
+        if let Some(gesture) = self.pan_gestures.get_mut(&id) {
+            if gesture.button == PanButton::Left {
+                gesture.swallowed_presses += 1;
+            }
             return;
         }
         if let Some(tag) = self.hover_targets.get(&id).cloned() {
@@ -1195,15 +1251,26 @@ impl InputRouter {
         modifiers: Modifiers,
     ) {
         // R881.1 §5.35 — gesture exclusivity, the release half: the
-        // matching `pointer_down` was swallowed while a live pan
-        // (middle drag or R882 Space-chord left drag) owned the
-        // pointer, so this release must not dispatch either (a
+        // matching `pointer_down` was swallowed while a pan-class
+        // gesture (middle drag or R882 Space-chord left drag) owned
+        // the pointer, so this release must not dispatch either (a
         // free-mode `PointerUp` with no prior `Down` would reach
         // activation-edge decoders — `is_activation_event` — and
-        // click a widget that was never pressed). A routed gesture
-        // cannot be in flight here: its press was refused, so there is
-        // no capture / drag / press tracker to close.
-        if self.pan_live(id) {
+        // click a widget that was never pressed). R882.1 — same
+        // widened any-gesture predicate as the press half (the two
+        // guards must agree or a dead-zone-gesture press/release pair
+        // dispatches an orphan `Up`). A routed gesture cannot be in
+        // flight here: its press was refused, so there is no capture /
+        // drag / press tracker to close. This arc IS the left-button
+        // release channel, so a swallowed-press refusal on a
+        // LEFT-owned gesture is drained here exactly as
+        // [`left_pan_up`](Self::left_pan_up) drains it on the shell
+        // front-door path — each release travels exactly one of the
+        // two, so the counter can neither leak nor double-drain.
+        if let Some(gesture) = self.pan_gestures.get_mut(&id) {
+            if gesture.button == PanButton::Left && gesture.swallowed_presses > 0 {
+                gesture.swallowed_presses -= 1;
+            }
             return;
         }
         // R876 §5.49 §5.51 — read the click-vs-drag SSOT for this press, then
@@ -4321,10 +4388,21 @@ mod tests {
         router.middle_down(PointerId::MOUSE);
         router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene);
         router.middle_down(PointerId::MOUSE);
+        // R882.1 — the refused press is *counted*: its matching release
+        // pairs with the refusal (`NoPress` — the injected pair is fully
+        // inert, it can neither paste nor end the pan early) and only
+        // the press that opened the gesture may close it.
+        assert_eq!(
+            router.middle_up(PointerId::MOUSE),
+            PanRelease::NoPress,
+            "the injected pair's release pairs with its refused press",
+        );
+        assert!(router.cursor_moved(PointerId::MOUSE, 50.0, 40.0, &mut state_scene));
+        assert_eq!(scroll.offset(), (0, 50), "the native pan keeps panning");
         assert_eq!(
             router.middle_up(PointerId::MOUSE),
             PanRelease::Pan,
-            "the injected second press must not demote the live pan to a click",
+            "the owning press's release closes the gesture as a pan",
         );
     }
 
@@ -4639,6 +4717,110 @@ mod tests {
         assert!(mods.control_key(), "held chords reach the External's wheel arm");
         assert_eq!(scroll.offset(), (0, 0), "consumed offer skips the scroll fallback");
         assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::Pan);
+    }
+
+    // ─── R882.1 §5.35 session-audit regressions ───────────────────
+
+    #[test]
+    fn r882_1_injected_left_pair_cannot_steal_a_live_left_pan() {
+        // The same-button half of release exclusivity: an RPC click
+        // (press + release on the shared pointer) racing a native
+        // Space-chord hold must be fully inert — the press is refused
+        // AND counted, so its release pairs with the refusal instead
+        // of consuming the user's gesture; the user's real release
+        // still resolves as the pan. Pre-R882.1 the injected release
+        // ended the pan early and the user's physical release fell
+        // through as an orphan free-mode `PointerUp` (phantom
+        // activation).
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        router.left_pan_down(PointerId::MOUSE);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene);
+        // Injected pair, chord-held flavour (both halves enter the pan
+        // channel): press refused + counted, release drains the count.
+        router.left_pan_down(PointerId::MOUSE);
+        assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::NoPress);
+        assert!(router.left_pan_in_flight(PointerId::MOUSE), "the native pan survives");
+        // Injected pair, chordless flavour (the routed arc): press
+        // swallowed + counted by `pointer_down`, release drained by
+        // `pointer_up` — each release travels exactly one channel.
+        router.pointer_down(PointerId::MOUSE, &mut state_scene);
+        router.pointer_up(PointerId::MOUSE, &mut state_scene);
+        assert!(router.left_pan_in_flight(PointerId::MOUSE), "still in flight");
+        // The pan still works and the OWNING release closes it.
+        assert!(router.cursor_moved(PointerId::MOUSE, 50.0, 40.0, &mut state_scene));
+        assert_eq!(scroll.offset(), (0, 50));
+        assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::Pan);
+        assert!(!router.left_pan_in_flight(PointerId::MOUSE));
+    }
+
+    #[test]
+    fn r882_1_mixed_channel_pair_drains_one_count_per_release() {
+        // A swallowed press counted via `pointer_down` may be released
+        // via `left_pan_up` (the shell front door) and vice versa —
+        // the counter is per-press, not per-channel, so a mixed pair
+        // still balances and the owning release still closes.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let mut state_scene = Scene::Container(ContainerNode::new(Vec::new()));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 50.0, 90.0, &mut state_scene);
+        router.left_pan_down(PointerId::MOUSE);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 60.0, &mut state_scene);
+        router.pointer_down(PointerId::MOUSE, &mut state_scene);
+        assert_eq!(
+            router.left_pan_up(PointerId::MOUSE),
+            PanRelease::NoPress,
+            "the front-door release drains the routed-arc count",
+        );
+        assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::Pan);
+    }
+
+    #[test]
+    fn r882_1_dead_zone_pan_press_refuses_routed_press_symmetrically() {
+        // The press-side guards must be symmetric: `pan_down` refuses
+        // while a press tracker exists, so `pointer_down` must refuse
+        // while a pan gesture exists — even in its dead zone. Letting
+        // a routed press open a capture / press tracker beside a
+        // dead-zone pan would feed both gestures the same motion the
+        // moment the pan latches.
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (ext, sends) = CaptureExternal::new();
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        // Over the button so a routed press WOULD capture it.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        router.middle_down(PointerId::MOUSE);
+        // Still inside the dead zone — no pan yet, but the gesture
+        // candidate owns the pointer.
+        sends.lock().expect("mutex poisoned").clear();
+        router.pointer_down(PointerId::MOUSE, &mut state_scene);
+        router.pointer_up(PointerId::MOUSE, &mut state_scene);
+        assert!(
+            sends.lock().expect("mutex poisoned").is_empty(),
+            "a routed press/release is refused even during the dead zone",
+        );
+        // The middle gesture is unaffected: stray past the dead zone
+        // and it pans; release resolves Pan.
+        assert!(router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state_scene));
+        assert_eq!(router.middle_up(PointerId::MOUSE), PanRelease::Pan);
     }
 
     // ─── R51.187 §5.45 R55.C.3 keyboard scroll dispatch tests ─────

@@ -831,6 +831,37 @@ mod tests {
     }
 
     #[test]
+    fn r882_1_resize_send_decodes_through_the_grammar_ssot() {
+        // R882 moved this arm onto `split_send_payload` (the R880.1
+        // `:` grammar SSOT). Pin the decode contract incl. the edge
+        // the swap changed: a wire with a MALFORMED modifier token is
+        // rejected whole (fail-closed — `split_send_payload` returns
+        // `None`, the fallback is not a recognised event name, so the
+        // drag stays armed and the caller sees `UnknownPath`) instead
+        // of the old hand-roll's salvage of the middle segment. The
+        // router is the wire's only legitimate emitter and never
+        // produces a bad token; a hand-written `scene/invoke` typo
+        // must surface loudly, not half-apply.
+        let state = Rc::new(widths());
+        let mut ext = resize_ext(&state, 0);
+        ext.pointer_move(0.5, 0.0);
+        assert!(ext.is_dragging());
+        // Well-formed three-segment wire (held modifiers) decodes.
+        ext.invoke("send", IntrospectValue::Text("resize:PointerUp:c".into())).unwrap();
+        assert!(!ext.is_dragging(), "the R781 modifier segment decodes through the SSOT");
+        // Malformed modifier token → reject-loudly, no teardown.
+        ext.pointer_move(0.5, 0.0);
+        assert!(ext.is_dragging());
+        let err = ext.invoke("send", IntrospectValue::Text("resize:PointerUp:zz".into()));
+        assert!(err.is_err(), "a malformed modifier token rejects the whole wire");
+        assert!(ext.is_dragging(), "a rejected wire must not half-apply");
+        // Bare (non-composite) event name still decodes via the
+        // documented `None` fallback.
+        ext.invoke("send", IntrospectValue::Text("PointerCancel".into())).unwrap();
+        assert!(!ext.is_dragging());
+    }
+
+    #[test]
     fn resize_ignores_non_teardown_pointer_events() {
         let state = Rc::new(widths());
         let mut ext = resize_ext(&state, 0);
