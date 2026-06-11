@@ -40,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    abs_rects_of,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -55,6 +56,21 @@ EDIT = "data_grid_edit"
 # viewport, so the trailing columns (Scale / Active) clip out at rest and the
 # grid scrolls sideways to reveal them (the read-only grids' R784 wrap reused).
 H_SCROLL = "data_grid_hscroll"
+
+
+def _cell_on_screen(snap, tag) -> bool:
+    """The h-scroll clips a cell's on-screen *rect* (not its scene-tree node —
+    the rows are eager), so a click needs the rect to overlap the horizontal
+    viewport. Gating on `find_by_tag` would pass at ANY offset and not wait for
+    the scroll to settle (a R896.1 ZERO-FLAKE fix); gate on rect overlap."""
+    node = find_by_tag(snap, H_SCROLL)
+    rects = abs_rects_of(snap)
+    if node is None or tag not in rects:
+        return False
+    vp = node.get("viewport") or {}
+    vp_x, vp_w = int(vp.get("x", -1)), int(vp.get("w", -1))
+    x, _, w, _ = rects[tag]
+    return x < vp_x + vp_w and x + w > vp_x
 
 
 def _focus_grid(tf) -> None:
@@ -116,20 +132,21 @@ def body() -> None:
         wait_until(lambda: tf.query("/external/value.2.4") is True, timeout=4.0,
                    interval=0.03, desc="Space toggles the focused bool")
         # Single-click the Active bool of row 0 (true) toggles it off. R896 —
-        # the Active column is off-screen at rest, so scroll it into view
-        # first (the cell tag is clipped out of the paint scene until then);
-        # then scroll back so the rest of the demo runs at the default offset.
+        # the Active column's on-screen rect is off-viewport at rest, so scroll
+        # it into view first and WAIT for its rect to overlap the viewport (not
+        # merely for its tree node, which is always present); then scroll back
+        # so the rest of the demo runs at the default offset.
         tf.scroll(H_SCROLL, to=(1000, 0))  # clamps to max => reveals Active
-        wait_snap(tf, lambda s: find_by_tag(s, f"{GRID}#0_4") is not None,
-                  viewport=VIEWPORT, desc="Active column scrolled into view")
+        wait_snap(tf, lambda s: _cell_on_screen(s, f"{GRID}#0_4"),
+                  viewport=VIEWPORT, desc="Active column scrolled on-screen (rect visible)")
         tf.click(path=f"{GRID}#0_4")
         wait_until(lambda: tf.query("/external/value.0.4") is False, timeout=4.0,
                    interval=0.03, desc="single-click toggles a bool cell")
         assert_eq(tf.query("/external/focused_row"), 0, "click focuses the cell")
         assert_eq(tf.query("/external/focused_col"), 4, "click focuses the cell")
         tf.scroll(H_SCROLL, to=(0, 0))
-        wait_snap(tf, lambda s: find_by_tag(s, f"{GRID}#0_0") is not None,
-                  viewport=VIEWPORT, desc="scrolled back to the leading columns")
+        wait_snap(tf, lambda s: _cell_on_screen(s, f"{GRID}#0_0"),
+                  viewport=VIEWPORT, desc="scrolled back: Asset column rect on-screen")
 
         # ── (D) int edit via keyboard (gate drops letters) ──────────
         _focus_grid(tf)

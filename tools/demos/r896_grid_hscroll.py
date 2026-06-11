@@ -58,6 +58,11 @@ def offset_x(snap) -> int:
     return int(hscroll_node(snap).get("offset_x", -1))
 
 
+def vscroll_offset_y(snap) -> int:
+    node = find_by_tag(snap, "data_grid_vscroll")
+    return int(node.get("offset_y", -1)) if node is not None else -1
+
+
 def hviewport_w(snap) -> int:
     return int((hscroll_node(snap).get("viewport") or {}).get("w", -1))
 
@@ -154,6 +159,24 @@ def body() -> None:
         assert_eq(tf.query("/external/value.0.1"), seed_01, "model value survives the scroll")
         assert_eq(offset_x(tf.snapshot(source="paint", viewport=WIN)), 0,
                   "AI reads offset_x straight off the scroll node")
+
+        # ── (E) R896.1 — vertical scroll catches grouped overflow ───
+        # Grouping by Asset (4 distinct: Hero/Tree/Coin/Boss) interleaves 4
+        # group headers + 4 data rows = 8 rows, taller than the band. Before
+        # R896.1 the bottom rows clipped silently (no v-scroll); now the inner
+        # vertical scroll catches the overflow so every grouped row is reachable.
+        groups = tf.invoke("/external/set_group", "0")
+        assert_eq(groups, 4, "Asset groups into 4 single-member runs (8 rows > band)")
+        snap = wait_snap(tf, lambda s: find_by_tag(s, "data_grid_vscroll") is not None,
+                         viewport=WIN, desc="vertical scroll node present when grouped")
+        assert_eq(vscroll_offset_y(snap), 0, "grouped body starts at the top")
+        tf.scroll("data_grid_vscroll", to=(0, 10 ** 9))  # clamp to bottom
+        snap = wait_snap(tf, lambda s: vscroll_offset_y(s) > 0, viewport=WIN,
+                         desc="grouped rows overflow => vertical scroll engages (not clipped)")
+        assert vscroll_offset_y(snap) > 0, "v-scroll advanced: bottom grouped rows are reachable"
+        tf.invoke("/external/set_group", None)  # back to flat
+        wait_snap(tf, lambda s: vscroll_offset_y(s) <= 0, viewport=WIN,
+                  desc="ungrouped body fits the band again (no overflow)")
 
 
 if __name__ == "__main__":

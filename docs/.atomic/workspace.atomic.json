@@ -37983,6 +37983,52 @@
         "grid Model/View convergence continues incrementally; each round stays green and SSOT-clean"
       ]
     },
+    "R896.1": {
+      "decision_summary": "Session-review adversarial audit clearance: 2 subagent reviews + grep/read re-verification surfaced two real defects, both fixed inline. (1) an r837 ZERO-FLAKE race (click gated on scene-tree presence, not rect visibility); (2) an AI-reachable silent v-clip (fixed 268px grid with no vertical scroll dropped grouped overflow rows) fixed with an inner vertical scroll. Scope critique accepted: R896 deferred the higher-value virtualization for the easier h-scroll and over-framed a feature round as architecture.",
+      "changes_bullets": [
+        "r837 ZERO-FLAKE: off-screen-cell click gated on find_by_tag (scene-tree, always present for eager rows) so it never waited for the scroll to settle -> race; re-gated on rect-overlap (_cell_on_screen); scroll-back gate fixed the same way; false \"clipped out of the paint scene\" comment corrected",
+        "editable grid v-clip: a fixed 268px viewport had NO vertical scroll, so grouping a high-cardinality column (Asset, 4 distinct = 8 rows) overflowed the band and clipped the bottom row silently (AI-reachable via set_group) -> added an inner vertical Scene::Scroll (R784 nested single-axis; the header stays outside it so it remains pinned); body still eager (windowed virtualization = R898)",
+        "made the grid container cross-axis width contract explicit in prose (the default AlignItems::Stretch that gives the h-scroll its narrower viewport was load-bearing but uncommented)",
+        "r896 demo gained an (E) v-scroll witness: group -> 8 rows overflow -> offset_y advances past 0 (bottom rows reachable) -> ungroup -> fits again"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green; cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "6 data-grid demos PASS incl r837 (rect-gated) + r896 (h-scroll + new v-scroll witness); hello-data-grid 40 unit green",
+        "v-clip fix positively verified: r896 (E) drives set_group \"0\" -> 4 groups -> data_grid_vscroll offset_y > 0 after scroll-to-bottom, == 0 when ungrouped"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "scope self-critique accepted (adversarial reviewer): R896 shipped h-scroll (the easy axis) and deferred virtualization (the real northern-star value) on a flake-risk pretext; the convergence narrative was inflated (the audit itself found \"no active smell\" to converge)",
+        "course-correct: next round is NOT R897 frozen-column; it is VIRTUALIZE the editable grid body (measured-viewport window = the real Model/View-at-scale debt, and the complete v-clip fix) OR diversify to the node-editor substrate (greener per northern-star, escapes the ~10-round single-widget local optimum)",
+        "frozen column moves after virtualization"
+      ],
+      "publishable_decision_summary": "Session-review adversarial audit clearance: 2 subagent reviews + grep/read re-verification surfaced two real defects, both fixed inline. (1) an r837 ZERO-FLAKE race (click gated on scene-tree presence, not rect visibility); (2) an AI-reachable silent v-clip (fixed 268px grid with no vertical scroll dropped grouped overflow rows) fixed with an inner vertical scroll. Scope critique accepted: R896 deferred the higher-value virtualization for the easier h-scroll and over-framed a feature round as architecture.",
+      "publishable_changes_bullets": [
+        "r837 ZERO-FLAKE: off-screen-cell click gated on find_by_tag (scene-tree, always present for eager rows) so it never waited for the scroll to settle -> race; re-gated on rect-overlap (_cell_on_screen); scroll-back gate fixed the same way; false \"clipped out of the paint scene\" comment corrected",
+        "editable grid v-clip: a fixed 268px viewport had NO vertical scroll, so grouping a high-cardinality column (Asset, 4 distinct = 8 rows) overflowed the band and clipped the bottom row silently (AI-reachable via set_group) -> added an inner vertical Scene::Scroll (R784 nested single-axis; the header stays outside it so it remains pinned); body still eager (windowed virtualization = R898)",
+        "made the grid container cross-axis width contract explicit in prose (the default AlignItems::Stretch that gives the h-scroll its narrower viewport was load-bearing but uncommented)",
+        "r896 demo gained an (E) v-scroll witness: group -> 8 rows overflow -> offset_y advances past 0 (bottom rows reachable) -> ungroup -> fits again"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green; cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "6 data-grid demos PASS incl r837 (rect-gated) + r896 (h-scroll + new v-scroll witness); hello-data-grid 40 unit green",
+        "v-clip fix positively verified: r896 (E) drives set_group \"0\" -> 4 groups -> data_grid_vscroll offset_y > 0 after scroll-to-bottom, == 0 when ungrouped"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "scope self-critique accepted (adversarial reviewer): R896 shipped h-scroll (the easy axis) and deferred virtualization (the real northern-star value) on a flake-risk pretext; the convergence narrative was inflated (the audit itself found \"no active smell\" to converge)",
+        "course-correct: next round is NOT R897 frozen-column; it is VIRTUALIZE the editable grid body (measured-viewport window = the real Model/View-at-scale debt, and the complete v-clip fix) OR diversify to the node-editor substrate (greener per northern-star, escapes the ~10-round single-widget local optimum)",
+        "frozen column moves after virtualization"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -162,7 +162,7 @@ use pinion_core::external::{
     IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, ScrollAxis, ScrollNode, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
 };
@@ -220,6 +220,13 @@ const EDIT_TF_TAG: &str = "data_grid_edit";
 /// their total width outgrows the grid viewport (the R784 single-axis scroll,
 /// the read-only grids' [`h_scrolled_column`] wrap reused on the editable grid).
 const H_SCROLL_KEY: &str = "data_grid_hscroll";
+/// R896.1 — the vertical body `ScrollState` cache key. The rows scroll under
+/// the pinned header when they outgrow [`GRID_VIEWPORT_H`] — e.g. grouping by a
+/// high-cardinality column interleaves enough group headers to overflow the
+/// band. Without this the bottom rows clipped silently (R896 audit finding);
+/// the body is still eager (all rows built — windowed virtualization is R898),
+/// so this is a plain clip-and-scroll, the inner axis of the R784 nested pair.
+const V_SCROLL_KEY: &str = "data_grid_vscroll";
 /// Commit-on-blur intent the inline field raises on a click-away (R793).
 const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("data_grid_edit", "blur");
 
@@ -1613,8 +1620,21 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
                 .with_gap(ROW_GAP),
         ),
     );
+    // R896.1 — clip + scroll the rows vertically when they overflow the band
+    // (grouping a high-cardinality column interleaves enough group headers to
+    // exceed GRID_VIEWPORT_H; before this the bottom rows clipped silently).
+    // The header is OUTSIDE this scroll (it sits above it inside
+    // `h_scrolled_column`'s column), so it stays vertically pinned — the R784
+    // nested single-axis composition: outer horizontal over [pinned header,
+    // inner vertical body]. The body is eager (windowed virtualization = R898).
+    let v_scroll = use_scroll_state(V_SCROLL_KEY);
+    let body = Scene::Scroll(
+        ScrollNode::from_state(Rc::clone(&v_scroll), Rect::default(), rows_column)
+            .with_axis(ScrollAxis::Vertical)
+            .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
+    );
     let h_scroll = use_scroll_state(H_SCROLL_KEY);
-    let scrolled = h_scrolled_column(&h_scroll, view_header(&theme, sort), rows_column);
+    let scrolled = h_scrolled_column(&h_scroll, view_header(&theme, sort), body);
     let grid = Scene::Container(
         ContainerNode::new(vec![scrolled])
             .with_tag(GRID_TAG)
@@ -1622,6 +1642,11 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)).with_border(
                 Border::new(theme.resolve(ColorRole::Outline), 1),
             ))
+            // The fixed viewport bounds both scroll axes. The default
+            // `AlignItems::Stretch` makes `scrolled` claim the full
+            // GRID_VIEWPORT_W width, so the horizontal scroll has a viewport
+            // narrower than the 570px columns to scroll against (R896.1 —
+            // stating the cross-axis contract that was implicit before).
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
