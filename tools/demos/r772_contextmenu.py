@@ -15,7 +15,9 @@ renderer on every platform — so its position/structure is fully
 introspectable as scene-as-data (§2 invariant #7), no native menu
 opacity. The native secondary-button path (`apply_secondary_click`) is
 verified live by `tools/` XTEST separately; here the open path is the
-§2 invariant #2 AI-first `open_at` invoke.
+AI-first `open_at` invoke (the binding-specific programmatic action).
+Since R887 the universal §2 invariant #2 input peer is `scene/click
+{button: "right"}` — exercised by `r887_secondary_click.py`.
 
 The menu is command-class (WAI-ARIA `menuitem`), not selection — so the
 verification axis is the open/active *structure* + the `"command"`

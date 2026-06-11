@@ -31,9 +31,13 @@
 //!
 //! A secondary-button press routes through
 //! [`WidgetCore::apply_secondary_click`] carrying the window-space click
-//! point; the override `invoke("open_at", "<x>,<y>")`s the
-//! [`ContextMenuExternal`], anchoring the popup. AI / RPC clients reach
-//! the same path via `scene/invoke` `open_at` (§2 invariant #2).
+//! point; the override `invoke("open_at", …)`s the
+//! [`ContextMenuExternal`], anchoring the popup. Since R887 the
+//! universal AI peer is `scene/click {button: "right"}` — the exact
+//! injected mirror of the physical press, reaching this same override
+//! on ANY binding (§2 invariant #2). `scene/invoke` `open_at` remains
+//! the binding-specific programmatic action (open without a synthetic
+//! pointer arc).
 //!
 //! ## Keyboard model (WAI-ARIA 1.2 §3.5 Menu)
 //!
@@ -55,8 +59,9 @@
 //! ## AI clients
 //!
 //! `query("open")` / `query("open_x")` / `query("open_y")` /
-//! `query("active")` read the structure; `invoke("open_at", "<x>,<y>")`
-//! opens it, `invoke("send", "i<i>:PointerUp")` activates an item,
+//! `query("active")` read the structure; `scene/click
+//! {button: "right"}` (R887, the universal input arc) or
+//! `invoke("open_at", "<x>,<y>")` (the programmatic action) opens it, `invoke("send", "i<i>:PointerUp")` activates an item,
 //! `invoke("send", "barrier:PointerUp")` dismisses, and
 //! `invoke("key", "<W3CKeyName>")` drives the keyboard model. The popup
 //! is queryable via `scene/snapshot` on the `ctx` panel node (§2
@@ -257,7 +262,7 @@ impl WidgetCore for ContextMenuView {
             return false;
         };
         matches!(
-            intro.invoke("open_at", IntrospectValue::Text(format!("{x},{y}"))),
+            intro.invoke("open_at", ContextMenuExternal::open_at_args(x, y)),
             Ok(IntrospectValue::Bool(true))
         )
     }

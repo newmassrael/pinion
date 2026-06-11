@@ -239,6 +239,37 @@ pub enum WindowFramePolicy {
     },
 }
 
+/// R888 §5.49 §5.28 §2 #4 — the addressed window's frame-pacing
+/// *override slot*: the `scene/pacing_state` READ payload, mirroring
+/// the `scene/set_fps` write axis (read = inverse of write,
+/// [[wire-form-read-write-symmetry]]). Moved here from `pinion-rpc`
+/// at R888.1 — pacing vocabulary lives with its domain, next to
+/// [`WindowFramePolicy`].
+///
+/// Relation to [`WindowFramePolicy`] (deliberately NOT folded): this
+/// enum is the *installed override slot* (what the AI client wrote);
+/// `WindowFramePolicy` is the *per-frame resolved policy* the render
+/// loop executes. `Override(n)` resolves to `Polled { fps: n }`;
+/// `DefaultPolicy` resolves adaptively (Polled while immediate-mode
+/// content is active, `Idle` otherwise).
+///
+/// A named two-state enum, NOT `Option<u32>` doubled into the
+/// dispatch context's availability `Option` — "no override
+/// installed" is a *value* of the axis, categorically different from
+/// "this backend keeps no pacing clock" (the TUI, which surfaces
+/// `PacingStateUnavailable`); nesting `Option`s would alias the two
+/// (the R874 named-enum-over-nested-Option rule).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacingState {
+    /// No override installed — the adaptive per-window default policy
+    /// applies. Serializes as `{"fps": null}`.
+    DefaultPolicy,
+    /// An override is installed: paint at `n` fps; `0` = paused
+    /// (frame-step mode — the window repaints only on explicit
+    /// `scene/tick` / redraw). Serializes as `{"fps": n}`.
+    Override(u32),
+}
+
 impl WindowFramePolicy {
     /// Convenience constructor for `Polled { fps }`.
     #[must_use]

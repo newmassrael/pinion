@@ -340,6 +340,20 @@ fn r886_1_input_state_cursor_follows_tui_click() {
 /// whole axis as absent — NOT alias it onto "default policy" — the
 /// `modifiers: null` honesty precedent's whole-axis variant (§2 #6).
 #[test]
+fn r888_1_set_fps_write_is_unavailable_on_the_tui() {
+    // R888.1 — write/read agree: the TUI cannot answer
+    // `scene/pacing_state`, so it must not accept-and-drop a
+    // `scene/set_fps` either (the R884 silent-no-op class).
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    let write = r#"{"jsonrpc":"2.0","id":1,"method":"scene/set_fps","params":{"fps":30}}"#;
+    let response = core.dispatch_rpc(write).expect("write must respond");
+    assert!(
+        response.contains(r#""error""#) && response.contains("PacingStateUnavailable"),
+        "TUI must reject the pacing write with the shared token: {response}",
+    );
+}
+
+#[test]
 fn r888_pacing_state_is_unavailable_on_the_tui() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
     let read = r#"{"jsonrpc":"2.0","id":1,"method":"scene/pacing_state","params":{}}"#;

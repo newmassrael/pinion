@@ -37355,6 +37355,68 @@
         "TUI pacing axis stays unavailable until the TUI gets a frame clock (event-driven terminal; §2#6)"
       ]
     },
+    "R888.1": {
+      "decision_summary": "session-review adversarial audit clearance for R887+R888: 10 contained real findings cleared inline (encode/decode pair, vocab structural ties, TUI set_fps write gate, PacingState domain rehome, native-arm testability, doc drift); window-known predicate SSOT carried as dedicated round",
+      "changes_bullets": [
+        "open_at encode lifted: ContextMenuExternal::open_at_args adjacent to its decoder (2 callers)",
+        "click \"middle\" redirect detects via DragButton::from_wire_name; message built from as_wire_name",
+        "drag \"right\" gets the mirror redirect to scene/click; click vocab error string = 1 const",
+        "TUI set_fps write gated on pacing availability (shared PacingStateUnavailable token, R884 class)",
+        "PacingState rehomed to pinion_runtime::frame_pacing next to WindowFramePolicy (not folded; doc)",
+        "dispatch_mouse bound loosened to any WidgetViewTui; ACTUAL Down(Right) arm now unit-tested",
+        "dispatch.rs stale 27-method prose enumeration removed (the match is the SSOT)",
+        "doc drift: hello-contextmenu + r772 demo now name scene/click button:right as universal arc"
+      ],
+      "verification_bullets": [
+        "2 adversarial subagent reviews; every finding re-verified by grep/read; 3-bucket classified",
+        "6 new tests: set_fps-unavailable, path+button compose, TUI native Down(Right) + Up(Right) absorb,",
+        "TUI ingress set_fps gate; all suites 150 green; clippy -D pedantic clean",
+        "demos r887/r888/r772 PASS on fresh release builds"
+      ],
+      "impact_refs": [
+        "5.49",
+        "5.53",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "window-known predicate SSOT round (R889 lead): known-unpainted window write/read asymmetry +",
+        "resolve_spec_id primary-fallback makes unknown-window honesty unreachable in production (R683",
+        "pre-existing) + input/pacing availability coupling + wire-level multi-window pins",
+        "apply_secondary_click trait debt: no modifiers (vs apply_middle_click), window-agnostic (R772)",
+        "right-press-during-live-gesture parity pin test (review verified parity holds, untested)",
+        "REJECTED: folding DragButton/ClickButton/KeyWireState wire-pair glue (per-vocab idiom, R803)"
+      ],
+      "publishable_decision_summary": "session-review adversarial audit clearance for R887+R888: 10 contained real findings cleared inline (encode/decode pair, vocab structural ties, TUI set_fps write gate, PacingState domain rehome, native-arm testability, doc drift); window-known predicate SSOT carried as dedicated round",
+      "publishable_changes_bullets": [
+        "open_at encode lifted: ContextMenuExternal::open_at_args adjacent to its decoder (2 callers)",
+        "click \"middle\" redirect detects via DragButton::from_wire_name; message built from as_wire_name",
+        "drag \"right\" gets the mirror redirect to scene/click; click vocab error string = 1 const",
+        "TUI set_fps write gated on pacing availability (shared PacingStateUnavailable token, R884 class)",
+        "PacingState rehomed to pinion_runtime::frame_pacing next to WindowFramePolicy (not folded; doc)",
+        "dispatch_mouse bound loosened to any WidgetViewTui; ACTUAL Down(Right) arm now unit-tested",
+        "dispatch.rs stale 27-method prose enumeration removed (the match is the SSOT)",
+        "doc drift: hello-contextmenu + r772 demo now name scene/click button:right as universal arc"
+      ],
+      "publishable_verification_bullets": [
+        "2 adversarial subagent reviews; every finding re-verified by grep/read; 3-bucket classified",
+        "6 new tests: set_fps-unavailable, path+button compose, TUI native Down(Right) + Up(Right) absorb,",
+        "TUI ingress set_fps gate; all suites 150 green; clippy -D pedantic clean",
+        "demos r887/r888/r772 PASS on fresh release builds"
+      ],
+      "publishable_impact_refs": [
+        "5.49",
+        "5.53",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "window-known predicate SSOT round (R889 lead): known-unpainted window write/read asymmetry +",
+        "resolve_spec_id primary-fallback makes unknown-window honesty unreachable in production (R683",
+        "pre-existing) + input/pacing availability coupling + wire-level multi-window pins",
+        "apply_secondary_click trait debt: no modifiers (vs apply_middle_click), window-agnostic (R772)",
+        "right-press-during-live-gesture parity pin test (review verified parity holds, untested)",
+        "REJECTED: folding DragButton/ClickButton/KeyWireState wire-pair glue (per-vocab idiom, R803)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

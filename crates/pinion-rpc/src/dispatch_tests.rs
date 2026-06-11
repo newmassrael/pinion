@@ -957,6 +957,43 @@ fn r887_scene_click_right_button_enqueues_secondary_click() {
 }
 
 #[test]
+fn r887_scene_click_path_form_with_right_button_resolves_rect_centre() {
+    // R888.1 — the `path` selector and the `button` axis compose: the
+    // dispatcher walks the paint scene for the tag's rect centre and
+    // enqueues the secondary press there (pre-R888.1 only the demo
+    // covered this composition).
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut produce = |_w: u32, _h: u32| -> Scene {
+        use pinion_core::scene::{BoxNode, ContainerNode};
+        let inner = Scene::Box(
+            BoxNode::filled(
+                pinion_core::scene::Rect::new(10, 20, 40, 20),
+                pinion_core::Color::default(),
+            )
+            .with_tag("target"),
+        );
+        let mut outer = ContainerNode::new(vec![inner]);
+        outer.rect = pinion_core::scene::Rect::new(0, 0, 360, 220);
+        Scene::Container(outer)
+    };
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox)
+        .with_paint_producer(&mut produce);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"path":"target","button":"right"},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::SecondaryClick { x, y } = inbox[0] else {
+        panic!("expected SecondaryClick variant, got {:?}", inbox[0]);
+    };
+    assert!((x - 30.0).abs() < f64::EPSILON, "rect centre x");
+    assert!((y - 30.0).abs() < f64::EPSILON, "rect centre y");
+}
+
+#[test]
 fn r887_scene_click_explicit_left_button_enqueues_click() {
     let mut scene = counted_scene(0);
     let previews = PreviewLedger::default();
@@ -1170,7 +1207,8 @@ fn scene_set_fps_enqueues_target_fps() {
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
     let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+        .with_deferred_inputs(&mut inbox)
+        .with_pacing_state(PacingState::DefaultPolicy);
     let req = r#"{"jsonrpc":"2.0","method":"scene/set_fps","params":{"fps":0},"id":7}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1189,7 +1227,8 @@ fn scene_set_fps_accepts_positive_rate() {
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
     let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+        .with_deferred_inputs(&mut inbox)
+        .with_pacing_state(PacingState::DefaultPolicy);
     let req = r#"{"jsonrpc":"2.0","method":"scene/set_fps","params":{"fps":144},"id":7}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1208,7 +1247,8 @@ fn r888_scene_set_fps_null_clears_the_override() {
     let revision = SceneRevision::default();
     let mut inbox: Vec<DeferredInput> = Vec::new();
     let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-        .with_deferred_inputs(&mut inbox);
+        .with_deferred_inputs(&mut inbox)
+        .with_pacing_state(PacingState::DefaultPolicy);
     let req = r#"{"jsonrpc":"2.0","method":"scene/set_fps","params":{"fps":null},"id":7}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
     assert!(resp.error.is_none(), "{:?}", resp.error);
@@ -1216,6 +1256,29 @@ fn r888_scene_set_fps_null_clears_the_override() {
         panic!("expected SetTargetFps variant, got {:?}", inbox[0]);
     };
     assert_eq!(fps, None, "null clears the override");
+}
+
+#[test]
+fn r888_1_set_fps_without_pacing_capability_is_unavailable() {
+    // R888.1 — a backend that cannot answer `scene/pacing_state`
+    // (no pacing clock: the TUI) must reject the write too, not
+    // accept-and-drop it; one availability signal, one wire token.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/set_fps","params":{"fps":30},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("must error without pacing capability");
+    assert_eq!(err.code, -32602);
+    assert_eq!(
+        err.data.as_ref().and_then(Value::as_str),
+        Some("PacingStateUnavailable"),
+        "write and read share the availability token",
+    );
+    assert!(inbox.is_empty(), "rejected write enqueues nothing");
 }
 
 // ---- R888 §5.49 §5.28 — scene/pacing_state (READ peer of set_fps) ----
@@ -1281,7 +1344,8 @@ fn scene_set_fps_rejects_missing_negative_and_non_integer() {
         let revision = SceneRevision::default();
         let mut inbox: Vec<DeferredInput> = Vec::new();
         let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
-            .with_deferred_inputs(&mut inbox);
+            .with_deferred_inputs(&mut inbox)
+            .with_pacing_state(PacingState::DefaultPolicy);
         let req = format!(
             r#"{{"jsonrpc":"2.0","method":"scene/set_fps","params":{bad},"id":7}}"#
         );

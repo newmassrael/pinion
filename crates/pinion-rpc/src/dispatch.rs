@@ -2,20 +2,14 @@
 //!
 //! Realizes the wire shape ratified in §5.7: parse a JSON-RPC 2.0
 //! request envelope, route to a typed handler (§5.12), and emit a
-//! response envelope. Registered methods (R612 — 27 typed):
-//! `scene/query`, `scene/click`, `scene/rewind`, `scene/snapshot`,
-//! `scene/dry_run`, `scene/waitFor`, `scene/screenshot`,
-//! `scene/invoke`, `scene/intents`, `scene/locate`,
-//! `scene/locate_region`, `scene/bbox`, `scene/cancel_preview`,
-//! `scene/list_previews`, `scene/propose_change`,
-//! `scene/apply_preview`, `scene/theme_tokens`,
-//! `scene/set_theme_mode`, `scene/set_theme_palettes`,
-//! `scene/animation_state`, `scene/scroll_state`,
-//! `scene/set_scroll_offset`, `scene/text_state`,
-//! `scene/set_text`, `scene/set_selection`, `scene/set_caret`,
-//! `scene/caret_state`. The preview-lifecycle methods take the
-//! `&PreviewLedger` and `&SceneRevision` arguments the dispatcher
-//! receives from its caller alongside the scene.
+//! response envelope. The registered-method SSOT is the
+//! [`dispatch_parsed`] match itself — a prose enumeration here was a
+//! second encoding of that match and had drifted ~25 methods stale
+//! by R888.1, so it was removed rather than maintained (each
+//! handler's own doc carries its method name and wire shape). The
+//! preview-lifecycle methods take the `&PreviewLedger` and
+//! `&SceneRevision` arguments the dispatcher receives from its
+//! caller alongside the scene.
 //!
 //! Notifications (requests without `id`) elicit no response per the spec
 //! — [`dispatch`] returns `None` in that case. Errors map to the
@@ -827,29 +821,13 @@ pub enum DeferredInput {
     SetTargetFps { fps: Option<u32> },
 }
 
-/// R888 §5.49 §5.28 §2 #4 — the addressed window's frame-pacing
-/// target: the `scene/pacing_state` READ payload, mirroring the
-/// `scene/set_fps` write axis (read = inverse of write,
-/// [[wire-form-read-write-symmetry]]).
-///
-/// A named two-state enum, NOT `Option<u32>` doubled into the
-/// context's availability `Option` — "no override installed" is a
-/// *value* of the axis (the adaptive default policy), categorically
-/// different from "this backend keeps no pacing clock" (the TUI,
-/// which surfaces `PacingStateUnavailable`); nesting `Option`s would
-/// alias the two (the R874 named-enum-over-nested-Option rule).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PacingState {
-    /// No override installed — the adaptive per-window default policy
-    /// applies (60fps while immediate-mode content is active, idle
-    /// otherwise; see `pinion_runtime::frame_pacing`). Serializes as
-    /// `{"fps": null}`.
-    DefaultPolicy,
-    /// An override is installed: paint at `n` fps; `0` = paused
-    /// (frame-step mode — the window repaints only on explicit
-    /// `scene/tick` / redraw). Serializes as `{"fps": n}`.
-    Override(u32),
-}
+// R888.1 §5.28 — `PacingState` is homed in
+// `pinion_runtime::frame_pacing` next to `WindowFramePolicy` (the
+// READ-payload precedent: `InputStateSnapshot` → pinion-core,
+// `FragmentCacheStats` → pinion-runtime; vocabulary lives with its
+// domain, [[helper-crate-home-ssot-axis]]). Re-exported here so the
+// wire API surface stays `pinion_rpc::PacingState`.
+pub use pinion_runtime::PacingState;
 
 impl<'a> DispatchContext<'a> {
     /// Build a context from the three borrowed runtime handles.
@@ -1310,7 +1288,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let inbox = deferred_inputs.as_mut().map(|p| &mut **p);
             (
-                handle_scene_set_fps(inbox, request.params.as_ref()),
+                handle_scene_set_fps(inbox, request.params.as_ref(), pacing_state.is_some()),
                 HandlerKind::Mutate,
             )
         }
@@ -1755,6 +1733,11 @@ fn handle_scene_query(
     }
 }
 
+/// R888.1 §5.49 — the one prose source of `scene/click`'s button
+/// vocabulary error (two reject sites in [`handle_scene_click`]; a
+/// vocabulary change edits one string).
+const CLICK_BUTTON_VOCAB_ERR: &str = "params.button must be \"left\" or \"right\"";
+
 /// R51.196 / R51.201 §5.49 — `scene/click` typed dispatcher.
 ///
 /// Two mutually-exclusive parameter shapes:
@@ -1802,17 +1785,23 @@ where
         None => ClickButton::default(),
         Some(v) => {
             let name = v.as_str().ok_or_else(|| {
-                RpcError::invalid_params("params.button must be \"left\" or \"right\"")
+                RpcError::invalid_params(CLICK_BUTTON_VOCAB_ERR)
             })?;
-            if name == "middle" {
-                return Err(RpcError::invalid_params(
-                    "params.button \"middle\" is a gesture, not a click — use \
-                     scene/drag {button: \"middle\"} (from == to for the in-place \
+            // R888.1 — detect the wrong-method button STRUCTURALLY
+            // through DragButton's own decoder (not a re-hardcoded
+            // token), so the redirect tracks that vocabulary; the
+            // shared-token pin test guards the prose.
+            if DragButton::from_wire_name(name) == Some(DragButton::Middle) {
+                return Err(RpcError::invalid_params(format!(
+                    "params.button \"{}\" is a gesture, not a click — use \
+                     scene/drag {{button: \"{}\"}} (from == to for the in-place \
                      paste click)",
-                ));
+                    DragButton::Middle.as_wire_name(),
+                    DragButton::Middle.as_wire_name(),
+                )));
             }
             ClickButton::from_wire_name(name).ok_or_else(|| {
-                RpcError::invalid_params("params.button must be \"left\" or \"right\"")
+                RpcError::invalid_params(CLICK_BUTTON_VOCAB_ERR)
             })?
         }
     };
@@ -1950,10 +1939,22 @@ fn handle_scene_tick(
 fn handle_scene_set_fps(
     inbox: Option<&mut Vec<DeferredInput>>,
     params: Option<&Value>,
+    pacing_available: bool,
 ) -> Result<Value, RpcError> {
     let Some(inbox) = inbox else {
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
+    // R888.1 §5.49 — write/read agree on ONE availability signal: a
+    // backend that cannot answer `scene/pacing_state` (no pacing
+    // clock — the TUI) must not silently accept-and-drop the write
+    // either (the R884 silent-no-op class). Same wire token as the
+    // READ peer's error.
+    if !pacing_available {
+        return Err(
+            RpcError::invalid_params("frame pacing unavailable for this dispatch")
+                .with_data_string("PacingStateUnavailable"),
+        );
+    }
     // R888 §5.49 — `{"fps": null}` clears the override (restores the
     // adaptive default policy); a MISSING `fps` stays an error so a
     // typo'd param name cannot silently clear a frame-step pause.
@@ -2157,12 +2158,25 @@ where
     // loudly instead of silently degrading to a left drag.
     let button = match params.get("button") {
         None => DragButton::default(),
-        Some(v) => v
-            .as_str()
-            .and_then(DragButton::from_wire_name)
-            .ok_or_else(|| {
+        Some(v) => {
+            let name = v.as_str().ok_or_else(|| {
                 RpcError::invalid_params("params.button must be \"left\" or \"middle\"")
-            })?,
+            })?;
+            // R888.1 — wrong-method redirect, the mirror of
+            // `scene/click`'s "middle" arm: a right press is a
+            // press-edge one-shot with no capture arc, so only
+            // `scene/click {button: "right"}` can express it.
+            if ClickButton::from_wire_name(name) == Some(ClickButton::Right) {
+                return Err(RpcError::invalid_params(format!(
+                    "params.button \"{n}\" has no drag arc (a secondary press is a \
+                     press-edge one-shot) — use scene/click {{button: \"{n}\"}}",
+                    n = ClickButton::Right.as_wire_name(),
+                )));
+            }
+            DragButton::from_wire_name(name).ok_or_else(|| {
+                RpcError::invalid_params("params.button must be \"left\" or \"middle\"")
+            })?
+        }
     };
     inbox.push(DeferredInput::Drag {
         from_x: from.0,

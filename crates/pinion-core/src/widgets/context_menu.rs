@@ -165,6 +165,18 @@ impl ContextMenuExternal {
         }
     }
 
+    /// R888.1 §5.53 — encode the `invoke("open_at", …)` wire payload
+    /// for a window-space point: the inverse of
+    /// [`Self::dispatch_open_at`]'s `"<x>,<y>"` parse, kept adjacent
+    /// so the separator/format decision has one home (encode/decode
+    /// pair completeness — pre-R888.1 the `format!("{x},{y}")` encode
+    /// was hand-rolled at two `apply_secondary_click` call sites
+    /// against this decoder).
+    #[must_use]
+    pub fn open_at_args(x: f32, y: f32) -> IntrospectValue {
+        IntrospectValue::Text(format!("{x},{y}"))
+    }
+
     /// Number of command items.
     #[must_use]
     pub fn item_count(&self) -> usize {

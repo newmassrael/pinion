@@ -455,7 +455,10 @@ impl WidgetCore for ContextMenuFixture {
             return false;
         };
         matches!(
-            intro.invoke("open_at", IntrospectValue::Text(format!("{x},{y}"))),
+            intro.invoke(
+                "open_at",
+                crate::widgets::context_menu::ContextMenuExternal::open_at_args(x, y),
+            ),
             Ok(IntrospectValue::Bool(true))
         )
     }

@@ -57,8 +57,10 @@
 //!    `ShellCore::finalize_frame` post-render handoff).
 //! 4. `MouseEventKind::Down(Left)` → cursor sync + `pointer_down`;
 //!    `Up(Left)` → `pointer_up`; `Moved` / `Drag(Left)` →
-//!    `cursor_moved`. Right / middle / wheel events are absorbed
-//!    silently (Tier-1 widget catalogue has no semantics for them).
+//!    `cursor_moved`; `Down(Right)` → cursor sync +
+//!    `secondary_click` (R887, the context-menu press); scroll maps
+//!    per-axis to `wheel`. Right-release / middle stay absorbed
+//!    (terminal emulators own middle-paste at the terminal tier).
 //!
 //! The §5.20 intent drain + cached-state refresh + repaint cycle
 //! collapses into [`drain_and_repaint`] — the keyboard path and the
@@ -412,15 +414,22 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
 /// substrate's [`ShellCoreTui<V>`] dispatch methods. Returns `true`
 /// when an event was routed (the caller then refreshes state +
 /// repaints); `false` for events the substrate intentionally
-/// absorbs (right / middle button, scroll wheel — Tier-1 widget
-/// catalogue has no semantics for them).
+/// absorbs (right-button release / middle button, scroll handled
+/// per-axis below).
 ///
 /// `Down(Left)` runs `cursor_moved` first so the substrate's hover
 /// target reflects the press location before `pointer_down`
 /// dispatches (otherwise a click on a widget not yet hovered would
 /// miss). `Drag(Left)` reuses `cursor_moved` — the substrate's
 /// capture-aware branch handles drag-aware widgets internally.
-fn dispatch_mouse<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
+///
+/// R888.1 — generic over any [`WidgetViewTui`] (the body only calls
+/// `ShellCoreTui` dispatch methods; the previous
+/// `TuiRenderer<CrosstermBackend<Stdout>>` bound was an accident of
+/// the caller's type and made every arm untestable off a live
+/// terminal — the R887 native right-press arm shipped with only a
+/// hand-mirrored test because of it).
+fn dispatch_mouse<V: WidgetViewTui>(
     core: &mut ShellCoreTui<V>,
     kind: crossterm::event::MouseEventKind,
     x: f64,
@@ -634,4 +643,52 @@ fn spawn_stdin_rpc_reader_tui(tx: mpsc::Sender<String>) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use crossterm::event::{MouseButton, MouseEventKind};
+    use pinion_core::test_fixtures::{ContextMenuFixture, ContextMenuFixtureState};
+
+    use super::dispatch_mouse;
+    use crate::substrate::ShellCoreTui;
+
+    /// R888.1 §5.49 §5.53 — drive the ACTUAL crossterm `Down(Right)`
+    /// arm (not a hand-mirrored call pair): the arm must seed the
+    /// cursor, run the press-edge one-shot, and report the repaint —
+    /// the R887 native-arm test this surface could not host while
+    /// `dispatch_mouse` was bound to the live-terminal renderer.
+    #[test]
+    fn r888_1_down_right_arm_opens_context_menu_at_event_cell() {
+        let mut core: ShellCoreTui<ContextMenuFixture> = ShellCoreTui::new();
+        let routed = dispatch_mouse(
+            &mut core,
+            MouseEventKind::Down(MouseButton::Right),
+            6.0,
+            4.0,
+        );
+        assert!(routed, "handled right press reports the repaint");
+        assert_eq!(
+            *core.cached_state(),
+            ContextMenuFixtureState {
+                open: true,
+                anchor: Some((6.0, 4.0)),
+            },
+            "the native arm anchors the popup at the event cell",
+        );
+    }
+
+    /// R888.1 — the matching release stays absorbed (press-edge
+    /// one-shot has no release half), as does middle.
+    #[test]
+    fn r888_1_up_right_and_middle_press_stay_absorbed() {
+        let mut core: ShellCoreTui<ContextMenuFixture> = ShellCoreTui::new();
+        assert!(!dispatch_mouse(
+            &mut core,
+            MouseEventKind::Up(MouseButton::Right),
+            6.0,
+            4.0,
+        ));
+        assert!(!core.cached_state().open, "release alone opens nothing");
+    }
 }
