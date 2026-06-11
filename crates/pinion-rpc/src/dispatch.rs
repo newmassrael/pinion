@@ -429,6 +429,63 @@ impl DragButton {
     }
 }
 
+/// R887 §5.49 §5.53 — which mouse button a `scene/click` press-release
+/// cycle uses (`params.button`, default [`ClickButton::Left`]).
+///
+/// A deliberately *different* vocabulary from [`DragButton`]
+/// (`left | middle`), not a fold of it: each wire names exactly the
+/// buttons whose physical arc that method can mirror.
+///
+///   * `left` — the press/release activation pair
+///     ([`DeferredInput::Click`]).
+///   * `right` — the secondary-button press
+///     ([`DeferredInput::SecondaryClick`]): a one-shot press-edge
+///     dispatch (`apply_secondary_click`, the W3C `contextmenu`
+///     convention), no release half, no capture arc — which is why
+///     `right` has no place on `scene/drag`.
+///   * `middle` is *rejected here with a pointer*: a middle
+///     press-release is a gesture whose meaning (pan vs paste) is
+///     decided by whether the pointer moved, so only `scene/drag
+///     {button: "middle"}` can express it (`from == to` for the
+///     in-place paste click).
+///
+/// The shared `"left"` token is pinned byte-identical across both
+/// vocabularies by `click_and_drag_button_vocabularies_share_left`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClickButton {
+    /// The primary button — the pre-R887 `scene/click` arc.
+    #[default]
+    Left,
+    /// The secondary (right) button — the R772 context-menu press.
+    Right,
+}
+
+impl ClickButton {
+    /// Canonical wire name — the single source the docs / errors quote.
+    /// Inverse of [`from_wire_name`](Self::from_wire_name).
+    #[must_use]
+    pub fn as_wire_name(self) -> &'static str {
+        match self {
+            ClickButton::Left => "left",
+            ClickButton::Right => "right",
+        }
+    }
+
+    /// Decode a wire button name; `None` for anything outside the
+    /// vocabulary (the dispatcher rejects with `invalid_params`, and
+    /// `"middle"` with a redirect to `scene/drag`, so a typo or a
+    /// wrong-method button surfaces at the call site, not as a silent
+    /// left-click). Inverse of [`as_wire_name`](Self::as_wire_name).
+    #[must_use]
+    pub fn from_wire_name(name: &str) -> Option<Self> {
+        match name {
+            "left" => Some(ClickButton::Left),
+            "right" => Some(ClickButton::Right),
+            _ => None,
+        }
+    }
+}
+
 /// R882 §5.49 §5.39 — which keyboard edge a `scene/key` injection
 /// mirrors. The winit `KeyboardInput` `ElementState` RPC peer: a
 /// physical key delivers a `Pressed` edge (dispatch + held-state
@@ -547,6 +604,20 @@ pub enum DeferredInput {
     /// Replaces the R51.193-era probe-only path that only consulted
     /// `External::handles_event` policy.
     Click { x: f64, y: f64 },
+    /// R887 §5.49 §5.53 — `scene/click {button: "right"}` injection:
+    /// the secondary-button (right-click) press. The embedder applies
+    /// `cursor_moved(MOUSE, x, y)` then routes the press-edge one-shot
+    /// through `apply_secondary_click` — the exact arc winit's
+    /// `MouseInput { button: Right, state: Pressed }` takes (the W3C
+    /// `contextmenu` convention fires on press, no release half), so a
+    /// context menu opens for an AI client on *any* binding that
+    /// implements [`WidgetCore::apply_secondary_click`], not only one
+    /// that hand-exposed an `invoke("open_at", …)` action (§2
+    /// invariant #2 — every input a human makes has an RPC peer).
+    /// Closes the R881.1 right-click wire-gap carry.
+    ///
+    /// [`WidgetCore::apply_secondary_click`]: pinion_core::WidgetCore::apply_secondary_click
+    SecondaryClick { x: f64, y: f64 },
     /// R51.197 §5.49 §5.45 — `scene/key` named-key injection. The
     /// embedder applies `cursor_moved(MOUSE, x, y)` then
     /// `handle_named_key(key)` so the substrate first hands the W3C
@@ -1648,6 +1719,14 @@ fn handle_scene_query(
 /// `WindowEvent::MouseInput` triggers. Returns `null` on success;
 /// the AI client follows up with `scene/snapshot` (or `scene/query`)
 /// to observe the resulting state transition.
+///
+/// R887 §5.49 §5.53 — `params.button` ([`ClickButton`], optional,
+/// default `"left"`) selects the mouse button: `"right"` enqueues a
+/// [`DeferredInput::SecondaryClick`] (press-edge one-shot, the
+/// context-menu arc) instead of the press/release pair. `"middle"` is
+/// rejected with a redirect — a middle press-release is a gesture
+/// (pan vs paste decided by movement), expressible only via
+/// `scene/drag {button: "middle"}`.
 fn handle_scene_click<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
     paint_producer: Option<&mut F>,
@@ -1661,8 +1740,29 @@ where
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     let params = require_params(params)?;
+    let button = match params.get("button") {
+        None => ClickButton::default(),
+        Some(v) => {
+            let name = v.as_str().ok_or_else(|| {
+                RpcError::invalid_params("params.button must be \"left\" or \"right\"")
+            })?;
+            if name == "middle" {
+                return Err(RpcError::invalid_params(
+                    "params.button \"middle\" is a gesture, not a click — use \
+                     scene/drag {button: \"middle\"} (from == to for the in-place \
+                     paste click)",
+                ));
+            }
+            ClickButton::from_wire_name(name).ok_or_else(|| {
+                RpcError::invalid_params("params.button must be \"left\" or \"right\"")
+            })?
+        }
+    };
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
-    inbox.push(DeferredInput::Click { x, y });
+    inbox.push(match button {
+        ClickButton::Left => DeferredInput::Click { x, y },
+        ClickButton::Right => DeferredInput::SecondaryClick { x, y },
+    });
     Ok(Value::Null)
 }
 

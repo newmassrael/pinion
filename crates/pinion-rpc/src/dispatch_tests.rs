@@ -934,6 +934,112 @@ fn scene_click_v1_enqueues_click_at_coordinate() {
     assert!((y - 80.0).abs() < f64::EPSILON);
 }
 
+// ---- R887 §5.49 §5.53 — scene/click button param (ClickButton) ----
+
+#[test]
+fn r887_scene_click_right_button_enqueues_secondary_click() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":64.0,"y":48.0},"button":"right"},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(resp.result, Some(Value::Null));
+    assert_eq!(inbox.len(), 1);
+    let DeferredInput::SecondaryClick { x, y } = inbox[0] else {
+        panic!("expected SecondaryClick variant, got {:?}", inbox[0]);
+    };
+    assert!((x - 64.0).abs() < f64::EPSILON);
+    assert!((y - 48.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn r887_scene_click_explicit_left_button_enqueues_click() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":1.0,"y":2.0},"button":"left"},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(inbox.len(), 1);
+    assert!(
+        matches!(inbox[0], DeferredInput::Click { .. }),
+        "explicit \"left\" takes the same arc as the omitted default, got {:?}",
+        inbox[0]
+    );
+}
+
+#[test]
+fn r887_scene_click_middle_button_redirects_to_drag() {
+    // "middle" is a *gesture* (pan vs paste decided by movement), so the
+    // click wire rejects it with a redirect instead of guessing an arc.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":1.0,"y":2.0},"button":"middle"},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("middle button must error");
+    assert_eq!(err.code, -32602);
+    let detail = err.data.as_ref().and_then(Value::as_str).unwrap_or("");
+    assert!(
+        detail.contains("scene/drag"),
+        "redirect names the owning method: {detail}"
+    );
+    assert!(inbox.is_empty(), "rejected request enqueues nothing");
+}
+
+#[test]
+fn r887_scene_click_unknown_or_non_string_button_is_invalid() {
+    for bad in [r#""rigth""#, r#""""#, "2", "null", "true"] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/click","params":{{"at":{{"x":1.0,"y":2.0}},"button":{bad}}},"id":1}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        let err = resp.error.unwrap_or_else(|| panic!("button {bad} must error"));
+        assert_eq!(err.code, -32602, "button {bad}");
+        assert!(inbox.is_empty(), "rejected request enqueues nothing");
+    }
+}
+
+#[test]
+fn r887_click_button_wire_pair_round_trips() {
+    // decode == inverse(encode) for the whole vocabulary; unknown
+    // names decode to None (the R773 wire-vocabulary SSOT guard).
+    for b in [ClickButton::Left, ClickButton::Right] {
+        assert_eq!(ClickButton::from_wire_name(b.as_wire_name()), Some(b));
+    }
+    assert_eq!(ClickButton::from_wire_name("middle"), None);
+    assert_eq!(ClickButton::from_wire_name(""), None);
+    assert_eq!(ClickButton::default(), ClickButton::Left);
+}
+
+#[test]
+fn click_and_drag_button_vocabularies_share_left() {
+    // R773 cross-vocab pin: ClickButton and DragButton are parallel
+    // vocabularies (deliberately NOT folded — each names exactly the
+    // buttons its method can mirror), so the one shared token must
+    // stay byte-identical across both.
+    assert_eq!(
+        ClickButton::Left.as_wire_name(),
+        DragButton::Left.as_wire_name()
+    );
+}
+
 // ---- R881 §5.35 §5.49 — scene/drag button param (DragButton) ----
 
 #[test]

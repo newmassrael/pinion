@@ -29,7 +29,7 @@
 
 use core::fmt;
 
-use pinion_core::test_fixtures::{EchoButtonFixture, ScrollbarMultiFixture};
+use pinion_core::test_fixtures::{ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
 
 use crate::{vello_renderer_impl, WidgetView};
 
@@ -122,6 +122,19 @@ impl WidgetView for EchoButtonFixture {
 /// `dispatch_intent` producer pins the Container-root send invariant
 /// (`CoreShell::send_to_primary`) through its own wiring path.
 impl WidgetView for ScrollbarMultiFixture {
+    type Renderer = TestRenderer;
+
+    fn initial_size_strategy() -> crate::SizeStrategy {
+        crate::SizeStrategy::Fixed { width: 8, height: 8 }
+    }
+}
+
+/// R887 §5.49 §5.53 — Vello-side `WidgetView` impl for the
+/// secondary-click fixture, so the shell's
+/// `DeferredInput::SecondaryClick` drain producer pins the
+/// right-click arc (`secondary_click_for_window` →
+/// `apply_secondary_click`) through its own wiring path.
+impl WidgetView for ContextMenuFixture {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> crate::SizeStrategy {

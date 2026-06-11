@@ -449,6 +449,18 @@ fn dispatch_mouse<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdou
             cursor_change | down_change
         }
         MouseEventKind::Up(MouseButton::Left) => core.pointer_up(),
+        // R887 §5.49 §5.53 — secondary-button press: the context-menu
+        // arc (the R51.118 substrate-incompleteness signal fired when
+        // the R772 context menu landed). Cursor sync precedes the
+        // press-edge one-shot so `apply_secondary_click` anchors at
+        // the just-reported cell — the same ordering invariant as the
+        // `Down(Left)` arm. Press-edge only (W3C `contextmenu`); the
+        // matching `Up(Right)` stays absorbed below.
+        MouseEventKind::Down(MouseButton::Right) => {
+            let cursor_change = core.cursor_moved(x, y);
+            let click_change = core.secondary_click();
+            cursor_change | click_change
+        }
         // (R51.186 §5.45 R55.C.2) crossterm wheel events. The cursor
         // sync precedes the wheel dispatch so the substrate's
         // `InputRouter` resolves the deepest `Scene::Scroll` under
@@ -480,9 +492,10 @@ fn dispatch_mouse<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdou
             let wheel_change = core.wheel(WheelDelta::Lines { dx: 1.0, dy: 0.0 });
             cursor_change | wheel_change
         }
-        // Right / middle — no Tier-1 widget reacts. R51.118+
-        // surfaces a substrate-incompleteness-signal once a widget
-        // (context menu) needs them.
+        // Right release / middle — right-press is handled above
+        // (R887); middle stays absorbed (terminal emulators own
+        // middle-paste at the terminal tier — §2 #6 divergence
+        // carry, pre-existing for the whole TUI paste axis).
         _ => false,
     }
 }

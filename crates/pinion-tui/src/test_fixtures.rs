@@ -27,7 +27,7 @@
 //! type symbols and the supertrait impls are both in scope at the
 //! same time this impl compiles.
 
-use pinion_core::test_fixtures::{ButtonFixture, EchoButtonFixture, ScrollbarMultiFixture};
+use pinion_core::test_fixtures::{ButtonFixture, ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
 use ratatui::backend::TestBackend;
 
 use crate::widget::WidgetViewTui;
@@ -64,5 +64,15 @@ impl WidgetViewTui for EchoButtonFixture {
 /// producer pins the Container-root send invariant
 /// (`CoreShell::send_to_primary`) through its own wiring path.
 impl WidgetViewTui for ScrollbarMultiFixture {
+    type Renderer = crate::TuiRenderer<TestBackend>;
+}
+
+/// R887 §5.49 §5.53 — TUI-side `WidgetViewTui` impl for the
+/// secondary-click fixture, so both TUI producers of the right-click
+/// arc (the `DeferredInput::SecondaryClick` drain and the crossterm
+/// `Down(Right)` arm, both through `ShellCoreTui::secondary_click`)
+/// pin the same popup-opens-at-press-point observable the Vello
+/// sibling pins.
+impl WidgetViewTui for ContextMenuFixture {
     type Renderer = crate::TuiRenderer<TestBackend>;
 }

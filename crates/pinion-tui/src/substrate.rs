@@ -456,6 +456,33 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         false
     }
 
+    /// R887 §5.49 §5.53 — secondary-button (right-click) press: the
+    /// `scene/click {button: "right"}` drain and the crossterm
+    /// `MouseButton::Right` arm. Mirrors the GUI shell's
+    /// `secondary_click_for_window` shape: reads the cached cursor
+    /// position (the channel `cursor_moved` seeds) and forwards it to
+    /// [`CoreShell::apply_secondary_click`](pinion_runtime::CoreShell::apply_secondary_click)
+    /// — a press-edge one-shot (the W3C `contextmenu` convention), no
+    /// release half. A press before any `cursor_moved` (no cached
+    /// position) is swallowed quietly, byte-for-byte the GUI policy.
+    /// Returns `true` on visible state change (R51.124 §5.41).
+    pub fn secondary_click(&mut self) -> bool {
+        let Some((x, y)) = self
+            .core
+            .cursor_position_for_window(pinion_runtime::DEFAULT_WINDOW, PointerId::MOUSE)
+        else {
+            return false;
+        };
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "cell-grid logical cursor coords fit f32 in every realistic terminal"
+        )]
+        match self.core.apply_secondary_click(x as f32, y as f32) {
+            Some(tail) => self.handle_tail(&tail),
+            None => false,
+        }
+    }
+
     /// R51.117 §5.41 — pointer press (mouse left button down,
     /// crossterm-side). Returns `true` on visible state change
     /// (R51.124 §5.41).
@@ -599,6 +626,14 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                     state_changed |= self.cursor_moved(x, y);
                     state_changed |= self.pointer_down();
                     state_changed |= self.pointer_up();
+                }
+                // R887 §5.49 §5.53 — `scene/click {button: "right"}`
+                // mirror: seed the cursor cache, then the press-edge
+                // one-shot (`secondary_click` reads that cache), the
+                // same arc the GUI sibling takes. No release half.
+                pinion_rpc::DeferredInput::SecondaryClick { x, y } => {
+                    state_changed |= self.cursor_moved(x, y);
+                    state_changed |= self.secondary_click();
                 }
                 pinion_rpc::DeferredInput::DoubleClick { x, y } => {
                     // R663 §5.49 — W3C UIEvent `detail:2` mirror: two
@@ -2062,5 +2097,60 @@ mod tests {
         }];
         assert!(core.drain_deferred_inputs(&inputs));
         assert_eq!(*core.cached_state(), ButtonState::Hover);
+    }
+
+    // ---- R887 §5.49 §5.53 — secondary-click (right-button) producers ----
+    //
+    // Both TUI producers of the right-click arc route through
+    // `ShellCoreTui::secondary_click`: the
+    // [`SecondaryClick`](pinion_rpc::DeferredInput::SecondaryClick)
+    // RPC drain (which seeds the cursor itself) and the crossterm
+    // `Down(Right)` surface arm (whose `cursor_moved → secondary_click`
+    // pair the direct-call tests mirror). The fixture carries a real
+    // `ContextMenuExternal`, so the observable is the production one —
+    // the popup opens at the press point.
+
+    use pinion_core::test_fixtures::{ContextMenuFixture, ContextMenuFixtureState};
+
+    #[test]
+    fn r887_drain_secondary_click_opens_context_menu_at_press_point() {
+        let mut core: ShellCoreTui<ContextMenuFixture> = ShellCoreTui::new();
+        assert!(!core.cached_state().open, "popup starts closed");
+        let inputs = vec![pinion_rpc::DeferredInput::SecondaryClick { x: 12.0, y: 9.0 }];
+        assert!(core.drain_deferred_inputs(&inputs));
+        assert_eq!(
+            *core.cached_state(),
+            ContextMenuFixtureState {
+                open: true,
+                anchor: Some((12.0, 9.0)),
+            },
+            "drained right-click must open the popup at the press point",
+        );
+    }
+
+    #[test]
+    fn r887_native_right_press_arc_opens_context_menu() {
+        // The crossterm `Down(MouseButton::Right)` arm is
+        // `cursor_moved → secondary_click` (the same ordering
+        // invariant as `Down(Left)`); drive the pair directly.
+        let mut core: ShellCoreTui<ContextMenuFixture> = ShellCoreTui::new();
+        let _ = core.cursor_moved(5.0, 7.0);
+        assert!(core.secondary_click(), "handled press reports the repaint");
+        assert_eq!(
+            *core.cached_state(),
+            ContextMenuFixtureState {
+                open: true,
+                anchor: Some((5.0, 7.0)),
+            },
+        );
+    }
+
+    #[test]
+    fn r887_secondary_click_before_any_cursor_move_is_swallowed() {
+        // No cached cursor position → the press is swallowed quietly,
+        // byte-for-byte the GUI `secondary_click_for_window` policy.
+        let mut core: ShellCoreTui<ContextMenuFixture> = ShellCoreTui::new();
+        assert!(!core.secondary_click(), "no cursor cache → no dispatch");
+        assert!(!core.cached_state().open, "popup stays closed");
     }
 }

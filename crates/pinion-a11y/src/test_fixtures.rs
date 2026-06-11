@@ -22,7 +22,7 @@
 //!
 //! [`ButtonFixture`]: pinion_core::test_fixtures::ButtonFixture
 
-use pinion_core::test_fixtures::{ButtonFixture, EchoButtonFixture, ScrollbarMultiFixture};
+use pinion_core::test_fixtures::{ButtonFixture, ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
 
 use crate::widget_a11y::WidgetA11y;
 
@@ -41,3 +41,10 @@ impl WidgetA11y for ScrollbarMultiFixture {}
 /// applies identically (trait lives here, fixture lives in
 /// `pinion-core`).
 impl WidgetA11y for EchoButtonFixture {}
+
+/// R887 §5.40 §5.53 — atomic-default `WidgetA11y` impl for the
+/// secondary-click fixture [`ContextMenuFixture`]. Same default-empty
+/// shape as [`ButtonFixture`]; the orphan-rule placement rationale
+/// applies identically (trait lives here, fixture lives in
+/// `pinion-core`).
+impl WidgetA11y for ContextMenuFixture {}

@@ -368,6 +368,107 @@ impl WidgetCore for ScrollbarMultiFixture {
     }
 }
 
+/// R887 §5.49 §5.53 — projected state for [`ContextMenuFixture`]:
+/// the popup's open flag plus its anchor point, read straight off the
+/// carried [`ContextMenuExternal`]'s `open` / `open_x` / `open_y`
+/// query slots.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct ContextMenuFixtureState {
+    /// `query("open")` — whether the popup is showing.
+    pub open: bool,
+    /// `query("open_x")` / `query("open_y")` — the press anchor while
+    /// open, `None` while closed.
+    pub anchor: Option<(f32, f32)>,
+}
+
+/// R887 §5.49 §5.53 — secondary-click (right-click) producer fixture:
+/// carries a real [`ContextMenuExternal`] and implements
+/// [`WidgetCore::apply_secondary_click`] exactly the way the R772
+/// `hello-contextmenu` binding does (`invoke("open_at", "<x>,<y>")`),
+/// so every dispatch producer of the secondary-click arc pins the
+/// same observable — the popup opens at the press point:
+///
+/// - `pinion-shell::substrate` — the `DeferredInput::SecondaryClick`
+///   drain (`scene/click {button: "right"}`) and the winit
+///   `MouseInput { button: Right }` path, both through
+///   `secondary_click_for_window`.
+/// - `pinion-tui::substrate` — the same drain plus the crossterm
+///   `Down(Right)` arm, both through `ShellCoreTui::secondary_click`.
+///
+/// The walker is `find_external_with_tag` (root-shape-agnostic), not
+/// a bare `Scene::External` root match — fixtures must stay valid if
+/// a future variant composes extras around the primary (the R884
+/// silent-drop class).
+pub struct ContextMenuFixture;
+
+impl WidgetCore for ContextMenuFixture {
+    type State = ContextMenuFixtureState;
+    type Event = ButtonEvent;
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(crate::widgets::context_menu::ContextMenuExternal::new(3))
+    }
+
+    fn tag() -> &'static str {
+        "ctx_fixture"
+    }
+
+    fn read_state(scene: &Scene) -> Self::State {
+        let open_query = |intro: &dyn crate::external::ExternalIntrospect, path: &str| {
+            if let Some(IntrospectValue::Float(v)) = intro.query(path) {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    reason = "anchor coords are window-local f32 values widened for the wire"
+                )]
+                Some(v as f32)
+            } else {
+                None
+            }
+        };
+        scene
+            .find_external_with_tag(Self::tag())
+            .and_then(|n| n.handle.introspect())
+            .map_or_else(ContextMenuFixtureState::default, |intro| {
+                let open = matches!(intro.query("open"), Some(IntrospectValue::Bool(true)));
+                let anchor = match (open_query(intro, "open_x"), open_query(intro, "open_y")) {
+                    (Some(x), Some(y)) => Some((x, y)),
+                    _ => None,
+                };
+                ContextMenuFixtureState { open, anchor }
+            })
+    }
+
+    fn view(_state: Self::State, _frame: &Frame) -> Scene {
+        Scene::Container(ContainerNode {
+            rect: Rect::new(0, 0, 200, 120),
+            tag: Some(Cow::Borrowed("ctx_fixture")),
+            children: vec![Scene::Text(TextNode::default())],
+            ..Default::default()
+        })
+    }
+
+    fn apply_secondary_click(scene: &mut Scene, x: f32, y: f32) -> bool {
+        let Some(node) = scene.find_external_with_tag_mut(Self::tag()) else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        matches!(
+            intro.invoke("open_at", IntrospectValue::Text(format!("{x},{y}"))),
+            Ok(IntrospectValue::Bool(true))
+        )
+    }
+
+    fn event_name(event: Self::Event) -> &'static str {
+        <ButtonFixture as WidgetCore>::event_name(event)
+    }
+
+    fn title() -> &'static str {
+        "ContextMenuFixture"
+    }
+}
+
 /// R51.167 §5.23 R27 — substrate-level reducer test fixture.
 ///
 /// Reuses [`ButtonFixture`]'s External / paint / `read_state` /

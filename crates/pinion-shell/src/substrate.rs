@@ -1701,6 +1701,16 @@ impl<V: WidgetView> ShellCore<V> {
                     self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
                     self.mouse_released_for_window(window_id, PointerId::MOUSE);
                 }
+                // R887 §5.49 §5.53 — `scene/click {button: "right"}`
+                // mirror: seed the router's cursor cache, then take the
+                // exact arc a physical `MouseInput { button: Right,
+                // state: Pressed }` takes (`secondary_click_for_window`
+                // reads that cache — the press-edge one-shot, no
+                // release half).
+                DeferredInput::SecondaryClick { x, y } => {
+                    self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    self.secondary_click_for_window(window_id, PointerId::MOUSE);
+                }
                 // R663 §5.49 — `scene/double_click` mirror. Two
                 // complete press/release cycles at the same coordinate
                 // exercise the W3C UIEvent `detail:2` convention the

@@ -37245,6 +37245,64 @@
         "R778-ruling citation nuance in data-grid docstring (loose but substantively correct)"
       ]
     },
+    "R887": {
+      "decision_summary": "scene/click button axis (left|right): right-click RPC peer routes DeferredInput::SecondaryClick through apply_secondary_click on both backends + TUI native Down(Right) arm; closes the R881.1 right-click wire gap (§2 invariant #2)",
+      "changes_bullets": [
+        "scene/click gains optional button param: \"left\" (default) | \"right\"; ClickButton wire enum",
+        "\"middle\" on click rejected with redirect to scene/drag (gesture owns moved/in-place judgement)",
+        "DeferredInput::SecondaryClick {x,y}: press-edge one-shot, no release half (W3C contextmenu)",
+        "GUI drain: cursor seed + secondary_click_for_window (exact physical MouseInput Right arc)",
+        "TUI: new ShellCoreTui::secondary_click (cursor-cache read, GUI-parity swallow policy)",
+        "TUI native crossterm Down(Right) arm wired (R51.118 documented trigger fired at R772)",
+        "ContextMenuFixture in pinion-core test_fixtures: real ContextMenuExternal, all producers pinned",
+        "rpc_verify.py click() helper gains button kwarg"
+      ],
+      "verification_bullets": [
+        "6 new dispatch unit tests incl. cross-vocab left-token pin + middle redirect + reject matrix",
+        "shell end-to-end test: dispatch_rpc right-click opens popup at press point via drain",
+        "3 TUI tests: drain, native press arc, no-cursor swallow parity",
+        "workspace test green (150 suites); clippy -D pedantic clean",
+        "demo r887_secondary_click.py PASS (35 asserts, wait-gated); r772 + r885 regressions PASS"
+      ],
+      "impact_refs": [
+        "5.49",
+        "5.53"
+      ],
+      "carry_forward_bullets": [
+        "scene/set_fps is write-only wire (R887 entry self-grep axis-2 finding): no read peer for the",
+        "per-window pacing target; R885 pattern (embedder pre-resolve READ) is the canonical fix shape",
+        "TUI middle paste + wheel modifiers + absolute modifiers cache: §2#6 carry unchanged",
+        "binding-glue invoke(\"open_at\") forwarding at 2 sites (example+fixture): lift at 3rd consumer"
+      ],
+      "publishable_decision_summary": "scene/click button axis (left|right): right-click RPC peer routes DeferredInput::SecondaryClick through apply_secondary_click on both backends + TUI native Down(Right) arm; closes the R881.1 right-click wire gap (§2 invariant #2)",
+      "publishable_changes_bullets": [
+        "scene/click gains optional button param: \"left\" (default) | \"right\"; ClickButton wire enum",
+        "\"middle\" on click rejected with redirect to scene/drag (gesture owns moved/in-place judgement)",
+        "DeferredInput::SecondaryClick {x,y}: press-edge one-shot, no release half (W3C contextmenu)",
+        "GUI drain: cursor seed + secondary_click_for_window (exact physical MouseInput Right arc)",
+        "TUI: new ShellCoreTui::secondary_click (cursor-cache read, GUI-parity swallow policy)",
+        "TUI native crossterm Down(Right) arm wired (R51.118 documented trigger fired at R772)",
+        "ContextMenuFixture in pinion-core test_fixtures: real ContextMenuExternal, all producers pinned",
+        "rpc_verify.py click() helper gains button kwarg"
+      ],
+      "publishable_verification_bullets": [
+        "6 new dispatch unit tests incl. cross-vocab left-token pin + middle redirect + reject matrix",
+        "shell end-to-end test: dispatch_rpc right-click opens popup at press point via drain",
+        "3 TUI tests: drain, native press arc, no-cursor swallow parity",
+        "workspace test green (150 suites); clippy -D pedantic clean",
+        "demo r887_secondary_click.py PASS (35 asserts, wait-gated); r772 + r885 regressions PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.49",
+        "5.53"
+      ],
+      "publishable_carry_forward_bullets": [
+        "scene/set_fps is write-only wire (R887 entry self-grep axis-2 finding): no read peer for the",
+        "per-window pacing target; R885 pattern (embedder pre-resolve READ) is the canonical fix shape",
+        "TUI middle paste + wheel modifiers + absolute modifiers cache: §2#6 carry unchanged",
+        "binding-glue invoke(\"open_at\") forwarding at 2 sites (example+fixture): lift at 3rd consumer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

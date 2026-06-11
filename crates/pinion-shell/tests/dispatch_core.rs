@@ -1788,10 +1788,40 @@ mod r51_169_handle_tail_drain_routing {
 
 mod r51_175_shared_fixture_wiring {
     use pinion_core::external::IntrospectValue;
-    use pinion_core::test_fixtures::{EchoButtonFixture, ScrollbarMultiFixture};
+    use pinion_core::test_fixtures::{ContextMenuFixture, EchoButtonFixture, ScrollbarMultiFixture};
     use pinion_core::widgets::button::ButtonState;
     use pinion_core::Intent;
     use pinion_shell::ShellCore;
+
+    #[test]
+    fn r887_rpc_right_click_opens_context_menu_at_press_point() {
+        // R887 — `scene/click {button: "right"}` end-to-end through
+        // the Vello-side producer: dispatch enqueues
+        // `DeferredInput::SecondaryClick`, the post-dispatch drain
+        // seeds the cursor cache then routes the press-edge one-shot
+        // through `secondary_click_for_window` →
+        // `CoreShell::apply_secondary_click`, and the popup opens at
+        // the press point. Pre-R887 no RPC arc reached
+        // `apply_secondary_click` at all — a right-click was
+        // human-only input (§2 invariant #2 gap, R881.1 carry).
+        let mut core = ShellCore::<ContextMenuFixture>::new();
+        assert!(!core.cached_state().open, "popup starts closed");
+
+        let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"at":{"x":40.0,"y":25.0},"button":"right"},"id":1}"#;
+        let mut no_resize = |_: u32, _: u32| {};
+        let resp = core.dispatch_rpc(req, &mut no_resize).expect("response");
+        assert!(
+            resp.contains(r#""result":null"#),
+            "right-click injection succeeds: {resp}"
+        );
+        let state = *core.cached_state();
+        assert!(state.open, "popup must open on the drained right-click");
+        assert_eq!(
+            state.anchor,
+            Some((40.0, 25.0)),
+            "popup anchors at the injected press point (cursor-seed leg)",
+        );
+    }
 
     #[test]
     fn r884_dispatch_intent_reaches_primary_through_container_root() {

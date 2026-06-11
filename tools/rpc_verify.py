@@ -513,6 +513,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         at: Optional[tuple[float, float]] = None,
         *,
         path: Optional[str] = None,
+        button: Optional[str] = None,
     ) -> None:
         """`scene/click` typed wrapper (R51.196 / R51.201 §5.49).
 
@@ -524,12 +525,19 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             `snapshot → find_by_tag → node_center` boilerplate when
             the caller only wants "click on widget X".
 
+        `button` (R887 §5.49 §5.53) selects the mouse button: omitted /
+        `"left"` is the press/release activation pair; `"right"` is the
+        secondary-button press-edge one-shot (`apply_secondary_click`,
+        the context-menu arc — no release half). A middle press-release
+        is a gesture and lives on `scene/drag {button: "middle"}`.
+
         The shell drains the deferred-input inbox after the request
         returns, applying `cursor_moved`, `mouse_pressed`, then
-        `mouse_released` so the `InputRouter` fires the same
-        activation arc winit's `WindowEvent::MouseInput` triggers
-        from a real mouse click. Follow up with `query(...)` or
-        `snapshot(...)` to observe the post-click state transition.
+        `mouse_released` (left) or `cursor_moved` +
+        `secondary_click_for_window` (right) so the substrate fires the
+        same arc winit's `WindowEvent::MouseInput` triggers from a real
+        mouse. Follow up with `query(...)` or `snapshot(...)` to
+        observe the post-click state transition.
         """
         if (at is None) == (path is None):
             raise ValueError("exactly one of `at` or `path` must be supplied")
@@ -538,6 +546,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         else:
             assert path is not None
             params = {"path": path}
+        if button is not None:
+            params["button"] = button
         self.request("scene/click", params)
 
     def hover(
