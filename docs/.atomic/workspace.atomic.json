@@ -37695,6 +37695,64 @@
         "empty filtered view: hidden-row cursor has no re-anchor target until a row reappears"
       ]
     },
+    "R892": {
+      "decision_summary": "R892 §5.40 editable data-grid grouping fold: settable group-by column + collapse via the cross-grid group_rows SSOT, edit-while-grouped re-anchor, GridSendKey::Group routing, hand-rolled treegrid a11y",
+      "changes_bullets": [
+        "settable group-by column via the cross-grid group_rows free-fn SSOT (not GroupOrderState; R778)",
+        "wire: group/group_count/visible_len/kind_at/label_at/collapsed + set_group/toggle_group/*_all",
+        "GridSendKey::Group (g<group>) in composite_tag SSOT; header clicks route + toggle collapse",
+        "visible_rows / visible_data_order unify paint / a11y / nav / source_at over the GroupRow flatten",
+        "reanchor_cursor generalised over filter+group+collapse (visible-data slice; 1 impl, 4 sites)",
+        "edit-while-grouped: a group-key commit regroups the row live; collapse hides cursor -> re-anchor",
+        "group id keyed on the STABLE source-order group_table; a group-by change clears collapse",
+        "grouped a11y hand-rolled treegrid (cell focus); single-External tags do not fit the builder",
+        "4 paint/a11y tag-builder helpers (cell/col_header/group_header/data_row) = byte-match SSOT"
+      ],
+      "verification_bullets": [
+        "pinion-core composite_tag: GridSendKey::Group round-trip + row()=None green",
+        "hello-data-grid 33 tests green (8 new R892: flatten/reanchor/wire/regroup/nav/click/treegrid/flat)",
+        "cargo test --workspace -j2 green; clippy --workspace --all-targets pedantic clean",
+        "demo r892_grid_group_editable.py PASS (36 asserts); r891 demo no-regression after the tag refactor"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "grouped a11y hand-rolled; lift a tag-flexible grouped builder at the 2nd single-External consumer",
+        "frozen-pane fold = no-op here (columns fit, no h-scroll); deferred to a wide editable grid",
+        "multi-facet filter / per-cell a11y roles / per-column validation still deferred (additive)"
+      ],
+      "publishable_decision_summary": "R892 §5.40 editable data-grid grouping fold: settable group-by column + collapse via the cross-grid group_rows SSOT, edit-while-grouped re-anchor, GridSendKey::Group routing, hand-rolled treegrid a11y",
+      "publishable_changes_bullets": [
+        "settable group-by column via the cross-grid group_rows free-fn SSOT (not GroupOrderState; R778)",
+        "wire: group/group_count/visible_len/kind_at/label_at/collapsed + set_group/toggle_group/*_all",
+        "GridSendKey::Group (g<group>) in composite_tag SSOT; header clicks route + toggle collapse",
+        "visible_rows / visible_data_order unify paint / a11y / nav / source_at over the GroupRow flatten",
+        "reanchor_cursor generalised over filter+group+collapse (visible-data slice; 1 impl, 4 sites)",
+        "edit-while-grouped: a group-key commit regroups the row live; collapse hides cursor -> re-anchor",
+        "group id keyed on the STABLE source-order group_table; a group-by change clears collapse",
+        "grouped a11y hand-rolled treegrid (cell focus); single-External tags do not fit the builder",
+        "4 paint/a11y tag-builder helpers (cell/col_header/group_header/data_row) = byte-match SSOT"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core composite_tag: GridSendKey::Group round-trip + row()=None green",
+        "hello-data-grid 33 tests green (8 new R892: flatten/reanchor/wire/regroup/nav/click/treegrid/flat)",
+        "cargo test --workspace -j2 green; clippy --workspace --all-targets pedantic clean",
+        "demo r892_grid_group_editable.py PASS (36 asserts); r891 demo no-regression after the tag refactor"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "grouped a11y hand-rolled; lift a tag-flexible grouped builder at the 2nd single-External consumer",
+        "frozen-pane fold = no-op here (columns fit, no h-scroll); deferred to a wide editable grid",
+        "multi-facet filter / per-cell a11y roles / per-column validation still deferred (additive)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

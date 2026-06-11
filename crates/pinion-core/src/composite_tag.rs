@@ -167,6 +167,13 @@ pub enum GridSendKey {
         /// Zero-based column index.
         col: usize,
     },
+    /// A group-header click (`"g<group>"`) — the collapse-toggle target on a
+    /// grouped grid (R892). Parallel to [`Header`](Self::Header) for the
+    /// group axis: it addresses a group id, not a data row.
+    Group {
+        /// Group id (an index into the consumer's label table).
+        group: usize,
+    },
 }
 
 impl GridSendKey {
@@ -179,6 +186,9 @@ impl GridSendKey {
     pub fn parse(key: &str) -> Option<Self> {
         if let Some(col) = key.strip_prefix('h') {
             return col.parse().ok().map(|col| Self::Header { col });
+        }
+        if let Some(group) = key.strip_prefix('g') {
+            return group.parse().ok().map(|group| Self::Group { group });
         }
         let (row, col) = key.split_once('_')?;
         Some(Self::Cell {
@@ -196,7 +206,7 @@ impl GridSendKey {
     pub fn row(self) -> Option<usize> {
         match self {
             Self::Cell { row, .. } => Some(row),
-            Self::Header { .. } => None,
+            Self::Header { .. } | Self::Group { .. } => None,
         }
     }
 
@@ -209,6 +219,7 @@ impl GridSendKey {
         match self {
             Self::Header { col } => format!("h{col}"),
             Self::Cell { row, col } => format!("{row}_{col}"),
+            Self::Group { group } => format!("g{group}"),
         }
     }
 }
@@ -364,11 +375,13 @@ mod tests {
             GridSendKey::Cell { row: 0, col: 0 },
             GridSendKey::Cell { row: 9_999, col: 2 },
             GridSendKey::Header { col: 1 },
+            GridSendKey::Group { group: 3 },
         ] {
             assert_eq!(GridSendKey::parse(&key.encode()), Some(key), "round-trip {key:?}");
         }
         assert_eq!(GridSendKey::Cell { row: 4, col: 2 }.encode(), "4_2");
         assert_eq!(GridSendKey::Header { col: 1 }.encode(), "h1");
+        assert_eq!(GridSendKey::Group { group: 3 }.encode(), "g3");
     }
 
     #[test]
@@ -376,6 +389,8 @@ mod tests {
         assert_eq!(GridSendKey::parse("5_2").and_then(GridSendKey::row), Some(5));
         // A header key has no row (SelectRows: ignored by a row coordinator).
         assert_eq!(GridSendKey::parse("h2").and_then(GridSendKey::row), None);
+        // A group-header key has no row either (the group axis, R892).
+        assert_eq!(GridSendKey::parse("g1").and_then(GridSendKey::row), None);
         // A bare list-item index is not a grid key — the list path handles it.
         assert_eq!(GridSendKey::parse("5"), None);
         // Malformed grid keys decode to None (defensive against wire drift).

@@ -98,6 +98,31 @@
 //! and the keyboard commit) — never the silent navigation teleport the R886
 //! sort fold left as a documented note.
 //!
+//! ## Column grouping (R892 — the editable fold of the group axis)
+//!
+//! A settable group-by column (`invoke "set_group" "<col>"` / `Null`) flattens
+//! the filtered+sorted rows into group runs through the cross-grid
+//! [`group_rows`] free-fn SSOT (the read-only `hello-grouped-grid` shares it):
+//! a [`group_header_row`] per group (label = the column's displayed value,
+//! detail = member count, click toggles collapse) over its member data rows.
+//! The wire mirrors the `group_order` vocabulary read/write-symmetrically
+//! (`query "group"` / `group_count` / `visible_len` / `kind_at` / `label_at` /
+//! `collapsed.<g>`; `invoke "set_group"` / `toggle_group` / `collapse_all` /
+//! `expand_all`; group headers route a click via [`GridSendKey::Group`]).
+//!
+//! **Edit-while-grouped** is the fold's payoff (the group analog of R886
+//! edit-while-sorted / R891 edit-while-filtered): every grid state stays
+//! SOURCE-keyed, so a committed edit of the group-key cell moves its row to
+//! another group on the next paint, and collapsing the cursor's group (or an
+//! edit that hides it) re-anchors the source-keyed cursor through the shared
+//! [`reanchor_cursor`] SSOT (now generalised over filter + group + collapse).
+//! The group id keys on the STABLE source-order [`group_table`] so a sort /
+//! filter / edit keeps a group's collapse intact; changing the group column
+//! clears it. The [`GroupOrderState`](pinion_core::widgets::group_order::GroupOrderState)
+//! coordinator is deliberately NOT reused (the R778 family ruling — the shared
+//! parts are the `group_rows` free fn + wire vocab, not the coordinator, which
+//! assumes a `VirtualSelectExternal` selection + a String dataset).
+//!
 //! ## Known gaps (honest carry, shared with R836)
 //!
 //! - Native checkbox / textbox cell roles (per-cell a11y role) — additive.
@@ -105,14 +130,21 @@
 //! - Multi-facet / substring column filter — one fixed-string column facet
 //!   here (the cross-grid `GridFilter` shape); multi-facet is a later
 //!   additive axis, exactly as the read-only `GridSortState` filter defers it.
-//! - Column grouping / frozen panes on the *editable* grid — remaining fold
-//!   rounds (sort landed R886, filter R891; the read-only catalog has
-//!   grouping / frozen as separate substrate).
+//! - Grouped-mode a11y is hand-rolled (not `grouped_grid_access_nodes`): this
+//!   single-External grid's tags (`data_grid#g<g>` headers, `dg_row<src>` rows)
+//!   do not fit the substrate's `{prefix}#{id}` scheme. A 2nd single-External
+//!   grouped consumer would justify lifting a tag-flexible builder.
+//! - Frozen panes on the *editable* grid are a no-op at this size (the columns
+//!   fit the window, so there is no horizontal scroll to pin against) —
+//!   deferred until a wide editable grid needs it.
 
 use std::rc::Rc;
 
+use std::collections::BTreeSet;
+
 use pinion_a11y::{
-    grid_table_nodes, AccessNode, GridCell, GridColumn, GridRow, SortDirection, WidgetA11y,
+    grid_table_nodes, AccessNode, AriaRole, GridCell, GridColumn, GridRow, SortDirection,
+    WidgetA11y,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::GridSendKey;
@@ -133,6 +165,7 @@ use pinion_core::widgets::grid_sort::{
     col_sort_dir, grid_filter_from_str, grid_filter_str, grid_sort_from_str, grid_sort_str,
     GridFilter,
 };
+use pinion_core::widgets::group_order::{group_rows, GroupRow};
 use pinion_core::widgets::table::{cycle_col_sort, grid_order_by};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
@@ -140,6 +173,7 @@ use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::checkbox::{view_checkbox_box, CheckboxStyle};
+use pinion_widget_paint::group_header::group_header_row;
 use pinion_widget_paint::text_field as tf_paint;
 
 use pinion_widget_paint::state_layer::HOVER;
@@ -198,6 +232,31 @@ const COL_W: [u32; NCOLS] = [120, 90, 70, 70, 70];
 /// `(row, col)` → flat model index.
 fn idx(row: usize, col: usize) -> usize {
     row * NCOLS + col
+}
+
+// ─── paint / a11y tag SSOT (byte-match guard, R886.1) ─────────────
+// A node's a11y tag MUST equal its painted tag for `rect_for_tag` bounds +
+// pointer routing; these helpers are the one place the grammar lives, so the
+// paint producer and the a11y builder cannot drift.
+
+/// Cell click target — `data_grid#<row>_<col>` (the `GridSendKey::Cell` wire).
+fn cell_tag(row: usize, col: usize) -> String {
+    format!("{GRID_TAG}#{}", GridSendKey::Cell { row, col }.encode())
+}
+
+/// Column-header click target — `data_grid#h<col>` (`GridSendKey::Header`).
+fn col_header_tag(col: usize) -> String {
+    format!("{GRID_TAG}#{}", GridSendKey::Header { col }.encode())
+}
+
+/// Group-header click target — `data_grid#g<group>` (`GridSendKey::Group`).
+fn group_header_tag(group: usize) -> String {
+    format!("{GRID_TAG}#{}", GridSendKey::Group { group }.encode())
+}
+
+/// Data-row container tag — `dg_row<source>` (the AT row-bounds anchor).
+fn data_row_tag(source: usize) -> String {
+    format!("dg_row{source}")
 }
 
 // ─── column sort (R886 — the editable fold of the sort axis) ──────
@@ -302,46 +361,120 @@ fn use_filter() -> Rc<Signal<Option<GridFilter>>> {
     owner.cache("data_grid.filter", || Signal::new(None))
 }
 
-// ─── cursor re-anchor (the R891 edit-while-filtered SSOT) ─────────
-
-/// R891 — the cursor's visual position in the current `(sort, filter)` order,
-/// captured BEFORE a filter / edit mutation so [`reanchor_cursor`] can land
-/// the cursor on the row that takes its screen slot. `0` when the cursor is
-/// somehow already off-view (callers re-anchor explicitly regardless).
-fn cursor_visual_pos(
-    model: &Signal<Vec<CellValue>>,
-    sort: &Signal<Option<(usize, bool)>>,
-    filter: &Signal<Option<GridFilter>>,
-    cursor: &Signal<usize>,
-) -> usize {
-    let order = current_order(&model.get(), sort.get(), filter.get().as_ref());
-    let src = cursor.get();
-    order.iter().position(|&s| s == src).unwrap_or(0)
+/// R892 — the active group-by column (`None` = ungrouped, flat). A SOURCE-keyed
+/// axis like [`use_sort`] / [`use_filter`]: changing it repaints the rows into
+/// group runs on the next paint. The cross-grid group-by facet (the read-only
+/// `hello-grouped-grid` groups by a fixed column; here it is settable).
+#[must_use]
+fn use_group_col() -> Rc<Signal<Option<usize>>> {
+    let owner = Owner::current().expect("use_group_col requires an active Owner scope");
+    owner.cache("data_grid.group_col", || Signal::new(None))
 }
 
-/// R891 — re-anchor the SOURCE-keyed cursor into the filtered+sorted view
-/// after a filter change or an edit filtered its row out (the R886.1 note
-/// made good: an EXPLICIT re-anchor, never the silent `position().unwrap_or(0)`
-/// teleport the navigation once relied on). A no-op when the cursor's row
-/// still passes (still visible); else the cursor lands on the visible row now
-/// at its prior visual slot `prior_vis` (clamped — Excel / Qt keep the
-/// selection at its screen position); a no-op when the view is now empty (no
-/// visible row to land on — the grid shows no active cell until a row
-/// reappears). The single SSOT both the coordinator's `set_filter` /
-/// `intervene` and the owner-scoped `commit_edit` call (one re-anchor policy,
-/// not a per-call-site copy).
-fn reanchor_cursor(
-    model: &Signal<Vec<CellValue>>,
-    sort: &Signal<Option<(usize, bool)>>,
-    filter: &Signal<Option<GridFilter>>,
-    cursor: &Signal<usize>,
-    prior_vis: usize,
-) {
-    let order = current_order(&model.get(), sort.get(), filter.get().as_ref());
-    if order.contains(&cursor.get()) {
+/// R892 — the collapsed group ids (a `BTreeSet` for a deterministic, cheap
+/// membership test). Keyed on the STABLE group id from [`group_table`], so a
+/// sort / filter / edit that reorders rows keeps a group's collapse intact; a
+/// group-by-column CHANGE clears it (the ids no longer mean the same groups).
+#[must_use]
+fn use_collapsed() -> Rc<Signal<BTreeSet<usize>>> {
+    let owner = Owner::current().expect("use_collapsed requires an active Owner scope");
+    owner.cache("data_grid.collapsed", || Signal::new(BTreeSet::new()))
+}
+
+// ─── column grouping (R892 — the editable fold of the group axis) ──
+
+/// R892 — the group-by label table: the distinct display values of column
+/// `col` in SOURCE-order first appearance, so a group's id is STABLE across
+/// sort / filter / edits (the collapse set keys on it). `labels[id]` is the
+/// header's display name; [`group_of`] maps a source row to its id.
+fn group_table(model: &[CellValue], col: usize) -> Vec<String> {
+    let mut labels: Vec<String> = Vec::new();
+    for row in 0..NROWS {
+        if let Some(key) = model.get(idx(row, col)).map(CellValue::display) {
+            if !labels.contains(&key) {
+                labels.push(key);
+            }
+        }
+    }
+    labels
+}
+
+/// R892 — the STABLE group id of source `row` under group column `col`: its
+/// position in the [`group_table`]. Same display value ⇒ same group (Excel
+/// groups by the shown value; for a homogeneous typed column display equality
+/// is value equality, so no `sort_cmp`-style typed key is needed).
+fn group_of(model: &[CellValue], row: usize, col: usize, table: &[String]) -> usize {
+    let key = model.get(idx(row, col)).map(CellValue::display).unwrap_or_default();
+    table.iter().position(|l| *l == key).unwrap_or(0)
+}
+
+/// R892 — the visible row sequence: the filtered+sorted [`current_order`]
+/// flattened into [`GroupRow`]s when a group column is active (group headers +
+/// their members; a collapsed group omits its members), or one
+/// [`GroupRow::Data`] per source row when ungrouped (no headers — identical to
+/// the pre-R892 flat order). The unified SSOT the paint loop, the a11y tree,
+/// the `source_at` / `kind_at` wire, and the nav / re-anchor all read.
+fn visible_rows(
+    model: &[CellValue],
+    sort: Option<(usize, bool)>,
+    filter: Option<&GridFilter>,
+    group_col: Option<usize>,
+    collapsed: &BTreeSet<usize>,
+) -> Vec<GroupRow> {
+    let order = current_order(model, sort, filter);
+    match group_col {
+        None => order.into_iter().map(|source| GroupRow::Data { source }).collect(),
+        Some(col) => {
+            let table = group_table(model, col);
+            group_rows(
+                &order,
+                |row| group_of(model, row, col, &table),
+                |group| collapsed.contains(&group),
+            )
+        }
+    }
+}
+
+/// R892 — the visible DATA rows (source indices) in visual order, a collapsed
+/// group's members excluded — what vertical navigation walks and the cursor
+/// re-anchor clamps into. Ungrouped, this equals [`current_order`].
+fn visible_data_order(
+    model: &[CellValue],
+    sort: Option<(usize, bool)>,
+    filter: Option<&GridFilter>,
+    group_col: Option<usize>,
+    collapsed: &BTreeSet<usize>,
+) -> Vec<usize> {
+    visible_rows(model, sort, filter, group_col, collapsed)
+        .iter()
+        .filter_map(GroupRow::source)
+        .collect()
+}
+
+// ─── cursor re-anchor (R891 filter / R892 collapse — one SSOT) ─────
+
+/// R891/R892 — the cursor's position among the `visible` DATA rows, captured
+/// BEFORE a filter / group / collapse / edit mutation so [`reanchor_cursor`]
+/// can land the cursor on the row that takes its screen slot. `0` when the
+/// cursor is already off-view (callers re-anchor explicitly regardless).
+fn cursor_visual_pos(visible: &[usize], cursor: usize) -> usize {
+    visible.iter().position(|&s| s == cursor).unwrap_or(0)
+}
+
+/// R891/R892 — re-anchor the SOURCE-keyed cursor into the visible DATA rows
+/// after a filter / group-by / collapse change or an edit hid its row (the
+/// R886.1 note made good: an EXPLICIT re-anchor, never the silent
+/// `position().unwrap_or(0)` teleport navigation once relied on). A no-op when
+/// the cursor's row is still visible; else the cursor lands on the visible row
+/// now at its prior slot `prior_vis` (clamped — Excel / Qt keep the selection
+/// at its screen position); a no-op when no data row is visible (every group
+/// collapsed / filter excludes all — the grid shows no active cell until one
+/// reappears). The single SSOT the coordinator writes and `commit_edit` share.
+fn reanchor_cursor(visible: &[usize], cursor: &Signal<usize>, prior_vis: usize) {
+    if visible.contains(&cursor.get()) {
         return;
     }
-    if let Some(&row) = order.get(prior_vis.min(order.len().saturating_sub(1))) {
+    if let Some(&row) = visible.get(prior_vis.min(visible.len().saturating_sub(1))) {
         cursor.set(row);
     }
 }
@@ -362,9 +495,14 @@ struct DataGridExternal {
     sort: Rc<Signal<Option<(usize, bool)>>>,
     /// R891 — the shared column-filter signal (`use_filter`).
     filter: Rc<Signal<Option<GridFilter>>>,
+    /// R892 — the shared group-by column (`use_group_col`).
+    group_col: Rc<Signal<Option<usize>>>,
+    /// R892 — the shared collapsed-group set (`use_collapsed`).
+    collapsed: Rc<Signal<BTreeSet<usize>>>,
 }
 
 impl DataGridExternal {
+    #[allow(clippy::too_many_arguments)] // one Rc per shared reactive axis
     fn new(
         model: Rc<Signal<Vec<CellValue>>>,
         focused_row: Rc<Signal<usize>>,
@@ -373,14 +511,77 @@ impl DataGridExternal {
         editor: Rc<TextEditState>,
         sort: Rc<Signal<Option<(usize, bool)>>>,
         filter: Rc<Signal<Option<GridFilter>>>,
+        group_col: Rc<Signal<Option<usize>>>,
+        collapsed: Rc<Signal<BTreeSet<usize>>>,
     ) -> Self {
-        Self { model, focused_row, focused_col, editing_cell, editor, sort, filter }
+        Self {
+            model,
+            focused_row,
+            focused_col,
+            editing_cell,
+            editor,
+            sort,
+            filter,
+            group_col,
+            collapsed,
+        }
     }
 
     /// R891 — rows passing the active filter (`NROWS` when unfiltered), the
-    /// derived view length the AI-first `set_filter` reports in one round-trip.
+    /// derived data-row count the AI-first `set_filter` reports in one
+    /// round-trip. Independent of grouping / collapse (the logical filtered
+    /// count, not the rendered row count — that is [`visible_len`](Self::visible_len)).
     fn view_len(&self) -> usize {
         current_order(&self.model.get(), self.sort.get(), self.filter.get().as_ref()).len()
+    }
+
+    /// R892 — the visible row sequence (group headers + uncollapsed data rows
+    /// when grouped; one data row per source when ungrouped) — the SSOT the
+    /// `source_at` / `kind_at` wire and the a11y tree index.
+    fn rows(&self) -> Vec<GroupRow> {
+        visible_rows(
+            &self.model.get(),
+            self.sort.get(),
+            self.filter.get().as_ref(),
+            self.group_col.get(),
+            &self.collapsed.get(),
+        )
+    }
+
+    /// R892 — the rendered row count (headers + uncollapsed data rows);
+    /// `view_len` when ungrouped. What `source_at.<pos>` / `kind_at.<pos>` index.
+    fn visible_len(&self) -> usize {
+        self.rows().len()
+    }
+
+    /// R892 — distinct group count under the active group column, `0` ungrouped.
+    fn group_count(&self) -> usize {
+        match self.group_col.get() {
+            Some(col) => group_table(&self.model.get(), col).len(),
+            None => 0,
+        }
+    }
+
+    /// R892 — the visible DATA rows (source order, collapsed members excluded)
+    /// — the cursor re-anchor / nav window.
+    fn cur_visible(&self) -> Vec<usize> {
+        visible_data_order(
+            &self.model.get(),
+            self.sort.get(),
+            self.filter.get().as_ref(),
+            self.group_col.get(),
+            &self.collapsed.get(),
+        )
+    }
+
+    /// R892 — capture the cursor's visual slot BEFORE a mutation (re-anchor input).
+    fn cursor_prior_vis(&self) -> usize {
+        cursor_visual_pos(&self.cur_visible(), self.focused_row.get())
+    }
+
+    /// R892 — re-anchor the cursor into the post-mutation visible rows.
+    fn reanchor(&self, prior_vis: usize) {
+        reanchor_cursor(&self.cur_visible(), &self.focused_row, prior_vis);
     }
 
     /// R891 — apply a column filter (`None` clears) and re-anchor the cursor
@@ -390,11 +591,53 @@ impl DataGridExternal {
     /// `intervene "filter"` and `invoke "set_filter"` share.
     fn set_filter(&self, filter: Option<GridFilter>) -> usize {
         let filter = filter.filter(|f| f.col < NCOLS);
-        let prior_vis =
-            cursor_visual_pos(&self.model, &self.sort, &self.filter, &self.focused_row);
+        let prior_vis = self.cursor_prior_vis();
         self.filter.set(filter);
-        reanchor_cursor(&self.model, &self.sort, &self.filter, &self.focused_row, prior_vis);
+        self.reanchor(prior_vis);
         self.view_len()
+    }
+
+    /// R892 — set the group-by column (`None` ungroups). An out-of-range column
+    /// clamps to ungrouped. Re-grouping (a CHANGE of column) clears the collapse
+    /// set (its ids no longer name the same groups). Re-anchors the cursor and
+    /// returns the resulting [`group_count`](Self::group_count). The mutation
+    /// path the wire's `intervene "group"` and `invoke "set_group"` share.
+    fn set_group(&self, col: Option<usize>) -> usize {
+        let col = col.filter(|&c| c < NCOLS);
+        let prior_vis = self.cursor_prior_vis();
+        if col != self.group_col.get() {
+            self.collapsed.set(BTreeSet::new());
+        }
+        self.group_col.set(col);
+        self.reanchor(prior_vis);
+        self.group_count()
+    }
+
+    /// R892 — toggle group `group`'s collapse (a clicked group header / the
+    /// `toggle_group` wire). Collapsing the cursor's group hides its rows, so
+    /// the cursor re-anchors. Returns the resulting collapsed flag.
+    fn toggle_group(&self, group: usize) -> bool {
+        let prior_vis = self.cursor_prior_vis();
+        let mut next = self.collapsed.get();
+        let now_collapsed = if next.remove(&group) {
+            false
+        } else {
+            next.insert(group);
+            true
+        };
+        self.collapsed.set(next);
+        self.reanchor(prior_vis);
+        now_collapsed
+    }
+
+    /// R892 — collapse every group / expand every group (the `collapse_all` /
+    /// `expand_all` wire). Re-anchors the cursor (collapse-all hides every data
+    /// row — the cursor stays put, no visible row to land on, until re-expanded).
+    fn set_all_collapsed(&self, collapse: bool) {
+        let prior_vis = self.cursor_prior_vis();
+        let set: BTreeSet<usize> = if collapse { (0..self.group_count()).collect() } else { BTreeSet::new() };
+        self.collapsed.set(set);
+        self.reanchor(prior_vis);
     }
 
     /// Toggle the bool at `(row, col)`; no-op (returns `false`) unless the
@@ -492,12 +735,22 @@ impl ExternalIntrospect for DataGridExternal {
             ("sort", "string"),
             ("filter", "string"),
             ("view_len", "int"),
+            ("group", "string"),
+            ("group_count", "int"),
+            ("visible_len", "int"),
             ("source_at.<pos>", "int"),
+            ("kind_at.<pos>", "string"),
+            ("label_at.<pos>", "string"),
+            ("collapsed.<group>", "bool"),
             ("send", "string"),
             ("toggle", "json"),
             ("begin", "json"),
             ("cycle_sort", "json"),
             ("set_filter", "string"),
+            ("set_group", "string"),
+            ("toggle_group", "int"),
+            ("collapse_all", "json"),
+            ("expand_all", "json"),
         ])
     }
 
@@ -528,21 +781,60 @@ impl ExternalIntrospect for DataGridExternal {
             // R891 — rows passing the active filter (the read side of the
             // `set_filter` outcome; `NROWS` when unfiltered).
             "view_len" => Some(IntrospectValue::Int(int_of(self.view_len()))),
+            // R892 — the group-by column ("none" / "<col>"), the read side of
+            // `set_group` (decode = inverse in `intervene "group"`).
+            "group" => Some(IntrospectValue::Text(match self.group_col.get() {
+                Some(col) => col.to_string(),
+                None => "none".to_owned(),
+            })),
+            // R892 — distinct group count (0 ungrouped) + rendered row count
+            // (headers + uncollapsed data rows; `view_len` ungrouped).
+            "group_count" => Some(IntrospectValue::Int(int_of(self.group_count()))),
+            "visible_len" => Some(IntrospectValue::Int(int_of(self.visible_len()))),
             _ => {
                 // R886 — `source_at.<pos>`: the source row painted at
                 // visual position `pos` under the active sort (identity
                 // when unsorted) — the AI-side order introspection.
                 if let Some(pos_str) = path.strip_prefix("source_at.") {
-                    // R886.1 — the shared `source_at.` projection SSOT:
-                    // out-of-range / unparseable reports Null
-                    // (present-but-empty), never absence — the family
-                    // contract every sort proxy speaks.
-                    let model = self.model.get();
-                    let order = current_order(&model, self.sort.get(), self.filter.get().as_ref());
+                    // R886.1/R892 — the shared `source_at.` projection SSOT over
+                    // the visible row sequence: a data row reports its source, a
+                    // group header or out-of-range position reports Null
+                    // (present-but-empty), never absence — the family contract
+                    // every sort / group proxy speaks. Ungrouped, the sequence
+                    // is the flat filtered+sorted order (bit-identical to R886).
+                    let rows = self.rows();
                     return Some(pinion_core::widgets::order_memo::source_at_value(
                         pos_str,
-                        |p| order.get(p).copied(),
+                        |p| rows.get(p).and_then(GroupRow::source),
                     ));
+                }
+                // R892 — the visible-row discriminator (`"header"` / `"data"`,
+                // Null out of range) — disambiguates a `source_at` Null (header
+                // vs out-of-range).
+                if let Some(pos_str) = path.strip_prefix("kind_at.") {
+                    let pos: usize = pos_str.parse().ok()?;
+                    return Some(self.rows().get(pos).map_or(IntrospectValue::Null, |r| {
+                        IntrospectValue::Text(r.kind_str().to_owned())
+                    }));
+                }
+                // R892 — the group label of a header position (Null for a data
+                // row or out of range): the displayed group key.
+                if let Some(pos_str) = path.strip_prefix("label_at.") {
+                    let pos: usize = pos_str.parse().ok()?;
+                    let rows = self.rows();
+                    let label = match (self.group_col.get(), rows.get(pos)) {
+                        (Some(col), Some(GroupRow::Header { group, .. })) => {
+                            group_table(&self.model.get(), col).get(*group).cloned()
+                        }
+                        _ => None,
+                    };
+                    return Some(label.map_or(IntrospectValue::Null, IntrospectValue::Text));
+                }
+                // R892 — whether group `<group>` is collapsed (the read side of
+                // `toggle_group` / `intervene "collapsed.<group>"`).
+                if let Some(g_str) = path.strip_prefix("collapsed.") {
+                    let group: usize = g_str.parse().ok()?;
+                    return Some(IntrospectValue::Bool(self.collapsed.get().contains(&group)));
                 }
                 if let Some(col_str) = path.strip_prefix("col_name.") {
                     let col: usize = col_str.parse().ok()?;
@@ -566,9 +858,8 @@ impl ExternalIntrospect for DataGridExternal {
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
-            "row_count" | "col_count" | "editing_row" | "editing_col" | "view_len" => {
-                Err(InterveneError::ReadOnly)
-            }
+            "row_count" | "col_count" | "editing_row" | "editing_col" | "view_len"
+            | "group_count" | "visible_len" => Err(InterveneError::ReadOnly),
             "focused_row" => match value {
                 IntrospectValue::Int(i) => {
                     let row = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
@@ -613,7 +904,34 @@ impl ExternalIntrospect for DataGridExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
+            // R892 — admin / restore write of the group-by column: "<col>" /
+            // "none" / Null (decode = inverse of `query "group"`). An
+            // out-of-range / unparseable column ungroups (`set_group` clamps).
+            "group" => match value {
+                IntrospectValue::Text(ref s) => {
+                    self.set_group(if s == "none" { None } else { s.parse::<usize>().ok() });
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.set_group(None);
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
             _ => {
+                // R892 — set group `<group>`'s collapse directly (idempotent;
+                // re-anchors via `toggle_group` when it actually changes).
+                if let Some(g_str) = path.strip_prefix("collapsed.") {
+                    let group: usize =
+                        g_str.parse().map_err(|_| InterveneError::UnknownPath)?;
+                    let IntrospectValue::Bool(want) = value else {
+                        return Err(InterveneError::TypeMismatch);
+                    };
+                    if self.collapsed.get().contains(&group) != want {
+                        self.toggle_group(group);
+                    }
+                    return Ok(());
+                }
                 let Some(rest) = path.strip_prefix("value.") else {
                     return Err(InterveneError::UnknownPath);
                 };
@@ -625,18 +943,18 @@ impl ExternalIntrospect for DataGridExternal {
                     return Err(InterveneError::UnknownPath);
                 }
                 let new_value = COL_KINDS[col].coerce(value)?;
-                // R891 — a typed-set that flips the cursor's row out of an
-                // active filter re-anchors the cursor (no-op when the write
-                // leaves the cursor's row visible), so the AI write path keeps
-                // the same cursor-stays-visible invariant the edit commit does.
-                let prior_vis =
-                    cursor_visual_pos(&self.model, &self.sort, &self.filter, &self.focused_row);
+                // R891/R892 — a typed-set that flips the cursor's row out of an
+                // active filter OR into a collapsed group re-anchors the cursor
+                // (no-op when the write leaves the cursor's row visible), so the
+                // AI write path keeps the same cursor-stays-visible invariant
+                // the edit commit does.
+                let prior_vis = self.cursor_prior_vis();
                 self.model.set_with(move |prev| {
                     let mut next = prev.clone();
                     next[idx(row, col)] = new_value.clone();
                     next
                 });
-                reanchor_cursor(&self.model, &self.sort, &self.filter, &self.focused_row, prior_vis);
+                self.reanchor(prior_vis);
                 Ok(())
             }
         }
@@ -689,6 +1007,18 @@ impl ExternalIntrospect for DataGridExternal {
                                 _ => Ok(IntrospectValue::Null),
                             }
                         }
+                        // R892 — a clicked group header toggles that group's
+                        // collapse (the `GridSendKey::Group` wire, parallel to
+                        // the column-header sort cycle).
+                        GridSendKey::Group { group } => {
+                            if group >= self.group_count() {
+                                return Err(InvokeError::Rejected);
+                            }
+                            if event_name == "PointerUp" {
+                                self.toggle_group(group);
+                            }
+                            Ok(IntrospectValue::Null)
+                        }
                     }
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -729,6 +1059,36 @@ impl ExternalIntrospect for DataGridExternal {
                 };
                 Ok(IntrospectValue::Int(int_of(view_len)))
             }
+            // R892 — the AI-first group-by: "<col>" / "none" / Null sets the
+            // group column (an out-of-range column ungroups). Returns the
+            // resulting group_count in one round-trip.
+            "set_group" => {
+                let count = match args {
+                    IntrospectValue::Text(ref s) => {
+                        self.set_group(if s == "none" { None } else { s.parse::<usize>().ok() })
+                    }
+                    IntrospectValue::Null => self.set_group(None),
+                    _ => return Err(InvokeError::TypeMismatch),
+                };
+                Ok(IntrospectValue::Int(int_of(count)))
+            }
+            // R892 — toggle a group's collapse; returns the resulting flag.
+            "toggle_group" => match args {
+                IntrospectValue::Int(i) => {
+                    let group = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+                    Ok(IntrospectValue::Bool(self.toggle_group(group)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R892 — collapse / expand every group at once.
+            "collapse_all" => {
+                self.set_all_collapsed(true);
+                Ok(IntrospectValue::Null)
+            }
+            "expand_all" => {
+                self.set_all_collapsed(false);
+                Ok(IntrospectValue::Null)
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -745,15 +1105,24 @@ fn commit_edit(restore_focus: bool) {
         return;
     };
     let model = use_data_model();
-    let sort = use_sort();
-    let filter = use_filter();
     let cursor = use_focused_row();
     let text = use_text_edit_state(EDIT_TF_TAG).text();
-    // R891 — capture the edited row's visual slot BEFORE the write so a
-    // commit that filters the row out can re-anchor the cursor to the row
-    // that takes its screen position (the cursor IS the edited row — editing
-    // never moves the grid cursor).
-    let prior_vis = cursor_visual_pos(&model, &sort, &filter, &cursor);
+    // R892 — the cursor's visible-data window (filter + group + collapse), used
+    // both to capture the prior slot and to re-anchor after the write.
+    let visible = || {
+        visible_data_order(
+            &model.get(),
+            use_sort().get(),
+            use_filter().get().as_ref(),
+            use_group_col().get(),
+            &use_collapsed().get(),
+        )
+    };
+    // R891/R892 — capture the edited row's visual slot BEFORE the write so a
+    // commit that filters the row out (or moves it into a collapsed group)
+    // re-anchors the cursor to the row that takes its screen position (the
+    // cursor IS the edited row — editing never moves the grid cursor).
+    let prior_vis = cursor_visual_pos(&visible(), cursor.get());
     if col < NCOLS {
         if let Some(parsed) = COL_KINDS[col].parse(&text) {
             model.set_with(move |prev| {
@@ -764,9 +1133,9 @@ fn commit_edit(restore_focus: bool) {
         }
     }
     end_edit_mode(restore_focus);
-    // R891 — if the committed value flipped the row out of an active filter,
-    // re-anchor the now-hidden cursor (no-op when the row still passes).
-    reanchor_cursor(&model, &sort, &filter, &cursor, prior_vis);
+    // R891/R892 — if the committed value hid the row, re-anchor the now-hidden
+    // cursor (no-op when the row stays visible).
+    reanchor_cursor(&visible(), &cursor, prior_vis);
 }
 
 fn cancel_edit() {
@@ -807,8 +1176,15 @@ fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
         // vertical arms no-op rather than the old silent `unwrap_or(0)`
         // teleport (the R886.1 note made good).
         "ArrowDown" | "ArrowUp" => {
-            let order =
-                current_order(&use_data_model().get(), use_sort().get(), use_filter().get().as_ref());
+            // R892 — walk the visible DATA rows (collapsed-group members
+            // excluded), so ArrowDown/Up skip group headers and hidden rows.
+            let order = visible_data_order(
+                &use_data_model().get(),
+                use_sort().get(),
+                use_filter().get().as_ref(),
+                use_group_col().get(),
+                &use_collapsed().get(),
+            );
             let row = row_sig.get().min(NROWS - 1);
             let Some(vis) = order.iter().position(|&s| s == row) else {
                 return false;
@@ -934,7 +1310,7 @@ fn view_cell(
     };
     Scene::Container(
         ContainerNode::new(vec![inner])
-            .with_tag(format!("{GRID_TAG}#{}", GridSendKey::Cell { row, col }.encode()))
+            .with_tag(cell_tag(row, col))
             .with_style(BoxStyle::filled(cell_fill(theme, focused)))
             .with_layout(
                 LayoutStyle::new()
@@ -967,7 +1343,7 @@ fn view_header(theme: &Theme, sort: Option<(usize, bool)>) -> Scene {
                         .with_size_px(HEADER_PX)
                         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
                 ))])
-                .with_tag(format!("{GRID_TAG}#{}", GridSendKey::Header { col }.encode()))
+                .with_tag(col_header_tag(col))
                 .with_layout(
                     LayoutStyle::new()
                         .flex(FlexDirection::Row)
@@ -986,6 +1362,55 @@ fn view_header(theme: &Theme, sort: Option<(usize, bool)>) -> Scene {
     )
 }
 
+/// R892 — a group header row (the [`group_header_row`] SSOT, R871): the group
+/// label + member count + collapse chevron, tagged `data_grid#g<group>` so a
+/// click routes to the coordinator's collapse toggle. Spans the full grid width.
+fn view_group_header(
+    group: usize,
+    label: &str,
+    member_count: usize,
+    collapsed: bool,
+    theme: &Theme,
+) -> Scene {
+    group_header_row(
+        group_header_tag(group),
+        label,
+        &member_count.to_string(),
+        collapsed,
+        theme,
+        COL_W.iter().sum::<u32>(),
+        ROW_H,
+    )
+}
+
+/// R886.1 — one data row: a flex row of [`view_cell`]s, tagged `dg_row<src>`
+/// (the same tag its a11y `row` node uses, so AT bounds attach). The cursor /
+/// edit latch are SOURCE-keyed, so this paints by source index regardless of
+/// the visual order.
+fn view_data_row(
+    row: usize,
+    model: &[CellValue],
+    focus: (usize, usize),
+    editing: Option<(usize, usize)>,
+    theme: &Theme,
+    edit_field: (TextFieldState, u32),
+) -> Scene {
+    let (focused_row, focused_col) = focus;
+    let cells: Vec<Scene> = (0..NCOLS)
+        .map(|col| {
+            let value = &model[idx(row, col)];
+            let focused = row == focused_row && col == focused_col;
+            let edit_active = editing == Some((row, col)) && COL_KINDS[col].is_text_editable();
+            view_cell(row, col, value, focused, edit_active, theme, edit_field)
+        })
+        .collect();
+    Scene::Container(
+        ContainerNode::new(cells).with_tag(data_row_tag(row)).with_layout(
+            LayoutStyle::new().flex(FlexDirection::Row).with_align_items(AlignItems::Center),
+        ),
+    )
+}
+
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
     let (edit_state, edit_caret) = state;
@@ -994,14 +1419,20 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let focused_row = use_focused_row().get();
     let focused_col = use_focused_col().get();
     let editing = use_editing_cell().get();
-    // R886 / R891 — paint rows in the filtered+sorted visual order; every
-    // cell keeps its SOURCE identity (tags, cursor, edit latch), so a
-    // committed edit that changes the sort key visibly moves its row — or a
-    // filter facet drops it — on this very repaint while the cursor and any
-    // in-flight editor follow the source row.
+    // R886 / R891 / R892 — paint rows in the filtered+sorted+grouped visual
+    // sequence; every data cell keeps its SOURCE identity (tags, cursor, edit
+    // latch), so a committed edit that changes the sort key moves its row — a
+    // filter drops it — a group-key edit re-groups it — on this very repaint
+    // while the cursor and any in-flight editor follow the source row.
     let sort = use_sort().get();
     let filter = use_filter().get();
-    let order = current_order(&model, sort, filter.as_ref());
+    let group_col = use_group_col().get();
+    let collapsed = use_collapsed().get();
+    let vis_rows = visible_rows(&model, sort, filter.as_ref(), group_col, &collapsed);
+    let group_labels = group_col.map(|col| group_table(&model, col));
+    // The status "showing" count stays the FILTER readout (data rows passing,
+    // independent of collapse) — the R891 semantics, so its demo is unaffected.
+    let view_len = current_order(&model, sort, filter.as_ref()).len();
 
     let title = Scene::Text(TextNode::styled(
         "Asset table",
@@ -1011,26 +1442,26 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
 
-    let mut rows: Vec<Scene> = Vec::with_capacity(NROWS + 1);
+    let mut rows: Vec<Scene> = Vec::with_capacity(vis_rows.len() + 1);
     rows.push(view_header(&theme, sort));
-    for &row in &order {
-        let cells: Vec<Scene> = (0..NCOLS)
-            .map(|col| {
-                let value = &model[idx(row, col)];
-                let focused = row == focused_row && col == focused_col;
-                let edit_active = editing == Some((row, col)) && COL_KINDS[col].is_text_editable();
-                view_cell(row, col, value, focused, edit_active, &theme, (edit_state, edit_caret))
-            })
-            .collect();
-        // R886.1 — the painted row carries the same `dg_row<src>` tag its
-        // a11y `row` node uses, so AT row bounds attach (the columnheader
-        // parity applied to the row axis; pre-R886.1 the tags matched no
-        // painted node).
-        rows.push(Scene::Container(
-            ContainerNode::new(cells)
-                .with_tag(format!("dg_row{row}"))
-                .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_align_items(AlignItems::Center)),
-        ));
+    for vrow in &vis_rows {
+        rows.push(match *vrow {
+            // R892 — a group header spanning the grid (label + member count +
+            // collapse chevron; a click toggles collapse).
+            GroupRow::Header { group, member_count, collapsed: is_collapsed } => {
+                let label =
+                    group_labels.as_ref().and_then(|t| t.get(group)).map_or("", String::as_str);
+                view_group_header(group, label, member_count, is_collapsed, &theme)
+            }
+            GroupRow::Data { source } => view_data_row(
+                source,
+                &model,
+                (focused_row, focused_col),
+                editing,
+                &theme,
+                (edit_state, edit_caret),
+            ),
+        });
     }
     let grid = Scene::Container(
         ContainerNode::new(rows)
@@ -1047,16 +1478,21 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             ),
     );
 
-    // R891 — a scene-as-data readout of the active filter + resulting view
-    // size (`filter 1=mesh \u{00B7} showing 2 of 4`), the witness that the
-    // row set shrank — the `hello-grid-filter` status-bar pattern at the
-    // editable grid's scale. Tagged for AI-first introspection.
+    // R891 / R892 — a scene-as-data readout of the active filter + resulting
+    // view size (`filter 1=mesh \u{00B7} showing 2 of 4`), plus the group-by
+    // column when grouped — the `hello-grid-filter` status-bar pattern at the
+    // editable grid's scale. Tagged for AI-first introspection. The ungrouped
+    // text is byte-identical to R891 (the group suffix is appended only when
+    // grouped), so the R891 status assertions stand.
+    let group_suffix = match group_col {
+        Some(col) => format!(" \u{00B7} grouped by {}", COL_NAMES[col]),
+        None => String::new(),
+    };
     let status = Scene::Text(
         TextNode::styled(
             format!(
-                "filter {} \u{00B7} showing {} of {NROWS}",
+                "filter {} \u{00B7} showing {view_len} of {NROWS}{group_suffix}",
                 grid_filter_str(filter.as_ref()),
-                order.len(),
             ),
             Rect::default(),
             TextStyle::new()
@@ -1100,8 +1536,10 @@ impl WidgetCore for DataGridView {
         let editor = use_text_edit_state(EDIT_TF_TAG);
         let sort = use_sort();
         let filter = use_filter();
+        let group_col = use_group_col();
+        let collapsed = use_collapsed();
         Box::new(DataGridExternal::new(
-            model, focused_row, focused_col, editing, editor, sort, filter,
+            model, focused_row, focused_col, editing, editor, sort, filter, group_col, collapsed,
         ))
     }
 
@@ -1185,51 +1623,179 @@ impl WidgetCore for DataGridView {
     }
 }
 
+/// R892 — the WAI-ARIA `treegrid` a11y for the GROUPED editable grid.
+///
+/// Hand-rolled (not the lifted [`grouped_grid_access_nodes`] SSOT): that
+/// builder tags rows via `GroupRow::composite_tag(group_prefix, data_prefix)`
+/// = `{prefix}#{id}`, the read-only multi-External scheme. This single-External
+/// grid cannot use it — its group headers route via [`GridSendKey::Group`]
+/// (`data_grid#g<g>`, so the 'g' both routes and avoids the source-id
+/// collision) and its data rows are tagged `dg_row<src>` (locked by the R891
+/// demo + the ungrouped [`grid_table_nodes`] parity). A 2nd single-External
+/// grouped consumer would justify lifting a tag-flexible builder
+/// ([[abstraction-needs-second-consumer]]). The focused CELL is the
+/// activedescendant (the editable-grid model), not the row.
+fn grouped_access_nodes(
+    model: &[CellValue],
+    rows: &[GroupRow],
+    labels: &[String],
+    columns: &[GridColumn],
+    focused_row: usize,
+    focused_col: usize,
+) -> Vec<AccessNode> {
+    const HEADER_ROW_TAG: &str = "dg_header";
+    let total = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+    let mut nodes: Vec<AccessNode> = Vec::with_capacity(rows.len() * (NCOLS + 1) + NCOLS + 2);
+
+    // treegrid root: the column-header row, then every visible row.
+    let mut grid = AccessNode::new(GRID_TAG, AriaRole::TreeGrid).with_name("Asset table");
+    grid = grid.with_child(HEADER_ROW_TAG);
+    for vrow in rows {
+        grid = grid.with_child(group_row_a11y_tag(vrow));
+    }
+    nodes.push(grid);
+
+    // column-header row + columnheaders (aria-sort from the GridColumn slice).
+    let mut header_row = AccessNode::new(HEADER_ROW_TAG, AriaRole::Row);
+    for col in columns {
+        header_row = header_row.with_child(col.tag.as_str());
+    }
+    nodes.push(header_row);
+    for col in columns {
+        let mut ch =
+            AccessNode::new(col.tag.as_str(), AriaRole::ColumnHeader).with_name(&col.label);
+        if let Some(dir) = col.sort {
+            ch = ch.with_sort(dir);
+        }
+        nodes.push(ch);
+    }
+
+    // group headers (level-1 expandable rows) + data rows (level-2 + gridcells).
+    for (pos, vrow) in rows.iter().enumerate() {
+        push_group_row_nodes(
+            &mut nodes,
+            *vrow,
+            u32::try_from(pos + 1).unwrap_or(u32::MAX),
+            total,
+            model,
+            labels,
+            (focused_row, focused_col),
+        );
+    }
+    nodes
+}
+
+/// R892 — push one visible row's a11y nodes: a level-1 expandable group
+/// header, or a level-2 data row + its `gridcell`s (the focused cell carrying
+/// the activedescendant). Split out of [`grouped_access_nodes`] for the 100-line
+/// budget.
+fn push_group_row_nodes(
+    nodes: &mut Vec<AccessNode>,
+    vrow: GroupRow,
+    posinset: u32,
+    total: u32,
+    model: &[CellValue],
+    labels: &[String],
+    focus: (usize, usize),
+) {
+    let (focused_row, focused_col) = focus;
+    match vrow {
+        GroupRow::Header { group, member_count, collapsed } => {
+            let label = labels.get(group).map_or("", String::as_str);
+            nodes.push(
+                AccessNode::new(group_header_tag(group), AriaRole::Row)
+                    .with_name(format!("{label} ({member_count})"))
+                    .with_level(1)
+                    .with_position_in_set(posinset)
+                    .with_size_of_set(total)
+                    .with_expanded(!collapsed),
+            );
+        }
+        GroupRow::Data { source } => {
+            let mut data_row = AccessNode::new(data_row_tag(source), AriaRole::Row)
+                .with_level(2)
+                .with_position_in_set(posinset)
+                .with_size_of_set(total);
+            for (col, _) in COL_NAMES.iter().enumerate() {
+                data_row = data_row.with_child(cell_tag(source, col));
+            }
+            nodes.push(data_row);
+            for (col, name) in COL_NAMES.iter().enumerate() {
+                let value =
+                    model.get(idx(source, col)).map(CellValue::display).unwrap_or_default();
+                nodes.push(
+                    AccessNode::new(cell_tag(source, col), AriaRole::GridCell)
+                        .with_name(format!("{name}: {value}"))
+                        .with_focused(source == focused_row && col == focused_col),
+                );
+            }
+        }
+    }
+}
+
+/// The a11y tag of a visible [`GroupRow`] — the painted-tag SSOT (header =
+/// `group_header_tag`, data = `data_row_tag`).
+fn group_row_a11y_tag(vrow: &GroupRow) -> String {
+    match *vrow {
+        GroupRow::Header { group, .. } => group_header_tag(group),
+        GroupRow::Data { source } => data_row_tag(source),
+    }
+}
+
 impl WidgetA11y for DataGridView {
-    /// R837 §5.40 — the grid lowers through the lifted [`grid_table_nodes`]
-    /// SSOT (3rd consumer). A column-name header over one row per record; the
-    /// focused cell carries the roving `focused` flag (`aria-activedescendant`).
+    /// R837 / R886 / R891 / R892 — ungrouped, a flat WAI-ARIA `grid` (the
+    /// lifted [`grid_table_nodes`] SSOT) over the filtered+sorted rows, the
+    /// focused cell as `aria-activedescendant`; grouped, a `treegrid` (group
+    /// headers as level-1 expandable rows, data rows level-2) via
+    /// [`grouped_access_nodes`]. The columns (with `aria-sort`) are shared.
     fn access_node(_state: &RootState, _focused: Option<&str>) -> Vec<AccessNode> {
         let model = use_data_model().get();
         let focused_row = use_focused_row().get();
         let focused_col = use_focused_col().get();
-        // R886 — the active column announces `aria-sort` (WAI-ARIA 1.2
-        // §6.6.2) and the rows are emitted in the sorted visual order, so
-        // AT linear navigation matches what sighted users see. R891 — the
-        // rows are also filtered, so AT sees exactly the visible set (the
-        // grid `row` count tracks the filtered `view_len`).
         let sort = use_sort().get();
-        let order = current_order(&model, sort, use_filter().get().as_ref());
+        let filter = use_filter().get();
+        let group_col = use_group_col().get();
+        let collapsed = use_collapsed().get();
+        // R886.1 — the a11y columnheader tag IS the painted clickable header
+        // tag, so `rect_for_tag` bounds attach and an AT activation routes to
+        // the sort wire. The active column announces `aria-sort` (WAI-ARIA 1.2
+        // §6.6.2).
         let columns: Vec<GridColumn> = COL_NAMES
             .iter()
             .enumerate()
             .map(|(col, label)| GridColumn {
-                // R886.1 — the a11y columnheader tag IS the painted
-                // clickable header tag, so `rect_for_tag` bounds attach
-                // and an AT activation routes to the sort wire (the
-                // hello-table / grouped-grid-sort parity; the R837-era
-                // `dg_col<n>` tags matched no painted node).
-                tag: format!("{GRID_TAG}#{}", GridSendKey::Header { col }.encode()),
+                tag: col_header_tag(col),
                 label: (*label).to_owned(),
                 sort: col_sort_dir(sort, col).map(SortDirection::from_ascending),
             })
             .collect();
-        let rows: Vec<GridRow> = order
-            .iter()
-            .map(|&row| GridRow {
-                tag: format!("dg_row{row}"),
-                selected: false,
-                state: RadioState::Idle,
-                cells: (0..NCOLS)
-                    .map(|col| GridCell {
-                        tag: format!("{GRID_TAG}#{}", GridSendKey::Cell { row, col }.encode()),
-                        name: format!("{}: {}", COL_NAMES[col], model[idx(row, col)].display()),
-                        focused: row == focused_row && col == focused_col,
-                    })
-                    .collect(),
-            })
-            .collect();
-        grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows)
+
+        let Some(gcol) = group_col else {
+            // R886/R891 — ungrouped flat grid; the rows are the filtered+sorted
+            // order, so AT linear navigation matches what sighted users see.
+            let order = current_order(&model, sort, filter.as_ref());
+            let rows: Vec<GridRow> = order
+                .iter()
+                .map(|&row| GridRow {
+                    tag: data_row_tag(row),
+                    selected: false,
+                    state: RadioState::Idle,
+                    cells: (0..NCOLS)
+                        .map(|col| GridCell {
+                            tag: cell_tag(row, col),
+                            name: format!("{}: {}", COL_NAMES[col], model[idx(row, col)].display()),
+                            focused: row == focused_row && col == focused_col,
+                        })
+                        .collect(),
+                })
+                .collect();
+            return grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
+        };
+
+        // R892 — grouped treegrid over the visible group/data sequence.
+        let rows = visible_rows(&model, sort, filter.as_ref(), Some(gcol), &collapsed);
+        let labels = group_table(&model, gcol);
+        grouped_access_nodes(&model, &rows, &labels, &columns, focused_row, focused_col)
     }
 }
 
@@ -1787,6 +2353,188 @@ mod tests {
             );
             assert!(DataGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowUp", m));
             assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(0)), "back to Hero");
+        });
+    }
+
+    // ─── R892 — the editable fold of the GROUP axis ──────────────────
+
+    // Type column (col 1) source values: sprite, mesh, sprite, mesh.
+    // Grouping by Type: group 0 = sprite (rows 0, 2), group 1 = mesh (1, 3).
+    // Unsorted visible sequence = [H0, D0, D2, H1, D1, D3].
+
+    #[test]
+    fn r892_group_by_flattens_and_indexes_the_sequence() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert_eq!(intro.query("group"), Some(IntrospectValue::Text("none".to_owned())));
+            assert_eq!(intro.query("group_count"), Some(IntrospectValue::Int(0)), "ungrouped");
+            // set_group returns the new group count in one round-trip.
+            assert_eq!(
+                intro.invoke("set_group", IntrospectValue::Text("1".to_owned())),
+                Ok(IntrospectValue::Int(2)),
+                "Type has two distinct values",
+            );
+            assert_eq!(intro.query("group"), Some(IntrospectValue::Text("1".to_owned())));
+            assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(6)), "2 headers + 4 data");
+            // kind_at disambiguates header vs data positions.
+            assert_eq!(intro.query("kind_at.0"), Some(IntrospectValue::Text("header".to_owned())));
+            assert_eq!(intro.query("kind_at.1"), Some(IntrospectValue::Text("data".to_owned())));
+            // source_at: headers report Null, data rows their source.
+            assert_eq!(intro.query("source_at.0"), Some(IntrospectValue::Null), "header");
+            assert_eq!(intro.query("source_at.1"), Some(IntrospectValue::Int(0)), "sprite: Hero");
+            assert_eq!(intro.query("source_at.2"), Some(IntrospectValue::Int(2)), "sprite: Coin");
+            assert_eq!(intro.query("source_at.4"), Some(IntrospectValue::Int(1)), "mesh: Tree");
+            // label_at gives a header's group label.
+            assert_eq!(intro.query("label_at.0"), Some(IntrospectValue::Text("sprite".to_owned())));
+            assert_eq!(intro.query("label_at.3"), Some(IntrospectValue::Text("mesh".to_owned())));
+            assert_eq!(intro.query("label_at.1"), Some(IntrospectValue::Null), "data row has no label");
+        });
+    }
+
+    #[test]
+    fn r892_collapse_hides_members_and_reanchors_cursor() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            let _ = intro.invoke("set_group", IntrospectValue::Text("1".to_owned()));
+            let _ = intro.intervene("focused_row", IntrospectValue::Int(0)); // Hero, sprite group
+            // Collapse the sprite group (group 0); its members (0, 2) vanish.
+            assert_eq!(intro.invoke("toggle_group", IntrospectValue::Int(0)), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(intro.query("collapsed.0"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(4)), "2 headers + 2 mesh");
+            assert_eq!(intro.query("source_at.2"), Some(IntrospectValue::Int(1)), "first mesh row");
+            // The cursor was on the now-hidden Hero (row 0) → re-anchors into
+            // the visible set (the first mesh row, source 1).
+            assert_eq!(
+                intro.query("focused_row"),
+                Some(IntrospectValue::Int(1)),
+                "cursor re-anchored out of the collapsed group",
+            );
+        });
+    }
+
+    #[test]
+    fn r892_group_wire_round_trips_read_write() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // intervene decode = inverse of query encode.
+            assert_eq!(intro.intervene("group", IntrospectValue::Text("1".to_owned())), Ok(()));
+            assert_eq!(intro.query("group"), Some(IntrospectValue::Text("1".to_owned())));
+            // collapse_all / expand_all bound the rendered rows.
+            let _ = intro.invoke("collapse_all", IntrospectValue::Null);
+            assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(2)), "two headers only");
+            let _ = intro.invoke("expand_all", IntrospectValue::Null);
+            assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(6)), "all members back");
+            // collapsed.<g> is a writable bool axis.
+            assert_eq!(intro.intervene("collapsed.1", IntrospectValue::Bool(true)), Ok(()));
+            assert_eq!(intro.query("collapsed.1"), Some(IntrospectValue::Bool(true)));
+            // Null clears the group (decode), reported group_count drops to 0.
+            assert_eq!(intro.intervene("group", IntrospectValue::Null), Ok(()));
+            assert_eq!(intro.query("group"), Some(IntrospectValue::Text("none".to_owned())));
+            assert_eq!(intro.query("group_count"), Some(IntrospectValue::Int(0)));
+        });
+    }
+
+    #[test]
+    fn r892_edit_group_key_regroups_live() {
+        // The fold's payoff: editing a row's group-key cell moves it to another
+        // group on the same commit (the live derivation), the group analog of
+        // edit-while-sorted / edit-while-filtered.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            let _ = intro.invoke("set_group", IntrospectValue::Text("1".to_owned()));
+            // Before: sprite group [0, 2] leads, mesh [1, 3] follows.
+            assert_eq!(intro.query("source_at.1"), Some(IntrospectValue::Int(0)));
+            assert_eq!(intro.query("source_at.2"), Some(IntrospectValue::Int(2)));
+            // Edit Hero's Type sprite -> mesh: it joins the mesh group live.
+            assert_eq!(intro.intervene("value.0.1", IntrospectValue::Text("mesh".to_owned())), Ok(()));
+            assert_eq!(intro.query("group_count"), Some(IntrospectValue::Int(2)), "still two values");
+            // Now mesh [0, 1, 3] leads (first appearance), sprite [2] follows:
+            // visible = [H(mesh), D0, D1, D3, H(sprite), D2].
+            assert_eq!(intro.query("label_at.0"), Some(IntrospectValue::Text("mesh".to_owned())));
+            assert_eq!(intro.query("source_at.1"), Some(IntrospectValue::Int(0)), "Hero now in mesh");
+            assert_eq!(intro.query("source_at.3"), Some(IntrospectValue::Int(3)), "mesh has 3 members");
+            assert_eq!(intro.query("label_at.4"), Some(IntrospectValue::Text("sprite".to_owned())));
+            assert_eq!(intro.query("source_at.5"), Some(IntrospectValue::Int(2)), "sprite: only Coin");
+        });
+    }
+
+    #[test]
+    fn r892_arrow_nav_skips_headers_and_walks_data() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("set_group", IntrospectValue::Text("1".to_owned()));
+                let _ = intro.intervene("focused_row", IntrospectValue::Int(0));
+            }
+            // Visible data order = [0, 2, 1, 3]; ArrowDown walks it, skipping
+            // the group-header rows between source 2 and source 1.
+            let m = Modifiers::empty();
+            assert!(DataGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", m));
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(2)), "sprite: Coin");
+            assert!(DataGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", m));
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(1)), "into mesh: Tree");
+        });
+    }
+
+    #[test]
+    fn r892_header_click_toggles_collapse() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            let _ = intro.invoke("set_group", IntrospectValue::Text("1".to_owned()));
+            // A click on the group-0 header (the GridSendKey::Group wire) toggles.
+            let _ = intro.invoke("send", IntrospectValue::Text("g0:PointerUp".to_owned()));
+            assert_eq!(intro.query("collapsed.0"), Some(IntrospectValue::Bool(true)));
+            let _ = intro.invoke("send", IntrospectValue::Text("g0:PointerUp".to_owned()));
+            assert_eq!(intro.query("collapsed.0"), Some(IntrospectValue::Bool(false)));
+        });
+    }
+
+    #[test]
+    fn r892_grouped_a11y_is_treegrid_with_cell_focus() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("set_group", IntrospectValue::Text("1".to_owned()));
+            }
+            use_focused_row().set(2); // Coin (sprite group)
+            use_focused_col().set(2); // Count
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            assert_eq!(nodes[0].role, AriaRole::TreeGrid, "grouped grid is a treegrid");
+            let header = nodes
+                .iter()
+                .find(|n| n.tag == group_header_tag(0))
+                .expect("sprite group header present (painted-tag parity)");
+            assert_eq!(header.role, AriaRole::Row);
+            assert_eq!(header.level, Some(1), "group header is aria-level 1");
+            assert_eq!(header.expanded, Some(true));
+            // Cell-focus: the focused gridcell is the activedescendant, not the row.
+            let cell = nodes.iter().find(|n| n.tag == cell_tag(2, 2)).expect("focused cell");
+            assert!(cell.state.focused, "the focused cell carries activedescendant");
+            let row = nodes.iter().find(|n| n.tag == data_row_tag(2)).expect("data row 2");
+            assert!(!row.state.focused, "the data row does not (cell focus, not row focus)");
+        });
+    }
+
+    #[test]
+    fn r892_ungrouped_a11y_stays_a_flat_grid() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Grid, "ungrouped stays a flat grid");
         });
     }
 }

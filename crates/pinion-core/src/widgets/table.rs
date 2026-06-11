@@ -970,6 +970,11 @@ impl ExternalIntrospect for TableExternal {
                                 }
                             })
                         }
+                        // R892 — the eager `Table` has no group axis; a
+                        // group-header key is not addressable here.
+                        crate::composite_tag::GridSendKey::Group { .. } => {
+                            Err(InvokeError::Rejected)
+                        }
                     }
                 }
                 _ => Err(InvokeError::TypeMismatch),
