@@ -38075,6 +38075,40 @@
         "frozen column + hello-property-grid migration remain (post-virtualization convergence)"
       ]
     },
+    "R897.1": {
+      "decision_summary": "Fix the recurring CI 'No space left on device' link failure (a runner disk-capacity infra issue, not a code flake): reclaim preinstalled runner SDKs inline before the build and strip test-binary debug line-tables, so the windowless test link has headroom and pushes stop needing a manual rerun.",
+      "changes_bullets": [
+        "root cause: the windowless lint-and-test job links every crate + example test binary; the runner's ~14GB free disk ran out at link time (\"No space left on device\"), failing 2/2 recent pushes (R896.1, R897 attempt#1) — a CI infra capacity issue, NOT a code/test flake",
+        "reclaim ~25GB of preinstalled runner SDKs (dotnet/android/ghc/CodeQL/boost) inline before the build in both jobs — inline rm, not an unpinned third-party action (supply-chain surface avoided)",
+        "CARGO_PROFILE_TEST_DEBUG=0 on the test job strips debug line-tables (the bulk of the test-binary link footprint); pass/fail and debug-assertions unchanged"
+      ],
+      "verification_bullets": [
+        "ci.yml validated as well-formed YAML (python yaml.safe_load; both jobs + step order intact)",
+        "effect is observable only on the next CI run (a green attempt#1 with no manual rerun) — disk reclaim cannot be exercised on the dev box"
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "if the disk pressure recurs despite the reclaim, the next lever is splitting the workspace test job or capping test-link parallelism (-j)"
+      ],
+      "publishable_decision_summary": "Fix the recurring CI 'No space left on device' link failure (a runner disk-capacity infra issue, not a code flake): reclaim preinstalled runner SDKs inline before the build and strip test-binary debug line-tables, so the windowless test link has headroom and pushes stop needing a manual rerun.",
+      "publishable_changes_bullets": [
+        "root cause: the windowless lint-and-test job links every crate + example test binary; the runner's ~14GB free disk ran out at link time (\"No space left on device\"), failing 2/2 recent pushes (R896.1, R897 attempt#1) — a CI infra capacity issue, NOT a code/test flake",
+        "reclaim ~25GB of preinstalled runner SDKs (dotnet/android/ghc/CodeQL/boost) inline before the build in both jobs — inline rm, not an unpinned third-party action (supply-chain surface avoided)",
+        "CARGO_PROFILE_TEST_DEBUG=0 on the test job strips debug line-tables (the bulk of the test-binary link footprint); pass/fail and debug-assertions unchanged"
+      ],
+      "publishable_verification_bullets": [
+        "ci.yml validated as well-formed YAML (python yaml.safe_load; both jobs + step order intact)",
+        "effect is observable only on the next CI run (a green attempt#1 with no manual rerun) — disk reclaim cannot be exercised on the dev box"
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "if the disk pressure recurs despite the reclaim, the next lever is splitting the workspace test job or capping test-link parallelism (-j)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
