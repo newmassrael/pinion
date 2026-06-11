@@ -37887,6 +37887,48 @@
         "next: wide/frozen editable grid, then diversify to node-editor (greener per northern-star)"
       ]
     },
+    "R895.1": {
+      "decision_summary": "R895.1/.2: remove R894 invented Scale clamp [0,10] that corrupted R837 -2.5 write (Scale unbounded, only Count domain-bounded); demo realigned + regression guard",
+      "changes_bullets": [
+        "R894 invented Scale clamp [0.0,10.0] with no domain bound; corrupted R837 -2.5 write to 0.0",
+        "R895.1 prod+unit: drop ColRange::Float, Scale unbounded; only Count [0,1000] (domain-true) kept",
+        "R895.2 demo: R894 demo clamp shown on Count only; Scale verbatim incl -2.5 regression guard"
+      ],
+      "verification_bullets": [
+        "hello-data-grid 40 unit tests green; workspace clippy clean",
+        "all 5 grid demos (R837/R886/R891/R892/R894) pass locally + CI sweep 197/197 green",
+        "negative-Scale -2.5 verbatim assertion guards the exact regression"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "range/validator add-remove is NOT additive: grep all writers prod+unit+demos",
+        "demo sweep is a verification layer separate from prod+unit; run touched-column demos pre-push",
+        "prefer domain-true bounds only; an invented bound is a smell (Scale had none)"
+      ],
+      "publishable_decision_summary": "R895.1/.2: remove R894 invented Scale clamp [0,10] that corrupted R837 -2.5 write (Scale unbounded, only Count domain-bounded); demo realigned + regression guard",
+      "publishable_changes_bullets": [
+        "R894 invented Scale clamp [0.0,10.0] with no domain bound; corrupted R837 -2.5 write to 0.0",
+        "R895.1 prod+unit: drop ColRange::Float, Scale unbounded; only Count [0,1000] (domain-true) kept",
+        "R895.2 demo: R894 demo clamp shown on Count only; Scale verbatim incl -2.5 regression guard"
+      ],
+      "publishable_verification_bullets": [
+        "hello-data-grid 40 unit tests green; workspace clippy clean",
+        "all 5 grid demos (R837/R886/R891/R892/R894) pass locally + CI sweep 197/197 green",
+        "negative-Scale -2.5 verbatim assertion guards the exact regression"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "range/validator add-remove is NOT additive: grep all writers prod+unit+demos",
+        "demo sweep is a verification layer separate from prod+unit; run touched-column demos pre-push",
+        "prefer domain-true bounds only; an invented bound is a smell (Scale had none)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
