@@ -43,9 +43,7 @@ use crate::font::{self, FontError, FontRegistry};
 use crate::intents::{drain_intents, IntentsError};
 use crate::intervene::{intervene, InterveneError};
 use crate::invoke::{invoke, InvokeError};
-use crate::layout_query::{
-    layout_query, LayoutNode, LayoutQueryError, LayoutQueryParams,
-};
+use crate::layout_query::{layout_query, LayoutQueryError, LayoutQueryParams};
 use crate::locate::{
     bbox, locate, locate_region, BboxError, LocateError, LocateOutcome, LocateRegionOutcome,
 };
@@ -84,6 +82,37 @@ pub struct Request {
     pub params: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
+}
+
+impl Request {
+    /// R890.1 §5.49 — THE one extraction home for the out-of-band
+    /// `{window: "<id>"}` scope param. Every consumer — the backend
+    /// entries deriving their dispatch scope, the
+    /// [`unknown_window_verdict`] judgment, and [`dispatch_parsed`]'s
+    /// own type validation — reads the param through here, so the
+    /// extraction cannot drift between sites (pre-R890.1 the GUI
+    /// shell hand-rolled a byte-identical extraction to compute its
+    /// out-of-band scope, and the two had to agree forever for the
+    /// R889 gate to hold in production).
+    ///
+    /// # Errors
+    ///
+    /// `Ok(None)` — param absent (or no params object): the caller
+    /// applies its entry's default scope. `Ok(Some(id))` — a string
+    /// scope. `Err(_)` — the param is present but not a string;
+    /// [`dispatch_parsed`] rejects the frame with `-32602` (pre-R890.1
+    /// a non-string scope was silently dropped and the request acted
+    /// on the primary — the alias smell class R889 set out to kill,
+    /// surviving in the type-error corner).
+    pub fn window_scope(&self) -> Result<Option<&str>, RpcError> {
+        match self.params.as_ref().and_then(|p| p.get("window")) {
+            None => Ok(None),
+            Some(Value::String(s)) => Ok(Some(s.as_str())),
+            Some(other) => Err(RpcError::invalid_params(format!(
+                "params.window must be a string, got {other}"
+            ))),
+        }
+    }
 }
 
 /// JSON-RPC 2.0 request id (number, string, or null).
@@ -242,14 +271,6 @@ pub struct DispatchContext<'a> {
     /// iteration. Asynchronous — AI clients pair with
     /// `scene/wait_for_frame` for stable observation.
     pub resize_request: Option<&'a mut (dyn FnMut(u32, u32) + 'a)>,
-    /// R47.7.5 §5.12 — application's most recent winit-rendered
-    /// frame snapshot. `scene/layout` with `viewport: null` returns
-    /// a clone of this value. The application refreshes the
-    /// snapshot at the end of each `render()` pass via
-    /// `layout_query::build_layout_node`. `None` until winit has
-    /// rendered the first frame — `scene/layout {viewport: null}`
-    /// errors with `NoLastPaintLayout` in that window.
-    pub last_paint_layout: Option<&'a LayoutNode>,
     /// (R705 §5.12 §2 #7) The named window's most recently painted
     /// scene — the exact tree that produced the pixels on screen.
     /// `scene/snapshot from: paint` serializes THIS borrow when present
@@ -861,7 +882,6 @@ impl<'a> DispatchContext<'a> {
             revision,
             paint_producer: None,
             resize_request: None,
-            last_paint_layout: None,
             last_paint_scene: None,
             font_registry: None,
             focus_manager: None,
@@ -901,16 +921,6 @@ impl<'a> DispatchContext<'a> {
         request: &'a mut (dyn FnMut(u32, u32) + 'a),
     ) -> Self {
         self.resize_request = Some(request);
-        self
-    }
-
-    /// Builder: attach the most recent winit-rendered frame snapshot
-    /// (R47.7.5 §5.12). `scene/layout {viewport: null}` returns a
-    /// clone; the application refreshes the snapshot at the end of
-    /// each `render()` pass.
-    #[must_use]
-    pub fn with_last_paint_layout(mut self, snapshot: &'a LayoutNode) -> Self {
-        self.last_paint_layout = Some(snapshot);
         self
     }
 
@@ -1153,10 +1163,9 @@ pub fn unknown_window_verdict(
     is_window_known: impl Fn(&str) -> bool,
 ) -> Option<String> {
     request
-        .params
-        .as_ref()
-        .and_then(|p| p.get("window"))
-        .and_then(Value::as_str)
+        .window_scope()
+        .ok()
+        .flatten()
         .filter(|wid| !is_window_known(wid))
         .map(str::to_owned)
 }
@@ -1187,13 +1196,13 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // `focus/set` mutates, `focus/get` reads; both need exclusive
     // access during the route arm.
     let mut focus_manager = ctx.focus_manager.take();
-    // R47.7.5 — snapshot read-only; safe to copy the &LayoutNode out
-    // of the context for the dispatch lifetime.
-    let last_paint_layout = ctx.last_paint_layout;
     // R705 §5.12 §2 #7 — the stored paint scene (displayed frame).
     // `scene/snapshot from: paint` serializes this instead of
-    // re-rendering at query time. Copied out for the dispatch lifetime
-    // (read-only borrow, same shape as `last_paint_layout`).
+    // re-rendering at query time, and (R890.1) `scene/layout
+    // {viewport: null}` + the path→coordinate resolvers project from
+    // the SAME borrow — one channel, so the layout READ and the
+    // pixels-on-screen introspection cannot disagree about which
+    // frame they describe. Copied out for the dispatch lifetime.
     let last_paint_scene = ctx.last_paint_scene;
     // R51.161 §5.23 — substrate's root Owner. Read-only borrow:
     // `scene/commands` snapshots the pending queue;
@@ -1236,6 +1245,26 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
         )));
     }
 
+    let is_notification = request.id.is_none();
+    let id = request.id.clone();
+
+    // R890.1 §5.49 — window-scope TYPE validation, before method
+    // routing: a present-but-non-string `{window: ...}` is `-32602`,
+    // not a silent drop (pre-R890.1 `{"window": 42}` fell through the
+    // extraction and the request acted on the primary — the R889
+    // alias smell class surviving in the type-error corner).
+    if let Err(err) = request.window_scope() {
+        if is_notification {
+            return None;
+        }
+        return Some(serialize(&error_response(
+            id,
+            err.code,
+            &err.message,
+            err.data,
+        )));
+    }
+
     // R889 §5.49 — unknown-window gate, before method routing: the
     // embedder resolved the request's `{window: "<id>"}` scope against
     // the window-known registry (`CoreShell::is_window_known`) and
@@ -1247,17 +1276,22 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // ("no such window" vs "no data yet"). Post-R889 the per-axis
     // `*Unavailable` answers mean "known window, axis has no data /
     // backend lacks the axis" only.
+    //
+    // R890.1 — notifications stay silent (JSON-RPC 2.0: the server
+    // MUST NOT reply to a notification; the file's method-routing
+    // tail honors the same rule), and the gate sits after the
+    // `is_notification` sample for exactly that reason.
     if let Some(supplied) = ctx.unknown_window.take() {
+        if is_notification {
+            return None;
+        }
         return Some(serialize(&error_response(
-            request.id,
+            id,
             -32602,
             "unknown_window",
             Some(Value::String(supplied)),
         )));
     }
-
-    let is_notification = request.id.is_none();
-    let id = request.id.clone();
 
     // R620 §5.7 — every match arm returns `(handler_outcome, kind)`;
     // the kind is the OCC bump contract right at the arm so the
@@ -1281,7 +1315,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
-                handle_scene_click(inbox, producer, last_paint_layout, request.params.as_ref()),
+                handle_scene_click(inbox, producer, last_paint_scene, request.params.as_ref()),
                 HandlerKind::Mutate,
             )
         }
@@ -1297,7 +1331,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
-                handle_scene_hover(inbox, producer, last_paint_layout, request.params.as_ref()),
+                handle_scene_hover(inbox, producer, last_paint_scene, request.params.as_ref()),
                 HandlerKind::Mutate,
             )
         }
@@ -1390,7 +1424,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 handle_scene_double_click(
                     inbox,
                     producer,
-                    last_paint_layout,
+                    last_paint_scene,
                     request.params.as_ref(),
                 ),
                 HandlerKind::Mutate,
@@ -1408,7 +1442,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
-                handle_scene_drag(inbox, producer, last_paint_layout, request.params.as_ref()),
+                handle_scene_drag(inbox, producer, last_paint_scene, request.params.as_ref()),
                 HandlerKind::Mutate,
             )
         }
@@ -1557,7 +1591,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
-                handle_scene_layout(producer, last_paint_layout, request.params.as_ref()),
+                handle_scene_layout(producer, last_paint_scene, request.params.as_ref()),
                 HandlerKind::Read,
             )
         }
@@ -1573,7 +1607,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
-                handle_scene_key(inbox, producer, last_paint_layout, request.params.as_ref()),
+                handle_scene_key(inbox, producer, last_paint_scene, request.params.as_ref()),
                 // Input enqueue — mutation deferred to next dispatch
                 // cycle; no immediate OCC bump.
                 HandlerKind::Read,
@@ -1591,7 +1625,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
-                handle_scene_wheel(inbox, producer, last_paint_layout, request.params.as_ref()),
+                handle_scene_wheel(inbox, producer, last_paint_scene, request.params.as_ref()),
                 HandlerKind::Read,
             )
         }
@@ -1602,7 +1636,7 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
             )]
             let producer = paint_producer.as_mut().map(|p| &mut **p);
             (
-                handle_scene_scroll(producer, last_paint_layout, request.params.as_ref()),
+                handle_scene_scroll(producer, last_paint_scene, request.params.as_ref()),
                 HandlerKind::Read,
             )
         }
@@ -1843,7 +1877,7 @@ const CLICK_BUTTON_VOCAB_ERR: &str = "params.button must be \"left\" or \"right\
 fn handle_scene_click<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -1877,7 +1911,7 @@ where
             })?
         }
     };
-    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
     inbox.push(match button {
         ClickButton::Left => DeferredInput::Click { x, y },
         ClickButton::Right => DeferredInput::SecondaryClick { x, y },
@@ -1895,7 +1929,7 @@ where
 fn handle_scene_hover<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -1905,7 +1939,7 @@ where
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     let params = require_params(params)?;
-    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
     inbox.push(DeferredInput::Hover { x, y });
     Ok(Value::Null)
 }
@@ -2135,7 +2169,7 @@ fn handle_scene_modifiers(
 fn handle_scene_double_click<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -2145,7 +2179,7 @@ where
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     let params = require_params(params)?;
-    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
     inbox.push(DeferredInput::DoubleClick { x, y });
     Ok(Value::Null)
 }
@@ -2178,7 +2212,7 @@ where
 fn handle_scene_drag<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
     mut paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -2200,7 +2234,7 @@ where
         "from",
         "from_path",
         producer_for_from,
-        last_paint_layout,
+        last_paint_scene,
     )?;
     #[allow(
         clippy::option_as_ref_deref,
@@ -2212,7 +2246,7 @@ where
         "to",
         "to_path",
         producer_for_to,
-        last_paint_layout,
+        last_paint_scene,
     )?;
     let steps = match params.get("steps") {
         Some(v) => v
@@ -2272,7 +2306,7 @@ fn resolve_drag_endpoint<F>(
     at_key: &str,
     path_key: &str,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
 ) -> Result<(f64, f64), RpcError>
 where
     F: FnMut(u32, u32) -> Scene + ?Sized,
@@ -2287,7 +2321,7 @@ where
             "params requires either `{at_key}: {{x, y}}` or `{path_key}: \"<tag>\"`"
         ))),
         (Some(at_value), None) => parse_at_coords(at_value),
-        (None, Some(tag)) => resolve_path_to_center(tag, paint_producer, last_paint_layout),
+        (None, Some(tag)) => resolve_path_to_center(tag, paint_producer, last_paint_scene),
     }
 }
 
@@ -2300,7 +2334,7 @@ where
 fn resolve_at_or_path<F>(
     params: &Value,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
 ) -> Result<(f64, f64), RpcError>
 where
     F: FnMut(u32, u32) -> Scene + ?Sized,
@@ -2315,7 +2349,7 @@ where
             "params requires either `at: {x, y}` or `path: \"<tag>\"`",
         )),
         (Some(at_value), None) => parse_at_coords(at_value),
-        (None, Some(tag)) => resolve_path_to_center(tag, paint_producer, last_paint_layout),
+        (None, Some(tag)) => resolve_path_to_center(tag, paint_producer, last_paint_scene),
     }
 }
 
@@ -2341,7 +2375,7 @@ fn parse_at_coords(at_value: &Value) -> Result<(f64, f64), RpcError> {
 fn resolve_path_to_center<F>(
     target_tag: &str,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
 ) -> Result<(f64, f64), RpcError>
 where
     F: FnMut(u32, u32) -> Scene + ?Sized,
@@ -2351,11 +2385,15 @@ where
     };
     // The tag's rect only matches the live window's hit-test if the
     // paint pass runs at the same viewport size as the window. Pull
-    // it from the last-paint snapshot the shell wired up (the root
-    // `LayoutNode.rect` IS the live window's geometry); fall back
-    // to a 720×480 default for headless / no-frame-yet callers.
-    let (vw, vh) = last_paint_layout
-        .map_or((720, 480), |l| (l.rect.w.max(1), l.rect.h.max(1)));
+    // it from the addressed window's stored paint scene (its root
+    // rect IS that window's live geometry — R890.1: the same borrow
+    // `scene/snapshot from: paint` serializes, so hit-tests and
+    // pixel introspection agree by construction); fall back to a
+    // 720×480 default for headless / no-frame-yet callers.
+    let (vw, vh) = last_paint_scene.map_or((720, 480), |s| {
+        let r = s.rect();
+        (r.w.max(1), r.h.max(1))
+    });
     let scene = producer(vw, vh);
     let Some(rect) = find_rect_by_tag(&scene, target_tag) else {
         return Err(RpcError::invalid_params(format!(
@@ -2411,7 +2449,7 @@ fn find_rect_by_tag(scene: &Scene, target_tag: &str) -> Option<pinion_core::scen
 /// `[0, max_{x,y}]`).
 fn handle_scene_scroll<F>(
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -2434,7 +2472,7 @@ where
         (Some(to_value), None) => ScrollAction::To(parse_xy(to_value, "to")?),
         (None, Some(by_value)) => ScrollAction::By(parse_xy(by_value, "by")?),
     };
-    let state = resolve_scroll_target_at_or_path(params, paint_producer, last_paint_layout)?;
+    let state = resolve_scroll_target_at_or_path(params, paint_producer, last_paint_scene)?;
     match action {
         ScrollAction::To((x, y)) => state.scroll_to(x, y),
         ScrollAction::By((dx, dy)) => state.scroll_by(dx, dy),
@@ -2461,7 +2499,7 @@ where
 fn resolve_scroll_target_at_or_path<F>(
     params: &Value,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
 ) -> Result<std::rc::Rc<pinion_core::widgets::scroll::ScrollState>, RpcError>
 where
     F: FnMut(u32, u32) -> Scene + ?Sized,
@@ -2489,8 +2527,10 @@ where
     let Some(producer) = paint_producer else {
         return Err(RpcError::invalid_params("PaintProducerUnavailable"));
     };
-    let (vw, vh) = last_paint_layout
-        .map_or((720, 480), |l| (l.rect.w.max(1), l.rect.h.max(1)));
+    let (vw, vh) = last_paint_scene.map_or((720, 480), |s| {
+        let r = s.rect();
+        (r.w.max(1), r.h.max(1))
+    });
     let painted = producer(vw, vh);
     match target {
         Target::Path(tag) => find_scroll_state_by_tag(&painted, tag).ok_or_else(|| {
@@ -2729,7 +2769,7 @@ where
 fn handle_scene_key<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -2775,7 +2815,7 @@ where
     {
         (0.0, 0.0)
     } else {
-        resolve_at_or_path(params, paint_producer, last_paint_layout)?
+        resolve_at_or_path(params, paint_producer, last_paint_scene)?
     };
     // R666 §5.37 — single-codepoint vs multi-codepoint discriminator.
     // `chars().count()` is the Unicode-scalar-value count, so
@@ -2821,7 +2861,7 @@ where
 fn handle_scene_wheel<F>(
     inbox: Option<&mut Vec<DeferredInput>>,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -2838,7 +2878,7 @@ where
     let delta = parse_wheel_delta(delta_obj)?;
     // R51.202 §5.49 — wheel target is either an explicit cursor
     // coordinate or a tag lookup via the paint scene.
-    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_layout)?;
+    let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
     inbox.push(DeferredInput::Wheel { x, y, delta });
     Ok(Value::Null)
 }
@@ -4672,7 +4712,7 @@ fn bbox_error_to_rpc(err: BboxError) -> RpcError {
 /// of the inner trait object is elided into `F`'s bound.
 fn handle_scene_layout<F>(
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -4681,7 +4721,7 @@ where
     let params = require_params(params)?;
     let typed: LayoutQueryParams = serde_json::from_value(params.clone())
         .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?;
-    match layout_query(&typed, paint_producer, last_paint_layout) {
+    match layout_query(&typed, paint_producer, last_paint_scene) {
         Ok(node) => serde_json::to_value(&node)
             .map_err(|e| RpcError::invalid_params(format!("serialize: {e}"))),
         Err(err) => Err(layout_query_error_to_rpc(err)),

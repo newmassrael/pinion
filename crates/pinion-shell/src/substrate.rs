@@ -614,19 +614,25 @@ impl<V: WidgetView> ShellCore<V> {
     /// scene into a [`LayoutNode`] tree, on demand. The per-window
     /// scene the publish primitives store
     /// ([`pinion_runtime::InputRouter::last_paint_scene`]) is the ONE
-    /// layout source — `scene/layout {viewport: null}` and the
-    /// path→coordinate hit-test resolvers read this projection, so a
-    /// window can only ever answer with its own geometry. `None` when
-    /// the window has never painted (the wire's `NoLastPaintLayout`
-    /// honesty; pre-R890 a binding-wide last-writer-wins mirror
-    /// answered with whichever window painted or dispatched last).
+    /// layout source, so a window can only ever answer with its own
+    /// geometry. `None` when the window has never painted (the wire's
+    /// `NoLastPaintLayout` honesty; pre-R890 a binding-wide
+    /// last-writer-wins mirror answered with whichever window painted
+    /// or dispatched last).
+    ///
+    /// R890.1 — substrate-side observability/test accessor (the
+    /// `has_last_paint_scene_for_window` pattern): the dispatch path
+    /// itself no longer calls this — the dispatcher projects lazily
+    /// from the `DispatchContext::last_paint_scene` borrow it already
+    /// threads for `scene/snapshot from: paint`, ONE channel for
+    /// layout + pixel introspection. Both routes go through
+    /// [`pinion_rpc::project_layout`], so this accessor is the
+    /// substrate-level mirror of exactly what the wire answers.
     ///
     /// Replaces two retired caches: the `ShellCore.last_paint_layout`
     /// binding-wide mirror and the per-frame
     /// `WindowSlot.last_paint_layout` build (`AppShell::render_window`
-    /// walked the paint scene EVERY winit frame to keep it fresh; the
-    /// on-demand projection moves that cost from the 60fps paint path
-    /// to the AI-paced RPC read).
+    /// walked the paint scene EVERY winit frame to keep it fresh).
     #[must_use]
     pub fn last_paint_layout_for_window(&self, window_id: &str) -> Option<LayoutNode> {
         self.core
@@ -819,15 +825,14 @@ impl<V: WidgetView> ShellCore<V> {
     /// rejects the request at dispatch entry first); the `None`
     /// legs remain the honest answer for direct substrate callers.
     ///
-    /// The verdict reads the request's IN-BAND `{window: "<id>"}`
-    /// param — not the out-of-band `window_id` scope — so BOTH
-    /// dispatch entries share the gate: `dispatch_rpc_for_window`
-    /// (`AppShell` threads the same param value out-of-band) and the
-    /// single-window `dispatch_rpc` (which ignores the param for
-    /// scoping; pre-R889 a `window: "bogus"` frame through it
-    /// silently acted on the primary). Extraction + judgment glue is
-    /// 1-homed in [`pinion_rpc::unknown_window_verdict`] (GUI/TUI
-    /// ingress parity, the R886.1 lesson).
+    /// R890.1 — `window_id` and the verdict's judged id are the SAME
+    /// value by construction: both entries derive the dispatch scope
+    /// from the request's `{window: "<id>"}` param through the one
+    /// extraction home ([`pinion_rpc::Request::window_scope`]), so
+    /// every field of the returned struct describes one window.
+    /// Extraction + judgment glue is 1-homed in
+    /// [`pinion_rpc::unknown_window_verdict`] (GUI/TUI ingress
+    /// parity, the R886.1 lesson).
     fn window_scoped_rpc_reads(
         &self,
         request: &Request,
@@ -2641,7 +2646,7 @@ impl<V: WidgetView> ShellCore<V> {
     /// R890 §5.12 §5.16 — no `paint_layout` parameter any more: the
     /// stored per-window paint scene IS the layout source.
     /// `dispatch_rpc_inner` projects a [`LayoutNode`] from it on
-    /// demand (`pinion_rpc::build_layout_node`), so there is no
+    /// demand (`pinion_rpc::project_layout`), so there is no
     /// per-frame layout build and no mirror that can alias one
     /// window's geometry onto another (pre-R890 the binding-wide
     /// `last_paint_layout` mirror was last-writer-wins ACROSS
@@ -2865,39 +2870,48 @@ impl<V: WidgetView> ShellCore<V> {
     /// the `{window: "<id>"}` JSON-RPC frame param + resolves it
     /// against the per-window slot map before calling here.
     ///
-    /// R890 §5.12 §5.16 — no `slot_paint_layout` parameter any more:
-    /// the dispatcher projects the addressed window's layout on
-    /// demand from its stored paint scene
-    /// ([`Self::last_paint_layout_for_window`]), so `scene/layout
-    /// {viewport: null, window: "<id>"}` answers with the *named*
-    /// window's geometry or the honest `NoLastPaintLayout` — never
-    /// another window's tree (pre-R890 the R671 slot threading fell
-    /// back to a binding-wide last-writer-wins mirror for
-    /// known-but-unpainted windows).
+    /// R890.1 §5.7 §5.16 — windowed dispatch entry (the `AppShell`
+    /// production path; R671's `dispatch_rpc_for_window` successor).
+    /// The dispatch scope is derived from the request's own
+    /// `{window: "<id>"}` param through the ONE extraction home
+    /// ([`Request::window_scope`]); a missing param defaults to the
+    /// primary [`pinion_runtime::DEFAULT_WINDOW`]. There is no
+    /// caller-supplied window argument any more — pre-R890.1 the
+    /// R889 gate judged the in-band param while scoping obeyed the
+    /// out-of-band argument, so a direct caller passing mismatched
+    /// ids could act on a window the gate never checked. With one
+    /// source the mismatch is unrepresentable.
     ///
-    /// R671 §5.7 — per-window dispatch entry that accepts a
-    /// pre-parsed [`Request`]. `AppShell` parses the JSON-RPC envelope
-    /// once at the surface boundary + extracts out-of-band scope
-    /// (`{window: "<id>"}` per-window) from `request.params` + hands
-    /// the same `Request` here, eliminating the pre-R671 double-parse
-    /// (one parse for `params.window` sniffing, another inside
-    /// `pinion_rpc::dispatch`).
-    pub fn dispatch_rpc_for_window(
+    /// A non-string `window` param resolves to the default scope here
+    /// and is then rejected by [`dispatch_parsed`]'s type gate before
+    /// any handler runs.
+    pub fn dispatch_rpc_scoped(
         &mut self,
         request: Request,
-        window_id: &str,
         resize_request: &mut dyn FnMut(u32, u32),
     ) -> Option<String> {
-        self.dispatch_rpc_inner(request, Some(window_id), resize_request)
+        let scope: String = request
+            .window_scope()
+            .ok()
+            .flatten()
+            .unwrap_or(pinion_runtime::DEFAULT_WINDOW)
+            .to_owned();
+        self.dispatch_rpc_inner(request, Some(&scope), resize_request)
     }
 
     /// R670.B §5.7 — single-window dispatch entry. Accepts the raw
     /// JSON-RPC envelope; parses internally then forwards to
     /// [`Self::dispatch_rpc_inner`]. Used by single-window bindings
-    /// (every non-multi-window example + the in-crate test harness)
-    /// that do not need out-of-band scope extraction; multi-window
-    /// callers should use [`Self::dispatch_rpc_for_window`] which
-    /// accepts a pre-parsed [`Request`] (R671 single-parse refactor).
+    /// (every non-multi-window example + the in-crate test harness).
+    ///
+    /// R890.1 — an explicit `{window: "<id>"}` param now scopes the
+    /// dispatch (same [`Request::window_scope`] derivation as
+    /// [`Self::dispatch_rpc_scoped`]; pre-R890.1 a KNOWN non-primary
+    /// id was silently ignored for scoping — the residual alias
+    /// smell). The entries differ only in the missing-param default:
+    /// `None` here (the legacy bit-identical single-window path —
+    /// `V::view`, no per-window R684 finalize) vs the primary
+    /// [`pinion_runtime::DEFAULT_WINDOW`] on the windowed entry.
     pub fn dispatch_rpc(
         &mut self,
         request: &str,
@@ -2910,7 +2924,12 @@ impl<V: WidgetView> ShellCore<V> {
             // serialized response, so we just return it.
             Err(err_resp) => return Some(err_resp),
         };
-        self.dispatch_rpc_inner(parsed, None, resize_request)
+        let scope: Option<String> = parsed
+            .window_scope()
+            .ok()
+            .flatten()
+            .map(str::to_owned);
+        self.dispatch_rpc_inner(parsed, scope.as_deref(), resize_request)
     }
 
     fn dispatch_rpc_inner(
@@ -2928,14 +2947,6 @@ impl<V: WidgetView> ShellCore<V> {
         // input state, pacing, unknown-window verdict) before the
         // split-borrow block; see [`Self::window_scoped_rpc_reads`].
         let window_reads = self.window_scoped_rpc_reads(&request, window_id);
-        // R890 §5.12 §5.16 — project the addressed window's layout from
-        // its stored paint scene (owned, so the borrow on `&self.core`
-        // releases before the split takes `scene_mut`). On-demand
-        // projection at the AI-paced read replaces two per-frame
-        // caches; see [`Self::last_paint_layout_for_window`].
-        let derived_paint_layout: Option<LayoutNode> = self.last_paint_layout_for_window(
-            window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW),
-        );
         // R684 atomic 3 §5.16 §5.41 §5.49 — record the viewport the
         // produce closure ran with so the post-dispatch finalize can
         // populate the addressed window's
@@ -3013,11 +3024,6 @@ impl<V: WidgetView> ShellCore<V> {
             let revision = &self.revision;
             let focus_ptr = &mut self.focus;
             let text_cache_ptr = &mut self.text_cache;
-            // R890 §5.12 §5.16 — the addressed window's layout,
-            // projected pre-split from its stored paint scene (see
-            // [`Self::last_paint_layout_for_window`]). `None` =
-            // never-painted → the wire's `NoLastPaintLayout`.
-            let last_paint = derived_paint_layout.as_ref();
             // R670.B §5.16 — per-window view fn dispatch. Single-
             // window paths (`window_id == None`) keep using `V::view`
             // exactly as before for bit-identical legacy behaviour;
@@ -3067,23 +3073,18 @@ impl<V: WidgetView> ShellCore<V> {
                     pinion_overlay::FocusRingStyle::default(),
                 )
             };
-            // R47.7.5 §5.12 — surface the most recent winit-rendered
-            // frame to the dispatcher so `scene/layout {viewport: null}`
-            // returns the actual frame snapshot. Builder pattern keeps
-            // the `Option` wiring branchless at the AI-client level.
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
                 .with_resize_request(resize_request)
                 .with_focus_manager(focus_ptr);
-            if let Some(snapshot) = last_paint {
-                ctx = ctx.with_last_paint_layout(snapshot);
-            }
             // R705 §5.12 §2 #7 — thread the addressed window's stored
             // paint scene so `scene/snapshot from: paint` serializes the
-            // displayed frame rather than re-rendering. `None` (a
-            // never-painted window — headless bootstrap before the
-            // first paint cycle) leaves the handler on its producer
-            // fallback, preserving the in-crate headless test harness.
+            // displayed frame rather than re-rendering. R890.1: the
+            // dispatcher also projects `scene/layout {viewport: null}`
+            // and the path→coordinate hit-test dims from this SAME
+            // borrow (one channel — layout and pixel introspection
+            // cannot disagree about which frame they describe; the
+            // never-painted `None` surfaces `NoLastPaintLayout`).
             if let Some(paint) = last_paint_scene_ref {
                 ctx = ctx.with_last_paint_scene(paint);
             }

@@ -375,7 +375,11 @@ fn r889_unknown_window_verdict_extracts_and_judges_the_in_band_param() {
     assert_eq!(unknown_window_verdict(&req, known), None, "known window");
     let req =
         parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{"window":42}}"#);
-    assert_eq!(unknown_window_verdict(&req, known), None, "non-string ignored");
+    assert_eq!(
+        unknown_window_verdict(&req, known),
+        None,
+        "non-string is NOT this judgment's job — dispatch_parsed's type gate rejects it",
+    );
     let req =
         parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{"window":"side"}}"#);
     assert_eq!(
@@ -386,24 +390,80 @@ fn r889_unknown_window_verdict_extracts_and_judges_the_in_band_param() {
 }
 
 #[test]
+fn r890_1_window_scope_is_the_one_extraction_home() {
+    // Request::window_scope — absent / string / non-string. The
+    // backend entries, the verdict, and the dispatch type gate all
+    // read the param through this accessor (pre-R890.1 the GUI shell
+    // hand-rolled a second byte-identical extraction).
+    let parse = |s: &str| parse_request(s).expect("frame parses");
+    let req = parse(r#"{"jsonrpc":"2.0","id":1,"method":"m"}"#);
+    assert_eq!(req.window_scope().unwrap(), None, "absent params");
+    let req = parse(r#"{"jsonrpc":"2.0","id":1,"method":"m","params":{}}"#);
+    assert_eq!(req.window_scope().unwrap(), None, "absent param");
+    let req = parse(r#"{"jsonrpc":"2.0","id":1,"method":"m","params":{"window":"side"}}"#);
+    assert_eq!(req.window_scope().unwrap(), Some("side"), "string scope");
+    let req = parse(r#"{"jsonrpc":"2.0","id":1,"method":"m","params":{"window":42}}"#);
+    let err = req.window_scope().unwrap_err();
+    assert_eq!(err.code, -32602, "non-string scope is a params type error");
+}
+
+#[test]
+fn r890_1_non_string_window_param_is_rejected_not_silently_dropped() {
+    // Pre-R890.1 `{"window": 42}` fell through the extraction and the
+    // request acted on the primary — the R889 alias smell class in
+    // the type-error corner. dispatch_parsed now rejects the frame.
+    let mut scene = counted_scene(7);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision);
+    let req = r#"{"jsonrpc":"2.0","id":3,"method":"scene/query","params":{"window":42,"path":"/"}}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).expect("error frame"));
+    let err = resp.error.expect("rejected");
+    assert_eq!(err.code, -32602);
+    assert_eq!(resp.id, Some(RequestId::Num(3)), "id echoes the request");
+}
+
+#[test]
 fn r889_unknown_window_ctx_rejects_before_method_routing() {
     // The verdict threaded on the context rejects the WHOLE request
     // with `-32602 unknown_window` — READ and WRITE methods alike,
     // before the method match (a bogus scope must not mutate or read
-    // anything; pre-R889 the GUI aliased it onto the primary).
+    // anything; pre-R889 the GUI aliased it onto the primary). The
+    // frame is a MUTATE-kind method (scene/click), so the untouched
+    // OCC token below is a real pin (R890.1: the pre-fix assert used
+    // a Read-kind method that never bumps — vacuous).
     let mut scene = counted_scene(7);
     let previews = PreviewLedger::default();
     let revision = SceneRevision::default();
     let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
         .with_unknown_window("bogus".to_owned());
-    let req = r#"{"jsonrpc":"2.0","id":9,"method":"scene/query","params":{"window":"bogus","path":"/"}}"#;
+    let req = r#"{"jsonrpc":"2.0","id":9,"method":"scene/click","params":{"window":"bogus","at":{"x":1.0,"y":1.0}}}"#;
     let resp = parse_response(&dispatch(&mut ctx, req).expect("error frame"));
     let err = resp.error.expect("rejected");
     assert_eq!(err.code, -32602);
     assert_eq!(err.message, "unknown_window");
     assert_eq!(err.data, Some(Value::String("bogus".into())));
-    // OCC token untouched — nothing routed, nothing mutated.
+    // OCC token untouched — the Mutate-kind arm never ran.
     assert_eq!(revision.current(), 0, "no method ran, no revision bump");
+}
+
+#[test]
+fn r890_1_unknown_window_notification_stays_silent() {
+    // JSON-RPC 2.0: the server MUST NOT reply to a notification —
+    // errors in notifications are ignored. The gate honors the same
+    // rule the method-routing tail does for -32601 (pre-R890.1 the
+    // gate answered notifications with an id:null error frame).
+    let mut scene = counted_scene(7);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_unknown_window("bogus".to_owned());
+    let req = r#"{"jsonrpc":"2.0","method":"scene/click","params":{"window":"bogus","at":{"x":1.0,"y":1.0}}}"#;
+    assert_eq!(dispatch(&mut ctx, req), None, "notification gets no frame");
+    // Type-error variant honors the same silence.
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/query","params":{"window":42}}"#;
+    assert_eq!(dispatch(&mut ctx, req), None, "type-error notification silent too");
 }
 
 // ---- R51.25 §5.12 — Response::result nullable_present deserialize ----

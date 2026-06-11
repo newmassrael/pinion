@@ -37567,6 +37567,82 @@
         "documented escalation"
       ]
     },
+    "R890.1": {
+      "decision_summary": "Session-review adversarial audit clearance: scope derived from request via Request::window_scope 1-home (caller window arg deleted, mismatch unrepresentable); notification silence + non-string -32602 at the gate; ctx.last_paint_layout channel deleted (lazy projection from ctx.last_paint_scene, one channel for layout+pixel introspection); TUI threads last_paint_scene (R705 parity)",
+      "changes_bullets": [
+        "scope 단일 도출: Request::window_scope = THE extraction home (string/absent/type-error 3-way);",
+        "dispatch_rpc_for_window 의 caller window 인자 삭제 -> dispatch_rpc_scoped (scope 는 frame 의",
+        "in-band param 에서만 도출; R889 gate 가 in-band 를 판정하고 scoping 은 out-of-band 를 따르던",
+        "이원화 = mismatch 표현 불가로 구조 종결); AppShell 의 hand-roll 추출 2-copy 삭제",
+        "단일-window dispatch_rpc 도 명시 window param 을 scoping 에 honor (R890 carry 격상 청산)",
+        "notification 침묵: unknown_window gate 를 is_notification 뒤로 이동, 알림엔 frame 미반환",
+        "(JSON-RPC 2.0 + 파일 자체 -32601 관례 정렬); 비-string window -> -32602 type 거부",
+        "(silent primary-alias 의 type-error 코너 잔존 청산)",
+        "ctx.last_paint_layout 채널 삭제: scene/layout viewport:null + hit-test dims 가 전부",
+        "ctx.last_paint_scene 한 채널에서 lazy projection (layout_query 가 None-arm 서 project_layout;",
+        "resolver 들은 scene root rect 로 dims) -> eager per-dispatch build 구조 소멸 + layout 과",
+        "snapshot from:paint 가 같은 frame 을 서술함이 구성적으로 보장",
+        "TUI 가 with_last_paint_scene 을 처음 threading: from:paint 가 재-render 아닌 commit frame 을",
+        "읽음 (R705 GUI-only parity gap 청산, §2#6)",
+        "doc 거짓 정리: core_shell 모듈 doc 의 last_paint_layout 목록 / iff overclaim 의 primary 2-비대칭",
+        "명시 / window_owner \"calling this IS registration\" hardening note / substrate prose"
+      ],
+      "verification_bullets": [
+        "new tests 4: window_scope 1-home unit / non-string -32602 dispatch / notification silence 2-arm",
+        "/ (rewrite) revision pin 을 Mutate-kind frame 으로 (구 Read-kind assert 는 vacuous 였음)",
+        "migrated: dispatch_core 호출부 dispatch_rpc_scoped + layout_query viewport:null projection test",
+        "cargo test --workspace -j2: 150 suites green; clippy --all-targets -D pedantic clean",
+        "demos PASS (fresh release 10종): r889 r890 r670b r671 r672 r683 r680 r670a r888 r885"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.12",
+        "5.16",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "adversarial reviewer 들의 잔여 NOTE 중 기각분: -32600 version arm 의 notification frame 은",
+        "invalid-Request 라 spec-defensible (관례 유지); window_owner 는 pub 유지 (registration-edge",
+        "doc 로 hardening, de-pub 은 test surface 파괴)"
+      ],
+      "publishable_decision_summary": "Session-review adversarial audit clearance: scope derived from request via Request::window_scope 1-home (caller window arg deleted, mismatch unrepresentable); notification silence + non-string -32602 at the gate; ctx.last_paint_layout channel deleted (lazy projection from ctx.last_paint_scene, one channel for layout+pixel introspection); TUI threads last_paint_scene (R705 parity)",
+      "publishable_changes_bullets": [
+        "scope 단일 도출: Request::window_scope = THE extraction home (string/absent/type-error 3-way);",
+        "dispatch_rpc_for_window 의 caller window 인자 삭제 -> dispatch_rpc_scoped (scope 는 frame 의",
+        "in-band param 에서만 도출; R889 gate 가 in-band 를 판정하고 scoping 은 out-of-band 를 따르던",
+        "이원화 = mismatch 표현 불가로 구조 종결); AppShell 의 hand-roll 추출 2-copy 삭제",
+        "단일-window dispatch_rpc 도 명시 window param 을 scoping 에 honor (R890 carry 격상 청산)",
+        "notification 침묵: unknown_window gate 를 is_notification 뒤로 이동, 알림엔 frame 미반환",
+        "(JSON-RPC 2.0 + 파일 자체 -32601 관례 정렬); 비-string window -> -32602 type 거부",
+        "(silent primary-alias 의 type-error 코너 잔존 청산)",
+        "ctx.last_paint_layout 채널 삭제: scene/layout viewport:null + hit-test dims 가 전부",
+        "ctx.last_paint_scene 한 채널에서 lazy projection (layout_query 가 None-arm 서 project_layout;",
+        "resolver 들은 scene root rect 로 dims) -> eager per-dispatch build 구조 소멸 + layout 과",
+        "snapshot from:paint 가 같은 frame 을 서술함이 구성적으로 보장",
+        "TUI 가 with_last_paint_scene 을 처음 threading: from:paint 가 재-render 아닌 commit frame 을",
+        "읽음 (R705 GUI-only parity gap 청산, §2#6)",
+        "doc 거짓 정리: core_shell 모듈 doc 의 last_paint_layout 목록 / iff overclaim 의 primary 2-비대칭",
+        "명시 / window_owner \"calling this IS registration\" hardening note / substrate prose"
+      ],
+      "publishable_verification_bullets": [
+        "new tests 4: window_scope 1-home unit / non-string -32602 dispatch / notification silence 2-arm",
+        "/ (rewrite) revision pin 을 Mutate-kind frame 으로 (구 Read-kind assert 는 vacuous 였음)",
+        "migrated: dispatch_core 호출부 dispatch_rpc_scoped + layout_query viewport:null projection test",
+        "cargo test --workspace -j2: 150 suites green; clippy --all-targets -D pedantic clean",
+        "demos PASS (fresh release 10종): r889 r890 r670b r671 r672 r683 r680 r670a r888 r885"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.12",
+        "5.16",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "adversarial reviewer 들의 잔여 NOTE 중 기각분: -32600 version arm 의 notification frame 은",
+        "invalid-Request 라 spec-defensible (관례 유지); window_owner 는 pub 유지 (registration-edge",
+        "doc 로 hardening, de-pub 은 test surface 파괴)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

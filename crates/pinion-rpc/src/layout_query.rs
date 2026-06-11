@@ -151,8 +151,11 @@ impl From<PathError> for LayoutQueryError {
 ///
 /// * `Some(viewport)` — invoke `paint_producer` with the requested
 ///   dimensions and walk the resulting `Scene` (`dry_run` semantics).
-/// * `None` — return a clone of `last_paint_layout` (the application's
-///   most recent winit-rendered frame snapshot).
+/// * `None` — project the addressed window's stored paint scene
+///   (R890.1: the same `DispatchContext::last_paint_scene` borrow
+///   `scene/snapshot from: paint` serializes — one channel, so the
+///   layout READ describes the same frame as the pixel introspection;
+///   the projection runs only on this arm, never eagerly).
 ///
 /// # Errors
 ///
@@ -160,7 +163,7 @@ impl From<PathError> for LayoutQueryError {
 pub fn layout_query<F>(
     params: &LayoutQueryParams,
     paint_producer: Option<&mut F>,
-    last_paint_layout: Option<&LayoutNode>,
+    last_paint_scene: Option<&Scene>,
 ) -> Result<LayoutNode, LayoutQueryError>
 where
     F: FnMut(u32, u32) -> Scene + ?Sized,
@@ -181,8 +184,8 @@ where
             let scene = producer(viewport.width, viewport.height);
             Ok(project_layout(&scene))
         }
-        None => last_paint_layout
-            .cloned()
+        None => last_paint_scene
+            .map(project_layout)
             .ok_or(LayoutQueryError::NoLastPaintLayout),
     }
 }
@@ -478,29 +481,24 @@ mod tests {
     }
 
     #[test]
-    fn layout_query_viewport_none_returns_last_paint_layout() {
-        // R47.7.5 — viewport=None reads the application's
-        // `last_paint_layout` snapshot (winit-actual frame). The
-        // paint_producer closure is not invoked.
+    fn layout_query_viewport_none_projects_the_stored_paint_scene() {
+        // R47.7.5 / R890.1 — viewport=None projects the stored paint
+        // scene (the same borrow `scene/snapshot from: paint` reads;
+        // winit-actual frame). The paint_producer closure is not
+        // invoked — viewport=None is the actual-frame path, not the
+        // hypothetical path.
         let params = LayoutQueryParams { viewport: None, path: None };
-        let last = LayoutNode {
-            path: "/0".to_string(),
-            kind: LayoutKind::Container,
-            rect: LayoutRect { x: 0, y: 0, w: 320, h: 200 },
-            tag: None,
-            content: None,
-            line_count: 0,
-            children: vec![],
-        };
+        let mut stored_container = ContainerNode::new(vec![]);
+        stored_container.rect = pinion_core::scene::Rect::new(0, 0, 320, 200);
+        let stored = Scene::Container(stored_container);
         let mut producer_called = false;
         let mut producer = |_w: u32, _h: u32| -> Scene {
             producer_called = true;
             Scene::Container(ContainerNode::new(vec![]))
         };
-        let node = layout_query(&params, Some(&mut producer), Some(&last)).unwrap();
-        assert_eq!(node, last);
-        // The producer must not have been invoked — viewport=None is
-        // the actual-frame path, not the hypothetical path.
+        let node = layout_query(&params, Some(&mut producer), Some(&stored)).unwrap();
+        assert_eq!(node.path, "/0", "canonical projection root");
+        assert_eq!((node.rect.w, node.rect.h), (320, 200), "stored frame's geometry");
         assert!(!producer_called);
     }
 

@@ -3465,7 +3465,8 @@ mod r889_window_known_gate {
     }
 
     /// Dispatch one window-scoped frame the way `AppShell::dispatch_rpc`
-    /// does (in-band param + the same value as out-of-band scope).
+    /// does — the scope derives from the frame's own in-band
+    /// `{window}` param (R890.1: one source, no out-of-band argument).
     fn dispatch_for_window(
         core: &mut ShellCore<TestView>,
         id: u64,
@@ -3476,7 +3477,7 @@ mod r889_window_known_gate {
         let mut nr = no_resize;
         let req = parse_request(&frame(id, method, window, extra)).expect("frame parses");
         let resp = core
-            .dispatch_rpc_for_window(req, window, &mut nr)
+            .dispatch_rpc_scoped(req, &mut nr)
             .expect("call requests always answer");
         serde_json::from_str(&resp).expect("response is JSON")
     }
@@ -3575,7 +3576,7 @@ mod r889_window_known_gate {
     fn r889_single_window_entry_gates_in_band_window_param() {
         // The legacy single-window `dispatch_rpc` entry ignores the
         // window param for SCOPING (documented: multi-window callers
-        // use `dispatch_rpc_for_window`), but the unknown-window gate
+        // use `dispatch_rpc_scoped`), but the unknown-window gate
         // reads the IN-BAND param so a bogus scope errors here too
         // instead of silently acting on the primary.
         let _g = super::TEST_LOCK.lock().unwrap();
@@ -3959,12 +3960,12 @@ mod r683_remove_window_shell_side {
 
 /// R684 §5.16 §5.41 §5.49 atomic 3 — headless-RPC floating-window
 /// paint cycle. The substrate hook in
-/// [`pinion_shell::ShellCore::dispatch_rpc_for_window`] re-runs the
+/// [`pinion_shell::ShellCore::dispatch_rpc_scoped`] re-runs the
 /// paint pipeline + finalizes the addressed window's
 /// [`pinion_runtime::InputRouter`] after the produce closure was
 /// invoked. The tests below pin the contract:
 ///
-/// 1. Calling `dispatch_rpc_for_window` with a paint-touching method
+/// 1. Calling `dispatch_rpc_scoped` with a paint-touching method
 ///    (e.g. `scene/snapshot {viewport: {…}}`) populates the
 ///    addressed window's `last_paint_scene` even when no winit
 ///    `RedrawRequested` cycle ever fires (the headless RPC case).
@@ -4009,7 +4010,7 @@ mod r684_headless_rpc_floating_window_finalize {
     fn no_resize(_w: u32, _h: u32) {}
 
     #[test]
-    fn r684_dispatch_rpc_for_window_populates_input_router_for_addressed_window() {
+    fn r684_dispatch_rpc_scoped_populates_input_router_for_addressed_window() {
         // R684 atomic 3 anchor — the first-paint contract for
         // headless-RPC floating windows. Before this dispatch the
         // addressed window's router is empty (no winit paint
@@ -4027,7 +4028,7 @@ mod r684_headless_rpc_floating_window_finalize {
         );
         let req = parse_request(&snapshot_request(1, "floating", 320, 200))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_for_window(req, "floating", &mut no_resize);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize);
         // Post-condition: produce ran (snapshot calls it), so the
         // post-dispatch finalize populated the router.
         assert!(
@@ -4063,7 +4064,7 @@ mod r684_headless_rpc_floating_window_finalize {
     }
 
     #[test]
-    fn r684_dispatch_rpc_for_window_focus_get_does_not_trigger_paint_finalize() {
+    fn r684_dispatch_rpc_scoped_focus_get_does_not_trigger_paint_finalize() {
         // `focus/get` is a pure substrate read — it never asks for
         // the paint scene. The produce closure stays unevoked, so
         // R684 atomic 3's post-dispatch finalize must NOT run
@@ -4074,7 +4075,7 @@ mod r684_headless_rpc_floating_window_finalize {
         core.register_window("floating");
         let req = parse_request(&focus_get_request(1, "floating"))
             .expect("focus_get request parses");
-        let _ = core.dispatch_rpc_for_window(req, "floating", &mut no_resize);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize);
         assert!(
             !core.has_last_paint_scene_for_window("floating"),
             "focus/get must not call produce → no post-dispatch finalize",
@@ -4082,7 +4083,7 @@ mod r684_headless_rpc_floating_window_finalize {
     }
 
     #[test]
-    fn r684_dispatch_rpc_for_window_isolates_finalize_to_addressed_window() {
+    fn r684_dispatch_rpc_scoped_isolates_finalize_to_addressed_window() {
         // Sibling-isolation pin — a dispatch to window A must NOT
         // populate window B's router. Critical for multi-window
         // bindings where each window has its own widget tree.
@@ -4096,7 +4097,7 @@ mod r684_headless_rpc_floating_window_finalize {
         core.register_window("panel_b");
         let req = parse_request(&snapshot_request(1, "panel_a", 200, 100))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_for_window(req, "panel_a", &mut no_resize);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize);
         assert!(
             core.has_last_paint_scene_for_window("panel_a"),
             "addressed window's router populated",
@@ -4108,7 +4109,7 @@ mod r684_headless_rpc_floating_window_finalize {
     }
 
     #[test]
-    fn r684_dispatch_rpc_for_window_repeat_dispatches_keep_router_populated() {
+    fn r684_dispatch_rpc_scoped_repeat_dispatches_keep_router_populated() {
         // Idempotent under repeat dispatch — the second snapshot
         // overwrites the first with the same scene (same view fn,
         // same state). Post-condition stays consistent.
@@ -4119,7 +4120,7 @@ mod r684_headless_rpc_floating_window_finalize {
         for id in 1_u64..=3 {
             let req = parse_request(&snapshot_request(id, "floating", 320, 200))
                 .expect("snapshot request parses");
-            let _ = core.dispatch_rpc_for_window(req, "floating", &mut no_resize);
+            let _ = core.dispatch_rpc_scoped(req, &mut no_resize);
             assert!(
                 core.has_last_paint_scene_for_window("floating"),
                 "router stays populated across repeat dispatches (iter {id})",
@@ -4128,7 +4129,7 @@ mod r684_headless_rpc_floating_window_finalize {
     }
 
     #[test]
-    fn r684_dispatch_rpc_for_window_finalize_feeds_the_layout_projection() {
+    fn r684_dispatch_rpc_scoped_finalize_feeds_the_layout_projection() {
         // R890 — the finalize hook stores the addressed window's
         // paint scene, and THAT is what `scene/layout {viewport:
         // null}` projects (per-window; the pre-R890 binding-wide
@@ -4146,7 +4147,7 @@ mod r684_headless_rpc_floating_window_finalize {
         );
         let req = parse_request(&snapshot_request(1, "floating", 320, 200))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_for_window(req, "floating", &mut no_resize);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize);
         let layout = core
             .last_paint_layout_for_window("floating")
             .expect("post-dispatch finalize feeds the projection");
@@ -4177,14 +4178,14 @@ mod r684_headless_rpc_floating_window_finalize {
         // the R684 finalize stores A's scene).
         let req = parse_request(&snapshot_request(1, "win_a", 320, 200))
             .expect("frame parses");
-        let _ = core.dispatch_rpc_for_window(req, "win_a", &mut no_resize);
+        let _ = core.dispatch_rpc_scoped(req, &mut no_resize);
         // A's viewport:null read = A's own frame.
         let req = parse_request(
             r#"{"jsonrpc":"2.0","id":2,"method":"scene/layout","params":{"window":"win_a"}}"#,
         )
         .expect("frame parses");
         let resp = core
-            .dispatch_rpc_for_window(req, "win_a", &mut no_resize)
+            .dispatch_rpc_scoped(req, &mut no_resize)
             .expect("response");
         assert!(
             resp.contains(r#""result""#) && resp.contains(r#""w":320"#),
@@ -4196,7 +4197,7 @@ mod r684_headless_rpc_floating_window_finalize {
         )
         .expect("frame parses");
         let resp = core
-            .dispatch_rpc_for_window(req, "win_b", &mut no_resize)
+            .dispatch_rpc_scoped(req, &mut no_resize)
             .expect("response");
         assert!(
             resp.contains(r#""error""#) && resp.contains("NoLastPaintLayout"),
@@ -4205,7 +4206,7 @@ mod r684_headless_rpc_floating_window_finalize {
     }
 
     #[test]
-    fn r889_dispatch_rpc_for_window_unknown_window_id_is_rejected_without_finalize() {
+    fn r889_dispatch_rpc_scoped_unknown_window_id_is_rejected_without_finalize() {
         // R889 — REPLACES the pre-R889 pin "invalid window id still
         // finalizes under that key": the substrate now validates the
         // window scope against the window-known registry
@@ -4220,7 +4221,7 @@ mod r684_headless_rpc_floating_window_finalize {
         let req = parse_request(&snapshot_request(1, "any_unknown_window_id", 400, 300))
             .expect("snapshot request parses");
         let resp = core
-            .dispatch_rpc_for_window(req, "any_unknown_window_id", &mut no_resize)
+            .dispatch_rpc_scoped(req, &mut no_resize)
             .expect("call requests always get a response frame");
         assert!(
             resp.contains(r#""code":-32602"#) && resp.contains("unknown_window"),

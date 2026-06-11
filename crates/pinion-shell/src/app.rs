@@ -444,23 +444,16 @@ impl<V: WidgetView> AppShell<V> {
                 return;
             }
         };
-        // R889 §5.16 §5.49 — the supplied window id passes through
-        // verbatim (missing param defaults to the primary spec id).
-        // Pre-R889 `resolve_spec_id` silently aliased unknown ids onto
-        // the primary here, which made the substrate's honesty gates
-        // unreachable in production AND let a bogus-window WRITE hit
-        // the primary (`scene/set_fps {window: "bogus", fps: 0}` froze
-        // the primary's game loop). The unknown-window judgment now
-        // has ONE home: the substrate resolves the id against
-        // `CoreShell::is_window_known` inside `dispatch_rpc_inner` and
-        // the dispatcher rejects unknown ids with `-32602
-        // unknown_window` before method routing.
-        let resolved_spec_id = parsed_request
-            .params
-            .as_ref()
-            .and_then(|p| p.get("window"))
-            .and_then(serde_json::Value::as_str)
-            .map_or_else(|| String::from("main"), str::to_owned);
+        // R890.1 §5.16 §5.49 — no window extraction here at all: the
+        // substrate's windowed entry derives the dispatch scope from
+        // the request's own `{window: "<id>"}` param through the ONE
+        // extraction home (`pinion_rpc::Request::window_scope`), and
+        // the dispatcher gates unknown ids with `-32602
+        // unknown_window` before method routing. Pre-R889 this site
+        // hosted `resolve_spec_id` (silent alias of unknown ids onto
+        // the primary); pre-R890.1 it still hand-rolled a second copy
+        // of the param extraction that had to agree with the gate's
+        // forever.
         // R670.B §5.16 — primary-window-scoped `scene/resize` (the
         // resize closure still targets the primary window; per-window
         // `scene/resize` is a follow-up axis once a real consumer
@@ -484,16 +477,13 @@ impl<V: WidgetView> AppShell<V> {
                 window.request_redraw();
             }
         };
-        // R890 §5.12 §5.16 — no slot-layout threading: the substrate
-        // projects the addressed window's layout on demand from its
-        // stored paint scene (`ShellCore::last_paint_layout_for_window`),
-        // so `scene/layout {viewport: null}` answers with the named
-        // window's own geometry or the honest `NoLastPaintLayout`.
-        let resp = self.core.dispatch_rpc_for_window(
-            parsed_request,
-            &resolved_spec_id,
-            &mut resize_req,
-        );
+        // R890 §5.12 §5.16 — no slot-layout threading either: the
+        // dispatcher projects the addressed window's layout on demand
+        // from the stored paint scene it already threads for
+        // `scene/snapshot from: paint`, so `scene/layout {viewport:
+        // null}` answers with the named window's own geometry or the
+        // honest `NoLastPaintLayout`.
+        let resp = self.core.dispatch_rpc_scoped(parsed_request, &mut resize_req);
         if let Some(resp) = resp {
             let mut out = std::io::stdout().lock();
             if writeln!(out, "{resp}").is_err() {

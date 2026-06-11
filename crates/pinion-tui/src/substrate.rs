@@ -57,7 +57,7 @@ use pinion_core::event::WheelDelta;
 use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene, SceneRevision};
 use pinion_rpc::{
-    dispatch_parsed, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
+    dispatch_parsed, DeferredInput, DispatchContext, PreviewLedger,
 };
 use pinion_runtime::{
     clamp_frame_dt, CommandExecutor, CoreShell, DispatchTail, FocusManager, PointerId,
@@ -915,19 +915,6 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // seeded at construction, so the snapshot is always `Some`.
         let input_state_snapshot =
             self.core.input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None);
-        // R890 §5.12 — project the layout on demand from the router's
-        // stored paint scene (the same per-window source the GUI shell
-        // reads), replacing the per-commit `last_paint_layout` mirror.
-        // The "/0" root prefix is the canonical wire shape — the
-        // retired TUI mirror built with a bare "" prefix, so the SAME
-        // node had different `scene/layout` paths on the two backends
-        // (and even between viewport:null and viewport-supplied reads
-        // on the TUI itself) — a §2 #6 wire divergence this projection
-        // closes.
-        let derived_paint_layout: Option<LayoutNode> = self
-            .core
-            .last_paint_scene_for_window(pinion_runtime::DEFAULT_WINDOW)
-            .map(pinion_rpc::project_layout);
         let resp_pair = {
             // Disjoint-field split mutable borrows. Mirror of the
             // pinion-shell substrate's `dispatch_rpc` borrow split.
@@ -935,11 +922,23 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             let root_owner = self.core.root_owner().clone();
             let executor_for_rpc: Option<Arc<CommandExecutor>> =
                 self.core.executor().cloned();
-            let scene_ptr = self.core.scene_mut();
+            // R890.1 §5.12 §2 #6 — same disjoint split the GUI shell
+            // uses: mutable state scene + the stored paint scene of
+            // the single terminal window. Threading the stored scene
+            // gives the TUI both `scene/snapshot from: paint` reading
+            // the COMMITTED frame (pre-R890.1 it re-rendered at query
+            // time — the [[introspection-from-paint-not-screen]]
+            // divergence R705 closed on the GUI only) and the
+            // `scene/layout {viewport: null}` projection from the same
+            // borrow, canonical "/0"-rooted paths (the retired TUI
+            // mirror used a bare "" prefix — same node, different wire
+            // path per backend).
+            let (scene_ptr, last_paint_scene_ref) = self
+                .core
+                .scene_mut_and_last_paint_for_window(pinion_runtime::DEFAULT_WINDOW);
             let previews = &self.previews;
             let revision = &self.revision;
             let focus_ptr = &mut self.focus;
-            let last_paint = derived_paint_layout.as_ref();
             // R670 §5.41 §5.12 — TUI paint scene producer. The
             // view-fn already sets every container rect (no parley
             // shaping pass), so the produced scene carries the
@@ -957,8 +956,11 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
                 .with_focus_manager(focus_ptr);
-            if let Some(snapshot) = last_paint {
-                ctx = ctx.with_last_paint_layout(snapshot);
+            // R890.1 §5.12 §2 #6 — one channel: snapshot from:paint,
+            // layout viewport:null, and hit-test dims all read this
+            // borrow (GUI parity; see the split-borrow comment above).
+            if let Some(paint) = last_paint_scene_ref {
+                ctx = ctx.with_last_paint_scene(paint);
             }
             // R670 §5.41 §5.23 — surface the root Owner handle so
             // `scene/commands` (pending queue) + `scene/theme_tokens`

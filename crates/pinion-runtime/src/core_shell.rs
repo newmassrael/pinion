@@ -31,8 +31,8 @@
 //!   backend wrapping yet (R51.123 / R51.124 land the two wrappers).
 //! - **R51.123** — `pinion_shell::ShellCore` reduces to
 //!   `core: CoreShell<V>` + the Vello-specific extras (focus /
-//!   modifiers / `text_cache` / previews / revision / `last_paint_layout`
-//!   / `last_access_*` / `redraw_requested`). Existing dispatch
+//!   modifiers / `text_cache` / previews / revision /
+//!   `last_access_*` / `redraw_requested`). Existing dispatch
 //!   methods forward to `core` + log + bookkeep.
 //! - **R51.124** — `pinion_tui::ShellCoreTui` reduces to
 //!   `core: CoreShell<V>` + the TUI-specific `log_sink`.
@@ -272,13 +272,20 @@ pub struct CoreShell<V: WidgetCore> {
 
     /// R680 §5.16 §5.41 §5.28 — per-window reactive scope map.
     ///
-    /// R889 §5.49 — ALSO the window-known registry SSOT: an entry
-    /// exists iff the binding knows the window ([`DEFAULT_WINDOW`]
-    /// seeded in [`Self::new`]; secondaries registered by
-    /// [`Self::register_window`] at OS-window creation, removed by
-    /// [`Self::remove_window`]). [`Self::is_window_known`] is the
-    /// named predicate; [`Self::routers`] is NOT a registry — its
-    /// entries mean "has painted at least once".
+    /// R889 §5.49 — ALSO the window-known registry SSOT:
+    /// [`Self::is_window_known`] is the named predicate;
+    /// [`Self::routers`] is NOT a registry — its entries mean "has
+    /// painted at least once". Secondaries are registered by
+    /// [`Self::register_window`] at OS-window creation and removed by
+    /// [`Self::remove_window`]. Two deliberate primary asymmetries
+    /// (R890.1 doc honesty): [`DEFAULT_WINDOW`] is seeded in
+    /// [`Self::new`] unconditionally — it is "known" even before (or
+    /// without) a declared `"main"` spec, because the primary scope
+    /// aliases `root_owner` and is the binding's reactive anchor; and
+    /// `remove_window` refuses to drop it, so a binding that removes
+    /// `"main"` from its window list keeps the primary known (the
+    /// dock-host arc — the substrate survives as the anchor for
+    /// torn-off panels).
     ///
     /// First atomic of the 4-axis paint-pipeline rewrite series
     /// (R680-R683). Keyed by canonical [`WindowSpec::id`] string;
@@ -920,6 +927,16 @@ impl<V: WidgetCore> CoreShell<V> {
     ///   when this [`CoreShell`] drops (animations, effects, and
     ///   commands registered on the secondary scope evaporate
     ///   together with the substrate).
+    ///
+    /// ## R890.1 — calling this IS registration
+    ///
+    /// `window_owners` doubles as the window-known registry (R889),
+    /// so the lazy insert below is a registration edge: any call with
+    /// a fresh id makes that id pass [`Self::is_window_known`] and
+    /// the dispatch gate. Do NOT call this from read-intent paths —
+    /// probes use [`Self::window_owner_existing`]; the only intended
+    /// production caller is [`Self::register_window`] (the audited
+    /// creation edge).
     ///
     /// ## Why `&mut self`
     ///
