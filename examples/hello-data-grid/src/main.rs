@@ -175,6 +175,7 @@ use pinion_core::widgets::grid_sort::{
     GridFilter,
 };
 use pinion_core::widgets::group_order::{group_rows, GroupRow};
+use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::table::{cycle_col_sort, grid_order_by};
 use pinion_core::widgets::virtual_list::VisibleWindow;
 use pinion_core::widgets::radio::RadioState;
@@ -184,6 +185,7 @@ use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::checkbox::{view_checkbox_box, CheckboxStyle};
 use pinion_widget_paint::group_header::group_header_row;
+use pinion_widget_paint::table::h_scrolled_column;
 use pinion_widget_paint::text_field as tf_paint;
 
 use pinion_widget_paint::state_layer::HOVER;
@@ -213,6 +215,11 @@ const ROW_GAP: u32 = 1;
 const GRID_TAG: &str = "data_grid";
 /// Extra External — the one shared inline cell editor.
 const EDIT_TF_TAG: &str = "data_grid_edit";
+/// R896 — the horizontal `ScrollState` cache key shared by the header + rows:
+/// `scene/set_scroll_offset` on this tag slides the columns sideways once
+/// their total width outgrows the grid viewport (the R784 single-axis scroll,
+/// the read-only grids' [`h_scrolled_column`] wrap reused on the editable grid).
+const H_SCROLL_KEY: &str = "data_grid_hscroll";
 /// Commit-on-blur intent the inline field raises on a click-away (R793).
 const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("data_grid_edit", "blur");
 
@@ -236,8 +243,21 @@ const COL_KINDS: [CellKind; NCOLS] = [
     CellKind::Bool,
 ];
 
-/// Per-column paint width (logical px). Text columns are wider.
-const COL_W: [u32; NCOLS] = [120, 90, 70, 70, 70];
+/// Per-column paint width (logical px). Text columns are wider. R896 — the
+/// columns are deliberately wider than the grid viewport ([`GRID_VIEWPORT_W`])
+/// so their `570 px` total outgrows the visible band and the R784 horizontal
+/// scroll ([`h_scrolled_column`]) engages — the "wide asset table" a DCC
+/// browser scrolls sideways.
+const COL_W: [u32; NCOLS] = [160, 110, 100, 100, 100];
+
+/// R896 — the grid's visible width. Narrower than the `570 px` column total
+/// ([`COL_W`]) so the columns scroll sideways under the pinned header; wide
+/// enough to show the leading Asset / Type / Count columns at rest (offset 0).
+const GRID_VIEWPORT_W: u32 = 370;
+/// R896 — the grid's visible height (header + the rows band). Tall enough for
+/// the seeded rows + a grouped split; rows beyond it would scroll vertically
+/// once the body is virtualized (a later round).
+const GRID_VIEWPORT_H: u32 = 268;
 
 // ─── per-column validation (R894 — the DCC-inspector clamp axis) ──
 
@@ -1559,8 +1579,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
 
-    let mut rows: Vec<Scene> = Vec::with_capacity(vis_rows.len() + 1);
-    rows.push(view_header(&theme, sort));
+    let mut rows: Vec<Scene> = Vec::with_capacity(vis_rows.len());
     for vrow in &vis_rows {
         rows.push(match *vrow {
             // R892 — a group header spanning the grid (label + member count +
@@ -1580,8 +1599,24 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             ),
         });
     }
+    // R896 — the rows column (group headers + data rows). The header sits above
+    // it, and both are wrapped in the shared `h_scrolled_column` so the
+    // `570 px`-wide columns slide sideways under the pinned header once they
+    // outgrow `GRID_VIEWPORT_W` (the read-only grids' R784 horizontal-scroll
+    // wrap, reused — not a hand-rolled second copy). The body stays eager (the
+    // windowed virtualization of the rows is a later round).
+    let rows_column = Scene::Container(
+        ContainerNode::new(rows).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(ROW_GAP),
+        ),
+    );
+    let h_scroll = use_scroll_state(H_SCROLL_KEY);
+    let scrolled = h_scrolled_column(&h_scroll, view_header(&theme, sort), rows_column);
     let grid = Scene::Container(
-        ContainerNode::new(rows)
+        ContainerNode::new(vec![scrolled])
             .with_tag(GRID_TAG)
             .with_aria_label("Asset table")
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)).with_border(
@@ -1590,8 +1625,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Start)
-                    .with_gap(ROW_GAP),
+                    .with_size(Size::px(GRID_VIEWPORT_W, GRID_VIEWPORT_H)),
             ),
     );
 

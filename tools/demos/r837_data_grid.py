@@ -43,6 +43,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     find_by_tag,
     run_demo,
+    wait_snap,
     wait_until,
 )
 
@@ -50,6 +51,10 @@ VIEWPORT = (460, 320)
 
 GRID = "data_grid"
 EDIT = "data_grid_edit"
+# R896 — the grid's horizontal scroll: the 570px columns outgrow the 370px
+# viewport, so the trailing columns (Scale / Active) clip out at rest and the
+# grid scrolls sideways to reveal them (the read-only grids' R784 wrap reused).
+H_SCROLL = "data_grid_hscroll"
 
 
 def _focus_grid(tf) -> None:
@@ -110,12 +115,21 @@ def body() -> None:
         tf.key(path=GRID, name="Space")
         wait_until(lambda: tf.query("/external/value.2.4") is True, timeout=4.0,
                    interval=0.03, desc="Space toggles the focused bool")
-        # Single-click the Active bool of row 0 (true) toggles it off.
+        # Single-click the Active bool of row 0 (true) toggles it off. R896 —
+        # the Active column is off-screen at rest, so scroll it into view
+        # first (the cell tag is clipped out of the paint scene until then);
+        # then scroll back so the rest of the demo runs at the default offset.
+        tf.scroll(H_SCROLL, to=(1000, 0))  # clamps to max => reveals Active
+        wait_snap(tf, lambda s: find_by_tag(s, f"{GRID}#0_4") is not None,
+                  viewport=VIEWPORT, desc="Active column scrolled into view")
         tf.click(path=f"{GRID}#0_4")
         wait_until(lambda: tf.query("/external/value.0.4") is False, timeout=4.0,
                    interval=0.03, desc="single-click toggles a bool cell")
         assert_eq(tf.query("/external/focused_row"), 0, "click focuses the cell")
         assert_eq(tf.query("/external/focused_col"), 4, "click focuses the cell")
+        tf.scroll(H_SCROLL, to=(0, 0))
+        wait_snap(tf, lambda s: find_by_tag(s, f"{GRID}#0_0") is not None,
+                  viewport=VIEWPORT, desc="scrolled back to the leading columns")
 
         # ── (D) int edit via keyboard (gate drops letters) ──────────
         _focus_grid(tf)
@@ -167,6 +181,9 @@ def body() -> None:
                    interval=0.03, desc="back to navigation")
 
         # ── (H) paint: cells render; field only while editing ───────
+        # R896 — every cell stays in the paint scene tree (the rows are eager);
+        # the h-scroll only clips the trailing columns' on-screen *rects* (so a
+        # click on an off-screen cell needs a scroll first, as in section C).
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         for r in range(4):
             for c in range(5):

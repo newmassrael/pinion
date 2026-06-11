@@ -37929,6 +37929,60 @@
         "prefer domain-true bounds only; an invented bound is a smell (Scale had none)"
       ]
     },
+    "R896": {
+      "decision_summary": "Editable data-grid gains horizontal scroll by reusing the read-only grids' h_scrolled_column wrap (3rd consumer), not a hand-rolled copy; columns widened past the viewport slide under a pinned header while the SOURCE-keyed cursor/edit state stays scroll-independent — the first incremental step of the grid Model/View convergence.",
+      "changes_bullets": [
+        "pinion-widget-paint: h_scrolled_column lifted to pub (the R784 horizontal-scroll wrap); 3rd consumer = editable grid",
+        "hello-data-grid: COL_W widened 420->570 past GRID_VIEWPORT_W=370 so the columns slide sideways (no hand-rolled copy)",
+        "hello-data-grid: eager [header, rows] wrapped in the shared h_scrolled_column under a viewport-bounded grid container",
+        "hello-data-grid: H_SCROLL_KEY ScrollState via use_scroll_state; header + rows share one horizontal scroll",
+        "cell/header/row tag scheme byte-unchanged, so a11y + RPC state introspection are unaffected by the migration",
+        "r837 demo made h-scroll-aware: scroll the off-screen Active column into view before clicking it",
+        "new r896_grid_hscroll demo: structure/overflow, header-body x-sync, reveal-on-scroll+clamp, scroll-vs-edit-state orthogonality"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (pinion-widget-paint 469 read-only byte-identical; hello-data-grid 40)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "demos PASS: r837 r886 r891 r892 r894 (no regression) + r896 (new, 30 explicit asserts + 4 wait_snap)",
+        "self-grep: h_scrolled_column = 3 genuine consumers (render_unsplit + frozen pane + editable grid); no hand-rolled equivalent",
+        "view_virtual_grid_body extraction explored then reverted (1-consumer indirection); no trace remains"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R897: frozen first column on the editable grid (full-width group header inside a frozen split = the hard sub-problem)",
+        "R898: virtualize the editable grid body (measured-viewport window) + migrate hello-property-grid onto the shared primitive",
+        "grid Model/View convergence continues incrementally; each round stays green and SSOT-clean"
+      ],
+      "publishable_decision_summary": "Editable data-grid gains horizontal scroll by reusing the read-only grids' h_scrolled_column wrap (3rd consumer), not a hand-rolled copy; columns widened past the viewport slide under a pinned header while the SOURCE-keyed cursor/edit state stays scroll-independent — the first incremental step of the grid Model/View convergence.",
+      "publishable_changes_bullets": [
+        "pinion-widget-paint: h_scrolled_column lifted to pub (the R784 horizontal-scroll wrap); 3rd consumer = editable grid",
+        "hello-data-grid: COL_W widened 420->570 past GRID_VIEWPORT_W=370 so the columns slide sideways (no hand-rolled copy)",
+        "hello-data-grid: eager [header, rows] wrapped in the shared h_scrolled_column under a viewport-bounded grid container",
+        "hello-data-grid: H_SCROLL_KEY ScrollState via use_scroll_state; header + rows share one horizontal scroll",
+        "cell/header/row tag scheme byte-unchanged, so a11y + RPC state introspection are unaffected by the migration",
+        "r837 demo made h-scroll-aware: scroll the off-screen Active column into view before clicking it",
+        "new r896_grid_hscroll demo: structure/overflow, header-body x-sync, reveal-on-scroll+clamp, scroll-vs-edit-state orthogonality"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (pinion-widget-paint 469 read-only byte-identical; hello-data-grid 40)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "demos PASS: r837 r886 r891 r892 r894 (no regression) + r896 (new, 30 explicit asserts + 4 wait_snap)",
+        "self-grep: h_scrolled_column = 3 genuine consumers (render_unsplit + frozen pane + editable grid); no hand-rolled equivalent",
+        "view_virtual_grid_body extraction explored then reverted (1-consumer indirection); no trace remains"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R897: frozen first column on the editable grid (full-width group header inside a frozen split = the hard sub-problem)",
+        "R898: virtualize the editable grid body (measured-viewport window) + migrate hello-property-grid onto the shared primitive",
+        "grid Model/View convergence continues incrementally; each round stays green and SSOT-clean"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

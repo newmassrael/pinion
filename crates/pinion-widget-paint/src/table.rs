@@ -820,12 +820,20 @@ struct GridRender<'a> {
 
 /// R784 / R859 §5.45 — wrap a `[header, body]` column in the outer
 /// horizontal scroll the data-grid uses: the header tracks `horizontal`'s
-/// offset while staying vertically pinned above the inner vertical body
-/// scroll, and the column flex-grows to claim its parent's interior. Shared
-/// by the unsplit grid and the frozen grid's scrolling pane so the R784
-/// horizontal-scroll wrapping cannot diverge between them (a divergence
-/// would mis-scroll one of the two paths — R758 "divergence-is-a-bug").
-fn h_scrolled_column(horizontal: &Rc<ScrollState>, header: Scene, body: Scene) -> Scene {
+/// offset while staying vertically pinned above the body, and the column
+/// flex-grows to claim its parent's interior. Once the `[header, body]`
+/// content is wider than the parent the column slides sideways; while it
+/// fits, `horizontal`'s `max_x` is 0 and the wrap is inert.
+///
+/// Shared by three consumers so the R784 horizontal-scroll wrapping cannot
+/// diverge between them (a divergence would mis-scroll one — R758
+/// "divergence-is-a-bug"): the read-only unsplit grid ([`render_unsplit`]),
+/// the frozen grid's scrolling pane ([`frozen_split_panes`]), and — R896 —
+/// the editable `hello-data-grid`, which wraps its eager `[header, rows]`
+/// column to scroll its widened columns sideways (the body there is the eager
+/// row column, not a windowed `ScrollNode`; the wrap is body-agnostic).
+#[must_use]
+pub fn h_scrolled_column(horizontal: &Rc<ScrollState>, header: Scene, body: Scene) -> Scene {
     let column = Scene::Container(
         ContainerNode::new(vec![header, body])
             .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
