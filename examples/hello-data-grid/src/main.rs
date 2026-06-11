@@ -248,26 +248,22 @@ const COL_W: [u32; NCOLS] = [120, 90, 70, 70, 70];
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum ColRange {
     Int(i64, i64),
-    Float(f64, f64),
 }
 
 impl ColRange {
-    /// The AI-readable wire form (`"0..100"`); the kind is read separately via
-    /// `col_kind`. `Float` uses the canonical [`CellValue`] float formatting.
+    /// The AI-readable wire form (`"0..1000"`); the kind is read separately via
+    /// `col_kind`.
     fn wire(self) -> String {
         match self {
             ColRange::Int(lo, hi) => format!("{lo}..{hi}"),
-            ColRange::Float(lo, hi) => {
-                format!("{}..{}", CellValue::Float(lo).display(), CellValue::Float(hi).display())
-            }
         }
     }
 }
 
 /// Per-column clamp range, `None` for an unbounded column. Count (Int) is
-/// `0..1000`; Scale (Float) is `0..10`; Asset / Type / Active are unbounded.
+/// `0..1000`; all other columns (Asset / Type / Scale / Active) are unbounded.
 const COL_RANGE: [Option<ColRange>; NCOLS] =
-    [None, None, Some(ColRange::Int(0, 1000)), Some(ColRange::Float(0.0, 10.0)), None];
+    [None, None, Some(ColRange::Int(0, 1000)), None, None];
 
 /// R894 — clamp a typed value to column `col`'s [`ColRange`] (identity for an
 /// unbounded column, a non-numeric value, or a kind / range mismatch). The one
@@ -276,7 +272,6 @@ const COL_RANGE: [Option<ColRange>; NCOLS] =
 fn clamp_for_col(value: CellValue, col: usize) -> CellValue {
     match (&value, COL_RANGE.get(col).and_then(|r| r.as_ref())) {
         (CellValue::Int(i), Some(ColRange::Int(lo, hi))) => CellValue::Int((*i).clamp(*lo, *hi)),
-        (CellValue::Float(f), Some(ColRange::Float(lo, hi))) => CellValue::Float(f.clamp(*lo, *hi)),
         _ => value,
     }
 }
@@ -2669,9 +2664,9 @@ mod tests {
 
     #[test]
     fn r894_commit_clamps_to_column_range() {
-        // Count (col 2) range 0..100; Scale (col 3) range 0..10. A committed
-        // edit outside the range lands on the nearest bound; in-range commits
-        // unchanged (the bounded-spinbox contract through `commit_edit`).
+        // Count (col 2) range 0..1000. A committed edit above the bound lands
+        // on the max; in-range commits unchanged. Scale (col 3) is unbounded
+        // so a negative commit stores verbatim (no clamp applied).
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let commit = |scene: &mut Scene, col: i64, text: &str| {
@@ -2688,7 +2683,7 @@ mod tests {
             commit(&mut scene, 2, "5000");
             assert_eq!(grid_intro(&scene).query("value.0.2"), Some(IntrospectValue::Int(1000)), "clamp to max");
             commit(&mut scene, 3, "-5");
-            assert_eq!(grid_intro(&scene).query("value.0.3"), Some(IntrospectValue::Float(0.0)), "clamp to min");
+            assert_eq!(grid_intro(&scene).query("value.0.3"), Some(IntrospectValue::Float(-5.0)), "unbounded — stores as-is");
             commit(&mut scene, 2, "42");
             assert_eq!(grid_intro(&scene).query("value.0.2"), Some(IntrospectValue::Int(42)), "in-range unchanged");
         });
@@ -2698,7 +2693,8 @@ mod tests {
     fn r894_intervene_clamps_to_column_range() {
         // The AI write path runs the same clamp gate (an `intervene` cannot
         // exceed a bound a keyboard edit cannot); the read-back is the clamped
-        // value (the setter-returns-read-outcome discipline).
+        // value (the setter-returns-read-outcome discipline). Scale (col 3) is
+        // unbounded so a negative intervene stores verbatim.
         Owner::new().run(|| {
             let mut scene = boot_scene();
             let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
@@ -2706,9 +2702,9 @@ mod tests {
             assert!(intro.intervene("value.0.2", IntrospectValue::Int(5000)).is_ok());
             assert_eq!(intro.query("value.0.2"), Some(IntrospectValue::Int(1000)), "clamp to max");
             assert!(intro.intervene("value.0.3", IntrospectValue::Float(-5.0)).is_ok());
-            assert_eq!(intro.query("value.0.3"), Some(IntrospectValue::Float(0.0)), "clamp to min");
+            assert_eq!(intro.query("value.0.3"), Some(IntrospectValue::Float(-5.0)), "unbounded — stores as-is");
             assert!(intro.intervene("value.1.3", IntrospectValue::Float(5.0)).is_ok());
-            assert_eq!(intro.query("value.1.3"), Some(IntrospectValue::Float(5.0)), "in-range kept");
+            assert_eq!(intro.query("value.1.3"), Some(IntrospectValue::Float(5.0)), "positive float kept");
         });
     }
 
@@ -2718,8 +2714,8 @@ mod tests {
             let scene = boot_scene();
             let intro = grid_intro(&scene);
             assert_eq!(intro.query("col_range.2"), Some(IntrospectValue::Text("0..1000".to_owned())));
-            assert_eq!(intro.query("col_range.3"), Some(IntrospectValue::Text("0..10".to_owned())));
-            assert_eq!(intro.query("col_range.0"), Some(IntrospectValue::Text("none".to_owned())), "unbounded");
+            assert_eq!(intro.query("col_range.3"), Some(IntrospectValue::Text("none".to_owned())), "Scale unbounded");
+            assert_eq!(intro.query("col_range.0"), Some(IntrospectValue::Text("none".to_owned())), "Asset unbounded");
             assert_eq!(intro.query("col_range.9"), None, "out-of-range column -> None");
         });
     }
