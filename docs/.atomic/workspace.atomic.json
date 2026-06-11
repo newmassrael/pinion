@@ -37303,6 +37303,58 @@
         "binding-glue invoke(\"open_at\") forwarding at 2 sites (example+fixture): lift at 3rd consumer"
       ]
     },
+    "R888": {
+      "decision_summary": "scene/pacing_state READ peer of scene/set_fps + set_fps null=clear-override: the §2#4 frame-pacing target round-trips over the wire (R887 axis-2 self-grep finding; R885 read-write-symmetry pattern); TUI answers PacingStateUnavailable (no pacing clock, §2#6 honesty)",
+      "changes_bullets": [
+        "scene/pacing_state READ: {\"fps\": N} override (0=paused) | {\"fps\": null} default policy",
+        "PacingState enum (DefaultPolicy|Override) in pinion-rpc: named 2-state, no nested Option (R874)",
+        "scene/set_fps gains {\"fps\": null} = clear override; boot state was wire-unreachable (insert-only)",
+        "ShellCore::clear_target_fps_for_window; drain Some/None arms; missing fps stays error",
+        "DispatchContext.pacing_state pre-resolve; GUI read_axis_snapshots_for_window (one window gate)",
+        "TUI: deliberately absent -> PacingStateUnavailable (no pacing clock; modifiers:null parity)",
+        "rpc_verify: set_fps(None) + pacing_state() helpers"
+      ],
+      "verification_bullets": [
+        "4 dispatch unit tests (unavailable/default-null/override-and-paused/null-clears)",
+        "shell e2e round-trip: boot null -> 30 -> 0 -> null (boot state reachable again)",
+        "TUI rpc_ingress test: PacingStateUnavailable honesty",
+        "workspace 150 suites green; clippy -D pedantic clean (dispatch_rpc_inner re-budgeted)",
+        "demo r888_pacing_state.py PASS (31 asserts incl. frozen/tick cross-check); r829/r830/r831/r885 PASS"
+      ],
+      "impact_refs": [
+        "5.49",
+        "5.28"
+      ],
+      "carry_forward_bullets": [
+        "read-write symmetry axis self-grep now clean across all scene/* SET wires (set_fps was the last)",
+        "TUI pacing axis stays unavailable until the TUI gets a frame clock (event-driven terminal; §2#6)"
+      ],
+      "publishable_decision_summary": "scene/pacing_state READ peer of scene/set_fps + set_fps null=clear-override: the §2#4 frame-pacing target round-trips over the wire (R887 axis-2 self-grep finding; R885 read-write-symmetry pattern); TUI answers PacingStateUnavailable (no pacing clock, §2#6 honesty)",
+      "publishable_changes_bullets": [
+        "scene/pacing_state READ: {\"fps\": N} override (0=paused) | {\"fps\": null} default policy",
+        "PacingState enum (DefaultPolicy|Override) in pinion-rpc: named 2-state, no nested Option (R874)",
+        "scene/set_fps gains {\"fps\": null} = clear override; boot state was wire-unreachable (insert-only)",
+        "ShellCore::clear_target_fps_for_window; drain Some/None arms; missing fps stays error",
+        "DispatchContext.pacing_state pre-resolve; GUI read_axis_snapshots_for_window (one window gate)",
+        "TUI: deliberately absent -> PacingStateUnavailable (no pacing clock; modifiers:null parity)",
+        "rpc_verify: set_fps(None) + pacing_state() helpers"
+      ],
+      "publishable_verification_bullets": [
+        "4 dispatch unit tests (unavailable/default-null/override-and-paused/null-clears)",
+        "shell e2e round-trip: boot null -> 30 -> 0 -> null (boot state reachable again)",
+        "TUI rpc_ingress test: PacingStateUnavailable honesty",
+        "workspace 150 suites green; clippy -D pedantic clean (dispatch_rpc_inner re-budgeted)",
+        "demo r888_pacing_state.py PASS (31 asserts incl. frozen/tick cross-check); r829/r830/r831/r885 PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.49",
+        "5.28"
+      ],
+      "publishable_carry_forward_bullets": [
+        "read-write symmetry axis self-grep now clean across all scene/* SET wires (set_fps was the last)",
+        "TUI pacing axis stays unavailable until the TUI gets a frame clock (event-driven terminal; §2#6)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

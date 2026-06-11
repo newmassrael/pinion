@@ -378,6 +378,15 @@ pub struct DispatchContext<'a> {
     /// (headless fixture / embedder opt-out), distinct from an
     /// all-empty snapshot.
     pub input_state: Option<pinion_core::InputStateSnapshot>,
+    /// R888 §5.49 §5.28 — the dispatch-scoped window's frame-pacing
+    /// target, resolved by the embedder before dispatch (the
+    /// [`Self::input_state`] pattern). Consumed by
+    /// `scene/pacing_state` — the READ peer of `scene/set_fps`.
+    /// `None` surfaces `PacingStateUnavailable` (backend keeps no
+    /// pacing clock — the TUI — or unknown window id), distinct from
+    /// [`PacingState::DefaultPolicy`] ("no override installed", a
+    /// real value of the axis).
+    pub pacing_state: Option<PacingState>,
 }
 
 /// R881 §5.35 §5.49 — which mouse button a `scene/drag` injection
@@ -806,7 +815,40 @@ pub enum DeferredInput {
     /// makes has an RPC peer" invariant — a developer can pause/throttle
     /// a render loop in a debugger; an AI client now can too), which a
     /// continuous wall-clock loop cannot offer.
-    SetTargetFps { fps: u32 },
+    ///
+    /// R888 §5.49 §5.28 — `fps` is an `Option`: `Some(n)` installs the
+    /// override (`0` = paused), `None` (`{"fps": null}` on the wire)
+    /// *clears* it, restoring the adaptive default policy. Pre-R888 the
+    /// boot state (no override — 60fps while immediate-mode content is
+    /// active, idle otherwise) was unreachable once any set landed,
+    /// which the [`PacingState`] READ peer made visible
+    /// ([[wire-form-read-write-symmetry]]: every readable state of an
+    /// axis must be writable when the write wire claims the axis).
+    SetTargetFps { fps: Option<u32> },
+}
+
+/// R888 §5.49 §5.28 §2 #4 — the addressed window's frame-pacing
+/// target: the `scene/pacing_state` READ payload, mirroring the
+/// `scene/set_fps` write axis (read = inverse of write,
+/// [[wire-form-read-write-symmetry]]).
+///
+/// A named two-state enum, NOT `Option<u32>` doubled into the
+/// context's availability `Option` — "no override installed" is a
+/// *value* of the axis (the adaptive default policy), categorically
+/// different from "this backend keeps no pacing clock" (the TUI,
+/// which surfaces `PacingStateUnavailable`); nesting `Option`s would
+/// alias the two (the R874 named-enum-over-nested-Option rule).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PacingState {
+    /// No override installed — the adaptive per-window default policy
+    /// applies (60fps while immediate-mode content is active, idle
+    /// otherwise; see `pinion_runtime::frame_pacing`). Serializes as
+    /// `{"fps": null}`.
+    DefaultPolicy,
+    /// An override is installed: paint at `n` fps; `0` = paused
+    /// (frame-step mode — the window repaints only on explicit
+    /// `scene/tick` / redraw). Serializes as `{"fps": n}`.
+    Override(u32),
 }
 
 impl<'a> DispatchContext<'a> {
@@ -836,6 +878,7 @@ impl<'a> DispatchContext<'a> {
             window_id: None,
             fragment_cache_stats: None,
             input_state: None,
+            pacing_state: None,
         }
     }
 
@@ -1001,6 +1044,15 @@ impl<'a> DispatchContext<'a> {
         self.input_state = Some(snapshot);
         self
     }
+
+    /// Builder: install the pre-resolved frame-pacing target for the
+    /// dispatch-scoped window (R888 §5.49 §5.28). Consumed by
+    /// `scene/pacing_state`; absent -> `PacingStateUnavailable`.
+    #[must_use]
+    pub fn with_pacing_state(mut self, state: PacingState) -> Self {
+        self.pacing_state = Some(state);
+        self
+    }
 }
 
 /// Dispatch one JSON-RPC 2.0 frame against `ctx`.
@@ -1130,6 +1182,8 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // for the dispatch lifetime (the slot is per-dispatch like the
     // inbox), `scene/input_state` is the only consumer.
     let input_state = ctx.input_state.take();
+    // R888 §5.49 — same single-consumer take as `input_state`.
+    let pacing_state = ctx.pacing_state.take();
     // R50.X.1 §5.37.2 — font registry is shared (read-only borrow);
     // copy the optional reference out for the dispatch lifetime so
     // the registry slot itself is not consumed.
@@ -1375,6 +1429,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
         ),
         "scene/cache_stats" => (
             handle_scene_cache_stats(fragment_cache_stats),
+            HandlerKind::Read,
+        ),
+        "scene/pacing_state" => (
+            handle_scene_pacing_state(pacing_state),
             HandlerKind::Read,
         ),
         "scene/input_state" => (
@@ -1896,16 +1954,59 @@ fn handle_scene_set_fps(
     let Some(inbox) = inbox else {
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
-    let fps = params
-        .and_then(|p| p.get("fps"))
-        .and_then(Value::as_u64)
-        .ok_or_else(|| {
-            RpcError::invalid_params("params.fps missing or not a non-negative integer")
-        })?;
-    let fps = u32::try_from(fps)
-        .map_err(|_| RpcError::invalid_params("params.fps exceeds the u32 frame-rate range"))?;
+    // R888 §5.49 — `{"fps": null}` clears the override (restores the
+    // adaptive default policy); a MISSING `fps` stays an error so a
+    // typo'd param name cannot silently clear a frame-step pause.
+    let fps = match params.and_then(|p| p.get("fps")) {
+        None => {
+            return Err(RpcError::invalid_params(
+                "params.fps missing — pass a non-negative integer, or null to \
+                 clear the override (restore the default pacing policy)",
+            ));
+        }
+        Some(Value::Null) => None,
+        Some(v) => {
+            let n = v.as_u64().ok_or_else(|| {
+                RpcError::invalid_params("params.fps must be a non-negative integer or null")
+            })?;
+            Some(u32::try_from(n).map_err(|_| {
+                RpcError::invalid_params("params.fps exceeds the u32 frame-rate range")
+            })?)
+        }
+    };
     inbox.push(DeferredInput::SetTargetFps { fps });
     Ok(Value::Null)
+}
+
+/// R888 §5.49 §5.28 — `scene/pacing_state` typed handler: the READ
+/// peer of `scene/set_fps` ([[wire-form-read-write-symmetry]]).
+/// Serializes the embedder pre-resolved [`PacingState`] for the
+/// dispatch-scoped window:
+///
+/// * `{"fps": n}` — an override is installed (`0` = paused /
+///   frame-step mode).
+/// * `{"fps": null}` — no override; the adaptive default policy
+///   applies (and `scene/set_fps {"fps": null}` is the matching
+///   write).
+///
+/// Absent snapshot (backend keeps no pacing clock — the TUI's
+/// terminal repaints are event-driven — or an unknown window id) →
+/// `PacingStateUnavailable`, the `CacheStatsUnavailable` /
+/// `InputStateUnavailable` honesty parity: a bogus window must not
+/// alias onto "default policy". Read-only — `HandlerKind::Read`
+/// upstream skips the [`SceneRevision`] bump.
+fn handle_scene_pacing_state(state: Option<PacingState>) -> Result<Value, RpcError> {
+    let Some(state) = state else {
+        return Err(
+            RpcError::invalid_params("pacing state unavailable for this dispatch")
+                .with_data_string("PacingStateUnavailable"),
+        );
+    };
+    let fps = match state {
+        PacingState::DefaultPolicy => Value::Null,
+        PacingState::Override(n) => Value::Number(n.into()),
+    };
+    Ok(serde_json::json!({ "fps": fps }))
 }
 
 /// R763 §5.49 §5.39 — `scene/modifiers` handler: enqueue a

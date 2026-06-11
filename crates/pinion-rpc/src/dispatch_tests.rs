@@ -1179,7 +1179,7 @@ fn scene_set_fps_enqueues_target_fps() {
     let DeferredInput::SetTargetFps { fps } = inbox[0] else {
         panic!("expected SetTargetFps variant, got {:?}", inbox[0]);
     };
-    assert_eq!(fps, 0, "fps=0 pauses the per-window paint clock");
+    assert_eq!(fps, Some(0), "fps=0 pauses the per-window paint clock");
 }
 
 #[test]
@@ -1196,7 +1196,81 @@ fn scene_set_fps_accepts_positive_rate() {
     let DeferredInput::SetTargetFps { fps } = inbox[0] else {
         panic!("expected SetTargetFps variant, got {:?}", inbox[0]);
     };
-    assert_eq!(fps, 144);
+    assert_eq!(fps, Some(144));
+}
+
+#[test]
+fn r888_scene_set_fps_null_clears_the_override() {
+    // R888 — `{"fps": null}` enqueues the clear (restore the adaptive
+    // default policy); the boot state is wire-reachable again.
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/set_fps","params":{"fps":null},"id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let DeferredInput::SetTargetFps { fps } = inbox[0] else {
+        panic!("expected SetTargetFps variant, got {:?}", inbox[0]);
+    };
+    assert_eq!(fps, None, "null clears the override");
+}
+
+// ---- R888 §5.49 §5.28 — scene/pacing_state (READ peer of set_fps) ----
+
+#[test]
+fn r888_pacing_state_without_snapshot_is_unavailable() {
+    // No embedder pre-resolve (headless fixture / TUI: no pacing
+    // clock) -> PacingStateUnavailable, NOT a fake "default policy".
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/pacing_state","id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    let err = resp.error.expect("must error without a snapshot");
+    assert_eq!(err.code, -32602);
+    assert_eq!(
+        err.data.as_ref().and_then(Value::as_str),
+        Some("PacingStateUnavailable"),
+    );
+}
+
+#[test]
+fn r888_pacing_state_reports_default_policy_as_null_fps() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_pacing_state(PacingState::DefaultPolicy);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/pacing_state","id":7}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    assert_eq!(
+        resp.result,
+        Some(serde_json::json!({ "fps": null })),
+        "no override -> fps null (the scene/set_fps null write's mirror)",
+    );
+}
+
+#[test]
+fn r888_pacing_state_reports_override_including_paused_zero() {
+    for (state, expect) in [
+        (PacingState::Override(144), serde_json::json!({ "fps": 144 })),
+        (PacingState::Override(0), serde_json::json!({ "fps": 0 })),
+    ] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+            .with_pacing_state(state);
+        let req = r#"{"jsonrpc":"2.0","method":"scene/pacing_state","id":7}"#;
+        let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+        assert!(resp.error.is_none(), "{state:?}: {:?}", resp.error);
+        assert_eq!(resp.result, Some(expect), "{state:?}");
+    }
 }
 
 #[test]

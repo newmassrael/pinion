@@ -977,6 +977,12 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             if let Some(snapshot) = input_state_snapshot {
                 ctx = ctx.with_input_state(snapshot);
             }
+            // R888 §5.49 §5.28 — `with_pacing_state` is DELIBERATELY
+            // absent: the TUI keeps no frame-pacing clock (terminal
+            // repaints are event-driven; `SetTargetFps` drains as a
+            // wildcard no-op), so `scene/pacing_state` answers
+            // `PacingStateUnavailable` — the honest §2 #6 exposure,
+            // the `modifiers: null` precedent's whole-axis variant.
             let resp = dispatch(&mut ctx, request);
             (resp, deferred_inputs)
         };

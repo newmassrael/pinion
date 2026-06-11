@@ -52,8 +52,8 @@ pub use commands::{
     list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,
 };
 pub use dispatch::{
-    dispatch, dispatch_parsed, parse_request, ClickButton, DeferredInput, DispatchContext, DragButton, KeyWireState, Request,
-    RequestId, Response, RpcError,
+    dispatch, dispatch_parsed, parse_request, ClickButton, DeferredInput, DispatchContext, DragButton, KeyWireState, PacingState,
+    Request, RequestId, Response, RpcError,
 };
 pub use dry_run::{dry_run, DryRunError};
 pub use simulate::{simulate, SimulateError, SimulateStep};

@@ -647,7 +647,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         """
         self.request("scene/tick", {"dt": dt})
 
-    def set_fps(self, fps: int) -> None:
+    def set_fps(self, fps: Optional[int]) -> None:
         """`scene/set_fps` typed wrapper (R829 §2 #4 §5.28).
 
         Sets the addressed window's target frame rate — the §2 #4
@@ -657,9 +657,19 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         AI client frame-steps the immediate-mode game loop
         deterministically (`set_fps(0)` then `tick(dt)` advances the
         drivers by exactly `dt`). `fps=N` (re)starts the continuous loop
-        at N fps. `fps` must be a non-negative integer.
+        at N fps. `fps=None` (R888) clears the override, restoring the
+        adaptive default policy. Read back via `pacing_state()`.
         """
         self.request("scene/set_fps", {"fps": fps})
+
+    def pacing_state(self) -> Any:
+        """`scene/pacing_state` typed wrapper (R888 §5.49 §5.28): the
+        READ peer of `set_fps`. Returns the addressed window's target:
+        `{"fps": N}` (override; 0 = paused) or `{"fps": None}` (no
+        override — the adaptive default policy applies)."""
+        resp = self.request("scene/pacing_state", {})
+        assert resp is not None
+        return resp.result
 
     def double_click(
         self,

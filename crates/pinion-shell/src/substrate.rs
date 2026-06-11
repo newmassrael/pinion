@@ -767,6 +767,48 @@ impl<V: WidgetView> ShellCore<V> {
         }
     }
 
+    /// R888 §2 #4 §5.28 §5.49 — clear the per-window target-fps
+    /// override, restoring the adaptive default policy
+    /// ([`pinion_runtime::frame_pacing::default_window_frame_policy`]:
+    /// 60fps while immediate-mode content is active, idle otherwise).
+    /// The `scene/set_fps {"fps": null}` drain — pre-R888 the boot
+    /// state was unreachable once any override landed (insert-only
+    /// map), which the `scene/pacing_state` READ peer made visible.
+    /// No accumulator reset: clearing is a policy hand-back, not a
+    /// pause edge (the R831 zero-phase snap is the `fps == 0` arm's
+    /// frame-step contract).
+    pub fn clear_target_fps_for_window(&mut self, window_id: &str) {
+        self.target_fps_per_window.remove(window_id);
+    }
+
+    /// R885 / R888 §5.49 — pre-resolve the per-window out-of-band READ
+    /// axes (`scene/input_state` + `scene/pacing_state`) before
+    /// `dispatch_rpc_inner`'s split-borrow block (the
+    /// `fragment_cache_stats` pattern; extracted to respect that fn's
+    /// 100-line budget).
+    ///
+    /// One window-known gate for both: the router registry
+    /// `CoreShell::input_state_snapshot` resolves against. An unknown
+    /// window id yields `(None, None)`, surfacing
+    /// `InputStateUnavailable` / `PacingStateUnavailable` instead of
+    /// aliasing a bogus window onto "no cursor yet" / "default
+    /// policy" (the R886.1 honesty parity).
+    fn read_axis_snapshots_for_window(
+        &self,
+        window_id: Option<&str>,
+    ) -> (
+        Option<pinion_core::InputStateSnapshot>,
+        Option<pinion_rpc::PacingState>,
+    ) {
+        let wid = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        let input = self.core.input_state_snapshot(wid, Some(self.modifiers));
+        let pacing = input.as_ref().map(|_| match self.target_fps_for_window(wid) {
+            Some(fps) => pinion_rpc::PacingState::Override(fps),
+            None => pinion_rpc::PacingState::DefaultPolicy,
+        });
+        (input, pacing)
+    }
+
     /// R681 §2 #4 atomic 3 §5.16 §5.28 — read the per-window target
     /// fps override, if set. `None` means "use the default policy"
     /// (60fps when immediate-mode-active, idle otherwise — see
@@ -1790,11 +1832,16 @@ impl<V: WidgetView> ShellCore<V> {
                 // game-loop pacing policy for the addressed window;
                 // `fps == 0` pauses the continuous paint clock so the AI
                 // can frame-step the immediate-mode loop deterministically
-                // via `scene/tick`. The redraw request lets the new
-                // policy take effect (and, on un-pause, restarts the
-                // loop) on the next event-loop iteration.
+                // via `scene/tick`. R888 — `fps: null` clears the
+                // override (restores the adaptive default policy). The
+                // redraw request lets the new policy take effect (and,
+                // on un-pause, restarts the loop) on the next event-loop
+                // iteration.
                 DeferredInput::SetTargetFps { fps } => {
-                    self.set_target_fps_for_window(window_id, fps);
+                    match fps {
+                        Some(fps) => self.set_target_fps_for_window(window_id, fps),
+                        None => self.clear_target_fps_for_window(window_id),
+                    }
                     self.request_redraw_for_window(window_id);
                 }
                 // R763 §5.49 §5.39 — `scene/modifiers`: the winit
@@ -2859,16 +2906,12 @@ impl<V: WidgetView> ShellCore<V> {
         let cache_stats_for_window = self.fragment_cache_stats_for_window(
             window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW),
         );
-        // R885 §5.49 — pre-resolve the out-of-band input-state
-        // snapshot for `scene/input_state` before the split-borrow
-        // block (the `cache_stats_for_window` pattern). R886.1 — the
-        // resolution lives on `CoreShell::input_state_snapshot` (one
-        // home for both backends); `None` (unknown window) surfaces
-        // `InputStateUnavailable`, the cache-stats honesty parity.
-        let input_state_for_window = self.core.input_state_snapshot(
-            window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW),
-            Some(self.modifiers),
-        );
+        // R885 / R888 §5.49 — pre-resolve the out-of-band READ axes
+        // (`scene/input_state` + `scene/pacing_state`); see
+        // [`Self::read_axis_snapshots_for_window`] for the shared
+        // window-known gate + unavailability honesty contract.
+        let (input_state_for_window, pacing_state_for_window) =
+            self.read_axis_snapshots_for_window(window_id);
         // R684 atomic 3 §5.16 §5.41 §5.49 — record the viewport the
         // produce closure ran with so the post-dispatch finalize can
         // populate the addressed window's
@@ -3062,6 +3105,12 @@ impl<V: WidgetView> ShellCore<V> {
             // window → `InputStateUnavailable`).
             if let Some(snapshot) = input_state_for_window {
                 ctx = ctx.with_input_state(snapshot);
+            }
+            // R888 §5.49 — install the pre-resolved pacing target for
+            // `scene/pacing_state` (absent for an unknown window →
+            // `PacingStateUnavailable`).
+            if let Some(pacing) = pacing_state_for_window {
+                ctx = ctx.with_pacing_state(pacing);
             }
             let resp = dispatch_parsed(&mut ctx, request);
             (resp, deferred_inputs)

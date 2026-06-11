@@ -3398,6 +3398,53 @@ mod r682_fragment_cache_stats_substrate {
 // out-of-band input writes; each read mirrors its write shape)
 // ─────────────────────────────────────────────────────────────
 
+mod r888_pacing_state_rpc {
+    use pinion_shell::ShellCore;
+
+    use super::TestView;
+
+    fn fps_of(core: &mut ShellCore<TestView>) -> serde_json::Value {
+        let mut no_resize = |_: u32, _: u32| {};
+        let read = r#"{"jsonrpc":"2.0","method":"scene/pacing_state","id":1}"#;
+        let resp = core.dispatch_rpc(read, &mut no_resize).expect("response");
+        let body: serde_json::Value = serde_json::from_str(&resp).expect("JSON");
+        body.get("result").expect("dispatch ok").get("fps").expect("fps field").clone()
+    }
+
+    fn set_fps(core: &mut ShellCore<TestView>, fps: &str) {
+        let mut no_resize = |_: u32, _: u32| {};
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/set_fps","params":{{"fps":{fps}}},"id":2}}"#
+        );
+        let resp = core.dispatch_rpc(&req, &mut no_resize).expect("response");
+        assert!(resp.contains(r#""result":null"#), "set_fps {fps} ok: {resp}");
+    }
+
+    #[test]
+    fn r888_pacing_state_round_trips_every_set_fps_write() {
+        // R888 — read = inverse of write across the whole axis: boot
+        // (default policy) -> null; override N -> N; paused 0 -> 0;
+        // clear (null write) -> null again. Pre-R888 the axis was
+        // write-only AND the boot state was unreachable once any set
+        // landed (insert-only map).
+        let _g = super::TEST_LOCK.lock().unwrap();
+        super::reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+
+        assert_eq!(fps_of(&mut core), serde_json::Value::Null, "boot: default policy");
+        set_fps(&mut core, "30");
+        assert_eq!(fps_of(&mut core), serde_json::json!(30), "override installs");
+        set_fps(&mut core, "0");
+        assert_eq!(fps_of(&mut core), serde_json::json!(0), "paused (frame-step) reads 0");
+        set_fps(&mut core, "null");
+        assert_eq!(
+            fps_of(&mut core),
+            serde_json::Value::Null,
+            "null write clears the override (boot state wire-reachable again)",
+        );
+    }
+}
+
 mod r885_input_state_rpc {
     use pinion_shell::ShellCore;
 

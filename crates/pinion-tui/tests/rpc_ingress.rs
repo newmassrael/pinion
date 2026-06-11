@@ -332,3 +332,20 @@ fn r886_1_input_state_cursor_follows_tui_click() {
         "cursor follows the click injection: {response}",
     );
 }
+
+/// R888 §5.49 §5.28 — `scene/pacing_state` on the TUI answers
+/// `PacingStateUnavailable`: the terminal backend keeps no
+/// frame-pacing clock (repaints are event-driven; `SetTargetFps`
+/// drains as a wildcard no-op), so the READ peer must expose the
+/// whole axis as absent — NOT alias it onto "default policy" — the
+/// `modifiers: null` honesty precedent's whole-axis variant (§2 #6).
+#[test]
+fn r888_pacing_state_is_unavailable_on_the_tui() {
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    let read = r#"{"jsonrpc":"2.0","id":1,"method":"scene/pacing_state","params":{}}"#;
+    let response = core.dispatch_rpc(read).expect("read must respond");
+    assert!(
+        response.contains(r#""error""#) && response.contains("PacingStateUnavailable"),
+        "TUI has no pacing clock; the wire must say so: {response}",
+    );
+}
