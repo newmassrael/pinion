@@ -37643,6 +37643,58 @@
         "doc 로 hardening, de-pub 은 test surface 파괴)"
       ]
     },
+    "R891": {
+      "decision_summary": "R891 §5.40 editable data-grid filter fold: cross-grid GridFilter wire mirrored, typed-value match (CellValue::matches_filter), edit-while-filtered cursor re-anchor SSOT",
+      "changes_bullets": [
+        "CellValue::matches_filter typed filter-equality SSOT (value-not-label peer of sort_cmp)",
+        "DataGridExternal wire: query filter/view_len, intervene filter, invoke set_filter",
+        "cross-grid GridFilter + grid_filter_str/from_str reused as the wire-vocab SSOT",
+        "current_order gains the filter axis (grid_order_by pass closure); filter-then-sort",
+        "edit-while-filtered: reanchor_cursor + cursor_visual_pos SSOT (one impl, 3 sites)",
+        "apply_key_grid guards empty/off-view order (replaces silent unwrap_or(0) teleport)",
+        "status-bar dg_status readout (filter + view_len); WIN_H 320->348"
+      ],
+      "verification_bullets": [
+        "pinion-core r891_matches_filter green (Bool/Int/Float/Text/Choice/Color arms)",
+        "hello-data-grid 25 tests green (7 new R891: shrink/round-trip/clamp/compose/re-anchor/arrow)",
+        "workspace test -j2 exit 0; clippy --workspace --all-targets pedantic clean",
+        "r891_grid_filter_editable.py PASS (34 asserts, fresh release binary)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "multi-facet / substring filter deferred (one fixed-string facet; read-only proxy defers too)",
+        "editable-grid grouping / frozen-pane fold remain (sort R886, filter R891)",
+        "empty filtered view: hidden-row cursor has no re-anchor target until a row reappears"
+      ],
+      "publishable_decision_summary": "R891 §5.40 editable data-grid filter fold: cross-grid GridFilter wire mirrored, typed-value match (CellValue::matches_filter), edit-while-filtered cursor re-anchor SSOT",
+      "publishable_changes_bullets": [
+        "CellValue::matches_filter typed filter-equality SSOT (value-not-label peer of sort_cmp)",
+        "DataGridExternal wire: query filter/view_len, intervene filter, invoke set_filter",
+        "cross-grid GridFilter + grid_filter_str/from_str reused as the wire-vocab SSOT",
+        "current_order gains the filter axis (grid_order_by pass closure); filter-then-sort",
+        "edit-while-filtered: reanchor_cursor + cursor_visual_pos SSOT (one impl, 3 sites)",
+        "apply_key_grid guards empty/off-view order (replaces silent unwrap_or(0) teleport)",
+        "status-bar dg_status readout (filter + view_len); WIN_H 320->348"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core r891_matches_filter green (Bool/Int/Float/Text/Choice/Color arms)",
+        "hello-data-grid 25 tests green (7 new R891: shrink/round-trip/clamp/compose/re-anchor/arrow)",
+        "workspace test -j2 exit 0; clippy --workspace --all-targets pedantic clean",
+        "r891_grid_filter_editable.py PASS (34 asserts, fresh release binary)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "multi-facet / substring filter deferred (one fixed-string facet; read-only proxy defers too)",
+        "editable-grid grouping / frozen-pane fold remain (sort R886, filter R891)",
+        "empty filtered view: hidden-row cursor has no re-anchor target until a row reappears"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -145,6 +145,43 @@ impl CellValue {
         }
     }
 
+    /// R891 §5.40 — whether this cell passes an equality filter whose wire
+    /// value is `value`. The typed peer of [`sort_cmp`](Self::sort_cmp): a
+    /// filter matches by the cell's TYPED value, never its display label, so
+    /// the wire value is interpreted the way a committed edit would be — a
+    /// numeric column compares the parsed number (`"024"` matches `Int(24)`,
+    /// `"2.50"` matches `Float(2.5)`, whitespace-tolerant like
+    /// [`CellKind::parse`]), and a bool compares the canonical `"true"` /
+    /// `"false"` the AI / `edit_text` speak (not the `"On"` / `"Off"`
+    /// presentation accident the sort lesson warns of). A `Text` cell matches
+    /// the value EXACTLY (the cross-grid [`GridFilter`] "exact cell text"
+    /// contract for the one string kind); a `Choice` matches its selected
+    /// option label; a `Color` matches a parsed `#RRGGBB[AA]` hex (so case /
+    /// shorthand fold). An unparseable numeric / colour value matches
+    /// nothing (`"Count=abc"` keeps no rows) — the honest equality result.
+    ///
+    /// The match SEMANTICS are this consumer's policy, not the wire vocab:
+    /// the read-only [`GridSortState`](crate::widgets::grid_sort::GridSortState)
+    /// matches its `String` cells with raw text equality, while the typed grid
+    /// matches by value here — the same R778 family ruling sort follows (the
+    /// shared part is the [`GridFilter`] wire form, not the comparison).
+    ///
+    /// [`GridFilter`]: crate::widgets::grid_sort::GridFilter
+    #[must_use]
+    pub fn matches_filter(&self, value: &str) -> bool {
+        match self {
+            CellValue::Bool(b) => value.trim().parse::<bool>().is_ok_and(|v| v == *b),
+            CellValue::Int(i) => value.trim().parse::<i64>().is_ok_and(|v| v == *i),
+            CellValue::Float(f) => value
+                .trim()
+                .parse::<f64>()
+                .is_ok_and(|v| v.total_cmp(f) == core::cmp::Ordering::Equal),
+            CellValue::Text(s) => s == value,
+            CellValue::Choice { selected, options } => selected_label(*selected, options) == value,
+            CellValue::Color(c) => Color::from_hex(value.trim()).is_some_and(|v| v == *c),
+        }
+    }
+
     /// The text the inline editor is seeded with when the cell enters edit
     /// mode (the round-trip inverse of [`CellKind::parse`]). A `Choice` is
     /// popup-edited, not text-edited, so this is unused for it — it returns
@@ -553,5 +590,34 @@ mod tests {
             CellValue::Text("9".into()).sort_cmp(&CellValue::Text("12".into())),
             Ordering::Less,
         );
+    }
+
+    #[test]
+    fn r891_matches_filter_compares_by_type_not_display() {
+        // Bool filters by the canonical "true"/"false" (the AI / edit_text
+        // vocab), NOT the "On"/"Off" display label.
+        assert!(CellValue::Bool(true).matches_filter("true"));
+        assert!(CellValue::Bool(false).matches_filter("false"));
+        assert!(!CellValue::Bool(true).matches_filter("On"), "not the display label");
+        assert!(!CellValue::Bool(true).matches_filter("false"));
+        // Int compares the parsed number: whitespace + leading zeros fold.
+        assert!(CellValue::Int(24).matches_filter("24"));
+        assert!(CellValue::Int(24).matches_filter(" 024 "), "parsed, not literal text");
+        assert!(!CellValue::Int(24).matches_filter("25"));
+        assert!(!CellValue::Int(24).matches_filter("abc"), "unparseable matches nothing");
+        // Float compares totally; trailing-zero forms fold.
+        assert!(CellValue::Float(2.5).matches_filter("2.50"));
+        assert!(!CellValue::Float(2.5).matches_filter("2.6"));
+        // Text matches exactly (the cross-grid GridFilter contract).
+        assert!(CellValue::Text("mesh".into()).matches_filter("mesh"));
+        assert!(!CellValue::Text("mesh".into()).matches_filter("Mesh"), "exact, case-sensitive");
+        assert!(!CellValue::Text("mesh".into()).matches_filter("me"), "not a substring match");
+        // Choice matches the selected label; Color matches a parsed hex.
+        let choice = CellValue::Choice { selected: 1, options: vec!["a".into(), "b".into()] };
+        assert!(choice.matches_filter("b"));
+        assert!(!choice.matches_filter("a"));
+        let color = CellValue::Color(Color::rgb(255, 128, 0));
+        assert!(color.matches_filter("#FF8000"), "hex parse folds case");
+        assert!(!color.matches_filter("#000000"));
     }
 }

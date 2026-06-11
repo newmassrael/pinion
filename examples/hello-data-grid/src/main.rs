@@ -75,13 +75,39 @@
 //! R778 family ruling the shared parts are exactly the free-fn SSOT +
 //! wire vocabulary, not the coordinator struct.
 //!
+//! ## Column filter (R891 — the editable fold of the filter axis)
+//!
+//! An AI-first column filter (no clickable chip — driven by `invoke
+//! "set_filter" "<col>=<value>"`, exactly as `hello-grid-filter` /
+//! `hello-virtual-sort` drive theirs) shrinks the painted rows to the
+//! matching set, composing orthogonally with the sort (filter-then-sort
+//! through the same [`grid_order_by`] permutation SSOT). The wire speaks the
+//! cross-grid [`grid_filter_str`] vocabulary (`query "filter"` /
+//! `intervene "filter"` / `invoke "set_filter"` returning the new `view_len`
+//! / `query "view_len"`), so an AI client reads and restores the whole filter
+//! in one round-trip — read/write symmetric with the read-only proxies.
+//!
+//! Because the typed model is the SSOT, the match is by the cell's typed
+//! VALUE through [`CellValue::matches_filter`] (the value-not-label peer of
+//! `sort_cmp`), not its display string. **Edit-while-filtered** is the
+//! fold's payoff invariant (Excel / Qt `QSortFilterProxyModel`): every grid
+//! state stays SOURCE-keyed, so committing an edit that flips a row out of
+//! the filter drops the row on the next paint AND re-anchors the now-hidden
+//! source-keyed cursor to the visible row that takes its screen slot (the one
+//! [`reanchor_cursor`] SSOT, shared by the `set_filter` / `intervene` writes
+//! and the keyboard commit) — never the silent navigation teleport the R886
+//! sort fold left as a documented note.
+//!
 //! ## Known gaps (honest carry, shared with R836)
 //!
 //! - Native checkbox / textbox cell roles (per-cell a11y role) — additive.
 //! - Per-column validation / clamp ranges — additive.
-//! - Column filter / grouping / frozen panes on the *editable* grid —
-//!   remaining fold rounds (sort landed R886; the read-only catalog has
-//!   filter / grouping / frozen as separate substrate).
+//! - Multi-facet / substring column filter — one fixed-string column facet
+//!   here (the cross-grid `GridFilter` shape); multi-facet is a later
+//!   additive axis, exactly as the read-only `GridSortState` filter defers it.
+//! - Column grouping / frozen panes on the *editable* grid — remaining fold
+//!   rounds (sort landed R886, filter R891; the read-only catalog has
+//!   grouping / frozen as separate substrate).
 
 use std::rc::Rc;
 
@@ -103,7 +129,10 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
-use pinion_core::widgets::grid_sort::{col_sort_dir, grid_sort_from_str, grid_sort_str};
+use pinion_core::widgets::grid_sort::{
+    col_sort_dir, grid_filter_from_str, grid_filter_str, grid_sort_from_str, grid_sort_str,
+    GridFilter,
+};
 use pinion_core::widgets::table::{cycle_col_sort, grid_order_by};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
@@ -121,7 +150,7 @@ vello_renderer_impl!(HelloDataGridRenderer, HelloDataGridRendererError);
 // ─── window + layout constants ─────────────────────────────────────
 
 const WIN_W: u32 = 460;
-const WIN_H: u32 = 320;
+const WIN_H: u32 = 348;
 const THEME_TAG: &str = "app";
 
 const TITLE_PX: u32 = 22;
@@ -173,24 +202,37 @@ fn idx(row: usize, col: usize) -> usize {
 
 // ─── column sort (R886 — the editable fold of the sort axis) ──────
 
-/// R886 §5.40 — the visual → source row permutation for the live typed
-/// model. The editable grid's peer of [`GridSortState::order`]: that proxy
-/// owns a *static* materialized `String` dataset (its read-only consumers
-/// never mutate), while here the typed [`Signal`] model IS the SSOT and a
-/// committed edit must re-order the very next paint — so the order derives
-/// from the live model on read, through the [`grid_order_by`] permutation
-/// SSOT with the typed [`CellValue::sort_cmp`] comparator (R886.1 — the
-/// typed model sorts by its VALUES: `Bool` semantically, `Int` exactly,
-/// `Float` totally, `Text` via the numeric-aware `cell_cmp` string SSOT;
-/// stringifying first would tie the order to display labels). At
-/// `NROWS = 4` the permutation is recomputed per read; the memoized
-/// coordinator remains the scale path (`hello-grid-sort`, 10 000 rows).
-fn current_order(model: &[CellValue], sort: Option<(usize, bool)>) -> Vec<usize> {
+/// R886 / R891 §5.40 — the visual → source row permutation for the live
+/// typed model. The editable grid's peer of [`GridSortState::order`]: that
+/// proxy owns a *static* materialized `String` dataset (its read-only
+/// consumers never mutate), while here the typed [`Signal`] model IS the SSOT
+/// and a committed edit must re-order / re-filter the very next paint — so the
+/// order derives from the live model on read, through the [`grid_order_by`]
+/// permutation SSOT (filter-then-sort) with the typed [`CellValue::sort_cmp`]
+/// comparator (R886.1 — the typed model sorts by its VALUES: `Bool`
+/// semantically, `Int` exactly, `Float` totally, `Text` via the numeric-aware
+/// `cell_cmp` string SSOT; stringifying first would tie the order to display
+/// labels). R891 — the `filter` axis (the cross-grid [`GridFilter`] column
+/// facet) shrinks the row set FIRST, through the typed
+/// [`CellValue::matches_filter`] equality (the value-not-label peer of
+/// `sort_cmp`); a `None` filter passes every row (bit-identical to the
+/// pre-R891 `|_| true`). At `NROWS = 4` the permutation is recomputed per
+/// read; the memoized coordinator remains the scale path (`hello-grid-sort`,
+/// 10 000 rows).
+fn current_order(
+    model: &[CellValue],
+    sort: Option<(usize, bool)>,
+    filter: Option<&GridFilter>,
+) -> Vec<usize> {
     grid_order_by(
         NROWS,
         sort,
         |col, a, b| model[idx(a, col)].sort_cmp(&model[idx(b, col)]),
-        |_| true,
+        |row| {
+            filter.is_none_or(|f| {
+                model.get(idx(row, f.col)).is_some_and(|c| c.matches_filter(&f.value))
+            })
+        },
     )
 }
 
@@ -249,6 +291,61 @@ fn use_sort() -> Rc<Signal<Option<(usize, bool)>>> {
     owner.cache("data_grid.sort", || Signal::new(None))
 }
 
+/// R891 — active column filter `(col, value)`, `None` = unfiltered. A SOURCE-
+/// keyed axis exactly like [`use_sort`]: the view + a11y tree subscribe by
+/// reading it, so an `set_filter` shrinks the painted rows on the next paint
+/// like a sort cycle re-orders them. The cross-grid [`GridFilter`] facet
+/// (`hello-grid-filter` / `hello-virtual-sort` speak the same wire vocab).
+#[must_use]
+fn use_filter() -> Rc<Signal<Option<GridFilter>>> {
+    let owner = Owner::current().expect("use_filter requires an active Owner scope");
+    owner.cache("data_grid.filter", || Signal::new(None))
+}
+
+// ─── cursor re-anchor (the R891 edit-while-filtered SSOT) ─────────
+
+/// R891 — the cursor's visual position in the current `(sort, filter)` order,
+/// captured BEFORE a filter / edit mutation so [`reanchor_cursor`] can land
+/// the cursor on the row that takes its screen slot. `0` when the cursor is
+/// somehow already off-view (callers re-anchor explicitly regardless).
+fn cursor_visual_pos(
+    model: &Signal<Vec<CellValue>>,
+    sort: &Signal<Option<(usize, bool)>>,
+    filter: &Signal<Option<GridFilter>>,
+    cursor: &Signal<usize>,
+) -> usize {
+    let order = current_order(&model.get(), sort.get(), filter.get().as_ref());
+    let src = cursor.get();
+    order.iter().position(|&s| s == src).unwrap_or(0)
+}
+
+/// R891 — re-anchor the SOURCE-keyed cursor into the filtered+sorted view
+/// after a filter change or an edit filtered its row out (the R886.1 note
+/// made good: an EXPLICIT re-anchor, never the silent `position().unwrap_or(0)`
+/// teleport the navigation once relied on). A no-op when the cursor's row
+/// still passes (still visible); else the cursor lands on the visible row now
+/// at its prior visual slot `prior_vis` (clamped — Excel / Qt keep the
+/// selection at its screen position); a no-op when the view is now empty (no
+/// visible row to land on — the grid shows no active cell until a row
+/// reappears). The single SSOT both the coordinator's `set_filter` /
+/// `intervene` and the owner-scoped `commit_edit` call (one re-anchor policy,
+/// not a per-call-site copy).
+fn reanchor_cursor(
+    model: &Signal<Vec<CellValue>>,
+    sort: &Signal<Option<(usize, bool)>>,
+    filter: &Signal<Option<GridFilter>>,
+    cursor: &Signal<usize>,
+    prior_vis: usize,
+) {
+    let order = current_order(&model.get(), sort.get(), filter.get().as_ref());
+    if order.contains(&cursor.get()) {
+        return;
+    }
+    if let Some(&row) = order.get(prior_vis.min(order.len().saturating_sub(1))) {
+        cursor.set(row);
+    }
+}
+
 // ─── grid coordinator External ────────────────────────────────────
 
 /// The data-grid coordinator. Holds `Rc` clones of the reactive holders
@@ -263,6 +360,8 @@ struct DataGridExternal {
     editor: Rc<TextEditState>,
     /// R886 — the shared column-sort signal (`use_sort`).
     sort: Rc<Signal<Option<(usize, bool)>>>,
+    /// R891 — the shared column-filter signal (`use_filter`).
+    filter: Rc<Signal<Option<GridFilter>>>,
 }
 
 impl DataGridExternal {
@@ -273,8 +372,29 @@ impl DataGridExternal {
         editing_cell: Rc<Signal<Option<(usize, usize)>>>,
         editor: Rc<TextEditState>,
         sort: Rc<Signal<Option<(usize, bool)>>>,
+        filter: Rc<Signal<Option<GridFilter>>>,
     ) -> Self {
-        Self { model, focused_row, focused_col, editing_cell, editor, sort }
+        Self { model, focused_row, focused_col, editing_cell, editor, sort, filter }
+    }
+
+    /// R891 — rows passing the active filter (`NROWS` when unfiltered), the
+    /// derived view length the AI-first `set_filter` reports in one round-trip.
+    fn view_len(&self) -> usize {
+        current_order(&self.model.get(), self.sort.get(), self.filter.get().as_ref()).len()
+    }
+
+    /// R891 — apply a column filter (`None` clears) and re-anchor the cursor
+    /// into the resulting view. An out-of-range column clamps to unfiltered
+    /// (mirrors [`GridSortState::set_filter`]). Returns the resulting
+    /// [`view_len`](Self::view_len). The one mutation path the wire's
+    /// `intervene "filter"` and `invoke "set_filter"` share.
+    fn set_filter(&self, filter: Option<GridFilter>) -> usize {
+        let filter = filter.filter(|f| f.col < NCOLS);
+        let prior_vis =
+            cursor_visual_pos(&self.model, &self.sort, &self.filter, &self.focused_row);
+        self.filter.set(filter);
+        reanchor_cursor(&self.model, &self.sort, &self.filter, &self.focused_row, prior_vis);
+        self.view_len()
     }
 
     /// Toggle the bool at `(row, col)`; no-op (returns `false`) unless the
@@ -330,6 +450,7 @@ impl core::fmt::Debug for DataGridExternal {
             .field("focused_col", &self.focused_col.get())
             .field("editing_cell", &self.editing_cell.get())
             .field("sort", &self.sort.get())
+            .field("filter", &self.filter.get())
             .finish_non_exhaustive()
     }
 }
@@ -369,11 +490,14 @@ impl ExternalIntrospect for DataGridExternal {
             ("col_kind.<col>", "string"),
             ("value.<row>.<col>", "json"),
             ("sort", "string"),
+            ("filter", "string"),
+            ("view_len", "int"),
             ("source_at.<pos>", "int"),
             ("send", "string"),
             ("toggle", "json"),
             ("begin", "json"),
             ("cycle_sort", "json"),
+            ("set_filter", "string"),
         ])
     }
 
@@ -395,6 +519,15 @@ impl ExternalIntrospect for DataGridExternal {
             // vocabulary ("<col>:asc" / "<col>:desc" / "" = unsorted),
             // byte-identical to the read-only sort proxies.
             "sort" => Some(IntrospectValue::Text(grid_sort_str(self.sort.get()))),
+            // R891 — the cross-grid `grid_filter_str` vocabulary
+            // ("none" / "<col>=<value>"), byte-identical to the read-only
+            // `GridSortExternal` filter facet.
+            "filter" => {
+                Some(IntrospectValue::Text(grid_filter_str(self.filter.get().as_ref())))
+            }
+            // R891 — rows passing the active filter (the read side of the
+            // `set_filter` outcome; `NROWS` when unfiltered).
+            "view_len" => Some(IntrospectValue::Int(int_of(self.view_len()))),
             _ => {
                 // R886 — `source_at.<pos>`: the source row painted at
                 // visual position `pos` under the active sort (identity
@@ -405,7 +538,7 @@ impl ExternalIntrospect for DataGridExternal {
                     // (present-but-empty), never absence — the family
                     // contract every sort proxy speaks.
                     let model = self.model.get();
-                    let order = current_order(&model, self.sort.get());
+                    let order = current_order(&model, self.sort.get(), self.filter.get().as_ref());
                     return Some(pinion_core::widgets::order_memo::source_at_value(
                         pos_str,
                         |p| order.get(p).copied(),
@@ -433,7 +566,7 @@ impl ExternalIntrospect for DataGridExternal {
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
-            "row_count" | "col_count" | "editing_row" | "editing_col" => {
+            "row_count" | "col_count" | "editing_row" | "editing_col" | "view_len" => {
                 Err(InterveneError::ReadOnly)
             }
             "focused_row" => match value {
@@ -464,6 +597,22 @@ impl ExternalIntrospect for DataGridExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
+            // R891 — admin / restore write of the column filter, in the same
+            // `grid_filter_from_str` vocabulary `query "filter"` emits
+            // (decode = inverse of encode); `Null` clears. The cursor
+            // re-anchors into the new view (`set_filter` SSOT), mirroring
+            // `GridSortExternal`'s `intervene "filter"`.
+            "filter" => match value {
+                IntrospectValue::Text(ref s) => {
+                    self.set_filter(grid_filter_from_str(s));
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.set_filter(None);
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
             _ => {
                 let Some(rest) = path.strip_prefix("value.") else {
                     return Err(InterveneError::UnknownPath);
@@ -476,11 +625,18 @@ impl ExternalIntrospect for DataGridExternal {
                     return Err(InterveneError::UnknownPath);
                 }
                 let new_value = COL_KINDS[col].coerce(value)?;
+                // R891 — a typed-set that flips the cursor's row out of an
+                // active filter re-anchors the cursor (no-op when the write
+                // leaves the cursor's row visible), so the AI write path keeps
+                // the same cursor-stays-visible invariant the edit commit does.
+                let prior_vis =
+                    cursor_visual_pos(&self.model, &self.sort, &self.filter, &self.focused_row);
                 self.model.set_with(move |prev| {
                     let mut next = prev.clone();
                     next[idx(row, col)] = new_value.clone();
                     next
                 });
+                reanchor_cursor(&self.model, &self.sort, &self.filter, &self.focused_row, prior_vis);
                 Ok(())
             }
         }
@@ -560,6 +716,19 @@ impl ExternalIntrospect for DataGridExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R891 — the AI-first column filter: a `"<col>=<value>"` payload
+            // filters, `Null` clears. Returns the resulting `view_len` (rows
+            // passing the filter) in one round-trip, byte-identical to
+            // `GridSortExternal::set_filter`. The cursor re-anchors into the
+            // new view inside `Self::set_filter`.
+            "set_filter" => {
+                let view_len = match args {
+                    IntrospectValue::Text(ref s) => self.set_filter(grid_filter_from_str(s)),
+                    IntrospectValue::Null => self.set_filter(None),
+                    _ => return Err(InvokeError::TypeMismatch),
+                };
+                Ok(IntrospectValue::Int(int_of(view_len)))
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -576,7 +745,15 @@ fn commit_edit(restore_focus: bool) {
         return;
     };
     let model = use_data_model();
+    let sort = use_sort();
+    let filter = use_filter();
+    let cursor = use_focused_row();
     let text = use_text_edit_state(EDIT_TF_TAG).text();
+    // R891 — capture the edited row's visual slot BEFORE the write so a
+    // commit that filters the row out can re-anchor the cursor to the row
+    // that takes its screen position (the cursor IS the edited row — editing
+    // never moves the grid cursor).
+    let prior_vis = cursor_visual_pos(&model, &sort, &filter, &cursor);
     if col < NCOLS {
         if let Some(parsed) = COL_KINDS[col].parse(&text) {
             model.set_with(move |prev| {
@@ -587,6 +764,9 @@ fn commit_edit(restore_focus: bool) {
         }
     }
     end_edit_mode(restore_focus);
+    // R891 — if the committed value flipped the row out of an active filter,
+    // re-anchor the now-hidden cursor (no-op when the row still passes).
+    reanchor_cursor(&model, &sort, &filter, &cursor, prior_vis);
 }
 
 fn cancel_edit() {
@@ -614,26 +794,31 @@ fn editing_col_kind() -> Option<CellKind> {
 fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
     let row_sig = use_focused_row();
     let col_sig = use_focused_col();
-    let row = row_sig.get().min(NROWS - 1);
     let col = col_sig.get().min(NCOLS - 1);
-    // R886 — vertical navigation walks the sorted VISUAL sequence while the
-    // cursor itself stays SOURCE-keyed: resolve the cursor's visual position
-    // in the current order, step there, store the source row found at the
-    // destination. Identity mapping when unsorted (the pre-R886 behaviour,
-    // bit-identical).
-    let order = current_order(&use_data_model().get(), use_sort().get());
-    // `position` cannot miss today (the pass filter is `|_| true`, the
-    // cursor pre-clamped); when the filter fold lands, a filtered-out
-    // cursor must be re-anchored EXPLICITLY — the 0 fallback would
-    // silently teleport it to the visual top (R886.1 note).
-    let vis = order.iter().position(|&s| s == row).unwrap_or(0);
     match key {
-        "ArrowDown" => {
-            row_sig.set(order[(vis + 1).min(order.len() - 1)]);
-            true
-        }
-        "ArrowUp" => {
-            row_sig.set(order[vis.saturating_sub(1)]);
+        // R886 / R891 — vertical navigation walks the filtered+sorted VISUAL
+        // sequence while the cursor itself stays SOURCE-keyed: resolve the
+        // cursor's visual position in the current order, step there, store the
+        // source row found at the destination. Identity mapping when unsorted
+        // + unfiltered (the pre-R886 behaviour, bit-identical). R891 — the
+        // cursor is kept visible by the re-anchor invariant, so its visual
+        // position is present; a cursor off the view (defensive) or an empty
+        // view (a filter excluded every row) has no row to step to, so the
+        // vertical arms no-op rather than the old silent `unwrap_or(0)`
+        // teleport (the R886.1 note made good).
+        "ArrowDown" | "ArrowUp" => {
+            let order =
+                current_order(&use_data_model().get(), use_sort().get(), use_filter().get().as_ref());
+            let row = row_sig.get().min(NROWS - 1);
+            let Some(vis) = order.iter().position(|&s| s == row) else {
+                return false;
+            };
+            let dest = if key == "ArrowDown" {
+                (vis + 1).min(order.len() - 1)
+            } else {
+                vis.saturating_sub(1)
+            };
+            row_sig.set(order[dest]);
             true
         }
         "ArrowRight" => {
@@ -809,12 +994,14 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let focused_row = use_focused_row().get();
     let focused_col = use_focused_col().get();
     let editing = use_editing_cell().get();
-    // R886 — paint rows in the sorted visual order; every cell keeps its
-    // SOURCE identity (tags, cursor, edit latch), so a committed edit that
-    // changes the sort key visibly moves its row on this very repaint while
-    // the cursor and any in-flight editor follow the source row.
+    // R886 / R891 — paint rows in the filtered+sorted visual order; every
+    // cell keeps its SOURCE identity (tags, cursor, edit latch), so a
+    // committed edit that changes the sort key visibly moves its row — or a
+    // filter facet drops it — on this very repaint while the cursor and any
+    // in-flight editor follow the source row.
     let sort = use_sort().get();
-    let order = current_order(&model, sort);
+    let filter = use_filter().get();
+    let order = current_order(&model, sort, filter.as_ref());
 
     let title = Scene::Text(TextNode::styled(
         "Asset table",
@@ -860,15 +1047,34 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             ),
     );
 
+    // R891 — a scene-as-data readout of the active filter + resulting view
+    // size (`filter 1=mesh \u{00B7} showing 2 of 4`), the witness that the
+    // row set shrank — the `hello-grid-filter` status-bar pattern at the
+    // editable grid's scale. Tagged for AI-first introspection.
+    let status = Scene::Text(
+        TextNode::styled(
+            format!(
+                "filter {} \u{00B7} showing {} of {NROWS}",
+                grid_filter_str(filter.as_ref()),
+                order.len(),
+            ),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(HEADER_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        )
+        .with_tag("dg_status"),
+    );
+
     Scene::Container(
-        ContainerNode::new(vec![title, grid])
+        ContainerNode::new(vec![title, status, grid])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Start)
                     .with_padding(Rect::new(PANEL_PAD, PANEL_PAD, PANEL_PAD, PANEL_PAD))
-                    .with_gap(ROW_GAP * 12)
+                    .with_gap(ROW_GAP * 8)
                     .with_size(Size::px(WIN_W, WIN_H)),
             ),
     )
@@ -893,7 +1099,10 @@ impl WidgetCore for DataGridView {
         let editing = use_editing_cell();
         let editor = use_text_edit_state(EDIT_TF_TAG);
         let sort = use_sort();
-        Box::new(DataGridExternal::new(model, focused_row, focused_col, editing, editor, sort))
+        let filter = use_filter();
+        Box::new(DataGridExternal::new(
+            model, focused_row, focused_col, editing, editor, sort, filter,
+        ))
     }
 
     fn tag() -> &'static str {
@@ -986,9 +1195,11 @@ impl WidgetA11y for DataGridView {
         let focused_col = use_focused_col().get();
         // R886 — the active column announces `aria-sort` (WAI-ARIA 1.2
         // §6.6.2) and the rows are emitted in the sorted visual order, so
-        // AT linear navigation matches what sighted users see.
+        // AT linear navigation matches what sighted users see. R891 — the
+        // rows are also filtered, so AT sees exactly the visible set (the
+        // grid `row` count tracks the filtered `view_len`).
         let sort = use_sort().get();
-        let order = current_order(&model, sort);
+        let order = current_order(&model, sort, use_filter().get().as_ref());
         let columns: Vec<GridColumn> = COL_NAMES
             .iter()
             .enumerate()
@@ -1410,6 +1621,172 @@ mod tests {
                 .map(|n| n.tag.as_str())
                 .collect();
             assert_eq!(row_tags, ["dg_row0", "dg_row3", "dg_row1", "dg_row2"]);
+        });
+    }
+
+    // ─── R891 — the editable fold of the filter axis ─────────────────
+
+    // Type column (col 1) source values: sprite, mesh, sprite, mesh.
+    // `set_filter "1=mesh"` keeps rows 1 (Tree) and 3 (Boss).
+
+    #[test]
+    fn r891_set_filter_shrinks_view_and_reports_view_len() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert_eq!(intro.query("view_len"), Some(IntrospectValue::Int(4)), "unfiltered = NROWS");
+            assert_eq!(intro.query("filter"), Some(IntrospectValue::Text("none".to_owned())));
+            // set_filter returns the new view_len in one round-trip.
+            assert_eq!(
+                intro.invoke("set_filter", IntrospectValue::Text("1=mesh".to_owned())),
+                Ok(IntrospectValue::Int(2)),
+                "two rows carry Type=mesh",
+            );
+            assert_eq!(intro.query("view_len"), Some(IntrospectValue::Int(2)));
+            assert_eq!(intro.query("filter"), Some(IntrospectValue::Text("1=mesh".to_owned())));
+            // The view holds only the matching source rows, in source order.
+            assert_eq!(intro.query("source_at.0"), Some(IntrospectValue::Int(1)), "Tree");
+            assert_eq!(intro.query("source_at.1"), Some(IntrospectValue::Int(3)), "Boss");
+            assert_eq!(intro.query("source_at.2"), Some(IntrospectValue::Null), "view shrank");
+            // Clearing restores the full grid.
+            assert_eq!(
+                intro.invoke("set_filter", IntrospectValue::Null),
+                Ok(IntrospectValue::Int(4)),
+            );
+            assert_eq!(intro.query("filter"), Some(IntrospectValue::Text("none".to_owned())));
+        });
+    }
+
+    #[test]
+    fn r891_filter_wire_round_trips_read_write() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // intervene decode = inverse of query encode (the cross-grid vocab).
+            assert_eq!(intro.intervene("filter", IntrospectValue::Text("1=sprite".to_owned())), Ok(()));
+            assert_eq!(intro.query("filter"), Some(IntrospectValue::Text("1=sprite".to_owned())));
+            assert_eq!(intro.query("view_len"), Some(IntrospectValue::Int(2)), "Hero + Coin");
+            // Null clears (the header-less filter axis).
+            assert_eq!(intro.intervene("filter", IntrospectValue::Null), Ok(()));
+            assert_eq!(intro.query("filter"), Some(IntrospectValue::Text("none".to_owned())));
+            // view_len is read-only; a non-text/non-null filter is a mismatch.
+            assert_eq!(intro.intervene("view_len", IntrospectValue::Int(1)), Err(InterveneError::ReadOnly));
+            assert_eq!(
+                intro.intervene("filter", IntrospectValue::Int(1)),
+                Err(InterveneError::TypeMismatch),
+            );
+        });
+    }
+
+    #[test]
+    fn r891_set_filter_clamps_out_of_range_col() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // An out-of-range column clamps to unfiltered (GridSortState mirror).
+            assert_eq!(
+                intro.invoke("set_filter", IntrospectValue::Text("9=x".to_owned())),
+                Ok(IntrospectValue::Int(4)),
+            );
+            assert_eq!(intro.query("filter"), Some(IntrospectValue::Text("none".to_owned())));
+        });
+    }
+
+    #[test]
+    fn r891_filter_composes_with_sort() {
+        // filter Type=mesh keeps Tree (Count 24) + Boss (Count 1); sorting
+        // Count ascending orders the survivors [3 (Boss, 1), 1 (Tree, 24)].
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            let _ = intro.invoke("set_filter", IntrospectValue::Text("1=mesh".to_owned()));
+            let _ = intro.invoke("cycle_sort", IntrospectValue::Int(2)); // Count asc
+            assert_eq!(intro.query("view_len"), Some(IntrospectValue::Int(2)), "filter survives sort");
+            assert_eq!(intro.query("source_at.0"), Some(IntrospectValue::Int(3)), "Boss (1) first");
+            assert_eq!(intro.query("source_at.1"), Some(IntrospectValue::Int(1)), "Tree (24) second");
+        });
+    }
+
+    #[test]
+    fn r891_filter_change_reanchors_filtered_out_cursor() {
+        // Cursor on row 0 (Hero, Type=sprite); applying Type=mesh excludes it,
+        // so the cursor re-anchors to the visible row at its prior visual slot
+        // (Tree, source row 1) — never the silent teleport the sort fold noted.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            let _ = intro.intervene("focused_row", IntrospectValue::Int(0));
+            let _ = intro.invoke("set_filter", IntrospectValue::Text("1=mesh".to_owned()));
+            assert_eq!(
+                intro.query("focused_row"),
+                Some(IntrospectValue::Int(1)),
+                "cursor re-anchored from hidden row 0 to visible row 1",
+            );
+        });
+    }
+
+    #[test]
+    fn r891_edit_filters_row_out_reanchors_cursor() {
+        // The fold's payoff invariant: with Type=mesh active (Tree, Boss),
+        // editing Tree's Type to "sprite" drops Tree from the view on the same
+        // commit, and the source-keyed cursor re-anchors to the row that takes
+        // its screen slot (Boss) — Excel / Qt QSortFilterProxyModel behaviour.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("set_filter", IntrospectValue::Text("1=mesh".to_owned()));
+                let _ = intro.intervene("focused_row", IntrospectValue::Int(1)); // Tree
+                let _ = intro.intervene("focused_col", IntrospectValue::Int(1)); // Type
+                assert_eq!(intro.invoke("begin", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+            }
+            use_text_edit_state(EDIT_TF_TAG).set_text("sprite".to_owned());
+            commit_edit(true);
+            let intro = grid_intro(&scene);
+            assert_eq!(
+                intro.query("value.1.1"),
+                Some(IntrospectValue::Text("sprite".to_owned())),
+                "source write landed",
+            );
+            assert_eq!(intro.query("view_len"), Some(IntrospectValue::Int(1)), "Tree dropped from view");
+            assert_eq!(intro.query("source_at.0"), Some(IntrospectValue::Int(3)), "only Boss remains");
+            assert_eq!(
+                intro.query("focused_row"),
+                Some(IntrospectValue::Int(3)),
+                "cursor re-anchored from the filtered-out row to Boss",
+            );
+        });
+    }
+
+    #[test]
+    fn r891_arrow_nav_skips_filtered_rows() {
+        // Type=sprite keeps Hero (0) + Coin (2); ArrowDown/Up walk only the
+        // visible pair, clamping at the ends.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("set_filter", IntrospectValue::Text("1=sprite".to_owned()));
+                let _ = intro.intervene("focused_row", IntrospectValue::Int(0));
+            }
+            let m = Modifiers::empty();
+            assert!(DataGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", m));
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(2)), "Coin");
+            assert!(DataGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", m));
+            assert_eq!(
+                grid_intro(&scene).query("focused_row"),
+                Some(IntrospectValue::Int(2)),
+                "clamps at the last visible row",
+            );
+            assert!(DataGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowUp", m));
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(0)), "back to Hero");
         });
     }
 }
