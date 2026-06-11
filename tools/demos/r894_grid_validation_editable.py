@@ -1,25 +1,29 @@
 #!/usr/bin/env python3
 """R894 §5.40 — per-column validation (clamp) on the EDITABLE data grid.
 
-Drives `hello-data-grid` via JSON-RPC. Each numeric column carries an optional
+Drives `hello-data-grid` via JSON-RPC. A numeric column MAY carry an optional
 range; a committed (keyboard) or programmatic (AI) value outside it is CLAMPED
 to the nearest bound through one `clamp_for_col` gate, so neither path can
 store an out-of-range value (the bounded-spinbox / property-inspector
 contract). The constraint is AI-readable (`query col_range.<col>`), and the
 clamp surfaces as the read-back value (setter-returns-read-outcome).
 
-Ranges: Count (col 2, Int) = 0..1000; Scale (col 3, Float) = 0..10;
-Asset / Type / Active are unbounded.
+Only a column with a domain-true bound carries a range: Count (col 2, Int) =
+0..1000 (an instance count cannot go negative). Scale (col 3, Float) is a
+transform multiplier with no natural bound (negative = mirror, large = big
+object), so it is UNBOUNDED — a value passes through verbatim, including the
+negative -2.5 the R837 demo writes (R895.1 removed an invented Scale bound
+that had silently corrupted that write). Asset / Type / Active are unbounded.
 
-Scope (exact count = 30 checks):
+Scope (exact count = 24 checks):
   (A) the ranges are AI-readable                        [4]
-  (B) intervene (AI write) clamps to the range          [5]
-  (C) in-range values pass through unchanged            [2]
-  (D) an unbounded column is verbatim                   [1]
+  (B) intervene (AI write) clamps the bounded column    [3]
+  (C) an in-range value passes through unchanged        [1]
+  (D) unbounded columns are verbatim (incl. negative)   [3]
   (E) a keyboard commit clamps the same way             [2]
-  (F) clamp composes with sort (clamped value sorts)    [2]
+  (F) clamp composes with sort (clamped value sorts)    [3]
   (G) the clamped value is what the grid paints         [2]
-  (H) re-read sweep confirms every cell within bounds   [12]
+  (H) re-read sweep confirms Count within its bounds    [6]
 """
 
 from __future__ import annotations
@@ -72,33 +76,32 @@ def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
         # ── (A) the column ranges are AI-readable ───────────────────
         assert_eq(tf.query("/external/col_range.2"), "0..1000", "Count range")
-        assert_eq(tf.query("/external/col_range.3"), "0..10", "Scale range")
+        assert_eq(tf.query("/external/col_range.3"), "none", "Scale unbounded")
         assert_eq(tf.query("/external/col_range.0"), "none", "Asset unbounded")
         assert_eq(tf.query("/external/col_range.4"), "none", "Active unbounded")
         # (an out-of-range column is an UnknownPath over the wire; the Rust
         # `None` -> error mapping is covered by the r894_col_range unit test.)
 
-        # ── (B) intervene (AI write) clamps to the range ────────────
+        # ── (B) intervene (AI write) clamps the bounded column ──────
         tf.request("scene/intervene", {"path": "/external/value.0.2", "value": 5000})
         assert_eq(tf.query("/external/value.0.2"), 1000, "Count 5000 -> clamp to max 1000")
-        tf.request("scene/intervene", {"path": "/external/value.1.3", "value": 50.0})
-        assert_eq(tf.query("/external/value.1.3"), 10.0, "Scale 50 -> clamp to max 10")
-        tf.request("scene/intervene", {"path": "/external/value.2.3", "value": -5.0})
-        assert_eq(tf.query("/external/value.2.3"), 0.0, "Scale -5 -> clamp to min 0")
         tf.request("scene/intervene", {"path": "/external/value.3.2", "value": -99})
         assert_eq(tf.query("/external/value.3.2"), 0, "Count -99 -> clamp to min 0")
         tf.request("scene/intervene", {"path": "/external/value.2.2", "value": 1000})
         assert_eq(tf.query("/external/value.2.2"), 1000, "Count 1000 -> the bound itself")
 
-        # ── (C) in-range values pass through unchanged ──────────────
+        # ── (C) an in-range value passes through unchanged ──────────
         tf.request("scene/intervene", {"path": "/external/value.0.2", "value": 42})
         assert_eq(tf.query("/external/value.0.2"), 42, "in-range Count kept verbatim")
-        tf.request("scene/intervene", {"path": "/external/value.1.3", "value": 3.5})
-        assert_eq(tf.query("/external/value.1.3"), 3.5, "in-range Scale kept verbatim")
 
-        # ── (D) an unbounded column is verbatim ─────────────────────
+        # ── (D) unbounded columns are verbatim (incl. negative) ─────
         tf.request("scene/intervene", {"path": "/external/value.0.0", "value": "LongAssetName"})
         assert_eq(tf.query("/external/value.0.0"), "LongAssetName", "unbounded Text unclamped")
+        tf.request("scene/intervene", {"path": "/external/value.1.3", "value": 50.0})
+        assert_eq(tf.query("/external/value.1.3"), 50.0, "unbounded Scale 50 kept (no fake max)")
+        # The exact value R837 writes; R895.1 regression guard.
+        tf.request("scene/intervene", {"path": "/external/value.2.3", "value": -2.5})
+        assert_eq(tf.query("/external/value.2.3"), -2.5, "unbounded Scale -2.5 kept verbatim")
 
         # ── (E) a keyboard commit clamps the same way ───────────────
         _focus_grid(tf)
@@ -132,19 +135,15 @@ def body() -> None:
         )
         assert_eq("9999" in _texts(snap), False, "the out-of-range input never reaches the cell")
 
-        # ── (H) re-read sweep: every numeric cell within its bounds ─
+        # ── (H) re-read sweep: every Count cell within its bounds ───
         for r in range(4):
             cnt = tf.query(f"/external/value.{r}.2")
             assert_eq(0 <= cnt <= 1000, True, f"Count[{r}]={cnt} within 0..1000")
-            scale = tf.query(f"/external/value.{r}.3")
-            assert_eq(0.0 <= scale <= 10.0, True, f"Scale[{r}]={scale} within 0..10")
-        # The bounds themselves are valid (inclusive).
-        tf.request("scene/intervene", {"path": "/external/value.3.3", "value": 10.0})
-        assert_eq(tf.query("/external/value.3.3"), 10.0, "the upper bound is inclusive")
-        tf.request("scene/intervene", {"path": "/external/value.3.3", "value": 0.0})
-        assert_eq(tf.query("/external/value.3.3"), 0.0, "the lower bound is inclusive")
+        # The Count bounds themselves are valid (inclusive on both ends).
+        tf.request("scene/intervene", {"path": "/external/value.3.2", "value": 1000})
+        assert_eq(tf.query("/external/value.3.2"), 1000, "the upper bound is inclusive")
         tf.request("scene/intervene", {"path": "/external/value.3.2", "value": 0})
-        assert_eq(tf.query("/external/value.3.2"), 0, "Count lower bound inclusive")
+        assert_eq(tf.query("/external/value.3.2"), 0, "the lower bound is inclusive")
 
 
 if __name__ == "__main__":
