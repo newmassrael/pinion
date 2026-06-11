@@ -1044,25 +1044,24 @@ fn r51_80_finalize_frame_snapshots_layout() {
     reset_mocks();
 
     let mut core = ShellCore::<TestView>::new();
+    // R890 §5.12 — the stored paint scene IS the layout source; the
+    // substrate projects a LayoutNode from it on demand. Before any
+    // finalize the projection is honestly absent...
+    assert!(
+        core.last_paint_layout_for_window(pinion_runtime::DEFAULT_WINDOW).is_none(),
+        "no paint yet -> no layout projection",
+    );
     let scene = core.compute_paint_scene(64, 32);
-    // R671 §5.12 — caller now supplies the pre-built layout (the
-    // build moved out of `finalize_frame` to avoid a redundant scene
-    // walk per paint cycle; production callers build once + reuse
-    // for the per-window slot snapshot too).
-    let layout = pinion_rpc::build_layout_node(&scene, "/0");
-    core.finalize_frame(scene, layout);
-
-    // The §5.12 last-paint snapshot drives RPC `scene/layout
-    // {viewport: null}` — finalize must populate it so the AI client
-    // can read the frame the user actually sees.
-    // (We only assert the substrate-visible side effect: that some
-    // other dispatch chain that depends on the snapshot doesn't
-    // panic. Direct access is `pub(crate)` so the assertion is
-    // indirect — re-running finalize_frame again must remain safe
-    // and idempotent.)
+    core.finalize_frame(scene);
+    // ...and after finalize the projection answers with the painted
+    // frame's geometry (drives `scene/layout {viewport: null}`).
+    let layout = core
+        .last_paint_layout_for_window(pinion_runtime::DEFAULT_WINDOW)
+        .expect("finalize stores the scene the projection reads");
+    assert_eq!((layout.rect.w, layout.rect.h), (64, 32));
+    // Re-running finalize must remain safe and idempotent.
     let scene2 = core.compute_paint_scene(64, 32);
-    let layout2 = pinion_rpc::build_layout_node(&scene2, "/0");
-    core.finalize_frame(scene2, layout2);
+    core.finalize_frame(scene2);
 }
 
 #[test]
@@ -3477,7 +3476,7 @@ mod r889_window_known_gate {
         let mut nr = no_resize;
         let req = parse_request(&frame(id, method, window, extra)).expect("frame parses");
         let resp = core
-            .dispatch_rpc_for_window(req, window, None, &mut nr)
+            .dispatch_rpc_for_window(req, window, &mut nr)
             .expect("call requests always answer");
         serde_json::from_str(&resp).expect("response is JSON")
     }
@@ -4028,7 +4027,7 @@ mod r684_headless_rpc_floating_window_finalize {
         );
         let req = parse_request(&snapshot_request(1, "floating", 320, 200))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_for_window(req, "floating", None, &mut no_resize);
+        let _ = core.dispatch_rpc_for_window(req, "floating", &mut no_resize);
         // Post-condition: produce ran (snapshot calls it), so the
         // post-dispatch finalize populated the router.
         assert!(
@@ -4075,7 +4074,7 @@ mod r684_headless_rpc_floating_window_finalize {
         core.register_window("floating");
         let req = parse_request(&focus_get_request(1, "floating"))
             .expect("focus_get request parses");
-        let _ = core.dispatch_rpc_for_window(req, "floating", None, &mut no_resize);
+        let _ = core.dispatch_rpc_for_window(req, "floating", &mut no_resize);
         assert!(
             !core.has_last_paint_scene_for_window("floating"),
             "focus/get must not call produce → no post-dispatch finalize",
@@ -4097,7 +4096,7 @@ mod r684_headless_rpc_floating_window_finalize {
         core.register_window("panel_b");
         let req = parse_request(&snapshot_request(1, "panel_a", 200, 100))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_for_window(req, "panel_a", None, &mut no_resize);
+        let _ = core.dispatch_rpc_for_window(req, "panel_a", &mut no_resize);
         assert!(
             core.has_last_paint_scene_for_window("panel_a"),
             "addressed window's router populated",
@@ -4120,7 +4119,7 @@ mod r684_headless_rpc_floating_window_finalize {
         for id in 1_u64..=3 {
             let req = parse_request(&snapshot_request(id, "floating", 320, 200))
                 .expect("snapshot request parses");
-            let _ = core.dispatch_rpc_for_window(req, "floating", None, &mut no_resize);
+            let _ = core.dispatch_rpc_for_window(req, "floating", &mut no_resize);
             assert!(
                 core.has_last_paint_scene_for_window("floating"),
                 "router stays populated across repeat dispatches (iter {id})",
@@ -4129,29 +4128,79 @@ mod r684_headless_rpc_floating_window_finalize {
     }
 
     #[test]
-    fn r684_dispatch_rpc_for_window_finalize_advances_last_paint_layout_substrate_mirror() {
-        // Side-channel observation: the `ShellCore.last_paint_layout`
-        // mirror gets updated by `finalize_frame_for_window` (which
-        // calls `last_paint_layout = Some(paint_layout)` per
-        // `pinion_shell::ShellCore::finalize_frame_for_window`).
-        // Before R684 atomic 3 the mirror stayed `None` after a
-        // floating-window RPC dispatch; after, the snapshot is
-        // visible to subsequent `scene/layout {viewport: null}`
-        // callers as the latest paint result.
+    fn r684_dispatch_rpc_for_window_finalize_feeds_the_layout_projection() {
+        // R890 — the finalize hook stores the addressed window's
+        // paint scene, and THAT is what `scene/layout {viewport:
+        // null}` projects (per-window; the pre-R890 binding-wide
+        // `last_paint_layout` mirror is gone). The projection answers
+        // only for the addressed window — a sibling stays honestly
+        // absent instead of inheriting the last writer's tree.
         let _guard = TEST_LOCK.lock().unwrap();
         reset_mocks();
         let mut core: ShellCore<TestView> = ShellCore::new();
         core.register_window("floating");
+        core.register_window("sibling");
         assert!(
-            core.last_paint_layout().is_none(),
-            "fresh ShellCore has no last_paint_layout mirror",
+            core.last_paint_layout_for_window("floating").is_none(),
+            "never-painted window has no layout projection",
         );
         let req = parse_request(&snapshot_request(1, "floating", 320, 200))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_for_window(req, "floating", None, &mut no_resize);
+        let _ = core.dispatch_rpc_for_window(req, "floating", &mut no_resize);
+        let layout = core
+            .last_paint_layout_for_window("floating")
+            .expect("post-dispatch finalize feeds the projection");
+        assert_eq!(
+            (layout.rect.w, layout.rect.h),
+            (320, 200),
+            "projection carries the addressed window's own viewport",
+        );
         assert!(
-            core.last_paint_layout().is_some(),
-            "post-dispatch finalize updates the substrate-mirror last_paint_layout",
+            core.last_paint_layout_for_window("sibling").is_none(),
+            "sibling window does NOT inherit the finalize (no cross-window mirror)",
+        );
+    }
+
+    #[test]
+    fn r890_layout_viewport_null_answers_per_window_not_last_writer() {
+        // THE R890 wire pin: paint window A at one size, then read
+        // `scene/layout {viewport: null}` scoped to known-but-
+        // unpainted window B. Pre-R890 B answered with A's tree (the
+        // last-writer-wins mirror / slot fallback); post-R890 B gets
+        // the honest NoLastPaintLayout and A keeps its own geometry.
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.register_window("win_a");
+        core.register_window("win_b");
+        // Paint A via a viewport-supplied layout call (runs produce +
+        // the R684 finalize stores A's scene).
+        let req = parse_request(&snapshot_request(1, "win_a", 320, 200))
+            .expect("frame parses");
+        let _ = core.dispatch_rpc_for_window(req, "win_a", &mut no_resize);
+        // A's viewport:null read = A's own frame.
+        let req = parse_request(
+            r#"{"jsonrpc":"2.0","id":2,"method":"scene/layout","params":{"window":"win_a"}}"#,
+        )
+        .expect("frame parses");
+        let resp = core
+            .dispatch_rpc_for_window(req, "win_a", &mut no_resize)
+            .expect("response");
+        assert!(
+            resp.contains(r#""result""#) && resp.contains(r#""w":320"#),
+            "win_a viewport:null answers its own painted frame: {resp}",
+        );
+        // B (known, never painted) must NOT inherit A's tree.
+        let req = parse_request(
+            r#"{"jsonrpc":"2.0","id":3,"method":"scene/layout","params":{"window":"win_b"}}"#,
+        )
+        .expect("frame parses");
+        let resp = core
+            .dispatch_rpc_for_window(req, "win_b", &mut no_resize)
+            .expect("response");
+        assert!(
+            resp.contains(r#""error""#) && resp.contains("NoLastPaintLayout"),
+            "known-unpainted window answers honestly, not with A's tree: {resp}",
         );
     }
 
@@ -4171,7 +4220,7 @@ mod r684_headless_rpc_floating_window_finalize {
         let req = parse_request(&snapshot_request(1, "any_unknown_window_id", 400, 300))
             .expect("snapshot request parses");
         let resp = core
-            .dispatch_rpc_for_window(req, "any_unknown_window_id", None, &mut no_resize)
+            .dispatch_rpc_for_window(req, "any_unknown_window_id", &mut no_resize)
             .expect("call requests always get a response frame");
         assert!(
             resp.contains(r#""code":-32602"#) && resp.contains("unknown_window"),

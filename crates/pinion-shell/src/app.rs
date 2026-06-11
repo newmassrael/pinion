@@ -125,20 +125,6 @@ struct WindowSlot<R: VelloRenderer> {
     /// downstream `spec_id: &str` parameter sites stay unchanged —
     /// Cow's `Deref<Target = str>` covers the read API.
     spec_id: Cow<'static, str>,
-    /// R671 §5.12 §5.16 — per-window last-painted [`LayoutNode`]
-    /// snapshot. R670.B's single `ShellCore.last_paint_layout` was
-    /// binding-wide (the last window to paint wrote into it), which
-    /// made `scene/layout {viewport: null, window: "<id>"}` return
-    /// whichever window painted most recently rather than the
-    /// addressed window. R671 lifts the snapshot per-slot so each
-    /// window keeps its own last-painted layout independently;
-    /// `AppShell::render_window` writes here after each paint cycle,
-    /// and `AppShell::dispatch_rpc` reads here when resolving the
-    /// `{window: "<id>"}` JSON-RPC param. The substrate's
-    /// `ShellCore.last_paint_layout` is kept as the primary mirror
-    /// for backward-compatible single-window callers
-    /// (`ShellCore::dispatch_rpc` without a window scope).
-    last_paint_layout: Option<pinion_rpc::LayoutNode>,
     /// R681 §2 #4 atomic 2 — sticky flag set whenever the most recent
     /// per-window paint scene contained at least one
     /// [`pinion_core::Scene::ImmediateModeNode`]. The
@@ -202,7 +188,6 @@ impl<R: VelloRenderer> WindowSlot<R> {
             last_ime_cursor_area: None,
             pending_intrinsic_resize,
             spec_id,
-            last_paint_layout: None,
             has_immediate_mode_subtree: false,
             fragment_cache: paint_adapter::FragmentCache::new(),
             image_cache: image_cache::ImageCache::new(),
@@ -499,25 +484,14 @@ impl<V: WidgetView> AppShell<V> {
                 window.request_redraw();
             }
         };
-        // R671 §5.12 — resolve the addressed window's
-        // [`WindowSlot::last_paint_layout`] so the substrate's
-        // dispatcher answers `scene/layout {viewport: null}` against
-        // the *named* window's last paint (not the binding-wide
-        // primary mirror). The lookup walks `spec_id_to_window_id`
-        // first (resolved_spec_id is a canonical spec id; the slot
-        // map is keyed by winit `WindowId`); fallback `None` leaves
-        // the substrate reading its primary mirror exactly as
-        // pre-R671 / single-window callers.
-        let slot_layout_owned: Option<pinion_rpc::LayoutNode> = self
-            .spec_id_to_window_id
-            .iter()
-            .find(|(id, _)| **id == resolved_spec_id.as_str())
-            .and_then(|(_, win_id)| self.windows.get(win_id))
-            .and_then(|slot| slot.last_paint_layout.clone());
+        // R890 §5.12 §5.16 — no slot-layout threading: the substrate
+        // projects the addressed window's layout on demand from its
+        // stored paint scene (`ShellCore::last_paint_layout_for_window`),
+        // so `scene/layout {viewport: null}` answers with the named
+        // window's own geometry or the honest `NoLastPaintLayout`.
         let resp = self.core.dispatch_rpc_for_window(
             parsed_request,
             &resolved_spec_id,
-            slot_layout_owned.as_ref(),
             &mut resize_req,
         );
         if let Some(resp) = resp {
@@ -751,18 +725,13 @@ impl<V: WidgetView> AppShell<V> {
         // R56.2.c §5.13 §5.38 — push IME candidate window position
         // to the platform IME (per-window since R670.B).
         self.publish_ime_for_window(window_id, &paint_scene);
-        // R671 §5.12 §5.16 — build the per-window layout snapshot
-        // exactly once, before `finalize_frame` consumes the paint
-        // scene. The single build feeds both the per-slot
-        // `last_paint_layout` (multi-window `scene/layout {window:
-        // "<id>"}` reads from here through `AppShell::dispatch_rpc`)
-        // and the `ShellCore.last_paint_layout` primary mirror that
-        // backs single-window `dispatch_rpc(...)` callers. The slot
-        // gets a clone — `LayoutNode` is `Clone` and the cost is
-        // proportional to the painted tree size (small for the
-        // current widget catalog; the next big consumer is the
-        // DevTools/Inspector axis which already buys this cost).
-        let paint_layout = pinion_rpc::build_layout_node(&paint_scene, "/0");
+        // R890 §5.12 §5.16 — no per-frame [`pinion_rpc::LayoutNode`]
+        // build any more: the paint scene `finalize_frame_for_window`
+        // stores in the addressed window's router IS the layout
+        // source; the substrate projects it on demand at the AI-paced
+        // RPC read (`ShellCore::last_paint_layout_for_window`). The
+        // R671-era per-frame build + per-slot clone paid an O(painted
+        // tree) walk on EVERY winit frame for data only RPC consumed.
         // R683 §5.16 — `spec_id` is `Cow<'static, str>`; clone for
         // the post-borrow `finalize_frame_for_window` call (clones
         // are `Cow`-cheap for `Borrowed`, `String::clone` for
@@ -783,7 +752,6 @@ impl<V: WidgetView> AppShell<V> {
             .get(&window_id)
             .map(|slot| slot.fragment_cache.stats());
         if let Some(slot) = self.windows.get_mut(&window_id) {
-            slot.last_paint_layout = Some(paint_layout.clone());
             // R681 §2 #4 atomic 2 — sticky per-window flag for the
             // immediate-mode game-loop pacing. The next
             // `about_to_wait` reads this to choose between
@@ -816,11 +784,10 @@ impl<V: WidgetView> AppShell<V> {
         if let Some(stats) = cache_stats {
             self.core.publish_fragment_cache_stats(target_window, stats);
         }
-        // R51.80 §5.12 §5.35 — hand the rendered scene + the pre-
-        // built layout snapshot to the substrate. `finalize_frame`
-        // refreshes the input router + intent drain in one method
-        // and stores the layout on `ShellCore.last_paint_layout` as
-        // the primary mirror.
+        // R51.80 §5.12 §5.35 — hand the rendered scene to the
+        // substrate. `finalize_frame` refreshes the input router +
+        // intent drain in one method; the stored scene doubles as the
+        // `scene/layout` source (R890).
         //
         // R672 §5.35 §5.41 — route through `finalize_frame_for_window`
         // so the addressed window's [`pinion_runtime::InputRouter`]
@@ -828,7 +795,7 @@ impl<V: WidgetView> AppShell<V> {
         // paint scene. Each window's pointer state stays isolated;
         // cross-window paint cycles no longer flip-flop hover state.
         self.core
-            .finalize_frame_for_window(target_window, paint_scene, paint_layout);
+            .finalize_frame_for_window(target_window, paint_scene);
     }
 
     /// R670.B §5.16 — per-window IME candidate publish helper.

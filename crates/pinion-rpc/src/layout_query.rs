@@ -179,7 +179,7 @@ where
             let producer =
                 paint_producer.ok_or(LayoutQueryError::PaintProducerUnavailable)?;
             let scene = producer(viewport.width, viewport.height);
-            Ok(build_layout_node(&scene, "/0"))
+            Ok(project_layout(&scene))
         }
         None => last_paint_layout
             .cloned()
@@ -187,13 +187,27 @@ where
     }
 }
 
+/// R890 §5.12 — the ONE home of the canonical layout projection: a
+/// whole `Scene` becomes a [`LayoutNode`] tree rooted at the `"/0"`
+/// wire path. Every `scene/layout` answer goes through here — the
+/// viewport-supplied arm above, the GUI substrate's per-window
+/// stored-scene projection
+/// (`pinion-shell::ShellCore::last_paint_layout_for_window`), and the
+/// TUI ingress — so the root prefix cannot drift between backends or
+/// read forms (the retired TUI mirror built with a bare `""` prefix,
+/// a §2 #6 wire divergence).
+#[must_use]
+pub fn project_layout(scene: &Scene) -> LayoutNode {
+    build_layout_node(scene, "/0")
+}
+
 /// Recursive walk: turn a `Scene` sub-tree into a [`LayoutNode`].
 /// `path_prefix` is the address of `scene` within the response root
 /// (`"/0"` for top-level, `"/0/1"` for the second child of root, etc.).
 ///
-/// Public for R47.7.5 — applications call this once per winit frame
-/// to produce the `last_paint_layout` snapshot they register on
-/// `DispatchContext::with_last_paint_layout`.
+/// Prefer [`project_layout`] for whole-scene projections (it pins the
+/// canonical `"/0"` root); this recursive primitive remains public
+/// for sub-tree walks and tests.
 #[must_use]
 pub fn build_layout_node(scene: &Scene, path_prefix: &str) -> LayoutNode {
     let projected = describe_scene(scene);

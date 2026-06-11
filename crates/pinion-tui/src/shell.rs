@@ -532,15 +532,14 @@ fn commit_paint<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>
     Ok(paint_scene)
 }
 
-/// R670 §5.41 — paint commit + last-paint-layout snapshot in one
-/// step. The substrate's `finalize_paint_snapshot` must observe the
-/// freshly-painted scene before `update_paint_scene` consumes it so
-/// an RPC `scene/layout {viewport: null}` on the next dispatch tick
-/// sees the post-paint geometry. Collapses the three-line
-/// "commit / finalize / handoff" sequence event-loop arms repeat at
-/// every redraw site into one helper call, keeping `run_impl` under
-/// the workspace `clippy::too_many_lines` ceiling without splitting
-/// the substrate's snapshot wire across two layers.
+/// R670 §5.41 — paint commit + router hand-off in one step, so an
+/// RPC `scene/layout {viewport: null}` on the next dispatch tick
+/// sees the post-paint geometry (R890: the stored router scene IS
+/// the layout source — projected on demand inside `dispatch_rpc`;
+/// the per-commit `finalize_paint_snapshot` mirror is retired).
+/// Collapses the "commit / handoff" sequence event-loop arms repeat
+/// at every redraw site into one helper call, keeping `run_impl`
+/// under the workspace `clippy::too_many_lines` ceiling.
 fn commit_and_finalize<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
     core: &mut ShellCoreTui<V>,
     cols: u16,
@@ -548,7 +547,6 @@ fn commit_and_finalize<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<
     renderer: &mut TuiRenderer<CrosstermBackend<Stdout>>,
 ) -> io::Result<()> {
     let paint_scene = commit_paint::<V>(core, cols, rows, renderer)?;
-    core.finalize_paint_snapshot(&paint_scene);
     core.update_paint_scene(paint_scene);
     Ok(())
 }

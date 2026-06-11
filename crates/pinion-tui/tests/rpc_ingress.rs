@@ -35,7 +35,6 @@ fn r670_dispatch_rpc_scene_snapshot_returns_json_with_external_node() {
     // Prime the paint snapshot so `scene/snapshot` from: paint works
     // identically to the Vello side post-first-paint.
     let paint = core.compute_paint_scene();
-    core.finalize_paint_snapshot(&paint);
     core.update_paint_scene(paint);
 
     let request = r#"{"jsonrpc":"2.0","id":1,"method":"scene/snapshot","params":{"path":""}}"#;
@@ -70,7 +69,6 @@ fn r670_dispatch_rpc_scene_snapshot_returns_json_with_external_node() {
 fn r670_dispatch_rpc_scene_click_drains_to_hover_state() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
     let paint = core.compute_paint_scene();
-    core.finalize_paint_snapshot(&paint);
     core.update_paint_scene(paint);
     assert_eq!(*core.cached_state(), ButtonState::Idle);
 
@@ -102,7 +100,6 @@ fn r670_dispatch_rpc_scene_click_drains_to_hover_state() {
 fn r670_dispatch_rpc_scene_key_named_space_fires_click_intent() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
     let paint = core.compute_paint_scene();
-    core.finalize_paint_snapshot(&paint);
     core.update_paint_scene(paint);
     assert_eq!(*core.cached_state(), ButtonState::Idle);
 
@@ -132,7 +129,6 @@ fn r670_dispatch_rpc_scene_key_named_space_fires_click_intent() {
 fn r670_dispatch_rpc_scene_key_character_d_disables_button() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
     let paint = core.compute_paint_scene();
-    core.finalize_paint_snapshot(&paint);
     core.update_paint_scene(paint);
     assert_eq!(*core.cached_state(), ButtonState::Idle);
 
@@ -160,7 +156,6 @@ fn r670_dispatch_rpc_scene_key_character_d_disables_button() {
 fn r670_dispatch_rpc_scene_invoke_send_disable_flips_state() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
     let paint = core.compute_paint_scene();
-    core.finalize_paint_snapshot(&paint);
     core.update_paint_scene(paint);
     assert_eq!(*core.cached_state(), ButtonState::Idle);
 
@@ -244,7 +239,6 @@ fn r670_dispatch_rpc_focus_set_targets_button_tag() {
 fn r670_dispatch_rpc_mutating_call_bumps_revision_counter() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
     let paint = core.compute_paint_scene();
-    core.finalize_paint_snapshot(&paint);
     core.update_paint_scene(paint);
     let revision_before = core.revision();
 
@@ -314,7 +308,6 @@ fn r885_input_state_reports_null_modifiers_and_real_held_keys() {
 fn r886_1_input_state_cursor_follows_tui_click() {
     let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
     let paint = core.compute_paint_scene();
-    core.finalize_paint_snapshot(&paint);
     core.update_paint_scene(paint);
 
     let read = r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state","params":{}}"#;
@@ -399,5 +392,37 @@ fn r889_main_window_scope_passes_the_tui_gate() {
     assert!(
         response.contains(r#""modifiers":null"#) && !response.contains("unknown_window"),
         "main scope passes the gate and answers normally: {response}",
+    );
+}
+
+/// R890 §5.12 §2 #6 — `scene/layout {viewport: null}` projects the
+/// router's stored paint scene with the canonical `"/0"` root prefix.
+/// The retired per-commit TUI mirror built with a bare `""` prefix,
+/// so the SAME node had different layout paths on the two backends —
+/// and even between viewport:null and viewport-supplied reads on the
+/// TUI itself. One projection home closes the divergence.
+#[test]
+fn r890_layout_viewport_null_projects_router_scene_with_canonical_paths() {
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    // Before any paint: honest NoLastPaintLayout (no mirror to leak).
+    let read = r#"{"jsonrpc":"2.0","id":1,"method":"scene/layout","params":{}}"#;
+    let response = core.dispatch_rpc(read).expect("read must respond");
+    assert!(
+        response.contains("NoLastPaintLayout"),
+        "no paint yet -> honest absence: {response}",
+    );
+    // After the commit hand-off, the projection answers with the
+    // canonical "/0" root path (GUI parity).
+    let paint = core.compute_paint_scene();
+    core.update_paint_scene(paint);
+    let read = r#"{"jsonrpc":"2.0","id":2,"method":"scene/layout","params":{}}"#;
+    let response = core.dispatch_rpc(read).expect("read must respond");
+    assert!(
+        response.contains(r#""path":"/0""#),
+        "root path is the canonical /0 wire shape: {response}",
+    );
+    assert!(
+        !response.contains(r#""path":"""#),
+        "the retired bare-prefix mirror shape must not reappear: {response}",
     );
 }

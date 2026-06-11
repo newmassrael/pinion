@@ -57,7 +57,7 @@ use pinion_core::event::WheelDelta;
 use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene, SceneRevision};
 use pinion_rpc::{
-    build_layout_node, dispatch_parsed, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
+    dispatch_parsed, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_runtime::{
     clamp_frame_dt, CommandExecutor, CoreShell, DispatchTail, FocusManager, PointerId,
@@ -117,17 +117,6 @@ pub struct ShellCoreTui<V: WidgetViewTui> {
     /// directly so an AI client can already exercise focus arcs
     /// through the wire even before the crossterm Tab arm lands.
     focus: FocusManager,
-    /// R670 §5.41 §5.12 — most recent painted scene projected to a
-    /// [`LayoutNode`] tree (mirror of
-    /// `pinion_shell::ShellCore::last_paint_layout`). Refreshed at the
-    /// end of every [`Self::finalize_paint_snapshot`] call so
-    /// `scene/layout {viewport: null}` returns the actual frame the
-    /// crossterm shell just painted. `None` until the first paint
-    /// runs — the RPC method errors with `NoLastPaintLayout` in that
-    /// window. TUI paint scenes carry the view-fn's container rects
-    /// directly (no parley shaping pass), so the snapshot is the
-    /// view-fn's geometry projected to the AI-introspection wire.
-    last_paint_layout: Option<LayoutNode>,
     /// R51.120 §5.41 — optional diagnostic sink for intent / state
     /// trace lines.
     ///
@@ -203,7 +192,6 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             previews: PreviewLedger::default(),
             revision: SceneRevision::default(),
             focus,
-            last_paint_layout: None,
             log_sink: None,
             last_paint_instant: Cell::new(None),
         }
@@ -225,22 +213,6 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     #[must_use]
     pub fn focus(&self) -> &FocusManager {
         &self.focus
-    }
-
-    /// R670 §5.41 §5.12 — refresh the [`LayoutNode`] snapshot from a
-    /// freshly-painted scene so `scene/layout {viewport: null}`
-    /// returns the geometry the just-rendered frame committed.
-    ///
-    /// The crossterm surface calls this from [`crate::shell::commit_paint`]
-    /// after every successful paint commit so the next RPC dispatch
-    /// (which the event loop drains on the same tick) sees the
-    /// post-paint snapshot. The mirror of
-    /// `pinion_shell::ShellCore::finalize_frame`'s snapshot refresh —
-    /// TUI side skips the AccessKit emit + router `update_paint_scene`
-    /// because [`Self::update_paint_scene`] already covers the
-    /// router half and the TUI a11y substrate has no AT consumer yet.
-    pub fn finalize_paint_snapshot(&mut self, paint_scene: &Scene) {
-        self.last_paint_layout = Some(build_layout_node(paint_scene, ""));
     }
 
     /// R51.120 §5.41 — install a diagnostic sink for intent / state
@@ -943,6 +915,19 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // seeded at construction, so the snapshot is always `Some`.
         let input_state_snapshot =
             self.core.input_state_snapshot(pinion_runtime::DEFAULT_WINDOW, None);
+        // R890 §5.12 — project the layout on demand from the router's
+        // stored paint scene (the same per-window source the GUI shell
+        // reads), replacing the per-commit `last_paint_layout` mirror.
+        // The "/0" root prefix is the canonical wire shape — the
+        // retired TUI mirror built with a bare "" prefix, so the SAME
+        // node had different `scene/layout` paths on the two backends
+        // (and even between viewport:null and viewport-supplied reads
+        // on the TUI itself) — a §2 #6 wire divergence this projection
+        // closes.
+        let derived_paint_layout: Option<LayoutNode> = self
+            .core
+            .last_paint_scene_for_window(pinion_runtime::DEFAULT_WINDOW)
+            .map(pinion_rpc::project_layout);
         let resp_pair = {
             // Disjoint-field split mutable borrows. Mirror of the
             // pinion-shell substrate's `dispatch_rpc` borrow split.
@@ -954,7 +939,7 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             let previews = &self.previews;
             let revision = &self.revision;
             let focus_ptr = &mut self.focus;
-            let last_paint = self.last_paint_layout.as_ref();
+            let last_paint = derived_paint_layout.as_ref();
             // R670 §5.41 §5.12 — TUI paint scene producer. The
             // view-fn already sets every container rect (no parley
             // shaping pass), so the produced scene carries the

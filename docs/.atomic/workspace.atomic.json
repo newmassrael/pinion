@@ -37493,6 +37493,80 @@
         "(documented contract: multi-window callers use dispatch_rpc_for_window); gate covers unknown"
       ]
     },
+    "R890": {
+      "decision_summary": "scene/layout aliasing killed structurally: per-window stored paint scene is the ONE layout source, projected on demand (project_layout, canonical /0 root); binding-wide last-writer mirror + per-frame slot build + TUI bare-prefix mirror all deleted; known-unpainted -> honest NoLastPaintLayout",
+      "changes_bullets": [
+        "scene/layout = per-window paint-scene PROJECTION: the per-window scene the publish primitives",
+        "already store (R705 snapshot-from-paint SSOT) is the one layout source, projected on demand",
+        "(pinion_rpc::project_layout, canonical \"/0\" root; ShellCore::last_paint_layout_for_window)",
+        "DELETED: ShellCore.last_paint_layout binding-wide mirror (last-writer-wins ACROSS windows:",
+        "any window's paint/dispatch-finalize overwrote it) + WindowSlot.last_paint_layout per-frame",
+        "build (O(painted tree) walk EVERY winit frame for RPC-only data) + TUI per-commit mirror",
+        "known-but-unpainted window now answers honest NoLastPaintLayout instead of the primary's tree",
+        "(the R889 carry); dispatch_rpc_for_window drops the slot_paint_layout param",
+        "finalize/apply_paint primitives drop the paint_layout param (scene-only signatures); the",
+        "dirty-on-mutation re-store loop and the R684 finalize hook stop building layouts",
+        "TUI: \"\" -> \"/0\" root prefix unification (same node had different layout paths per backend AND",
+        "between viewport:null vs viewport-supplied reads on the TUI itself - §2#6 wire divergence);",
+        "hit-test path resolvers (click/hover/drag/key/wheel/scroll) now read the addressed window's",
+        "own viewport dims instead of possibly another window's"
+      ],
+      "verification_bullets": [
+        "new tests 3: shell finalize-feeds-projection + viewport-null-per-window wire pin + tui \"/0\" pin",
+        "migrated: r51_80 finalize test to projection asserts; r684 mirror test to per-window semantics",
+        "cargo test --workspace -j2: 150 suites green; clippy --all-targets -D pedantic clean",
+        "demo r890_layout_projection.py PASS (32 asserts, hello-multi-window, zero-flake gates)",
+        "regressions PASS (fresh release): r670b r671 r672 r683 r680 r670a r889"
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.16",
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "single-window dispatch_rpc entry still ignores a KNOWN non-primary window param for scoping",
+        "(documented contract; unknown ids gated since R889) — promotion to full scoping needs audit",
+        "per-dispatch projection cost = O(painted tree) walk per RPC read (replaces per-frame build;",
+        "net win for 60fps path); if Phase B profiling flags hot AI loops, lazy ctx producer is the",
+        "documented escalation"
+      ],
+      "publishable_decision_summary": "scene/layout aliasing killed structurally: per-window stored paint scene is the ONE layout source, projected on demand (project_layout, canonical /0 root); binding-wide last-writer mirror + per-frame slot build + TUI bare-prefix mirror all deleted; known-unpainted -> honest NoLastPaintLayout",
+      "publishable_changes_bullets": [
+        "scene/layout = per-window paint-scene PROJECTION: the per-window scene the publish primitives",
+        "already store (R705 snapshot-from-paint SSOT) is the one layout source, projected on demand",
+        "(pinion_rpc::project_layout, canonical \"/0\" root; ShellCore::last_paint_layout_for_window)",
+        "DELETED: ShellCore.last_paint_layout binding-wide mirror (last-writer-wins ACROSS windows:",
+        "any window's paint/dispatch-finalize overwrote it) + WindowSlot.last_paint_layout per-frame",
+        "build (O(painted tree) walk EVERY winit frame for RPC-only data) + TUI per-commit mirror",
+        "known-but-unpainted window now answers honest NoLastPaintLayout instead of the primary's tree",
+        "(the R889 carry); dispatch_rpc_for_window drops the slot_paint_layout param",
+        "finalize/apply_paint primitives drop the paint_layout param (scene-only signatures); the",
+        "dirty-on-mutation re-store loop and the R684 finalize hook stop building layouts",
+        "TUI: \"\" -> \"/0\" root prefix unification (same node had different layout paths per backend AND",
+        "between viewport:null vs viewport-supplied reads on the TUI itself - §2#6 wire divergence);",
+        "hit-test path resolvers (click/hover/drag/key/wheel/scroll) now read the addressed window's",
+        "own viewport dims instead of possibly another window's"
+      ],
+      "publishable_verification_bullets": [
+        "new tests 3: shell finalize-feeds-projection + viewport-null-per-window wire pin + tui \"/0\" pin",
+        "migrated: r51_80 finalize test to projection asserts; r684 mirror test to per-window semantics",
+        "cargo test --workspace -j2: 150 suites green; clippy --all-targets -D pedantic clean",
+        "demo r890_layout_projection.py PASS (32 asserts, hello-multi-window, zero-flake gates)",
+        "regressions PASS (fresh release): r670b r671 r672 r683 r680 r670a r889"
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.16",
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "single-window dispatch_rpc entry still ignores a KNOWN non-primary window param for scoping",
+        "(documented contract; unknown ids gated since R889) — promotion to full scoping needs audit",
+        "per-dispatch projection cost = O(painted tree) walk per RPC read (replaces per-frame build;",
+        "net win for 60fps path); if Phase B profiling flags hot AI loops, lazy ctx producer is the",
+        "documented escalation"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

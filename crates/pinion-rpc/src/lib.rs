@@ -76,7 +76,7 @@ pub use font::{
 pub use intents::{drain_intents, IntentsError};
 pub use invoke::{invoke, InvokeError};
 pub use layout_query::{
-    build_layout_node, layout_query, LayoutKind, LayoutNode, LayoutQueryError,
+    build_layout_node, layout_query, project_layout, LayoutKind, LayoutNode, LayoutQueryError,
     LayoutQueryParams, LayoutRect, ViewportSize,
 };
 pub use locate::{
