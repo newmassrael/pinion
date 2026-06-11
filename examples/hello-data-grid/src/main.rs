@@ -126,10 +126,20 @@
 //! parts are the `group_rows` free fn + wire vocab, not the coordinator, which
 //! assumes a `VirtualSelectExternal` selection + a String dataset).
 //!
+//! ## Column validation (R894 — the DCC-inspector clamp axis)
+//!
+//! Each numeric column carries an optional [`ColRange`]; a committed or
+//! programmatic value outside it is **clamped** to the nearest bound through
+//! the one [`clamp_for_col`] gate both `commit_edit` (keyboard) and
+//! `intervene "value"` (AI) run — so neither path can store an out-of-range
+//! value (the bounded-spinbox / property-inspector contract). The constraint
+//! is AI-readable (`query "col_range.<col>"` → `"0..1000"` / `"none"`), and the
+//! clamp surfaces as the read-back value (the [[setter-wire-returns-read-outcome]]
+//! discipline: an `intervene` of `999` reads back as the clamped bound).
+//!
 //! ## Known gaps (honest carry, shared with R836)
 //!
 //! - Native checkbox / textbox cell roles (per-cell a11y role) — additive.
-//! - Per-column validation / clamp ranges — additive.
 //! - Multi-facet / substring column filter — one fixed-string column facet
 //!   here (the cross-grid `GridFilter` shape); multi-facet is a later
 //!   additive axis, exactly as the read-only `GridSortState` filter defers it.
@@ -231,6 +241,48 @@ const COL_KINDS: [CellKind; NCOLS] = [
 
 /// Per-column paint width (logical px). Text columns are wider.
 const COL_W: [u32; NCOLS] = [120, 90, 70, 70, 70];
+
+// ─── per-column validation (R894 — the DCC-inspector clamp axis) ──
+
+/// R894 — a numeric column's valid range; a committed / programmatic value
+/// outside it is clamped to the nearest bound (the bounded-spinbox / property-
+/// inspector contract — you cannot enter `999` into a `0..100` field). Typed
+/// per kind so the clamp needs no cross-kind cast.
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum ColRange {
+    Int(i64, i64),
+    Float(f64, f64),
+}
+
+impl ColRange {
+    /// The AI-readable wire form (`"0..100"`); the kind is read separately via
+    /// `col_kind`. `Float` uses the canonical [`CellValue`] float formatting.
+    fn wire(self) -> String {
+        match self {
+            ColRange::Int(lo, hi) => format!("{lo}..{hi}"),
+            ColRange::Float(lo, hi) => {
+                format!("{}..{}", CellValue::Float(lo).display(), CellValue::Float(hi).display())
+            }
+        }
+    }
+}
+
+/// Per-column clamp range, `None` for an unbounded column. Count (Int) is
+/// `0..1000`; Scale (Float) is `0..10`; Asset / Type / Active are unbounded.
+const COL_RANGE: [Option<ColRange>; NCOLS] =
+    [None, None, Some(ColRange::Int(0, 1000)), Some(ColRange::Float(0.0, 10.0)), None];
+
+/// R894 — clamp a typed value to column `col`'s [`ColRange`] (identity for an
+/// unbounded column, a non-numeric value, or a kind / range mismatch). The one
+/// validation gate both the keyboard `commit_edit` and the programmatic
+/// `intervene "value"` write run, so an AI set and a typed commit clamp alike.
+fn clamp_for_col(value: CellValue, col: usize) -> CellValue {
+    match (&value, COL_RANGE.get(col).and_then(|r| r.as_ref())) {
+        (CellValue::Int(i), Some(ColRange::Int(lo, hi))) => CellValue::Int((*i).clamp(*lo, *hi)),
+        (CellValue::Float(f), Some(ColRange::Float(lo, hi))) => CellValue::Float(f.clamp(*lo, *hi)),
+        _ => value,
+    }
+}
 
 /// `(row, col)` → flat model index.
 fn idx(row: usize, col: usize) -> usize {
@@ -767,6 +819,7 @@ impl ExternalIntrospect for DataGridExternal {
             ("editing_col", "int"),
             ("col_name.<col>", "string"),
             ("col_kind.<col>", "string"),
+            ("col_range.<col>", "string"),
             ("value.<row>.<col>", "json"),
             ("sort", "string"),
             ("filter", "string"),
@@ -886,6 +939,15 @@ impl ExternalIntrospect for DataGridExternal {
                     let col: usize = col_str.parse().ok()?;
                     return COL_KINDS.get(col).map(|k| IntrospectValue::Text(k.name().to_owned()));
                 }
+                // R894 — the column's clamp range ("<min>..<max>" / "none"); an
+                // out-of-range column is `None` (an unknown path), an unbounded
+                // one is the text "none" (present-but-unconstrained).
+                if let Some(col_str) = path.strip_prefix("col_range.") {
+                    let col: usize = col_str.parse().ok()?;
+                    return COL_RANGE.get(col).map(|range| {
+                        IntrospectValue::Text(range.map_or_else(|| "none".to_owned(), ColRange::wire))
+                    });
+                }
                 if let Some(rest) = path.strip_prefix("value.") {
                     let (row_str, col_str) = rest.split_once('.')?;
                     let row: usize = row_str.parse().ok()?;
@@ -989,7 +1051,10 @@ impl ExternalIntrospect for DataGridExternal {
                 if row >= NROWS || col >= NCOLS {
                     return Err(InterveneError::UnknownPath);
                 }
-                let new_value = COL_KINDS[col].coerce(value)?;
+                // R894 — clamp the programmatic set to the column's range, the
+                // same gate `commit_edit` runs (an AI write cannot exceed the
+                // bounds a keyboard edit cannot).
+                let new_value = clamp_for_col(COL_KINDS[col].coerce(value)?, col);
                 // R891/R892 — a typed-set that flips the cursor's row out of an
                 // active filter OR into a collapsed group re-anchors the cursor
                 // (no-op when the write leaves the cursor's row visible), so the
@@ -1172,6 +1237,9 @@ fn commit_edit(restore_focus: bool) {
     let prior_vis = cursor_visual_pos(&visible(), cursor.get());
     if col < NCOLS {
         if let Some(parsed) = COL_KINDS[col].parse(&text) {
+            // R894 — clamp the committed value to the column's range (the
+            // bounded-spinbox contract; an out-of-range edit lands on the bound).
+            let parsed = clamp_for_col(parsed, col);
             model.set_with(move |prev| {
                 let mut next = prev.clone();
                 next[idx(row, col)] = parsed.clone();
@@ -2668,6 +2736,80 @@ mod tests {
             // No dead id leaked: the real groups stay expanded.
             assert_eq!(intro.query("collapsed.0"), Some(IntrospectValue::Bool(false)));
             assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(6)), "all expanded");
+        });
+    }
+
+    // ─── R894 — per-column validation (clamp) ────────────────────────
+
+    #[test]
+    fn r894_commit_clamps_to_column_range() {
+        // Count (col 2) range 0..100; Scale (col 3) range 0..10. A committed
+        // edit outside the range lands on the nearest bound; in-range commits
+        // unchanged (the bounded-spinbox contract through `commit_edit`).
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let commit = |scene: &mut Scene, col: i64, text: &str| {
+                {
+                    let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid");
+                    let intro = node.handle.introspect_mut().expect("introspectable");
+                    let _ = intro.intervene("focused_row", IntrospectValue::Int(0));
+                    let _ = intro.intervene("focused_col", IntrospectValue::Int(col));
+                    let _ = intro.invoke("begin", IntrospectValue::Null);
+                }
+                use_text_edit_state(EDIT_TF_TAG).set_text(text.to_owned());
+                commit_edit(true);
+            };
+            commit(&mut scene, 2, "5000");
+            assert_eq!(grid_intro(&scene).query("value.0.2"), Some(IntrospectValue::Int(1000)), "clamp to max");
+            commit(&mut scene, 3, "-5");
+            assert_eq!(grid_intro(&scene).query("value.0.3"), Some(IntrospectValue::Float(0.0)), "clamp to min");
+            commit(&mut scene, 2, "42");
+            assert_eq!(grid_intro(&scene).query("value.0.2"), Some(IntrospectValue::Int(42)), "in-range unchanged");
+        });
+    }
+
+    #[test]
+    fn r894_intervene_clamps_to_column_range() {
+        // The AI write path runs the same clamp gate (an `intervene` cannot
+        // exceed a bound a keyboard edit cannot); the read-back is the clamped
+        // value (the setter-returns-read-outcome discipline).
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert!(intro.intervene("value.0.2", IntrospectValue::Int(5000)).is_ok());
+            assert_eq!(intro.query("value.0.2"), Some(IntrospectValue::Int(1000)), "clamp to max");
+            assert!(intro.intervene("value.0.3", IntrospectValue::Float(-5.0)).is_ok());
+            assert_eq!(intro.query("value.0.3"), Some(IntrospectValue::Float(0.0)), "clamp to min");
+            assert!(intro.intervene("value.1.3", IntrospectValue::Float(5.0)).is_ok());
+            assert_eq!(intro.query("value.1.3"), Some(IntrospectValue::Float(5.0)), "in-range kept");
+        });
+    }
+
+    #[test]
+    fn r894_col_range_wire_query() {
+        Owner::new().run(|| {
+            let scene = boot_scene();
+            let intro = grid_intro(&scene);
+            assert_eq!(intro.query("col_range.2"), Some(IntrospectValue::Text("0..1000".to_owned())));
+            assert_eq!(intro.query("col_range.3"), Some(IntrospectValue::Text("0..10".to_owned())));
+            assert_eq!(intro.query("col_range.0"), Some(IntrospectValue::Text("none".to_owned())), "unbounded");
+            assert_eq!(intro.query("col_range.9"), None, "out-of-range column -> None");
+        });
+    }
+
+    #[test]
+    fn r894_unbounded_column_is_unclamped() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Asset (col 0, Text, no range): a long value is stored verbatim.
+            assert!(intro.intervene("value.0.0", IntrospectValue::Text("VeryLongAssetName".to_owned())).is_ok());
+            assert_eq!(
+                intro.query("value.0.0"),
+                Some(IntrospectValue::Text("VeryLongAssetName".to_owned())),
+            );
         });
     }
 }

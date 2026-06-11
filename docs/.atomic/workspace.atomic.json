@@ -37799,6 +37799,46 @@
         "open: tag-flexible grouped a11y builder @ 2nd consumer; frozen-pane fold for a wide grid"
       ]
     },
+    "R894": {
+      "decision_summary": "R894 §5.40 editable data-grid per-column validation: ColRange clamp gate (commit + intervene), AI-readable col_range query; the documented validation/clamp gap landed",
+      "changes_bullets": [
+        "ColRange (Int/Float) + COL_RANGE config (Count 0..1000, Scale 0..10); clamp_for_col SSOT gate",
+        "both write paths clamp: commit_edit (keyboard) + intervene \"value\" (AI) run the one gate",
+        "query \"col_range.<col>\" exposes the constraint (read-only); clamp surfaces as the value read-back",
+        "the documented \"per-column validation / clamp ranges\" gap landed (additive; no substrate change)"
+      ],
+      "verification_bullets": [
+        "hello-data-grid 40 tests green (4 new R894: commit/intervene clamp, range-query, unbounded)",
+        "cargo test --workspace -j2 green; clippy --workspace --all-targets pedantic clean",
+        "demo r894_grid_validation_editable.py PASS (30 asserts); r886/r891/r892 demos no-regression"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "clamp only (numeric range); pattern/length validation + reject + inline error styling deferred",
+        "Choice/Color cell columns + frozen-pane fold for a wide grid = remaining advanced-data-grid tail"
+      ],
+      "publishable_decision_summary": "R894 §5.40 editable data-grid per-column validation: ColRange clamp gate (commit + intervene), AI-readable col_range query; the documented validation/clamp gap landed",
+      "publishable_changes_bullets": [
+        "ColRange (Int/Float) + COL_RANGE config (Count 0..1000, Scale 0..10); clamp_for_col SSOT gate",
+        "both write paths clamp: commit_edit (keyboard) + intervene \"value\" (AI) run the one gate",
+        "query \"col_range.<col>\" exposes the constraint (read-only); clamp surfaces as the value read-back",
+        "the documented \"per-column validation / clamp ranges\" gap landed (additive; no substrate change)"
+      ],
+      "publishable_verification_bullets": [
+        "hello-data-grid 40 tests green (4 new R894: commit/intervene clamp, range-query, unbounded)",
+        "cargo test --workspace -j2 green; clippy --workspace --all-targets pedantic clean",
+        "demo r894_grid_validation_editable.py PASS (30 asserts); r886/r891/r892 demos no-regression"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "clamp only (numeric range); pattern/length validation + reject + inline error styling deferred",
+        "Choice/Color cell columns + frozen-pane fold for a wide grid = remaining advanced-data-grid tail"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
