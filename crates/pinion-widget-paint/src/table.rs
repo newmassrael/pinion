@@ -801,6 +801,39 @@ pub fn view_virtual_table(
     )
 }
 
+/// R897 §5.27 — the content-agnostic virtualized grid body shared by the
+/// read-only [`view_virtual_table`] and the editable `hello-data-grid`:
+/// window over `view_len` uniform-`row_pitch` rows, build only the visible
+/// ones through `build_row`, and wrap the `[header, body]` column in the
+/// outer horizontal scroll. The consumer owns each row's **content** (a
+/// string data row, or the editable grid's interspersed group-header /
+/// rich-cell rows); the substrate owns the windowing geometry
+/// ([`uniform_slots`] slot-tops + the `total_h` sizer) and the nested
+/// single-axis scroll wiring ([`assemble_windowed_flex`] vertical body inside
+/// the outer [`h_scrolled_column`] horizontal scroll), so the two grids cannot
+/// diverge on the scroll-bound geometry (R758 divergence-is-a-bug).
+///
+/// `window` / `total_h` come from the caller's [`compute_visible_range`] /
+/// [`content_height`] over the same `view_len`; `content_w` is the row width
+/// (the column-width sum) the windowed sizer frames. `build_row` is invoked
+/// once per **visible** view position and returns that row's full Scene (the
+/// substrate only positions it at `view_pos · row_pitch`), so an off-window row
+/// is never built — this is the actual virtualization, not an eager clip.
+#[must_use]
+pub fn view_virtual_grid_body(
+    scroll: GridScroll<'_>,
+    window: &VisibleWindow,
+    content_w: u32,
+    total_h: u32,
+    row_pitch: u32,
+    header: Scene,
+    build_row: impl FnMut(usize) -> Scene,
+) -> Scene {
+    let slots = uniform_slots(window, content_w, row_pitch, build_row);
+    let body = assemble_windowed_flex(scroll.body, content_w, total_h, slots, false);
+    h_scrolled_column(scroll.horizontal, header, body)
+}
+
 /// R859 §5.27 — the shared "what + how to render" context for the two
 /// [`view_virtual_table`] body assemblies (the unsplit R784 grid and the
 /// frozen-column split). Bundling the borrowed inputs keeps each assembly
@@ -932,26 +965,11 @@ impl GridRender<'_> {
         mut build_cells: impl FnMut(usize) -> Vec<String>,
     ) -> Scene {
         let total_w: u32 = self.widths.iter().copied().sum();
-        // The uniform-pitch slot geometry (`top = view_pos · row_height`)
-        // is the shared `uniform_slots` (R775.1) source of truth; only the
-        // row *content* (a multi-cell `data_row`) diverges.
-        let slots = uniform_slots(self.window, total_w, self.style.row_height, |view_pos| {
-            let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
-            let cells_text = build_cells(source);
-            let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
-            let row_tag = GridTag::data_row(self.tag, source);
-            data_row(
-                self.tag,
-                source,
-                &cell_refs,
-                fill,
-                fg,
-                RowPane { container_tag: &row_tag, col_base: 0, widths: self.widths },
-                self.style,
-            )
-        });
-        let body = assemble_windowed_flex(scroll.body, total_w, self.total_h, slots, false);
         let hrow_tag = GridTag::header_row(self.tag);
+        // R784 — the frozen header above the inner vertical body scroll, the
+        // whole `total_w`-wide column slid by the outer horizontal scroll. No
+        // surface fill here — the frame in `view_virtual_table` owns it so the
+        // rounded block stays put while the content scrolls.
         let header = header_row(
             self.tag,
             self.click_tag,
@@ -966,11 +984,34 @@ impl GridRender<'_> {
             self.theme,
             self.style,
         );
-        // R784 — the frozen header above the inner vertical body scroll, the
-        // whole `total_w`-wide column slid by the outer horizontal scroll. No
-        // surface fill here — the frame in `view_virtual_table` owns it so the
-        // rounded block stays put while the content scrolls.
-        h_scrolled_column(scroll.horizontal, header, body)
+        // R897 — the windowing + nested single-axis scroll machinery is the
+        // shared `view_virtual_grid_body` SSOT (`top = view_pos · row_height`,
+        // R775.1); only the row *content* (a multi-cell `data_row`) is built
+        // here. The editable `hello-data-grid` drives the same primitive with
+        // group-header / rich-cell rows (its virtualization consumer).
+        view_virtual_grid_body(
+            scroll,
+            self.window,
+            total_w,
+            self.total_h,
+            self.style.row_height,
+            header,
+            |view_pos| {
+                let (source, fill, fg) = self.row_inputs(view_pos, is_selected);
+                let cells_text = build_cells(source);
+                let cell_refs: Vec<&str> = cells_text.iter().map(String::as_str).collect();
+                let row_tag = GridTag::data_row(self.tag, source);
+                data_row(
+                    self.tag,
+                    source,
+                    &cell_refs,
+                    fill,
+                    fg,
+                    RowPane { container_tag: &row_tag, col_base: 0, widths: self.widths },
+                    self.style,
+                )
+            },
+        )
     }
 
     /// R859 frozen-left-column grid: a fixed-width frozen pane (columns

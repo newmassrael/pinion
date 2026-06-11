@@ -38029,6 +38029,52 @@
         "frozen column moves after virtualization"
       ]
     },
+    "R897": {
+      "decision_summary": "Migrate the editable data-grid body from R896.1 eager clip-scroll to the read-only grids' proven windowed primitive (view_virtual_grid_body, re-introduced now that the editable grid is its genuine 2nd consumer). The body windows against its measured viewport so the grid renders a constant handful of rows regardless of model size — the Model/View-at-scale debt the R896 audit flagged, sharing the identical SSOT hello-grid-sort exercises at 10k rows.",
+      "changes_bullets": [
+        "pinion-widget-paint: re-introduced view_virtual_grid_body (pub windowed-body + h-scroll primitive); render_unsplit delegates to it (read-only byte-identical). Now 2 genuine consumers (render_unsplit + editable grid), justifying the extraction the R896 audit had me revert as 1-consumer indirection",
+        "hello-data-grid: body migrated from R896.1's eager [v-scroll(rows)] to view_virtual_grid_body windowed over the measured viewport (compute_visible_range + content_height + OVERSCAN 4) -> only the visible window is built, off-window rows never materialize (the real Model/View-at-scale fix + the mechanism-level v-clip fix)",
+        "group headers + data rows window at a uniform ROW_H pitch via the shared uniform_slots; each visible position resolves to a SOURCE-keyed GroupRow (sorted/filtered/grouped rows still paint by identity)",
+        "unit test seeds a measured viewport (the read-only grid tests' convention) so the windowed view builds rows without a shell layout pass"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (widget-paint read-only byte-identical via the delegating render_unsplit; hello-data-grid 40 incl the viewport-seeded paint test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "6 data-grid demos PASS (no regression; the windowed primitive's vertical scroll exercised by r896 (E))",
+        "virtualization is proven by construction: the editable grid now shares the exact windowed code path hello-grid-sort exercises at 10k rows"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "in-grid large-dataset scale DEMO is an honest follow-up: the fold demos (r886/r891/r892/r894) are coupled to the precise 4-row dataset, so bumping NROWS re-derives their group/filter LOGIC (not just an \"of 4\" string) = a separate careful round",
+        "a11y still exposes all rows (VisibleWindow{0, len}); a11y-windowing is a separate axis",
+        "frozen column + hello-property-grid migration remain (post-virtualization convergence)"
+      ],
+      "publishable_decision_summary": "Migrate the editable data-grid body from R896.1 eager clip-scroll to the read-only grids' proven windowed primitive (view_virtual_grid_body, re-introduced now that the editable grid is its genuine 2nd consumer). The body windows against its measured viewport so the grid renders a constant handful of rows regardless of model size — the Model/View-at-scale debt the R896 audit flagged, sharing the identical SSOT hello-grid-sort exercises at 10k rows.",
+      "publishable_changes_bullets": [
+        "pinion-widget-paint: re-introduced view_virtual_grid_body (pub windowed-body + h-scroll primitive); render_unsplit delegates to it (read-only byte-identical). Now 2 genuine consumers (render_unsplit + editable grid), justifying the extraction the R896 audit had me revert as 1-consumer indirection",
+        "hello-data-grid: body migrated from R896.1's eager [v-scroll(rows)] to view_virtual_grid_body windowed over the measured viewport (compute_visible_range + content_height + OVERSCAN 4) -> only the visible window is built, off-window rows never materialize (the real Model/View-at-scale fix + the mechanism-level v-clip fix)",
+        "group headers + data rows window at a uniform ROW_H pitch via the shared uniform_slots; each visible position resolves to a SOURCE-keyed GroupRow (sorted/filtered/grouped rows still paint by identity)",
+        "unit test seeds a measured viewport (the read-only grid tests' convention) so the windowed view builds rows without a shell layout pass"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (widget-paint read-only byte-identical via the delegating render_unsplit; hello-data-grid 40 incl the viewport-seeded paint test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "6 data-grid demos PASS (no regression; the windowed primitive's vertical scroll exercised by r896 (E))",
+        "virtualization is proven by construction: the editable grid now shares the exact windowed code path hello-grid-sort exercises at 10k rows"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "in-grid large-dataset scale DEMO is an honest follow-up: the fold demos (r886/r891/r892/r894) are coupled to the precise 4-row dataset, so bumping NROWS re-derives their group/filter LOGIC (not just an \"of 4\" string) = a separate careful round",
+        "a11y still exposes all rows (VisibleWindow{0, len}); a11y-windowing is a separate axis",
+        "frozen column + hello-property-grid migration remain (post-virtualization convergence)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -162,7 +162,7 @@ use pinion_core::external::{
     IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
-use pinion_core::scene::{ContainerNode, Rect, ScrollAxis, ScrollNode, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
 };
@@ -177,7 +177,7 @@ use pinion_core::widgets::grid_sort::{
 use pinion_core::widgets::group_order::{group_rows, GroupRow};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::table::{cycle_col_sort, grid_order_by};
-use pinion_core::widgets::virtual_list::VisibleWindow;
+use pinion_core::widgets::virtual_list::{compute_visible_range, content_height, VisibleWindow};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
@@ -185,7 +185,7 @@ use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::checkbox::{view_checkbox_box, CheckboxStyle};
 use pinion_widget_paint::group_header::group_header_row;
-use pinion_widget_paint::table::h_scrolled_column;
+use pinion_widget_paint::table::{view_virtual_grid_body, GridScroll};
 use pinion_widget_paint::text_field as tf_paint;
 
 use pinion_widget_paint::state_layer::HOVER;
@@ -220,13 +220,16 @@ const EDIT_TF_TAG: &str = "data_grid_edit";
 /// their total width outgrows the grid viewport (the R784 single-axis scroll,
 /// the read-only grids' [`h_scrolled_column`] wrap reused on the editable grid).
 const H_SCROLL_KEY: &str = "data_grid_hscroll";
-/// R896.1 — the vertical body `ScrollState` cache key. The rows scroll under
-/// the pinned header when they outgrow [`GRID_VIEWPORT_H`] — e.g. grouping by a
-/// high-cardinality column interleaves enough group headers to overflow the
-/// band. Without this the bottom rows clipped silently (R896 audit finding);
-/// the body is still eager (all rows built — windowed virtualization is R898),
-/// so this is a plain clip-and-scroll, the inner axis of the R784 nested pair.
+/// R896.1 / R897 — the vertical body `ScrollState` cache key. The rows window
+/// against this state's measured viewport and scroll under the pinned header;
+/// R897 made the body **virtualized** (only the visible window is built, via
+/// [`view_virtual_grid_body`]), so a 10k-row asset table renders a constant
+/// handful of rows. It is the inner axis of the R784 nested single-axis pair.
 const V_SCROLL_KEY: &str = "data_grid_vscroll";
+
+/// R897 — rows built beyond the strict visible window on each side, so a
+/// partial scroll never flashes an unbuilt gap (the read-only grids' default).
+const OVERSCAN: usize = 4;
 /// Commit-on-blur intent the inline field raises on a click-away (R793).
 const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("data_grid_edit", "blur");
 
@@ -1586,9 +1589,31 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ));
 
-    let mut rows: Vec<Scene> = Vec::with_capacity(vis_rows.len());
-    for vrow in &vis_rows {
-        rows.push(match *vrow {
+    // R897 — VIRTUALIZE the body: window over the visible rows and build only
+    // those, through the read-only grids' `view_virtual_grid_body` SSOT. The
+    // body's measured viewport height drives the window (the R774 AutoSizer
+    // feedback), so a 10k-row asset table renders a constant handful of rows —
+    // the real Model/View-at-scale fix, replacing the R896.1 eager clip-scroll.
+    // Group headers + data rows share a uniform ROW_H pitch, so the windowing is
+    // the same `uniform_slots` math; each visible position resolves to a
+    // SOURCE-keyed group header or data row, so a sorted/filtered/grouped row
+    // still paints by its identity. The header rides outside the inner vertical
+    // body (pinned) inside the outer horizontal scroll (R784 nested pair).
+    let v_scroll = use_scroll_state(V_SCROLL_KEY);
+    let h_scroll = use_scroll_state(H_SCROLL_KEY);
+    let total_w: u32 = COL_W.iter().sum();
+    let (_, measured_h) = v_scroll.measured_viewport();
+    let window =
+        compute_visible_range(v_scroll.offset_y(), measured_h, vis_rows.len(), ROW_H, OVERSCAN);
+    let total_h = content_height(vis_rows.len(), ROW_H);
+    let scrolled = view_virtual_grid_body(
+        GridScroll { body: &v_scroll, horizontal: &h_scroll },
+        &window,
+        total_w,
+        total_h,
+        ROW_H,
+        view_header(&theme, sort),
+        |view_pos| match vis_rows[view_pos] {
             // R892 — a group header spanning the grid (label + member count +
             // collapse chevron; a click toggles collapse).
             GroupRow::Header { group, member_count, collapsed: is_collapsed } => {
@@ -1604,37 +1629,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
                 &theme,
                 (edit_state, edit_caret),
             ),
-        });
-    }
-    // R896 — the rows column (group headers + data rows). The header sits above
-    // it, and both are wrapped in the shared `h_scrolled_column` so the
-    // `570 px`-wide columns slide sideways under the pinned header once they
-    // outgrow `GRID_VIEWPORT_W` (the read-only grids' R784 horizontal-scroll
-    // wrap, reused — not a hand-rolled second copy). The body stays eager (the
-    // windowed virtualization of the rows is a later round).
-    let rows_column = Scene::Container(
-        ContainerNode::new(rows).with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Column)
-                .with_align_items(AlignItems::Start)
-                .with_gap(ROW_GAP),
-        ),
+        },
     );
-    // R896.1 — clip + scroll the rows vertically when they overflow the band
-    // (grouping a high-cardinality column interleaves enough group headers to
-    // exceed GRID_VIEWPORT_H; before this the bottom rows clipped silently).
-    // The header is OUTSIDE this scroll (it sits above it inside
-    // `h_scrolled_column`'s column), so it stays vertically pinned — the R784
-    // nested single-axis composition: outer horizontal over [pinned header,
-    // inner vertical body]. The body is eager (windowed virtualization = R898).
-    let v_scroll = use_scroll_state(V_SCROLL_KEY);
-    let body = Scene::Scroll(
-        ScrollNode::from_state(Rc::clone(&v_scroll), Rect::default(), rows_column)
-            .with_axis(ScrollAxis::Vertical)
-            .with_layout(LayoutStyle::new().with_flex_grow(1.0)),
-    );
-    let h_scroll = use_scroll_state(H_SCROLL_KEY);
-    let scrolled = h_scrolled_column(&h_scroll, view_header(&theme, sort), body);
     let grid = Scene::Container(
         ContainerNode::new(vec![scrolled])
             .with_tag(GRID_TAG)
@@ -2133,6 +2129,11 @@ mod tests {
     fn r837_view_carries_grid_and_cell_tags() {
         Owner::new().run(|| {
             let _ = boot_scene();
+            // R897 — the body virtualizes against the measured viewport, so a
+            // unit test (no shell layout pass) must seed a viewport height or
+            // the window is empty and no rows build (the read-only grid tests'
+            // convention). GRID_VIEWPORT_H windows all four seeded rows.
+            use_scroll_state(V_SCROLL_KEY).set_measured_viewport(GRID_VIEWPORT_W, GRID_VIEWPORT_H);
             let scene = view((TextFieldState::Idle, 0), &Frame::new());
             assert!(scene.contains_tag(GRID_TAG), "grid root painted");
             assert!(scene.contains_tag(&format!("{GRID_TAG}#0_0")), "cell (0,0) painted");
