@@ -37753,6 +37753,52 @@
         "multi-facet filter / per-cell a11y roles / per-column validation still deferred (additive)"
       ]
     },
+    "R893": {
+      "decision_summary": "R893 session-review adversarial audit clearance (§5.40 §5.49): bool-toggle re-anchor (R891 gap), label-keyed collapse (R892 stale-id fix + OOR guard); 2 nits rejected",
+      "changes_bullets": [
+        "bool toggle now re-anchors the cursor (the model mutation R891 missed; commit/intervene had it)",
+        "collapse keyed on group LABEL (BTreeSet<String>) not position: survives value-removing edits",
+        "collapse wire (toggle_group/collapsed.<g>) guards OOR via the label map (Null/no-op/UnknownPath)",
+        "module + use_collapsed doc corrected (false \"collapse intact across edits\" claim)",
+        "2 subagent adversarial reviews (R891/R892); findings re-verified by grep+read (real/reject)"
+      ],
+      "verification_bullets": [
+        "hello-data-grid 36 tests green (3 new R893: toggle-reanchor / label-survives-edit / OOR-collapse)",
+        "cargo test --workspace -j2 green (exit 0); clippy --workspace --all-targets pedantic clean",
+        "r891 + r892 demos no-regression (collapse internals changed; the wire is behaviorally unchanged)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "rejected: Float -0.0/0.0 split (consistent w/ sort_cmp); group=99 readback=none (documented clamp)",
+        "intervene focused_row to a hidden row = direct source-row set (by design, not a visibility gate)",
+        "open: tag-flexible grouped a11y builder @ 2nd consumer; frozen-pane fold for a wide grid"
+      ],
+      "publishable_decision_summary": "R893 session-review adversarial audit clearance (§5.40 §5.49): bool-toggle re-anchor (R891 gap), label-keyed collapse (R892 stale-id fix + OOR guard); 2 nits rejected",
+      "publishable_changes_bullets": [
+        "bool toggle now re-anchors the cursor (the model mutation R891 missed; commit/intervene had it)",
+        "collapse keyed on group LABEL (BTreeSet<String>) not position: survives value-removing edits",
+        "collapse wire (toggle_group/collapsed.<g>) guards OOR via the label map (Null/no-op/UnknownPath)",
+        "module + use_collapsed doc corrected (false \"collapse intact across edits\" claim)",
+        "2 subagent adversarial reviews (R891/R892); findings re-verified by grep+read (real/reject)"
+      ],
+      "publishable_verification_bullets": [
+        "hello-data-grid 36 tests green (3 new R893: toggle-reanchor / label-survives-edit / OOR-collapse)",
+        "cargo test --workspace -j2 green (exit 0); clippy --workspace --all-targets pedantic clean",
+        "r891 + r892 demos no-regression (collapse internals changed; the wire is behaviorally unchanged)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "rejected: Float -0.0/0.0 split (consistent w/ sort_cmp); group=99 readback=none (documented clamp)",
+        "intervene focused_row to a hidden row = direct source-row set (by design, not a visibility gate)",
+        "open: tag-flexible grouped a11y builder @ 2nd consumer; frozen-pane fold for a wide grid"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

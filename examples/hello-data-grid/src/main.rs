@@ -116,9 +116,12 @@
 //! another group on the next paint, and collapsing the cursor's group (or an
 //! edit that hides it) re-anchors the source-keyed cursor through the shared
 //! [`reanchor_cursor`] SSOT (now generalised over filter + group + collapse).
-//! The group id keys on the STABLE source-order [`group_table`] so a sort /
-//! filter / edit keeps a group's collapse intact; changing the group column
-//! clears it. The [`GroupOrderState`](pinion_core::widgets::group_order::GroupOrderState)
+//! Collapse is keyed on the group LABEL (the displayed value), not its
+//! positional id (R893 audit fix), so a sort / filter / edit that reorders
+//! rows OR changes the distinct-value set keeps a group's collapse tied to its
+//! identity — an edit that empties a group can never re-target a different
+//! group's collapse; changing the group column clears it. The
+//! [`GroupOrderState`](pinion_core::widgets::group_order::GroupOrderState)
 //! coordinator is deliberately NOT reused (the R778 family ruling — the shared
 //! parts are the `group_rows` free fn + wire vocab, not the coordinator, which
 //! assumes a `VirtualSelectExternal` selection + a String dataset).
@@ -371,12 +374,17 @@ fn use_group_col() -> Rc<Signal<Option<usize>>> {
     owner.cache("data_grid.group_col", || Signal::new(None))
 }
 
-/// R892 — the collapsed group ids (a `BTreeSet` for a deterministic, cheap
-/// membership test). Keyed on the STABLE group id from [`group_table`], so a
-/// sort / filter / edit that reorders rows keeps a group's collapse intact; a
-/// group-by-column CHANGE clears it (the ids no longer mean the same groups).
+/// R892 / R893 — the collapsed group LABELS (the displayed group-key values; a
+/// `BTreeSet<String>` for a deterministic, cheap membership test). Keyed on the
+/// VALUE, not the positional [`group_table`] id (R893 audit fix): a sort /
+/// filter / edit that reorders rows OR changes the distinct-value set keeps a
+/// group's collapse tied to its identity — an edit that empties a group leaves
+/// a harmless stale label, never re-targeting a different group (the read-only
+/// `GroupOrderState` keys collapse on positions, sound only for its STATIC
+/// dataset; an editable grid's value set shifts). A group-by-column CHANGE
+/// clears it (the labels are a different column's values).
 #[must_use]
-fn use_collapsed() -> Rc<Signal<BTreeSet<usize>>> {
+fn use_collapsed() -> Rc<Signal<BTreeSet<String>>> {
     let owner = Owner::current().expect("use_collapsed requires an active Owner scope");
     owner.cache("data_grid.collapsed", || Signal::new(BTreeSet::new()))
 }
@@ -419,7 +427,7 @@ fn visible_rows(
     sort: Option<(usize, bool)>,
     filter: Option<&GridFilter>,
     group_col: Option<usize>,
-    collapsed: &BTreeSet<usize>,
+    collapsed: &BTreeSet<String>,
 ) -> Vec<GroupRow> {
     let order = current_order(model, sort, filter);
     match group_col {
@@ -429,7 +437,9 @@ fn visible_rows(
             group_rows(
                 &order,
                 |row| group_of(model, row, col, &table),
-                |group| collapsed.contains(&group),
+                // R893 — collapse is keyed on the group LABEL, so map the id
+                // group_rows hands us back to its label before the lookup.
+                |group| table.get(group).is_some_and(|label| collapsed.contains(label)),
             )
         }
     }
@@ -443,7 +453,7 @@ fn visible_data_order(
     sort: Option<(usize, bool)>,
     filter: Option<&GridFilter>,
     group_col: Option<usize>,
-    collapsed: &BTreeSet<usize>,
+    collapsed: &BTreeSet<String>,
 ) -> Vec<usize> {
     visible_rows(model, sort, filter, group_col, collapsed)
         .iter()
@@ -498,7 +508,7 @@ struct DataGridExternal {
     /// R892 — the shared group-by column (`use_group_col`).
     group_col: Rc<Signal<Option<usize>>>,
     /// R892 — the shared collapsed-group set (`use_collapsed`).
-    collapsed: Rc<Signal<BTreeSet<usize>>>,
+    collapsed: Rc<Signal<BTreeSet<String>>>,
 }
 
 impl DataGridExternal {
@@ -512,7 +522,7 @@ impl DataGridExternal {
         sort: Rc<Signal<Option<(usize, bool)>>>,
         filter: Rc<Signal<Option<GridFilter>>>,
         group_col: Rc<Signal<Option<usize>>>,
-        collapsed: Rc<Signal<BTreeSet<usize>>>,
+        collapsed: Rc<Signal<BTreeSet<String>>>,
     ) -> Self {
         Self {
             model,
@@ -599,7 +609,7 @@ impl DataGridExternal {
 
     /// R892 — set the group-by column (`None` ungroups). An out-of-range column
     /// clamps to ungrouped. Re-grouping (a CHANGE of column) clears the collapse
-    /// set (its ids no longer name the same groups). Re-anchors the cursor and
+    /// set (its labels are a different column's values). Re-anchors the cursor and
     /// returns the resulting [`group_count`](Self::group_count). The mutation
     /// path the wire's `intervene "group"` and `invoke "set_group"` share.
     fn set_group(&self, col: Option<usize>) -> usize {
@@ -613,16 +623,29 @@ impl DataGridExternal {
         self.group_count()
     }
 
+    /// R893 — the LABEL of group id `group` under the active group column, or
+    /// `None` when ungrouped or out of range. The id→label map the label-keyed
+    /// collapse set goes through; an out-of-range id resolves to `None`, so the
+    /// collapse wire naturally rejects a phantom group (no hand-rolled guard).
+    fn group_label_at(&self, group: usize) -> Option<String> {
+        self.group_col.get().and_then(|col| group_table(&self.model.get(), col).get(group).cloned())
+    }
+
     /// R892 — toggle group `group`'s collapse (a clicked group header / the
     /// `toggle_group` wire). Collapsing the cursor's group hides its rows, so
-    /// the cursor re-anchors. Returns the resulting collapsed flag.
+    /// the cursor re-anchors. Returns the resulting collapsed flag; an
+    /// out-of-range group is a no-op returning `false` (R893 — the label map
+    /// guards it).
     fn toggle_group(&self, group: usize) -> bool {
+        let Some(label) = self.group_label_at(group) else {
+            return false;
+        };
         let prior_vis = self.cursor_prior_vis();
         let mut next = self.collapsed.get();
-        let now_collapsed = if next.remove(&group) {
+        let now_collapsed = if next.remove(&label) {
             false
         } else {
-            next.insert(group);
+            next.insert(label);
             true
         };
         self.collapsed.set(next);
@@ -635,17 +658,29 @@ impl DataGridExternal {
     /// row — the cursor stays put, no visible row to land on, until re-expanded).
     fn set_all_collapsed(&self, collapse: bool) {
         let prior_vis = self.cursor_prior_vis();
-        let set: BTreeSet<usize> = if collapse { (0..self.group_count()).collect() } else { BTreeSet::new() };
+        let set: BTreeSet<String> = if collapse {
+            self.group_col
+                .get()
+                .map(|col| group_table(&self.model.get(), col).into_iter().collect())
+                .unwrap_or_default()
+        } else {
+            BTreeSet::new()
+        };
         self.collapsed.set(set);
         self.reanchor(prior_vis);
     }
 
     /// Toggle the bool at `(row, col)`; no-op (returns `false`) unless the
-    /// column is a bool. The checkbox affordance behind `Space` + click.
+    /// column is a bool. The checkbox affordance behind `Space` + click. R893 —
+    /// this is a committed edit, so it re-anchors the cursor exactly like
+    /// `commit_edit` / `intervene "value"`: toggling the cell out of an active
+    /// filter (or into a collapsed group) on the group/filter column moves its
+    /// row, and the source-keyed cursor follows into the visible set.
     fn toggle(&self, row: usize, col: usize) -> bool {
         if col >= NCOLS || COL_KINDS[col] != CellKind::Bool {
             return false;
         }
+        let prior_vis = self.cursor_prior_vis();
         let mut toggled = false;
         self.model.set_with(|prev| {
             let mut next = prev.clone();
@@ -655,6 +690,7 @@ impl DataGridExternal {
             }
             next
         });
+        self.reanchor(prior_vis);
         toggled
     }
 
@@ -830,11 +866,17 @@ impl ExternalIntrospect for DataGridExternal {
                     };
                     return Some(label.map_or(IntrospectValue::Null, IntrospectValue::Text));
                 }
-                // R892 — whether group `<group>` is collapsed (the read side of
-                // `toggle_group` / `intervene "collapsed.<group>"`).
+                // R892 / R893 — whether group `<group>` is collapsed (the read
+                // side of `toggle_group` / `intervene "collapsed.<group>"`).
+                // Resolves the id to its label; an out-of-range group reports
+                // Null (present-but-empty), the §5.12 convention the
+                // `GroupOrderExternal` SSOT speaks.
                 if let Some(g_str) = path.strip_prefix("collapsed.") {
                     let group: usize = g_str.parse().ok()?;
-                    return Some(IntrospectValue::Bool(self.collapsed.get().contains(&group)));
+                    return Some(match self.group_label_at(group) {
+                        Some(label) => IntrospectValue::Bool(self.collapsed.get().contains(&label)),
+                        None => IntrospectValue::Null,
+                    });
                 }
                 if let Some(col_str) = path.strip_prefix("col_name.") {
                     let col: usize = col_str.parse().ok()?;
@@ -919,15 +961,20 @@ impl ExternalIntrospect for DataGridExternal {
                 _ => Err(InterveneError::TypeMismatch),
             },
             _ => {
-                // R892 — set group `<group>`'s collapse directly (idempotent;
-                // re-anchors via `toggle_group` when it actually changes).
+                // R892 / R893 — set group `<group>`'s collapse directly
+                // (idempotent; re-anchors via `toggle_group` when it actually
+                // changes). The id resolves to its label; an out-of-range group
+                // is an unknown path (mirrors the `query` Null).
                 if let Some(g_str) = path.strip_prefix("collapsed.") {
                     let group: usize =
                         g_str.parse().map_err(|_| InterveneError::UnknownPath)?;
                     let IntrospectValue::Bool(want) = value else {
                         return Err(InterveneError::TypeMismatch);
                     };
-                    if self.collapsed.get().contains(&group) != want {
+                    let Some(label) = self.group_label_at(group) else {
+                        return Err(InterveneError::UnknownPath);
+                    };
+                    if self.collapsed.get().contains(&label) != want {
                         self.toggle_group(group);
                     }
                     return Ok(());
@@ -2535,6 +2582,92 @@ mod tests {
             let _scene = boot_scene();
             let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
             assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Grid, "ungrouped stays a flat grid");
+        });
+    }
+
+    // ─── R893 — session-review audit remediation ─────────────────────
+
+    #[test]
+    fn r893_bool_toggle_under_filter_reanchors_cursor() {
+        // A bool toggle is a committed edit: toggling the cursor's Active cell
+        // out of an `Active=true` filter must drop the row AND re-anchor the
+        // source-keyed cursor (R893 — the toggle path was the one model
+        // mutation missing the re-anchor R891 wired into commit_edit/intervene).
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Active (col 4) = [true, true, false, true]; filter keeps 0, 1, 3.
+            let _ = intro.invoke("set_filter", IntrospectValue::Text("4=true".to_owned()));
+            let _ = intro.intervene("focused_row", IntrospectValue::Int(0));
+            let _ = intro.intervene("focused_col", IntrospectValue::Int(4));
+            assert_eq!(intro.query("view_len"), Some(IntrospectValue::Int(3)));
+            // Toggle Hero's Active true -> false: it leaves the filter.
+            let _ = intro.invoke("toggle", IntrospectValue::Null);
+            assert_eq!(intro.query("value.0.4"), Some(IntrospectValue::Bool(false)), "toggled");
+            assert_eq!(intro.query("view_len"), Some(IntrospectValue::Int(2)), "Hero dropped");
+            assert_eq!(
+                intro.query("focused_row"),
+                Some(IntrospectValue::Int(1)),
+                "cursor re-anchored out of the now-hidden row",
+            );
+        });
+    }
+
+    #[test]
+    fn r893_collapse_keyed_on_label_survives_value_removing_edit() {
+        // Group by Type [sprite, mesh, sprite, mesh]; collapse the sprite
+        // group; then edit BOTH sprite rows to mesh so "sprite" vanishes. The
+        // collapse keys on the LABEL, so it must NOT re-target the mesh group
+        // (the positional-id bug would collapse whatever now sits at index 0).
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            let _ = intro.invoke("set_group", IntrospectValue::Text("1".to_owned()));
+            assert_eq!(intro.invoke("toggle_group", IntrospectValue::Int(0)), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(4)), "sprite collapsed");
+            // Both sprite rows (0, 2) -> mesh; "sprite" no longer exists.
+            let _ = intro.intervene("value.0.1", IntrospectValue::Text("mesh".to_owned()));
+            let _ = intro.intervene("value.2.1", IntrospectValue::Text("mesh".to_owned()));
+            assert_eq!(intro.query("group_count"), Some(IntrospectValue::Int(1)), "only mesh remains");
+            assert_eq!(
+                intro.query("collapsed.0"),
+                Some(IntrospectValue::Bool(false)),
+                "mesh is NOT collapsed (the stale 'sprite' label does not match it)",
+            );
+            assert_eq!(
+                intro.query("visible_len"),
+                Some(IntrospectValue::Int(5)),
+                "one mesh header + four data rows, all shown",
+            );
+        });
+    }
+
+    #[test]
+    fn r893_collapsed_out_of_range_group_is_null_and_noop() {
+        // R893 — the label map guards an out-of-range group id without a
+        // hand-rolled bound: query is Null (present-but-empty), toggle is a
+        // no-op returning false, intervene is UnknownPath; the set stays clean.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            let _ = intro.invoke("set_group", IntrospectValue::Text("1".to_owned())); // 2 groups
+            assert_eq!(intro.query("collapsed.9"), Some(IntrospectValue::Null), "OOR group -> Null");
+            assert_eq!(
+                intro.invoke("toggle_group", IntrospectValue::Int(9)),
+                Ok(IntrospectValue::Bool(false)),
+                "OOR toggle is a no-op",
+            );
+            assert_eq!(
+                intro.intervene("collapsed.9", IntrospectValue::Bool(true)),
+                Err(InterveneError::UnknownPath),
+                "OOR collapse write is UnknownPath",
+            );
+            // No dead id leaked: the real groups stay expanded.
+            assert_eq!(intro.query("collapsed.0"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(6)), "all expanded");
         });
     }
 }
