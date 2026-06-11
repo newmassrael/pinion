@@ -37839,6 +37839,54 @@
         "Choice/Color cell columns + frozen-pane fold for a wide grid = remaining advanced-data-grid tail"
       ]
     },
+    "R895": {
+      "decision_summary": "R895 session-review audit clearance (§5.50 §5.40): lift the R892 hand-rolled grouped treegrid a11y into the grouped_grid_access_nodes substrate (row_tag closure + focused_cell axis); the cost-no-object textbook resolution the user audit demanded",
+      "changes_bullets": [
+        "grouped_grid_access_nodes gains a row_tag closure (consumer owns the tag) replacing composite_tag",
+        "GroupedGridSpec drops group_prefix/data_prefix, gains focused_cell (cell-vs-row activedescendant)",
+        "hello-data-grid deletes the ~100-line hand-rolled grouped a11y; routes through the substrate",
+        "3 read-only consumers pass the composite_tag closure + focused_cell None (behavior-identical)",
+        "read-only metadata/projection intervene returns ReadOnly not UnknownPath (error-class honesty)",
+        "completes the substrate's stated \"consumer owns the tags\" contract (it hardcoded {prefix}#{id})"
+      ],
+      "verification_bullets": [
+        "pinion-a11y 215+17 green (r895 cell-focus + row-tag test); hello-data-grid 40 ok",
+        "3 consumers green (grouped-grid 4 / sort 8 / property 45); workspace green; clippy clean",
+        "demos no-regression: editable r886/r891/r892/r894 + consumers r845/r846/r836/r871 PASS"
+      ],
+      "impact_refs": [
+        "5.50",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "clamp_for_col still local (lift to cell_value at 2nd consumer); R874 bare-cell name deferred",
+        "process: under cost-no-object don't defer churny-correct substrate lifts; don't self-censor scope",
+        "next: wide/frozen editable grid, then diversify to node-editor (greener per northern-star)"
+      ],
+      "publishable_decision_summary": "R895 session-review audit clearance (§5.50 §5.40): lift the R892 hand-rolled grouped treegrid a11y into the grouped_grid_access_nodes substrate (row_tag closure + focused_cell axis); the cost-no-object textbook resolution the user audit demanded",
+      "publishable_changes_bullets": [
+        "grouped_grid_access_nodes gains a row_tag closure (consumer owns the tag) replacing composite_tag",
+        "GroupedGridSpec drops group_prefix/data_prefix, gains focused_cell (cell-vs-row activedescendant)",
+        "hello-data-grid deletes the ~100-line hand-rolled grouped a11y; routes through the substrate",
+        "3 read-only consumers pass the composite_tag closure + focused_cell None (behavior-identical)",
+        "read-only metadata/projection intervene returns ReadOnly not UnknownPath (error-class honesty)",
+        "completes the substrate's stated \"consumer owns the tags\" contract (it hardcoded {prefix}#{id})"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-a11y 215+17 green (r895 cell-focus + row-tag test); hello-data-grid 40 ok",
+        "3 consumers green (grouped-grid 4 / sort 8 / property 45); workspace green; clippy clean",
+        "demos no-regression: editable r886/r891/r892/r894 + consumers r845/r846/r836/r871 PASS"
+      ],
+      "publishable_impact_refs": [
+        "5.50",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "clamp_for_col still local (lift to cell_value at 2nd consumer); R874 bare-cell name deferred",
+        "process: under cost-no-object don't defer churny-correct substrate lifts; don't self-censor scope",
+        "next: wide/frozen editable grid, then diversify to node-editor (greener per northern-star)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

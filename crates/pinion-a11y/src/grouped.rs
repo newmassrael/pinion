@@ -202,10 +202,6 @@ pub struct GroupedGridSpec<'a> {
     pub header_row_tag: &'a str,
     /// The columns (tag + label + active `aria-sort`), left to right.
     pub columns: &'a [GridColumn],
-    /// Composite-tag namespace of group headers (`"{group_prefix}#{g}"`).
-    pub group_prefix: &'a str,
-    /// Composite-tag namespace of data rows (`"{data_prefix}#{s}"`).
-    pub data_prefix: &'a str,
     /// Whether the grid exposes an `aria-selected` axis, and which source is
     /// selected ([`GroupedGridSelection`]).
     pub selection: GroupedGridSelection,
@@ -214,6 +210,14 @@ pub struct GroupedGridSpec<'a> {
     /// data row) carries the `focused` state (`aria-activedescendant`). A
     /// grid with no keyboard navigation passes `None`.
     pub focused_view_pos: Option<usize>,
+    /// R895 — the focused **column** within the focused data row, for a
+    /// **cell-focus** treegrid (an editable grid's 2-D cell cursor). When the
+    /// focused row ([`focused_view_pos`](Self::focused_view_pos)) is a data row
+    /// and this is `Some(col)`, that row's `gridcell` at `col` carries the
+    /// `focused` `aria-activedescendant` **instead of** the row; `None` keeps
+    /// **row-level** focus (a selection-navigated read-only grid). A group
+    /// header is always row-focused (it has no cells), regardless of this.
+    pub focused_cell: Option<usize>,
 }
 
 /// R847 §5.50 — build the grouped-**grid** `treegrid` a11y nodes over the
@@ -237,7 +241,13 @@ pub struct GroupedGridSpec<'a> {
 ///
 /// `group_label(group)` yields the group's display name; `cell_tag(source, col)`
 /// the per-cell composite tag (a `pointer_transparent` paint node carries its
-/// bound); `cell_value(source, col)` the cell's value.
+/// bound); `cell_value(source, col)` the cell's value; `row_tag(&GroupRow)` the
+/// header / data **row** tag — the consumer owns it (R895), so a grid routing
+/// rows through one coordinator (`{prefix}#{id}` via
+/// [`GroupRow::composite_tag`]) and a single-`External` grid with a bespoke
+/// scheme (`data_grid#g<g>` / `dg_row<src>`) build from the SAME topology,
+/// differing only in the closure they pass — the same caller-owned-tag
+/// convention `cell_tag` already follows.
 #[must_use]
 pub fn grouped_grid_access_nodes(
     spec: &GroupedGridSpec,
@@ -246,9 +256,9 @@ pub fn grouped_grid_access_nodes(
     group_label: impl Fn(usize) -> String,
     cell_tag: impl Fn(usize, usize) -> String,
     cell_value: impl Fn(usize, usize) -> String,
+    row_tag: impl Fn(&GroupRow) -> String,
 ) -> Vec<AccessNode> {
     let total = u32::try_from(rows.len()).unwrap_or(u32::MAX);
-    let row_tag = |row: &GroupRow| row.composite_tag(spec.group_prefix, spec.data_prefix);
 
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(window.count * (spec.columns.len() + 1) + 2);
 
@@ -300,12 +310,17 @@ pub fn grouped_grid_access_nodes(
                 );
             }
             GroupRow::Data { source } => {
+                // R895 — cell-focus vs row-focus: on the focused data row, a
+                // `Some(col)` `focused_cell` moves the activedescendant onto
+                // that gridcell (an editable grid's 2-D cell cursor) and off
+                // the row; `None` keeps the row focused (a row-navigated grid).
+                let cell_focus = if focused { spec.focused_cell } else { None };
                 // Data row = level-2 leaf row carrying one gridcell per column.
                 let mut data_row = AccessNode::new(row_tag(row), AriaRole::Row)
                     .with_level(2)
                     .with_position_in_set(posinset)
                     .with_size_of_set(total)
-                    .with_focused(focused);
+                    .with_focused(focused && cell_focus.is_none());
                 // `aria-selected` only on a selection-capable grid (R874): a
                 // focus-only inspector (`Display`) omits the axis entirely.
                 if let GroupedGridSelection::Single(sel) = spec.selection {
@@ -320,7 +335,8 @@ pub fn grouped_grid_access_nodes(
                     // AT announces "<column>: <value>" without prefixing (R874).
                     nodes.push(
                         AccessNode::new(cell_tag(source, c), AriaRole::GridCell)
-                            .with_name(cell_value(source, c)),
+                            .with_name(cell_value(source, c))
+                            .with_focused(cell_focus == Some(c)),
                     );
                 }
             }
@@ -415,10 +431,9 @@ mod tests {
             name: Some("Grouped grid"),
             header_row_tag: "head",
             columns: &columns,
-            group_prefix: "grp",
-            data_prefix: "row",
             selection: GroupedGridSelection::Single(Some(0)),
             focused_view_pos: Some(0),
+            focused_cell: None,
         };
         let nodes = grouped_grid_access_nodes(
             &spec,
@@ -427,6 +442,7 @@ mod tests {
             |g| format!("G{g}"),
             |s, c| format!("cell_{s}_{c}"),
             |s, c| format!("v{s}{c}"),
+            |r| r.composite_tag("grp", "row"),
         );
         // R874 — the grouped grid is a `treegrid` (hierarchical + columns), not
         // a flat `grid`.
@@ -459,6 +475,50 @@ mod tests {
     }
 
     #[test]
+    fn r895_focused_cell_moves_activedescendant_onto_the_gridcell() {
+        // R895 — the cell-focus model (an editable grid's 2-D cursor):
+        // `focused_cell = Some(col)` on the focused data row moves the
+        // `aria-activedescendant` onto that gridcell, OFF the row; `None`
+        // keeps row focus (the read-only grids). Also exercises the `row_tag`
+        // closure with a bespoke (non-composite) scheme.
+        let rows = sample(); // [Header g0, Data 0, Data 2, Header g1, Data 1]
+        let win = full_window(&rows);
+        let columns = grid_columns();
+        let spec = GroupedGridSpec {
+            grid_tag: "grid",
+            name: None,
+            header_row_tag: "head",
+            columns: &columns,
+            selection: GroupedGridSelection::Display,
+            focused_view_pos: Some(1), // the first data row (source 0)
+            focused_cell: Some(1),     // cell-focus on column 1
+        };
+        let nodes = grouped_grid_access_nodes(
+            &spec,
+            &rows,
+            win,
+            |g| format!("G{g}"),
+            |s, c| format!("cell_{s}_{c}"),
+            |s, c| format!("v{s}{c}"),
+            // A bespoke single-coordinator scheme ('g'-prefixed headers, a
+            // dotted data-row tag) the composite scheme cannot express.
+            |r| match *r {
+                GroupRow::Header { group, .. } => format!("grid#g{group}"),
+                GroupRow::Data { source } => format!("drow.{source}"),
+            },
+        );
+        // The bespoke row tags are honored (the consumer owns the tag).
+        assert!(nodes.iter().any(|n| n.tag == "grid#g0"), "bespoke header tag");
+        let d0 = nodes.iter().find(|n| n.tag == "drow.0").expect("bespoke data-row tag");
+        // Cell-focus: the row is NOT the active descendant; its column-1 cell is.
+        assert!(!d0.state.focused, "cell-focus: the row is not the active descendant");
+        let cell01 = nodes.iter().find(|n| n.tag == "cell_0_1").expect("cell 0,1");
+        assert!(cell01.state.focused, "the focused column's gridcell is the active descendant");
+        let cell00 = nodes.iter().find(|n| n.tag == "cell_0_0").expect("cell 0,0");
+        assert!(!cell00.state.focused, "an unfocused column's gridcell is not");
+    }
+
+    #[test]
     fn grouped_grid_display_selection_omits_aria_selected() {
         // R874 — a focus-only grid (`Display`) carries NO `aria-selected` axis:
         // its roving cursor is keyboard focus (`aria-activedescendant`), not
@@ -472,10 +532,9 @@ mod tests {
             name: None,
             header_row_tag: "head",
             columns: &columns,
-            group_prefix: "grp",
-            data_prefix: "row",
             selection: GroupedGridSelection::Display,
             focused_view_pos: Some(1),
+            focused_cell: None,
         };
         let nodes = grouped_grid_access_nodes(
             &spec,
@@ -484,6 +543,7 @@ mod tests {
             |g| format!("G{g}"),
             |s, c| format!("cell_{s}_{c}"),
             |s, c| format!("v{s}{c}"),
+            |r| r.composite_tag("grp", "row"),
         );
         for tag in ["row#0", "row#1", "row#2"] {
             let d = nodes.iter().find(|n| n.tag == tag).unwrap_or_else(|| panic!("{tag}"));

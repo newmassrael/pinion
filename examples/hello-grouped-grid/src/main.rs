@@ -398,10 +398,11 @@ impl WidgetA11y for GroupedGridView {
             name: Some("Grouped asset grid"),
             header_row_tag: HEAD_ROW_TAG,
             columns: &columns,
-            group_prefix: GROUP_TAG,
-            data_prefix: GRID_TAG,
             selection: GroupedGridSelection::Single(state.selected),
             focused_view_pos: state.cursor,
+            // R895 — row-focus (a selection-navigated grid; cell-focus is the
+            // editable data grid's axis).
+            focused_cell: None,
         };
         grouped_grid_access_nodes(
             &spec,
@@ -410,6 +411,9 @@ impl WidgetA11y for GroupedGridView {
             |g| GROUPS[g % GROUPS.len()].to_string(),
             cell_tag,
             cell_value,
+            // R895 — the rows route through one coordinator via the composite
+            // scheme; the consumer owns the tag (it used to be a spec prefix).
+            |r| r.composite_tag(GROUP_TAG, GRID_TAG),
         )
     }
 

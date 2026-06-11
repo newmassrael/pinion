@@ -463,12 +463,12 @@ impl WidgetA11y for GroupedGridSortView {
             name: Some("Sortable grouped asset grid"),
             header_row_tag: &header_row_tag,
             columns: &columns,
-            group_prefix: GROUP_TAG,
-            data_prefix: GRID_TAG,
             selection: GroupedGridSelection::Single(*selected),
             // No keyboard navigation in this sort-focused slice (R848 wires
             // grouped-list / grouped-grid); the cursor axis is absent here.
             focused_view_pos: None,
+            // R895 — row-focus (read-only selection grid).
+            focused_cell: None,
         };
         grouped_grid_access_nodes(
             &spec,
@@ -477,6 +477,7 @@ impl WidgetA11y for GroupedGridSortView {
             |g| GROUPS[g % GROUPS.len()].to_string(),
             cell_tag,
             cell_value,
+            |r| r.composite_tag(GROUP_TAG, GRID_TAG),
         )
     }
 }

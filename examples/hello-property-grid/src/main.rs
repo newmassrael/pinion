@@ -2044,8 +2044,6 @@ impl WidgetA11y for PropertyGridView {
             name: Some("Inspector"),
             header_row_tag: "pg_header",
             columns: &columns,
-            group_prefix: GROUP_TAG,
-            data_prefix: GRID_TAG,
             // R873/R874 — the roving cursor is keyboard FOCUS, exposed as
             // `aria-activedescendant` via `focused_view_pos` + `access_focus_target`.
             // The property grid has NO selection model, so the selection is
@@ -2054,6 +2052,9 @@ impl WidgetA11y for PropertyGridView {
             // grid as a selection widget).
             selection: GroupedGridSelection::Display,
             focused_view_pos: cursor,
+            // R895 — row-focus: the activedescendant is the whole property row
+            // (label + value), not a single cell.
+            focused_cell: None,
         };
         let mut nodes = grouped_grid_access_nodes(
             &spec,
@@ -2068,6 +2069,7 @@ impl WidgetA11y for PropertyGridView {
                     model[source].display()
                 }
             },
+            |r| r.composite_tag(GROUP_TAG, GRID_TAG),
         );
         // R873 — the live search box is a Tab stop; emit its textbox node (the
         // lifted `text_field_a11y_node` SSOT) so an AT user who tabs into it

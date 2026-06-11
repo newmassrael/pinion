@@ -143,10 +143,6 @@
 //! - Multi-facet / substring column filter — one fixed-string column facet
 //!   here (the cross-grid `GridFilter` shape); multi-facet is a later
 //!   additive axis, exactly as the read-only `GridSortState` filter defers it.
-//! - Grouped-mode a11y is hand-rolled (not `grouped_grid_access_nodes`): this
-//!   single-External grid's tags (`data_grid#g<g>` headers, `dg_row<src>` rows)
-//!   do not fit the substrate's `{prefix}#{id}` scheme. A 2nd single-External
-//!   grouped consumer would justify lifting a tag-flexible builder.
 //! - Frozen panes on the *editable* grid are a no-op at this size (the columns
 //!   fit the window, so there is no horizontal scroll to pin against) —
 //!   deferred until a wide editable grid needs it.
@@ -156,8 +152,8 @@ use std::rc::Rc;
 use std::collections::BTreeSet;
 
 use pinion_a11y::{
-    grid_table_nodes, AccessNode, AriaRole, GridCell, GridColumn, GridRow, SortDirection,
-    WidgetA11y,
+    grid_table_nodes, grouped_grid_access_nodes, AccessNode, GridCell, GridColumn, GridRow,
+    GroupedGridSelection, GroupedGridSpec, SortDirection, WidgetA11y,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::GridSendKey;
@@ -180,6 +176,7 @@ use pinion_core::widgets::grid_sort::{
 };
 use pinion_core::widgets::group_order::{group_rows, GroupRow};
 use pinion_core::widgets::table::{cycle_col_sort, grid_order_by};
+use pinion_core::widgets::virtual_list::VisibleWindow;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
@@ -1023,6 +1020,16 @@ impl ExternalIntrospect for DataGridExternal {
                 _ => Err(InterveneError::TypeMismatch),
             },
             _ => {
+                // R895 — read-only metadata / projection paths reject as
+                // `ReadOnly` (the honest "exists but you can't write it"), not
+                // `UnknownPath` (the "doesn't exist" lie) — error-class honesty
+                // for the AI-first introspection contract.
+                if ["col_name.", "col_kind.", "col_range.", "source_at.", "kind_at.", "label_at."]
+                    .iter()
+                    .any(|prefix| path.starts_with(prefix))
+                {
+                    return Err(InterveneError::ReadOnly);
+                }
                 // R892 / R893 — set group `<group>`'s collapse directly
                 // (idempotent; re-anchors via `toggle_group` when it actually
                 // changes). The id resolves to its label; an out-of-range group
@@ -1738,118 +1745,12 @@ impl WidgetCore for DataGridView {
     }
 }
 
-/// R892 — the WAI-ARIA `treegrid` a11y for the GROUPED editable grid.
-///
-/// Hand-rolled (not the lifted [`grouped_grid_access_nodes`] SSOT): that
-/// builder tags rows via `GroupRow::composite_tag(group_prefix, data_prefix)`
-/// = `{prefix}#{id}`, the read-only multi-External scheme. This single-External
-/// grid cannot use it — its group headers route via [`GridSendKey::Group`]
-/// (`data_grid#g<g>`, so the 'g' both routes and avoids the source-id
-/// collision) and its data rows are tagged `dg_row<src>` (locked by the R891
-/// demo + the ungrouped [`grid_table_nodes`] parity). A 2nd single-External
-/// grouped consumer would justify lifting a tag-flexible builder
-/// ([[abstraction-needs-second-consumer]]). The focused CELL is the
-/// activedescendant (the editable-grid model), not the row.
-fn grouped_access_nodes(
-    model: &[CellValue],
-    rows: &[GroupRow],
-    labels: &[String],
-    columns: &[GridColumn],
-    focused_row: usize,
-    focused_col: usize,
-) -> Vec<AccessNode> {
-    const HEADER_ROW_TAG: &str = "dg_header";
-    let total = u32::try_from(rows.len()).unwrap_or(u32::MAX);
-    let mut nodes: Vec<AccessNode> = Vec::with_capacity(rows.len() * (NCOLS + 1) + NCOLS + 2);
-
-    // treegrid root: the column-header row, then every visible row.
-    let mut grid = AccessNode::new(GRID_TAG, AriaRole::TreeGrid).with_name("Asset table");
-    grid = grid.with_child(HEADER_ROW_TAG);
-    for vrow in rows {
-        grid = grid.with_child(group_row_a11y_tag(vrow));
-    }
-    nodes.push(grid);
-
-    // column-header row + columnheaders (aria-sort from the GridColumn slice).
-    let mut header_row = AccessNode::new(HEADER_ROW_TAG, AriaRole::Row);
-    for col in columns {
-        header_row = header_row.with_child(col.tag.as_str());
-    }
-    nodes.push(header_row);
-    for col in columns {
-        let mut ch =
-            AccessNode::new(col.tag.as_str(), AriaRole::ColumnHeader).with_name(&col.label);
-        if let Some(dir) = col.sort {
-            ch = ch.with_sort(dir);
-        }
-        nodes.push(ch);
-    }
-
-    // group headers (level-1 expandable rows) + data rows (level-2 + gridcells).
-    for (pos, vrow) in rows.iter().enumerate() {
-        push_group_row_nodes(
-            &mut nodes,
-            *vrow,
-            u32::try_from(pos + 1).unwrap_or(u32::MAX),
-            total,
-            model,
-            labels,
-            (focused_row, focused_col),
-        );
-    }
-    nodes
-}
-
-/// R892 — push one visible row's a11y nodes: a level-1 expandable group
-/// header, or a level-2 data row + its `gridcell`s (the focused cell carrying
-/// the activedescendant). Split out of [`grouped_access_nodes`] for the 100-line
-/// budget.
-fn push_group_row_nodes(
-    nodes: &mut Vec<AccessNode>,
-    vrow: GroupRow,
-    posinset: u32,
-    total: u32,
-    model: &[CellValue],
-    labels: &[String],
-    focus: (usize, usize),
-) {
-    let (focused_row, focused_col) = focus;
-    match vrow {
-        GroupRow::Header { group, member_count, collapsed } => {
-            let label = labels.get(group).map_or("", String::as_str);
-            nodes.push(
-                AccessNode::new(group_header_tag(group), AriaRole::Row)
-                    .with_name(format!("{label} ({member_count})"))
-                    .with_level(1)
-                    .with_position_in_set(posinset)
-                    .with_size_of_set(total)
-                    .with_expanded(!collapsed),
-            );
-        }
-        GroupRow::Data { source } => {
-            let mut data_row = AccessNode::new(data_row_tag(source), AriaRole::Row)
-                .with_level(2)
-                .with_position_in_set(posinset)
-                .with_size_of_set(total);
-            for (col, _) in COL_NAMES.iter().enumerate() {
-                data_row = data_row.with_child(cell_tag(source, col));
-            }
-            nodes.push(data_row);
-            for (col, name) in COL_NAMES.iter().enumerate() {
-                let value =
-                    model.get(idx(source, col)).map(CellValue::display).unwrap_or_default();
-                nodes.push(
-                    AccessNode::new(cell_tag(source, col), AriaRole::GridCell)
-                        .with_name(format!("{name}: {value}"))
-                        .with_focused(source == focused_row && col == focused_col),
-                );
-            }
-        }
-    }
-}
-
-/// The a11y tag of a visible [`GroupRow`] — the painted-tag SSOT (header =
-/// `group_header_tag`, data = `data_row_tag`).
+/// R895 — the a11y tag of a visible [`GroupRow`] (the painted-tag SSOT: a
+/// header is `group_header_tag`, a data row `data_row_tag`). This is the
+/// `row_tag` closure the editable grid hands to [`grouped_grid_access_nodes`]
+/// — the single-`External` `data_grid#g<g>` / `dg_row<src>` scheme the
+/// composite-tag default cannot express, supplied by the consumer (the
+/// substrate owns the topology, the consumer owns the tags).
 fn group_row_a11y_tag(vrow: &GroupRow) -> String {
     match *vrow {
         GroupRow::Header { group, .. } => group_header_tag(group),
@@ -1858,11 +1759,12 @@ fn group_row_a11y_tag(vrow: &GroupRow) -> String {
 }
 
 impl WidgetA11y for DataGridView {
-    /// R837 / R886 / R891 / R892 — ungrouped, a flat WAI-ARIA `grid` (the
-    /// lifted [`grid_table_nodes`] SSOT) over the filtered+sorted rows, the
-    /// focused cell as `aria-activedescendant`; grouped, a `treegrid` (group
-    /// headers as level-1 expandable rows, data rows level-2) via
-    /// [`grouped_access_nodes`]. The columns (with `aria-sort`) are shared.
+    /// R837 / R886 / R891 / R892 / R895 — ungrouped, a flat WAI-ARIA `grid`
+    /// (the [`grid_table_nodes`] SSOT) over the filtered+sorted rows, the
+    /// focused cell as `aria-activedescendant`; grouped, a `treegrid` via the
+    /// [`grouped_grid_access_nodes`] SSOT (R895 — the editable grid is the
+    /// substrate's cell-focus + bespoke-row-tag consumer, replacing the
+    /// R892 hand-roll). The columns (with `aria-sort`) are shared.
     fn access_node(_state: &RootState, _focused: Option<&str>) -> Vec<AccessNode> {
         let model = use_data_model().get();
         let focused_row = use_focused_row().get();
@@ -1907,10 +1809,34 @@ impl WidgetA11y for DataGridView {
             return grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
         };
 
-        // R892 — grouped treegrid over the visible group/data sequence.
+        // R895 — grouped treegrid via the substrate SSOT. The editable grid is
+        // its cell-focus consumer (`focused_cell = Some(col)` puts the
+        // activedescendant on the focused gridcell, not the row) and its
+        // bespoke-row-tag consumer (`group_row_a11y_tag` supplies the
+        // `data_grid#g<g>` / `dg_row<src>` scheme the composite default can't).
         let rows = visible_rows(&model, sort, filter.as_ref(), Some(gcol), &collapsed);
         let labels = group_table(&model, gcol);
-        grouped_access_nodes(&model, &rows, &labels, &columns, focused_row, focused_col)
+        let focused_view_pos = rows.iter().position(|r| r.source() == Some(focused_row));
+        let spec = GroupedGridSpec {
+            grid_tag: GRID_TAG,
+            name: Some("Asset table"),
+            header_row_tag: "dg_header",
+            columns: &columns,
+            selection: GroupedGridSelection::Display,
+            focused_view_pos,
+            focused_cell: Some(focused_col),
+        };
+        grouped_grid_access_nodes(
+            &spec,
+            &rows,
+            VisibleWindow { first: 0, count: rows.len() },
+            |g| labels.get(g).cloned().unwrap_or_default(),
+            cell_tag,
+            |source, col| {
+                format!("{}: {}", COL_NAMES[col], model.get(idx(source, col)).map(CellValue::display).unwrap_or_default())
+            },
+            group_row_a11y_tag,
+        )
     }
 }
 
@@ -2628,12 +2554,12 @@ mod tests {
             use_focused_row().set(2); // Coin (sprite group)
             use_focused_col().set(2); // Count
             let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
-            assert_eq!(nodes[0].role, AriaRole::TreeGrid, "grouped grid is a treegrid");
+            assert_eq!(nodes[0].role, pinion_a11y::AriaRole::TreeGrid, "grouped grid is a treegrid");
             let header = nodes
                 .iter()
                 .find(|n| n.tag == group_header_tag(0))
                 .expect("sprite group header present (painted-tag parity)");
-            assert_eq!(header.role, AriaRole::Row);
+            assert_eq!(header.role, pinion_a11y::AriaRole::Row);
             assert_eq!(header.level, Some(1), "group header is aria-level 1");
             assert_eq!(header.expanded, Some(true));
             // Cell-focus: the focused gridcell is the activedescendant, not the row.
