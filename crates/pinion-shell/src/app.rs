@@ -459,13 +459,23 @@ impl<V: WidgetView> AppShell<V> {
                 return;
             }
         };
-        let window_id_choice = parsed_request
+        // R889 §5.16 §5.49 — the supplied window id passes through
+        // verbatim (missing param defaults to the primary spec id).
+        // Pre-R889 `resolve_spec_id` silently aliased unknown ids onto
+        // the primary here, which made the substrate's honesty gates
+        // unreachable in production AND let a bogus-window WRITE hit
+        // the primary (`scene/set_fps {window: "bogus", fps: 0}` froze
+        // the primary's game loop). The unknown-window judgment now
+        // has ONE home: the substrate resolves the id against
+        // `CoreShell::is_window_known` inside `dispatch_rpc_inner` and
+        // the dispatcher rejects unknown ids with `-32602
+        // unknown_window` before method routing.
+        let resolved_spec_id = parsed_request
             .params
             .as_ref()
             .and_then(|p| p.get("window"))
             .and_then(serde_json::Value::as_str)
             .map_or_else(|| String::from("main"), str::to_owned);
-        let resolved_spec_id = self.resolve_spec_id(&window_id_choice);
         // R670.B §5.16 — primary-window-scoped `scene/resize` (the
         // resize closure still targets the primary window; per-window
         // `scene/resize` is a follow-up axis once a real consumer
@@ -582,33 +592,6 @@ impl<V: WidgetView> AppShell<V> {
         // !should_emit so the next frame's plan diffs against the
         // post-emit baseline.
         self.core.commit_access_emit(nodes, at_focus.as_ref());
-    }
-
-    /// R670.B §5.16 — resolve the supplied window id to a known
-    /// spec id. Falls back to the primary spec id when the supplied
-    /// id is missing or unknown (AI clients targeting a window that
-    /// doesn't exist see the primary's scene rather than a hard
-    /// error — single-window bindings always have a primary; multi-
-    /// window bindings can detect the fallback by comparing the
-    /// returned id against the supplied id).
-    ///
-    /// Returns an owned `String` so the borrow on `self.windows`
-    /// releases before the caller threads the id into the substrate's
-    /// producer closure (which takes its own `&mut self.core`).
-    fn resolve_spec_id(&self, supplied: &str) -> String {
-        // R683 §5.16 — `spec_id_to_window_id` is keyed by
-        // `Cow<'static, str>`; `HashMap::contains_key` takes
-        // `&Q where K: Borrow<Q>` and `Cow<'static, str>:
-        // Borrow<str>`, so the plain `&str` lookup still works.
-        if self.spec_id_to_window_id.contains_key(supplied) {
-            return supplied.to_string();
-        }
-        // Fall back to the primary spec id (the first spec, by
-        // construction always present in `windows` after `resumed`).
-        match self.primary_slot() {
-            Some(slot) => slot.spec_id.to_string(),
-            None => "main".to_string(),
-        }
     }
 
     /// Build the paint scene for the current cached state, run layout,
@@ -1327,6 +1310,18 @@ impl<V: WidgetView> AppShell<V> {
                 }
             }
         };
+        // R889 §5.16 §5.49 — register the window in the substrate's
+        // window-known registry the moment the OS window exists
+        // (before renderer init + before the first paint). From here
+        // on `CoreShell::is_window_known(spec.id)` is true, so the
+        // dispatch-entry unknown-window gate admits RPC scoped to this
+        // window and the per-window READ axes (`scene/input_state` /
+        // `scene/pacing_state`) answer honestly for the
+        // registered-but-unpainted phase (R683 tear-off arc). One
+        // creation edge for both `resumed` and `reconcile_windows`
+        // paths; the matching removal edge is the reconcile drop
+        // pass's `ShellCore::remove_window`.
+        self.core.register_window(spec.id.as_ref());
         let pending_intrinsic_resize = match strategy {
             SizeStrategy::Fixed { .. } => None,
             SizeStrategy::IntrinsicAfterFirstPaint { min, max } => Some((min, max)),

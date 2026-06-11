@@ -57,7 +57,7 @@ use pinion_core::event::WheelDelta;
 use pinion_core::intent::Intent;
 use pinion_core::{Frame, Owner, Scene, SceneRevision};
 use pinion_rpc::{
-    build_layout_node, dispatch, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
+    build_layout_node, dispatch_parsed, DeferredInput, DispatchContext, LayoutNode, PreviewLedger,
 };
 use pinion_runtime::{
     clamp_frame_dt, CommandExecutor, CoreShell, DispatchTail, FocusManager, PointerId,
@@ -908,6 +908,24 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// the alternate-screen + raw-mode terminal holds stdout — see
     /// [`crate::shell::run`] for the response-writer wiring rationale).
     pub fn dispatch_rpc(&mut self, request: &str) -> Option<String> {
+        // R889 §5.41 §5.49 — parse once (the R671 GUI single-parse
+        // shape) so the out-of-band `{window: "<id>"}` scope is
+        // visible pre-dispatch. Pre-R889 the TUI never read the
+        // window param: a request scoped to ANY window id silently
+        // acted on the single terminal window — the GUI's
+        // alias-to-primary smell in §2 #6 disguise. The verdict goes
+        // through the same named predicate
+        // (`CoreShell::is_window_known`; the TUI registry holds
+        // exactly `DEFAULT_WINDOW`, seeded at construction) and the
+        // same dispatcher gate (`-32602 unknown_window`).
+        let parsed_request = match pinion_rpc::parse_request(request) {
+            Ok(r) => r,
+            Err(err_resp) => return Some(err_resp),
+        };
+        let unknown_window_verdict: Option<String> =
+            pinion_rpc::unknown_window_verdict(&parsed_request, |wid| {
+                self.core.is_window_known(wid)
+            });
         // R670 §5.41 §5.39 — sample focus before dispatch so we can
         // detect `focus/set` (or any other focus-mutating method)
         // and fire the `External::on_focus_change` notification on
@@ -983,7 +1001,13 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             // wildcard no-op), so `scene/pacing_state` answers
             // `PacingStateUnavailable` — the honest §2 #6 exposure,
             // the `modifiers: null` precedent's whole-axis variant.
-            let resp = dispatch(&mut ctx, request);
+            //
+            // R889 §5.49 — thread the unknown-window verdict (GUI
+            // parity; see the prologue above).
+            if let Some(supplied) = unknown_window_verdict {
+                ctx = ctx.with_unknown_window(supplied);
+            }
+            let resp = dispatch_parsed(&mut ctx, parsed_request);
             (resp, deferred_inputs)
         };
         let (resp, deferred_inputs) = resp_pair;

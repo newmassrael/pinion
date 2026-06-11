@@ -381,6 +381,21 @@ pub struct DispatchContext<'a> {
     /// [`PacingState::DefaultPolicy`] ("no override installed", a
     /// real value of the axis).
     pub pacing_state: Option<PacingState>,
+    /// R889 §5.49 — the embedder's unknown-window verdict: `Some(id)`
+    /// when the request's out-of-band `{window: "<id>"}` scope names a
+    /// window the binding does not know
+    /// (`pinion_runtime::CoreShell::is_window_known` is the one
+    /// predicate; the embedder threads the verdict as data because the
+    /// dispatch borrow split precludes a live closure into the
+    /// substrate). [`dispatch_parsed`] rejects the whole request with
+    /// `-32602 unknown_window` before method routing — READ and WRITE
+    /// axes share the gate, so a bogus window id can neither read
+    /// another window's state nor mutate it (pre-R889 the GUI shell
+    /// silently aliased unknown ids onto the primary: `scene/set_fps
+    /// {window: "bogus", fps: 0}` froze the primary's game loop).
+    /// `None` (the default) means the scope named a known window or
+    /// the request carried no window param.
+    pub unknown_window: Option<String>,
 }
 
 /// R881 §5.35 §5.49 — which mouse button a `scene/drag` injection
@@ -857,6 +872,7 @@ impl<'a> DispatchContext<'a> {
             fragment_cache_stats: None,
             input_state: None,
             pacing_state: None,
+            unknown_window: None,
         }
     }
 
@@ -1031,6 +1047,16 @@ impl<'a> DispatchContext<'a> {
         self.pacing_state = Some(state);
         self
     }
+
+    /// Builder: record the embedder's unknown-window verdict (R889
+    /// §5.49). [`dispatch_parsed`] rejects the request with `-32602
+    /// unknown_window` before method routing; see
+    /// [`Self::unknown_window`].
+    #[must_use]
+    pub fn with_unknown_window(mut self, supplied: String) -> Self {
+        self.unknown_window = Some(supplied);
+        self
+    }
 }
 
 /// Dispatch one JSON-RPC 2.0 frame against `ctx`.
@@ -1109,6 +1135,32 @@ pub fn parse_request(request_json: &str) -> Result<Request, String> {
     }
 }
 
+/// R889 §5.49 — resolve a request's unknown-window verdict: reads the
+/// IN-BAND `{window: "<id>"}` scope param off the parsed [`Request`]
+/// and judges it through the embedder-supplied window-known predicate
+/// (`pinion_runtime::CoreShell::is_window_known` behind a closure —
+/// the substrate borrow split at the call sites precludes passing the
+/// core itself). Returns `Some(id)` for a supplied-but-unknown window,
+/// to thread into [`DispatchContext::with_unknown_window`]; `None`
+/// when the param is absent / not a string / names a known window.
+///
+/// One home for the extraction + judgment glue so the GUI
+/// (`pinion-shell::ShellCore::dispatch_rpc_inner`) and the TUI
+/// (`pinion-tui::ShellCoreTui::dispatch_rpc`) ingresses cannot drift
+/// (the R886.1 `input_state_snapshot` 2-copy-glue lesson).
+pub fn unknown_window_verdict(
+    request: &Request,
+    is_window_known: impl Fn(&str) -> bool,
+) -> Option<String> {
+    request
+        .params
+        .as_ref()
+        .and_then(|p| p.get("window"))
+        .and_then(Value::as_str)
+        .filter(|wid| !is_window_known(wid))
+        .map(str::to_owned)
+}
+
 /// R671 §5.7 — dispatch a pre-parsed [`Request`] against the live
 /// context. Identical method routing as [`dispatch`] but skips the
 /// envelope parse step so callers that have already parsed the
@@ -1181,6 +1233,26 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 "expected jsonrpc=\"2.0\", got \"{}\"",
                 request.jsonrpc
             ))),
+        )));
+    }
+
+    // R889 §5.49 — unknown-window gate, before method routing: the
+    // embedder resolved the request's `{window: "<id>"}` scope against
+    // the window-known registry (`CoreShell::is_window_known`) and
+    // threaded the verdict; a request scoped to a window the binding
+    // does not know is rejected wholesale. One gate for every method —
+    // READ and WRITE share the availability signal, replacing the
+    // pre-R889 GUI silent-alias-to-primary (wrong target for writes,
+    // wrong data for reads) and the per-axis `*Unavailable` ambiguity
+    // ("no such window" vs "no data yet"). Post-R889 the per-axis
+    // `*Unavailable` answers mean "known window, axis has no data /
+    // backend lacks the axis" only.
+    if let Some(supplied) = ctx.unknown_window.take() {
+        return Some(serialize(&error_response(
+            request.id,
+            -32602,
+            "unknown_window",
+            Some(Value::String(supplied)),
         )));
     }
 

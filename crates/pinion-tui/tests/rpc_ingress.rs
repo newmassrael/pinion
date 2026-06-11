@@ -363,3 +363,41 @@ fn r888_pacing_state_is_unavailable_on_the_tui() {
         "TUI has no pacing clock; the wire must say so: {response}",
     );
 }
+
+/// R889 §5.49 — the TUI gates the in-band `{window: "<id>"}` scope
+/// through the same window-known predicate as the GUI
+/// (`CoreShell::is_window_known`; the TUI registry holds exactly the
+/// seeded `DEFAULT_WINDOW`). Pre-R889 the TUI never read the param:
+/// a request scoped to ANY window id silently acted on the single
+/// terminal window — the GUI's alias-to-primary smell in §2 #6
+/// disguise.
+#[test]
+fn r889_unknown_window_scope_is_rejected_on_the_tui() {
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    let read =
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state","params":{"window":"bogus"}}"#;
+    let response = core.dispatch_rpc(read).expect("read must respond");
+    assert!(
+        response.contains(r#""code":-32602"#) && response.contains("unknown_window"),
+        "bogus window scope must error, not alias onto the terminal window: {response}",
+    );
+    assert!(
+        response.contains(r#""data":"bogus""#),
+        "error data names the supplied id: {response}",
+    );
+}
+
+#[test]
+fn r889_main_window_scope_passes_the_tui_gate() {
+    // `window: "main"` names the seeded DEFAULT_WINDOW — the gate
+    // admits it and the dispatch proceeds exactly as without the
+    // param (the TUI's single window IS main).
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    let read =
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state","params":{"window":"main"}}"#;
+    let response = core.dispatch_rpc(read).expect("read must respond");
+    assert!(
+        response.contains(r#""modifiers":null"#) && !response.contains("unknown_window"),
+        "main scope passes the gate and answers normally: {response}",
+    );
+}

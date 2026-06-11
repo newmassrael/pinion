@@ -37417,6 +37417,82 @@
         "REJECTED: folding DragButton/ClickButton/KeyWireState wire-pair glue (per-vocab idiom, R803)"
       ]
     },
+    "R889": {
+      "decision_summary": "Window-known predicate SSOT: window_owners registry + register_window creation edge + is_window_known 1-home; dispatch-entry unknown_window gate shared by READ+WRITE; resolve_spec_id silent-alias deleted; input_state/pacing re-gated on the named predicate (not router presence)",
+      "changes_bullets": [
+        "CoreShell::window_owners is now the window-known registry SSOT: register_window creation edge",
+        "(AppShell::resume_spec calls it pre-first-paint) + is_window_known named predicate (1-home)",
+        "dispatch entry gate: DispatchContext.unknown_window verdict -> -32602 unknown_window before",
+        "method routing; READ and WRITE share the gate; verdict glue 1-homed in",
+        "pinion_rpc::unknown_window_verdict (GUI dispatch_rpc_inner + TUI ingress parity)",
+        "AppShell::resolve_spec_id DELETED (silent alias of unknown ids onto primary; made the R886.1",
+        "honesty gates production-unreachable and let set_fps 0 on a bogus window freeze the primary)",
+        "input_state_snapshot re-gated on is_window_known; cursor leg stays a router fact (known-but-",
+        "unpainted window answers cursor:null honestly instead of InputStateUnavailable)",
+        "pacing read re-gated on the same named predicate (was piggybacked on router presence =",
+        "painted, a category error vs window-exists); known-unpainted set_fps/pacing_state round-trips",
+        "TUI dispatch_rpc switched to parse_request + dispatch_parsed (R671 single-parse parity) and",
+        "now reads the in-band window param: bogus scopes error instead of silently acting on the",
+        "terminal window; ShellCore window_scoped_rpc_reads struct bundles the 4 pre-dispatch reads"
+      ],
+      "verification_bullets": [
+        "new tests 10: runtime registry lifecycle 1, rpc verdict+gate 2, shell wire pins 5, tui 2",
+        "r684 family migrated to register-first; old invalid-id-finalizes pin replaced by rejection pin",
+        "cargo test --workspace -j2: 150 suites green; clippy --all-targets -D pedantic clean",
+        "demo r889_window_known_gate.py PASS (33 asserts, hello-multi-window, zero-flake gates)",
+        "regressions PASS (fresh release): r888 r885 r672 r670b r671 r683 r680 r670a",
+        "r670b demo ghost-window section updated from fallback pin to unknown_window rejection pin"
+      ],
+      "impact_refs": [
+        "5.7",
+        "5.16",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "scene/layout slot fallback: known-unpainted secondary answers with the PRIMARY paint-layout",
+        "mirror (slot_paint_layout.or(last_paint_layout), R671 back-compat) — same aliasing class,",
+        "needs its own availability axis (LayoutUnavailable?) and a wire decision; audit next round",
+        "single-window dispatch_rpc entry still ignores a KNOWN non-primary window param for scoping",
+        "(documented contract: multi-window callers use dispatch_rpc_for_window); gate covers unknown"
+      ],
+      "publishable_decision_summary": "Window-known predicate SSOT: window_owners registry + register_window creation edge + is_window_known 1-home; dispatch-entry unknown_window gate shared by READ+WRITE; resolve_spec_id silent-alias deleted; input_state/pacing re-gated on the named predicate (not router presence)",
+      "publishable_changes_bullets": [
+        "CoreShell::window_owners is now the window-known registry SSOT: register_window creation edge",
+        "(AppShell::resume_spec calls it pre-first-paint) + is_window_known named predicate (1-home)",
+        "dispatch entry gate: DispatchContext.unknown_window verdict -> -32602 unknown_window before",
+        "method routing; READ and WRITE share the gate; verdict glue 1-homed in",
+        "pinion_rpc::unknown_window_verdict (GUI dispatch_rpc_inner + TUI ingress parity)",
+        "AppShell::resolve_spec_id DELETED (silent alias of unknown ids onto primary; made the R886.1",
+        "honesty gates production-unreachable and let set_fps 0 on a bogus window freeze the primary)",
+        "input_state_snapshot re-gated on is_window_known; cursor leg stays a router fact (known-but-",
+        "unpainted window answers cursor:null honestly instead of InputStateUnavailable)",
+        "pacing read re-gated on the same named predicate (was piggybacked on router presence =",
+        "painted, a category error vs window-exists); known-unpainted set_fps/pacing_state round-trips",
+        "TUI dispatch_rpc switched to parse_request + dispatch_parsed (R671 single-parse parity) and",
+        "now reads the in-band window param: bogus scopes error instead of silently acting on the",
+        "terminal window; ShellCore window_scoped_rpc_reads struct bundles the 4 pre-dispatch reads"
+      ],
+      "publishable_verification_bullets": [
+        "new tests 10: runtime registry lifecycle 1, rpc verdict+gate 2, shell wire pins 5, tui 2",
+        "r684 family migrated to register-first; old invalid-id-finalizes pin replaced by rejection pin",
+        "cargo test --workspace -j2: 150 suites green; clippy --all-targets -D pedantic clean",
+        "demo r889_window_known_gate.py PASS (33 asserts, hello-multi-window, zero-flake gates)",
+        "regressions PASS (fresh release): r888 r885 r672 r670b r671 r683 r680 r670a",
+        "r670b demo ghost-window section updated from fallback pin to unknown_window rejection pin"
+      ],
+      "publishable_impact_refs": [
+        "5.7",
+        "5.16",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "scene/layout slot fallback: known-unpainted secondary answers with the PRIMARY paint-layout",
+        "mirror (slot_paint_layout.or(last_paint_layout), R671 back-compat) — same aliasing class,",
+        "needs its own availability axis (LayoutUnavailable?) and a wire decision; audit next round",
+        "single-window dispatch_rpc entry still ignores a KNOWN non-primary window param for scoping",
+        "(documented contract: multi-window callers use dispatch_rpc_for_window); gate covers unknown"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

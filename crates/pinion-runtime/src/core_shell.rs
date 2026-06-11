@@ -272,6 +272,14 @@ pub struct CoreShell<V: WidgetCore> {
 
     /// R680 §5.16 §5.41 §5.28 — per-window reactive scope map.
     ///
+    /// R889 §5.49 — ALSO the window-known registry SSOT: an entry
+    /// exists iff the binding knows the window ([`DEFAULT_WINDOW`]
+    /// seeded in [`Self::new`]; secondaries registered by
+    /// [`Self::register_window`] at OS-window creation, removed by
+    /// [`Self::remove_window`]). [`Self::is_window_known`] is the
+    /// named predicate; [`Self::routers`] is NOT a registry — its
+    /// entries mean "has painted at least once".
+    ///
     /// First atomic of the 4-axis paint-pipeline rewrite series
     /// (R680-R683). Keyed by canonical [`WindowSpec::id`] string;
     /// each value is an [`Owner`] handle (cheap `Rc`-internal clone).
@@ -946,6 +954,48 @@ impl<V: WidgetCore> CoreShell<V> {
         child
     }
 
+    /// R889 §5.16 §5.49 — explicit window-registration edge: a backend
+    /// calls this when an OS window for `window_id` comes into
+    /// existence (GUI `AppShell::resume_spec`, before the first paint),
+    /// making [`Self::window_owners`] the window-known registry SSOT
+    /// from creation — not from first paint.
+    ///
+    /// Pre-R889 nothing registered secondary windows at creation: the
+    /// substrate could not tell "known but never painted" (R683
+    /// tear-off pre-first-paint) from "no such window", so per-axis
+    /// READ gates piggybacked on [`Self::routers`] presence (= painted)
+    /// and the GUI shell silently aliased unknown ids onto the primary.
+    /// Both were SSOT-by-accident; [`Self::is_window_known`] is the
+    /// named predicate they now share.
+    ///
+    /// Idempotent (re-registering an existing id is a no-op lookup);
+    /// delegates to [`Self::window_owner`]'s lazy-create so the
+    /// per-window reactive scope and the registry entry are one
+    /// record — there is no separate set to drift. The matching
+    /// removal edge is [`Self::remove_window`].
+    pub fn register_window(&mut self, window_id: &str) {
+        let _ = self.window_owner(window_id);
+    }
+
+    /// R889 §5.16 §5.49 — the ONE window-known predicate: `true` when
+    /// `window_id` is registered in the [`Self::window_owners`]
+    /// registry ([`DEFAULT_WINDOW`] seeded in [`Self::new`]; secondary
+    /// windows registered by [`Self::register_window`] at creation,
+    /// dropped by [`Self::remove_window`]).
+    ///
+    /// Every per-window availability judgment goes through here —
+    /// `scene/input_state` / `scene/pacing_state` gating and the
+    /// dispatch-entry unknown-window rejection. Distinct from
+    /// [`Self::has_last_paint_scene_for_window`] ("has painted at
+    /// least once", a [`Self::routers`] fact): a known window may
+    /// never have painted, and per-axis data for it is answered
+    /// honestly (`cursor: null`, default pacing policy) instead of
+    /// `*Unavailable`.
+    #[must_use]
+    pub fn is_window_known(&self, window_id: &str) -> bool {
+        self.window_owners.contains_key(window_id)
+    }
+
     /// R680 §5.16 §5.41 §5.28 — read-only probe for a per-window
     /// scope. Returns `Some(owner_clone)` when an entry already
     /// exists; `None` for unknown ids. Never creates a fresh scope.
@@ -1316,21 +1366,36 @@ impl<V: WidgetCore> CoreShell<V> {
     /// backend-supplied axis (the GUI's absolute cache vs the TUI's
     /// honest `None` — crossterm has no absolute modifier state).
     ///
-    /// Returns `None` for an UNKNOWN window id (no router entry), so the
-    /// wire surfaces `InputStateUnavailable` instead of aliasing a bogus
-    /// window onto `cursor: null` ("no cursor event yet") — the
+    /// Returns `None` for an UNKNOWN window id, so the wire surfaces
+    /// `InputStateUnavailable` instead of aliasing a bogus window onto
+    /// `cursor: null` ("no cursor event yet") — the
     /// `CacheStatsUnavailable` honesty parity.
+    ///
+    /// R889 §5.49 — gated on [`Self::is_window_known`] (the registry
+    /// predicate), NOT on [`Self::routers`] presence: pre-R889 the
+    /// gate was the router map, so a registered-but-never-painted
+    /// window (R683 tear-off pre-first-paint) read as `Unavailable`
+    /// even though the axis data (held keys, modifiers) is
+    /// binding-global and real. The cursor leg stays a router fact —
+    /// `None` for a known-unpainted window is the honest "no cursor
+    /// event yet" answer, exactly as for a painted window the pointer
+    /// never entered.
     #[must_use]
     pub fn input_state_snapshot(
         &self,
         window_id: &str,
         modifiers: Option<pinion_core::Modifiers>,
     ) -> Option<pinion_core::InputStateSnapshot> {
-        let router = self.routers.get(window_id)?;
+        if !self.is_window_known(window_id) {
+            return None;
+        }
         Some(pinion_core::InputStateSnapshot {
             modifiers,
             held_keys: self.held_keys.held_names(),
-            cursor: router.cursor_position(PointerId::MOUSE),
+            cursor: self
+                .routers
+                .get(window_id)
+                .and_then(|r| r.cursor_position(PointerId::MOUSE)),
         })
     }
 
@@ -3305,6 +3370,40 @@ mod tests {
         assert_eq!(snap.held_keys, vec!["Space"]);
         assert_eq!(snap.modifiers, None, "backend-supplied axis passes through");
         assert!(core.input_state_snapshot("no-such-window", None).is_none());
+    }
+
+    #[test]
+    fn r889_window_known_registry_lifecycle_and_unpainted_snapshot() {
+        // The window-known registry SSOT (`window_owners`): seeded
+        // with DEFAULT_WINDOW, extended by the explicit
+        // `register_window` creation edge, drained by
+        // `remove_window`. `is_window_known` is the one predicate;
+        // "known" is independent of "has painted" (`routers`).
+        let mut core: CoreShell<TestButton> = CoreShell::new();
+        assert!(core.is_window_known(crate::DEFAULT_WINDOW), "primary seeded at new()");
+        assert!(!core.is_window_known("tear"), "unregistered id is unknown");
+
+        core.register_window("tear");
+        assert!(core.is_window_known("tear"), "registration edge makes it known");
+        assert!(
+            !core.has_last_paint_scene_for_window("tear"),
+            "known is NOT painted — the two registries answer different questions",
+        );
+        // Known-but-unpainted: the axis is available, the cursor leg
+        // honestly reports "no cursor event yet" (a router fact).
+        let snap = core
+            .input_state_snapshot("tear", None)
+            .expect("known window answers even before its first paint");
+        assert_eq!(snap.cursor, None, "never-painted window has no cursor yet");
+
+        assert!(core.remove_window("tear"), "removal edge drains the registry");
+        assert!(!core.is_window_known("tear"), "removed id is unknown again");
+        assert!(core.input_state_snapshot("tear", None).is_none());
+
+        // Idempotent re-registration (suspend/resume reuse arc).
+        core.register_window("tear");
+        core.register_window("tear");
+        assert!(core.is_window_known("tear"));
     }
 
     #[test]

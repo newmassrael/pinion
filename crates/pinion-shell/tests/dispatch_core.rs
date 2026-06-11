@@ -3445,6 +3445,177 @@ mod r888_pacing_state_rpc {
     }
 }
 
+// ─────────────────────────────────────────────────────────────
+// R889 §5.49 §5.16 — window-known predicate SSOT: registered-but-
+// unpainted windows answer per-window READ axes honestly; unknown
+// window scopes are rejected wholesale (READ + WRITE share the gate).
+// ─────────────────────────────────────────────────────────────
+
+mod r889_window_known_gate {
+    use pinion_rpc::parse_request;
+    use pinion_shell::ShellCore;
+
+    use super::TestView;
+
+    fn no_resize(_w: u32, _h: u32) {}
+
+    fn frame(id: u64, method: &str, window: &str, extra: &str) -> String {
+        format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"{method}","params":{{"window":"{window}"{extra}}}}}"#,
+        )
+    }
+
+    /// Dispatch one window-scoped frame the way `AppShell::dispatch_rpc`
+    /// does (in-band param + the same value as out-of-band scope).
+    fn dispatch_for_window(
+        core: &mut ShellCore<TestView>,
+        id: u64,
+        method: &str,
+        window: &str,
+        extra: &str,
+    ) -> serde_json::Value {
+        let mut nr = no_resize;
+        let req = parse_request(&frame(id, method, window, extra)).expect("frame parses");
+        let resp = core
+            .dispatch_rpc_for_window(req, window, None, &mut nr)
+            .expect("call requests always answer");
+        serde_json::from_str(&resp).expect("response is JSON")
+    }
+
+    fn assert_unknown_window(body: &serde_json::Value, supplied: &str) {
+        let err = body.get("error").expect("error frame");
+        assert_eq!(err.get("code"), Some(&serde_json::json!(-32602)));
+        assert_eq!(err.get("message"), Some(&serde_json::json!("unknown_window")));
+        assert_eq!(err.get("data"), Some(&serde_json::json!(supplied)));
+    }
+
+    #[test]
+    fn r889_known_unpainted_window_pacing_axis_round_trips() {
+        // THE R889 headline: a registered-but-never-painted window
+        // (R683 tear-off pre-first-paint) honors `scene/set_fps` AND
+        // reads the same state back through `scene/pacing_state` —
+        // pre-R889 the write was honored while the read answered
+        // `PacingStateUnavailable` (availability piggybacked on the
+        // router registry = "has painted", a category error).
+        let _g = super::TEST_LOCK.lock().unwrap();
+        super::reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.register_window("tear");
+        assert!(
+            !core.has_last_paint_scene_for_window("tear"),
+            "pre-condition: registered window has never painted",
+        );
+
+        let body = dispatch_for_window(&mut core, 1, "scene/pacing_state", "tear", "");
+        assert_eq!(
+            body.get("result").expect("read ok").get("fps"),
+            Some(&serde_json::Value::Null),
+            "boot: default policy, not Unavailable",
+        );
+        let body = dispatch_for_window(&mut core, 2, "scene/set_fps", "tear", r#","fps":30"#);
+        assert!(body.get("error").is_none(), "set_fps honored: {body}");
+        let body = dispatch_for_window(&mut core, 3, "scene/pacing_state", "tear", "");
+        assert_eq!(
+            body.get("result").expect("read ok").get("fps"),
+            Some(&serde_json::json!(30)),
+            "read mirrors the write on the never-painted window",
+        );
+        let body = dispatch_for_window(&mut core, 4, "scene/set_fps", "tear", r#","fps":null"#);
+        assert!(body.get("error").is_none(), "null clear honored: {body}");
+        let body = dispatch_for_window(&mut core, 5, "scene/pacing_state", "tear", "");
+        assert_eq!(
+            body.get("result").expect("read ok").get("fps"),
+            Some(&serde_json::Value::Null),
+            "clear restores default policy",
+        );
+        assert!(
+            !core.has_last_paint_scene_for_window("tear"),
+            "the whole axis round-tripped without a single paint",
+        );
+    }
+
+    #[test]
+    fn r889_known_unpainted_window_input_state_available_with_null_cursor() {
+        // Held keys + modifiers are binding-global facts; the cursor
+        // is a router (per-paint) fact. A known-unpainted window
+        // answers the axis with `cursor: null` ("no cursor event
+        // yet") instead of `InputStateUnavailable`.
+        let _g = super::TEST_LOCK.lock().unwrap();
+        super::reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.register_window("tear");
+        let body = dispatch_for_window(&mut core, 1, "scene/input_state", "tear", "");
+        let result = body.get("result").expect("axis available for known window");
+        assert_eq!(result.get("cursor"), Some(&serde_json::Value::Null));
+        assert_eq!(result.get("held_keys"), Some(&serde_json::json!([])));
+    }
+
+    #[test]
+    fn r889_unknown_window_write_rejected_and_primary_untouched() {
+        // The pre-R889 production bug: `resolve_spec_id` aliased
+        // unknown ids onto the primary, so `scene/set_fps {window:
+        // "bogus", fps: 0}` FROZE THE PRIMARY's game loop. Post-R889
+        // the write is rejected and the primary's pacing is untouched.
+        let _g = super::TEST_LOCK.lock().unwrap();
+        super::reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let body = dispatch_for_window(&mut core, 1, "scene/set_fps", "bogus", r#","fps":0"#);
+        assert_unknown_window(&body, "bogus");
+        assert_eq!(
+            core.target_fps_for_window(pinion_runtime::DEFAULT_WINDOW),
+            None,
+            "primary pacing untouched by the rejected bogus-window write",
+        );
+        let body = dispatch_for_window(&mut core, 2, "scene/pacing_state", "bogus", "");
+        assert_unknown_window(&body, "bogus");
+        let body = dispatch_for_window(&mut core, 3, "scene/input_state", "bogus", "");
+        assert_unknown_window(&body, "bogus");
+    }
+
+    #[test]
+    fn r889_single_window_entry_gates_in_band_window_param() {
+        // The legacy single-window `dispatch_rpc` entry ignores the
+        // window param for SCOPING (documented: multi-window callers
+        // use `dispatch_rpc_for_window`), but the unknown-window gate
+        // reads the IN-BAND param so a bogus scope errors here too
+        // instead of silently acting on the primary.
+        let _g = super::TEST_LOCK.lock().unwrap();
+        super::reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        let mut nr = no_resize;
+        let resp = core
+            .dispatch_rpc(&frame(1, "scene/pacing_state", "bogus", ""), &mut nr)
+            .expect("response");
+        let body: serde_json::Value = serde_json::from_str(&resp).expect("JSON");
+        assert_unknown_window(&body, "bogus");
+        // A known id (the seeded primary) passes the gate unchanged.
+        let resp = core
+            .dispatch_rpc(
+                &frame(2, "scene/pacing_state", pinion_runtime::DEFAULT_WINDOW, ""),
+                &mut nr,
+            )
+            .expect("response");
+        let body: serde_json::Value = serde_json::from_str(&resp).expect("JSON");
+        assert!(body.get("result").is_some(), "known primary passes: {body}");
+    }
+
+    #[test]
+    fn r889_remove_window_revokes_registration() {
+        // Registry lifecycle: the reconcile drop pass's
+        // `remove_window` is the removal edge — after it, the same
+        // scope that round-tripped above is rejected again.
+        let _g = super::TEST_LOCK.lock().unwrap();
+        super::reset_mocks();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.register_window("tear");
+        let body = dispatch_for_window(&mut core, 1, "scene/pacing_state", "tear", "");
+        assert!(body.get("result").is_some(), "registered: axis answers");
+        assert!(core.remove_window("tear"), "removal edge drains the entry");
+        let body = dispatch_for_window(&mut core, 2, "scene/pacing_state", "tear", "");
+        assert_unknown_window(&body, "tear");
+    }
+}
+
 mod r885_input_state_rpc {
     use pinion_shell::ShellCore;
 
@@ -3808,6 +3979,11 @@ mod r683_remove_window_shell_side {
 /// 4. Sibling windows stay isolated — a dispatch to window A leaves
 ///    window B's router empty.
 /// 5. Repeat dispatches keep the router populated (idempotent).
+/// 6. (R889) The floating window must be REGISTERED first
+///    (`ShellCore::register_window`, the `AppShell::resume_spec`
+///    creation edge) — dispatch scoped to an unregistered id is
+///    rejected with `-32602 unknown_window` before method routing,
+///    so no router slot materialises for bogus ids.
 mod r684_headless_rpc_floating_window_finalize {
     use super::*;
     use pinion_rpc::parse_request;
@@ -3843,7 +4019,9 @@ mod r684_headless_rpc_floating_window_finalize {
         let _guard = TEST_LOCK.lock().unwrap();
         reset_mocks();
         let mut core: ShellCore<TestView> = ShellCore::new();
-        // Pre-condition: never-painted floating window.
+        // R889 — the floating window exists (registered at creation,
+        // the AppShell::resume_spec edge) but has never painted.
+        core.register_window("floating");
         assert!(
             !core.has_last_paint_scene_for_window("floating"),
             "fresh router for newly-spawned floating window is empty",
@@ -3894,6 +4072,7 @@ mod r684_headless_rpc_floating_window_finalize {
         let _guard = TEST_LOCK.lock().unwrap();
         reset_mocks();
         let mut core: ShellCore<TestView> = ShellCore::new();
+        core.register_window("floating");
         let req = parse_request(&focus_get_request(1, "floating"))
             .expect("focus_get request parses");
         let _ = core.dispatch_rpc_for_window(req, "floating", None, &mut no_resize);
@@ -3911,6 +4090,11 @@ mod r684_headless_rpc_floating_window_finalize {
         let _guard = TEST_LOCK.lock().unwrap();
         reset_mocks();
         let mut core: ShellCore<TestView> = ShellCore::new();
+        // R889 — both siblings registered (both exist); only A is
+        // dispatched to, so the isolation pin is strictly about the
+        // finalize hook, not about registration state.
+        core.register_window("panel_a");
+        core.register_window("panel_b");
         let req = parse_request(&snapshot_request(1, "panel_a", 200, 100))
             .expect("snapshot request parses");
         let _ = core.dispatch_rpc_for_window(req, "panel_a", None, &mut no_resize);
@@ -3932,6 +4116,7 @@ mod r684_headless_rpc_floating_window_finalize {
         let _guard = TEST_LOCK.lock().unwrap();
         reset_mocks();
         let mut core: ShellCore<TestView> = ShellCore::new();
+        core.register_window("floating");
         for id in 1_u64..=3 {
             let req = parse_request(&snapshot_request(id, "floating", 320, 200))
                 .expect("snapshot request parses");
@@ -3956,6 +4141,7 @@ mod r684_headless_rpc_floating_window_finalize {
         let _guard = TEST_LOCK.lock().unwrap();
         reset_mocks();
         let mut core: ShellCore<TestView> = ShellCore::new();
+        core.register_window("floating");
         assert!(
             core.last_paint_layout().is_none(),
             "fresh ShellCore has no last_paint_layout mirror",
@@ -3970,22 +4156,34 @@ mod r684_headless_rpc_floating_window_finalize {
     }
 
     #[test]
-    fn r684_dispatch_rpc_for_window_invalid_window_id_still_finalizes_under_that_key() {
-        // The substrate does not validate window_id against a list of
-        // declared windows — every spec_id the AI client supplies
-        // gets its own router slot lazily. This test pins that even
-        // an unrecognized id (no WindowSpec, no winit Window) gets
-        // a router populated by the finalize hook, so downstream
-        // dispatches addressing the same id hit-test successfully.
+    fn r889_dispatch_rpc_for_window_unknown_window_id_is_rejected_without_finalize() {
+        // R889 — REPLACES the pre-R889 pin "invalid window id still
+        // finalizes under that key": the substrate now validates the
+        // window scope against the window-known registry
+        // (`CoreShell::is_window_known`) and rejects unknown ids with
+        // `-32602 unknown_window` BEFORE method routing. No router
+        // slot materialises for the bogus id, so an AI client typo
+        // can neither read another window's state nor leave per-id
+        // residue in the substrate.
         let _guard = TEST_LOCK.lock().unwrap();
         reset_mocks();
         let mut core: ShellCore<TestView> = ShellCore::new();
         let req = parse_request(&snapshot_request(1, "any_unknown_window_id", 400, 300))
             .expect("snapshot request parses");
-        let _ = core.dispatch_rpc_for_window(req, "any_unknown_window_id", None, &mut no_resize);
+        let resp = core
+            .dispatch_rpc_for_window(req, "any_unknown_window_id", None, &mut no_resize)
+            .expect("call requests always get a response frame");
         assert!(
-            core.has_last_paint_scene_for_window("any_unknown_window_id"),
-            "router for arbitrary spec_id populated post-finalize",
+            resp.contains(r#""code":-32602"#) && resp.contains("unknown_window"),
+            "unknown window scope is rejected wholesale: {resp}",
+        );
+        assert!(
+            resp.contains("any_unknown_window_id"),
+            "error data names the supplied id: {resp}",
+        );
+        assert!(
+            !core.has_last_paint_scene_for_window("any_unknown_window_id"),
+            "no router slot materialises for a rejected window id",
         );
     }
 }

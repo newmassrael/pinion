@@ -356,6 +356,56 @@ fn dispatch_full(
     dispatch(&mut ctx, req)
 }
 
+// ---- R889 §5.49 — unknown-window gate (dispatch-entry rejection) ----
+
+#[test]
+fn r889_unknown_window_verdict_extracts_and_judges_the_in_band_param() {
+    // One home for the extraction + judgment glue (GUI + TUI
+    // ingresses both call this): absent / non-string / known →
+    // None; supplied-but-unknown → Some(id).
+    let known = |wid: &str| wid == "main";
+    let parse = |s: &str| parse_request(s).expect("frame parses");
+
+    let req = parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{}}"#);
+    assert_eq!(unknown_window_verdict(&req, known), None, "absent param");
+    let req = parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query"}"#);
+    assert_eq!(unknown_window_verdict(&req, known), None, "absent params object");
+    let req =
+        parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{"window":"main"}}"#);
+    assert_eq!(unknown_window_verdict(&req, known), None, "known window");
+    let req =
+        parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{"window":42}}"#);
+    assert_eq!(unknown_window_verdict(&req, known), None, "non-string ignored");
+    let req =
+        parse(r#"{"jsonrpc":"2.0","id":1,"method":"scene/query","params":{"window":"side"}}"#);
+    assert_eq!(
+        unknown_window_verdict(&req, known),
+        Some("side".to_owned()),
+        "supplied-but-unknown id is the verdict payload",
+    );
+}
+
+#[test]
+fn r889_unknown_window_ctx_rejects_before_method_routing() {
+    // The verdict threaded on the context rejects the WHOLE request
+    // with `-32602 unknown_window` — READ and WRITE methods alike,
+    // before the method match (a bogus scope must not mutate or read
+    // anything; pre-R889 the GUI aliased it onto the primary).
+    let mut scene = counted_scene(7);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_unknown_window("bogus".to_owned());
+    let req = r#"{"jsonrpc":"2.0","id":9,"method":"scene/query","params":{"window":"bogus","path":"/"}}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).expect("error frame"));
+    let err = resp.error.expect("rejected");
+    assert_eq!(err.code, -32602);
+    assert_eq!(err.message, "unknown_window");
+    assert_eq!(err.data, Some(Value::String("bogus".into())));
+    // OCC token untouched — nothing routed, nothing mutated.
+    assert_eq!(revision.current(), 0, "no method ran, no revision bump");
+}
+
 // ---- R51.25 §5.12 — Response::result nullable_present deserialize ----
 
 #[test]

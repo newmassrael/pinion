@@ -56,6 +56,27 @@ use pinion_text::LayoutCache;
 
 use super::WidgetView;
 
+/// R889 §5.49 — every window-scoped read `dispatch_rpc_inner`
+/// pre-resolves before its split-borrow block (the substrate borrows
+/// preclude resolving these once `scene_mut` is taken). Bundled in a
+/// named struct so the resolver
+/// ([`ShellCore::window_scoped_rpc_reads`]) stays one call inside the
+/// dispatch fn's 100-line clippy budget — the R888 extraction's
+/// successor shape, grown a field per axis (R682.B cache stats / R885
+/// input / R888 pacing / R889 unknown-window verdict).
+struct WindowScopedRpcReads {
+    /// R682.B — `scene/cache_stats`; `None` → `CacheStatsUnavailable`
+    /// (known window that has not painted, or embedder opt-out).
+    cache_stats: Option<FragmentCacheStats>,
+    /// R885 — `scene/input_state`; `None` → `InputStateUnavailable`.
+    input_state: Option<pinion_core::InputStateSnapshot>,
+    /// R888 — `scene/pacing_state`; `None` → `PacingStateUnavailable`.
+    pacing_state: Option<pinion_rpc::PacingState>,
+    /// R889 — `Some(id)` rejects the whole request with `-32602
+    /// unknown_window` before method routing.
+    unknown_window: Option<String>,
+}
+
 /// R51.76 §5.40 — framework-side dispatch substrate, decoupled from
 /// winit / wgpu / `accesskit_winit`.
 ///
@@ -787,26 +808,46 @@ impl<V: WidgetView> ShellCore<V> {
     /// `fragment_cache_stats` pattern; extracted to respect that fn's
     /// 100-line budget).
     ///
-    /// One window-known gate for both: the router registry
-    /// `CoreShell::input_state_snapshot` resolves against. An unknown
-    /// window id yields `(None, None)`, surfacing
-    /// `InputStateUnavailable` / `PacingStateUnavailable` instead of
-    /// aliasing a bogus window onto "no cursor yet" / "default
-    /// policy" (the R886.1 honesty parity).
-    fn read_axis_snapshots_for_window(
+    /// R889 §5.49 — the READ axes gate on the NAMED window-known
+    /// predicate ([`pinion_runtime::CoreShell::is_window_known`], the
+    /// window-owners registry) — a deliberate shared gate, not the
+    /// pre-R889 piggyback where pacing availability rode on the
+    /// input snapshot's router-presence resolution (routers = "has
+    /// painted", a different category than "window exists"; a
+    /// registered-but-unpainted R683 tear-off honored `set_fps` writes
+    /// while reading back `Unavailable`). Unknown window ids never
+    /// reach these axes in production (the `unknown_window` verdict
+    /// rejects the request at dispatch entry first); the `None`
+    /// legs remain the honest answer for direct substrate callers.
+    ///
+    /// The verdict reads the request's IN-BAND `{window: "<id>"}`
+    /// param — not the out-of-band `window_id` scope — so BOTH
+    /// dispatch entries share the gate: `dispatch_rpc_for_window`
+    /// (`AppShell` threads the same param value out-of-band) and the
+    /// single-window `dispatch_rpc` (which ignores the param for
+    /// scoping; pre-R889 a `window: "bogus"` frame through it
+    /// silently acted on the primary). Extraction + judgment glue is
+    /// 1-homed in [`pinion_rpc::unknown_window_verdict`] (GUI/TUI
+    /// ingress parity, the R886.1 lesson).
+    fn window_scoped_rpc_reads(
         &self,
+        request: &Request,
         window_id: Option<&str>,
-    ) -> (
-        Option<pinion_core::InputStateSnapshot>,
-        Option<pinion_rpc::PacingState>,
-    ) {
+    ) -> WindowScopedRpcReads {
         let wid = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
-        let input = self.core.input_state_snapshot(wid, Some(self.modifiers));
-        let pacing = input.as_ref().map(|_| match self.target_fps_for_window(wid) {
-            Some(fps) => pinion_rpc::PacingState::Override(fps),
-            None => pinion_rpc::PacingState::DefaultPolicy,
-        });
-        (input, pacing)
+        WindowScopedRpcReads {
+            cache_stats: self.fragment_cache_stats_for_window(wid),
+            input_state: self.core.input_state_snapshot(wid, Some(self.modifiers)),
+            pacing_state: self.core.is_window_known(wid).then(|| {
+                match self.target_fps_for_window(wid) {
+                    Some(fps) => pinion_rpc::PacingState::Override(fps),
+                    None => pinion_rpc::PacingState::DefaultPolicy,
+                }
+            }),
+            unknown_window: pinion_rpc::unknown_window_verdict(request, |w| {
+                self.core.is_window_known(w)
+            }),
+        }
     }
 
     /// R681 §2 #4 atomic 3 §5.16 §5.28 — read the per-window target
@@ -881,6 +922,19 @@ impl<V: WidgetView> ShellCore<V> {
         // can log / introspect cleanup actually happened.
         let runtime_side = self.core.remove_window(window_id);
         shell_side || runtime_side
+    }
+
+    /// R889 §5.16 §5.49 — register `window_id` in the substrate's
+    /// window-known registry
+    /// ([`pinion_runtime::CoreShell::register_window`]). The backend
+    /// calls this when the OS window comes into existence
+    /// ([`crate::AppShell::resume_spec`], before the first paint) so
+    /// availability gates ([`pinion_runtime::CoreShell::is_window_known`])
+    /// and the dispatch-entry unknown-window rejection see the window
+    /// from creation — not from first paint. Matching removal edge is
+    /// [`Self::remove_window`].
+    pub fn register_window(&mut self, window_id: &str) {
+        self.core.register_window(window_id);
     }
 
     /// R682 §5.16 atomic 3 — read the most-recent
@@ -2897,21 +2951,11 @@ impl<V: WidgetView> ShellCore<V> {
         // detect `focus/set` (or any other focus-mutating method)
         // and trigger a redraw to refresh the focus ring.
         let focus_before = self.focus.focused().map(str::to_owned);
-        // R682.B §5.16 — pre-resolve the per-window paint-fragment
-        // cache observability snapshot before the split-borrow block.
-        // `scene/cache_stats` reads it off the dispatch context.
-        // Defaults to `DEFAULT_WINDOW` when single-window callers
-        // pass `None`; an unknown window id yields `None` here too,
-        // surfacing as `CacheStatsUnavailable` to the AI client.
-        let cache_stats_for_window = self.fragment_cache_stats_for_window(
-            window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW),
-        );
-        // R885 / R888 §5.49 — pre-resolve the out-of-band READ axes
-        // (`scene/input_state` + `scene/pacing_state`); see
-        // [`Self::read_axis_snapshots_for_window`] for the shared
-        // window-known gate + unavailability honesty contract.
-        let (input_state_for_window, pacing_state_for_window) =
-            self.read_axis_snapshots_for_window(window_id);
+        // R682.B / R885 / R888 / R889 §5.16 §5.49 — pre-resolve every
+        // window-scoped read the DispatchContext carries (cache stats,
+        // input state, pacing, unknown-window verdict) before the
+        // split-borrow block; see [`Self::window_scoped_rpc_reads`].
+        let window_reads = self.window_scoped_rpc_reads(&request, window_id);
         // R684 atomic 3 §5.16 §5.41 §5.49 — record the viewport the
         // produce closure ran with so the post-dispatch finalize can
         // populate the addressed window's
@@ -3092,25 +3136,27 @@ impl<V: WidgetView> ShellCore<V> {
             // outside the dispatcher's `&mut scene` borrow.
             let mut deferred_inputs: Vec<pinion_rpc::DeferredInput> = Vec::new();
             ctx = ctx.with_deferred_inputs(&mut deferred_inputs);
-            // R682.B §5.16 — install the pre-resolved per-window
-            // paint-fragment cache observability snapshot so
-            // `scene/cache_stats` can read counters + damage region
-            // without ever crossing the `vello::Scene`-bearing
-            // `paint_adapter::FragmentCache` boundary.
-            if let Some(stats) = cache_stats_for_window {
+            // R682.B / R885 / R888 §5.16 §5.49 — install the
+            // pre-resolved window-scoped reads (cache stats / input
+            // state / pacing; each absent leg surfaces its
+            // `*Unavailable` token).
+            if let Some(stats) = window_reads.cache_stats {
                 ctx = ctx.with_fragment_cache_stats(stats);
             }
-            // R885 §5.49 — install the pre-resolved input-state
-            // snapshot for `scene/input_state` (absent for an unknown
-            // window → `InputStateUnavailable`).
-            if let Some(snapshot) = input_state_for_window {
+            if let Some(snapshot) = window_reads.input_state {
                 ctx = ctx.with_input_state(snapshot);
             }
-            // R888 §5.49 — install the pre-resolved pacing target for
-            // `scene/pacing_state` (absent for an unknown window →
-            // `PacingStateUnavailable`).
-            if let Some(pacing) = pacing_state_for_window {
+            if let Some(pacing) = window_reads.pacing_state {
                 ctx = ctx.with_pacing_state(pacing);
+            }
+            // R889 §5.49 — thread the unknown-window verdict so the
+            // dispatcher rejects the whole request (`-32602
+            // unknown_window`) before method routing. Replaces the
+            // pre-R889 AppShell-side silent alias of unknown ids onto
+            // the primary spec (`resolve_spec_id`, deleted) — one
+            // judgment site, shared by every READ + WRITE method.
+            if let Some(supplied) = window_reads.unknown_window {
+                ctx = ctx.with_unknown_window(supplied);
             }
             let resp = dispatch_parsed(&mut ctx, request);
             (resp, deferred_inputs)

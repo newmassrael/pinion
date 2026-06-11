@@ -647,7 +647,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         """
         self.request("scene/tick", {"dt": dt})
 
-    def set_fps(self, fps: Optional[int]) -> None:
+    def set_fps(self, fps: Optional[int], *, window: Optional[str] = None) -> None:
         """`scene/set_fps` typed wrapper (R829 §2 #4 §5.28).
 
         Sets the addressed window's target frame rate — the §2 #4
@@ -659,15 +659,24 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         drivers by exactly `dt`). `fps=N` (re)starts the continuous loop
         at N fps. `fps=None` (R888) clears the override, restoring the
         adaptive default policy. Read back via `pacing_state()`.
+        `window` scopes the write (R889: an unknown id raises
+        `unknown_window` instead of silently targeting the primary).
         """
-        self.request("scene/set_fps", {"fps": fps})
+        params: dict[str, Any] = {"fps": fps}
+        if window is not None:
+            params["window"] = window
+        self.request("scene/set_fps", params)
 
-    def pacing_state(self) -> Any:
+    def pacing_state(self, *, window: Optional[str] = None) -> Any:
         """`scene/pacing_state` typed wrapper (R888 §5.49 §5.28): the
         READ peer of `set_fps`. Returns the addressed window's target:
         `{"fps": N}` (override; 0 = paused) or `{"fps": None}` (no
-        override — the adaptive default policy applies)."""
-        resp = self.request("scene/pacing_state", {})
+        override — the adaptive default policy applies). `window`
+        scopes the read (R889 unknown ids raise `unknown_window`)."""
+        params: dict[str, Any] = {}
+        if window is not None:
+            params["window"] = window
+        resp = self.request("scene/pacing_state", params)
         assert resp is not None
         return resp.result
 

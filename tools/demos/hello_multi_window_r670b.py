@@ -46,6 +46,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
+    RpcError,
     RpcSubprocess,
     assert_eq,
     find_by_tag,
@@ -138,19 +139,27 @@ def body() -> None:
             desc="after main click, inspector must mirror Hover state",
         )
 
-        # ── (6) Ghost window id falls back to primary ───────────────
-        # AppShell::resolve_spec_id falls back to primary on unknown
-        # id rather than hard-erroring. AI clients targeting a
-        # not-yet-defined window see the primary's scene + can
-        # detect the fallback by comparing returned tags.
-        snap_ghost = tf.snapshot(
-            source="paint",
-            viewport=(320, 200),
-            window="definitely_not_a_real_window",
-        )
-        assert (
-            find_by_tag(snap_ghost, "main_btn") is not None
-        ), "ghost id falls back to primary window (main_btn must be present)"
+        # ── (6) Ghost window id is rejected (R889) ───────────────────
+        # Pre-R889 `AppShell::resolve_spec_id` silently aliased an
+        # unknown id onto the primary — which also let bogus-window
+        # WRITES hit the primary (set_fps 0 froze its game loop).
+        # R889 deletes the alias: the dispatcher rejects the whole
+        # request with `-32602 unknown_window` via the window-known
+        # registry (`CoreShell::is_window_known`).
+        try:
+            tf.snapshot(
+                source="paint",
+                viewport=(320, 200),
+                window="definitely_not_a_real_window",
+            )
+            raise AssertionError("ghost window id must be rejected, not aliased")
+        except RpcError as err:
+            assert (err.code, err.message) == (-32602, "unknown_window"), (
+                f"ghost id rejection shape: {err.code} {err.message}"
+            )
+            assert err.data == "definitely_not_a_real_window", (
+                "error data names the supplied id"
+            )
 
         # ── (7) scene/key on inspector window is rejected gracefully ─
         # Inspector has no focusable widgets. A scene/key against the
