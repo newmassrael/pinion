@@ -91,12 +91,18 @@
 //!   beside the pin (a wired port hides it; the value is retained); it is
 //!   AI-read/write (`query`/`intervene node.<id>.input_default.<port>`, typed —
 //!   a colour takes a `#RRGGBB[AA]` hex, the write journals an undoable
-//!   [`SetPortDefaultCmd`]). Deferred: **inline keyboard editing** of the
-//!   default — the input port's pointer gesture is already edge-connect (R742),
-//!   so an inline value box needs a separate hit target (a follow-up UX axis;
-//!   the AI-first write path is the framework's primary path, §2). Still
-//!   deferred to the blueprint/material consumer: dataflow **evaluation** and
-//!   the typed ports' AT enrichment (the a11y name keeps the arity count).
+//!   [`SetPortDefaultCmd`]). The painted default is *read-only on the canvas*
+//!   for now (AI-settable via `intervene`); **inline keyboard editing** is the
+//!   immediate next step — a **double-click** on the default opens the inline
+//!   field (the same affordance the title rename uses, R878), while the input
+//!   port's *single*-click stays edge-connect (R742). (An earlier note framed
+//!   this as needing a "separate hit target"; that overstated a blocker — the
+//!   double-click disambiguates exactly as it does for the title.)
+//!   Genuinely-separate axes still deferred: dataflow **evaluation** (a Phase-C
+//!   *runtime* concern — this is the *authoring* substrate, not the compute
+//!   engine) and the typed ports' AT enrichment (the a11y name keeps the arity
+//!   count: `pinion-a11y` has no diagram / `graphics-document` role yet — an
+//!   upstream substrate gap, the same one the module-level a11y note records).
 //! - **Undo / redo** (R851 + R853): every edit is reversible on the shared
 //!   [`UndoStack`] — the **structural** edits (add node, delete node + its
 //!   incident edges, connect, disconnect) as [`GraphEdit`] deltas, and node
@@ -1340,6 +1346,14 @@ fn apply_rename(
 /// (the granular [`RenameNodeCmd`] peer — a per-field, non-coalescing undo
 /// step: each committed default change is its own step). Stores the typed
 /// [`CellValue`] before / after, so undo / redo restore the exact value.
+///
+/// R900 — this is the *fourth* per-widget [`UndoCommand`] ([`GraphEdit`] /
+/// [`MoveNodesCmd`] / [`RenameNodeCmd`] / this), the established node-editor
+/// pattern: each command owns the shape of the one mutation it reverses, not a
+/// generic field-functor. They are deliberately separate — `MoveNodesCmd` is
+/// multi-target + coalescing, `RenameNodeCmd` validates a non-empty trim, this
+/// no-ops on a total-order-equal value — so a single closure-parameterised
+/// `FieldUndoCmd<T>` would be a behaviour-bifurcating wrong abstraction (R853).
 struct SetPortDefaultCmd {
     nodes: Rc<Signal<Vec<GraphNode>>>,
     id: NodeId,
@@ -1399,7 +1413,12 @@ fn apply_set_default(
     else {
         return false;
     };
-    if before == value {
+    // R900 — the no-op guard compares by the substrate's TOTAL order
+    // (`CellValue::sort_cmp`), not the derived IEEE `PartialEq`: a `Float`
+    // default of `NaN` is `!= NaN` under `==`, so re-setting it would journal a
+    // spurious second undo step ("an unchanged write journals nothing" would be
+    // false). `sort_cmp`'s `total_cmp` arm makes `NaN == NaN` for this guard.
+    if before.sort_cmp(&value) == core::cmp::Ordering::Equal {
         return true;
     }
     let cmd = SetPortDefaultCmd { nodes: Rc::clone(nodes), id, port, before, after: value };
@@ -1898,8 +1917,15 @@ impl NodeGraphExternal {
             return Err(InterveneError::UnknownPath);
         };
         let next = current.with_intervene(value)?;
-        apply_set_default(&self.nodes, &self.undo, id, port, next);
-        Ok(())
+        // R900 — gate the result like the `apply_rename` caller does (symmetry):
+        // the port existence is pre-checked above so `false` is currently
+        // unreachable, but threading the funnel's success keeps the contract
+        // explicit and total rather than silently swallowing a future failure.
+        if apply_set_default(&self.nodes, &self.undo, id, port, next) {
+            Ok(())
+        } else {
+            Err(InterveneError::UnknownPath)
+        }
     }
 
     /// Remove the edge with stable id `id` (no-op + `false` if absent). R851 —
@@ -4049,6 +4075,25 @@ mod tests {
             assert_eq!(coord.node_by_id(NodeId(2)).unwrap().input_default(0), Some(&grey));
             assert!(stack.redo(), "redo re-applies it");
             assert_eq!(coord.node_by_id(NodeId(2)).unwrap().input_default(0), Some(&red));
+        });
+    }
+
+    #[test]
+    fn r900_setting_a_nan_float_default_twice_is_idempotent() {
+        // R900 audit fix: the no-op guard compares by total order, so a repeat
+        // write of the SAME value journals nothing — even for `Float(NaN)`,
+        // which the derived IEEE `PartialEq` would have treated as `!=` itself
+        // and journaled a spurious second undo step.
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let lerp = coord.add_node(6).expect("Lerp"); // input 2 is a Float port
+            let nan = CellValue::Float(f64::NAN);
+            assert!(apply_set_default(&use_nodes(), &use_undo(), lerp, 2, nan.clone()), "first NaN set journals");
+            let after_first = stack.len();
+            assert!(apply_set_default(&use_nodes(), &use_undo(), lerp, 2, nan), "repeat NaN is a no-op");
+            assert_eq!(stack.len(), after_first, "an unchanged NaN write journals nothing");
         });
     }
 

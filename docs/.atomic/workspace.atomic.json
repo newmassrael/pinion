@@ -38227,6 +38227,58 @@
         "R900 lead: inline value editor (separate hit target) OR node detail/inspector panel reusing the property-grid OR crate-extract pinion-graph"
       ]
     },
+    "R900": {
+      "decision_summary": "session-review adversarial audit clearance of R898+R899: NaN-idempotent total-order no-op guard + symmetric apply_set_default return + per-widget undo-command doc + honest inline-edit reframe; rejected over-reach (evaluation=Phase C, round-sizing)",
+      "changes_bullets": [
+        "no-op guard now compares by CellValue::sort_cmp TOTAL order (NaN==NaN), not derived IEEE PartialEq",
+        "^ fixes a spurious 2nd undo step when a Float port default is re-set to NaN (idempotency was false)",
+        "intervene_input_default gates apply_set_default's bool return (symmetry with the apply_rename caller; no silent swallow)",
+        "SetPortDefaultCmd doc: records the 4th per-widget UndoCommand pattern (not a generic FieldUndoCmd; R853 behaviour-bifurcation)",
+        "docstring: corrected the inline-edit deferral framing (double-click is the path, mirroring R878 rename; not a hit-target blocker)",
+        "audit verdict recorded: a11y type-enrich JUSTIFIED (pinion-a11y has no diagram role); evaluation = Phase C, not a Phase-B authoring gap"
+      ],
+      "verification_bullets": [
+        "3-subagent adversarial review of R898+R899; every finding independently grep+read verified (real vs over-reach buckets)",
+        "new regression unit r900 (repeat-NaN write journals nothing); example unit tests 101 green",
+        "workspace cargo test -j2 green (150 result-ok groups, 0 failed); clippy --workspace --all-targets -D pedantic clean",
+        "r899 demo PASS (exercises the changed intervene + total-order no-op path); process-clearance round (no new demo)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "R901 = inline keyboard editor for port defaults: double-click opens the shared inline field; generalize the R878 rename edit-context to {title | port-default}. The completion of R899 (immediate next round, not a deferral).",
+        "typed-port AT enrichment deferred = upstream pinion-a11y diagram/graphics-document role gap (justified external dep)",
+        "dataflow evaluation = Phase C runtime (R1000+), not a node-editor authoring gap (reviewer over-reach, rejected)",
+        "node-editor arc = R898/R899/R901; after R901 diversify per CLAUDE.md Phase-B value order (avoid >3-round single-widget local optimum, R896 caution)"
+      ],
+      "publishable_decision_summary": "session-review adversarial audit clearance of R898+R899: NaN-idempotent total-order no-op guard + symmetric apply_set_default return + per-widget undo-command doc + honest inline-edit reframe; rejected over-reach (evaluation=Phase C, round-sizing)",
+      "publishable_changes_bullets": [
+        "no-op guard now compares by CellValue::sort_cmp TOTAL order (NaN==NaN), not derived IEEE PartialEq",
+        "^ fixes a spurious 2nd undo step when a Float port default is re-set to NaN (idempotency was false)",
+        "intervene_input_default gates apply_set_default's bool return (symmetry with the apply_rename caller; no silent swallow)",
+        "SetPortDefaultCmd doc: records the 4th per-widget UndoCommand pattern (not a generic FieldUndoCmd; R853 behaviour-bifurcation)",
+        "docstring: corrected the inline-edit deferral framing (double-click is the path, mirroring R878 rename; not a hit-target blocker)",
+        "audit verdict recorded: a11y type-enrich JUSTIFIED (pinion-a11y has no diagram role); evaluation = Phase C, not a Phase-B authoring gap"
+      ],
+      "publishable_verification_bullets": [
+        "3-subagent adversarial review of R898+R899; every finding independently grep+read verified (real vs over-reach buckets)",
+        "new regression unit r900 (repeat-NaN write journals nothing); example unit tests 101 green",
+        "workspace cargo test -j2 green (150 result-ok groups, 0 failed); clippy --workspace --all-targets -D pedantic clean",
+        "r899 demo PASS (exercises the changed intervene + total-order no-op path); process-clearance round (no new demo)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R901 = inline keyboard editor for port defaults: double-click opens the shared inline field; generalize the R878 rename edit-context to {title | port-default}. The completion of R899 (immediate next round, not a deferral).",
+        "typed-port AT enrichment deferred = upstream pinion-a11y diagram/graphics-document role gap (justified external dep)",
+        "dataflow evaluation = Phase C runtime (R1000+), not a node-editor authoring gap (reviewer over-reach, rejected)",
+        "node-editor arc = R898/R899/R901; after R901 diversify per CLAUDE.md Phase-B value order (avoid >3-round single-widget local optimum, R896 caution)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
