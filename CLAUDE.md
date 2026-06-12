@@ -27,24 +27,24 @@ pinion synthesizes interactive UIs **and games** from:
 | Phase | Target | Current |
 |---|---|---:|
 | **A. Foundation** (§1-§4 spec + first composed multi-widget apps) | "Hello-world apps possible" — todomvc + settings panel | **~97%** (R666 todomvc + R667 settings-panel + R668 close = finalised) |
-| **B. Professional GUI** (Qt / Flutter / Compose / React-class) | Multi-window + DCC/IDE/CAD-grade widget catalog + pro-tool performance | **~32%** (R835 re-tally; ~40 common widget families + multi-window + DevTools + dock-editor + tree virtualization + a11y catalog + menu-bar + print done. Hard long-tail remains: advanced DCC widgets [property-grid / node-editor / advanced data-grid] ~10%, Model/View-at-scale framework ~35%, OS-native maturity ~30%, rich-text editing ~30%, §7 API stabilisation ~12%) |
+| **B. Professional GUI** (Qt / Flutter / Compose / React-class) | Multi-window + DCC/IDE/CAD-grade widget catalog + pro-tool performance | **~48%** (R900 re-tally, bottom-up weighted: 19 crates / 105 examples / 200 demos / 31+ widget families. Per-axis × weight × evidence-grounded completion: common widget catalog+interaction 18%×70% / text editing 10%×45% (single+multi-line+IME+selection complete; styled-run *edit*/find-replace/syntax 0%) / **advanced DCC widgets 22%×65%** (property-grid ~70 + editable data-grid ~90 + node-editor ~85 — example-grade, node *eval*=Phase C) / Model/View-at-scale 18%×50% (windowing+3 composable proxies complete; no unified data layer / async / million-row) / pro-tool perf 10%×30% / OS-native 12%×45% (file-dialog/clipboard/drag-drop/prefers-scheme done; native-menu/tray/PDF missing) / §7 API 10%×15% = ≈50%, reported ~48% conservative. Jump from R835's ~32%: that tally predated the entire property-grid[R836]+data-grid[R837-R897]+node-editor[R838-R900] build-out [axis #1 ~10%→~65%]) |
 | **C. Game engine substrate** (§2 #4 entry) | Immediate-mode game loop ↔ retained widget tree dual; 3D scene graph; asset pipeline; physics; audio; gamepad; PBR | **~5%** (§2 #4 immediate-mode game loop I/O surface + fixed-timestep done R681/R827-R831; 3D / asset / physics / audio / gamepad / PBR all 0%) |
 | **D. AAA game maker** | Unreal-class editor **self-hosted in pinion**; visual scripting; Nanite/Lumen-class rendering; multiplayer netcode | **0%** |
 
 **True north**: AAA game shippable + Unreal-class editor self-hosted in pinion itself, with AI-introspection 1st-class through every phase.
 
-Current weighted progress against true north: **~14.5%** (Phase A 97% × 5% phase-weight + Phase B 32% × 25% + Phase C 5% × 35% + Phase D 0% × 35%), R835 re-tally. Figures are soft self-estimates with a per-axis breakdown (do not over-read precision; ±5%); the Phase B figure was re-tallied bottom-up at R835 (axes × weights × evidence-grounded completion).
+Current weighted progress against true north: **~18.6%** (Phase A 97% × 5% phase-weight + Phase B 48% × 25% + Phase C 5% × 35% + Phase D 0% × 35%), R900 re-tally. Figures are soft self-estimates with a per-axis breakdown (do not over-read precision; ±5%); the Phase B figure was re-tallied bottom-up at R900 (axes × weights × evidence-grounded completion; R835 was the prior tally at ~32%, stale after the R836-R900 DCC-widget build-out).
 
 R655-R666 todomvc + R667 settings-panel = Phase A finalisation. R700+ = Phase B entry (multi-window first). R1000+ = Phase C entry (ImmediateModeNode + game loop). R2500+ = Phase D entry (editor self-hosted dogfood).
 
 **Phase B value order (R835 directive — do the highest-value-for-the-northern-star first).** The true north is the Unreal-class editor self-hosted in pinion; Phase B is the substrate that editor is built on, so "high value" = what the self-hosted editor most needs and what is high-weight × low-completion. Work this order (audit-first within each):
 
-1. **Advanced DCC/IDE widgets** — property-grid / inspector panel (typed editable rows), advanced data-grid (cell editors / grouping / frozen panes), node-graph editor substrate (visual scripting / material graph). ~10% done; the editor's detail + outliner + blueprint panels. Highest leverage.
-2. **Model/View at scale** — the large-data backbone (asset browser / scene outliner: 10k+ rows, unified sort/filter/group). ~35% done (virtualization + proxies exist; no unified data layer).
-3. **Pro-tool performance** — 60fps with large scenes; profiling. ~25%.
-4. **OS-native maturity** — finish file-dialog / print (PDF render) / drag-drop / tray. ~30% (MVPs exist).
-5. **API stabilisation (§7)** — LATER: freeze a *mature* surface, not a churning one. ~12%.
-6. **rich-text editing/selection** — code-editor-grade text. ~30%.
+1. **Advanced DCC/IDE widgets** — property-grid / inspector panel (typed editable rows), advanced data-grid (cell editors / grouping / frozen panes), node-graph editor substrate (visual scripting / material graph). **~65% done** (R900 re-tally — property-grid ~70 / editable data-grid ~90 / node-editor ~85, all dogfood-verified; remaining: example-grade→crate-lift, node *evaluation* [Phase C], advanced delegates / scrub / detail-panel). Still highest leverage for crate-lift + depth.
+2. **Model/View at scale** — the large-data backbone (asset browser / scene outliner: 10k+ rows, unified sort/filter/group). **~50% done** (windowing [list/grid/tree] + 3 orthogonally-composable proxies [sort/filter/group/tree-filter] + data-indexed selection complete; **no unified data layer** [deliberate], no async / lazy / million-row).
+3. **Pro-tool performance** — 60fps with large scenes; profiling. ~30% (virtualization + dirty-cache; no profiling infra, no measured large-scene 60fps).
+4. **OS-native maturity** — finish file-dialog / print (PDF render) / drag-drop / tray. ~45% (file-dialog / clipboard / drag-drop / prefers-color-scheme done; native-menu rendered-not-native, print MVP [CUPS, no PDF/Win/Mac], tray 0%).
+5. **API stabilisation (§7)** — LATER: freeze a *mature* surface, not a churning one. ~15%.
+6. **rich-text editing/selection** — code-editor-grade text. ~45% (single+multi-line+IME+selection+caret complete; styled-run *editing* / find-replace / syntax highlighting 0%).
 
 NOT catalog regression (R760 PIVOT): a property grid / node editor / advanced data-grid are NEW high-value editor widgets, not re-doing finished basic widgets.
 
