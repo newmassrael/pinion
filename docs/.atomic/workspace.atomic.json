@@ -38331,6 +38331,60 @@
         "inline Color edit is hex-text; popup HSV pad deferred (needs Color->HSV decompose, substrate gap)"
       ]
     },
+    "R901.1": {
+      "decision_summary": "R901.1: session-review adversarial audit clearance — 3-lens subagent review + my grep re-verify; cleared C6 wired-port invisible-editor, F2b parser Rule-of-Three lift, SEED retired-GENERATED.md refs",
+      "changes_bullets": [
+        "C6 must-fix: begin_edit_default now rejects a WIRED port (input_wired gate)",
+        "wired pins hide the default label, so the inline editor never opens unpainted",
+        "restores paint-gate == a11y-gate (R873/R874); a wired default still set via intervene",
+        "F2b: split_node_port SSOT lifts the `_`-split (NodeId,usize) — 4 callers (oport/idefault/iport)",
+        "SEED slim: retired docs/GENERATED.md refs (entry-order + SoT pointers) -> atomic changelog",
+        "over-reach rejected: view_field 2-site divergent; Rename vs SetPortDefault non-merge justified"
+      ],
+      "verification_bullets": [
+        "example unit 109 green (1 new r901_1: wired-port begin_edit_default reject regression)",
+        "workspace test 150-group green 0-fail; clippy -D pedantic clean (workspace + example)",
+        "node-editor demos r901/r878/r838/r898/r899 PASS (edge-connect via split_node_port, wired no-regress)",
+        "3 subagent adversarial lenses (SSOT/correctness/scope) + my grep+read re-verify each finding",
+        "migration-vs-blur / serde-on-transient / commit funnel verified SOUND (over-reach, not bugs)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "future non-text-editable PortType (Bool/Choice) -> begin_edit gate is_text_editable (none yet)",
+        "SEED L23 add-section --parent-doc docs/GENERATED.md mirrors CLAUDE.md (separate fix if stale)",
+        "R902 = tree multi-select for scene-outliner (audit-confirmed; see SEED L3 + atomic R901)"
+      ],
+      "publishable_decision_summary": "R901.1: session-review adversarial audit clearance — 3-lens subagent review + my grep re-verify; cleared C6 wired-port invisible-editor, F2b parser Rule-of-Three lift, SEED retired-GENERATED.md refs",
+      "publishable_changes_bullets": [
+        "C6 must-fix: begin_edit_default now rejects a WIRED port (input_wired gate)",
+        "wired pins hide the default label, so the inline editor never opens unpainted",
+        "restores paint-gate == a11y-gate (R873/R874); a wired default still set via intervene",
+        "F2b: split_node_port SSOT lifts the `_`-split (NodeId,usize) — 4 callers (oport/idefault/iport)",
+        "SEED slim: retired docs/GENERATED.md refs (entry-order + SoT pointers) -> atomic changelog",
+        "over-reach rejected: view_field 2-site divergent; Rename vs SetPortDefault non-merge justified"
+      ],
+      "publishable_verification_bullets": [
+        "example unit 109 green (1 new r901_1: wired-port begin_edit_default reject regression)",
+        "workspace test 150-group green 0-fail; clippy -D pedantic clean (workspace + example)",
+        "node-editor demos r901/r878/r838/r898/r899 PASS (edge-connect via split_node_port, wired no-regress)",
+        "3 subagent adversarial lenses (SSOT/correctness/scope) + my grep+read re-verify each finding",
+        "migration-vs-blur / serde-on-transient / commit funnel verified SOUND (over-reach, not bugs)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "future non-text-editable PortType (Bool/Choice) -> begin_edit gate is_text_editable (none yet)",
+        "SEED L23 add-section --parent-doc docs/GENERATED.md mirrors CLAUDE.md (separate fix if stale)",
+        "R902 = tree multi-select for scene-outliner (audit-confirmed; see SEED L3 + atomic R901)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -985,10 +985,20 @@ fn parse_palette_sub(sub: &str) -> Option<usize> {
     sub.strip_prefix("palette_")?.parse().ok()
 }
 
+/// R901.1 (session-review audit) — the `"<id>_<index>"` → (node id, port
+/// index) underscore-split core shared by every composite pin sub-tag parser
+/// (`oport_` / `idefault_` / `iport_`) and the drag-source decode. The prefix
+/// strip is the caller's concern; this is the `_`-split → typed-pair SSOT (the
+/// Rule-of-Three lift of the parser family that R901's `idefault_` sibling
+/// pushed past three byte-identical copies).
+fn split_node_port(s: &str) -> Option<(NodeId, usize)> {
+    let (n, i) = s.split_once('_')?;
+    Some((NodeId(n.parse().ok()?), i.parse().ok()?))
+}
+
 /// `oport_<id>_<j>` → (node id, output port).
 fn parse_oport_sub(sub: &str) -> Option<(NodeId, usize)> {
-    let (n, j) = sub.strip_prefix("oport_")?.split_once('_')?;
-    Some((NodeId(n.parse().ok()?), j.parse().ok()?))
+    split_node_port(sub.strip_prefix("oport_")?)
 }
 
 /// R901 — `idefault_<id>_<i>` → (node id, input port): the pin-default label's
@@ -996,15 +1006,13 @@ fn parse_oport_sub(sub: &str) -> Option<(NodeId, usize)> {
 /// it opens the inline default editor (the [`parse_oport_sub`] peer over the
 /// `idefault_` prefix).
 fn parse_idefault_sub(sub: &str) -> Option<(NodeId, usize)> {
-    let (n, i) = sub.strip_prefix("idefault_")?.split_once('_')?;
-    Some((NodeId(n.parse().ok()?), i.parse().ok()?))
+    split_node_port(sub.strip_prefix("idefault_")?)
 }
 
 /// A full drop tag `node_graph#iport_<id>_<i>` → (node id, input port). Uses
 /// the canonical `#` splitter (`split_subindex`) rather than an inline split.
 fn parse_input_port_tag(tag: &str) -> Option<(NodeId, usize)> {
-    let (n, i) = split_subindex(tag).1?.strip_prefix("iport_")?.split_once('_')?;
-    Some((NodeId(n.parse().ok()?), i.parse().ok()?))
+    split_node_port(split_subindex(tag).1?.strip_prefix("iport_")?)
 }
 
 /// Two comma-separated `i32`s ("dx,dy").
@@ -2314,8 +2322,27 @@ impl NodeGraphExternal {
     /// R901 — open the inline editor on node `node`'s input port `port`'s
     /// default (the double-click-on-pin-default / `invoke begin_edit_default`
     /// entry).
+    ///
+    /// R901.1 (session-review audit) — reject a **wired** port: the inline
+    /// editor's anchor is the pin's default LABEL, which paints only for an
+    /// unwired port ([`view_node`]'s `!wired_inputs` gate; a wired pin draws no
+    /// label, its value comes from the edge). Opening it on a wired port would
+    /// paint nothing yet steal focus and make the a11y tree advertise a textbox
+    /// with no painted peer (paint gate != a11y gate — the R873/R874
+    /// one-gate violation). A wired port's retained default stays settable via
+    /// `intervene input_default.<port>`, which is label-independent.
     fn begin_edit_default(&self, node: NodeId, port: usize) -> bool {
+        if self.input_wired(node, port) {
+            return false;
+        }
         self.begin_edit(EditTarget::PortDefault { node, port })
+    }
+
+    /// R901.1 — whether an edge feeds node `node`'s input `port`. The wired-pin
+    /// predicate that gates the inline editor to the same ports whose default
+    /// label paints, so `editing` can never point at an unpainted field.
+    fn input_wired(&self, node: NodeId, port: usize) -> bool {
+        self.edges.get().iter().any(|e| e.to_node == node && e.to_port == port)
     }
 
     /// Pointer `send` wire (the same channel the router and RPC share).
@@ -2704,10 +2731,7 @@ impl External for NodeGraphExternal {
         if let (IntrospectValue::Text(src), Some((to_node, to_port))) =
             (&payload.value, over.as_ref().and_then(|dp| parse_input_port_tag(&dp.tag)))
         {
-            if let Some((from_node, from_port)) = src
-                .split_once('_')
-                .and_then(|(a, b)| Some((NodeId(a.parse().ok()?), b.parse::<usize>().ok()?)))
-            {
+            if let Some((from_node, from_port)) = split_node_port(src) {
                 self.add_edge(from_node, from_port, to_node, to_port);
             }
         }
@@ -4454,20 +4478,28 @@ mod tests {
             assert_eq!(j.get("node").and_then(serde_json::Value::as_u64), Some(2));
             assert_eq!(graph_intro(&scene).query("renaming"), Some(IntrospectValue::Int(2)));
             // A port-default edit: `editing` is a port_default object, but
-            // `renaming` is Null (the degenerate projection).
-            {
+            // `renaming` is Null (the degenerate projection). R901.1 — a wired
+            // pin rejects the inline editor, so edit a fresh Lerp's UNWIRED
+            // Float pin (node 2's pins are both wired in the seed graph).
+            let lerp = {
                 let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                let Ok(IntrospectValue::Int(id)) =
+                    intro.invoke("add_node", IntrospectValue::Text("Lerp".to_owned()))
+                else {
+                    panic!("add_node returns the new id");
+                };
                 assert_eq!(
-                    intro.invoke("begin_edit_default", IntrospectValue::Text("2.1".to_owned())),
+                    intro.invoke("begin_edit_default", IntrospectValue::Text(format!("{id}.2"))),
                     Ok(IntrospectValue::Bool(true)),
                 );
-            }
+                id
+            };
             let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
                 panic!("editing reads as a JSON object for a port-default edit");
             };
             assert_eq!(j.get("kind").and_then(serde_json::Value::as_str), Some("port_default"));
-            assert_eq!(j.get("node").and_then(serde_json::Value::as_u64), Some(2));
-            assert_eq!(j.get("port").and_then(serde_json::Value::as_u64), Some(1));
+            assert_eq!(j.get("node").and_then(serde_json::Value::as_u64), u64::try_from(lerp).ok());
+            assert_eq!(j.get("port").and_then(serde_json::Value::as_u64), Some(2));
             assert_eq!(
                 graph_intro(&scene).query("renaming"),
                 Some(IntrospectValue::Null),
@@ -4550,6 +4582,35 @@ mod tests {
                 "the editor migrated to the title target",
             );
             assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "Multiply", "reseeded from the new target");
+        });
+    }
+
+    /// R901.1 (session-review audit) — the inline editor must NOT open on a
+    /// wired port: its anchor is the default LABEL, which paints only for an
+    /// unwired pin (the edge supplies a wired pin's value). Opening it there
+    /// would paint nothing yet grab focus and advertise an a11y textbox with no
+    /// painted peer (the paint gate == a11y gate invariant, R873/R874).
+    #[test]
+    fn r901_1_begin_edit_default_rejects_a_wired_port() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            // Seed graph: node 2 (Multiply) input 0 is wired by edge 0 (0:0->2:0).
+            assert!(coord.input_wired(NodeId(2), 0), "node 2 port 0 is wired in the seed graph");
+            assert!(!coord.begin_edit_default(NodeId(2), 0), "a wired port rejects the inline editor");
+            assert_eq!(use_edit_target().get(), None, "the rejected begin left no edit in flight");
+            // The a11y tree advertises no textbox while idle (the gate that the
+            // wired-port begin must not falsely trip).
+            let a11y = NodeEditorView::access_node(&IDLE_TF, Some(GRAPH_TAG));
+            assert!(a11y.iter().all(|n| n.tag != EDIT_TF_TAG), "no unpainted textbox advertised");
+            // An UNWIRED port (a fresh Lerp's pin) still opens normally.
+            let lerp = coord.add_node(6).expect("Lerp");
+            assert!(!coord.input_wired(lerp, 2), "the fresh Lerp's pin is unwired");
+            assert!(coord.begin_edit_default(lerp, 2), "an unwired port opens the editor");
+            assert_eq!(
+                use_edit_target().get(),
+                Some(EditTarget::PortDefault { node: lerp, port: 2 }),
+            );
         });
     }
 
