@@ -45,7 +45,7 @@
 //! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
-//! `edge_ids` / `node.<id>.{title,x,y,inputs,outputs}` / `edge.<id>` /
+//! `edge_ids` / `node.<id>.{title,x,y,inputs,outputs,input_types,output_types}` / `edge.<id>` /
 //! `selected` / `selected_ids` / `selected_edge`; `intervene node.<id>.x` /
 //! `node.<id>.y` / `node.<id>.title` / `selected` / `selected_ids` /
 //! `selected_edge`; `invoke add_edge` / `remove_edge` /
@@ -73,10 +73,18 @@
 //!   `Signal::get()`. Fine for this demo; a real editor graph lifts to a
 //!   `SlotMap`/`HashMap`-by-id store (stable ids make that swap interface-
 //!   transparent — R841 was the prerequisite).
-//! - **Typed ports**: ports are input/output *counts*, not typed sockets, so
-//!   `add_edge` validates arity but not type (a Float output can wire to any
-//!   input). The type lattice differs per graph kind (material vs blueprint),
-//!   so it is deferred until that consumer settles it ([[abstraction-needs-second-consumer]]).
+//! - **Typed ports** (R898): ports are [`PortType`]-typed sockets, not bare
+//!   counts. `add_edge` rejects an ill-typed wire — the output's type must be
+//!   assignable to the input's (exact, or a `Float`->`Vector` scalar
+//!   broadcast). Ports paint in their type's signature colour (the
+//!   colour-coded-pin convention), and the types are AI-readable
+//!   (`query node.<id>.{input_types,output_types}`). Two material-graph types
+//!   for now (`Float`, `Vector`); `PortType` is `#[non_exhaustive]`, so a
+//!   blueprint consumer's `Exec` / `Bool` extend the lattice without a
+//!   re-spell ([[abstraction-needs-second-consumer]] — the taxonomy is the
+//!   consumer's, the mechanism is shared). Still deferred to that consumer:
+//!   node **parameters** / inline value editors, dataflow **evaluation**, and
+//!   the typed ports' AT enrichment (the a11y name keeps the arity count).
 //! - **Undo / redo** (R851 + R853): every edit is reversible on the shared
 //!   [`UndoStack`] — the **structural** edits (add node, delete node + its
 //!   incident edges, connect, disconnect) as [`GraphEdit`] deltas, and node
@@ -176,15 +184,25 @@ const THEME_TAG: &str = "app";
 const GRAPH_TAG: &str = "node_graph";
 
 /// R849 — the "add node" palette: the node kinds a sidebar click (or the
-/// `add_node` RPC verb) can create, as `(title, inputs, outputs)`. A tiny
-/// material-graph vocabulary (sources / op / sink), the same port shapes
-/// [`default_nodes`] seeds.
-const PALETTE: &[(&str, usize, usize)] = &[
-    ("Texture", 0, 1),
-    ("Color", 0, 1),
-    ("Multiply", 2, 1),
-    ("Add", 2, 1),
-    ("Output", 1, 0),
+/// `add_node` RPC verb) can create, as `(title, input_types, output_types)`.
+/// A tiny material-graph vocabulary (sources / ops / sink), the same typed
+/// port shapes [`default_nodes`] seeds. R898 — the entries are now
+/// [`PortType`]-typed; the first five keep their pre-R898 indices (0..=4) so
+/// the index-addressed `add_node(kind)` callers are unmoved, and the typed
+/// sources/ops (`Scalar`, `Lerp`) that exercise the type lattice are
+/// *appended* (5, 6).
+const PALETTE: &[(&str, &[PortType], &[PortType])] = &[
+    ("Texture", &[], &[PortType::Vector]),
+    ("Color", &[], &[PortType::Vector]),
+    ("Multiply", &[PortType::Vector, PortType::Vector], &[PortType::Vector]),
+    ("Add", &[PortType::Vector, PortType::Vector], &[PortType::Vector]),
+    ("Output", &[PortType::Vector], &[]),
+    // R898 — a scalar source: its `Float` output broadcasts into a `Vector`
+    // input (accepted) but a `Vector` never narrows into it (rejected).
+    ("Scalar", &[], &[PortType::Float]),
+    // R898 — a 3-input op whose last input is a `Float` factor, so a
+    // `Color`/`Texture` (`Vector`) wired to it is type-rejected.
+    ("Lerp", &[PortType::Vector, PortType::Vector, PortType::Float], &[PortType::Vector]),
 ];
 
 /// R849 — sidebar width for the node palette. The canvas keeps its
@@ -226,7 +244,10 @@ const STORAGE_CACHE_KEY: &str = "node_graph.storage";
 const STORAGE_KEY: &str = "node_graph.state";
 /// R852 — bump on an incompatible [`SerializedGraph`] layout change; a load of a
 /// mismatched version starts fresh (silent fall-through, the todomvc precedent).
-const PERSISTED_SCHEMA_VERSION: u32 = 1;
+// R898 — bumped 1 -> 2: typed ports changed the `GraphNode` serialised shape
+// (`inputs`/`outputs` counts -> `input_ports`/`output_ports` typed lists), so a
+// stale v1 blob mismatch-rejects and starts fresh rather than misreading.
+const PERSISTED_SCHEMA_VERSION: u32 = 2;
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -351,28 +372,119 @@ impl core::fmt::Display for EdgeId {
     }
 }
 
-/// One node: a titled card with `inputs` input ports (left edge) and
-/// `outputs` output ports (right edge), placed at canvas `(x, y)`. Carries a
-/// stable [`NodeId`].
+/// R898 — a port's data type. The lattice that makes the graph a *typed*
+/// node editor: an edge connects an output to an input only when the
+/// output's type is assignable to the input's (see [`PortType::is_assignable_to`]),
+/// so the canvas rejects an ill-typed wire the way Unreal's blueprint /
+/// material graphs do. Two material-graph types for now (`Float` scalar,
+/// `Vector` colour/vec3); `#[non_exhaustive]` so a blueprint consumer's
+/// `Exec` / `Bool` extend it without re-spelling the match arms here
+/// ([[abstraction-needs-second-consumer]] — the type *taxonomy* is the
+/// consumer's, the *mechanism* is shared).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[non_exhaustive]
+enum PortType {
+    /// A scalar.
+    Float,
+    /// A vec3 / colour (a material graph's primary data type).
+    Vector,
+}
+
+/// R898 — a `Float` port's signature colour. Node editors colour-code pins by
+/// type (Unreal/Blender) so a connection's validity is legible at a glance;
+/// the colour is a fixed type identity, *not* themed (a `Float` reads the same
+/// green in light and dark).
+const FLOAT_PORT_COLOR: Color = Color::rgb(0x7c, 0xd0, 0x6f);
+/// R898 — a `Vector` port's signature colour (gold, the vec3 convention).
+const VECTOR_PORT_COLOR: Color = Color::rgb(0xe0, 0xb0, 0x3a);
+
+impl PortType {
+    /// The pin's signature colour (the `view_port` fill). Fixed per type — the
+    /// node-editor colour-coding convention, not a themed role.
+    const fn color(self) -> Color {
+        match self {
+            PortType::Float => FLOAT_PORT_COLOR,
+            PortType::Vector => VECTOR_PORT_COLOR,
+        }
+    }
+
+    /// The wire-form / display token — the `input_types` CSV element and the
+    /// `(<n>/<m>)` palette label has no use for it, but the AI-first
+    /// `query node.<id>.input_types` does.
+    const fn name(self) -> &'static str {
+        match self {
+            PortType::Float => "Float",
+            PortType::Vector => "Vector",
+        }
+    }
+
+    /// Whether an output of `self` may feed an input of `into`. Exact match
+    /// always; a scalar `Float` broadcasts up to a `Vector` (the shader-graph
+    /// scalar-promote coercion). There is no narrowing (a `Vector` never feeds
+    /// a `Float`), so the relation is a strict partial order, not symmetric.
+    const fn is_assignable_to(self, into: PortType) -> bool {
+        // `Float` assigns to `Float` or `Vector` (exact + scalar broadcast);
+        // `Vector` only to `Vector` (no narrowing).
+        matches!(
+            (self, into),
+            (PortType::Float, PortType::Float | PortType::Vector)
+                | (PortType::Vector, PortType::Vector)
+        )
+    }
+}
+
+/// One node: a titled card with typed input ports (left edge) and typed
+/// output ports (right edge), placed at canvas `(x, y)`. Carries a stable
+/// [`NodeId`]. R898 — the ports are [`PortType`]-typed sockets; the arity
+/// (`inputs()` / `outputs()`) is now the *length* of those lists, so the
+/// pre-R898 count-only contract is the degenerate read of the richer model.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct GraphNode {
     id: NodeId,
     title: String,
     x: i32,
     y: i32,
-    inputs: usize,
-    outputs: usize,
+    input_ports: Vec<PortType>,
+    output_ports: Vec<PortType>,
 }
 
 impl GraphNode {
-    fn new(id: u32, title: &str, x: i32, y: i32, inputs: usize, outputs: usize) -> Self {
-        Self { id: NodeId(id), title: title.to_owned(), x, y, inputs, outputs }
+    fn new(id: u32, title: &str, x: i32, y: i32, inputs: &[PortType], outputs: &[PortType]) -> Self {
+        Self {
+            id: NodeId(id),
+            title: title.to_owned(),
+            x,
+            y,
+            input_ports: inputs.to_vec(),
+            output_ports: outputs.to_vec(),
+        }
+    }
+
+    /// Input-port arity — the pre-R898 `inputs` count, now derived from the
+    /// typed list so the RPC `node.<id>.inputs` contract stays byte-stable.
+    fn inputs(&self) -> usize {
+        self.input_ports.len()
+    }
+
+    /// Output-port arity (the derived count twin of [`GraphNode::inputs`]).
+    fn outputs(&self) -> usize {
+        self.output_ports.len()
+    }
+
+    /// The type of input port `port`, if it exists (the `add_edge` type gate).
+    fn input_type(&self, port: usize) -> Option<PortType> {
+        self.input_ports.get(port).copied()
+    }
+
+    /// The type of output port `port`, if it exists.
+    fn output_type(&self, port: usize) -> Option<PortType> {
+        self.output_ports.get(port).copied()
     }
 
     /// Port rows = the taller of the two columns (at least one, so a
     /// source / sink node still has a body).
     fn rows(&self) -> i32 {
-        irow(self.inputs.max(self.outputs).max(1))
+        irow(self.inputs().max(self.outputs()).max(1))
     }
 
     fn height(&self) -> i32 {
@@ -498,11 +610,12 @@ fn first_dynamic_node_id() -> u32 {
 /// First-paint graph — a tiny material graph (`Texture` × `Color` →
 /// `Multiply` → `Output`). Node ids 0..=3, edge ids 0..=2.
 fn default_nodes() -> Vec<GraphNode> {
+    use PortType::Vector;
     vec![
-        GraphNode::new(0, "Texture", 40, 70, 0, 1),
-        GraphNode::new(1, "Color", 40, 210, 0, 1),
-        GraphNode::new(2, "Multiply", 250, 110, 2, 1),
-        GraphNode::new(3, "Output", 470, 150, 1, 0),
+        GraphNode::new(0, "Texture", 40, 70, &[], &[Vector]),
+        GraphNode::new(1, "Color", 40, 210, &[], &[Vector]),
+        GraphNode::new(2, "Multiply", 250, 110, &[Vector, Vector], &[Vector]),
+        GraphNode::new(3, "Output", 470, 150, &[Vector], &[]),
     ]
 }
 
@@ -811,6 +924,12 @@ fn parse_pair_i32(s: &str) -> Option<(i32, i32)> {
 /// Join stable ids into the CSV the `node_ids` / `edge_ids` queries return.
 fn csv_ids(ids: impl Iterator<Item = u32>) -> String {
     ids.map(|id| id.to_string()).collect::<Vec<_>>().join(",")
+}
+
+/// R898 — join a port's types into the CSV the `node.<id>.input_types` /
+/// `output_types` queries return ("Vector,Float"; "" for a source / sink).
+fn port_types_csv(ports: &[PortType]) -> String {
+    ports.iter().map(|p| p.name()).collect::<Vec<_>>().join(",")
 }
 
 /// Four comma-separated values: "from_node_id,from_port,to_node_id,to_port".
@@ -1547,7 +1666,7 @@ impl NodeGraphExternal {
     /// rearranged. A new node has no edges, so no edge / selection bookkeeping
     /// is needed (the stable-id model: adding is purely additive).
     fn add_node(&self, kind: usize) -> Option<NodeId> {
-        let &(title, inputs, outputs) = PALETTE.get(kind)?;
+        let &(title, input_ports, output_ports) = PALETTE.get(kind)?;
         let raw = self.next_node_id.get();
         self.next_node_id.set(raw + 1);
         let id = NodeId(raw);
@@ -1564,7 +1683,14 @@ impl NodeGraphExternal {
         );
         let x = clamp_node_x(round_i32(gx) + step * SPAWN_STEP);
         let y = clamp_node_y(round_i32(gy) + step * SPAWN_STEP);
-        let node = GraphNode { id, title: title.to_owned(), x, y, inputs, outputs };
+        let node = GraphNode {
+            id,
+            title: title.to_owned(),
+            x,
+            y,
+            input_ports: input_ports.to_vec(),
+            output_ports: output_ports.to_vec(),
+        };
         let sel_before = self.selection.get();
         // `record` applies the edit forward — pushing the node and selecting it
         // (the prior direct writes) — so a single Ctrl+Z removes it again.
@@ -1593,7 +1719,17 @@ impl NodeGraphExternal {
         let Some(dst) = nodes.iter().find(|n| n.id == to_node) else {
             return false;
         };
-        if from_port >= src.outputs || to_port >= dst.inputs {
+        let (Some(from_ty), Some(to_ty)) = (src.output_type(from_port), dst.input_type(to_port))
+        else {
+            // Out-of-range port (the pre-R898 arity reject, now expressed as a
+            // missing typed socket).
+            return false;
+        };
+        // R898 — typed-port validation: the output's type must be assignable to
+        // the destination input's type (exact, or a `Float`->`Vector` scalar
+        // broadcast). A material / blueprint graph rejects an ill-typed wire;
+        // arity alone (the pre-R898 gate) let a `Float` reach any input.
+        if !from_ty.is_assignable_to(to_ty) {
             return false;
         }
         let edges = self.edges.get();
@@ -2319,6 +2455,8 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node.<id>.y", "int"),
             ("node.<id>.inputs", "int"),
             ("node.<id>.outputs", "int"),
+            ("node.<id>.input_types", "string"),
+            ("node.<id>.output_types", "string"),
             ("edge.<id>", "string"),
             ("viewport.x", "float"),
             ("viewport.y", "float"),
@@ -2395,8 +2533,15 @@ impl ExternalIntrospect for NodeGraphExternal {
                         "title" => Some(IntrospectValue::Text(node.title.clone())),
                         "x" => Some(IntrospectValue::Int(i64::from(node.x))),
                         "y" => Some(IntrospectValue::Int(i64::from(node.y))),
-                        "inputs" => Some(IntrospectValue::Int(int_of(node.inputs))),
-                        "outputs" => Some(IntrospectValue::Int(int_of(node.outputs))),
+                        "inputs" => Some(IntrospectValue::Int(int_of(node.inputs()))),
+                        "outputs" => Some(IntrospectValue::Int(int_of(node.outputs()))),
+                        // R898 — the typed-port read twins: CSV of the port
+                        // types in port order ("" for a source / sink). The
+                        // arity reads above stay the byte-stable count contract.
+                        "input_types" => Some(IntrospectValue::Text(port_types_csv(&node.input_ports))),
+                        "output_types" => {
+                            Some(IntrospectValue::Text(port_types_csv(&node.output_ports)))
+                        }
                         _ => None,
                     };
                 }
@@ -2517,7 +2662,11 @@ impl ExternalIntrospect for NodeGraphExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
-            "inputs" | "outputs" => Err(InterveneError::ReadOnly),
+            // R898 — port arity and the typed-port lists are read-only: ports
+            // are defined by the node kind, edited only by add/remove edges.
+            "inputs" | "outputs" | "input_types" | "output_types" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -2916,7 +3065,6 @@ fn view_node(
     zoom: f64,
 ) -> Scene {
     let id = node.id;
-    let port_color = theme.resolve(ColorRole::Accent);
     // R878 — while this node is being renamed, the header swaps its title
     // text for the ONE shared inline rename field (the data-grid
     // title-or-field switch), sized to the header and projected through the
@@ -2953,21 +3101,24 @@ fn view_node(
     );
 
     let mut children = vec![header];
-    for i in 0..node.inputs {
+    // R898 — each port paints in its [`PortType`] signature colour, so a
+    // connection's validity (output colour vs input colour) is legible at a
+    // glance — the Unreal/Blender colour-coded-pin convention.
+    for (i, ty) in node.input_ports.iter().enumerate() {
         children.push(view_port(
             format!("{GRAPH_TAG}#iport_{id}_{i}"),
             0,
             port_row_top(i),
-            port_color,
+            ty.color(),
             zoom,
         ));
     }
-    for j in 0..node.outputs {
+    for (j, ty) in node.output_ports.iter().enumerate() {
         children.push(view_port(
             format!("{GRAPH_TAG}#oport_{id}_{j}"),
             NODE_W - PORT_SIZE,
             port_row_top(j),
-            port_color,
+            ty.color(),
             zoom,
         ));
     }
@@ -3032,9 +3183,9 @@ fn view_palette(theme: &Theme) -> Scene {
         )
         .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 12, 12, 4))),
     ));
-    for (idx, &(title, inputs, outputs)) in PALETTE.iter().enumerate() {
+    for (idx, &(title, input_ports, output_ports)) in PALETTE.iter().enumerate() {
         let label = Scene::Text(TextNode::styled(
-            format!("{title} ({inputs}/{outputs})"),
+            format!("{title} ({}/{})", input_ports.len(), output_ports.len()),
             Rect::default(),
             TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
         ));
@@ -3394,7 +3545,7 @@ impl WidgetA11y for NodeEditorView {
         out.push(group);
         for node in &nodes {
             let mut entry = AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
-                .with_name(format!("{} ({} in, {} out)", node.title, node.inputs, node.outputs))
+                .with_name(format!("{} ({} in, {} out)", node.title, node.inputs(), node.outputs()))
                 .with_selected(selected.contains(&node.id));
             // R878 — while this node is being renamed, the shared inline
             // field is its child textbox (the lifted `text_field_a11y_node`
@@ -3552,6 +3703,66 @@ mod tests {
             assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(3)));
             assert_eq!(intro.query("edge.2"), None, "old wire id 2 was replaced");
             assert_eq!(intro.query("edge.3"), Some(IntrospectValue::Text("0:0->3:0".to_owned())));
+        });
+    }
+
+    #[test]
+    fn r898_port_type_lattice_is_a_strict_partial_order() {
+        // Exact match always; a scalar `Float` broadcasts up to a `Vector`;
+        // there is no narrowing, so the relation is asymmetric.
+        assert!(PortType::Float.is_assignable_to(PortType::Float));
+        assert!(PortType::Vector.is_assignable_to(PortType::Vector));
+        assert!(PortType::Float.is_assignable_to(PortType::Vector), "scalar broadcast");
+        assert!(!PortType::Vector.is_assignable_to(PortType::Float), "no vector->scalar narrowing");
+    }
+
+    #[test]
+    fn r898_add_edge_rejects_a_type_incompatible_wire() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            // A `Scalar` (Float source, palette 5) and a `Lerp`
+            // (`[Vector, Vector, Float]` in, palette 6) — the typed sources/ops.
+            let scalar = coord.add_node(5).expect("Scalar is a valid kind");
+            let lerp = coord.add_node(6).expect("Lerp is a valid kind");
+            let before = coord.edges.get().len();
+            // Float -> Float (Lerp's factor input): exact, accepted.
+            assert!(coord.add_edge(scalar, 0, lerp, 2), "Float -> Float exact is accepted");
+            // Float -> Vector (Lerp's colour input): scalar broadcast, accepted.
+            assert!(coord.add_edge(scalar, 0, lerp, 0), "Float -> Vector broadcast is accepted");
+            // Vector -> Float (Texture's colour into the factor input): narrowing,
+            // REJECTED — the typed gate the pre-R898 arity check could not make.
+            assert!(!coord.add_edge(NodeId(0), 0, lerp, 2), "Vector -> Float narrowing is rejected");
+            // Only the two accepted wires were added.
+            assert_eq!(coord.edges.get().len(), before + 2, "exactly the compatible wires landed");
+        });
+    }
+
+    #[test]
+    fn r898_typed_ports_are_ai_readable_and_read_only() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Multiply (node 2): two `Vector` inputs, one `Vector` output.
+            assert_eq!(
+                intro.query("node.2.input_types"),
+                Some(IntrospectValue::Text("Vector,Vector".to_owned())),
+            );
+            assert_eq!(
+                intro.query("node.2.output_types"),
+                Some(IntrospectValue::Text("Vector".to_owned())),
+            );
+            // Texture (node 0): a source — no input types.
+            assert_eq!(
+                intro.query("node.0.input_types"),
+                Some(IntrospectValue::Text(String::new())),
+            );
+            // The typed-port lists are read-only (ports are the node kind's).
+            assert_eq!(
+                intro.intervene("node.2.input_types", IntrospectValue::Text("Float".to_owned())),
+                Err(InterveneError::ReadOnly),
+            );
         });
     }
 
@@ -3876,7 +4087,7 @@ mod tests {
             assert_eq!(use_selection().get(), Selection::single(id), "the new node is selected");
             let n = coord.node_by_id(id).expect("new node present");
             assert_eq!(n.title, "Multiply");
-            assert_eq!((n.inputs, n.outputs), (2, 1));
+            assert_eq!((n.inputs(), n.outputs()), (2, 1));
             // An out-of-range kind adds nothing.
             assert_eq!(coord.add_node(99), None);
             assert_eq!(coord.node_count(), 5);

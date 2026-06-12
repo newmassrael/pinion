@@ -9,7 +9,7 @@ with fresh stable ids (monotonic, never reused), the foundation the self-hosted
 blueprint / material-graph editor needs.
 
   (A) boot — the 4-node material graph (Texture/Color -> Multiply -> Output) +
-      the palette sidebar of 5 kind cards.
+      the palette sidebar of 7 kind cards (R898 appended the typed Scalar/Lerp).
   (B) RPC add_node — create by kind name; returns the new stable id; the node
       is addressable (title / ports / position) and selected; an unknown kind
       is rejected and changes nothing.
@@ -40,7 +40,9 @@ G = "node_graph"
 WIN = (132 + 640, 420)
 # Ids 0..3 are the seed nodes; the first minted id is 4.
 FIRST_DYN = 4
-NKINDS = 5  # Texture / Color / Multiply / Add / Output
+# Texture / Color / Multiply / Add / Output, then R898's appended typed
+# sources/ops Scalar / Lerp (indices 5, 6 — appended so 0..=4 are unmoved).
+NKINDS = 7
 
 
 def ncount(tf) -> int:
@@ -63,7 +65,7 @@ def body() -> None:
         assert_eq(ecount(tf), 3, "boot: 3 seed edges")
         assert_eq(tf.query("/external/node_ids"), "0,1,2,3", "boot: dense seed id space")
         assert_eq(tf.query("/external/node.2.title"), "Multiply", "seed node 2 is Multiply")
-        # The palette sidebar painted its 5 kind cards.
+        # The palette sidebar painted its 7 kind cards.
         rects = abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
         for idx in range(NKINDS):
             assert f"{G}#palette_{idx}" in rects, f"palette card {idx} present at boot"

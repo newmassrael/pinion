@@ -38109,6 +38109,66 @@
         "if the disk pressure recurs despite the reclaim, the next lever is splitting the workspace test job or capping test-link parallelism (-j)"
       ]
     },
+    "R898": {
+      "decision_summary": "node-editor typed ports: PortType lattice + type-checked add_edge + colour-coded pins + AI-readable input/output types (blueprint/material-graph foundation)",
+      "changes_bullets": [
+        "PortType{Float,Vector} lattice (#[non_exhaustive]); is_assignable_to = exact + Float->Vector broadcast",
+        "GraphNode ports usize counts -> typed Vec<PortType>; inputs()/outputs() derived so RPC count contract byte-stable",
+        "add_edge rejects ill-typed wire (output must be assignable to input); arity gate kept as missing-socket reject",
+        "PALETTE typed; Scalar(Float src)+Lerp(Vector,Vector,Float) APPENDED at idx 5,6 so 0..=4 indices are unmoved",
+        "RPC query node.<id>.input_types/output_types (CSV) + schema slots; intervene read-only (ports are the kind's)",
+        "colour-coded pins: PortType::color() fixed signature colours (Float green / Vector gold) via view_port reuse",
+        "PERSISTED_SCHEMA_VERSION 1->2 (serialised GraphNode shape changed); a stale v1 blob mismatch-resets",
+        "docstring closes the 'typed ports = deferred gap'; a11y name keeps arity count (typed AT enrich deferred)"
+      ],
+      "verification_bullets": [
+        "example unit tests 97 green (3 new R898: lattice strict-partial-order / type-incompatible reject / read-only AI-read)",
+        "workspace cargo test -j2 green (150 result-ok groups, 0 failed); clippy --workspace --all-targets -D pedantic clean",
+        "r898 demo PASS (37 assert: typed boot / connect accept+reject / read-only / colour-coded scene-as-data fill)",
+        "r849 updated 5->7 palette cards PASS; regression r838 + r852 (schema v2 save/load round-trip) PASS",
+        "3b self-grep clean: PortType is 1st consumer (no lift); only r849/r898 touch surface; no stale field literals"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "R897.1 CI disk-full fix VERIFIED CLEARED: run 27381435077 (6f0d46a) attempt#1 success, no manual rerun",
+        "typed-port AT enrichment deferred (a11y name keeps arity count) — additive when an AT consumer needs it",
+        "node parameters / inline typed value editors + dataflow evaluation deferred to blueprint/material consumer",
+        "PortType Exec/Bool deferred (#[non_exhaustive] ready); model crate-extraction lands at the 2nd consumer",
+        "R899 lead: node parameters (inline typed value editors) OR crate-extract pinion-graph OR grid large-data scale demo"
+      ],
+      "publishable_decision_summary": "node-editor typed ports: PortType lattice + type-checked add_edge + colour-coded pins + AI-readable input/output types (blueprint/material-graph foundation)",
+      "publishable_changes_bullets": [
+        "PortType{Float,Vector} lattice (#[non_exhaustive]); is_assignable_to = exact + Float->Vector broadcast",
+        "GraphNode ports usize counts -> typed Vec<PortType>; inputs()/outputs() derived so RPC count contract byte-stable",
+        "add_edge rejects ill-typed wire (output must be assignable to input); arity gate kept as missing-socket reject",
+        "PALETTE typed; Scalar(Float src)+Lerp(Vector,Vector,Float) APPENDED at idx 5,6 so 0..=4 indices are unmoved",
+        "RPC query node.<id>.input_types/output_types (CSV) + schema slots; intervene read-only (ports are the kind's)",
+        "colour-coded pins: PortType::color() fixed signature colours (Float green / Vector gold) via view_port reuse",
+        "PERSISTED_SCHEMA_VERSION 1->2 (serialised GraphNode shape changed); a stale v1 blob mismatch-resets",
+        "docstring closes the 'typed ports = deferred gap'; a11y name keeps arity count (typed AT enrich deferred)"
+      ],
+      "publishable_verification_bullets": [
+        "example unit tests 97 green (3 new R898: lattice strict-partial-order / type-incompatible reject / read-only AI-read)",
+        "workspace cargo test -j2 green (150 result-ok groups, 0 failed); clippy --workspace --all-targets -D pedantic clean",
+        "r898 demo PASS (37 assert: typed boot / connect accept+reject / read-only / colour-coded scene-as-data fill)",
+        "r849 updated 5->7 palette cards PASS; regression r838 + r852 (schema v2 save/load round-trip) PASS",
+        "3b self-grep clean: PortType is 1st consumer (no lift); only r849/r898 touch surface; no stale field literals"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R897.1 CI disk-full fix VERIFIED CLEARED: run 27381435077 (6f0d46a) attempt#1 success, no manual rerun",
+        "typed-port AT enrichment deferred (a11y name keeps arity count) — additive when an AT consumer needs it",
+        "node parameters / inline typed value editors + dataflow evaluation deferred to blueprint/material consumer",
+        "PortType Exec/Bool deferred (#[non_exhaustive] ready); model crate-extraction lands at the 2nd consumer",
+        "R899 lead: node parameters (inline typed value editors) OR crate-extract pinion-graph OR grid large-data scale demo"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
