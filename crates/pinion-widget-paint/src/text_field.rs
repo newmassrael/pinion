@@ -113,6 +113,17 @@ pub struct TextFieldStyle {
     /// Selection rect tint alpha (default 0xA0 ≈ 63 % opacity ≈
     /// macOS / Chrome system selection overlay weight).
     pub selection_alpha: u8,
+    /// R903 §5.22 — find-match highlight tint alpha (default 0x38 ≈ 22 %
+    /// opacity). Drawn behind **every** current find match (the
+    /// [`TextEditState::find_matches`](pinion_core::widgets::text_edit::TextEditState::find_matches)
+    /// ranges) so the matches read as faint candidates while the *current*
+    /// match — which is also the selection — gets the stronger
+    /// [`selection_alpha`](Self::selection_alpha) band layered on top. Same
+    /// `ColorRole::Accent` hue as the selection (the "fainter accent =
+    /// provisional" convention the preedit tint already uses), so a palette
+    /// swap restains find / selection / caret coherently rather than
+    /// introducing an off-palette highlight colour.
+    pub find_highlight_alpha: u8,
     /// Preedit background tint alpha (default 0x40 ≈ 25 % opacity
     /// — fainter than selection so the IME composition segment
     /// reads as provisional).
@@ -164,6 +175,7 @@ impl TextFieldStyle {
             font_size_px: 18,
             caret_width: 2,
             selection_alpha: 0xA0,
+            find_highlight_alpha: 0x38,
             preedit_bg_alpha: 0x40,
             preedit_underline_thickness: 1,
             multi_line: false,
@@ -376,6 +388,17 @@ fn selection_fill(theme: &Theme, alpha: u8) -> Color {
     Color::rgba(a.r, a.g, a.b, alpha)
 }
 
+/// R903 §5.22 — find-match highlight tint — a fainter `ColorRole::Accent`
+/// overlay than [`selection_fill`], drawn behind every find match so the
+/// matches read as candidates while the current match's stronger selection
+/// band layers on top. Shares the selection's Accent hue (a palette swap
+/// restains both) — the textbook find-highlight within a role-based palette
+/// that has no dedicated highlight role.
+fn find_highlight_fill(theme: &Theme, alpha: u8) -> Color {
+    let a = theme.resolve(ColorRole::Accent);
+    Color::rgba(a.r, a.g, a.b, alpha)
+}
+
 /// (R657 §5.16) Preedit background tint — fainter Accent overlay
 /// than [`selection_fill`] so the IME composition segment reads as
 /// provisional. Companion role for [`preedit_underline`].
@@ -419,6 +442,20 @@ fn saturating_f32_to_u32(v: f32) -> u32 {
         let out = v as u32;
         out
     }
+}
+
+/// R903 §5.22 — convert a layout-space [`CaretRect`] band to a paint-space
+/// `(x, y, w, h)` tuple, flooring the height to `font_floor` so a zero-height
+/// run still paints a visible band. The single conversion the per-line
+/// selection bands and the find-match highlight bands share (they both turn
+/// [`selection_rects_for_range`] output into absolute-positioned `Box` rects).
+fn rect_to_band(r: CaretRect, font_floor: u32) -> (u32, u32, u32, u32) {
+    (
+        saturating_f32_to_u32(r.x),
+        saturating_f32_to_u32(r.y),
+        saturating_f32_to_u32(r.width),
+        saturating_f32_to_u32(r.height).max(font_floor),
+    )
 }
 
 /// R765 §5.22 §5.45 — canonical **scroll-into-view**: the minimal new
@@ -528,7 +565,11 @@ pub fn view_field(
     // selection + preedit pixel rects from the same Layout.
     let layout_cache = use_text_field_layout_cache();
     let selection_range = text_state.selection_range();
-    let (caret_pixel_rect, selection_pixel, preedit_pixel, content_h) = {
+    // R903 §5.22 — current find matches as committed-text byte ranges. Empty
+    // when no search is active; when idle, `effective_text == text` so these
+    // offsets index the shaped layout exactly like `selection_range` does.
+    let find_match_ranges = text_state.find_matches();
+    let (caret_pixel_rect, selection_pixel, find_pixel, preedit_pixel, content_h) = {
         let mut cache = layout_cache.borrow_mut();
         let layout = cache.layout_with_runs(effective_text.as_str(), &text_style, &runs, max_width);
         #[allow(
@@ -553,17 +594,23 @@ pub fn view_field(
             .map(|(start, end)| {
                 selection_rects_for_range(layout, start, end)
                     .into_iter()
-                    .map(|r| {
-                        (
-                            saturating_f32_to_u32(r.x),
-                            saturating_f32_to_u32(r.y),
-                            saturating_f32_to_u32(r.width),
-                            saturating_f32_to_u32(r.height).max(style.font_size_px),
-                        )
-                    })
+                    .map(|r| rect_to_band(r, style.font_size_px))
                     .collect()
             })
             .unwrap_or_default();
+        // R903 §5.22 — one band per visual line of every find match (the same
+        // `selection_rects_for_range` geometry the selection uses), painted
+        // behind the selection so the current match's stronger band shows on
+        // top. The data is `find_matches`, so the highlight is exactly the
+        // `scene/<tag>/external/find_matches` RPC ranges — windowless-verifiable.
+        let find: Vec<(u32, u32, u32, u32)> = find_match_ranges
+            .iter()
+            .flat_map(|&(start, end)| {
+                selection_rects_for_range(layout, start, end)
+                    .into_iter()
+                    .map(|r| rect_to_band(r, style.font_size_px))
+            })
+            .collect();
         let preedit_p = preedit_byte_range.map(|(start, end)| {
             let start_rect = caret_rect_for_byte_offset(layout, start, cw);
             let end_rect = caret_rect_for_byte_offset(layout, end, cw);
@@ -573,7 +620,13 @@ pub fn view_field(
             let pre_h = saturating_f32_to_u32(start_rect.height).max(style.font_size_px);
             (start_x, pre_y, end_x.saturating_sub(start_x), pre_h)
         });
-        (caret, selection, preedit_p, saturating_f32_to_u32(layout.height()))
+        (
+            caret,
+            selection,
+            find,
+            preedit_p,
+            saturating_f32_to_u32(layout.height()),
+        )
     };
     let (caret_layout_x, caret_layout_y, caret_box_height) = caret_pixel_rect;
 
@@ -670,6 +723,29 @@ pub fn view_field(
     // content anchor at 0 — the `pad` lives in the Scroll's placement,
     // not in each band's offset.
     let inner_pad = if style.multi_line { 0 } else { pad };
+
+    // R903 §5.22 — find-match highlight bands paint FIRST (behind the
+    // selection band and the text), so the current match's stronger selection
+    // band layers on top of its fainter find tint. Same absolute-position +
+    // anchor rule as the selection band.
+    for &(fx, fy, fw, fh) in &find_pixel {
+        if fw > 0 {
+            let f_left = inner_pad.saturating_add(fx);
+            let f_top = inner_pad.saturating_add(fy);
+            let find_box = Scene::Box(
+                BoxNode::new(
+                    Rect::default(),
+                    BoxStyle::filled(find_highlight_fill(theme, style.find_highlight_alpha)),
+                )
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_size(Size::px(fw, fh))
+                        .with_absolute_position(f_left, f_top),
+                ),
+            );
+            field_children.push(find_box);
+        }
+    }
 
     // R56.1.f.3 §5.22 — selection rect paints BEFORE text_node so
     // glyphs render on top. Vello composites children in vector

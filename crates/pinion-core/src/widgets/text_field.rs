@@ -1142,6 +1142,24 @@ impl ExternalIntrospect for TextFieldExternal {
             // [`StyleRun`]: crate::scene::StyleRun
             ("apply-style", "boolean"),
             ("clear-style", "boolean"),
+            // R903 §5.22 — find &amp; replace. `find_query` /
+            // `find_case_sensitive` / `find_whole_word` are query+intervene
+            // (the needle + its flags); `find_matches` is a derived read
+            // (`{query, case_sensitive, whole_word, count, current, ranges}`).
+            // `find-next` / `find-prev` navigate (return the new selection or
+            // `Null`); `replace` (arg = replacement `Text`) replaces the
+            // current match and advances (returns `Bool`); `replace-all` (arg =
+            // replacement `Text`) rewrites every match as one undo step
+            // (returns the count). The AI-first peer of the find bar's
+            // keyboard.
+            ("find_query", "string"),
+            ("find_case_sensitive", "boolean"),
+            ("find_whole_word", "boolean"),
+            ("find_matches", "json"),
+            ("find-next", "object"),
+            ("find-prev", "object"),
+            ("replace", "boolean"),
+            ("replace-all", "number"),
         ])
     }
 
@@ -1171,13 +1189,12 @@ impl ExternalIntrospect for TextFieldExternal {
             // Bare `TextField` (no attached state) returns `None`
             // (the path is unknown to that instance) so RPC clients
             // distinguish "no state bound" from "no selection".
-            "selection" => self.text_state().map(|s| match s.selection_range() {
-                Some((start, end)) => IntrospectValue::Json(serde_json::json!({
-                    "start": start,
-                    "end":   end,
-                })),
-                None => IntrospectValue::Null,
-            }),
+            // R903 — the `{start, end}|Null` encoding is the
+            // [`selection_range_to_value`] SSOT, shared with the
+            // `find-next` / `find-prev` invoke return.
+            "selection" => self
+                .text_state()
+                .map(|s| selection_range_to_value(s.selection_range())),
             // R769.1 §5.36 §5.22 — applied formatting runs as a JSON array
             // `[{"start", "end", "style": {...}}]` (the `StyleRun` serde
             // shape, identical to the field Text node's `runs` in
@@ -1200,6 +1217,34 @@ impl ExternalIntrospect for TextFieldExternal {
             "preedit" => self.text_state().map(|s| match s.preedit() {
                 Some(content) => IntrospectValue::Text(content),
                 None => IntrospectValue::Null,
+            }),
+            // R903 §5.22 — find &amp; replace read surface (the write peers are
+            // the matching `intervene` arms + `find-*` / `replace*` invokes).
+            "find_query" => self
+                .text_state()
+                .map(|s| IntrospectValue::Text(s.find_query())),
+            "find_case_sensitive" => self
+                .text_state()
+                .map(|s| IntrospectValue::Bool(s.find_case_sensitive())),
+            "find_whole_word" => self
+                .text_state()
+                .map(|s| IntrospectValue::Bool(s.find_whole_word())),
+            // Derived match state: count + every `[start, end]` range + the
+            // index the selection currently coincides with (`current`, null
+            // when off a match) — the "{n} of {N}" status + highlight data, all
+            // from the one `find_matches` derivation so the wire never disagrees
+            // with the paint.
+            "find_matches" => self.text_state().map(|s| {
+                let matches = s.find_matches();
+                let ranges: Vec<[usize; 2]> = matches.iter().map(|&(a, b)| [a, b]).collect();
+                IntrospectValue::Json(serde_json::json!({
+                    "query": s.find_query(),
+                    "case_sensitive": s.find_case_sensitive(),
+                    "whole_word": s.find_whole_word(),
+                    "count": matches.len(),
+                    "current": s.find_current_index(),
+                    "ranges": ranges,
+                }))
             }),
             _ => None,
         }
@@ -1311,6 +1356,39 @@ impl ExternalIntrospect for TextFieldExternal {
                     }
                     _ => Err(InterveneError::TypeMismatch),
                 }
+            }
+            // R903 §5.22 — find &amp; replace write surface. Pure setters (they
+            // never move the caret — `find-next` navigates), so each is the
+            // exact write peer of its `query` read.
+            "find_query" => {
+                let Some(state) = self.text_state() else {
+                    return Err(InterveneError::ReadOnly);
+                };
+                let IntrospectValue::Text(s) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                state.set_find_query(&s);
+                Ok(())
+            }
+            "find_case_sensitive" => {
+                let Some(state) = self.text_state() else {
+                    return Err(InterveneError::ReadOnly);
+                };
+                let IntrospectValue::Bool(b) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                state.set_find_case_sensitive(b);
+                Ok(())
+            }
+            "find_whole_word" => {
+                let Some(state) = self.text_state() else {
+                    return Err(InterveneError::ReadOnly);
+                };
+                let IntrospectValue::Bool(b) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                state.set_find_whole_word(b);
+                Ok(())
             }
             _ => Err(InterveneError::UnknownPath),
         }
@@ -1495,12 +1573,72 @@ impl ExternalIntrospect for TextFieldExternal {
                 },
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R903 §5.22 — find &amp; replace actions live in a dedicated helper
+            // (SRP: keeps the invoke dispatch under the line ceiling).
+            "find-next" | "find-prev" | "replace" | "replace-all" => {
+                self.invoke_find_replace(path, &args)
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
 }
 
 impl TextFieldExternal {
+    /// R903 §5.22 §5.52 — the find &amp; replace `invoke` actions, split out of
+    /// [`invoke`](ExternalIntrospect::invoke) for SRP (and to keep that
+    /// dispatch under the line ceiling). `path` is one of `find-next` /
+    /// `find-prev` / `replace` / `replace-all`; the navigation actions take
+    /// `Null` and return the new selection (or `Null`), `replace` takes the
+    /// `Text` replacement and returns `Bool`, `replace-all` takes the `Text`
+    /// replacement and returns the `Int` count. A bare field (no state) is
+    /// inert — `Null` / `Bool(false)` / `Int(0)` — never `UnknownPath`.
+    fn invoke_find_replace(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // No args (`Null`, mirror of `paste-primary`); returns the newly
+            // selected match as `{"start", "end"}` (the `selection` query shape)
+            // or `Null` when there are no matches — the read outcome of the move.
+            "find-next" => match args {
+                IntrospectValue::Null => Ok(selection_range_to_value(
+                    self.text_state().and_then(|s| s.find_next()),
+                )),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "find-prev" => match args {
+                IntrospectValue::Null => Ok(selection_range_to_value(
+                    self.text_state().and_then(|s| s.find_prev()),
+                )),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Replace the current match (when the selection is on one) with the
+            // `Text` replacement and advance; `Bool(true)` when a replacement
+            // happened, `Bool(false)` when it only selected the next match (or
+            // no state is attached). The empty replacement deletes.
+            "replace" => match args {
+                IntrospectValue::Text(replacement) => Ok(IntrospectValue::Bool(
+                    self.text_state()
+                        .is_some_and(|s| s.replace_current(replacement)),
+                )),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Replace every match with the `Text` replacement as one undo step;
+            // returns the count replaced.
+            "replace-all" => match args {
+                IntrospectValue::Text(replacement) => Ok(IntrospectValue::Int(
+                    self.text_state().map_or(0, |s| {
+                        i64::try_from(s.replace_all(replacement)).unwrap_or(i64::MAX)
+                    }),
+                )),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Unreachable: the caller only routes the four paths above here.
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+
     /// R56.1.f.0 §5.13 — single dispatch site shared by the
     /// `IntrospectValue::Text` (no-modifier) and `IntrospectValue::Json`
     /// (modifier-aware) arms of `invoke("key", ...)`. Forwards into
@@ -1693,6 +1831,20 @@ impl TextFieldExternal {
 /// `usize` range (the unreachable 2^64-overflow guard).
 fn parse_selection_intervene_json(value: &serde_json::Value) -> Option<(usize, usize)> {
     parse_byte_range_json(value.as_object()?)
+}
+
+/// R903 §5.22 — encode an optional `(start, end)` selection range as the
+/// canonical `{"start", "end"}` Json (the same shape the `selection` query
+/// emits) or `Null` when there is no range. The read-outcome return of
+/// `invoke("find-next" / "find-prev", ...)`.
+fn selection_range_to_value(range: Option<(usize, usize)>) -> IntrospectValue {
+    match range {
+        Some((start, end)) => IntrospectValue::Json(serde_json::json!({
+            "start": start,
+            "end":   end,
+        })),
+        None => IntrospectValue::Null,
+    }
 }
 
 /// R768 §5.36 §5.22 — shared `{"start", "end"}` non-negative-integer
@@ -2136,7 +2288,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_twelve_slots() {
+    fn external_schema_declares_twenty_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
@@ -2150,6 +2302,10 @@ mod tests {
         // setCharFormat / clearFormat over a byte range).
         // R769.1 grew the surface: + style_runs (applied formatting read
         // peer of apply-style / clear-style, a JSON run array).
+        // R903 grew the surface: + find_query / find_case_sensitive /
+        // find_whole_word / find_matches (find session read+write +
+        // derived match read) + find-next / find-prev / replace /
+        // replace-all (navigation + mutation actions).
         // The schema shape is stable across bare and wired-up
         // TextFields — text/caret/selection/preedit queries return
         // None / intervene returns ReadOnly when no TextEditState is
@@ -2173,6 +2329,14 @@ mod tests {
                 ("paste-primary", "boolean"),
                 ("apply-style", "boolean"),
                 ("clear-style", "boolean"),
+                ("find_query", "string"),
+                ("find_case_sensitive", "boolean"),
+                ("find_whole_word", "boolean"),
+                ("find_matches", "json"),
+                ("find-next", "object"),
+                ("find-prev", "object"),
+                ("replace", "boolean"),
+                ("replace-all", "number"),
             ],
         );
     }
@@ -5465,6 +5629,178 @@ mod r56_1_g_2_tests {
             .invoke("bogus_method", IntrospectValue::Null)
             .unwrap_err();
         assert!(matches!(err, InvokeError::UnknownPath));
+    }
+}
+
+#[cfg(test)]
+mod r903_find_replace_tests {
+    //! R903 §5.22 §5.52 — find &amp; replace RPC surface on
+    //! [`TextFieldExternal`]: query / intervene read-write symmetry, the
+    //! `find-next` / `find-prev` navigation, and `replace` / `replace-all`
+    //! mutation (the AI-first peer of the find bar's keyboard).
+
+    use super::TextFieldExternal;
+    use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
+    use crate::widgets::text_edit::TextEditState;
+    use std::rc::Rc;
+
+    fn wired(text: &str) -> (Rc<TextEditState>, TextFieldExternal) {
+        let state = Rc::new(TextEditState::with_initial(text.to_string()));
+        let tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        (state, tfx)
+    }
+
+    #[test]
+    fn r903_find_query_read_write_round_trips() {
+        let (_state, mut tfx) = wired("at bat");
+        tfx.intervene("find_query", IntrospectValue::Text("at".to_string()))
+            .unwrap();
+        assert_eq!(
+            tfx.query("find_query").unwrap(),
+            IntrospectValue::Text("at".to_string()),
+        );
+    }
+
+    #[test]
+    fn r903_case_and_whole_word_flags_round_trip() {
+        let (_state, mut tfx) = wired("Cat cat");
+        tfx.intervene("find_case_sensitive", IntrospectValue::Bool(true))
+            .unwrap();
+        tfx.intervene("find_whole_word", IntrospectValue::Bool(true))
+            .unwrap();
+        assert_eq!(
+            tfx.query("find_case_sensitive").unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(
+            tfx.query("find_whole_word").unwrap(),
+            IntrospectValue::Bool(true),
+        );
+    }
+
+    #[test]
+    fn r903_find_matches_reports_count_ranges_and_current() {
+        let (state, mut tfx) = wired("at bat hat");
+        state.set_caret(0);
+        tfx.intervene("find_query", IntrospectValue::Text("at".to_string()))
+            .unwrap();
+        // Before navigating, current is null (selection not on a match).
+        let IntrospectValue::Json(j) = tfx.query("find_matches").unwrap() else {
+            panic!("find_matches must be Json");
+        };
+        assert_eq!(j["count"], serde_json::json!(3));
+        assert_eq!(j["ranges"], serde_json::json!([[0, 2], [4, 6], [8, 10]]));
+        assert_eq!(j["current"], serde_json::Value::Null);
+        // find-next selects the first match → current becomes 0.
+        let sel = tfx.invoke("find-next", IntrospectValue::Null).unwrap();
+        assert_eq!(sel, super::selection_range_to_value(Some((0, 2))));
+        let IntrospectValue::Json(j2) = tfx.query("find_matches").unwrap() else {
+            panic!("json");
+        };
+        assert_eq!(j2["current"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn r903_find_next_prev_navigate_and_wrap() {
+        let (state, mut tfx) = wired("at bat hat");
+        state.set_caret(0);
+        tfx.intervene("find_query", IntrospectValue::Text("at".to_string()))
+            .unwrap();
+        assert_eq!(
+            tfx.invoke("find-next", IntrospectValue::Null).unwrap(),
+            super::selection_range_to_value(Some((0, 2))),
+        );
+        assert_eq!(
+            tfx.invoke("find-next", IntrospectValue::Null).unwrap(),
+            super::selection_range_to_value(Some((4, 6))),
+        );
+        assert_eq!(
+            tfx.invoke("find-prev", IntrospectValue::Null).unwrap(),
+            super::selection_range_to_value(Some((0, 2))),
+        );
+    }
+
+    #[test]
+    fn r903_find_next_on_no_matches_returns_null() {
+        let (_state, mut tfx) = wired("hello");
+        tfx.intervene("find_query", IntrospectValue::Text("zzz".to_string()))
+            .unwrap();
+        assert_eq!(
+            tfx.invoke("find-next", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Null,
+        );
+    }
+
+    #[test]
+    fn r903_replace_current_mutates_and_returns_bool() {
+        let (state, mut tfx) = wired("at bat");
+        state.set_caret(0);
+        tfx.intervene("find_query", IntrospectValue::Text("at".to_string()))
+            .unwrap();
+        // First press selects (false), second replaces (true).
+        assert_eq!(
+            tfx.invoke("replace", IntrospectValue::Text("X".to_string()))
+                .unwrap(),
+            IntrospectValue::Bool(false),
+        );
+        assert_eq!(
+            tfx.invoke("replace", IntrospectValue::Text("X".to_string()))
+                .unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(state.text(), "X bat");
+    }
+
+    #[test]
+    fn r903_replace_all_returns_count_and_rewrites() {
+        let (state, mut tfx) = wired("red red red");
+        tfx.intervene("find_query", IntrospectValue::Text("red".to_string()))
+            .unwrap();
+        assert_eq!(
+            tfx.invoke("replace-all", IntrospectValue::Text("blue".to_string()))
+                .unwrap(),
+            IntrospectValue::Int(3),
+        );
+        assert_eq!(state.text(), "blue blue blue");
+    }
+
+    #[test]
+    fn r903_find_surface_on_bare_field_is_inert_not_unknown() {
+        // No state attached → reads return None (path known, unbound), the
+        // setter returns ReadOnly, the actions return their empty outcome —
+        // never UnknownPath (the slots exist in the schema unconditionally).
+        let mut tfx = TextFieldExternal::new();
+        assert_eq!(tfx.query("find_query"), None);
+        assert!(matches!(
+            tfx.intervene("find_query", IntrospectValue::Text("a".to_string())),
+            Err(InterveneError::ReadOnly),
+        ));
+        assert_eq!(
+            tfx.invoke("find-next", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Null,
+        );
+        assert_eq!(
+            tfx.invoke("replace-all", IntrospectValue::Text("x".to_string()))
+                .unwrap(),
+            IntrospectValue::Int(0),
+        );
+    }
+
+    #[test]
+    fn r903_find_actions_reject_wrong_arg_shapes() {
+        let (_state, mut tfx) = wired("at");
+        assert!(matches!(
+            tfx.invoke("find-next", IntrospectValue::Text("oops".to_string())),
+            Err(InvokeError::TypeMismatch),
+        ));
+        assert!(matches!(
+            tfx.invoke("replace", IntrospectValue::Int(1)),
+            Err(InvokeError::TypeMismatch),
+        ));
+        assert!(matches!(
+            tfx.intervene("find_case_sensitive", IntrospectValue::Text("yes".to_string())),
+            Err(InterveneError::TypeMismatch),
+        ));
     }
 }
 

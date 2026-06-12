@@ -38503,6 +38503,74 @@
         "find_node_mut to lift @ 2nd consumer); selection decode inline in intervene = single co-located site."
       ]
     },
+    "R903": {
+      "decision_summary": "R903 find & replace (cost-no-object textbook; diversify off the R896-R902 node-editor/tree local optimum, R896 lesson). The find session (needle + case/whole-word flags) lives on TextEditState so the editor is self-describing to AI introspection (find_matches RPC reports count/ranges/current); the current match is the selection (browser/VS Code model), so no fragile current-index state. All-match highlight bands reuse selection_rects_for_range with data = find_matches (windowless-verifiable). Replace All is the FIRST consumer of the undo substrate's reserved macro-transaction axis (begin_macro/end_macro -> MacroCommand): N splices fold into one Ctrl+Z. Find/replace mirrors read<->write on TextFieldExternal. Self-grep lift: the {start,end}|Null encoding is now selection_range_to_value SSOT shared by the selection query + find-next/prev. Single-line editor kept (multiline wraps one Scroll, would break caret-count tests); ASCII case-fold (byte-offset exact); keyboard find-bar UI deferred (RPC is the §2 primary path).",
+      "changes_bullets": [
+        "undo.rs: begin_macro/end_macro + MacroCommand (children undo reverse, redo forward)",
+        "undo.rs: commit() buffers edits during an open macro; nested macros flatten to outermost",
+        "undo.rs: empty macro records nothing; single-child macro keeps the macro label",
+        "text_edit.rs: find_query/find_case_sensitive/find_whole_word reactive Signals on TextEditState",
+        "text_edit.rs: find_matches_in pure search (ASCII case-fold, whole-word, non-overlap, byte-exact)",
+        "text_edit.rs: find_next/find_prev search from selection and wrap; find_current_index/match_count",
+        "text_edit.rs: replace_range/replace_current/replace_all; replace_all folds N splices into one step",
+        "text_field.rs: find query+intervene (find_query/case/whole_word) + find_matches derived read",
+        "text_field.rs: invoke find-next/find-prev/replace/replace-all via invoke_find_replace (SRP split)",
+        "text_field.rs: selection_range_to_value SSOT for {start,end}|Null, shared by the selection query",
+        "widget-paint: all-match highlight bands behind the selection (find_highlight_alpha, rect_to_band)",
+        "examples/hello-find-replace: single-line editor + seeded needle + find-status bar; first consumer"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-core 2170 pass; 151 test-result-ok lines; 0 failed)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "28 new pinion-core unit tests (6 macro + 13 find model + 9 RPC) + 16 hello-find-replace tests",
+        "tools/demos/r903_find_replace.py 42 assertions PASS (toggles/nav/replace/macro-undo/screenshot)",
+        "replace-all macro proven end-to-end: one Ctrl+Z over RPC reverses all four replacements (phase 5)",
+        "3b self-grep: lifted selection_range_to_value (2-site encode); macro/search/band no other dup"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "a11y live-region match-count announcement deferred (single consumer, no describedby relation)",
+        "keyboard find-bar UI (typeable query field + buttons) deferred — RPC is the §2 primary path",
+        "regex search deferred (needs a regex engine dep); ASCII case-fold only (Unicode folding deferred)",
+        "multiline find editor deferred (multiline wraps one Scroll; per-line bands work, untested here)"
+      ],
+      "publishable_decision_summary": "R903 find & replace (cost-no-object textbook; diversify off the R896-R902 node-editor/tree local optimum, R896 lesson). The find session (needle + case/whole-word flags) lives on TextEditState so the editor is self-describing to AI introspection (find_matches RPC reports count/ranges/current); the current match is the selection (browser/VS Code model), so no fragile current-index state. All-match highlight bands reuse selection_rects_for_range with data = find_matches (windowless-verifiable). Replace All is the FIRST consumer of the undo substrate's reserved macro-transaction axis (begin_macro/end_macro -> MacroCommand): N splices fold into one Ctrl+Z. Find/replace mirrors read<->write on TextFieldExternal. Self-grep lift: the {start,end}|Null encoding is now selection_range_to_value SSOT shared by the selection query + find-next/prev. Single-line editor kept (multiline wraps one Scroll, would break caret-count tests); ASCII case-fold (byte-offset exact); keyboard find-bar UI deferred (RPC is the §2 primary path).",
+      "publishable_changes_bullets": [
+        "undo.rs: begin_macro/end_macro + MacroCommand (children undo reverse, redo forward)",
+        "undo.rs: commit() buffers edits during an open macro; nested macros flatten to outermost",
+        "undo.rs: empty macro records nothing; single-child macro keeps the macro label",
+        "text_edit.rs: find_query/find_case_sensitive/find_whole_word reactive Signals on TextEditState",
+        "text_edit.rs: find_matches_in pure search (ASCII case-fold, whole-word, non-overlap, byte-exact)",
+        "text_edit.rs: find_next/find_prev search from selection and wrap; find_current_index/match_count",
+        "text_edit.rs: replace_range/replace_current/replace_all; replace_all folds N splices into one step",
+        "text_field.rs: find query+intervene (find_query/case/whole_word) + find_matches derived read",
+        "text_field.rs: invoke find-next/find-prev/replace/replace-all via invoke_find_replace (SRP split)",
+        "text_field.rs: selection_range_to_value SSOT for {start,end}|Null, shared by the selection query",
+        "widget-paint: all-match highlight bands behind the selection (find_highlight_alpha, rect_to_band)",
+        "examples/hello-find-replace: single-line editor + seeded needle + find-status bar; first consumer"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-core 2170 pass; 151 test-result-ok lines; 0 failed)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "28 new pinion-core unit tests (6 macro + 13 find model + 9 RPC) + 16 hello-find-replace tests",
+        "tools/demos/r903_find_replace.py 42 assertions PASS (toggles/nav/replace/macro-undo/screenshot)",
+        "replace-all macro proven end-to-end: one Ctrl+Z over RPC reverses all four replacements (phase 5)",
+        "3b self-grep: lifted selection_range_to_value (2-site encode); macro/search/band no other dup"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "a11y live-region match-count announcement deferred (single consumer, no describedby relation)",
+        "keyboard find-bar UI (typeable query field + buttons) deferred — RPC is the §2 primary path",
+        "regex search deferred (needs a regex engine dep); ASCII case-fold only (Unicode folding deferred)",
+        "multiline find editor deferred (multiline wraps one Scroll; per-line bands work, untested here)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -1,0 +1,68 @@
+[package]
+name = "hello-find-replace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R903 §5.22 §5.52 find & replace consumer — set a search needle (case / whole-word toggles), walk matches with find-next/prev, replace one or all (Replace All folds into one undo step via the begin_macro/end_macro macro-transaction axis); all-match highlight bands + a {n} of {N} status, driven AI-first over the TextFieldExternal find surface"
+publish = false
+
+[[bin]]
+name = "hello-find-replace"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Tier-1 TextField widget + its `External` adapter; the
+# WidgetView impl wires `TextFieldExternal::attach_state` /
+# `attach_blink` to shared reactive primitives in `create_external`
+# (R56.1.b.1 substrate wrap puts `create_external` inside
+# `root_owner.run`).
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+# R56.1.b.1 §5.40 — `AriaRole::TextInput` lowering to `Role::TextInput`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R51.30 paint-side AppShell. Pulls pinion-runtime (vello feature) +
+# pinion-rpc + pinion-text + winit + pollster transitively.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R56.2.b §5.22 — platform clipboard bridge. `ArboardClipboard`
+# wraps the canonical Rust ecosystem `arboard` crate (Wayland
+# `wl_data_device` + X11 CLIPBOARD + macOS `NSPasteboard` +
+# Windows `OpenClipboard`) so Ctrl/Cmd+C/X/V crosses the process
+# boundary (other applications see the same clipboard). Falls back
+# to `InMemoryClipboard` when the platform clipboard daemon is
+# unreachable (headless CI / broken display).
+pinion-platform-clipboard = { path = "../../crates/pinion-platform-clipboard", version = "0.0.1" }
+# R56.1.b.2 §5.36 — `caret_rect_for_byte_offset` + `LayoutCache` for
+# the view fn's caret geometry lookup (shape text once per paint,
+# read cursor rect from the cached parley `Layout`).
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+# R657 §5.16 §5.38 — backend-agnostic TextField paint composition
+# helpers. R657 lifts ~280 LOC of caret/selection/preedit composition
+# out of this binding (and the todomvc 2nd consumer) into the new
+# pinion-widget-paint crate so both consumers — and any future
+# TextField-using binding — share one substrate per
+# [[abstraction-needs-second-consumer]].
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# R46.5 §5.16: the `HelloTextFieldRenderer` struct emitted by
+# `build.rs` references `::vello::*` and `::vello::wgpu::*` directly
+# (R46.3.3 fully-qualified codegen path); the `vello_renderer_impl!`
+# macro expansion also names `::vello::Scene` and `::vello::peniko::Color`.
+vello = { workspace = true }
+# R764.1 §5.38 — the IME composition + modifier key-forward Json
+# building moved into `pinion_widget_paint::text_field`
+# (`forward_composition_to_field` / `forward_key_to_field`), so this
+# binding no longer constructs `serde_json` values directly.
+
+[dev-dependencies]
+# R55.G.22 §5.49 — `pinion_core::test_fixtures::assert_widget_view_carries_tag`
+# regression helper for the [[composite-paint-root-tag-convention]] (R55.G.17).
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the `HelloTextFieldRenderer`
+# Vello wrapper. Identical pattern to hello-toggle / hello-button.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

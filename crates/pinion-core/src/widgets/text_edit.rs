@@ -247,6 +247,32 @@ pub struct TextEditState {
     /// A `RefCell` (not a `Signal`): the attachment is wiring, not
     /// observable content — no view-fn renders "is undo attached".
     undo: RefCell<Option<Rc<UndoStack>>>,
+    /// R903 §5.22 — **find &amp; replace** session: the active search needle.
+    /// Empty (the default) is "no search active" — [`find_matches`](Self::find_matches)
+    /// yields nothing and the highlight paint draws no bands. A reactive
+    /// `Signal` (content peer of [`text`](Self::text)) so the find-highlight
+    /// paint and the match-count status subscribe and re-derive the moment the
+    /// needle changes. The session lives on the editable buffer itself (not a
+    /// separate widget) so the field is **self-describing** to AI introspection:
+    /// `scene/<tag>/external/find_matches` reports the editor's own match state
+    /// without the agent reconstructing it from a find-bar's text. The "current
+    /// match" is **not** a field — it is implicit in the selection (the
+    /// browser / VS Code model: find-next searches forward from the selection
+    /// and lands the selection on the hit), so there is no current-index state
+    /// to keep clamped against an edit-shifted match list.
+    find_query: Signal<String>,
+    /// R903 §5.22 — case-sensitivity of the [`find_query`](Self::find_query)
+    /// match. `false` (the default) folds **ASCII** case only (`A`..=`Z` ↔
+    /// `a`..=`z`); non-ASCII code points compare exactly, which keeps every
+    /// match range on the source's own byte boundaries (Unicode case folding
+    /// changes byte lengths and is a deferred axis). Reactive for the same
+    /// reason as [`find_query`](Self::find_query).
+    find_case_sensitive: Signal<bool>,
+    /// R903 §5.22 — whole-word constraint: when `true`, a match counts only
+    /// when neither neighbour char is a *word* char (alphanumeric or `_`), the
+    /// canonical editor "Match Whole Word" toggle. `false` (the default)
+    /// matches any substring. Reactive peer of the other find axes.
+    find_whole_word: Signal<bool>,
 }
 
 /// R796 §5.52 — which edits may coalesce. Two commands fold into one undo
@@ -482,6 +508,85 @@ fn text_diff(before: &str, after: &str) -> (usize, String, String) {
     )
 }
 
+/// R903 §5.22 — a *word* character for whole-word find matching: alphanumeric
+/// (Unicode-aware) or `_`, the canonical editor word class (`\w`).
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// R903 §5.22 — do two chars match under the find case policy? Case-sensitive
+/// is exact; case-insensitive folds **ASCII** letters only ([`char::eq_ignore_ascii_case`]),
+/// leaving non-ASCII code points to compare exactly so a match never straddles
+/// a byte boundary the source does not have.
+fn chars_match(a: char, b: char, case_sensitive: bool) -> bool {
+    if case_sensitive {
+        a == b
+    } else {
+        a.eq_ignore_ascii_case(&b)
+    }
+}
+
+/// R903 §5.22 — if `needle` matches `haystack` starting at byte `at` (under the
+/// case policy), the end byte offset of that match; else `None`. `at` must be a
+/// `char` boundary. The end is a `char` boundary because it sums whole
+/// haystack-char byte lengths.
+fn match_at(haystack: &str, at: usize, needle: &str, case_sensitive: bool) -> Option<usize> {
+    let mut hchars = haystack[at..].chars();
+    let mut consumed = 0usize;
+    for nc in needle.chars() {
+        match hchars.next() {
+            Some(hc) if chars_match(hc, nc, case_sensitive) => consumed += hc.len_utf8(),
+            _ => return None,
+        }
+    }
+    Some(at + consumed)
+}
+
+/// R903 §5.22 — whole-word guard: the match `[start, end)` sits on word
+/// boundaries (each neighbour is a non-word char or the buffer edge).
+fn is_word_boundary(haystack: &str, start: usize, end: usize) -> bool {
+    let before_ok = start == 0
+        || !haystack[..start]
+            .chars()
+            .next_back()
+            .is_some_and(is_word_char);
+    let after_ok = end == haystack.len()
+        || !haystack[end..].chars().next().is_some_and(is_word_char);
+    before_ok && after_ok
+}
+
+/// R903 §5.22 — every non-overlapping match of `needle` in `haystack` as
+/// `(start, end)` byte ranges, left to right (a match resumes at the previous
+/// match's end — textbook find-all). An empty `needle` yields none.
+/// `case_sensitive == false` folds ASCII case only; `whole_word` additionally
+/// requires both neighbours to be non-word chars (or the buffer edge). The
+/// pure search core shared by every [`TextEditState`] find / replace method
+/// and unit-testable without a reactive scope (the `text_diff` sibling shape).
+fn find_matches_in(
+    haystack: &str,
+    needle: &str,
+    case_sensitive: bool,
+    whole_word: bool,
+) -> Vec<(usize, usize)> {
+    if needle.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut idx = 0usize;
+    while idx < haystack.len() {
+        if let Some(end) = match_at(haystack, idx, needle, case_sensitive) {
+            if !whole_word || is_word_boundary(haystack, idx, end) {
+                out.push((idx, end));
+                idx = end; // non-overlapping: resume past the match
+                continue;
+            }
+        }
+        // No match (or whole-word reject) here — step to the next char start.
+        idx += haystack[idx..].chars().next().map_or(1, char::len_utf8);
+    }
+    out
+}
+
 impl TextEditState {
     /// Construct a fresh `TextEditState` with empty text and caret
     /// at `0`. Most application code reaches `TextEditState`
@@ -499,6 +604,9 @@ impl TextEditState {
             goal_column: Cell::new(None),
             style_runs: Signal::new(Vec::new()),
             undo: RefCell::new(None),
+            find_query: Signal::new(String::new()),
+            find_case_sensitive: Signal::new(false),
+            find_whole_word: Signal::new(false),
         }
     }
 
@@ -537,6 +645,9 @@ impl TextEditState {
             goal_column: Cell::new(None),
             style_runs: Signal::new(Vec::new()),
             undo: RefCell::new(None),
+            find_query: Signal::new(String::new()),
+            find_case_sensitive: Signal::new(false),
+            find_whole_word: Signal::new(false),
         }
     }
 
@@ -896,6 +1007,205 @@ impl TextEditState {
             .into_iter()
             .find(|r| r.start <= b && b < r.end)
             .map(|r| r.style)
+    }
+
+    // ───────────────────────── R903 §5.22 find &amp; replace ─────────────────
+    //
+    // The find session is two reactive axes (the needle + its case / whole-word
+    // flags); the *current match* is the selection (the browser / VS Code
+    // model), so there is no persistent cursor to keep clamped against an
+    // edit-shifted match list. `find_matches` re-derives from the live text on
+    // every call (subscribing in a view-fn), so the highlight paint and the
+    // match-count status stay correct through every edit with no manual refresh
+    // threaded into the mutators. Replace routes through one splice primitive
+    // ([`replace_range`]); *Replace All* wraps the run in an
+    // [`UndoStack`](crate::undo::UndoStack) macro so one Ctrl+Z reverses it.
+
+    /// R903 §5.22 — the active find needle (reactive read). Empty is "no search".
+    #[must_use]
+    pub fn find_query(&self) -> String {
+        self.find_query.get()
+    }
+
+    /// R903 §5.22 — set the find needle. A pure setter: it never moves the
+    /// caret / selection (call [`find_next`](Self::find_next) to navigate), so
+    /// the read/write pair stays symmetric and side-effect-free. Equality-skip
+    /// suppresses the re-derive when the needle is unchanged.
+    pub fn set_find_query(&self, query: &str) {
+        self.find_query.set(query.to_string());
+    }
+
+    /// R903 §5.22 — whether the find match is case-sensitive (reactive read).
+    #[must_use]
+    pub fn find_case_sensitive(&self) -> bool {
+        self.find_case_sensitive.get()
+    }
+
+    /// R903 §5.22 — set case-sensitivity of the find match.
+    pub fn set_find_case_sensitive(&self, on: bool) {
+        self.find_case_sensitive.set(on);
+    }
+
+    /// R903 §5.22 — whether the find match is constrained to whole words
+    /// (reactive read).
+    #[must_use]
+    pub fn find_whole_word(&self) -> bool {
+        self.find_whole_word.get()
+    }
+
+    /// R903 §5.22 — set the whole-word constraint of the find match.
+    pub fn set_find_whole_word(&self, on: bool) {
+        self.find_whole_word.set(on);
+    }
+
+    /// R903 §5.22 — every match of the current needle in the live buffer as
+    /// `(start, end)` byte ranges (reactive read: subscribes to the text + all
+    /// three find axes). Empty needle → empty. The single derivation the
+    /// highlight paint, the match count, and the navigation all read, so they
+    /// never disagree.
+    #[must_use]
+    pub fn find_matches(&self) -> Vec<(usize, usize)> {
+        let query = self.find_query.get();
+        let text = self.text.get();
+        let cs = self.find_case_sensitive.get();
+        let ww = self.find_whole_word.get();
+        find_matches_in(&text, &query, cs, ww)
+    }
+
+    /// R903 §5.22 — number of current matches (reactive read).
+    #[must_use]
+    pub fn find_match_count(&self) -> usize {
+        self.find_matches().len()
+    }
+
+    /// R903 §5.22 — zero-based index of the match the selection currently
+    /// coincides with, or `None` when the selection is not exactly on a match
+    /// (no search active, caret-only, or an arbitrary selection). Powers the
+    /// "{n} of {N}" status; reactive read.
+    #[must_use]
+    pub fn find_current_index(&self) -> Option<usize> {
+        let sel = self.selection_range()?;
+        self.find_matches().iter().position(|&m| m == sel)
+    }
+
+    /// R903 §5.22 — select the next match at or after the current selection end
+    /// (or caret when there is no selection), wrapping to the first match past
+    /// the end of the buffer. Returns the selected range, or `None` when there
+    /// are no matches. The textbook find-next: the selection *is* the cursor,
+    /// so repeated calls walk every match and loop.
+    pub fn find_next(&self) -> Option<(usize, usize)> {
+        let matches = self.find_matches();
+        let first = *matches.first()?;
+        let from = self
+            .selection_range()
+            .map_or_else(|| self.caret_pos.get(), |(_, end)| end);
+        let hit = matches
+            .iter()
+            .copied()
+            .find(|&(start, _)| start >= from)
+            .unwrap_or(first);
+        self.set_selection(hit.0, hit.1);
+        Some(hit)
+    }
+
+    /// R903 §5.22 — mirror of [`find_next`](Self::find_next): select the
+    /// previous match ending at or before the current selection start (or
+    /// caret), wrapping to the last match.
+    pub fn find_prev(&self) -> Option<(usize, usize)> {
+        let matches = self.find_matches();
+        let last = *matches.last()?;
+        let from = self
+            .selection_range()
+            .map_or_else(|| self.caret_pos.get(), |(start, _)| start);
+        let hit = matches
+            .iter()
+            .copied()
+            .rev()
+            .find(|&(_, end)| end <= from)
+            .unwrap_or(last);
+        self.set_selection(hit.0, hit.1);
+        Some(hit)
+    }
+
+    /// R903 §5.22 — replace the current match (when the selection sits exactly
+    /// on one) and advance to the next, the VS Code "Replace" gesture. Returns
+    /// `true` when a replacement happened. When the selection is **not** on a
+    /// match, this selects the next match instead (returns `false`) so the
+    /// following Replace acts on it — the canonical two-press "find then
+    /// replace" flow.
+    pub fn replace_current(&self, replacement: &str) -> bool {
+        if let Some(sel) = self.selection_range() {
+            if self.find_matches().contains(&sel) {
+                self.replace_range(sel.0, sel.1, replacement);
+                self.find_next();
+                return true;
+            }
+        }
+        self.find_next();
+        false
+    }
+
+    /// R903 §5.22 §5.52 — replace **every** match with `replacement` as one
+    /// undo step, returning the count replaced (0 leaves the buffer and the
+    /// timeline untouched). The matches are spliced last-to-first so each
+    /// earlier match's byte range stays valid as later text shifts, and the run
+    /// is bracketed by an [`UndoStack`](crate::undo::UndoStack) macro
+    /// ([`begin_macro`](crate::undo::UndoStack::begin_macro) /
+    /// [`end_macro`](crate::undo::UndoStack::end_macro)) so a single Ctrl+Z
+    /// reverses the whole batch — the first consumer of the macro axis the undo
+    /// substrate reserved.
+    pub fn replace_all(&self, replacement: &str) -> usize {
+        let matches = self.find_matches();
+        if matches.is_empty() {
+            return 0;
+        }
+        let count = matches.len();
+        let stack = self.undo_stack();
+        if let Some(stack) = &stack {
+            stack.begin_macro("Replace all");
+        }
+        for &(start, end) in matches.iter().rev() {
+            self.replace_range(start, end, replacement);
+        }
+        if let Some(stack) = &stack {
+            stack.end_macro();
+        }
+        count
+    }
+
+    /// R903 §5.22 — splice `[start, end)` to `s` as one undo step labelled
+    /// "Replace". Unlike [`insert`](Self::insert) (which early-returns on an
+    /// empty string), this drains the range even when `s` is empty, so
+    /// "replace with nothing" deletes the match. The single replace primitive
+    /// [`replace_current`](Self::replace_current) and
+    /// [`replace_all`](Self::replace_all) share.
+    pub fn replace_range(&self, start: usize, end: usize, s: &str) {
+        self.record_edit(CoalesceGroup::Boundary, false, "Replace", || {
+            self.splice_inner(start, end, s);
+        });
+    }
+
+    /// R903 §5.22 — apply one `[start, end) -> s` splice to the buffer
+    /// (offsets clamped to `char` boundaries), maintaining the style runs
+    /// (clip the deleted span, shift the insert) and collapsing the selection,
+    /// in one [`batch`]. The bare mutation [`replace_range`](Self::replace_range)
+    /// journals.
+    fn splice_inner(&self, start: usize, end: usize, s: &str) {
+        self.goal_column.set(None);
+        let mut buf = self.text.get();
+        let start = clamp_to_char_boundary(&buf, start.min(buf.len()));
+        let end = clamp_to_char_boundary(&buf, end.min(buf.len())).max(start);
+        buf.replace_range(start..end, s);
+        let new_caret = start + s.len();
+        let mut runs = self.style_runs.get();
+        clip_runs_for_delete(&mut runs, start, end);
+        shift_runs_for_insert(&mut runs, start, s.len());
+        batch(|| {
+            self.text.set(buf);
+            self.caret_pos.set(new_caret);
+            self.selection_anchor.set(None);
+            self.style_runs.set(runs);
+        });
     }
 
     /// Replace the buffer with `new_text`. The caret is clamped
@@ -1790,7 +2100,7 @@ mod tests {
     //! hook integration.
 
     use super::{
-        clamp_to_char_boundary, next_char_boundary, prev_char_boundary,
+        clamp_to_char_boundary, find_matches_in, next_char_boundary, prev_char_boundary,
         use_text_edit_state, TextEditState,
     };
     use crate::reactive::{Effect, Owner};
@@ -3459,6 +3769,175 @@ mod tests {
             assert_eq!(st.text(), "word", "two backspaces undo as one coalesced step");
             assert!(st.undo());
             assert_eq!(st.text(), "", "the typing run is the prior step");
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R903 §5.22 — find &amp; replace
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r903_find_matches_in_finds_non_overlapping_runs() {
+        // "aaa" with needle "aa" yields ONE match (non-overlapping resume).
+        assert_eq!(find_matches_in("aaa", "aa", true, false), vec![(0, 2)]);
+        assert_eq!(
+            find_matches_in("the cat sat", "at", true, false),
+            vec![(5, 7), (9, 11)]
+        );
+        assert_eq!(find_matches_in("abc", "", true, false), Vec::new());
+        assert_eq!(find_matches_in("abc", "xyz", true, false), Vec::new());
+    }
+
+    #[test]
+    fn r903_find_matches_in_ascii_case_insensitive() {
+        assert_eq!(
+            find_matches_in("Cat cat CAT", "cat", false, false),
+            vec![(0, 3), (4, 7), (8, 11)]
+        );
+        // Case-sensitive sees only the exact one.
+        assert_eq!(
+            find_matches_in("Cat cat CAT", "cat", true, false),
+            vec![(4, 7)]
+        );
+    }
+
+    #[test]
+    fn r903_find_matches_in_whole_word() {
+        // "cat" whole-word skips the "cat" inside "cats".
+        assert_eq!(
+            find_matches_in("cats cat scatter cat", "cat", true, true),
+            vec![(5, 8), (17, 20)]
+        );
+    }
+
+    #[test]
+    fn r903_find_matches_in_multibyte_offsets_are_exact() {
+        // A multi-byte prefix shifts the byte offset; the match range must land
+        // on the source's own byte boundaries.
+        let s = "\u{00e9}cole cole"; // "école cole" — 'é' is 2 bytes
+        assert_eq!(find_matches_in(s, "cole", true, false), vec![(2, 6), (7, 11)]);
+    }
+
+    #[test]
+    fn r903_find_next_walks_and_wraps() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("at bat hat".to_string());
+            st.set_caret(0);
+            st.set_find_query("at");
+            assert_eq!(st.find_match_count(), 3);
+            assert_eq!(st.find_next(), Some((0, 2)), "first match from caret 0");
+            assert_eq!(st.selection_range(), Some((0, 2)));
+            assert_eq!(st.find_current_index(), Some(0));
+            assert_eq!(st.find_next(), Some((4, 6)), "advances past the selection");
+            assert_eq!(st.find_next(), Some((8, 10)));
+            assert_eq!(st.find_next(), Some((0, 2)), "wraps to the first");
+        });
+    }
+
+    #[test]
+    fn r903_find_prev_walks_and_wraps() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("at bat hat".to_string());
+            st.set_caret(0);
+            st.set_find_query("at");
+            assert_eq!(st.find_prev(), Some((8, 10)), "from caret 0 wraps to last");
+            assert_eq!(st.find_prev(), Some((4, 6)));
+            assert_eq!(st.find_prev(), Some((0, 2)));
+            assert_eq!(st.find_prev(), Some((8, 10)), "wraps again");
+        });
+    }
+
+    #[test]
+    fn r903_find_current_index_none_off_a_match() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("at bat".to_string());
+            st.set_find_query("at");
+            // Caret-only (no selection) is not on a match.
+            st.set_caret(3);
+            assert_eq!(st.find_current_index(), None);
+            // An arbitrary selection that is not a match.
+            st.set_selection(0, 5);
+            assert_eq!(st.find_current_index(), None);
+        });
+    }
+
+    #[test]
+    fn r903_replace_current_replaces_then_advances() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("at bat hat".to_string());
+            st.set_caret(0);
+            st.set_find_query("at");
+            // Not on a match yet: first press selects, replaces nothing.
+            assert!(!st.replace_current("X"), "first press only selects");
+            assert_eq!(st.selection_range(), Some((0, 2)));
+            // On a match now: replace it, advance to next.
+            assert!(st.replace_current("X"), "second press replaces");
+            assert_eq!(st.text(), "X bat hat");
+            assert_eq!(st.selection_range(), Some((3, 5)), "advanced to 'at' in bat");
+        });
+    }
+
+    #[test]
+    fn r903_replace_with_empty_deletes_the_match() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("foofoo".to_string());
+            st.set_find_query("foo");
+            assert_eq!(st.replace_all(""), 2);
+            assert_eq!(st.text(), "", "replace-with-empty deletes every match");
+        });
+    }
+
+    #[test]
+    fn r903_replace_all_counts_and_rewrites() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("red green red blue red".to_string());
+            st.set_find_query("red");
+            assert_eq!(st.replace_all("X"), 3);
+            assert_eq!(st.text(), "X green X blue X");
+            // Idempotent: no more matches.
+            assert_eq!(st.replace_all("X"), 0);
+        });
+    }
+
+    #[test]
+    fn r903_replace_all_is_one_undo_step() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a a a a".to_string());
+            let stack = Rc::new(crate::undo::UndoStack::new());
+            st.attach_undo(Rc::clone(&stack));
+            st.set_find_query("a");
+            assert_eq!(st.replace_all("bb"), 4);
+            assert_eq!(st.text(), "bb bb bb bb");
+            assert_eq!(stack.len(), 1, "four replacements folded into one step");
+            assert!(st.undo());
+            assert_eq!(st.text(), "a a a a", "single undo reverses the whole batch");
+            assert!(st.redo());
+            assert_eq!(st.text(), "bb bb bb bb", "single redo re-applies the batch");
+        });
+    }
+
+    #[test]
+    fn r903_replace_all_no_matches_touches_nothing() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("hello".to_string());
+            let stack = Rc::new(crate::undo::UndoStack::new());
+            st.attach_undo(Rc::clone(&stack));
+            st.set_find_query("zzz");
+            assert_eq!(st.replace_all("Q"), 0);
+            assert_eq!(st.text(), "hello");
+            assert_eq!(stack.len(), 0, "an empty replace-all records no undo step");
+        });
+    }
+
+    #[test]
+    fn r903_set_find_query_does_not_move_the_selection() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("at bat".to_string());
+            st.set_caret(2);
+            st.set_find_query("at"); // pure setter — no implicit navigation
+            assert_eq!(st.caret(), 2, "setting the needle leaves the caret put");
+            assert_eq!(st.selection_range(), None);
+            assert_eq!(st.find_query(), "at");
         });
     }
 }

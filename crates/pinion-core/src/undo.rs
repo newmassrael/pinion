@@ -43,11 +43,15 @@
 //!
 //! ## Scope (honest boundaries)
 //!
-//! - **Single linear branch.** Command merging / coalescing (typing
-//!   collapses into one undo step) and compound *macro* transactions
-//!   (group N edits as one) are additive — both are backward-compatible
-//!   later (a defaulted `merge` trait method, a `begin_macro`/`end_macro`
-//!   pair) and have no consumer yet ([[abstraction-needs-second-consumer]]).
+//! - **Single linear branch.** Command merging / coalescing (typing collapses
+//!   into one undo step, the defaulted [`merge`](UndoCommand::merge) trait
+//!   method) landed R796 with text typing as its consumer; compound *macro*
+//!   transactions (group N edits as one, the
+//!   [`begin_macro`](UndoStack::begin_macro) /
+//!   [`end_macro`](UndoStack::end_macro) pair folding into a [`MacroCommand`])
+//!   landed R903 with text find &amp; replace's *Replace All* as its first
+//!   consumer. Both were the additive, backward-compatible extensions the
+//!   original shape reserved ([[abstraction-needs-second-consumer]]).
 //! - **Optional capacity.** A bounded stack drops the oldest command from
 //!   the front when full (the `QUndoStack::setUndoLimit` model); the
 //!   [`use_undo_stack`] hook builds an unbounded stack.
@@ -161,6 +165,38 @@ where
     }
 }
 
+/// R903 §5.52 — a **compound** [`UndoCommand`] grouping N child edits into one
+/// reversible step (the `QUndoStack` macro the [`UndoStack::begin_macro`] /
+/// [`UndoStack::end_macro`] pair folds a transaction into). `redo` replays the
+/// children in record order; `undo` replays their inverses in **reverse**
+/// order — the textbook nesting rule so an interleaved sequence (replace A,
+/// replace B, replace C) unwinds C-then-B-then-A and the document returns to
+/// the exact pre-macro state. Its [`label`](UndoCommand::label) is the macro's
+/// (e.g. "Replace all"), keeping the grouped step introspectable as one entry
+/// (§2 #7) rather than leaking N internal splices.
+struct MacroCommand {
+    children: Vec<Box<dyn UndoCommand>>,
+    label: Cow<'static, str>,
+}
+
+impl UndoCommand for MacroCommand {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        for child in &self.children {
+            child.redo();
+        }
+    }
+
+    fn undo(&self) {
+        for child in self.children.iter().rev() {
+            child.undo();
+        }
+    }
+}
+
 /// A linear undo / redo history of [`UndoCommand`]s with a cursor — the
 /// `QUndoStack` peer. Shared by `Rc` (see [`use_undo_stack`]); all methods
 /// take `&self` (interior mutability) so the reducer, the view, and the
@@ -181,6 +217,26 @@ pub struct UndoStack {
     revision: Signal<u64>,
     /// The [`use_undo_stack`] cache key, or `None` when constructed directly.
     tag: Option<&'static str>,
+    /// R903 §5.52 — **open macro transaction** buffer (the `QUndoStack`
+    /// `beginMacro`/`endMacro` peer). While a macro is open
+    /// ([`macro_depth`](Self::macro_depth) `> 0`), every
+    /// [`record`](Self::record) / [`push_applied`](Self::push_applied) appends
+    /// here instead of the main [`commands`](Self::commands) timeline and does
+    /// **not** bump the revision — so the N constituent edits stay invisible
+    /// to `can_undo` / `index` until [`end_macro`](Self::end_macro) folds them
+    /// into one [`MacroCommand`] step. The first consumer is text find &
+    /// replace's *Replace All* (one Ctrl+Z reverses every replacement).
+    macro_buffer: RefCell<Vec<Box<dyn UndoCommand>>>,
+    /// R903 §5.52 — macro nesting depth. `begin_macro` increments,
+    /// `end_macro` decrements; the buffered edits commit as one step only
+    /// when it returns to `0`. Nested macros therefore flatten into the
+    /// outermost step (Qt nests them as separate sub-steps; pinion flattens —
+    /// the consumer-visible contract is identical for the single-level use).
+    macro_depth: Cell<usize>,
+    /// R903 §5.52 — label for the in-flight macro, captured at the outermost
+    /// [`begin_macro`](Self::begin_macro) and applied to the folded
+    /// [`MacroCommand`] at [`end_macro`](Self::end_macro).
+    macro_label: RefCell<Cow<'static, str>>,
 }
 
 impl core::fmt::Debug for UndoStack {
@@ -209,6 +265,9 @@ impl UndoStack {
             capacity: None,
             revision: Signal::new(0),
             tag: None,
+            macro_buffer: RefCell::new(Vec::new()),
+            macro_depth: Cell::new(0),
+            macro_label: RefCell::new(Cow::Borrowed("")),
         }
     }
 
@@ -275,6 +334,54 @@ impl UndoStack {
         self.commit(Box::new(command), true);
     }
 
+    /// R903 §5.52 — open a **macro transaction** (the `QUndoStack::beginMacro`
+    /// peer). Until the matching [`end_macro`](Self::end_macro), every
+    /// [`record`](Self::record) / [`push_applied`](Self::push_applied) is
+    /// buffered instead of landing on the timeline, so the constituent edits
+    /// collapse into one undo step. `label` describes that step (e.g. "Replace
+    /// all"); it is captured only at the **outermost** `begin_macro` — nested
+    /// macros flatten into the outermost one (a `begin_macro` while a macro is
+    /// already open just deepens the nesting). The buffered edits are still
+    /// applied **eagerly** by their callers (the text mutators write the
+    /// reactive buffer on each splice); the stack only withholds the *history*
+    /// entries, so the document mutates live during the macro and only the
+    /// Ctrl+Z granularity is grouped.
+    pub fn begin_macro(&self, label: impl Into<Cow<'static, str>>) {
+        if self.macro_depth.get() == 0 {
+            self.macro_buffer.borrow_mut().clear();
+            *self.macro_label.borrow_mut() = label.into();
+        }
+        self.macro_depth.set(self.macro_depth.get() + 1);
+    }
+
+    /// R903 §5.52 — close the macro opened by [`begin_macro`](Self::begin_macro)
+    /// (the `QUndoStack::endMacro` peer). A no-op when no macro is open. When
+    /// the **outermost** macro closes, the buffered edits fold into one history
+    /// step: an empty buffer records nothing (an all-no-op macro leaves the
+    /// timeline untouched) and one or more fold into a [`MacroCommand`]
+    /// carrying the macro `label`. A single-child macro still wraps, so the
+    /// step reads as "Replace all" rather than the lone child's "Replace" — the
+    /// macro name is the introspectable truth of what the user did. Its `undo`
+    /// reverses the children in reverse order. The folded step is pushed
+    /// already-applied (the callers applied each child eagerly) and bumps the
+    /// revision once, so dependent views see exactly one transition.
+    pub fn end_macro(&self) {
+        let depth = self.macro_depth.get();
+        if depth == 0 {
+            return;
+        }
+        self.macro_depth.set(depth - 1);
+        if depth > 1 {
+            return;
+        }
+        let children = std::mem::take(&mut *self.macro_buffer.borrow_mut());
+        if children.is_empty() {
+            return;
+        }
+        let label = self.macro_label.borrow().clone();
+        self.commit(Box::new(MacroCommand { children, label }), true);
+    }
+
     /// Shared body of [`record`](Self::record) / [`push_applied`](Self::push_applied):
     /// truncate the redo suffix, attempt to coalesce into the top command,
     /// else append (honouring [`capacity`](Self::with_capacity)). `applied`
@@ -282,6 +389,13 @@ impl UndoStack {
     fn commit(&self, boxed: Box<dyn UndoCommand>, applied: bool) {
         if !applied {
             boxed.redo();
+        }
+        // R903 §5.52 — an open macro diverts the edit into the macro buffer:
+        // it stays out of the visible timeline (no append, no coalesce, no
+        // revision bump) until `end_macro` folds the run into one step.
+        if self.macro_depth.get() > 0 {
+            self.macro_buffer.borrow_mut().push(boxed);
+            return;
         }
         let mut commands = self.commands.borrow_mut();
         let cursor = self.index.get();
@@ -648,6 +762,107 @@ mod tests {
             assert_eq!(counter.get(), 1, "counter edit still applied");
             stack.undo();
             assert_eq!(counter.get(), 0, "counter edit undone second");
+        });
+    }
+
+    #[test]
+    fn r903_macro_folds_children_into_one_step() {
+        Owner::new().run(|| {
+            let counter: Signal<i64> = Signal::new(0);
+            let stack = UndoStack::new();
+            stack.begin_macro("batch +3");
+            stack.record(SignalEdit::to(&counter, 1, "a"));
+            stack.record(SignalEdit::to(&counter, 2, "b"));
+            stack.record(SignalEdit::to(&counter, 3, "c"));
+            // During the macro the children are eagerly applied but invisible
+            // to the timeline.
+            assert_eq!(counter.get(), 3, "children apply eagerly");
+            assert_eq!(stack.index(), 0, "no step lands until end_macro");
+            stack.end_macro();
+            assert_eq!(stack.len(), 1, "three edits folded into one step");
+            assert_eq!(stack.labels(), vec!["batch +3"], "macro label, not children");
+            // One Ctrl+Z reverses the whole run.
+            assert!(stack.undo());
+            assert_eq!(counter.get(), 0, "single undo reverses all three");
+            assert!(stack.redo());
+            assert_eq!(counter.get(), 3, "single redo re-applies all three");
+        });
+    }
+
+    #[test]
+    fn r903_macro_undo_unwinds_children_in_reverse() {
+        Owner::new().run(|| {
+            // Two signals prove the reverse-order replay: the macro sets a then
+            // b; undo must restore b first then a, returning both to before.
+            let a: Signal<i64> = Signal::new(10);
+            let b: Signal<i64> = Signal::new(20);
+            let stack = UndoStack::new();
+            stack.begin_macro("set both");
+            stack.record(SignalEdit::to(&a, 11, "set a"));
+            stack.record(SignalEdit::to(&b, 21, "set b"));
+            stack.end_macro();
+            stack.undo();
+            assert_eq!(a.get(), 10, "a restored");
+            assert_eq!(b.get(), 20, "b restored");
+        });
+    }
+
+    #[test]
+    fn r903_empty_macro_records_no_step() {
+        Owner::new().run(|| {
+            let (_counter, stack) = fixture();
+            stack.begin_macro("nothing");
+            stack.end_macro();
+            assert_eq!(stack.len(), 0, "an empty macro leaves the timeline untouched");
+            assert!(!stack.can_undo());
+        });
+    }
+
+    #[test]
+    fn r903_single_child_macro_keeps_the_macro_label() {
+        Owner::new().run(|| {
+            let counter: Signal<i64> = Signal::new(0);
+            let stack = UndoStack::new();
+            stack.begin_macro("Replace all");
+            stack.record(SignalEdit::to(&counter, 1, "Replace"));
+            stack.end_macro();
+            assert_eq!(stack.len(), 1);
+            assert_eq!(
+                stack.labels(),
+                vec!["Replace all"],
+                "one-child macro reads as the macro, not the lone child"
+            );
+            assert!(stack.undo());
+            assert_eq!(counter.get(), 0);
+        });
+    }
+
+    #[test]
+    fn r903_nested_macros_flatten_into_the_outermost_step() {
+        Owner::new().run(|| {
+            let counter: Signal<i64> = Signal::new(0);
+            let stack = UndoStack::new();
+            stack.begin_macro("outer");
+            stack.record(SignalEdit::to(&counter, 1, "a"));
+            stack.begin_macro("inner"); // nested: deepens, does not split
+            stack.record(SignalEdit::to(&counter, 2, "b"));
+            stack.end_macro(); // inner close: still one open level, no commit
+            assert_eq!(stack.index(), 0, "inner end does not land a step");
+            stack.record(SignalEdit::to(&counter, 3, "c"));
+            stack.end_macro(); // outer close: one folded step
+            assert_eq!(stack.len(), 1, "nested macros flatten to one step");
+            assert_eq!(stack.labels(), vec!["outer"], "outermost label wins");
+            stack.undo();
+            assert_eq!(counter.get(), 0, "single undo reverses the flattened run");
+        });
+    }
+
+    #[test]
+    fn r903_end_macro_without_begin_is_a_noop() {
+        Owner::new().run(|| {
+            let (_counter, stack) = fixture();
+            stack.end_macro(); // no open macro
+            assert_eq!(stack.len(), 0);
         });
     }
 
