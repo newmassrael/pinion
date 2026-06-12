@@ -533,6 +533,13 @@ pub struct TreeGridData<'a> {
     pub data_col_width: u32,
     /// Rows built beyond the strict visible window on each side.
     pub overscan: usize,
+    /// R902 — the keyboard cursor (active) row id, painted with the deeper /
+    /// focus-tint emphasis (see [`treegrid_row_bg`]) so the roving cursor is
+    /// distinguishable from the rest of the selection; `None` for none. A
+    /// per-frame render input like [`rows`](Self::rows), so it rides the data
+    /// struct rather than a separate argument (the selection *predicate* stays
+    /// a closure arg, mirroring [`view_virtual_table`](crate::table::view_virtual_table)).
+    pub cursor: Option<&'a str>,
 }
 
 /// Focus-highlight fill for a tree-grid row (shared by the name cell + the
@@ -542,6 +549,28 @@ fn row_focus_bg(theme: &Theme, is_focused: bool) -> Color {
         theme.resolve(ColorRole::SurfaceContainerHighest)
     } else {
         Color::TRANSPARENT
+    }
+}
+
+/// R902 §5.40 — row fill for the **multi-select** tree-grid: the selection
+/// **set** and the keyboard **cursor** (active row) are distinct visual states
+/// (decoupled after R902 — `Ctrl+Space` can leave the cursor on a deselected
+/// row), so the fill encodes both, shared by the frozen name cell + the
+/// scrolling metadata strip so a row highlights across both panes.
+///
+/// A selected row washes [`ColorRole::Surface`] toward [`ColorRole::Accent`] —
+/// the same 0.16 "selected container" tint the data grid's
+/// [`row_fill`](crate::table::row_fill) uses (so the two scaled Model/View
+/// widgets read identically); the cursor deepens that wash to 0.28 when it sits
+/// on a selected row, or shows the R860 focus tint
+/// ([`ColorRole::SurfaceContainerHighest`]) when it sits on an unselected one.
+/// An ordinary row stays transparent.
+fn treegrid_row_bg(theme: &Theme, is_selected: bool, is_cursor: bool) -> Color {
+    match (is_selected, is_cursor) {
+        (true, true) => theme.resolve(ColorRole::Surface).lerp(theme.resolve(ColorRole::Accent), 0.28),
+        (true, false) => theme.resolve(ColorRole::Surface).lerp(theme.resolve(ColorRole::Accent), 0.16),
+        (false, true) => theme.resolve(ColorRole::SurfaceContainerHighest),
+        (false, false) => Color::TRANSPARENT,
     }
 }
 
@@ -568,14 +597,14 @@ fn treegrid_name_cell(
     tag: &str,
     row: &VisibleRow,
     width: u32,
-    is_focused: bool,
+    row_bg: Color,
     theme: &Theme,
     style: &TreeViewStyle,
 ) -> Scene {
     Scene::Container(
         treegrid_strip(tree_cell_content(row, theme, style), width, style)
             .with_tag(composite_row_tag(tag, &row.id))
-            .with_style(BoxStyle::filled(row_focus_bg(theme, is_focused))),
+            .with_style(BoxStyle::filled(row_bg)),
     )
 }
 
@@ -601,7 +630,7 @@ fn treegrid_data_row(
     tag: &str,
     row: &VisibleRow,
     data: &TreeGridData<'_>,
-    is_focused: bool,
+    row_bg: Color,
     theme: &Theme,
     style: &TreeViewStyle,
     cell_data: &impl Fn(&str, usize) -> String,
@@ -615,7 +644,7 @@ fn treegrid_data_row(
     Scene::Container(
         ContainerNode::new(cells)
             .with_tag(GridTag::metadata_row(tag, &row.id))
-            .with_style(BoxStyle::filled(row_focus_bg(theme, is_focused)))
+            .with_style(BoxStyle::filled(row_bg))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -687,14 +716,25 @@ fn treegrid_data_header(
 /// panes via [`AccessNode::bounds_union_tags`](pinion_a11y::AccessNode). (A
 /// `tree`/`treeitem` topology could not expose the metadata columns — a
 /// `treeitem` has no `gridcell` children in WAI-ARIA.)
+///
+/// R902 §5.40 — **multi-select**: `is_selected` is a predicate over a row's
+/// stable [`id`](pinion_core::widgets::tree_nav::VisibleRow::id) (single-select
+/// would pass `|id| sel == Some(id)`; the scene outliner passes set membership —
+/// the generalization mirrors [`view_virtual_table`](crate::table::view_virtual_table)'s
+/// `is_selected` row predicate), so several visible rows can be highlighted at
+/// once. The keyboard cursor (`data.cursor`) is painted with the deeper /
+/// focus-tint emphasis (see [`treegrid_row_bg`]) so the roving active row is
+/// distinguishable from the rest of the selection. Argument order mirrors
+/// `view_virtual_table` (the selection predicate is the lone closure before the
+/// cell-data closure; the cursor rides `data`).
 #[must_use]
 pub fn view_virtual_treegrid(
     tag: &'static str,
     scroll: GridScroll<'_>,
     data: &TreeGridData<'_>,
-    focused: Option<&str>,
     theme: &Theme,
     style: &TreeViewStyle,
+    is_selected: impl Fn(&str) -> bool,
     cell_data: impl Fn(&str, usize) -> String,
 ) -> Scene {
     let row_pitch = style.row_height;
@@ -712,14 +752,16 @@ pub fn view_virtual_treegrid(
     // Frozen pane: the tree name column, one cell per visible row.
     let frozen_slots = uniform_slots(&window, frozen_w, row_pitch, |index| {
         let row = &rows[index];
-        let is_focused = focused == Some(row.id.as_str());
-        treegrid_name_cell(tag, row, frozen_w, is_focused, theme, style)
+        let row_bg =
+            treegrid_row_bg(theme, is_selected(row.id.as_str()), data.cursor == Some(row.id.as_str()));
+        treegrid_name_cell(tag, row, frozen_w, row_bg, theme, style)
     });
     // Scrolling pane: the metadata columns, one strip per visible row.
     let scroll_slots = uniform_slots(&window, scroll_w, row_pitch, |index| {
         let row = &rows[index];
-        let is_focused = focused == Some(row.id.as_str());
-        treegrid_data_row(tag, row, data, is_focused, theme, style, &cell_data)
+        let row_bg =
+            treegrid_row_bg(theme, is_selected(row.id.as_str()), data.cursor == Some(row.id.as_str()));
+        treegrid_data_row(tag, row, data, row_bg, theme, style, &cell_data)
     });
 
     // Frozen header band: the single tree-column header on the raised surface.
@@ -2262,7 +2304,7 @@ mod r860_treegrid_tests {
         ]
     }
 
-    fn run(rows: &[VisibleRow], focused: Option<&str>) -> Scene {
+    fn run(rows: &[VisibleRow], selected: &[&str], cursor: Option<&str>) -> Scene {
         let body = Rc::new(ScrollState::new());
         let pitch = i32::try_from(TreeViewStyle::m3_default().row_height).unwrap();
         body.set_max(0, i32::try_from(rows.len()).unwrap() * pitch);
@@ -2270,6 +2312,7 @@ mod r860_treegrid_tests {
         let h = Rc::new(ScrollState::with_tag("tg_h"));
         let theme = Theme::light();
         let style = TreeViewStyle::m3_default();
+        let sel: std::collections::BTreeSet<&str> = selected.iter().copied().collect();
         Owner::new().run(|| {
             view_virtual_treegrid(
                 TAG,
@@ -2281,10 +2324,11 @@ mod r860_treegrid_tests {
                     tree_col_width: 200,
                     data_col_width: 100,
                     overscan: 2,
+                    cursor,
                 },
-                focused,
                 &theme,
                 &style,
+                |id| sel.contains(id),
                 |id, col| format!("{id}#{col}"),
             )
         })
@@ -2332,7 +2376,7 @@ mod r860_treegrid_tests {
 
     #[test]
     fn renders_frozen_tree_and_scrolling_metadata() {
-        let scene = run(&flat_visible(&outliner(true)), None);
+        let scene = run(&flat_visible(&outliner(true)), &[], None);
         assert!(has_tag(&scene, "tg_fhrow"), "frozen tree header band present");
         assert!(has_tag(&scene, "tg_hrow"), "scrolling metadata header band present");
         for id in ["grp", "a", "b", "c"] {
@@ -2343,7 +2387,7 @@ mod r860_treegrid_tests {
 
     #[test]
     fn frozen_tree_pane_is_follower_metadata_pane_is_primary() {
-        let scene = run(&flat_visible(&outliner(true)), None);
+        let scene = run(&flat_visible(&outliner(true)), &[], None);
         let mut followers = Vec::new();
         vfollowers(&scene, &mut followers);
         assert_eq!(
@@ -2359,7 +2403,7 @@ mod r860_treegrid_tests {
         let collapsed = flat_visible(&outliner(false));
         assert_eq!(expanded.len(), 4, "grp expanded -> grp+a+b+c");
         assert_eq!(collapsed.len(), 2, "grp collapsed -> grp+c only");
-        let scene = run(&collapsed, None);
+        let scene = run(&collapsed, &[], None);
         assert!(has_tag(&scene, "tg#grp"), "group row rendered when collapsed");
         assert!(!has_tag(&scene, "tg#a"), "collapsed child a not rendered");
         assert!(!has_tag(&scene, "tg#b"), "collapsed child b not rendered");
@@ -2367,11 +2411,30 @@ mod r860_treegrid_tests {
     }
 
     #[test]
-    fn focused_row_highlights_both_panes() {
-        let scene = run(&flat_visible(&outliner(true)), Some("b"));
-        let focus_bg = Theme::light().resolve(ColorRole::SurfaceContainerHighest);
-        assert_eq!(fill_of(&scene, "tg#b"), Some(focus_bg), "focused tree name cell highlighted");
-        assert_eq!(fill_of(&scene, "tg_drowb"), Some(focus_bg), "focused metadata strip highlighted");
-        assert_ne!(fill_of(&scene, "tg#a"), Some(focus_bg), "unfocused row stays transparent");
+    fn multi_select_highlights_the_set_and_distinguishes_the_cursor() {
+        // R902 — selection is a set (`a` + `b`), the cursor is a SEPARATE row
+        // (`c`, unselected — the post-`Ctrl+Space` state). Each visual state
+        // has its own fill, on BOTH the frozen name cell and the metadata strip.
+        let theme = Theme::light();
+        let sel_bg = theme.resolve(ColorRole::Surface).lerp(theme.resolve(ColorRole::Accent), 0.16);
+        let cursor_sel_bg = theme.resolve(ColorRole::Surface).lerp(theme.resolve(ColorRole::Accent), 0.28);
+        let cursor_only_bg = theme.resolve(ColorRole::SurfaceContainerHighest);
+        // `a`,`b` selected; `b` is the cursor; `c` is unselected non-cursor.
+        let scene = run(&flat_visible(&outliner(true)), &["a", "b"], Some("b"));
+        // A plain selected row (a): the 0.16 accent wash, both panes.
+        assert_eq!(fill_of(&scene, "tg#a"), Some(sel_bg), "selected name cell washed");
+        assert_eq!(fill_of(&scene, "tg_drowa"), Some(sel_bg), "selected metadata strip washed");
+        // The selected cursor row (b): the deeper 0.28 wash, both panes.
+        assert_eq!(fill_of(&scene, "tg#b"), Some(cursor_sel_bg), "selected cursor name cell deeper");
+        assert_eq!(fill_of(&scene, "tg_drowb"), Some(cursor_sel_bg), "selected cursor metadata deeper");
+        // An unselected, non-cursor row (c): transparent.
+        assert_ne!(fill_of(&scene, "tg#c"), Some(sel_bg), "unselected row not washed");
+        assert_ne!(fill_of(&scene, "tg#c"), Some(cursor_only_bg), "unselected non-cursor row not focus-tinted");
+
+        // The cursor on an UNSELECTED row (the Ctrl+Space-deselected state):
+        // the focus tint, distinct from the selection wash.
+        let scene2 = run(&flat_visible(&outliner(true)), &["a"], Some("c"));
+        assert_eq!(fill_of(&scene2, "tg#c"), Some(cursor_only_bg), "cursor-only row shows the focus tint");
+        assert_eq!(fill_of(&scene2, "tg#a"), Some(sel_bg), "the still-selected row keeps the wash");
     }
 }

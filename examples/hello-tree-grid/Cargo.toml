@@ -22,6 +22,9 @@ vello = { workspace = true }
 # R860 — the retained tree nodes are a `Signal<Vec<OutlinerNode>>`; the
 # §5.22 introspect bound requires the payload to derive serde.
 serde = { workspace = true, features = ["derive"] }
+# R902 — the multi-select coordinator's `selection` query / intervene wire is a
+# JSON array of row ids (the `VirtualSelectExternal` set-encode shape).
+serde_json = { workspace = true }
 
 [build-dependencies]
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

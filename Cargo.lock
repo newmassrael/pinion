@@ -2756,6 +2756,7 @@ dependencies = [
  "pinion-shell",
  "pinion-widget-paint",
  "serde",
+ "serde_json",
  "vello",
 ]
 

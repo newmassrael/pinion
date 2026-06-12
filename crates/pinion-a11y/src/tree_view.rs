@@ -46,6 +46,7 @@ use crate::node::AccessNode;
 use crate::role::AriaRole;
 use pinion_core::composite_tag::GridTag;
 use pinion_core::widgets::tree_nav::VisibleRow;
+use std::collections::BTreeSet;
 
 /// Compose a row's composite `AccessNode` tag — the frozen R51.42
 /// `{row_prefix}#{id}` separator the paint substrate stamps
@@ -143,6 +144,35 @@ pub fn tree_access_nodes(
     nodes
 }
 
+/// R902 §5.40 — the multi-select state a [`treegrid_nodes`] row lowers to: the
+/// selected-id `set` + the keyboard `cursor`, decoupled. Bundled into one carrier
+/// (the [`RowMetrics`](pinion_core::widgets::virtual_select) / `VirtualTableData`
+/// argument-budget habit) and a named distinction rather than two bare params,
+/// mirroring the [`GridSelection`](crate::virtual_grid) named-selection idea.
+///
+/// `selected` drives each rendered row's `aria-selected` (membership; the
+/// container is `aria-multiselectable` — the WAI-ARIA convention that in a
+/// multiselectable container *every* selectable row exposes the axis, so the
+/// builder emits explicit `true`/`false`). It is keyed by **stable id**, not
+/// visible index, so it is robust across expand / collapse; a selected row
+/// scrolled out of the window simply has no node this frame and re-paints when
+/// it scrolls back. `cursor` is the keyboard active row carrying
+/// `aria-activedescendant` (via [`with_focused`](AccessNode::with_focused)) —
+/// **decoupled** from `selected` because `Ctrl+Space` can toggle the cursor row
+/// *out* of the selection (the single-id premise R870 assumed held only while
+/// the outliner was single-select; the authoritative `aria-activedescendant` is
+/// the binding's `access_focus_target`, this marker mirrors
+/// [`tree_access_nodes`]'s `focused_id`).
+#[derive(Clone, Copy)]
+pub struct TreeGridSelection<'a> {
+    /// The selected row ids (by stable
+    /// [`TreeNode::id`](pinion_core::widgets::tree_nav::TreeNode::id)) — each
+    /// rendered row gets `aria-selected = selected.contains(id)`.
+    pub selected: &'a BTreeSet<String>,
+    /// The keyboard cursor / active row id (`aria-activedescendant`), or `None`.
+    pub cursor: Option<&'a str>,
+}
+
 /// R863 §5.40 §5.27 §5.50 — WAI-ARIA `treegrid` + `row` + `rowheader` /
 /// `gridcell` `AccessNode` builder: the columned analogue of
 /// [`tree_access_nodes`] for [`view_virtual_treegrid`](pinion_widget_paint::tree_view::view_virtual_treegrid).
@@ -181,7 +211,10 @@ pub fn tree_access_nodes(
 ///   is the metadata column count.
 /// - `rows` — the [`flat_visible`](pinion_core::widgets::tree_nav::flat_visible)
 ///   flattening of the visible tree (the SSOT the paint walk also consumes).
-/// - `selected_id` — the row id carrying `aria-selected`, or `None`.
+/// - `selection` — the [`TreeGridSelection`] carrier: the selected-id set + the
+///   keyboard cursor (see its doc). The treegrid is **multi-select** (R902
+///   scene-outliner) so the container is `aria-multiselectable` and every
+///   rendered row carries explicit `aria-selected`.
 ///
 /// # Returns
 ///
@@ -199,7 +232,7 @@ pub fn treegrid_nodes(
     tree_header: &str,
     data_headers: &[&str],
     rows: &[VisibleRow],
-    selected_id: Option<&str>,
+    selection: &TreeGridSelection<'_>,
 ) -> Vec<AccessNode> {
     let ncols = data_headers.len();
     // container + header row + (ncols + 1) columnheaders + per row (row +
@@ -211,6 +244,9 @@ pub fn treegrid_nodes(
     if let Some(name) = name {
         grid = grid.with_name(name);
     }
+    // R902 — the outliner holds an arbitrary row **set**, so the container is
+    // `aria-multiselectable` (the `GridSelection::Multi` convention).
+    grid.multiselectable = true;
     grid = grid.with_child(GridTag::header_row(grid_tag));
     for row in rows {
         grid = grid.with_child(GridTag::metadata_row(grid_tag, &row.id));
@@ -259,23 +295,19 @@ pub fn treegrid_nodes(
         if row.has_children {
             row_node = row_node.with_expanded(row.expanded);
         }
-        // R866 §5.40 — the cursor row carries `aria-selected` AND the roving
-        // `focused` flag (the `aria-activedescendant` target), mirroring
-        // [`tree_access_nodes`]: a single-tab-stop treegrid conveys its keyboard
-        // cursor via `aria-activedescendant` (the binding's `access_focus_target`
-        // redirects to this row's `_drow{id}` node), not `aria-selected` alone.
-        // R870 — unlike `tree_access_nodes` (which decouples `selected_id` /
-        // `focused_id` for its diverse consumers, incl. the click-only
-        // `hello-multi-window` inspector), the treegrid takes a single
-        // `selected_id` and sets *both* `aria-selected` and the cursor
-        // `focused` marker: its sole consumer (`hello-tree-grid`) is
-        // selection-follows-focus, so the two ids are always equal. The
-        // `focused` marker is in any case redundant with the authoritative
-        // `aria-activedescendant` the binding's `access_focus_target` emits
-        // (the AT layer does not lower `AccessState.focused`); decoupling it
-        // here would buy nothing but an unused parameter (YAGNI).
-        if selected_id == Some(row.id.as_str()) {
-            row_node = row_node.with_selected(true).with_focused(true);
+        // R902 §5.40 — multi-select: `aria-selected = set membership`, on EVERY
+        // rendered row (the multiselectable convention), keyed by stable id so
+        // a selection survives expand / collapse. Decoupled from the keyboard
+        // cursor: the active row carries the roving `focused` flag (the
+        // `aria-activedescendant` target the binding's `access_focus_target`
+        // redirects to), which `Ctrl+Space` can leave on a *deselected* row.
+        // (Before R902 the outliner was single-select selection-follows-focus,
+        // so R870 fused the two into one id; the set model splits them again,
+        // exactly as `tree_access_nodes` keeps `selected_id` / `focused_id`
+        // separate for its diverse consumers.)
+        row_node = row_node.with_selected(selection.selected.contains(&row.id));
+        if selection.cursor == Some(row.id.as_str()) {
+            row_node = row_node.with_focused(true);
         }
         nodes.push(row_node);
         // The name cell is the row's label → `rowheader` (the row analogue of
@@ -527,14 +559,25 @@ mod tests {
 
     // ── R863 §5.40 §5.27 — treegrid (columned tree) builder ──────────
 
-    use super::treegrid_nodes;
+    use super::{treegrid_nodes, TreeGridSelection};
+    use std::collections::BTreeSet;
 
     const DATA_HEADERS: [&str; 3] = ["Type", "Visible", "Layer"];
 
+    /// A row-id selection set from string literals (the binding's stable-id
+    /// `BTreeSet<String>` shape).
+    fn sel(ids: &[&str]) -> BTreeSet<String> {
+        ids.iter().map(|s| (*s).to_owned()).collect()
+    }
+
     /// `[treegrid, header_row, name_columnheader, 3 metadata columnheaders,
-    /// (row, rowheader, 3 gridcells) × rows]`.
+    /// (row, rowheader, 3 gridcells) × rows]`. No selection / cursor.
     fn tg_nodes() -> Vec<AccessNode> {
-        treegrid_nodes("tg_root", "tg", Some("Scene outliner"), "Name", &DATA_HEADERS, &sample_rows(), None)
+        let empty = BTreeSet::new();
+        treegrid_nodes(
+            "tg_root", "tg", Some("Scene outliner"), "Name", &DATA_HEADERS, &sample_rows(),
+            &TreeGridSelection { selected: &empty, cursor: None },
+        )
     }
 
     #[test]
@@ -545,6 +588,8 @@ mod tests {
         assert_eq!(out.len(), 1 + 1 + 4 + sample_rows().len() * 5);
         assert_eq!(out[0].role, AriaRole::TreeGrid, "container is a treegrid, not a tree");
         assert_eq!(out[0].name.as_deref(), Some("Scene outliner"));
+        // R902 — the outliner is multi-select, so its container is multiselectable.
+        assert!(out[0].multiselectable, "treegrid container is aria-multiselectable");
         // The container references the header row + every visible data-row strip.
         assert_eq!(out[0].children[0], "tg_hrow");
         assert_eq!(out[0].children[1], "tg_drowsrc");
@@ -621,23 +666,41 @@ mod tests {
     }
 
     #[test]
-    fn treegrid_selected_row_carries_aria_selected_others_omit_it() {
-        let out =
-            treegrid_nodes("tg_root", "tg", None, "Name", &DATA_HEADERS, &sample_rows(), Some("src/widgets"));
+    fn treegrid_multiselect_marks_every_row_and_decouples_the_cursor() {
+        // R902 — multi-select: each rendered row carries explicit
+        // `aria-selected = set membership` (true/false, never omitted in a
+        // multiselectable container), and the keyboard cursor (`aria-activedescendant`
+        // → `with_focused`) is a SEPARATE id that need not be in the set.
+        let selected = sel(&["src", "src/widgets"]);
+        let out = treegrid_nodes(
+            "tg_root", "tg", None, "Name", &DATA_HEADERS, &sample_rows(),
+            &TreeGridSelection { selected: &selected, cursor: Some("docs") },
+        );
         let by_tag = |tag: &str| out.iter().find(|n| n.tag == tag).expect("row present");
-        assert_eq!(by_tag("tg_drowsrc/widgets").selected, Some(true), "selected row");
-        assert_eq!(by_tag("tg_drowsrc").selected, None, "non-selected row omits the axis");
-        // R866 — the cursor row carries the roving `focused` flag too.
-        assert!(by_tag("tg_drowsrc/widgets").state.focused, "cursor row is the active descendant");
-        assert!(!by_tag("tg_drowsrc").state.focused, "non-cursor row is not focused");
+        // Two selected rows are aria-selected at once (set membership).
+        assert_eq!(by_tag("tg_drowsrc").selected, Some(true), "selected row");
+        assert_eq!(by_tag("tg_drowsrc/widgets").selected, Some(true), "second selected row");
+        // A non-selected row carries explicit aria-selected=false (multiselectable
+        // convention), NOT an omitted axis.
+        assert_eq!(by_tag("tg_drowsrc/main.rs").selected, Some(false), "unselected row is explicit false");
+        // The cursor (`docs`) carries the roving `focused` flag though it is NOT
+        // selected — the decoupling Ctrl+Space exercises.
+        assert!(by_tag("tg_drowdocs").state.focused, "cursor row is the active descendant");
+        assert_eq!(by_tag("tg_drowdocs").selected, Some(false), "the cursor row is not in the selection");
+        assert!(!by_tag("tg_drowsrc").state.focused, "a selected non-cursor row is not the active descendant");
     }
 
     #[test]
     fn treegrid_empty_rows_emit_container_and_headers_only() {
-        let out = treegrid_nodes("tg_root", "tg", None, "Name", &DATA_HEADERS, &[], None);
+        let empty = BTreeSet::new();
+        let out = treegrid_nodes(
+            "tg_root", "tg", None, "Name", &DATA_HEADERS, &[],
+            &TreeGridSelection { selected: &empty, cursor: None },
+        );
         // container + header row + (1 name + 3 metadata) columnheaders.
         assert_eq!(out.len(), 1 + 1 + 4);
         assert_eq!(out[0].role, AriaRole::TreeGrid);
+        assert!(out[0].multiselectable, "the multiselectable axis applies even when empty");
         assert_eq!(out[0].children, vec!["tg_hrow"], "no data rows referenced");
         assert!(out.iter().all(|n| n.role != AriaRole::Row || n.tag == "tg_hrow"));
     }

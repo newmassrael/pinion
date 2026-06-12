@@ -38385,6 +38385,66 @@
         "R902 = tree multi-select for scene-outliner (audit-confirmed; see SEED L3 + atomic R901)"
       ]
     },
+    "R902": {
+      "decision_summary": "R902 tree multi-select for the scene-outliner (hello-tree-grid): stable-id BTreeSet<String> selection decoupled from the keyboard cursor; SelectionChord keyboard chords + Ctrl+Space/Ctrl+A; aria-multiselectable treegrid + per-row aria-selected; RPC select/intervene/invoke read-write symmetry; selection-tint paint. Phase-B Model/View-at-scale (scene-outliner select N -> batch op). Modifier pointer-clicks deferred (TreeRowClickExternal modifier-forward = cross-4-consumer wire-symmetry change).",
+      "changes_bullets": [
+        "TreeState: + selection Signal<BTreeSet<String>> (stable-id set) + anchor; cursor (focused_id) decoupled",
+        "one funnel select_only/toggle/extend_range/select_visible/clear/set_selection (kbd+click+RPC share it)",
+        "keyboard: SelectionChord nav decode (plain=replace / Shift=extend) + Ctrl+Space toggle + Ctrl+A select-visible",
+        "click reducer: select_only (replace) + toggle_expanded; plain click = SelectionChord::Replace",
+        "a11y treegrid_nodes: TreeGridSelection carrier (set + cursor); aria-multiselectable + per-row aria-selected",
+        "paint view_virtual_treegrid: is_selected predicate + cursor in TreeGridData; treegrid_row_bg 4-state fill",
+        "TreeSelectExternal (binding-local 1st consumer): query selection/count/anchor + intervene + invoke ops"
+      ],
+      "verification_bullets": [
+        "example 24 unit (10 new R902: boot/plain-nav/shift-extend/ctrl-space/ctrl-a/stable-id/clear/phantom/click/RPC)",
+        "a11y 215+17(test-fixtures) / paint 469 / workspace 150 groups all green 0-fail (cargo test -j2)",
+        "clippy -D pedantic clean; arg-budget via TreeGridSelection carrier + TreeGridData.cursor field (RowMetrics habit)",
+        "r902_tree_multi_select.py PASS (~42 assert: set/count/anchor + invoke/intervene + stable-id collapse + chords + click)",
+        "r860 + r864 no regression (cursor row now selection-follows-focus wash, still tonally distinct)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27",
+        "5.50",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "modifier pointer-clicks (Ctrl/Shift-click) deferred: TreeRowClickExternal is model-agnostic (R675/R678),",
+        "carries bare id only; chord-clicks need it to forward held modifiers = wire-symmetry change across 4 tree",
+        "consumers; lands @ 2nd chord-click tree consumer (node-editor R879 does chord-clicks via its OWN send wire).",
+        "keyboard (Shift-nav/Ctrl+Space/Ctrl+A) + AI-first RPC give full modifier-aware multi-select already."
+      ],
+      "publishable_decision_summary": "R902 tree multi-select for the scene-outliner (hello-tree-grid): stable-id BTreeSet<String> selection decoupled from the keyboard cursor; SelectionChord keyboard chords + Ctrl+Space/Ctrl+A; aria-multiselectable treegrid + per-row aria-selected; RPC select/intervene/invoke read-write symmetry; selection-tint paint. Phase-B Model/View-at-scale (scene-outliner select N -> batch op). Modifier pointer-clicks deferred (TreeRowClickExternal modifier-forward = cross-4-consumer wire-symmetry change).",
+      "publishable_changes_bullets": [
+        "TreeState: + selection Signal<BTreeSet<String>> (stable-id set) + anchor; cursor (focused_id) decoupled",
+        "one funnel select_only/toggle/extend_range/select_visible/clear/set_selection (kbd+click+RPC share it)",
+        "keyboard: SelectionChord nav decode (plain=replace / Shift=extend) + Ctrl+Space toggle + Ctrl+A select-visible",
+        "click reducer: select_only (replace) + toggle_expanded; plain click = SelectionChord::Replace",
+        "a11y treegrid_nodes: TreeGridSelection carrier (set + cursor); aria-multiselectable + per-row aria-selected",
+        "paint view_virtual_treegrid: is_selected predicate + cursor in TreeGridData; treegrid_row_bg 4-state fill",
+        "TreeSelectExternal (binding-local 1st consumer): query selection/count/anchor + intervene + invoke ops"
+      ],
+      "publishable_verification_bullets": [
+        "example 24 unit (10 new R902: boot/plain-nav/shift-extend/ctrl-space/ctrl-a/stable-id/clear/phantom/click/RPC)",
+        "a11y 215+17(test-fixtures) / paint 469 / workspace 150 groups all green 0-fail (cargo test -j2)",
+        "clippy -D pedantic clean; arg-budget via TreeGridSelection carrier + TreeGridData.cursor field (RowMetrics habit)",
+        "r902_tree_multi_select.py PASS (~42 assert: set/count/anchor + invoke/intervene + stable-id collapse + chords + click)",
+        "r860 + r864 no regression (cursor row now selection-follows-focus wash, still tonally distinct)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27",
+        "5.50",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "modifier pointer-clicks (Ctrl/Shift-click) deferred: TreeRowClickExternal is model-agnostic (R675/R678),",
+        "carries bare id only; chord-clicks need it to forward held modifiers = wire-symmetry change across 4 tree",
+        "consumers; lands @ 2nd chord-click tree consumer (node-editor R879 does chord-clicks via its OWN send wire).",
+        "keyboard (Shift-nav/Ctrl+Space/Ctrl+A) + AI-first RPC give full modifier-aware multi-select already."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -51526,5 +51586,5 @@
   "entities": {},
   "predicates": {},
   "narrative_facts": {},
-  "schema_version": 19
+  "schema_version": 20
 }

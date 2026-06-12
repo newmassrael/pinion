@@ -17,15 +17,30 @@
 //!
 //! Click a folder row (the `{TREE_TAG}#{id}` composite-tag name cell, the
 //! R674 [`TreeRowClickExternal`] path) to expand / collapse it; the visible
-//! row count changes and the grid re-windows. Clicking also focuses the row
-//! (highlighted across both panes). R864 — the outliner is keyboard-navigable
-//! (single tab stop + `aria-activedescendant` roving cursor): Arrow Up/Down
-//! move the cursor, Arrow Right expands / descends, Arrow Left collapses /
-//! ascends, Enter/Space toggle, and type-ahead jumps by name — the lifted
-//! `apply_tree_key` + `tree_typeahead_jump` substrate, with the cursor
+//! row count changes and the grid re-windows. Clicking also **selects** the row
+//! (replace; highlighted across both panes). R864 — the outliner is
+//! keyboard-navigable (single tab stop + `aria-activedescendant` roving cursor):
+//! Arrow Up/Down move the cursor, Arrow Right expands / descends, Arrow Left
+//! collapses / ascends, Enter/Space toggle, and type-ahead jumps by name — the
+//! lifted `apply_tree_key` + `tree_typeahead_jump` substrate, with the cursor
 //! scrolled into the body window (keyboard ⊥ virtualization). The metadata
 //! columns are display cells the row cursor rides past, not separate tab
 //! stops (an outliner navigates by row, not by cell).
+//!
+//! R902 — **multi-select** (the scene outliner's "select N assets → batch
+//! rename / delete"): the selection is a **set** of rows by stable id (robust
+//! across expand / collapse, where a flat index would shift), decoupled from
+//! the keyboard cursor. Plain nav replaces the selection with the new cursor
+//! (selection-follows-focus); `Shift`+nav extends the contiguous range from the
+//! anchor; `Ctrl+Space` toggles the cursor row's membership; `Ctrl+A` selects
+//! every visible row — the chord decode is the shared [`SelectionChord`] policy
+//! (R880.1), so the keyboard matches the list/grid Model/View widgets. The
+//! `query`/`intervene("selection")` + `invoke` ops on [`SELECT_TAG`] give the AI
+//! the same multi-select through RPC (one funnel; §2 primary path). Modifier
+//! pointer-clicks (`Ctrl`/`Shift`-click) are deferred — `TreeRowClickExternal`
+//! is model-agnostic and carries only the bare id, so chord-clicks need it to
+//! forward modifiers (a wire-symmetry change across the four tree consumers),
+//! landing at the 2nd chord-click consumer.
 //!
 //! ## The witness (§2 #7 scene-as-data)
 //!
@@ -39,7 +54,12 @@
 //! window, so the AI reads structure here, not from the painted nodes); R865 —
 //! the [`CELLS_TAG`] peer reports `cell_at.<pos>.<col>` so the AI also reads the
 //! off-window metadata (Type / Visible / Layer) the paint window cannot expose.
-//! See `tools/demos/r860_tree_grid.py`.
+//! R902 — `scene/query` on [`SELECT_TAG`] reports the selection set
+//! (`selection` JSON array of ids + `count` + `anchor`), the FULL set including
+//! members hidden inside a collapsed branch; `scene/intervene("selection", […])`
+//! restores it and `scene/invoke` drives `select` / `toggle` / `extend_to` /
+//! `select_all` / `clear`. See `tools/demos/r860_tree_grid.py` +
+//! `tools/demos/r902_tree_multi_select.py`.
 //!
 //! ## a11y (R863)
 //!
@@ -53,14 +73,21 @@
 //! AT-invisible under the prior `tree` / `treeitem` topology (a `treeitem` has
 //! no `gridcell` children in WAI-ARIA). R865 — the AT tree is **windowed** to
 //! the rendered slice (the same `compute_visible_range` the paint uses), so it
-//! exposes exactly the realized rows, not bounds-less off-window ghosts.
+//! exposes exactly the realized rows, not bounds-less off-window ghosts. R902 —
+//! the treegrid is `aria-multiselectable`; each rendered row carries explicit
+//! `aria-selected = set membership` (several at once), and the keyboard cursor
+//! (decoupled — `Ctrl+Space` can leave it on a deselected row) is the
+//! `aria-activedescendant`.
 
-use pinion_a11y::{treegrid_nodes, AccessFocus, AccessNode, WidgetA11y};
+use pinion_a11y::{treegrid_nodes, AccessFocus, AccessNode, TreeGridSelection, WidgetA11y};
 use pinion_core::external::{
-    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, StubExternal,
+    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
+    IntrospectSchema, IntrospectValue, InvokeError, QueryOnlyIntrospect, QuerySource, RepaintOwner,
+    StubExternal, ThreadOwnership,
 };
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
+use pinion_core::reactive::batch;
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size};
 use pinion_core::theme::{use_theme, ColorRole};
@@ -71,13 +98,14 @@ use pinion_core::widgets::tree_nav::{
     flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode, VisibleRow,
 };
 use pinion_core::widgets::virtual_list::compute_visible_range;
-use pinion_core::{Frame, Modifiers, Owner, Scene, Signal, WidgetCore};
+use pinion_core::{Frame, Modifiers, Owner, Scene, SelectionChord, Signal, WidgetCore};
 use pinion_shell::typeahead::apply_windowed_tree_key;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::table::GridScroll;
 use pinion_widget_paint::tree_view::{
     view_virtual_treegrid, TreeGridData, TreeRowClickExternal, TreeViewStyle,
 };
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -109,6 +137,18 @@ const TREE_STATE_TAG: &str = "tgrid_state";
 /// stays node-type agnostic until a 2nd tree-grid consumer surfaces it —
 /// `[[abstraction-needs-second-consumer]]`).
 const CELLS_TAG: &str = "tgrid_cells";
+/// R902 §5.40 §5.12 — query + write introspection of the multi-select state:
+/// the selection **set** (by stable id), its count, and the range anchor. The
+/// AI-first ([[ai-first-rpc-introspection-obligation]]) read/write peer of the
+/// keyboard chords — `query`/`intervene("selection")` mirror each other and the
+/// `invoke` ops (`select` / `toggle` / `extend_to` / `select_all` / `clear`)
+/// drive the same funnel the keyboard does, so RPC and keyboard multi-select
+/// are one SSOT. Binding-local: the stable-id `BTreeSet<String>` selection is a
+/// 1st consumer (the flat-index [`VirtualSelectExternal`] cannot be reused — a
+/// tree row's flat index shifts on every expand / collapse), so the model stays
+/// in the example until a 2nd tree-multi-select consumer surfaces it
+/// ([[abstraction-needs-second-consumer]]).
+const SELECT_TAG: &str = "tgrid_select";
 /// Input-router tag for the vertical body `ScrollState` (shared by both
 /// panes).
 const SCROLL_KEY: &str = "tgrid_scroll";
@@ -279,12 +319,38 @@ impl QuerySource for CellsIntrospect {
     }
 }
 
-/// Reactive holder for the retained tree + the focused/selected row, lifted
-/// into [`Owner::cache`] so the view-fn, the a11y pass, and the click
-/// reducer read the same `Signal`s.
+/// Recursive existence check over the retained tree (every node, expanded or
+/// not): the validity bound for a selection id, so a malformed RPC payload can
+/// never select a phantom row (the [`VirtualSelect`](pinion_core::widgets::virtual_select)
+/// `item_count` guard's stable-id analogue). Selection is keyed by id over the
+/// WHOLE tree — not just the visible rows — so a node stays selected while an
+/// ancestor is collapsed.
+fn contains_id(nodes: &[OutlinerNode], id: &str) -> bool {
+    nodes.iter().any(|n| n.id == id || contains_id(&n.children, id))
+}
+
+/// Reactive holder for the retained tree + the keyboard cursor + the R902
+/// multi-select state, lifted into [`Owner::cache`] so the view-fn, the a11y
+/// pass, the click reducer, the keyboard `apply_key`, and the [`SELECT_TAG`]
+/// coordinator all read / mutate the same `Signal`s.
 struct TreeState {
     nodes: Signal<Vec<OutlinerNode>>,
+    /// The keyboard **cursor** (active row / `aria-activedescendant`): the
+    /// roving navigation reference. R902 — decoupled from the selection (the
+    /// cursor can sit on a row `Ctrl+Space` has deselected); before R902 the
+    /// single-cursor *was* the selection.
     focused_id: Signal<Option<String>>,
+    /// R902 — the selected-row **set**, by stable [`OutlinerNode`] id (robust
+    /// across expand / collapse, where a flat index would shift). The paint
+    /// highlights the visible members, the a11y emits `aria-selected` per
+    /// member, and `query("selection")` reports the FULL set (incl. members
+    /// hidden inside a collapsed branch).
+    selection: Signal<BTreeSet<String>>,
+    /// R902 — the range-extension origin: the row a `Shift`-extend grows from,
+    /// held put while extending and re-seeded by every plain move / toggle
+    /// (the [`VirtualSelect`](pinion_core::widgets::virtual_select) `anchor`'s
+    /// stable-id analogue).
+    anchor: Signal<Option<String>>,
 }
 
 fn use_tree_state() -> Rc<TreeState> {
@@ -294,21 +360,325 @@ fn use_tree_state() -> Rc<TreeState> {
         // R864 — boot the keyboard cursor on the first row (the WAI-ARIA tree
         // convention `hello-virtual-tree` also uses): the outliner is a single
         // tab stop, so a defined `aria-activedescendant` exists from frame one
-        // and the focus highlight paints across both panes immediately.
+        // and the focus highlight paints across both panes immediately. R902 —
+        // seed the selection on that same row (selection-follows-focus), so the
+        // outliner opens with `f0` both the cursor AND the sole selected row,
+        // matching the pre-R902 single-cursor highlight.
         focused_id: Signal::new(Some(String::from("f0"))),
+        selection: Signal::new(BTreeSet::from([String::from("f0")])),
+        anchor: Signal::new(Some(String::from("f0"))),
     })
 }
 
-/// R864 §5.27 §5.50 — apply one key to the windowed tree-grid: the lifted
-/// [`apply_windowed_tree_key`] (R866) resolve → type-ahead → scroll-cursor-into-
-/// window pipeline, shared verbatim with `hello-virtual-tree`. The columned grid
-/// navigates exactly like the plain tree — the metadata columns are display
-/// cells the cursor rides past, not separate tab stops — so it threads only its
-/// own per-binding state (`use_tree_state`) + scroll + cache slot into the
-/// substrate; no per-binding navigation glue.
-fn apply_key_impl(key: &str) -> bool {
+impl TreeState {
+    /// Replace the selection with just `id` and move the cursor + anchor there
+    /// (a plain click / unmodified nav — [`SelectionChord::Replace`]). Validates
+    /// `id` against the retained tree; an unknown id is a no-op. Returns whether
+    /// anything changed.
+    fn select_only(&self, id: &str) -> bool {
+        if !contains_id(&self.nodes.get(), id) {
+            return false;
+        }
+        let next = BTreeSet::from([id.to_owned()]);
+        let changed = self.selection.get() != next
+            || self.anchor.get().as_deref() != Some(id)
+            || self.focused_id.get().as_deref() != Some(id);
+        batch(|| {
+            self.selection.set(next);
+            self.anchor.set(Some(id.to_owned()));
+            self.focused_id.set(Some(id.to_owned()));
+        });
+        changed
+    }
+
+    /// `Ctrl`-toggle `id`'s membership, leaving the rest of the set intact, and
+    /// make it the cursor + anchor ([`SelectionChord::Toggle`] / `Ctrl+Space`).
+    /// Validates `id`; an unknown id is a no-op. Returns whether `id` was valid
+    /// (a toggle always flips membership).
+    fn toggle(&self, id: &str) -> bool {
+        if !contains_id(&self.nodes.get(), id) {
+            return false;
+        }
+        let mut next = self.selection.get();
+        if !next.remove(id) {
+            next.insert(id.to_owned());
+        }
+        batch(|| {
+            self.selection.set(next);
+            self.anchor.set(Some(id.to_owned()));
+            self.focused_id.set(Some(id.to_owned()));
+        });
+        true
+    }
+
+    /// `Shift`-extend the selection to `target`: replace it with the inclusive
+    /// run from the [`anchor`](Self::anchor) to `target` in **visible-row
+    /// order** (`rows` = [`flat_visible`]), moving the cursor to `target` while
+    /// the anchor stays put ([`SelectionChord::Extend`] — the ordered-model
+    /// meaning of *extend*). With no anchor (or one collapsed/scrolled out of
+    /// `rows`) it falls back to [`select_only`](Self::select_only). An unknown
+    /// `target` is a no-op. Returns whether anything changed.
+    fn extend_range(&self, rows: &[VisibleRow], target: &str) -> bool {
+        let Some(target_pos) = rows.iter().position(|r| r.id == target) else {
+            return false;
+        };
+        let anchor = self.anchor.get();
+        let Some(anchor_pos) = anchor.as_deref().and_then(|a| rows.iter().position(|r| r.id == a))
+        else {
+            return self.select_only(target);
+        };
+        let (lo, hi) = (anchor_pos.min(target_pos), anchor_pos.max(target_pos));
+        let next: BTreeSet<String> = rows[lo..=hi].iter().map(|r| r.id.clone()).collect();
+        let changed =
+            self.selection.get() != next || self.focused_id.get().as_deref() != Some(target);
+        batch(|| {
+            self.selection.set(next);
+            self.focused_id.set(Some(target.to_owned()));
+        });
+        changed
+    }
+
+    /// `Ctrl+A` — select every **visible** row (the WAI-ARIA tree select-all
+    /// convention: the visible rows, not descendants hidden inside collapsed
+    /// branches). Leaves the cursor + anchor put. Returns whether the set grew.
+    fn select_visible(&self, rows: &[VisibleRow]) -> bool {
+        let next: BTreeSet<String> = rows.iter().map(|r| r.id.clone()).collect();
+        if self.selection.get() == next {
+            return false;
+        }
+        self.selection.set(next);
+        true
+    }
+
+    /// Clear the selection + the range anchor; the keyboard cursor is left put
+    /// (cursor ⊥ selection — clearing the selection should not move the
+    /// keyboard position). Returns whether anything was selected.
+    fn clear(&self) -> bool {
+        let had = !self.selection.get().is_empty() || self.anchor.get().is_some();
+        batch(|| {
+            self.selection.set(BTreeSet::new());
+            self.anchor.set(None);
+        });
+        had
+    }
+
+    /// Admin replace the selection with an arbitrary id set (the persisted /
+    /// AI-restore channel — not an interaction): unknown ids are dropped, the
+    /// range anchor resets, the cursor is left put. Returns whether it changed.
+    fn set_selection(&self, ids: &BTreeSet<String>) -> bool {
+        let nodes = self.nodes.get();
+        let next: BTreeSet<String> =
+            ids.iter().filter(|id| contains_id(&nodes, id)).cloned().collect();
+        if self.selection.get() == next && self.anchor.get().is_none() {
+            return false;
+        }
+        batch(|| {
+            self.selection.set(next);
+            self.anchor.set(None);
+        });
+        true
+    }
+}
+
+/// R902 §5.40 §5.12 — the [`SELECT_TAG`] multi-select coordinator: the AI-first
+/// query / intervene / invoke surface over the shared [`TreeState`] selection,
+/// driving the SAME funnel ([`select_only`](TreeState::select_only) /
+/// [`toggle`](TreeState::toggle) / [`extend_range`](TreeState::extend_range) /
+/// [`select_visible`](TreeState::select_visible) / [`clear`](TreeState::clear) /
+/// [`set_selection`](TreeState::set_selection)) the keyboard + click drive, so
+/// RPC and pointer / keyboard multi-select are one SSOT
+/// ([[ai-first-rpc-introspection-obligation]]). It owns no state of its own — it
+/// holds the cached `TreeState` and mutates its `Signal`s, so a paint follows
+/// every write (the framework re-renders after a `scene/invoke`, and the
+/// `Signal::set` marks the view's owner dirty).
+///
+/// Read/write symmetric ([[wire-form-read-write-symmetry]]): `query("selection")`
+/// reports the set as a JSON array of ids and `intervene("selection", [..])`
+/// replaces it (the [`VirtualSelectExternal`](pinion_core::widgets::virtual_select)
+/// set-encode shape, id-keyed); each interaction `invoke` op returns the
+/// resulting set so a caller sees the outcome in one round-trip.
+struct TreeSelectExternal {
+    state: Rc<TreeState>,
+}
+
+impl core::fmt::Debug for TreeSelectExternal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("TreeSelectExternal")
+            .field("count", &self.state.selection.get().len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl TreeSelectExternal {
+    /// The selection set as a JSON array of ids (ascending — a `BTreeSet`): the
+    /// uniform return for the `"selection"` query + every mutating `invoke`.
+    /// Always an array (empty `[]` when nothing is selected), never `Null`, so
+    /// an AI consumer treats the slot as a list unconditionally.
+    fn selection_value(&self) -> IntrospectValue {
+        IntrospectValue::Json(serde_json::Value::Array(
+            self.state.selection.get().into_iter().map(serde_json::Value::String).collect(),
+        ))
+    }
+
+    /// The visible-row flattening — the order `extend_to` ranges over and the
+    /// set `select_all` collects.
+    fn rows(&self) -> Vec<VisibleRow> {
+        flat_visible(&self.state.nodes.get())
+    }
+}
+
+impl External for TreeSelectExternal {
+    fn backends(&self) -> BackendSupport {
+        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
+    }
+
+    fn repaint_ownership(&self) -> RepaintOwner {
+        RepaintOwner::Framework
+    }
+
+    fn thread_ownership(&self) -> ThreadOwnership {
+        ThreadOwnership::UiThreadSync
+    }
+
+    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+        Some(self)
+    }
+
+    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+impl ExternalIntrospect for TreeSelectExternal {
+    fn schema(&self) -> IntrospectSchema {
+        // `selection` — settable selected-id set as a JSON array (query + intervene).
+        // `count`     — selected-row count (query only).
+        // `anchor`    — the range-extension origin id (query only), Null when none.
+        // The interaction ops (`select` / `toggle` / `extend_to` / `select_all`
+        // / `clear`) are `invoke`-only, mirroring `VirtualSelectExternal`.
+        IntrospectSchema::new(&[("selection", "json"), ("count", "int"), ("anchor", "string")])
+    }
+
+    fn query(&self, path: &str) -> Option<IntrospectValue> {
+        match path {
+            "selection" => Some(self.selection_value()),
+            "count" => Some(IntrospectValue::Int(
+                i64::try_from(self.state.selection.get().len()).unwrap_or(i64::MAX),
+            )),
+            "anchor" => {
+                Some(self.state.anchor.get().map_or(IntrospectValue::Null, IntrospectValue::Text))
+            }
+            _ => None,
+        }
+    }
+
+    fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
+        match path {
+            // The full set is a writable axis (admin / AI-restore): a JSON array
+            // of ids replaces the selection (unknown ids dropped); Null clears.
+            "selection" => match value {
+                IntrospectValue::Json(serde_json::Value::Array(items)) => {
+                    let ids: BTreeSet<String> = items
+                        .into_iter()
+                        .filter_map(|v| match v {
+                            serde_json::Value::String(s) => Some(s),
+                            _ => None,
+                        })
+                        .collect();
+                    self.state.set_selection(&ids);
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.state.set_selection(&BTreeSet::new());
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            "count" | "anchor" => Err(InterveneError::ReadOnly),
+            _ => Err(InterveneError::UnknownPath),
+        }
+    }
+
+    fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        // Each op drives the shared funnel and returns the resulting set (the
+        // same funnel the keyboard + click drive — RPC parity, not a fork).
+        match path {
+            "select" => match args {
+                IntrospectValue::Text(ref id) => {
+                    self.state.select_only(id);
+                    Ok(self.selection_value())
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "toggle" => match args {
+                IntrospectValue::Text(ref id) => {
+                    self.state.toggle(id);
+                    Ok(self.selection_value())
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "extend_to" => match args {
+                IntrospectValue::Text(ref id) => {
+                    self.state.extend_range(&self.rows(), id);
+                    Ok(self.selection_value())
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "select_all" => {
+                self.state.select_visible(&self.rows());
+                Ok(self.selection_value())
+            }
+            "clear" => {
+                self.state.clear();
+                Ok(self.selection_value())
+            }
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+}
+
+/// R902 §5.40 §5.27 — apply one key to the **multi-select** windowed tree-grid.
+///
+/// Two chords are not navigation and short-circuit (the WAI-ARIA APG
+/// multi-select set ops, matching the list/grid keyboard `nav_select_key`):
+///
+/// - **`Ctrl+A`** — select every visible row ([`select_visible`](TreeState::select_visible)).
+/// - **`Ctrl+Space`** — toggle the cursor row's membership
+///   ([`toggle`](TreeState::toggle); the cursor stays put — `Ctrl`-arrow is not
+///   a tree gesture, so toggle is bound to `Ctrl+Space` only).
+///
+/// Otherwise the key drives the R864 navigation / expand / type-ahead pipeline
+/// (the lifted [`apply_windowed_tree_key`], modifier-blind), then **selection
+/// follows the cursor** — but only when the cursor actually *moved* (a pure
+/// expand / collapse leaves it put and must not disturb the set). The chord
+/// decode is the shared [`SelectionChord`] policy SSOT (R880.1): plain nav
+/// **replaces** the selection with the new cursor, `Shift`+nav **extends** the
+/// range from the [`anchor`](TreeState::anchor) — exactly the list/grid keyboard
+/// semantics, so the three scaled Model/View widgets never diverge. (`Ctrl`+nav
+/// decodes as `Toggle`, which has no move-gesture meaning here and collapses to
+/// a plain move, matching `nav_select_key`.)
+fn apply_key_impl(key: &str, modifiers: Modifiers) -> bool {
     let state = use_tree_state();
-    apply_windowed_tree_key(
+    // Ctrl+A — select all visible rows (not a navigation key).
+    if modifiers.command_key() && key.eq_ignore_ascii_case("a") {
+        let rows = flat_visible(&state.nodes.get());
+        state.select_visible(&rows);
+        return true;
+    }
+    // Ctrl+Space — toggle the cursor row's membership (cursor unchanged); plain
+    // Space falls through to expand-toggle below (the command gate distinguishes).
+    if modifiers.command_key() && (key == " " || key == "Space") {
+        return match state.focused_id.get() {
+            Some(cursor) => {
+                state.toggle(&cursor);
+                true
+            }
+            None => false,
+        };
+    }
+    // Navigation / expand / type-ahead — the R864 cursor + expand pipeline.
+    let before = state.focused_id.get();
+    let handled = apply_windowed_tree_key(
         &state.nodes,
         &state.focused_id,
         &use_scroll_state(SCROLL_KEY),
@@ -316,7 +686,21 @@ fn apply_key_impl(key: &str) -> bool {
         NAV_PAGE,
         ROW_PITCH,
         key,
-    )
+    );
+    // Selection-follows-cursor, but only when the cursor MOVED (an expand /
+    // collapse keeps the cursor put and leaves the selection alone).
+    if handled
+        && let after = state.focused_id.get()
+        && after != before
+        && let Some(target) = after
+    {
+        let rows = flat_visible(&state.nodes.get());
+        match SelectionChord::from_modifiers(modifiers) {
+            SelectionChord::Extend => state.extend_range(&rows, &target),
+            SelectionChord::Replace | SelectionChord::Toggle => state.select_only(&target),
+        };
+    }
+    handled
 }
 
 /// view-fn (§6.3): pure sync mapping. The dataset is virtual —
@@ -334,6 +718,9 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let nodes = tree_state.nodes.get();
     let rows = flat_visible(&nodes);
     let focused = tree_state.focused_id.get();
+    // R902 — snapshot the selection set once; the paint predicate tests
+    // membership per visible row (several rows highlighted at once).
+    let selection = tree_state.selection.get();
     let scroll = use_scroll_state(SCROLL_KEY);
     let h_scroll = use_scroll_state(H_SCROLL_KEY);
 
@@ -347,10 +734,11 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             tree_col_width: TREE_COL_W,
             data_col_width: DATA_COL_W,
             overscan: OVERSCAN,
+            cursor: focused.as_deref(),
         },
-        focused.as_deref(),
         &theme,
         &TreeViewStyle::m3_default(),
+        |id| selection.contains(id),
         cell_data,
     );
 
@@ -412,6 +800,9 @@ impl WidgetCore for TreeGridView {
                     rows: Box::new(move || flat_visible(&cells_nodes.get())),
                 }))),
             ),
+            // R902 — the multi-select coordinator: query / intervene the
+            // selection set + invoke the keyboard's funnel ops from RPC.
+            ExtraExternal::new(SELECT_TAG, Box::new(TreeSelectExternal { state: tree_state })),
         ]
     }
 
@@ -425,16 +816,27 @@ impl WidgetCore for TreeGridView {
         "__internal__"
     }
 
-    /// Click a row → focus it + toggle its `expanded` flag (a no-op on a
-    /// leaf, which `flat_visible` ignores). Side-effect-only reducer
-    /// ([[scxml-as-model-update-transient]]): the `Signal::set`s are the
+    /// Click a row → **select it** (replace the selection, move the cursor +
+    /// anchor — [`select_only`](TreeState::select_only)) + toggle its `expanded`
+    /// flag (a no-op on a leaf, which `flat_visible` ignores). Side-effect-only
+    /// reducer ([[scxml-as-model-update-transient]]): the `Signal::set`s are the
     /// mutation, so the command list is empty.
+    ///
+    /// R902 — a plain click is a `SelectionChord::Replace`. Modifier-aware
+    /// pointer clicks (`Ctrl` / `Shift`-click) are deferred: the shared
+    /// model-agnostic [`TreeRowClickExternal`] carries only the bare row id (its
+    /// R675/R678 contract), so chord-clicks need it to forward the held
+    /// modifiers — a wire-symmetry substrate change across all four tree
+    /// consumers, landing at the 2nd chord-click tree consumer
+    /// ([[abstraction-needs-second-consumer]]). The keyboard (`Shift`+nav /
+    /// `Ctrl+Space` / `Ctrl+A`) and the [`SELECT_TAG`] RPC ops already give full
+    /// modifier-aware multi-select.
     fn update(_state: (), intent: &Intent) -> Vec<pinion_core::command::Command> {
         if intent.tag_str() == CLICK_INTENT_TAG
             && let IntrospectValue::Text(id) = &intent.payload
         {
             let tree_state = use_tree_state();
-            tree_state.focused_id.set(Some(id.clone()));
+            tree_state.select_only(id);
             toggle_expanded(&tree_state.nodes, id);
         }
         Vec::new()
@@ -456,12 +858,12 @@ impl WidgetCore for TreeGridView {
     /// would steal keys from sibling panels in the eventual self-hosted editor
     /// ([[routing-and-focus-are-separate-axes]]); the RPC demo issues
     /// `focus/set` first like every other gated example.
-    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, _modifiers: Modifiers) -> bool {
+    fn apply_key(scene: &mut Scene, focused: Option<&str>, key: &str, modifiers: Modifiers) -> bool {
         let _ = scene;
         if focused != Some(ROOT_TAG) {
             return false;
         }
-        apply_key_impl(key)
+        apply_key_impl(key, modifiers)
     }
 
     fn title() -> &'static str {
@@ -484,13 +886,18 @@ impl WidgetA11y for TreeGridView {
     /// R865 — windows the AT tree to the rendered slice (the same
     /// `compute_visible_range` the paint uses), mirroring `hello-virtual-tree`:
     /// the AT tree exposes exactly the rows the paint realizes, so off-window
-    /// rows are not announced as bounds-less ghost nodes. The keyboard cursor
-    /// always sits inside this window (R864 `reveal_cursor` scrolls it in), so
-    /// the `aria-selected` cursor row is always present.
+    /// rows are not announced as bounds-less ghost nodes.
+    ///
+    /// R902 — the treegrid is `aria-multiselectable`; each rendered row carries
+    /// `aria-selected = selection membership` (several at once), and the keyboard
+    /// cursor (decoupled — `Ctrl+Space` may sit it on a deselected row) is the
+    /// `aria-activedescendant` via [`with_focused`](AccessNode::with_focused) +
+    /// the [`access_focus_target`](Self::access_focus_target) composite.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let tree_state = use_tree_state();
         let rows = flat_visible(&tree_state.nodes.get());
-        let focused = tree_state.focused_id.get();
+        let cursor = tree_state.focused_id.get();
+        let selection = tree_state.selection.get();
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();
         let window =
@@ -503,7 +910,7 @@ impl WidgetA11y for TreeGridView {
             TREE_HEADER,
             &DATA_HEADERS,
             slice,
-            focused.as_deref(),
+            &TreeGridSelection { selected: &selection, cursor: cursor.as_deref() },
         )
     }
 
@@ -539,6 +946,19 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Plain (no-modifier) key press through the R902 multi-select pipeline.
+    fn nav(key: &str) -> bool {
+        apply_key_impl(key, Modifiers::empty())
+    }
+    const SHIFT: Modifiers = Modifiers { shift: true, ctrl: false, alt: false, meta: false };
+    const CTRL: Modifiers = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+
+    /// The current selection as a sorted `Vec<String>` (a `BTreeSet` is already
+    /// ordered) for terse assertions.
+    fn selection_of(state: &TreeState) -> Vec<String> {
+        state.selection.get().into_iter().collect()
+    }
 
     #[test]
     fn metadata_overflows_the_window() {
@@ -595,12 +1015,12 @@ mod tests {
             let state = use_tree_state();
             // f0 boots expanded → ArrowDown descends to its first child.
             assert_eq!(state.focused_id.get().as_deref(), Some("f0"));
-            assert!(apply_key_impl("ArrowDown"), "ArrowDown handled");
+            assert!(nav("ArrowDown"), "ArrowDown handled");
             assert_eq!(state.focused_id.get().as_deref(), Some("f0-o0"), "Down -> first child");
-            assert!(apply_key_impl("ArrowUp"), "ArrowUp handled");
+            assert!(nav("ArrowUp"), "ArrowUp handled");
             assert_eq!(state.focused_id.get().as_deref(), Some("f0"), "Up -> back to parent");
             // A non-navigation, non-typeahead key is unhandled (falls through).
-            assert!(!apply_key_impl("F5"), "F5 is not a tree key");
+            assert!(!nav("F5"), "F5 is not a tree key");
         });
     }
 
@@ -612,11 +1032,11 @@ mod tests {
             // Focus a collapsed folder (f10), then ArrowRight expands it.
             state.focused_id.set(Some(String::from("f10")));
             let before = flat_visible(&state.nodes.get()).len();
-            assert!(apply_key_impl("ArrowRight"), "ArrowRight handled");
+            assert!(nav("ArrowRight"), "ArrowRight handled");
             let after = flat_visible(&state.nodes.get()).len();
             assert_eq!(after, before + OBJECTS_PER, "ArrowRight expanded f10");
             // ArrowLeft on the expanded branch collapses it again.
-            assert!(apply_key_impl("ArrowLeft"), "ArrowLeft handled");
+            assert!(nav("ArrowLeft"), "ArrowLeft handled");
             assert_eq!(flat_visible(&state.nodes.get()).len(), before, "ArrowLeft collapsed f10");
         });
     }
@@ -629,7 +1049,7 @@ mod tests {
             scroll.set_max(0, 1_000_000); // unclamp so scroll_to is honoured
             // Drive the cursor well past the bottom of the window.
             for _ in 0..40 {
-                apply_key_impl("ArrowDown");
+                nav("ArrowDown");
             }
             assert!(scroll.offset_y() > 0, "navigating down scrolled the body window");
             // The cursor row is inside the re-derived window (scroll-into-view).
@@ -743,6 +1163,191 @@ mod tests {
                 .expect("sibling-focused -> atomic");
             assert_eq!(target.focus_tag, "other_widget");
             assert!(target.active_descendant.is_none());
+        });
+    }
+
+    // ── R902 §5.40 multi-select model + coordinator ──────────────────
+
+    #[test]
+    fn boot_selects_the_cursor_row() {
+        Owner::new().run(|| {
+            // The outliner opens with f0 the cursor AND the sole selected row
+            // (selection-follows-focus seed), matching the pre-R902 highlight.
+            let state = use_tree_state();
+            assert_eq!(state.focused_id.get().as_deref(), Some("f0"));
+            assert_eq!(selection_of(&state), vec!["f0"]);
+            assert_eq!(state.anchor.get().as_deref(), Some("f0"));
+        });
+    }
+
+    #[test]
+    fn plain_nav_replaces_the_selection_with_the_new_cursor() {
+        Owner::new().run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * ROW_PITCH);
+            let state = use_tree_state();
+            assert!(nav("ArrowDown"));
+            // selection-follows-focus: the set is exactly the new cursor.
+            assert_eq!(state.focused_id.get().as_deref(), Some("f0-o0"));
+            assert_eq!(selection_of(&state), vec!["f0-o0"], "plain nav replaces");
+            assert_eq!(state.anchor.get().as_deref(), Some("f0-o0"), "plain nav re-seeds the anchor");
+        });
+    }
+
+    #[test]
+    fn shift_nav_extends_the_range_from_the_anchor() {
+        Owner::new().run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * ROW_PITCH);
+            let state = use_tree_state();
+            // anchor boots at f0; f0 boots expanded → the next visible rows are
+            // f0-o0, f0-o1, … Shift+Down extends the contiguous run.
+            assert!(apply_key_impl("ArrowDown", SHIFT));
+            assert_eq!(selection_of(&state), vec!["f0", "f0-o0"], "shift extends from anchor f0");
+            assert_eq!(state.anchor.get().as_deref(), Some("f0"), "anchor stays put while extending");
+            // Extend further: the range grows, anchor unchanged, cursor at the end.
+            assert!(apply_key_impl("ArrowDown", SHIFT));
+            assert_eq!(selection_of(&state), vec!["f0", "f0-o0", "f0-o1"]);
+            assert_eq!(state.focused_id.get().as_deref(), Some("f0-o1"), "cursor rides the far end");
+            assert_eq!(state.anchor.get().as_deref(), Some("f0"));
+        });
+    }
+
+    #[test]
+    fn ctrl_space_toggles_the_cursor_membership_without_moving() {
+        Owner::new().run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * ROW_PITCH);
+            let state = use_tree_state();
+            // boot: cursor f0, selected {f0}. Ctrl+Space deselects it (cursor stays).
+            assert!(apply_key_impl("Space", CTRL));
+            assert!(selection_of(&state).is_empty(), "Ctrl+Space toggled f0 off");
+            assert_eq!(state.focused_id.get().as_deref(), Some("f0"), "cursor stays put");
+            // Ctrl+Space again re-selects it.
+            assert!(apply_key_impl("Space", CTRL));
+            assert_eq!(selection_of(&state), vec!["f0"]);
+        });
+    }
+
+    #[test]
+    fn ctrl_a_selects_every_visible_row() {
+        Owner::new().run(|| {
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * ROW_PITCH);
+            let state = use_tree_state();
+            let visible = flat_visible(&state.nodes.get()).len();
+            assert!(visible > 30, "boot has many visible rows ({visible})");
+            assert!(apply_key_impl("a", CTRL));
+            assert_eq!(state.selection.get().len(), visible, "Ctrl+A selects all visible rows");
+        });
+    }
+
+    #[test]
+    fn selection_is_stable_across_collapse_by_id_not_index() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            // f0 boots expanded → its children are visible. Select one, then
+            // collapse f0: the child is no longer visible but stays in the set
+            // (keyed by stable id, not by a flat index that would shift).
+            assert!(state.toggle("f0-o5"));
+            assert!(state.selection.get().contains("f0-o5"));
+            toggle_expanded(&state.nodes, "f0"); // collapse f0
+            let visible: BTreeSet<String> =
+                flat_visible(&state.nodes.get()).iter().map(|r| r.id.clone()).collect();
+            assert!(!visible.contains("f0-o5"), "the child is collapsed away (not visible)");
+            assert!(state.selection.get().contains("f0-o5"), "but it stays selected by stable id");
+            // Re-expand: it is visible AND still selected.
+            toggle_expanded(&state.nodes, "f0");
+            assert!(state.selection.get().contains("f0-o5"), "re-expanding restores the selected row");
+        });
+    }
+
+    #[test]
+    fn clear_empties_selection_but_keeps_the_cursor() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            state.toggle("f1");
+            assert!(state.clear());
+            assert!(selection_of(&state).is_empty());
+            assert!(state.anchor.get().is_none(), "clear drops the range anchor");
+            assert_eq!(state.focused_id.get().as_deref(), Some("f1"), "cursor ⊥ selection: cursor stays");
+            assert!(!state.clear(), "clearing an empty selection is a no-op");
+        });
+    }
+
+    #[test]
+    fn set_selection_and_select_only_reject_phantom_ids() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            let ids: BTreeSet<String> =
+                ["f2", "f3", "ghost", "f99-o99"].iter().map(|s| (*s).to_owned()).collect();
+            assert!(state.set_selection(&ids));
+            assert_eq!(selection_of(&state), vec!["f2", "f3"], "phantom ids dropped, real ids kept");
+            assert!(state.anchor.get().is_none(), "admin restore resets the anchor");
+            // The interaction funnel guards too: a malformed id is a no-op.
+            assert!(!state.select_only("does-not-exist"), "unknown id is a no-op");
+            assert!(!state.toggle("does-not-exist"), "unknown id is a no-op");
+            assert_eq!(selection_of(&state), vec!["f2", "f3"], "selection unchanged by phantom ops");
+        });
+    }
+
+    #[test]
+    fn click_selects_replace_and_toggles_expand() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            // Click f7 (a collapsed folder): selects it (replace) AND expands it.
+            let intent = Intent::new_static(CLICK_INTENT_TAG, IntrospectValue::Text("f7".into()));
+            let _ = TreeGridView::update((), &intent);
+            assert_eq!(selection_of(&state), vec!["f7"], "click replaces the selection");
+            assert_eq!(state.focused_id.get().as_deref(), Some("f7"), "click moves the cursor");
+            assert!(
+                flat_visible(&state.nodes.get()).iter().any(|r| r.id == "f7-o0"),
+                "click expanded the folder",
+            );
+        });
+    }
+
+    #[test]
+    fn select_external_query_intervene_invoke_round_trip() {
+        Owner::new().run(|| {
+            let mut ext = TreeSelectExternal { state: use_tree_state() };
+            // boot: {f0}. Read mirrors the state.
+            assert_eq!(ext.query("count"), Some(IntrospectValue::Int(1)));
+            assert_eq!(ext.query("selection"), Some(IntrospectValue::Json(serde_json::json!(["f0"]))));
+            assert_eq!(ext.query("anchor"), Some(IntrospectValue::Text("f0".into())));
+            // invoke toggle adds a row and returns the resulting set.
+            assert_eq!(
+                ext.invoke("toggle", IntrospectValue::Text("f5".into())),
+                Ok(IntrospectValue::Json(serde_json::json!(["f0", "f5"]))),
+            );
+            // intervene (admin restore) replaces; the read mirrors the write,
+            // and an unknown id is dropped on the write path.
+            ext.intervene("selection", IntrospectValue::Json(serde_json::json!(["f3", "ghost"])))
+                .expect("array replaces");
+            assert_eq!(
+                ext.query("selection"),
+                Some(IntrospectValue::Json(serde_json::json!(["f3"]))),
+                "the unknown id is dropped on the write path",
+            );
+            // clear via invoke returns the empty set; read-only axes + unknown
+            // paths error.
+            assert_eq!(
+                ext.invoke("clear", IntrospectValue::Null),
+                Ok(IntrospectValue::Json(serde_json::json!([]))),
+            );
+            assert_eq!(ext.intervene("count", IntrospectValue::Int(0)), Err(InterveneError::ReadOnly));
+            assert_eq!(ext.invoke("bogus", IntrospectValue::Null), Err(InvokeError::UnknownPath));
+        });
+    }
+
+    #[test]
+    fn select_external_extend_to_ranges_over_visible_rows() {
+        Owner::new().run(|| {
+            let mut ext = TreeSelectExternal { state: use_tree_state() };
+            // Seed the anchor at f0, then extend over the visible run to f0-o2.
+            ext.invoke("select", IntrospectValue::Text("f0".into())).unwrap();
+            let set = ext.invoke("extend_to", IntrospectValue::Text("f0-o2".into())).unwrap();
+            assert_eq!(
+                set,
+                IntrospectValue::Json(serde_json::json!(["f0", "f0-o0", "f0-o1", "f0-o2"])),
+                "extend_to ranges from the anchor over the visible flattening",
+            );
         });
     }
 }
