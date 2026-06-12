@@ -248,6 +248,46 @@ impl SelectionChord {
     }
 }
 
+/// R902.1 — the **non-navigation** multi-select keyboard set-op a key+modifier
+/// chord maps to, decoded ONCE for every multi-select keyboard consumer (the
+/// list/grid [`nav_select_key`](crate::widgets::virtual_select::nav_select_key)
+/// and the tree-grid outliner). Unlike [`SelectionChord`] (which decodes the
+/// modifiers on a *navigation* key into replace / toggle / extend), this
+/// classifies the keys that are **not** navigation — `Ctrl+A` (select all) and
+/// `Ctrl+Space` (toggle the active row) — so the consumer swallows them without
+/// computing a navigation target. The chord→op mapping is one policy: a
+/// divergence (one widget binding `Ctrl+A`, another `Cmd+A` only) would be a
+/// cross-widget keyboard bug, so it lives here, not re-typed per consumer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MultiSelectKeyOp {
+    /// `Ctrl`/`Cmd`+A — select every (visible) row.
+    SelectAll,
+    /// `Ctrl`/`Cmd`+Space — toggle the active (cursor) row's membership.
+    ToggleCursor,
+}
+
+impl MultiSelectKeyOp {
+    /// Classify a key + held modifiers into a non-navigation set-op, or `None`
+    /// when the chord is not a multi-select set-op (the caller then treats the
+    /// key as navigation / type-ahead). The command gate is
+    /// [`Modifiers::command_key`] (Ctrl, or Cmd on macOS), matching the
+    /// text-field / list select-all chord; `Space` is spelled both `" "` and
+    /// `"Space"` (the character-key vs named-key wire forms).
+    #[must_use]
+    pub fn classify(key: &str, mods: Modifiers) -> Option<Self> {
+        if !mods.command_key() {
+            return None;
+        }
+        if key.eq_ignore_ascii_case("a") {
+            Some(Self::SelectAll)
+        } else if key == " " || key == "Space" {
+            Some(Self::ToggleCursor)
+        } else {
+            None
+        }
+    }
+}
+
 /// R56.1.f.0 §5.13 — abstract modifier-key state, mirroring
 /// `winit::keyboard::ModifiersState` and W3C DOM Level 3
 /// `getModifierState` without the winit dependency. Four modifier
@@ -752,6 +792,27 @@ mod tests {
         assert!(m(false, false, true).command_key());
         assert!(m(false, true, false).command_key());
         assert!(!m(true, false, false).command_key());
+    }
+
+    #[test]
+    fn r902_1_multiselect_key_op_classifies_the_non_nav_chords() {
+        use super::MultiSelectKeyOp;
+        let cmd = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+        let meta = Modifiers { shift: false, ctrl: false, alt: false, meta: true };
+        let none = Modifiers::empty();
+        // Ctrl/Cmd+A -> select-all; case-insensitive on the character key.
+        assert_eq!(MultiSelectKeyOp::classify("a", cmd), Some(MultiSelectKeyOp::SelectAll));
+        assert_eq!(MultiSelectKeyOp::classify("A", meta), Some(MultiSelectKeyOp::SelectAll));
+        // Ctrl/Cmd+Space (both wire spellings) -> toggle the cursor.
+        assert_eq!(MultiSelectKeyOp::classify(" ", cmd), Some(MultiSelectKeyOp::ToggleCursor));
+        assert_eq!(MultiSelectKeyOp::classify("Space", cmd), Some(MultiSelectKeyOp::ToggleCursor));
+        // Without the command modifier, these are NOT set-ops (plain 'a' =
+        // type-ahead, plain Space = expand-toggle) — the caller navigates.
+        assert_eq!(MultiSelectKeyOp::classify("a", none), None);
+        assert_eq!(MultiSelectKeyOp::classify(" ", none), None);
+        // A command chord on an unrelated key is not a set-op either.
+        assert_eq!(MultiSelectKeyOp::classify("b", cmd), None);
+        assert_eq!(MultiSelectKeyOp::classify("ArrowDown", cmd), None);
     }
 
     #[test]

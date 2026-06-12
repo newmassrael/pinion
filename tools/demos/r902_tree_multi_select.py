@@ -207,6 +207,29 @@ def body() -> None:
         assert_eq(tf.query(f"/{STATE_TAG}/external/cursor"), "f7", "click moves the cursor to f7")
         assert "f7-o0" in visible_ids(tf), "click also expanded f7 (its first child is visible)"
 
+        # ── (G) modifier pointer-clicks — the keyboard chords' pointer peer ──
+        # f7 is now expanded; its leaf children f7-o* are rendered. The held
+        # modifiers ride the click wire (tf.modifiers -> dispatch_send_mods ->
+        # the composite click intent -> the SelectionChord reducer): plain click
+        # replaces, Ctrl-click toggles, Shift-click extends from the anchor.
+        wait_until(
+            lambda: name_cell("f7-o5") in abs_rects_of(snap_now()),
+            desc="f7's leaf children are rendered",
+        )
+        tf.click(path=name_cell("f7-o1"))
+        wait_query(tf, sel_path("selection"), ["f7-o1"], desc="plain click on a leaf replaces + anchors")
+        tf.modifiers(ctrl=True)
+        tf.click(path=name_cell("f7-o3"))
+        tf.modifiers()
+        wait_query(tf, sel_path("selection"), ["f7-o1", "f7-o3"], desc="Ctrl-click toggles a 2nd row in")
+        tf.modifiers(shift=True)
+        tf.click(path=name_cell("f7-o5"))
+        tf.modifiers()
+        wait_query(
+            tf, sel_path("selection"), ["f7-o3", "f7-o4", "f7-o5"],
+            desc="Shift-click extends the range from the anchor (f7-o3)",
+        )
+
 
 if __name__ == "__main__":
     sys.exit(run_demo("r902_tree_multi_select", body))

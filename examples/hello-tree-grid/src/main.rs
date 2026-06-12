@@ -91,7 +91,7 @@ use pinion_core::reactive::batch;
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size};
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::composite_tag::GridTag;
+use pinion_core::composite_tag::{split_send_payload, GridTag};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::tree_nav::{
@@ -659,22 +659,27 @@ impl ExternalIntrospect for TreeSelectExternal {
 /// a plain move, matching `nav_select_key`.)
 fn apply_key_impl(key: &str, modifiers: Modifiers) -> bool {
     let state = use_tree_state();
-    // Ctrl+A — select all visible rows (not a navigation key).
-    if modifiers.command_key() && key.eq_ignore_ascii_case("a") {
-        let rows = flat_visible(&state.nodes.get());
-        state.select_visible(&rows);
-        return true;
-    }
-    // Ctrl+Space — toggle the cursor row's membership (cursor unchanged); plain
-    // Space falls through to expand-toggle below (the command gate distinguishes).
-    if modifiers.command_key() && (key == " " || key == "Space") {
-        return match state.focused_id.get() {
-            Some(cursor) => {
-                state.toggle(&cursor);
-                true
-            }
-            None => false,
-        };
+    // R902.1 — the non-navigation multi-select chords (Ctrl+A / Ctrl+Space) via
+    // the shared [`MultiSelectKeyOp`] gate (the same one `nav_select_key` uses,
+    // so list/grid/tree never diverge on which keys are set-ops). Plain Space /
+    // 'a' (command_key false -> None) fall through to expand-toggle / type-ahead.
+    match pinion_core::input::MultiSelectKeyOp::classify(key, modifiers) {
+        Some(pinion_core::input::MultiSelectKeyOp::SelectAll) => {
+            let rows = flat_visible(&state.nodes.get());
+            state.select_visible(&rows);
+            return true;
+        }
+        Some(pinion_core::input::MultiSelectKeyOp::ToggleCursor) => {
+            // Toggle the cursor row's membership (cursor stays put).
+            return match state.focused_id.get() {
+                Some(cursor) => {
+                    state.toggle(&cursor);
+                    true
+                }
+                None => false,
+            };
+        }
+        None => {}
     }
     // Navigation / expand / type-ahead — the R864 cursor + expand pipeline.
     let before = state.focused_id.get();
@@ -787,7 +792,10 @@ impl WidgetCore for TreeGridView {
         let cells_nodes = tree_state.nodes.clone();
         let focused = tree_state.focused_id.clone();
         vec![
-            ExtraExternal::new(TREE_TAG, Box::new(TreeRowClickExternal::new())),
+            // R902.1 — opt in to modifier-aware clicks (the `click` intent then
+            // carries the held modifiers; the keyboard's `SelectionChord` chords
+            // get a pointer peer).
+            ExtraExternal::new(TREE_TAG, Box::new(TreeRowClickExternal::new().with_click_modifiers())),
             tree_view_introspection_extra(
                 TREE_STATE_TAG,
                 move || flat_visible(&struct_nodes.get()),
@@ -816,28 +824,37 @@ impl WidgetCore for TreeGridView {
         "__internal__"
     }
 
-    /// Click a row → **select it** (replace the selection, move the cursor +
-    /// anchor — [`select_only`](TreeState::select_only)) + toggle its `expanded`
-    /// flag (a no-op on a leaf, which `flat_visible` ignores). Side-effect-only
+    /// Click a row → a [`SelectionChord`]-decoded selection (R902.1, the pointer
+    /// peer of the keyboard chords): a **plain** click *replaces* the selection
+    /// (move cursor + anchor — [`select_only`](TreeState::select_only)) AND
+    /// toggles the row's `expanded` flag (the R860 row-click affordance);
+    /// `Ctrl`-click *toggles* the row's membership and `Shift`-click *extends*
+    /// the range from the anchor — both selection-only (a chord click is a pure
+    /// selection gesture, it does not expand). The held modifiers ride the
+    /// `click` intent's composite `"{id}:click[:{token}]"` payload because the
+    /// [`TreeRowClickExternal`] is built `with_click_modifiers` (R902.1); the
+    /// decode is the shared [`split_send_payload`] grammar. Side-effect-only
     /// reducer ([[scxml-as-model-update-transient]]): the `Signal::set`s are the
     /// mutation, so the command list is empty.
-    ///
-    /// R902 — a plain click is a `SelectionChord::Replace`. Modifier-aware
-    /// pointer clicks (`Ctrl` / `Shift`-click) are deferred: the shared
-    /// model-agnostic [`TreeRowClickExternal`] carries only the bare row id (its
-    /// R675/R678 contract), so chord-clicks need it to forward the held
-    /// modifiers — a wire-symmetry substrate change across all four tree
-    /// consumers, landing at the 2nd chord-click tree consumer
-    /// ([[abstraction-needs-second-consumer]]). The keyboard (`Shift`+nav /
-    /// `Ctrl+Space` / `Ctrl+A`) and the [`SELECT_TAG`] RPC ops already give full
-    /// modifier-aware multi-select.
     fn update(_state: (), intent: &Intent) -> Vec<pinion_core::command::Command> {
         if intent.tag_str() == CLICK_INTENT_TAG
-            && let IntrospectValue::Text(id) = &intent.payload
+            && let IntrospectValue::Text(payload) = &intent.payload
+            && let Some((id, _event, modifiers)) = split_send_payload(payload)
         {
             let tree_state = use_tree_state();
-            tree_state.select_only(id);
-            toggle_expanded(&tree_state.nodes, id);
+            match SelectionChord::from_modifiers(modifiers) {
+                SelectionChord::Replace => {
+                    tree_state.select_only(id);
+                    toggle_expanded(&tree_state.nodes, id);
+                }
+                SelectionChord::Toggle => {
+                    tree_state.toggle(id);
+                }
+                SelectionChord::Extend => {
+                    let rows = flat_visible(&tree_state.nodes.get());
+                    tree_state.extend_range(&rows, id);
+                }
+            }
         }
         Vec::new()
     }
@@ -1287,19 +1304,64 @@ mod tests {
         });
     }
 
+    /// Build a click `Intent` exactly as the opted-in `TreeRowClickExternal`
+    /// emits it (R902.1 — the composite `"{id}:click[:{token}]"` payload).
+    fn click_intent(id: &str, modifiers: Modifiers) -> Intent {
+        let payload = pinion_core::composite_tag::compose_send_payload(
+            Some(id),
+            pinion_widget_paint::tree_view::TREE_ROW_CLICK_EVENT,
+            modifiers,
+        );
+        Intent::new_static(CLICK_INTENT_TAG, IntrospectValue::Text(payload))
+    }
+
     #[test]
-    fn click_selects_replace_and_toggles_expand() {
+    fn plain_click_replaces_and_toggles_expand() {
         Owner::new().run(|| {
             let state = use_tree_state();
-            // Click f7 (a collapsed folder): selects it (replace) AND expands it.
-            let intent = Intent::new_static(CLICK_INTENT_TAG, IntrospectValue::Text("f7".into()));
-            let _ = TreeGridView::update((), &intent);
-            assert_eq!(selection_of(&state), vec!["f7"], "click replaces the selection");
-            assert_eq!(state.focused_id.get().as_deref(), Some("f7"), "click moves the cursor");
+            // Plain click f7 (a collapsed folder): selects it (replace) AND
+            // expands it (the R860 row-click affordance).
+            let _ = TreeGridView::update((), &click_intent("f7", Modifiers::empty()));
+            assert_eq!(selection_of(&state), vec!["f7"], "plain click replaces the selection");
+            assert_eq!(state.focused_id.get().as_deref(), Some("f7"), "plain click moves the cursor");
             assert!(
                 flat_visible(&state.nodes.get()).iter().any(|r| r.id == "f7-o0"),
-                "click expanded the folder",
+                "plain click expanded the folder",
             );
+        });
+    }
+
+    #[test]
+    fn ctrl_and_shift_click_drive_the_selection_chord() {
+        // R902.1 — the pointer peer of the keyboard chords: Ctrl-click toggles,
+        // Shift-click extends — both selection-only (no expand on a chord click).
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            // Plain click a LEAF (f0 boots expanded, f0-o2 is a leaf -> no expand):
+            // replaces + anchors at f0-o2.
+            let _ = TreeGridView::update((), &click_intent("f0-o2", Modifiers::empty()));
+            assert_eq!(selection_of(&state), vec!["f0-o2"], "plain click on a leaf replaces");
+            assert_eq!(state.anchor.get().as_deref(), Some("f0-o2"), "plain click seeds the anchor");
+            // Shift-click extends the contiguous range from the anchor.
+            let _ = TreeGridView::update((), &click_intent("f0-o5", SHIFT));
+            assert_eq!(
+                selection_of(&state),
+                vec!["f0-o2", "f0-o3", "f0-o4", "f0-o5"],
+                "Shift-click extends the range from the anchor over the visible run",
+            );
+            assert_eq!(state.anchor.get().as_deref(), Some("f0-o2"), "Shift-click holds the anchor put");
+            // Ctrl-click toggles a non-adjacent row IN without clearing the range,
+            // and does NOT expand it.
+            let _ = TreeGridView::update((), &click_intent("f7", CTRL));
+            assert!(state.selection.get().contains("f7"), "Ctrl-click adds f7");
+            assert!(state.selection.get().contains("f0-o3"), "Ctrl-click keeps the existing range");
+            assert!(
+                flat_visible(&state.nodes.get()).iter().all(|r| r.id != "f7-o0"),
+                "Ctrl-click on a folder does NOT expand it (pure selection gesture)",
+            );
+            // Ctrl-click an existing member removes it.
+            let _ = TreeGridView::update((), &click_intent("f0-o3", CTRL));
+            assert!(!state.selection.get().contains("f0-o3"), "Ctrl-click toggles a member off");
         });
     }
 

@@ -858,22 +858,28 @@ pub fn nav_select_key(
 
     // Multi-select set ops that are *not* navigation: Ctrl+A select-all and
     // Ctrl+Space toggle-active. These handle the key (swallow it) without a
-    // navigation target / scroll. R880.1 — the chord gate is the
-    // [`Modifiers::command_key`] command predicate (Ctrl, or Cmd on macOS),
-    // matching the text-field select-all chord.
-    if multi && modifiers.command_key() && key.eq_ignore_ascii_case("a") {
-        if let Some(intro) = node.handle.introspect_mut() {
-            let _ = intro.invoke("select_all", IntrospectValue::Null);
-        }
-        return true;
-    }
-    if multi && modifiers.command_key() && (key == " " || key == "Space") {
-        if let (Some(intro), Some(c)) = (node.handle.introspect_mut(), current) {
-            if let Ok(c) = i64::try_from(c) {
-                let _ = intro.invoke("toggle", IntrospectValue::Int(c));
+    // navigation target / scroll. R902.1 — the chord→op gate is the shared
+    // [`MultiSelectKeyOp::classify`](crate::input::MultiSelectKeyOp::classify)
+    // SSOT (so the list/grid and the tree-grid never diverge on which keys are
+    // set-ops); only fires on a `multi` coordinator.
+    if multi {
+        match crate::input::MultiSelectKeyOp::classify(key, modifiers) {
+            Some(crate::input::MultiSelectKeyOp::SelectAll) => {
+                if let Some(intro) = node.handle.introspect_mut() {
+                    let _ = intro.invoke("select_all", IntrospectValue::Null);
+                }
+                return true;
             }
+            Some(crate::input::MultiSelectKeyOp::ToggleCursor) => {
+                if let (Some(intro), Some(c)) = (node.handle.introspect_mut(), current) {
+                    if let Ok(c) = i64::try_from(c) {
+                        let _ = intro.invoke("toggle", IntrospectValue::Int(c));
+                    }
+                }
+                return current.is_some();
+            }
+            None => {}
         }
-        return current.is_some();
     }
 
     let Some(target) = clamp_nav(current, key, item_count, page) else {

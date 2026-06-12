@@ -38445,6 +38445,64 @@
         "keyboard (Shift-nav/Ctrl+Space/Ctrl+A) + AI-first RPC give full modifier-aware multi-select already."
       ]
     },
+    "R902.1": {
+      "decision_summary": "R902.1 session-review audit clearance (cost-no-object). REAL fixed: (1) modifier pointer-clicks — the R902 deferral was scope-avoidance: the held modifiers already reach the composite row-click external (dispatch_send_mods) and were discarded; landed via TreeRowClickExternal opt-in with_click_modifiers (R880 default-false bit, 5 opt-out tree consumers byte-unchanged) so Ctrl/Shift-click drive the SelectionChord (toggle/extend) exactly as the keyboard, plain click replaces+expands. (2) SSOT: the Ctrl+A/Ctrl+Space key-gate was duplicated tree<->nav_select_key -> lifted MultiSelectKeyOp::classify into input.rs (2-consumer divergence-is-a-bug). REJECTED (over-reach): a generic MultiSelectModel<K> lift — VirtualSelect (index-range) and TreeSelect (visible-order-range) are peers with genuine repr/extend divergence (model-view-proxy wrong-abstraction). Correctness review found no bugs.",
+      "changes_bullets": [
+        "modifier pointer-clicks: TreeRowClickExternal.with_click_modifiers opt-in (R880 default-off bit)",
+        "the click intent then carries composite \"{id}:click[:token]\"; 5 opt-out consumers emit bare Text(id) unchanged",
+        "hello-tree-grid update reducer: split_send_payload -> SelectionChord (Replace=select+expand / Toggle / Extend)",
+        "MultiSelectKeyOp::classify lifted to input.rs (Ctrl+A=SelectAll / Ctrl+Space=ToggleCursor)",
+        "nav_select_key + tree apply_key now share the gate (2-consumer divergence-is-a-bug SSOT)"
+      ],
+      "verification_bullets": [
+        "pinion-core 2142(+1 MultiSelectKeyOp) / hello-tree-grid 25(+2 chord-click) / full workspace green 0-fail",
+        "clippy -D pedantic clean (workspace); r902 demo PASS (+modifier-click section, ~48 assert)",
+        "regression PASS: r860 r864 r674 r820 r821 (opt-out TreeRowClickExternal click path byte-identical)",
+        "adversarial 3-lens review (SSOT / correctness / scope) + my own grep+read re-verification",
+        "verified: modifiers DO reach the composite row-click external (dispatch_send_mods input.rs), were discarded"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.40",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "REJECTED (over-reach) generic MultiSelectModel<K> lift: VirtualSelect(usize, index-range-extend) vs",
+        "TreeSelect(String, visible-ORDER-range-extend) are peers with genuine repr+extend divergence; forcing a",
+        "shared trait = the model-view-proxy-family wrong-abstraction (R821). Shared surface (JSON-array-of-keys) shallow.",
+        "ACKNOWLEDGED minor, kept: focused_id co-owned (nav proposes the cursor, the funnel confirms it idempotently;",
+        "Signal equality-skip = no second notify) = not a bug; contains_id 1st-consumer binding-local (read peer of",
+        "find_node_mut to lift @ 2nd consumer); selection decode inline in intervene = single co-located site."
+      ],
+      "publishable_decision_summary": "R902.1 session-review audit clearance (cost-no-object). REAL fixed: (1) modifier pointer-clicks — the R902 deferral was scope-avoidance: the held modifiers already reach the composite row-click external (dispatch_send_mods) and were discarded; landed via TreeRowClickExternal opt-in with_click_modifiers (R880 default-false bit, 5 opt-out tree consumers byte-unchanged) so Ctrl/Shift-click drive the SelectionChord (toggle/extend) exactly as the keyboard, plain click replaces+expands. (2) SSOT: the Ctrl+A/Ctrl+Space key-gate was duplicated tree<->nav_select_key -> lifted MultiSelectKeyOp::classify into input.rs (2-consumer divergence-is-a-bug). REJECTED (over-reach): a generic MultiSelectModel<K> lift — VirtualSelect (index-range) and TreeSelect (visible-order-range) are peers with genuine repr/extend divergence (model-view-proxy wrong-abstraction). Correctness review found no bugs.",
+      "publishable_changes_bullets": [
+        "modifier pointer-clicks: TreeRowClickExternal.with_click_modifiers opt-in (R880 default-off bit)",
+        "the click intent then carries composite \"{id}:click[:token]\"; 5 opt-out consumers emit bare Text(id) unchanged",
+        "hello-tree-grid update reducer: split_send_payload -> SelectionChord (Replace=select+expand / Toggle / Extend)",
+        "MultiSelectKeyOp::classify lifted to input.rs (Ctrl+A=SelectAll / Ctrl+Space=ToggleCursor)",
+        "nav_select_key + tree apply_key now share the gate (2-consumer divergence-is-a-bug SSOT)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core 2142(+1 MultiSelectKeyOp) / hello-tree-grid 25(+2 chord-click) / full workspace green 0-fail",
+        "clippy -D pedantic clean (workspace); r902 demo PASS (+modifier-click section, ~48 assert)",
+        "regression PASS: r860 r864 r674 r820 r821 (opt-out TreeRowClickExternal click path byte-identical)",
+        "adversarial 3-lens review (SSOT / correctness / scope) + my own grep+read re-verification",
+        "verified: modifiers DO reach the composite row-click external (dispatch_send_mods input.rs), were discarded"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.40",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "REJECTED (over-reach) generic MultiSelectModel<K> lift: VirtualSelect(usize, index-range-extend) vs",
+        "TreeSelect(String, visible-ORDER-range-extend) are peers with genuine repr+extend divergence; forcing a",
+        "shared trait = the model-view-proxy-family wrong-abstraction (R821). Shared surface (JSON-array-of-keys) shallow.",
+        "ACKNOWLEDGED minor, kept: focused_id co-owned (nav proposes the cursor, the funnel confirms it idempotently;",
+        "Signal equality-skip = no second notify) = not a bug; contains_id 1st-consumer binding-local (read peer of",
+        "find_node_mut to lift @ 2nd consumer); selection decode inline in intervene = single co-located site."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

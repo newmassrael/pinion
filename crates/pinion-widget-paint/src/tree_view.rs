@@ -52,7 +52,8 @@
 //! - **Multi-select / drag-drop / inline rename**. Not in R671 scope.
 
 use crate::glyph::{DISCLOSURE_COLLAPSED as GLYPH_COLLAPSED, DISCLOSURE_EXPANDED as GLYPH_EXPANDED};
-use pinion_core::composite_tag::parse_send_payload;
+use pinion_core::composite_tag::{compose_send_payload, parse_send_payload};
+use pinion_core::input::Modifiers;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
@@ -945,6 +946,9 @@ pub struct TreeRowClickExternal {
     pressed_id: Option<String>,
     hovered_id: Option<String>,
     pending: Vec<Intent>,
+    /// R902.1 — forward the click's held modifiers in the `click` intent
+    /// (opt-in, default off). See [`with_click_modifiers`](Self::with_click_modifiers).
+    emit_modifiers: bool,
 }
 
 impl TreeRowClickExternal {
@@ -956,14 +960,37 @@ impl TreeRowClickExternal {
         Self::default()
     }
 
+    /// R902.1 §5.35 §5.40 — opt in to **modifier-aware clicks**: the `click`
+    /// intent then carries the held modifiers via the R781 composite wire form
+    /// `"{id}:click[:{token}]"` (decode with
+    /// [`parse_send_payload`](pinion_core::composite_tag::parse_send_payload) /
+    /// [`split_send_payload`](pinion_core::composite_tag::split_send_payload)),
+    /// so a binding can drive a [`SelectionChord`](pinion_core::SelectionChord)
+    /// off `Ctrl`/`Shift`-click exactly as the keyboard does. **Default off** —
+    /// every existing consumer keeps the bare `Text(id)` payload (R880's
+    /// "opt-in bit, default false, blast-radius 0" rule), so this is additive.
+    /// The modifiers already reach this External on the composite send wire
+    /// (`dispatch_send_mods` forwards them for any `#`-sub-indexed target); the
+    /// opt-out path discarded them as the press had no modifier axis (R781).
+    #[must_use]
+    pub fn with_click_modifiers(mut self) -> Self {
+        self.emit_modifiers = true;
+        self
+    }
+
     /// R675 §5.20 — enqueue the `click` intent for `id` on the §5.20
     /// channel. `drain_intents` ships the payload across the boundary
-    /// on the next substrate drain pass.
-    fn emit_click(&mut self, id: String) {
-        self.pending.push(Intent::new_static(
-            TREE_ROW_CLICK_EVENT,
-            IntrospectValue::Text(id),
-        ));
+    /// on the next substrate drain pass. R902.1 — when
+    /// [`with_click_modifiers`](Self::with_click_modifiers) is on, the payload
+    /// is the composite `"{id}:click[:{token}]"` carrying the held `modifiers`;
+    /// otherwise it is the bare `Text(id)` every pre-R902.1 consumer expects.
+    fn emit_click(&mut self, id: String, modifiers: Modifiers) {
+        let payload = if self.emit_modifiers {
+            IntrospectValue::Text(compose_send_payload(Some(&id), TREE_ROW_CLICK_EVENT, modifiers))
+        } else {
+            IntrospectValue::Text(id)
+        };
+        self.pending.push(Intent::new_static(TREE_ROW_CLICK_EVENT, payload));
     }
 
     /// R678 §5.20 — enqueue the `hover` intent on the §5.20 channel
@@ -1058,8 +1085,10 @@ impl ExternalIntrospect for TreeRowClickExternal {
                     // (R675: 7th substrate consumer — 6-of-6 framework
                     // at R674 plus this substrate lift takes it to
                     // framework-level Rule-of-Three maturity).
-                    // R781 — modifiers ignored (tree press has no modifier axis).
-                    let (id, event_name, _): (String, &str, _) =
+                    // R902.1 — the held modifiers (3rd segment) ride the click
+                    // intent when `with_click_modifiers` is on (else discarded,
+                    // the pre-R902.1 "press has no modifier axis" behaviour).
+                    let (id, event_name, modifiers): (String, &str, Modifiers) =
                         parse_send_payload(payload).ok_or(InvokeError::Rejected)?;
                     match PointerWireEvent::from_wire_name(event_name) {
                         Some(PointerWireEvent::Down) => {
@@ -1073,7 +1102,7 @@ impl ExternalIntrospect for TreeRowClickExternal {
                                 .is_some_and(|p| p == &id);
                             self.pressed_id = None;
                             if armed {
-                                self.emit_click(id);
+                                self.emit_click(id, modifiers);
                                 Ok(IntrospectValue::Bool(true))
                             } else {
                                 Ok(IntrospectValue::Bool(false))
@@ -1131,7 +1160,11 @@ impl ExternalIntrospect for TreeRowClickExternal {
             "click" => match args {
                 IntrospectValue::Text(id) => {
                     self.pressed_id = None;
-                    self.emit_click(id);
+                    // The AI single-shot click carries no modifiers (a chorded
+                    // AI selection drives the binding's selection coordinator
+                    // directly); an opted-in binding still sees the composite
+                    // `"{id}:click"` form, so its decode path is uniform.
+                    self.emit_click(id, Modifiers::empty());
                     Ok(IntrospectValue::Bool(true))
                 }
                 _ => Err(InvokeError::TypeMismatch),
