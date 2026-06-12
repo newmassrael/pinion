@@ -44,7 +44,9 @@ from rpc_verify import (  # noqa: E402
 
 EXAMPLE = "hello-node-editor"
 G = "node_graph"
-RENAME = "node_rename"
+# R901 — the shared inline field's tag (renamed from "node_rename": it now
+# hosts port-default edits too). `query renaming` still reports title edits.
+RENAME = "node_edit"
 VIEWPORT = (772, 420)
 
 

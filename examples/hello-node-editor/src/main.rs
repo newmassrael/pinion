@@ -135,16 +135,21 @@
 //!   `query`/`intervene viewport.{x,y,zoom}` (pan in zoom-independent graph
 //!   units) + `invoke frame_all`. Drag-to-pan (Space/middle-drag) and
 //!   edge-drag auto-pan are documented follow-ups.
-//! - **Node rename** (R878): double-click a node card (or `F2` on the
-//!   selection, or `invoke begin_rename`) opens ONE shared inline
-//!   [`TextFieldExternal`] over the node's title (the R790 todomvc
-//!   `EDIT_TF` modal-member shape). `Enter` commits, `Escape` cancels, a
-//!   click-away commits through the R793 blur intent; the rename-mode
-//!   keymap is the lifted [`pinion_core::edit_field_keymap`] SSOT (3rd
-//!   consumer). A committed rename journals an undoable [`RenameNodeCmd`]
-//!   through the `apply_rename` SSOT — the same path the AI-first
-//!   `intervene node.<id>.title` write-twin drives (`query renaming` is
-//!   the in-flight read).
+//! - **Inline edit** (R878 title / R901 port default): double-click a node
+//!   card (or `F2` on the selection, or `invoke begin_rename`) edits the
+//!   title; double-click a pin's default label (or `invoke
+//!   begin_edit_default`) edits that input port's literal default. Both open
+//!   ONE shared inline [`TextFieldExternal`] (the R790 todomvc `EDIT_TF`
+//!   modal-member shape) keyed by an [`EditTarget`]. `Enter` commits,
+//!   `Escape` cancels, a click-away commits through the R793 blur intent; the
+//!   keymap is the lifted [`pinion_core::edit_field_keymap`] SSOT with the
+//!   target's typed [`CellKind`] gate (title = text, a `Float` port = a
+//!   number, a `Vector`/`Color` port = a `#RRGGBB[AA]` hex). A commit journals
+//!   an undoable [`RenameNodeCmd`] / [`SetPortDefaultCmd`] through the
+//!   `apply_rename` / `apply_set_default` SSOT — the same path the AI-first
+//!   `intervene node.<id>.title` / `node.<id>.input_default.<port>` write-twins
+//!   drive (`query editing` is the in-flight read; `query renaming` survives as
+//!   its title-only projection).
 //! - Multi-select marquee — the *gesture* is the remaining piece (LMB
 //!   background-drag stays reserved, R877; it needs the router to expose a
 //!   became-drag edge for background presses). The selection *model* it
@@ -244,14 +249,15 @@ const UNDO_TAG: &str = "node_undo";
 /// resolve the same shared [`UndoStack`] from this key.
 const UNDO_KEY: &str = "node_graph.undo";
 
-/// R878 — the inline node-rename editor (a [`TextFieldExternal`] extra, the
-/// R790 todomvc `EDIT_TF` modal-member shape): ONE shared field painted over
-/// the renamed node's title while a rename is in flight. No `#` in the tag —
-/// it routes as its own coordinator, like [`UNDO_TAG`].
-const RENAME_TF_TAG: &str = "node_rename";
-/// R878 — commit-on-blur intent the rename field raises on a click-away
+/// R878 / R901 — the shared inline edit field (a [`TextFieldExternal`] extra,
+/// the R790 todomvc `EDIT_TF` modal-member shape): ONE field painted over the
+/// target's title (a rename) or a pin's default label (a port-default edit)
+/// while an edit is in flight. No `#` in the tag — it routes as its own
+/// coordinator, like [`UNDO_TAG`].
+const EDIT_TF_TAG: &str = "node_edit";
+/// R878 — commit-on-blur intent the inline field raises on a click-away
 /// (R793 opt-in `with_blur_intent`).
-const RENAME_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("node_rename", "blur");
+const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("node_edit", "blur");
 
 /// R852 — the per-OS data dir name for the file-backed graph store
 /// ([`open_app_storage`]); the `Owner::cache` key for the shared storage hook.
@@ -873,13 +879,42 @@ fn use_marquee_rect() -> Rc<Signal<Option<MarqueeRect>>> {
     owner.cache("node_graph.marquee", || Signal::new(None))
 }
 
-/// R878 — which node is being renamed inline (`None` when no rename is in
-/// flight). Shared by the coordinator (begin / commit), the view fn (paints
-/// the shared rename field over that node's title), and the keyboard /
-/// blur-intent commit paths. Transient UI state — never persisted.
-fn use_renaming() -> Rc<Signal<Option<NodeId>>> {
-    let owner = Owner::current().expect("use_renaming requires an active Owner scope");
-    owner.cache("node_graph.renaming", || Signal::new(None))
+/// R901 — what the ONE shared inline field is editing (`None` when idle).
+/// Generalises the R878 single-purpose `renaming: Option<NodeId>` so the same
+/// field, focus, blur-commit, keymap, and a11y machinery drive two edit
+/// targets: a node **title** (R878) and an input **port default** (R899). The
+/// field paints inside a node card either way (a title swaps the header, a
+/// port default swaps the pin's default label), so both targets name the
+/// hosting node ([`EditTarget::node`]).
+// `Serialize`/`Deserialize`: the `Signal<Option<EditTarget>>` holder satisfies
+// the §2 #7 scene-as-data bound (like `Signal<Option<NodeId>>` before it),
+// though this transient UI state is never actually persisted.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum EditTarget {
+    /// Editing node `id`'s title (the R878 rename).
+    Title(NodeId),
+    /// Editing node `node`'s input port `port`'s literal default value (R901).
+    PortDefault { node: NodeId, port: usize },
+}
+
+impl EditTarget {
+    /// The node whose card hosts the inline field. Both targets edit a value
+    /// painted within a single node card, so the migration-commit, the paint
+    /// switch, and the a11y child all key off this id.
+    fn node(self) -> NodeId {
+        match self {
+            EditTarget::Title(id) | EditTarget::PortDefault { node: id, .. } => id,
+        }
+    }
+}
+
+/// R878 / R901 — what the shared inline field is editing (`None` when no edit
+/// is in flight). Shared by the coordinator (begin / commit), the view fn
+/// (paints the field over the target's title or pin default), and the
+/// keyboard / blur-intent commit paths. Transient UI state — never persisted.
+fn use_edit_target() -> Rc<Signal<Option<EditTarget>>> {
+    let owner = Owner::current().expect("use_edit_target requires an active Owner scope");
+    owner.cache("node_graph.editing", || Signal::new(None))
 }
 
 /// Monotonic [`EdgeId`] allocator — persists across view-fn re-runs so a
@@ -956,6 +991,15 @@ fn parse_oport_sub(sub: &str) -> Option<(NodeId, usize)> {
     Some((NodeId(n.parse().ok()?), j.parse().ok()?))
 }
 
+/// R901 — `idefault_<id>_<i>` → (node id, input port): the pin-default label's
+/// composite sub-tag (the [`view_input_default`] hit target). Double-clicking
+/// it opens the inline default editor (the [`parse_oport_sub`] peer over the
+/// `idefault_` prefix).
+fn parse_idefault_sub(sub: &str) -> Option<(NodeId, usize)> {
+    let (n, i) = sub.strip_prefix("idefault_")?.split_once('_')?;
+    Some((NodeId(n.parse().ok()?), i.parse().ok()?))
+}
+
 /// A full drop tag `node_graph#iport_<id>_<i>` → (node id, input port). Uses
 /// the canonical `#` splitter (`split_subindex`) rather than an inline split.
 fn parse_input_port_tag(tag: &str) -> Option<(NodeId, usize)> {
@@ -978,6 +1022,14 @@ fn csv_ids(ids: impl Iterator<Item = u32>) -> String {
 /// `output_types` queries return ("Vector,Float"; "" for a source / sink).
 fn port_types_csv(ports: &[PortType]) -> String {
     ports.iter().map(|p| p.name()).collect::<Vec<_>>().join(",")
+}
+
+/// R901 — `"<node>.<port>"` → (node id, input port). The `begin_edit_default`
+/// invoke arg, mirroring the `node.<id>.input_default.<port>` path's dotted
+/// `<node>.<port>` addressing.
+fn parse_node_port(s: &str) -> Option<(NodeId, usize)> {
+    let (node, port) = s.split_once('.')?;
+    Some((NodeId(node.trim().parse().ok()?), port.trim().parse().ok()?))
 }
 
 /// Four comma-separated values: "from_node_id,from_port,to_node_id,to_port".
@@ -1310,7 +1362,7 @@ impl UndoCommand for RenameNodeCmd {
 /// R878 — apply a node rename undoably: trim, reject an empty / whitespace
 /// title or an unknown id (graph unchanged), no-op (and journal nothing) when
 /// the trimmed title already matches. The ONE rename mutation path — the
-/// interactive commit (Enter / blur via [`commit_rename`]) and the AI-first
+/// interactive commit (Enter / blur via [`commit_edit`]) and the AI-first
 /// `intervene node.<id>.title` both land here, so they cannot drift.
 fn apply_rename(
     nodes: &Rc<Signal<Vec<GraphNode>>>,
@@ -1397,10 +1449,11 @@ impl UndoCommand for SetPortDefaultCmd {
 /// peer): reject an unknown id / out-of-range port (graph unchanged, `false`),
 /// no-op (journal nothing) when the value is unchanged, else journal a
 /// [`SetPortDefaultCmd`]. The ONE port-default mutation path — the AI-first
-/// `intervene node.<id>.input_default.<port>` lands here (the interactive
-/// inline editor, when added, will share it), so the two cannot drift. The
-/// caller has already type-checked the value against the port's kind via
-/// [`CellValue::with_intervene`], so a wrong type never reaches the journal.
+/// `intervene node.<id>.input_default.<port>` and the R901 interactive inline
+/// editor (via [`apply_edit_commit`]) both land here, so they cannot drift.
+/// The caller has already typed the value (an `intervene` against the port's
+/// kind via [`CellValue::with_intervene`], the editor via `CellKind::parse`),
+/// so a wrong type never reaches the journal.
 fn apply_set_default(
     nodes: &Rc<Signal<Vec<GraphNode>>>,
     undo: &UndoStack,
@@ -1425,6 +1478,41 @@ fn apply_set_default(
     cmd.redo();
     undo.push_applied(cmd);
     true
+}
+
+/// R901 — the [`CellKind`] of node `node`'s input port `port`'s default, or
+/// `None` when the node / port is absent. Drives the inline editor's keystroke
+/// gate (a `Float` accepts digits / sign / `.`, a `Color` hex digits + `#`)
+/// and its commit parse — the one place a port default's editor type is read.
+fn port_default_kind(nodes: &[GraphNode], node: NodeId, port: usize) -> Option<CellKind> {
+    nodes.iter().find(|n| n.id == node)?.input_default(port).map(CellValue::kind)
+}
+
+/// R901 — commit inline-editor `text` into `target` through the matching
+/// field SSOT: a title routes to [`apply_rename`] (trim / reject-empty), a
+/// port default parses by the port's [`CellKind`] and routes to
+/// [`apply_set_default`] (a malformed numeric / hex keeps the prior value — no
+/// data loss, the `CellKind::parse` contract). The ONE place an inline commit
+/// dispatches by target, shared by the keyboard / blur [`commit_edit`] and the
+/// begin-edit migration (committing a different in-flight target before
+/// opening a new one), so the two can never drift.
+fn apply_edit_commit(
+    nodes: &Rc<Signal<Vec<GraphNode>>>,
+    undo: &UndoStack,
+    target: EditTarget,
+    text: &str,
+) {
+    match target {
+        EditTarget::Title(id) => {
+            let _ = apply_rename(nodes, undo, id, text);
+        }
+        EditTarget::PortDefault { node, port } => {
+            if let Some(value) = port_default_kind(&nodes.get(), node, port).and_then(|k| k.parse(text))
+            {
+                let _ = apply_set_default(nodes, undo, node, port, value);
+            }
+        }
+    }
 }
 
 /// R851 — prune a selection that a structural edit just made dangling: a
@@ -1459,13 +1547,14 @@ struct GraphServices {
     zoom: Rc<Signal<f64>>,
     /// R877 — the canvas pan (the `ScrollAxis::Both` world scroll's state).
     scroll: Rc<ScrollState>,
-    /// R878 — which node is being renamed (shared with the view fn's
-    /// title-or-field switch and the keyboard / blur commit paths).
-    renaming: Rc<Signal<Option<NodeId>>>,
-    /// R878 — the shared rename field's text buffer
-    /// ([`use_text_edit_state`]`(RENAME_TF_TAG)`) — `begin_rename` seeds it
-    /// with the current title, a commit reads it back.
-    rename_editor: Rc<TextEditState>,
+    /// R878 / R901 — what the shared inline field is editing (shared with the
+    /// view fn's title-or-field / pin-default switch and the keyboard / blur
+    /// commit paths).
+    editing: Rc<Signal<Option<EditTarget>>>,
+    /// R878 — the shared inline field's text buffer
+    /// ([`use_text_edit_state`]`(EDIT_TF_TAG)`) — `begin_edit` seeds it with
+    /// the target's current text, a commit reads it back.
+    edit_buffer: Rc<TextEditState>,
     /// R880 — the live marquee rect (shared with the view fn's rubber-band
     /// paint; [`use_marquee_rect`]).
     marquee_rect: Rc<Signal<Option<MarqueeRect>>>,
@@ -1497,12 +1586,12 @@ struct NodeGraphExternal {
     /// links (so the router's native wheel pan and the coordinator's
     /// anchored zoom write one offset).
     scroll: Rc<ScrollState>,
-    /// R878 — the in-flight inline rename (`None` when idle); the same
-    /// Signal the view fn's title-or-field switch reads.
-    renaming: Rc<Signal<Option<NodeId>>>,
-    /// R878 — the shared rename field's text buffer (seeded on begin,
+    /// R878 / R901 — the in-flight inline edit (`None` when idle); the same
+    /// Signal the view fn's title-or-field / pin-default switch reads.
+    editing: Rc<Signal<Option<EditTarget>>>,
+    /// R878 — the shared inline field's text buffer (seeded on begin,
     /// read back on commit).
-    rename_editor: Rc<TextEditState>,
+    edit_buffer: Rc<TextEditState>,
     /// Node grabbed for a capture-drag move (set on a node-body `PointerDown`).
     grabbed_node: Cell<Option<NodeId>>,
     node_drag: RefCell<Option<NodeDragStart>>,
@@ -1540,8 +1629,8 @@ impl NodeGraphExternal {
             storage: services.storage,
             zoom: services.zoom,
             scroll: services.scroll,
-            renaming: services.renaming,
-            rename_editor: services.rename_editor,
+            editing: services.editing,
+            edit_buffer: services.edit_buffer,
             marquee_rect: services.marquee_rect,
             grabbed_node: Cell::new(None),
             node_drag: RefCell::new(None),
@@ -2178,27 +2267,55 @@ impl NodeGraphExternal {
         self.selection.set(next);
     }
 
-    /// R878 — begin an inline rename of `id`: validate the node exists,
-    /// commit any in-flight rename of a *different* node first (the Qt
-    /// item-view discipline — an open editor commits when another item
-    /// enters edit; without it the migration would silently discard the
-    /// typed text), flag [`use_renaming`], seed the shared field with the
-    /// current title (caret parked at the end — the todomvc `begin_edit`
-    /// UX), and hand focus to the field through the focus-request mailbox.
-    fn begin_rename(&self, id: NodeId) -> bool {
-        let Some(node) = self.node_by_id(id) else {
+    /// R878 / R901 — begin an inline edit of `target` (a node title or an
+    /// input port default): validate the target exists, commit any in-flight
+    /// edit of a *different* target first (the Qt item-view discipline — an
+    /// open editor commits when another item enters edit; without it the
+    /// migration would silently discard the typed text), flag
+    /// [`use_edit_target`], seed the shared field with the target's current
+    /// text (caret parked at the end — the todomvc `begin_edit` UX), and hand
+    /// focus to the field through the focus-request mailbox.
+    fn begin_edit(&self, target: EditTarget) -> bool {
+        let Some(seed) = self.edit_seed_text(target) else {
             return false;
         };
-        if let Some(prev) = self.renaming.get() {
-            if prev != id {
-                let text = self.rename_editor.text();
-                let _ = apply_rename(&self.nodes, &self.undo, prev, &text);
+        if let Some(prev) = self.editing.get() {
+            if prev != target {
+                let text = self.edit_buffer.text();
+                apply_edit_commit(&self.nodes, &self.undo, prev, &text);
             }
         }
-        self.renaming.set(Some(id));
-        self.rename_editor.seed(node.title.clone());
-        pinion_core::focus_request::request(RENAME_TF_TAG);
+        self.editing.set(Some(target));
+        self.edit_buffer.seed(seed);
+        pinion_core::focus_request::request(EDIT_TF_TAG);
         true
+    }
+
+    /// R901 — the text the shared field is seeded with for `target`: a title's
+    /// current name, or a port default's [`CellValue::edit_text`] (the
+    /// round-trip inverse of the commit's `CellKind::parse`). `None` when the
+    /// node / port is absent (the begin-edit validity gate).
+    fn edit_seed_text(&self, target: EditTarget) -> Option<String> {
+        let nodes = self.nodes.get();
+        let node = nodes.iter().find(|n| n.id == target.node())?;
+        Some(match target {
+            EditTarget::Title(_) => node.title.clone(),
+            EditTarget::PortDefault { port, .. } => node.input_default(port)?.edit_text(),
+        })
+    }
+
+    /// R878 — open the inline editor on `id`'s title (the F2 / double-click /
+    /// `invoke begin_rename` entry). A thin [`Self::begin_edit`] wrapper that
+    /// keeps the established `begin_rename` verb name.
+    fn begin_rename(&self, id: NodeId) -> bool {
+        self.begin_edit(EditTarget::Title(id))
+    }
+
+    /// R901 — open the inline editor on node `node`'s input port `port`'s
+    /// default (the double-click-on-pin-default / `invoke begin_edit_default`
+    /// entry).
+    fn begin_edit_default(&self, node: NodeId, port: usize) -> bool {
+        self.begin_edit(EditTarget::PortDefault { node, port })
     }
 
     /// Pointer `send` wire (the same channel the router and RPC share).
@@ -2307,15 +2424,18 @@ impl NodeGraphExternal {
                 self.preview.set(None);
                 self.reset_gesture();
             }
-            // R878 — a double-click on a node card opens the inline rename
-            // editor (the R664/R790 todomvc dblclick-to-edit idiom; the
-            // router's W3C dblclick detection synthesises this on the second
-            // in-place press, and the `scene/double_click` RPC drain emits
-            // the identical wire). The trailing `PointerUp` still selects the
-            // node through its own arm — renaming implies selection visually.
+            // R878 / R901 — a double-click opens the inline editor: on a node
+            // card it edits the title (the R664/R790 todomvc dblclick-to-edit
+            // idiom), on a pin's default label it edits that port's default
+            // value (R901 — the same disambiguation a node card uses: a single
+            // press selects / connects, a double-click edits). The router's W3C
+            // dblclick detection synthesises this on the second in-place press,
+            // and the `scene/double_click` RPC drain emits the identical wire.
             (Some(s), "DoubleClick") => {
                 if let Some(n) = parse_node_sub(s) {
                     self.begin_rename(n);
+                } else if let Some((n, port)) = parse_idefault_sub(s) {
+                    self.begin_edit_default(n, port);
                 }
             }
             _ => {}
@@ -2615,7 +2735,9 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("selected_ids", "string"),
             ("selected_edge", "int"),
             ("renaming", "int"),
+            ("editing", "json"),
             ("begin_rename", "int"),
+            ("begin_edit_default", "string"),
             ("node.<id>.title", "string"),
             ("node.<id>.x", "int"),
             ("node.<id>.y", "int"),
@@ -2672,12 +2794,24 @@ impl ExternalIntrospect for NodeGraphExternal {
                 Some(id) => IntrospectValue::Int(i64::from(id.raw())),
                 None => IntrospectValue::Null,
             }),
-            // R878 — the in-flight inline rename target (`Null` when idle);
-            // the read twin of `invoke begin_rename`.
-            "renaming" => Some(match self.renaming.get() {
-                Some(id) => IntrospectValue::Int(i64::from(id.raw())),
-                None => IntrospectValue::Null,
+            // R878 — the in-flight inline *rename* target (`Null` when idle or
+            // when a non-title edit is in flight); the read twin of `invoke
+            // begin_rename`. R901 — a degenerate projection of `editing` over
+            // `Title` targets: a port-default edit is honestly not a rename, so
+            // this stays `Null` then (read `editing` for the full picture —
+            // [[wire-form-read-write-symmetry]], the representation-richer-but-
+            // old-contract-preserved discipline).
+            "renaming" => Some(match self.editing.get() {
+                Some(EditTarget::Title(id)) => IntrospectValue::Int(i64::from(id.raw())),
+                _ => IntrospectValue::Null,
             }),
+            // R901 — the in-flight inline edit target, the honest generalised
+            // read: `Null` when idle, else `{ kind: "title"|"port_default",
+            // node, port? }` (the read twin of `invoke begin_rename` /
+            // `begin_edit_default` + the double-click entries).
+            "editing" => {
+                Some(self.editing.get().map_or(IntrospectValue::Null, edit_target_introspect))
+            }
             // R852 — the whole graph as one JSON blob (the AI-first read; its
             // write-twin is `invoke set_graph`).
             "serialized" => Some(IntrospectValue::Text(self.serialized_json())),
@@ -2910,6 +3044,17 @@ impl ExternalIntrospect for NodeGraphExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R901 — open the inline editor on an input port's default value
+            // (the AI-first / test twin of double-clicking a pin's default
+            // label). Arg = `"<node>.<port>"`. `false` on an unknown node /
+            // out-of-range port (graph unchanged), mirroring `begin_rename`.
+            "begin_edit_default" => match args {
+                IntrospectValue::Text(s) => {
+                    let (node, port) = parse_node_port(&s).ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.begin_edit_default(node, port)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
             // R877 — fit the node bbox into the canvas (the keyboard `f`
             // twin). `false` on an empty graph.
             "frame_all" => Ok(IntrospectValue::Bool(self.frame_all())),
@@ -3015,54 +3160,85 @@ fn zoom_verb(key: &str, modifiers: Modifiers) -> Option<ZoomKey> {
     }
 }
 
-// ─── R878 inline rename (commit / cancel, owner-scoped) ────────────
+// ─── R878 / R901 inline edit (commit / cancel, owner-scoped) ───────
 
-/// Commit the in-flight rename: read the shared field's text and apply it
-/// through the [`apply_rename`] SSOT (trim; an empty / unchanged title keeps
-/// the prior name — no data loss, no spurious undo step). Mirrors
+/// Commit the in-flight inline edit: read the shared field's text and route
+/// it to the target's field SSOT through [`apply_edit_commit`] (a title trims
+/// and rejects empty, a port default parses by kind; an unchanged or malformed
+/// value keeps the prior — no data loss, no spurious undo step). Mirrors
 /// `hello-data-grid::commit_edit`.
-fn commit_rename(restore_focus: bool) {
-    let renaming = use_renaming();
-    let Some(id) = renaming.get() else {
+fn commit_edit(restore_focus: bool) {
+    let Some(target) = use_edit_target().get() else {
         return;
     };
-    let text = use_text_edit_state(RENAME_TF_TAG).text();
-    let _ = apply_rename(&use_nodes(), &use_undo(), id, &text);
-    end_rename_mode(restore_focus);
+    let text = use_text_edit_state(EDIT_TF_TAG).text();
+    apply_edit_commit(&use_nodes(), &use_undo(), target, &text);
+    end_edit_mode(restore_focus);
 }
 
-/// Cancel the in-flight rename — leave the title untouched, restore focus.
-fn cancel_rename() {
-    end_rename_mode(true);
+/// Cancel the in-flight edit — leave the target's value untouched, restore
+/// focus.
+fn cancel_edit() {
+    end_edit_mode(true);
 }
 
-/// Shared finish-rename teardown — clear the `renaming` flag + wipe the
-/// editor so the next rename starts from a fresh seed; restore canvas focus
-/// on request (the keyboard paths; a blur commit leaves focus where the
-/// click landed).
-fn end_rename_mode(restore_focus: bool) {
-    use_renaming().set(None);
-    use_text_edit_state(RENAME_TF_TAG).set_text(String::new());
+/// Shared finish-edit teardown — clear the `editing` flag + wipe the field so
+/// the next edit starts from a fresh seed; restore canvas focus on request
+/// (the keyboard paths; a blur commit leaves focus where the click landed).
+fn end_edit_mode(restore_focus: bool) {
+    use_edit_target().set(None);
+    use_text_edit_state(EDIT_TF_TAG).set_text(String::new());
     if restore_focus {
         pinion_core::focus_request::request(GRAPH_TAG);
     }
 }
 
-/// R878 — rename-mode keymap over the shared inline field: the lifted
-/// [`pinion_core::edit_field_keymap`] SSOT (3rd consumer, after the
-/// data-grid / property-grid typed editors). A node title is plain text, so
-/// the keystroke gate is [`CellKind::Text`] (every printable reaches the
-/// field; stray named keys defer — inert while the field owns focus).
-fn apply_key_rename(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
+/// R878 / R901 — the inline-edit keymap over the shared field: the lifted
+/// [`pinion_core::edit_field_keymap`] SSOT (3rd consumer, after the data-grid
+/// / property-grid typed editors). The keystroke gate is the *target's*
+/// [`CellKind`]: a node title is plain [`CellKind::Text`] (every printable
+/// reaches the field), a port default is the port's typed kind (a `Float`
+/// accepts digits / sign / `.`, a `Color` hex digits + `#`). Stray named keys
+/// defer — inert while the field owns focus.
+fn apply_key_edit(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
+    let kind = use_edit_target().get().map_or(CellKind::Text, edit_target_kind);
     pinion_core::edit_field_keymap(
         scene,
-        RENAME_TF_TAG,
+        EDIT_TF_TAG,
         key,
         modifiers,
-        CellKind::Text,
-        || commit_rename(true),
-        cancel_rename,
+        kind,
+        || commit_edit(true),
+        cancel_edit,
     )
+}
+
+/// R901 — the keystroke-gate [`CellKind`] for an in-flight edit target: plain
+/// text for a title, the port's typed kind for a port default (falling back to
+/// `Text` for a vanished port — the field is about to close on the next
+/// repaint either way).
+fn edit_target_kind(target: EditTarget) -> CellKind {
+    match target {
+        EditTarget::Title(_) => CellKind::Text,
+        EditTarget::PortDefault { node, port } => {
+            port_default_kind(&use_nodes().get(), node, port).unwrap_or(CellKind::Text)
+        }
+    }
+}
+
+/// R901 — the structured `query editing` read for an in-flight target: a
+/// `{ kind, node }` for a title, `{ kind, node, port }` for a port default
+/// (the honest generalisation of the R878 `query renaming` int — that read
+/// survives as a degenerate projection over `Title` targets).
+fn edit_target_introspect(target: EditTarget) -> IntrospectValue {
+    match target {
+        EditTarget::Title(id) => {
+            IntrospectValue::Json(serde_json::json!({ "kind": "title", "node": id.raw() }))
+        }
+        EditTarget::PortDefault { node, port } => IntrospectValue::Json(
+            serde_json::json!({ "kind": "port_default", "node": node.raw(), "port": port }),
+        ),
+    }
 }
 
 fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
@@ -3253,13 +3429,38 @@ fn view_input_default(tag: String, text: &str, top: i32, theme: &Theme, zoom: f6
     )
 }
 
+/// R901 — the ONE shared inline field painted over a pin's default label while
+/// that port default is being edited (the [`view_input_default`] swap, the
+/// pin-row twin of the header's title-or-field switch). Tagged
+/// [`EDIT_TF_TAG`] by [`tf_paint::view_field`] — the field owns the hit target
+/// and focus while open — and positioned where the static label sat, projected
+/// through the zoom like every world coordinate.
+fn view_port_default_field(edit_field: RootState, top: i32, theme: &Theme, zoom: f64) -> Scene {
+    let style = tf_paint::TextFieldStyle {
+        field_w: upx(wpx(NODE_W - PORT_SIZE - 8, zoom)),
+        field_h: upx(wpx(PORT_SIZE + 4, zoom)),
+        field_pad: 3,
+        font_size_px: wfont(11, zoom),
+        ..tf_paint::TextFieldStyle::m3_filled()
+    };
+    let field = tf_paint::view_field(EDIT_TF_TAG, edit_field.0, edit_field.1, theme, &style, "value");
+    Scene::Container(
+        ContainerNode::new(vec![field]).with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(upx(wpx(PORT_SIZE + 4, zoom)), upx(wpx(top, zoom)))
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center),
+        ),
+    )
+}
+
 /// One node card: a header (title) over its input (left) + output (right)
 /// ports, absolutely placed at the node's canvas position. The whole card is
 /// one drag target; the ports are deeper hit targets for edge connect.
 fn view_node(
     node: &GraphNode,
     selected: bool,
-    renaming: bool,
+    card_edit: Option<EditTarget>,
     edit_field: RootState,
     wired_inputs: &BTreeSet<usize>,
     theme: &Theme,
@@ -3270,7 +3471,7 @@ fn view_node(
     // text for the ONE shared inline rename field (the data-grid
     // title-or-field switch), sized to the header and projected through the
     // zoom like every other world coordinate.
-    let head_inner = if renaming {
+    let head_inner = if card_edit == Some(EditTarget::Title(id)) {
         let style = tf_paint::TextFieldStyle {
             field_w: upx(wpx(NODE_W - 8, zoom)),
             field_h: upx(wpx(HEADER_H - 6, zoom)),
@@ -3278,7 +3479,7 @@ fn view_node(
             font_size_px: wfont(NODE_TITLE_PX, zoom),
             ..tf_paint::TextFieldStyle::m3_filled()
         };
-        tf_paint::view_field(RENAME_TF_TAG, edit_field.0, edit_field.1, theme, &style, "Rename node")
+        tf_paint::view_field(EDIT_TF_TAG, edit_field.0, edit_field.1, theme, &style, "Rename node")
     } else {
         Scene::Text(TextNode::styled(
             node.title.clone(),
@@ -3318,7 +3519,12 @@ fn view_node(
         // supplies the value). The default is retained while wired — wiring
         // only hides the label.
         if !wired_inputs.contains(&i) {
-            if let Some(val) = node.input_default(i) {
+            // R901 — while this port's default is being edited, the pin swaps
+            // its static value label for the ONE shared inline field (the
+            // header's title-or-field switch, applied to the pin default).
+            if card_edit == Some(EditTarget::PortDefault { node: id, port: i }) {
+                children.push(view_port_default_field(edit_field, port_row_top(i), theme, zoom));
+            } else if let Some(val) = node.input_default(i) {
                 children.push(view_input_default(
                     format!("{GRAPH_TAG}#idefault_{id}_{i}"),
                     &val.display(),
@@ -3432,7 +3638,7 @@ fn view_palette(theme: &Theme) -> Scene {
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
-/// R878 — the cached paint posture: the shared rename field's interaction
+/// R878 — the cached paint posture: the shared inline edit field's interaction
 /// state + caret byte (the data-grid `RootState` shape).
 type RootState = (TextFieldState, u32);
 
@@ -3444,7 +3650,7 @@ fn view_node_cards(
     nodes: &[GraphNode],
     edges: &[Edge],
     selected: &BTreeSet<NodeId>,
-    renaming: Option<NodeId>,
+    editing: Option<EditTarget>,
     edit_field: RootState,
     theme: &Theme,
     zoom: f64,
@@ -3454,10 +3660,14 @@ fn view_node_cards(
         .map(|node| {
             let wired_inputs: BTreeSet<usize> =
                 edges.iter().filter(|e| e.to_node == node.id).map(|e| e.to_port).collect();
+            // R901 — only the card hosting the in-flight edit paints the shared
+            // field (a title or one pin default); every other card paints
+            // statically. `None` once the target's node is a different card.
+            let card_edit = editing.filter(|t| t.node() == node.id);
             view_node(
                 node,
                 selected.contains(&node.id),
-                renaming == Some(node.id),
+                card_edit,
                 edit_field,
                 &wired_inputs,
                 theme,
@@ -3478,8 +3688,10 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let selected = selection.nodes();
     let selected_edge = selection.edge();
     let preview = use_preview().get();
-    // R878 — which node paints the shared rename field instead of its title.
-    let renaming = use_renaming().get();
+    // R878 / R901 — the in-flight inline edit: a node paints the shared field
+    // instead of its title (a rename) or a pin's default label (a port-default
+    // edit).
+    let editing = use_edit_target().get();
     // R877 — the viewport: zoom projects every world coordinate below;
     // pan is the scroll offset (reading the zoom Signal subscribes the
     // paint Effect, so a wheel zoom repaints reactively; the offset is
@@ -3510,7 +3722,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         }
     }
 
-    world_children.extend(view_node_cards(&nodes, &edges, &selected, renaming, state, &theme, zoom));
+    world_children.extend(view_node_cards(&nodes, &edges, &selected, editing, state, &theme, zoom));
 
     // R880 — the live marquee rubber band layers over everything in the
     // world (reading the Signal subscribes the paint Effect, so each drag
@@ -3601,7 +3813,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
 struct NodeEditorView;
 
 impl WidgetCore for NodeEditorView {
-    /// R878 — the cached paint posture: the shared rename field's
+    /// R878 — the cached paint posture: the shared inline edit field's
     /// interaction state + caret byte (the data-grid `RootState` shape).
     /// Everything else the view reads is reactive (`Signal`s subscribe the
     /// paint Effect directly).
@@ -3621,8 +3833,8 @@ impl WidgetCore for NodeEditorView {
                 storage: use_graph_storage(),
                 zoom: use_zoom(),
                 scroll: use_canvas_scroll(),
-                renaming: use_renaming(),
-                rename_editor: use_text_edit_state(RENAME_TF_TAG),
+                editing: use_edit_target(),
+                edit_buffer: use_text_edit_state(EDIT_TF_TAG),
                 marquee_rect: use_marquee_rect(),
             },
         ))
@@ -3634,17 +3846,18 @@ impl WidgetCore for NodeEditorView {
     /// drive the identical history the canvas + keyboard use (one SSOT). It is a
     /// coordinator-only extra: it paints nothing and is not a focus stop.
     ///
-    /// R878 — plus the shared inline rename field (`RENAME_TF_TAG`), a
+    /// R878 / R901 — plus the shared inline edit field (`EDIT_TF_TAG`), a
     /// [`TextFieldExternal`] modal member (the R790 todomvc `EDIT_TF`
-    /// shape): one field reused for every node, painted only while a rename
-    /// is in flight, raising the R793 commit-on-blur intent on a click-away.
+    /// shape): one field reused for every node title AND every input port
+    /// default, painted only while an edit is in flight, raising the R793
+    /// commit-on-blur intent on a click-away.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        let editor_state = use_text_edit_state(RENAME_TF_TAG);
-        let blink = use_caret_blink(RENAME_TF_TAG);
+        let editor_state = use_text_edit_state(EDIT_TF_TAG);
+        let blink = use_caret_blink(EDIT_TF_TAG);
         vec![
             ExtraExternal::new(UNDO_TAG, Box::new(UndoStackExternal::new(use_undo()))),
             ExtraExternal::new(
-                RENAME_TF_TAG,
+                EDIT_TF_TAG,
                 Box::new(
                     TextFieldExternal::new()
                         .attach_state(editor_state)
@@ -3660,7 +3873,7 @@ impl WidgetCore for NodeEditorView {
     }
 
     fn read_state(scene: &Scene) -> RootState {
-        tf_paint::read_text_field_state(scene, RENAME_TF_TAG)
+        tf_paint::read_text_field_state(scene, EDIT_TF_TAG)
     }
 
     fn view(state: RootState, frame: &Frame) -> Scene {
@@ -3679,9 +3892,9 @@ impl WidgetCore for NodeEditorView {
         None
     }
 
-    /// The canvas is the single keyboard tab stop; the R878 rename field is
-    /// focusable so the focus-request mailbox can hand it focus while a
-    /// rename is in flight (the data-grid `EDIT_TF` precedent). R850 — the
+    /// The canvas is the single keyboard tab stop; the R878 / R901 inline
+    /// edit field is focusable so the focus-request mailbox can hand it focus
+    /// while an edit is in flight (the data-grid `EDIT_TF` precedent). R850 — the
     /// add-node palette is **not** yet a tab stop: it is mouse/RPC-driven
     /// (the `add_node` verb and `scene/click` reach it), and its a11y
     /// `toolbar` is emitted with `focused_control: None` (the
@@ -3689,7 +3902,7 @@ impl WidgetCore for NodeEditorView {
     /// palette (a second tab stop with arrow/Enter) is a documented carry,
     /// not a silent gap.
     fn focusable_tags() -> Vec<&'static str> {
-        vec![GRAPH_TAG, RENAME_TF_TAG]
+        vec![GRAPH_TAG, EDIT_TF_TAG]
     }
 
     fn apply_key(
@@ -3700,31 +3913,31 @@ impl WidgetCore for NodeEditorView {
     ) -> bool {
         match focused {
             Some(GRAPH_TAG) => apply_key_graph(scene, key, modifiers),
-            Some(RENAME_TF_TAG) => apply_key_rename(scene, key, modifiers),
+            Some(EDIT_TF_TAG) => apply_key_edit(scene, key, modifiers),
             _ => false,
         }
     }
 
-    /// R878 — route IME composition to the rename field while it owns focus,
-    /// through the lifted R764.1 SSOT.
+    /// R878 — route IME composition to the inline edit field while it owns
+    /// focus, through the lifted R764.1 SSOT.
     fn apply_composition(
         scene: &mut Scene,
         focused: Option<&str>,
         event: &pinion_core::CompositionEvent,
     ) -> bool {
-        if focused != Some(RENAME_TF_TAG) {
+        if focused != Some(EDIT_TF_TAG) {
             return false;
         }
-        tf_paint::forward_composition_to_field(scene, RENAME_TF_TAG, event)
+        tf_paint::forward_composition_to_field(scene, EDIT_TF_TAG, event)
     }
 
-    /// R878 / R793 §5.38 — commit-on-blur: the rename field lost focus (a
-    /// click elsewhere) while a rename was in flight → commit without
-    /// restoring focus. The `renaming` gate makes the post-commit blur a
-    /// no-op (the data-grid `update` arm verbatim).
+    /// R878 / R901 / R793 §5.38 — commit-on-blur: the inline field lost focus
+    /// (a click elsewhere) while an edit (title or port default) was in flight
+    /// → commit without restoring focus. The `editing` gate makes the
+    /// post-commit blur a no-op (the data-grid `update` arm verbatim).
     fn update(_state: RootState, intent: &pinion_core::Intent) -> Vec<Command> {
-        if intent.tag_str() == RENAME_TF_BLUR_INTENT_TAG && use_renaming().get().is_some() {
-            commit_rename(false);
+        if intent.tag_str() == EDIT_TF_BLUR_INTENT_TAG && use_edit_target().get().is_some() {
+            commit_edit(false);
         }
         Vec::new()
     }
@@ -3746,7 +3959,7 @@ impl WidgetA11y for NodeEditorView {
     fn access_node(state: &RootState, focused: Option<&str>) -> Vec<AccessNode> {
         let nodes = use_nodes().get();
         let selected = use_selection().get().nodes();
-        let renaming = use_renaming().get();
+        let editing = use_edit_target().get();
         // R849/R850 — the editor lowers to a root with two regions: the add-node
         // palette (a `toolbar` of `button`s that create nodes) and the graph
         // canvas (the R840 unordered `group` of node `generic`s).
@@ -3785,20 +3998,26 @@ impl WidgetA11y for NodeEditorView {
             let mut entry = AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
                 .with_name(format!("{} ({} in, {} out)", node.title, node.inputs(), node.outputs()))
                 .with_selected(selected.contains(&node.id));
-            // R878 — while this node is being renamed, the shared inline
-            // field is its child textbox (the lifted `text_field_a11y_node`
-            // SSOT). Gated on the SAME `renaming` predicate the paint uses,
-            // so the AT tree never advertises an unpainted editor.
-            if renaming == Some(node.id) {
-                entry = entry.with_child(RENAME_TF_TAG);
+            // R878 / R901 — while this node hosts the in-flight inline edit,
+            // the shared field is its child textbox (the lifted
+            // `text_field_a11y_node` SSOT), named for the edit kind ("Rename
+            // node" for a title, "Port default" for a pin default). Gated on
+            // the SAME `editing` predicate the paint uses, so the AT tree never
+            // advertises an unpainted editor.
+            if editing.is_some_and(|t| t.node() == node.id) {
+                let name = match editing {
+                    Some(EditTarget::PortDefault { .. }) => "Port default",
+                    _ => "Rename node",
+                };
+                entry = entry.with_child(EDIT_TF_TAG);
                 out.push(
                     tf_paint::text_field_a11y_node(
-                        RENAME_TF_TAG,
-                        use_text_edit_state(RENAME_TF_TAG).text(),
+                        EDIT_TF_TAG,
+                        use_text_edit_state(EDIT_TF_TAG).text(),
                         state.0,
-                        focused == Some(RENAME_TF_TAG),
+                        focused == Some(EDIT_TF_TAG),
                     )
-                    .with_name("Rename node"),
+                    .with_name(name),
                 );
             }
             out.push(entry);
@@ -4097,6 +4316,243 @@ mod tests {
         });
     }
 
+    // ─── R901 inline port-default editor ───────────────────────────
+
+    /// R901 — the inline editor opens on an input port default, seeds from the
+    /// port's `edit_text`, and commits the typed value through the SAME
+    /// `apply_set_default` SSOT the AI write uses (one undoable step), then
+    /// wipes the shared field. A Lerp's port 2 is a Float, so it is text-edited
+    /// inline (the R899-deferred axis, now landed).
+    #[test]
+    fn r901_port_default_inline_editor_begins_seeds_and_commits() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let lerp = coord.add_node(6).expect("Lerp"); // input 2 = Float port
+            assert!(coord.begin_edit_default(lerp, 2), "the Float pin default opens for edit");
+            assert_eq!(
+                use_edit_target().get(),
+                Some(EditTarget::PortDefault { node: lerp, port: 2 }),
+                "the editor targets the Float pin default",
+            );
+            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "0", "seeded with the current default");
+            use_text_edit_state(EDIT_TF_TAG).set_text("0.75".to_owned());
+            commit_edit(true);
+            assert_eq!(use_edit_target().get(), None, "commit leaves edit mode");
+            assert_eq!(
+                coord.node_by_id(lerp).and_then(|n| n.input_default(2).cloned()),
+                Some(CellValue::Float(0.75)),
+                "the typed value parsed and applied",
+            );
+            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "", "field wiped for the next edit");
+            assert_eq!(stack.undo_label().as_deref(), Some("Set port default"), "journaled undoably");
+            assert!(stack.undo());
+            assert_eq!(
+                coord.node_by_id(lerp).and_then(|n| n.input_default(2).cloned()),
+                Some(CellValue::Float(0.0)),
+                "undo restores the prior default",
+            );
+        });
+    }
+
+    /// R901 — the editor's keystroke gate is the TARGET's `CellKind`: text for
+    /// a title, the port's typed kind for a pin default (a Float pin accepts a
+    /// number, a Vector pin a `#RRGGBB[AA]` hex). The single funnel that keeps
+    /// the keyboard editor and the AI write from drifting on what a port holds.
+    #[test]
+    fn r901_port_default_editor_uses_the_port_typed_keystroke_gate() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            let lerp = coord.add_node(6).expect("Lerp"); // ports [Vector, Vector, Float]
+            assert_eq!(edit_target_kind(EditTarget::Title(NodeId(2))), CellKind::Text, "a title is plain text");
+            assert_eq!(
+                edit_target_kind(EditTarget::PortDefault { node: lerp, port: 2 }),
+                CellKind::Float,
+                "a Float pin is number-gated",
+            );
+            assert_eq!(
+                edit_target_kind(EditTarget::PortDefault { node: lerp, port: 0 }),
+                CellKind::Color,
+                "a Vector pin is hex-gated",
+            );
+        });
+    }
+
+    /// R901 — a Vector pin default is a `Color`, edited inline as a
+    /// `#RRGGBB[AA]` hex through the same `CellValue::edit_text` seed /
+    /// `CellKind::parse` commit the property-grid colour cell uses.
+    #[test]
+    fn r901_port_default_commit_parses_color_hex() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            let lerp = coord.add_node(6).expect("Lerp"); // port 0 = Vector -> Color default
+            assert!(coord.begin_edit_default(lerp, 0));
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "#808080",
+                "seeded with the grey default's hex",
+            );
+            use_text_edit_state(EDIT_TF_TAG).set_text("#3366cc".to_owned());
+            commit_edit(true);
+            assert_eq!(
+                coord.node_by_id(lerp).and_then(|n| n.input_default(0).cloned()),
+                Some(CellValue::Color(Color::rgb(0x33, 0x66, 0xcc))),
+                "the typed hex parsed into the colour default",
+            );
+        });
+    }
+
+    /// R901 — a malformed numeric commit keeps the prior default (no data loss,
+    /// no spurious undo step — the `CellKind::parse` contract the data-grid
+    /// editor follows). The keystroke gate normally blocks such input, but the
+    /// commit parse is the backstop (e.g. an IME-pasted run).
+    #[test]
+    fn r901_malformed_port_default_commit_keeps_prior_value() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let lerp = coord.add_node(6).expect("Lerp");
+            assert!(coord.begin_edit_default(lerp, 2)); // Float port
+            // The `add_node` above is itself one undo step; the rejected commit
+            // must add none.
+            let before = stack.len();
+            use_text_edit_state(EDIT_TF_TAG).set_text("abc".to_owned());
+            commit_edit(true);
+            assert_eq!(
+                coord.node_by_id(lerp).and_then(|n| n.input_default(2).cloned()),
+                Some(CellValue::Float(0.0)),
+                "a malformed commit keeps the prior default",
+            );
+            assert_eq!(stack.len(), before, "no undo step for a rejected parse");
+        });
+    }
+
+    /// R901 — `query editing` is the honest generalised read (`{ kind, node,
+    /// port? }` or Null); `query renaming` survives as its title-only
+    /// projection — a port-default edit is honestly NOT a rename, so `renaming`
+    /// is Null then while `editing` reports the port-default target.
+    #[test]
+    fn r901_editing_read_and_renaming_degenerate_projection() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Idle: both reads are Null.
+            assert_eq!(graph_intro(&scene).query("editing"), Some(IntrospectValue::Null));
+            assert_eq!(graph_intro(&scene).query("renaming"), Some(IntrospectValue::Null));
+            // A title edit: `editing` is a title object, `renaming` is the id.
+            {
+                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                assert_eq!(intro.invoke("begin_rename", IntrospectValue::Int(2)), Ok(IntrospectValue::Bool(true)));
+            }
+            let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
+                panic!("editing reads as a JSON object for a title edit");
+            };
+            assert_eq!(j.get("kind").and_then(serde_json::Value::as_str), Some("title"));
+            assert_eq!(j.get("node").and_then(serde_json::Value::as_u64), Some(2));
+            assert_eq!(graph_intro(&scene).query("renaming"), Some(IntrospectValue::Int(2)));
+            // A port-default edit: `editing` is a port_default object, but
+            // `renaming` is Null (the degenerate projection).
+            {
+                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                assert_eq!(
+                    intro.invoke("begin_edit_default", IntrospectValue::Text("2.1".to_owned())),
+                    Ok(IntrospectValue::Bool(true)),
+                );
+            }
+            let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
+                panic!("editing reads as a JSON object for a port-default edit");
+            };
+            assert_eq!(j.get("kind").and_then(serde_json::Value::as_str), Some("port_default"));
+            assert_eq!(j.get("node").and_then(serde_json::Value::as_u64), Some(2));
+            assert_eq!(j.get("port").and_then(serde_json::Value::as_u64), Some(1));
+            assert_eq!(
+                graph_intro(&scene).query("renaming"),
+                Some(IntrospectValue::Null),
+                "a port-default edit is not a rename",
+            );
+        });
+    }
+
+    /// R901 — the port-default editor opens from BOTH the AI-first
+    /// `invoke begin_edit_default` (an unknown node / out-of-range port is
+    /// rejected, graph unchanged) and a double-click on the pin's default
+    /// label, and the open field paints + lowers to a "Port default" textbox.
+    #[test]
+    fn r901_begin_edit_default_via_invoke_and_double_click() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let coord = coordinator();
+            let lerp = coord.add_node(6).expect("Lerp"); // a fresh node: its pins are unwired
+            // Invoke entry: a valid pin opens, a bad node / port is rejected.
+            {
+                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                assert_eq!(
+                    intro.invoke("begin_edit_default", IntrospectValue::Text(format!("{}.2", lerp.raw()))),
+                    Ok(IntrospectValue::Bool(true)),
+                );
+                assert_eq!(
+                    intro.invoke("begin_edit_default", IntrospectValue::Text("99.0".to_owned())),
+                    Ok(IntrospectValue::Bool(false)),
+                    "an unknown node is rejected",
+                );
+                assert_eq!(
+                    intro.invoke("begin_edit_default", IntrospectValue::Text(format!("{}.9", lerp.raw()))),
+                    Ok(IntrospectValue::Bool(false)),
+                    "an out-of-range port is rejected",
+                );
+            }
+            // The open field paints over the pin and lowers to a textbox named
+            // "Port default" (the paint gate == the a11y gate).
+            let painted = view((TextFieldState::Editing, 0), &Frame::new());
+            assert!(painted.contains_tag(EDIT_TF_TAG), "the shared field paints over the pin default");
+            let a11y = NodeEditorView::access_node(&(TextFieldState::Editing, 0), Some(EDIT_TF_TAG));
+            let textbox =
+                a11y.iter().find(|n| n.tag == EDIT_TF_TAG).expect("the pin default lowers to a textbox");
+            assert_eq!(textbox.role, AriaRole::TextInput);
+            assert_eq!(textbox.name.as_deref(), Some("Port default"), "named for the port-default edit kind");
+            // Cancel, then a double-click on the pin's default label re-opens it.
+            cancel_edit();
+            assert_eq!(use_edit_target().get(), None);
+            send(&mut scene, &format!("idefault_{}_2:DoubleClick", lerp.raw()));
+            assert_eq!(
+                use_edit_target().get(),
+                Some(EditTarget::PortDefault { node: lerp, port: 2 }),
+                "double-clicking the pin default opens its editor",
+            );
+        });
+    }
+
+    /// R901 — beginning a *different* edit target commits the in-flight one
+    /// first (the Qt item-view discipline), ACROSS kinds: a typed port default
+    /// commits when a title rename opens. The single `apply_edit_commit` funnel
+    /// routes each target to its field SSOT.
+    #[test]
+    fn r901_begin_edit_migration_commits_in_flight_across_targets() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            let lerp = coord.add_node(6).expect("Lerp");
+            assert!(coord.begin_edit_default(lerp, 2)); // open the Float pin
+            use_text_edit_state(EDIT_TF_TAG).set_text("1.5".to_owned());
+            // Opening a title rename commits the in-flight port default first.
+            assert!(coord.begin_rename(NodeId(2)));
+            assert_eq!(
+                coord.node_by_id(lerp).and_then(|n| n.input_default(2).cloned()),
+                Some(CellValue::Float(1.5)),
+                "the in-flight port default committed on migration",
+            );
+            assert_eq!(
+                use_edit_target().get(),
+                Some(EditTarget::Title(NodeId(2))),
+                "the editor migrated to the title target",
+            );
+            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "Multiply", "reseeded from the new target");
+        });
+    }
+
     #[test]
     fn r838_remove_edge_by_id() {
         Owner::new().run(|| {
@@ -4263,8 +4719,8 @@ mod tests {
                 storage: mem_storage(),
                 zoom: use_zoom(),
                 scroll: use_canvas_scroll(),
-                renaming: use_renaming(),
-                rename_editor: use_text_edit_state(RENAME_TF_TAG),
+                editing: use_edit_target(),
+                edit_buffer: use_text_edit_state(EDIT_TF_TAG),
                 marquee_rect: use_marquee_rect(),
             },
         )
@@ -4809,7 +5265,7 @@ mod tests {
             let extras = NodeEditorView::create_extra_externals();
             assert_eq!(extras.len(), 2, "the undo surface + the shared rename field");
             assert_eq!(extras[0].tag, UNDO_TAG, "the undo-history surface");
-            assert_eq!(extras[1].tag, RENAME_TF_TAG, "the R878 inline rename field");
+            assert_eq!(extras[1].tag, EDIT_TF_TAG, "the R878 inline rename field");
         });
     }
 
@@ -5664,17 +6120,29 @@ mod tests {
             let mut scene = boot_scene();
             send(&mut scene, "node_2:PointerDown");
             send(&mut scene, "node_2:DoubleClick");
-            assert_eq!(use_renaming().get(), Some(NodeId(2)), "rename armed on node 2");
-            let editor = use_text_edit_state(RENAME_TF_TAG);
+            assert_eq!(
+                use_edit_target().get(),
+                Some(EditTarget::Title(NodeId(2))),
+                "rename armed on node 2"
+            );
+            let editor = use_text_edit_state(EDIT_TF_TAG);
             assert_eq!(editor.text(), "Multiply", "seeded with the current title");
             assert_eq!(editor.caret(), "Multiply".len(), "caret parked at the end");
             // The trailing PointerUp (the second click's release) still selects.
             send(&mut scene, "node_2:PointerUp");
             assert_eq!(use_selection().get(), Selection::single(NodeId(2)));
-            assert_eq!(use_renaming().get(), Some(NodeId(2)), "selection does not cancel the rename");
+            assert_eq!(
+                use_edit_target().get(),
+                Some(EditTarget::Title(NodeId(2))),
+                "selection does not cancel the rename"
+            );
             // A background double-click begins nothing.
             send(&mut scene, "DoubleClick");
-            assert_eq!(use_renaming().get(), Some(NodeId(2)), "background dblclick is inert");
+            assert_eq!(
+                use_edit_target().get(),
+                Some(EditTarget::Title(NodeId(2))),
+                "background dblclick is inert"
+            );
         });
     }
 
@@ -5705,13 +6173,13 @@ mod tests {
                     Ok(IntrospectValue::Bool(true))
                 );
             }
-            assert_eq!(use_renaming().get(), Some(NodeId(0)));
+            assert_eq!(use_edit_target().get(), Some(EditTarget::Title(NodeId(0))));
             assert_eq!(
                 graph_intro(&scene).query("renaming"),
                 Some(IntrospectValue::Int(0)),
                 "the read twin reports the in-flight target",
             );
-            end_rename_mode(false);
+            end_edit_mode(false);
             assert_eq!(graph_intro(&scene).query("renaming"), Some(IntrospectValue::Null));
             // Null with a selection → the F2 path.
             use_selection().set(Selection::single(NodeId(3)));
@@ -5721,26 +6189,26 @@ mod tests {
                 intro.invoke("begin_rename", IntrospectValue::Null),
                 Ok(IntrospectValue::Bool(true))
             );
-            assert_eq!(use_renaming().get(), Some(NodeId(3)));
+            assert_eq!(use_edit_target().get(), Some(EditTarget::Title(NodeId(3))));
         });
     }
 
     #[test]
-    fn r878_commit_rename_applies_and_journals_one_undo_step() {
+    fn r878_commit_edit_applies_and_journals_one_undo_step() {
         Owner::new().run(|| {
             let _scene = boot_scene();
             let coord = coordinator();
             let stack = use_undo();
             assert!(coord.begin_rename(NodeId(2)));
-            use_text_edit_state(RENAME_TF_TAG).set_text("Mix".to_owned());
-            commit_rename(true);
-            assert_eq!(use_renaming().get(), None, "commit leaves rename mode");
+            use_text_edit_state(EDIT_TF_TAG).set_text("Mix".to_owned());
+            commit_edit(true);
+            assert_eq!(use_edit_target().get(), None, "commit leaves rename mode");
             assert_eq!(
                 coord.node_by_id(NodeId(2)).expect("present").title,
                 "Mix",
                 "the title is applied",
             );
-            assert_eq!(use_text_edit_state(RENAME_TF_TAG).text(), "", "editor wiped for the next rename");
+            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "", "editor wiped for the next rename");
             assert_eq!(stack.undo_label().as_deref(), Some("Rename node"), "journaled undoably");
             assert!(stack.undo());
             assert_eq!(coord.node_by_id(NodeId(2)).expect("present").title, "Multiply", "undo restores");
@@ -5757,14 +6225,14 @@ mod tests {
             let stack = use_undo();
             // Empty commit: title kept, no undo step, rename mode left.
             assert!(coord.begin_rename(NodeId(1)));
-            use_text_edit_state(RENAME_TF_TAG).set_text("   ".to_owned());
-            commit_rename(false);
+            use_text_edit_state(EDIT_TF_TAG).set_text("   ".to_owned());
+            commit_edit(false);
             assert_eq!(coord.node_by_id(NodeId(1)).expect("present").title, "Color", "whitespace kept");
-            assert_eq!(use_renaming().get(), None);
+            assert_eq!(use_edit_target().get(), None);
             assert!(!stack.can_undo(), "no spurious undo step");
             // Unchanged commit: successful no-op, still no undo step.
             assert!(coord.begin_rename(NodeId(1)));
-            commit_rename(false);
+            commit_edit(false);
             assert_eq!(coord.node_by_id(NodeId(1)).expect("present").title, "Color");
             assert!(!stack.can_undo(), "an unchanged title journals nothing");
         });
@@ -5823,23 +6291,23 @@ mod tests {
             let _scene = boot_scene();
             let coord = coordinator();
             assert!(coord.begin_rename(NodeId(0)));
-            use_text_edit_state(RENAME_TF_TAG).set_text("Albedo".to_owned());
+            use_text_edit_state(EDIT_TF_TAG).set_text("Albedo".to_owned());
             // Double-clicking node 1 while node 0's editor is open commits
             // node 0's typed text first (the Qt item-view discipline).
             assert!(coord.begin_rename(NodeId(1)));
             assert_eq!(coord.node_by_id(NodeId(0)).expect("present").title, "Albedo");
-            assert_eq!(use_renaming().get(), Some(NodeId(1)));
+            assert_eq!(use_edit_target().get(), Some(EditTarget::Title(NodeId(1))));
             assert_eq!(
-                use_text_edit_state(RENAME_TF_TAG).text(),
+                use_text_edit_state(EDIT_TF_TAG).text(),
                 "Color",
                 "the editor reseeds from the new target",
             );
             // Re-beginning the SAME node reseeds without committing (the
             // todomvc restart-editing UX).
-            use_text_edit_state(RENAME_TF_TAG).set_text("Tint".to_owned());
+            use_text_edit_state(EDIT_TF_TAG).set_text("Tint".to_owned());
             assert!(coord.begin_rename(NodeId(1)));
             assert_eq!(coord.node_by_id(NodeId(1)).expect("present").title, "Color", "no self-commit");
-            assert_eq!(use_text_edit_state(RENAME_TF_TAG).text(), "Color", "reseeded");
+            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "Color", "reseeded");
         });
     }
 
@@ -5849,26 +6317,26 @@ mod tests {
             let mut scene = boot_scene();
             let coord = coordinator();
             assert!(coord.begin_rename(NodeId(3)));
-            use_text_edit_state(RENAME_TF_TAG).set_text("Result".to_owned());
+            use_text_edit_state(EDIT_TF_TAG).set_text("Result".to_owned());
             assert!(NodeEditorView::apply_key(
                 &mut scene,
-                Some(RENAME_TF_TAG),
+                Some(EDIT_TF_TAG),
                 "Enter",
                 Modifiers::empty()
             ));
             assert_eq!(coord.node_by_id(NodeId(3)).expect("present").title, "Result", "Enter commits");
-            assert_eq!(use_renaming().get(), None);
+            assert_eq!(use_edit_target().get(), None);
             // Escape cancels without touching the title.
             assert!(coord.begin_rename(NodeId(3)));
-            use_text_edit_state(RENAME_TF_TAG).set_text("Scrap".to_owned());
+            use_text_edit_state(EDIT_TF_TAG).set_text("Scrap".to_owned());
             assert!(NodeEditorView::apply_key(
                 &mut scene,
-                Some(RENAME_TF_TAG),
+                Some(EDIT_TF_TAG),
                 "Escape",
                 Modifiers::empty()
             ));
             assert_eq!(coord.node_by_id(NodeId(3)).expect("present").title, "Result", "Escape cancels");
-            assert_eq!(use_renaming().get(), None);
+            assert_eq!(use_edit_target().get(), None);
         });
     }
 
@@ -5878,15 +6346,15 @@ mod tests {
             let _scene = boot_scene();
             let coord = coordinator();
             assert!(coord.begin_rename(NodeId(0)));
-            use_text_edit_state(RENAME_TF_TAG).set_text("Diffuse".to_owned());
+            use_text_edit_state(EDIT_TF_TAG).set_text("Diffuse".to_owned());
             let intent =
-                pinion_core::Intent::new_owned(RENAME_TF_BLUR_INTENT_TAG.to_owned(), IntrospectValue::Null);
+                pinion_core::Intent::new_owned(EDIT_TF_BLUR_INTENT_TAG.to_owned(), IntrospectValue::Null);
             let _ = NodeEditorView::update(IDLE_TF, &intent);
             assert_eq!(coord.node_by_id(NodeId(0)).expect("present").title, "Diffuse", "blur commits");
-            assert_eq!(use_renaming().get(), None);
+            assert_eq!(use_edit_target().get(), None);
             // A blur with no rename in flight is a no-op (the post-commit blur).
             let _ = NodeEditorView::update(IDLE_TF, &intent);
-            assert_eq!(use_renaming().get(), None);
+            assert_eq!(use_edit_target().get(), None);
         });
     }
 
@@ -5896,10 +6364,10 @@ mod tests {
             let _scene = boot_scene();
             let coord = coordinator();
             let idle = view(IDLE_TF, &Frame::new());
-            assert!(!idle.contains_tag(RENAME_TF_TAG), "no editor painted while idle");
+            assert!(!idle.contains_tag(EDIT_TF_TAG), "no editor painted while idle");
             assert!(coord.begin_rename(NodeId(2)));
             let editing = view((TextFieldState::Editing, 0), &Frame::new());
-            assert!(editing.contains_tag(RENAME_TF_TAG), "the shared field paints over the title");
+            assert!(editing.contains_tag(EDIT_TF_TAG), "the shared field paints over the title");
         });
     }
 
@@ -5910,17 +6378,17 @@ mod tests {
             let coord = coordinator();
             let idle = NodeEditorView::access_node(&IDLE_TF, Some(GRAPH_TAG));
             assert!(
-                idle.iter().all(|n| n.tag != RENAME_TF_TAG),
+                idle.iter().all(|n| n.tag != EDIT_TF_TAG),
                 "no textbox advertised while idle (paint gate == a11y gate)",
             );
             assert!(coord.begin_rename(NodeId(2)));
             let editing = NodeEditorView::access_node(
                 &(TextFieldState::Editing, 0),
-                Some(RENAME_TF_TAG),
+                Some(EDIT_TF_TAG),
             );
             let textbox = editing
                 .iter()
-                .find(|n| n.tag == RENAME_TF_TAG)
+                .find(|n| n.tag == EDIT_TF_TAG)
                 .expect("the rename field lowers to a textbox while renaming");
             assert_eq!(textbox.role, AriaRole::TextInput);
             let host = editing
@@ -5928,7 +6396,7 @@ mod tests {
                 .find(|n| n.tag == format!("{GRAPH_TAG}#node_2"))
                 .expect("renamed node present");
             assert!(
-                host.children.iter().any(|c| c == RENAME_TF_TAG),
+                host.children.iter().any(|c| c == EDIT_TF_TAG),
                 "the textbox is the renamed node's child",
             );
         });
@@ -6152,7 +6620,7 @@ mod tests {
                 Ok(IntrospectValue::Bool(false)),
                 "F2 on a multi-selection is ambiguous and refuses",
             );
-            assert_eq!(use_renaming().get(), None);
+            assert_eq!(use_edit_target().get(), None);
         });
     }
 

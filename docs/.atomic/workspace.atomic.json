@@ -38279,6 +38279,58 @@
         "node-editor arc = R898/R899/R901; after R901 diversify per CLAUDE.md Phase-B value order (avoid >3-round single-widget local optimum, R896 caution)"
       ]
     },
+    "R901": {
+      "decision_summary": "R901: node-editor inline port-default editor — generalise the R878 rename field into ONE EditTarget-keyed inline editor (Title | PortDefault), completing R899's deferred axis",
+      "changes_bullets": [
+        "EditTarget{Title|PortDefault} generalises R878 renaming; ONE shared inline field for both edits",
+        "double-click a pin default (or invoke begin_edit_default) opens it; gate = the port's CellKind",
+        "commit via apply_edit_commit -> apply_rename | apply_set_default (the AI-write SSOT; no drift)",
+        "query editing {kind,node,port?} = honest read; query renaming survives as its title-only projection",
+        "view_port_default_field swaps the pin label for the field; a11y textbox per kind (paint==a11y gate)",
+        "tag node_rename->node_edit; EDIT_TF_TAG/use_edit_target/commit_edit renamed (field hosts both)"
+      ],
+      "verification_bullets": [
+        "example unit 108 green (7 new R901: begin+seed+commit, typed gate, hex, malformed-keep, read)",
+        "workspace test 150-group green 0-fail; clippy -D pedantic clean (SRP helpers, no comment-trim)",
+        "r901 demo PASS (>=30 assert: open/seed/commit/undo, type-gate, hex, RPC pair, migration, blur, zoom)",
+        "r878 rename demo PASS (tag node_edit; renaming degenerate read intact); r838/r898/r899 no-regress",
+        "3b self-grep clean: apply_set_default 2 prod callers (AI+inline); apply_edit_commit 1-SSOT 2-call"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "node-editor arc (R898 typed ports / R899 defaults / R901 editor) done -> diversify per Phase-B order",
+        "EditTarget is example-local 1st consumer (no lift); 2 view_field sites opinionated (<3, no lift)",
+        "inline Color edit is hex-text; popup HSV pad deferred (needs Color->HSV decompose, substrate gap)"
+      ],
+      "publishable_decision_summary": "R901: node-editor inline port-default editor — generalise the R878 rename field into ONE EditTarget-keyed inline editor (Title | PortDefault), completing R899's deferred axis",
+      "publishable_changes_bullets": [
+        "EditTarget{Title|PortDefault} generalises R878 renaming; ONE shared inline field for both edits",
+        "double-click a pin default (or invoke begin_edit_default) opens it; gate = the port's CellKind",
+        "commit via apply_edit_commit -> apply_rename | apply_set_default (the AI-write SSOT; no drift)",
+        "query editing {kind,node,port?} = honest read; query renaming survives as its title-only projection",
+        "view_port_default_field swaps the pin label for the field; a11y textbox per kind (paint==a11y gate)",
+        "tag node_rename->node_edit; EDIT_TF_TAG/use_edit_target/commit_edit renamed (field hosts both)"
+      ],
+      "publishable_verification_bullets": [
+        "example unit 108 green (7 new R901: begin+seed+commit, typed gate, hex, malformed-keep, read)",
+        "workspace test 150-group green 0-fail; clippy -D pedantic clean (SRP helpers, no comment-trim)",
+        "r901 demo PASS (>=30 assert: open/seed/commit/undo, type-gate, hex, RPC pair, migration, blur, zoom)",
+        "r878 rename demo PASS (tag node_edit; renaming degenerate read intact); r838/r898/r899 no-regress",
+        "3b self-grep clean: apply_set_default 2 prod callers (AI+inline); apply_edit_commit 1-SSOT 2-call"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "node-editor arc (R898 typed ports / R899 defaults / R901 editor) done -> diversify per Phase-B order",
+        "EditTarget is example-local 1st consumer (no lift); 2 view_field sites opinionated (<3, no lift)",
+        "inline Color edit is hex-text; popup HSV pad deferred (needs Color->HSV decompose, substrate gap)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
