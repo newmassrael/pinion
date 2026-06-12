@@ -38169,6 +38169,64 @@
         "R899 lead: node parameters (inline typed value editors) OR crate-extract pinion-graph OR grid large-data scale demo"
       ]
     },
+    "R899": {
+      "decision_summary": "node-editor port default values (the pin default): per-input-port typed CellValue default + AI read/write + painted on unconnected ports + undoable; inline keyboard editing deferred (port click is edge-connect)",
+      "changes_bullets": [
+        "per-input-port typed default CellValue (Float port->Float, Vector port->Color) parallel to input_ports",
+        "reuses the data-grid CellValue substrate (2nd-consumer payoff): to_introspect/display/with_intervene, no hand-roll",
+        "AI-first query/intervene node.<id>.input_default.<port> (typed; a Color takes a hex), schema slot added",
+        "intervene journals an undoable SetPortDefaultCmd via the apply_set_default funnel (mirrors apply_rename)",
+        "paint: an unconnected port shows its default beside the pin (view_input_default); a wired port hides it, value retained",
+        "GraphNode/SerializedGraph drop Eq (CellValue holds an f64); never set/map keys; persist schema v2->3",
+        "SRP extracts to satisfy clippy 100-line: intervene_input_default method + view_node_cards helper",
+        "docstring: closed the node-parameters value gap; inline keyboard edit deferred (port click = edge-connect R742)"
+      ],
+      "verification_bullets": [
+        "example unit tests 100 green (3 new R899: typed-by-port / AI read-write + type-checked / undoable round-trip)",
+        "workspace cargo test -j2 green (150 result-ok groups, 0 failed); clippy --workspace --all-targets -D pedantic clean",
+        "r899 demo PASS (33 assert: typed boot / open-port paint / typed write-readback + reject / wired-hides / undo)",
+        "regression r838 / r849 / r851 / r852 (schema v3 round-trip) / r878 / r898 PASS",
+        "3b self-grep clean: node editor = CellValue 3rd consumer (use-substrate); 4 distinct per-widget undo cmds (no lift)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "inline KEYBOARD editing of a port default deferred: the input-port click is edge-connect (R742); needs a separate hit target",
+        "dataflow evaluation + typed-port AT enrichment (a11y name keeps arity count) still deferred to the blueprint/material consumer",
+        "PortType Exec/Bool still deferred (#[non_exhaustive] ready); pinion-graph crate-extraction at the 2nd consumer",
+        "R900 lead: inline value editor (separate hit target) OR node detail/inspector panel reusing the property-grid OR crate-extract pinion-graph"
+      ],
+      "publishable_decision_summary": "node-editor port default values (the pin default): per-input-port typed CellValue default + AI read/write + painted on unconnected ports + undoable; inline keyboard editing deferred (port click is edge-connect)",
+      "publishable_changes_bullets": [
+        "per-input-port typed default CellValue (Float port->Float, Vector port->Color) parallel to input_ports",
+        "reuses the data-grid CellValue substrate (2nd-consumer payoff): to_introspect/display/with_intervene, no hand-roll",
+        "AI-first query/intervene node.<id>.input_default.<port> (typed; a Color takes a hex), schema slot added",
+        "intervene journals an undoable SetPortDefaultCmd via the apply_set_default funnel (mirrors apply_rename)",
+        "paint: an unconnected port shows its default beside the pin (view_input_default); a wired port hides it, value retained",
+        "GraphNode/SerializedGraph drop Eq (CellValue holds an f64); never set/map keys; persist schema v2->3",
+        "SRP extracts to satisfy clippy 100-line: intervene_input_default method + view_node_cards helper",
+        "docstring: closed the node-parameters value gap; inline keyboard edit deferred (port click = edge-connect R742)"
+      ],
+      "publishable_verification_bullets": [
+        "example unit tests 100 green (3 new R899: typed-by-port / AI read-write + type-checked / undoable round-trip)",
+        "workspace cargo test -j2 green (150 result-ok groups, 0 failed); clippy --workspace --all-targets -D pedantic clean",
+        "r899 demo PASS (33 assert: typed boot / open-port paint / typed write-readback + reject / wired-hides / undo)",
+        "regression r838 / r849 / r851 / r852 (schema v3 round-trip) / r878 / r898 PASS",
+        "3b self-grep clean: node editor = CellValue 3rd consumer (use-substrate); 4 distinct per-widget undo cmds (no lift)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "inline KEYBOARD editing of a port default deferred: the input-port click is edge-connect (R742); needs a separate hit target",
+        "dataflow evaluation + typed-port AT enrichment (a11y name keeps arity count) still deferred to the blueprint/material consumer",
+        "PortType Exec/Bool still deferred (#[non_exhaustive] ready); pinion-graph crate-extraction at the 2nd consumer",
+        "R900 lead: inline value editor (separate hit target) OR node detail/inspector panel reusing the property-grid OR crate-extract pinion-graph"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

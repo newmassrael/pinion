@@ -45,9 +45,10 @@
 //! carry stable [`NodeId`] / [`EdgeId`] handles (R841): addressing is by id, so
 //! deleting one entity never renumbers the survivors. It exposes the graph for
 //! AI-first introspection: `query node_count` / `edge_count` / `node_ids` /
-//! `edge_ids` / `node.<id>.{title,x,y,inputs,outputs,input_types,output_types}` / `edge.<id>` /
-//! `selected` / `selected_ids` / `selected_edge`; `intervene node.<id>.x` /
-//! `node.<id>.y` / `node.<id>.title` / `selected` / `selected_ids` /
+//! `edge_ids` / `node.<id>.{title,x,y,inputs,outputs,input_types,output_types,input_default.<port>}` /
+//! `edge.<id>` / `selected` / `selected_ids` / `selected_edge`;
+//! `intervene node.<id>.x` / `node.<id>.y` / `node.<id>.title` /
+//! `node.<id>.input_default.<port>` / `selected` / `selected_ids` /
 //! `selected_edge`; `invoke add_edge` / `remove_edge` /
 //! `delete_node` / `delete_selected` / `nudge` / the pointer `send` wire.
 //!
@@ -82,8 +83,19 @@
 //!   for now (`Float`, `Vector`); `PortType` is `#[non_exhaustive]`, so a
 //!   blueprint consumer's `Exec` / `Bool` extend the lattice without a
 //!   re-spell ([[abstraction-needs-second-consumer]] — the taxonomy is the
-//!   consumer's, the mechanism is shared). Still deferred to that consumer:
-//!   node **parameters** / inline value editors, dataflow **evaluation**, and
+//!   consumer's, the mechanism is shared).
+//! - **Port default values** (R899): each input port carries a typed literal
+//!   default (the "pin default value"), typed by its [`PortType`] — a `Float`
+//!   port a scalar, a `Vector` port a colour — reusing the data-grid
+//!   [`CellValue`] value substrate. An **unconnected** port paints its default
+//!   beside the pin (a wired port hides it; the value is retained); it is
+//!   AI-read/write (`query`/`intervene node.<id>.input_default.<port>`, typed —
+//!   a colour takes a `#RRGGBB[AA]` hex, the write journals an undoable
+//!   [`SetPortDefaultCmd`]). Deferred: **inline keyboard editing** of the
+//!   default — the input port's pointer gesture is already edge-connect (R742),
+//!   so an inline value box needs a separate hit target (a follow-up UX axis;
+//!   the AI-first write path is the framework's primary path, §2). Still
+//!   deferred to the blueprint/material consumer: dataflow **evaluation** and
 //!   the typed ports' AT enrichment (the a11y name keeps the arity count).
 //! - **Undo / redo** (R851 + R853): every edit is reversible on the shared
 //!   [`UndoStack`] — the **structural** edits (add node, delete node + its
@@ -147,7 +159,7 @@ use pinion_core::external::{
     External, ExternalIntrospect, IntrospectSchema, IntrospectValue, InterveneError, InvokeError,
     RepaintOwner, ThreadOwnership,
 };
-use pinion_core::cell_value::CellKind;
+use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::reactive::{batch, Owner, Signal};
 use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
@@ -244,10 +256,11 @@ const STORAGE_CACHE_KEY: &str = "node_graph.storage";
 const STORAGE_KEY: &str = "node_graph.state";
 /// R852 — bump on an incompatible [`SerializedGraph`] layout change; a load of a
 /// mismatched version starts fresh (silent fall-through, the todomvc precedent).
-// R898 — bumped 1 -> 2: typed ports changed the `GraphNode` serialised shape
-// (`inputs`/`outputs` counts -> `input_ports`/`output_ports` typed lists), so a
-// stale v1 blob mismatch-rejects and starts fresh rather than misreading.
-const PERSISTED_SCHEMA_VERSION: u32 = 2;
+// R898 -> 2: typed ports changed the `GraphNode` serialised shape
+// (`inputs`/`outputs` counts -> `input_ports`/`output_ports` typed lists).
+// R899 -> 3: added per-port `input_defaults` (typed `CellValue`s). Each bump
+// mismatch-rejects a stale blob so it starts fresh rather than misreading.
+const PERSISTED_SCHEMA_VERSION: u32 = 3;
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.
@@ -418,6 +431,19 @@ impl PortType {
         }
     }
 
+    /// R899 — the literal default for an *unconnected* input port of this type
+    /// (the blueprint / material-graph "pin default value"): a typed
+    /// [`CellValue`] the data-grid value substrate carries, so a port default
+    /// reuses its parse / display / typed-`intervene` machinery rather than a
+    /// bespoke per-type literal. `Float` -> a scalar `0.0`, `Vector` -> a
+    /// mid-grey colour (a vec3/colour seed an author overrides).
+    fn default_value(self) -> CellValue {
+        match self {
+            PortType::Float => CellValue::Float(0.0),
+            PortType::Vector => CellValue::Color(Color::rgb(0x80, 0x80, 0x80)),
+        }
+    }
+
     /// Whether an output of `self` may feed an input of `into`. Exact match
     /// always; a scalar `Float` broadcasts up to a `Vector` (the shader-graph
     /// scalar-promote coercion). There is no narrowing (a `Vector` never feeds
@@ -438,7 +464,10 @@ impl PortType {
 /// [`NodeId`]. R898 — the ports are [`PortType`]-typed sockets; the arity
 /// (`inputs()` / `outputs()`) is now the *length* of those lists, so the
 /// pre-R898 count-only contract is the degenerate read of the richer model.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// R899 — no `Eq`: `input_defaults` carries [`CellValue`]s (an `f64` `Float`
+// arm), so the model is `PartialEq` only. Never a set / map key, so `Eq` is
+// not required (the same reason `SerializedGraph` / `GraphDelta` below drop it).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct GraphNode {
     id: NodeId,
     title: String,
@@ -446,6 +475,11 @@ struct GraphNode {
     y: i32,
     input_ports: Vec<PortType>,
     output_ports: Vec<PortType>,
+    /// R899 — the literal default per input port (parallel to `input_ports`),
+    /// used when the port is unconnected (the "pin default value"). Typed by
+    /// the port's [`PortType`]; retained while the port is wired (the Unreal
+    /// model — wiring hides the editor, it does not discard the value).
+    input_defaults: Vec<CellValue>,
 }
 
 impl GraphNode {
@@ -457,7 +491,13 @@ impl GraphNode {
             y,
             input_ports: inputs.to_vec(),
             output_ports: outputs.to_vec(),
+            input_defaults: inputs.iter().map(|t| t.default_value()).collect(),
         }
+    }
+
+    /// R899 — the literal default of input port `port` (`None` out of range).
+    fn input_default(&self, port: usize) -> Option<&CellValue> {
+        self.input_defaults.get(port)
     }
 
     /// Input-port arity — the pre-R898 `inputs` count, now derived from the
@@ -632,7 +672,9 @@ fn default_edges() -> Vec<Edge> {
 /// session left off (a deleted-then-saved id is never handed out again). The
 /// selection is transient UI state and is *not* persisted. `schema_version`
 /// gates the load: a mismatch starts fresh rather than misreading an old layout.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// R899 — `PartialEq` only (it carries `GraphNode`s with their `CellValue`
+// `input_defaults`); never a set / map key.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct SerializedGraph {
     schema_version: u32,
     nodes: Vec<GraphNode>,
@@ -1294,6 +1336,78 @@ fn apply_rename(
     true
 }
 
+/// R899 — one reversible edit to an input port's literal default value
+/// (the granular [`RenameNodeCmd`] peer — a per-field, non-coalescing undo
+/// step: each committed default change is its own step). Stores the typed
+/// [`CellValue`] before / after, so undo / redo restore the exact value.
+struct SetPortDefaultCmd {
+    nodes: Rc<Signal<Vec<GraphNode>>>,
+    id: NodeId,
+    port: usize,
+    before: CellValue,
+    after: CellValue,
+}
+
+impl SetPortDefaultCmd {
+    /// Write the port's default. A no-op if the node / port is absent (a LIFO
+    /// undo cannot reach it while deleted, but the write stays total — the
+    /// [`RenameNodeCmd::set_title`] discipline).
+    fn set_default(&self, value: &CellValue) {
+        self.nodes.set_with(|prev| {
+            let mut next = prev.clone();
+            if let Some(slot) =
+                next.iter_mut().find(|n| n.id == self.id).and_then(|n| n.input_defaults.get_mut(self.port))
+            {
+                *slot = value.clone();
+            }
+            next
+        });
+    }
+}
+
+impl UndoCommand for SetPortDefaultCmd {
+    fn label(&self) -> Cow<'static, str> {
+        Cow::Borrowed("Set port default")
+    }
+
+    fn redo(&self) {
+        self.set_default(&self.after);
+    }
+
+    fn undo(&self) {
+        self.set_default(&self.before);
+    }
+}
+
+/// R899 — apply an input-port default change undoably (the [`apply_rename`]
+/// peer): reject an unknown id / out-of-range port (graph unchanged, `false`),
+/// no-op (journal nothing) when the value is unchanged, else journal a
+/// [`SetPortDefaultCmd`]. The ONE port-default mutation path — the AI-first
+/// `intervene node.<id>.input_default.<port>` lands here (the interactive
+/// inline editor, when added, will share it), so the two cannot drift. The
+/// caller has already type-checked the value against the port's kind via
+/// [`CellValue::with_intervene`], so a wrong type never reaches the journal.
+fn apply_set_default(
+    nodes: &Rc<Signal<Vec<GraphNode>>>,
+    undo: &UndoStack,
+    id: NodeId,
+    port: usize,
+    value: CellValue,
+) -> bool {
+    let Some(before) =
+        nodes.get().into_iter().find(|n| n.id == id).and_then(|n| n.input_defaults.get(port).cloned())
+    else {
+        return false;
+    };
+    if before == value {
+        return true;
+    }
+    let cmd = SetPortDefaultCmd { nodes: Rc::clone(nodes), id, port, before, after: value };
+    cmd.redo();
+    undo.push_applied(cmd);
+    true
+}
+
 /// R851 — prune a selection that a structural edit just made dangling: a
 /// [`Selection`] over a removed node / edge id collapses to [`Selection::None`]
 /// (the stable-id analogue of R838's index-shift bookkeeping — "is it still
@@ -1690,6 +1804,7 @@ impl NodeGraphExternal {
             y,
             input_ports: input_ports.to_vec(),
             output_ports: output_ports.to_vec(),
+            input_defaults: input_ports.iter().map(|t| t.default_value()).collect(),
         };
         let sel_before = self.selection.get();
         // `record` applies the edit forward — pushing the node and selecting it
@@ -1760,6 +1875,31 @@ impl NodeGraphExternal {
             sel_after,
         );
         true
+    }
+
+    /// R899 — the `intervene node.<id>.input_default.<port>` write path. The
+    /// value is type-checked against the port's kind by
+    /// [`CellValue::with_intervene`] (a `Float` takes a float, a `Vector`/`Color`
+    /// a `#RRGGBB[AA]` hex), then routed through the `apply_set_default` SSOT, so
+    /// the AI write journals the same undoable [`SetPortDefaultCmd`] an inline
+    /// editor would. An unknown field / out-of-range port is an `UnknownPath`.
+    fn intervene_input_default(
+        &mut self,
+        id: NodeId,
+        node: &GraphNode,
+        field: &str,
+        value: IntrospectValue,
+    ) -> Result<(), InterveneError> {
+        let Some(port) = field.strip_prefix("input_default.").and_then(|p| p.parse::<usize>().ok())
+        else {
+            return Err(InterveneError::UnknownPath);
+        };
+        let Some(current) = node.input_default(port) else {
+            return Err(InterveneError::UnknownPath);
+        };
+        let next = current.with_intervene(value)?;
+        apply_set_default(&self.nodes, &self.undo, id, port, next);
+        Ok(())
     }
 
     /// Remove the edge with stable id `id` (no-op + `false` if absent). R851 —
@@ -2457,6 +2597,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node.<id>.outputs", "int"),
             ("node.<id>.input_types", "string"),
             ("node.<id>.output_types", "string"),
+            ("node.<id>.input_default.<port>", "json"),
             ("edge.<id>", "string"),
             ("viewport.x", "float"),
             ("viewport.y", "float"),
@@ -2542,7 +2683,14 @@ impl ExternalIntrospect for NodeGraphExternal {
                         "output_types" => {
                             Some(IntrospectValue::Text(port_types_csv(&node.output_ports)))
                         }
-                        _ => None,
+                        // R899 — the typed default of an input port (the
+                        // write twin is `intervene node.<id>.input_default.<port>`);
+                        // a `Float` reads as a float, a `Vector` (`Color`) as a
+                        // `{hex,r,g,b,a}` object — the CellValue introspect shape.
+                        other => other
+                            .strip_prefix("input_default.")
+                            .and_then(|p| p.parse::<usize>().ok())
+                            .and_then(|port| node.input_default(port).map(CellValue::to_introspect)),
                     };
                 }
                 if let Some(id_str) = path.strip_prefix("edge.") {
@@ -2667,7 +2815,10 @@ impl ExternalIntrospect for NodeGraphExternal {
             "inputs" | "outputs" | "input_types" | "output_types" => {
                 Err(InterveneError::ReadOnly)
             }
-            _ => Err(InterveneError::UnknownPath),
+            // R899 — set an input port's typed default (the write twin of
+            // `query node.<id>.input_default.<port>`); routed through the
+            // type-checking [`Self::intervene_input_default`] helper.
+            _ => self.intervene_input_default(id, &node, field, value),
         }
     }
 
@@ -3053,6 +3204,29 @@ fn view_port(tag: String, left: i32, top: i32, color: Color, zoom: f64) -> Scene
     )
 }
 
+/// R899 — the literal default value shown beside an *unconnected* input port
+/// (the "pin default" label). A tagged container so an AI client can observe
+/// the painted default through `scene/snapshot` (the value is also the
+/// `query node.<id>.input_default.<port>` read); its `Text` child carries the
+/// `CellValue::display` string. Placed just right of the port square, node-local.
+fn view_input_default(tag: String, text: &str, top: i32, theme: &Theme, zoom: f64) -> Scene {
+    let label = Scene::Text(TextNode::styled(
+        text.to_owned(),
+        Rect::default(),
+        TextStyle::new().with_size_px(wfont(11, zoom)).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+    ));
+    Scene::Container(
+        ContainerNode::new(vec![label])
+            .with_tag(tag)
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(upx(wpx(PORT_SIZE + 4, zoom)), upx(wpx(top, zoom)))
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center),
+            ),
+    )
+}
+
 /// One node card: a header (title) over its input (left) + output (right)
 /// ports, absolutely placed at the node's canvas position. The whole card is
 /// one drag target; the ports are deeper hit targets for edge connect.
@@ -3061,6 +3235,7 @@ fn view_node(
     selected: bool,
     renaming: bool,
     edit_field: RootState,
+    wired_inputs: &BTreeSet<usize>,
     theme: &Theme,
     zoom: f64,
 ) -> Scene {
@@ -3112,6 +3287,21 @@ fn view_node(
             ty.color(),
             zoom,
         ));
+        // R899 — an *unconnected* input port shows its literal default value
+        // (the "pin default"); a wired port draws no label (the incoming edge
+        // supplies the value). The default is retained while wired — wiring
+        // only hides the label.
+        if !wired_inputs.contains(&i) {
+            if let Some(val) = node.input_default(i) {
+                children.push(view_input_default(
+                    format!("{GRAPH_TAG}#idefault_{id}_{i}"),
+                    &val.display(),
+                    port_row_top(i),
+                    theme,
+                    zoom,
+                ));
+            }
+        }
     }
     for (j, ty) in node.output_ports.iter().enumerate() {
         children.push(view_port(
@@ -3220,6 +3410,37 @@ fn view_palette(theme: &Theme) -> Scene {
 /// state + caret byte (the data-grid `RootState` shape).
 type RootState = (TextFieldState, u32);
 
+/// R899 — the node cards, one per node. Computes each node's wired input set
+/// (the ports whose default label is hidden because an edge supplies their
+/// value — the single source the paint and the `add_edge` open-port rule
+/// share) and lowers it to a [`view_node`] card.
+fn view_node_cards(
+    nodes: &[GraphNode],
+    edges: &[Edge],
+    selected: &BTreeSet<NodeId>,
+    renaming: Option<NodeId>,
+    edit_field: RootState,
+    theme: &Theme,
+    zoom: f64,
+) -> Vec<Scene> {
+    nodes
+        .iter()
+        .map(|node| {
+            let wired_inputs: BTreeSet<usize> =
+                edges.iter().filter(|e| e.to_node == node.id).map(|e| e.to_port).collect();
+            view_node(
+                node,
+                selected.contains(&node.id),
+                renaming == Some(node.id),
+                edit_field,
+                &wired_inputs,
+                theme,
+                zoom,
+            )
+        })
+        .collect()
+}
+
 // The `&Frame` mirrors the `WidgetCore::view` trait signature (the data-grid
 // free-view idiom).
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -3263,16 +3484,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         }
     }
 
-    for node in &nodes {
-        world_children.push(view_node(
-            node,
-            selected.contains(&node.id),
-            renaming == Some(node.id),
-            state,
-            &theme,
-            zoom,
-        ));
-    }
+    world_children.extend(view_node_cards(&nodes, &edges, &selected, renaming, state, &theme, zoom));
 
     // R880 — the live marquee rubber band layers over everything in the
     // world (reading the Signal subscribes the paint Effect, so each drag
@@ -3763,6 +3975,80 @@ mod tests {
                 intro.intervene("node.2.input_types", IntrospectValue::Text("Float".to_owned())),
                 Err(InterveneError::ReadOnly),
             );
+        });
+    }
+
+    #[test]
+    fn r899_input_port_default_is_typed_by_port_type() {
+        // A Vector port defaults to a colour, a Float port to a scalar.
+        assert!(matches!(PortType::Vector.default_value(), CellValue::Color(_)));
+        assert_eq!(PortType::Float.default_value(), CellValue::Float(0.0));
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            // Multiply (node 2) input 0 is a Vector port -> a Color default.
+            let n = coord.node_by_id(NodeId(2)).expect("node 2");
+            assert!(matches!(n.input_default(0), Some(CellValue::Color(_))), "Vector input default is a Color");
+            // Lerp's input 2 is the Float factor -> a Float default.
+            let lerp = coord.add_node(6).expect("Lerp");
+            let l = coord.node_by_id(lerp).expect("lerp");
+            assert_eq!(l.input_default(2), Some(&CellValue::Float(0.0)), "Float input default is 0.0");
+        });
+    }
+
+    #[test]
+    fn r899_input_default_is_ai_read_write_and_type_checked() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // The Vector input's default reads as a Color object.
+            let Some(IntrospectValue::Json(j)) = intro.query("node.2.input_default.0") else {
+                panic!("Vector default reads as a JSON colour object");
+            };
+            assert_eq!(j.get("r").and_then(serde_json::Value::as_u64), Some(0x80), "default grey r=0x80");
+            // A typed write takes a hex string and reads back the parsed channels.
+            assert_eq!(
+                intro.intervene("node.2.input_default.0", IntrospectValue::Text("#3366cc".to_owned())),
+                Ok(()),
+            );
+            let Some(IntrospectValue::Json(j)) = intro.query("node.2.input_default.0") else {
+                panic!("re-read after the typed write");
+            };
+            assert_eq!(j.get("r").and_then(serde_json::Value::as_u64), Some(0x33), "written r");
+            assert_eq!(j.get("b").and_then(serde_json::Value::as_u64), Some(0xcc), "written b");
+            // The wrong value type for a Color port is rejected (no float into a colour).
+            assert_eq!(
+                intro.intervene("node.2.input_default.0", IntrospectValue::Float(1.0)),
+                Err(InterveneError::TypeMismatch),
+            );
+            // An out-of-range port: query is absent, write is UnknownPath.
+            assert_eq!(intro.query("node.2.input_default.9"), None);
+            assert_eq!(
+                intro.intervene("node.2.input_default.9", IntrospectValue::Text("#000000".to_owned())),
+                Err(InterveneError::UnknownPath),
+            );
+        });
+    }
+
+    #[test]
+    fn r899_set_port_default_is_undoable() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let red = CellValue::Color(Color::rgb(0xff, 0x00, 0x00));
+            let grey = coord.node_by_id(NodeId(2)).and_then(|n| n.input_default(0).cloned()).expect("default");
+            assert!(apply_set_default(&use_nodes(), &use_undo(), NodeId(2), 0, red.clone()));
+            assert_eq!(stack.len(), 1, "a default change is one undo step");
+            assert_eq!(coord.node_by_id(NodeId(2)).unwrap().input_default(0), Some(&red));
+            // Re-setting the same value is a no-op (no extra undo step).
+            assert!(apply_set_default(&use_nodes(), &use_undo(), NodeId(2), 0, red.clone()));
+            assert_eq!(stack.len(), 1, "an unchanged write journals nothing");
+            assert!(stack.undo(), "undo restores the prior default");
+            assert_eq!(coord.node_by_id(NodeId(2)).unwrap().input_default(0), Some(&grey));
+            assert!(stack.redo(), "redo re-applies it");
+            assert_eq!(coord.node_by_id(NodeId(2)).unwrap().input_default(0), Some(&red));
         });
     }
 
