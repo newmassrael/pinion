@@ -38929,6 +38929,58 @@
         "value_visual CellValue->paint stays per-binding (substrate Rule-of-Three ruling); lift only at a 3rd identical"
       ]
     },
+    "R910": {
+      "decision_summary": "R910 §5.38 §5.22 inspector interactivity: composite click-to-select + keyboard nav",
+      "changes_bullets": [
+        "hello-inspector pointer click-to-select: object rows tagged inspector#<i>; router #-split routes to send wire",
+        "send handler decodes split_send_payload + is_activation_event -> select on activation edge (PointerUp; hover no-op)",
+        "keyboard apply_key: Arrow/Home/End -> resolve_target_index (clamp) -> send \"<i>:KeyboardActivate\" (one select path)",
+        "pointer + keyboard + RPC invoke/select share the one select funnel (no divergence; hello-tabs/radio-group pattern)",
+        "pays the R909 carry (pointer + keyboard selection deferred); the inspector is now a real interactive widget",
+        "demo r910_inspector_interaction: 34 assertions (click each object / value follows selection / keyboard clamp / OOR no-op)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 157 result-ok, 0 failures (inspector 12 unit incl r910 send + keyboard-clamp)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo r910_inspector_interaction.py: PASS, 34 assertions (release); composite-click + Group-widget key routing verified e2e",
+        "self-grep: split_send_payload = reused decode SSOT (5+ consumers); the decode+activation+select glue is unique to inspector"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "inline click-to-edit cell delegates (property-grid popup/scrub richness) still deferred; AI-first RPC intervene primary",
+        "hover-no-select verified by unit test (PointerEnter); a bare PointerEnter is not RPC-drivable in the e2e demo",
+        "richer a11y (per-row List/ListItem nodes) deferred; the derived Group root node stays minimal",
+        "resolve_target_index clamps (no wrap) - intentional divergence from tabs' cyclic roving (pager-vs-cycle, R754)"
+      ],
+      "publishable_decision_summary": "R910 §5.38 §5.22 inspector interactivity: composite click-to-select + keyboard nav",
+      "publishable_changes_bullets": [
+        "hello-inspector pointer click-to-select: object rows tagged inspector#<i>; router #-split routes to send wire",
+        "send handler decodes split_send_payload + is_activation_event -> select on activation edge (PointerUp; hover no-op)",
+        "keyboard apply_key: Arrow/Home/End -> resolve_target_index (clamp) -> send \"<i>:KeyboardActivate\" (one select path)",
+        "pointer + keyboard + RPC invoke/select share the one select funnel (no divergence; hello-tabs/radio-group pattern)",
+        "pays the R909 carry (pointer + keyboard selection deferred); the inspector is now a real interactive widget",
+        "demo r910_inspector_interaction: 34 assertions (click each object / value follows selection / keyboard clamp / OOR no-op)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 157 result-ok, 0 failures (inspector 12 unit incl r910 send + keyboard-clamp)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo r910_inspector_interaction.py: PASS, 34 assertions (release); composite-click + Group-widget key routing verified e2e",
+        "self-grep: split_send_payload = reused decode SSOT (5+ consumers); the decode+activation+select glue is unique to inspector"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "inline click-to-edit cell delegates (property-grid popup/scrub richness) still deferred; AI-first RPC intervene primary",
+        "hover-no-select verified by unit test (PointerEnter); a bare PointerEnter is not RPC-drivable in the e2e demo",
+        "richer a11y (per-row List/ListItem nodes) deferred; the derived Group root node stays minimal",
+        "resolve_target_index clamps (no wrap) - intentional divergence from tabs' cyclic roving (pager-vs-cycle, R754)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

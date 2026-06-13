@@ -49,10 +49,12 @@
 use std::rc::Rc;
 
 use pinion_core::cell_value::CellValue;
+use pinion_core::composite_tag::split_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use pinion_core::input::is_activation_event;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle, Size,
@@ -282,6 +284,7 @@ impl ExternalIntrospect for InspectorExternal {
             ("kind.<i>", "string"),
             ("value.<i>", "json"),
             ("select", "int"),
+            ("send", "string"),
         ])
     }
 
@@ -353,6 +356,24 @@ impl ExternalIntrospect for InspectorExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R910 — the composite send wire: a click on an `inspector#<i>`
+            // object row (or the keyboard nav in `apply_key`) routes here
+            // as `"<i>:<EventName>"`. Select on the activation edge
+            // (PointerUp / KeyboardActivate), ignoring the enter/down/leave
+            // half of the pointer cycle so hover does not select.
+            "send" => match args {
+                IntrospectValue::Text(ref payload) => {
+                    if let Some((key, event, _mods)) = split_send_payload(payload) {
+                        if is_activation_event(event) {
+                            if let Ok(idx) = key.parse::<usize>() {
+                                self.select(idx);
+                            }
+                        }
+                    }
+                    Ok(IntrospectValue::Bool(true))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -360,6 +381,33 @@ impl ExternalIntrospect for InspectorExternal {
 
 fn make_inspector_external() -> InspectorExternal {
     InspectorExternal::new(use_objects(), use_selected())
+}
+
+/// Resolve the keyboard target object index for a nav key, read off the
+/// External's introspect (`object_count` + `selected`). Arrow Down/Right
+/// = next, Up/Left = previous (both clamp), Home/End = first/last.
+/// `None` for a non-nav key or an empty model.
+fn resolve_target_index(intro: Option<&dyn ExternalIntrospect>, key: &str) -> Option<usize> {
+    let intro = intro?;
+    let count = match intro.query("object_count")? {
+        IntrospectValue::Int(n) => usize::try_from(n).ok()?,
+        _ => return None,
+    };
+    if count == 0 {
+        return None;
+    }
+    let last = count - 1;
+    let cur = match intro.query("selected")? {
+        IntrospectValue::Int(n) => usize::try_from(n).unwrap_or(0),
+        _ => 0,
+    };
+    match key {
+        "ArrowDown" | "ArrowRight" => Some((cur + 1).min(last)),
+        "ArrowUp" | "ArrowLeft" => Some(cur.saturating_sub(1)),
+        "Home" => Some(0),
+        "End" => Some(last),
+        _ => None,
+    }
 }
 
 // ─── View ─────────────────────────────────────────────────────────
@@ -446,7 +494,11 @@ fn object_row(index: usize, name: &str, selected: bool, fg: Color, accent: Color
             Rect::default(),
             TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(text_fg),
         ))])
-        .with_tag(format!("obj_{index}"))
+        // Composite tag `inspector#<i>`: the input router's `#` split
+        // (R51.42) routes a click here to the primary External's `send`
+        // wire as `"<i>:<EventName>"` — the hello-tabs / radio-group
+        // click-to-select pattern.
+        .with_tag(format!("{INSPECTOR_TAG}#{index}"))
         .with_style(BoxStyle::filled(fill).with_corner_radius(5))
         .with_layout(
             LayoutStyle::new()
@@ -553,6 +605,7 @@ fn view(selected: usize, _frame: &Frame) -> Scene {
     initial_size = (WIN_W, WIN_H),
     external = make_inspector_external,
     role = Group,
+    apply_key,
 )]
 struct InspectorView;
 
@@ -575,6 +628,29 @@ impl InspectorView {
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
+    }
+
+    /// Keyboard navigation over the object list: Arrow keys move the
+    /// selection (clamped), Home/End jump to the ends. Routes through the
+    /// External's `send` wire (`"<i>:KeyboardActivate"`) so keyboard and
+    /// pointer share the one select path.
+    fn apply_key(
+        scene: &mut Scene,
+        _focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        let Scene::External(node) = scene else {
+            return false;
+        };
+        let Some(target) = resolve_target_index(node.handle.introspect(), key) else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        let _ = intro.invoke("send", IntrospectValue::Text(format!("{target}:KeyboardActivate")));
+        true
     }
 }
 
@@ -638,6 +714,39 @@ mod tests {
         e.intervene("selected", IntrospectValue::Int(2)).unwrap();
         assert_eq!(e.query("selected_name"), Some(IntrospectValue::Text("Sun Light".to_owned())));
         assert!(e.intervene("selected", IntrospectValue::Int(99)).is_err());
+    }
+
+    #[test]
+    fn r910_send_wire_selects_on_activation_edge() {
+        let mut e = ext();
+        // The full pointer cycle a composite click produces: only the
+        // PointerUp activation edge selects.
+        e.invoke("send", IntrospectValue::Text("2:PointerEnter".to_owned())).unwrap();
+        assert_eq!(e.sel(), 0, "hover (PointerEnter) must not select");
+        e.invoke("send", IntrospectValue::Text("2:PointerDown".to_owned())).unwrap();
+        assert_eq!(e.sel(), 0, "press (PointerDown) must not select");
+        e.invoke("send", IntrospectValue::Text("2:PointerUp".to_owned())).unwrap();
+        assert_eq!(e.sel(), 2, "release (PointerUp) selects");
+        assert_eq!(e.query("selected_name"), Some(IntrospectValue::Text("Sun Light".to_owned())));
+    }
+
+    #[test]
+    fn r910_keyboard_nav_clamps_at_both_ends() {
+        let mut e = ext();
+        let activate = |e: &mut InspectorExternal, idx: usize| {
+            e.invoke("send", IntrospectValue::Text(format!("{idx}:KeyboardActivate"))).unwrap();
+        };
+        // resolve_target_index drives the index; here we exercise the
+        // clamp arithmetic the keyboard path applies.
+        assert_eq!(resolve_target_index(Some(&e), "ArrowDown"), Some(1));
+        activate(&mut e, 1);
+        assert_eq!(resolve_target_index(Some(&e), "End"), Some(2));
+        activate(&mut e, 2);
+        assert_eq!(resolve_target_index(Some(&e), "ArrowDown"), Some(2), "clamps at last");
+        assert_eq!(resolve_target_index(Some(&e), "Home"), Some(0));
+        activate(&mut e, 0);
+        assert_eq!(resolve_target_index(Some(&e), "ArrowUp"), Some(0), "clamps at first");
+        assert_eq!(resolve_target_index(Some(&e), "Tab"), None, "non-nav key ignored");
     }
 
     #[test]
