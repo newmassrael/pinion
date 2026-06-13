@@ -2592,6 +2592,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-syntax-highlight"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-platform-clipboard",
+ "pinion-shell",
+ "pinion-text",
+ "pinion-widget-paint",
+ "vello",
+]
+
+[[package]]
 name = "hello-tab-reorder"
 version = "0.0.1"
 dependencies = [

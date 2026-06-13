@@ -59,6 +59,7 @@ members = [
     "examples/hello-textfield",
     "examples/hello-textarea",
     "examples/hello-find-replace",
+    "examples/hello-syntax-highlight",
     "examples/hello-textfield-tui",
     "examples/hello-toggle",
     "examples/hello-toggle-tui",

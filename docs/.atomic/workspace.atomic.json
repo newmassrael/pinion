@@ -38571,6 +38571,66 @@
         "multiline find editor deferred (multiline wraps one Scroll; per-line bands work, untested here)"
       ]
     },
+    "R904": {
+      "decision_summary": "R904 syntax highlighting (cost-no-object textbook; 2nd text-depth round after R903 find/replace, completing the code-editor essentials — well under the >3-round-per-axis local-optimum threshold). New pinion-core::syntax: SyntaxPalette (fixed classic scheme) + pure highlight_code(text, keywords, palette, font_size) C-family tokenizer (line comment / string-with-escape / number / keyword), char-aware + byte-offset exact. TextEditState::attach_highlighter makes style_runs() a content-derived read (the R903 find_matches derive pattern) so the SINGLE style_runs() read site feeds paint + caret geometry + hit-test + the scene/style_runs RPC — an AI reads the editor's token colouring directly. The attach_highlighter closure IS the language-agnostic seam (no premature Language trait; the keyword slice covers C-family dialects). Runs bake the field font_size (default size 0 = invisible glyphs). Highlighter and manual styling are mutually-exclusive modes (code editor vs rich text); a Highlighter newtype carries a manual Debug so TextEditState keeps its derive. Self-grep: NO lift — is_word_char (find whole-word) and syntax identifier-char are independent concepts coincidentally \\w (coupling = wrong-abstraction); attach_* and derived-accessor are idioms, not duplicated logic.",
+      "changes_bullets": [
+        "syntax.rs: SyntaxPalette (fixed classic scheme) + highlight_code C-family tokenizer",
+        "syntax.rs: char-aware scanners (string escape / number fraction / word / line comment)",
+        "syntax.rs: emits one StyleRun per keyword/string/comment/number, byte-offset exact",
+        "text_edit.rs: attach_highlighter + HighlighterFn; style_runs() derives from text when attached",
+        "text_edit.rs: Highlighter newtype carries a manual Debug so TextEditState keeps its derive",
+        "text_edit.rs: highlighter shadows manual runs (code-editor vs rich-text = exclusive modes)",
+        "lib.rs: pub mod syntax + pub use {highlight_code, SyntaxPalette}",
+        "examples/hello-syntax-highlight: code field + seeded line + attach_highlighter + token-count status"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-core 2181 pass; 152 test-result-ok lines; 0 failed)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "11 new pinion-core unit tests (9 tokenizer + 2 attach_highlighter) + 15 example tests",
+        "tools/demos/r904_syntax_highlight.py 33 assertions PASS (runs/colours/ranges/edit-rehighlight)",
+        "3b self-grep: no lift (is_word_char independent concept; attach_*/derive = idiom not dup)"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "theme-reactive syntax palette deferred (fixed scheme; editors theme code independently)",
+        "incremental/memoised highlighting deferred (re-scan per read; no measured large-file consumer)",
+        "multiline code editor deferred (single-line example; tokenizer + derive work multiline)",
+        "one grammar family (block comments / char / raw strings / number suffixes out of scope)",
+        "Language trait/registry deferred (attach_highlighter closure is the seam; 2nd grammar = sibling fn)"
+      ],
+      "publishable_decision_summary": "R904 syntax highlighting (cost-no-object textbook; 2nd text-depth round after R903 find/replace, completing the code-editor essentials — well under the >3-round-per-axis local-optimum threshold). New pinion-core::syntax: SyntaxPalette (fixed classic scheme) + pure highlight_code(text, keywords, palette, font_size) C-family tokenizer (line comment / string-with-escape / number / keyword), char-aware + byte-offset exact. TextEditState::attach_highlighter makes style_runs() a content-derived read (the R903 find_matches derive pattern) so the SINGLE style_runs() read site feeds paint + caret geometry + hit-test + the scene/style_runs RPC — an AI reads the editor's token colouring directly. The attach_highlighter closure IS the language-agnostic seam (no premature Language trait; the keyword slice covers C-family dialects). Runs bake the field font_size (default size 0 = invisible glyphs). Highlighter and manual styling are mutually-exclusive modes (code editor vs rich text); a Highlighter newtype carries a manual Debug so TextEditState keeps its derive. Self-grep: NO lift — is_word_char (find whole-word) and syntax identifier-char are independent concepts coincidentally \\w (coupling = wrong-abstraction); attach_* and derived-accessor are idioms, not duplicated logic.",
+      "publishable_changes_bullets": [
+        "syntax.rs: SyntaxPalette (fixed classic scheme) + highlight_code C-family tokenizer",
+        "syntax.rs: char-aware scanners (string escape / number fraction / word / line comment)",
+        "syntax.rs: emits one StyleRun per keyword/string/comment/number, byte-offset exact",
+        "text_edit.rs: attach_highlighter + HighlighterFn; style_runs() derives from text when attached",
+        "text_edit.rs: Highlighter newtype carries a manual Debug so TextEditState keeps its derive",
+        "text_edit.rs: highlighter shadows manual runs (code-editor vs rich-text = exclusive modes)",
+        "lib.rs: pub mod syntax + pub use {highlight_code, SyntaxPalette}",
+        "examples/hello-syntax-highlight: code field + seeded line + attach_highlighter + token-count status"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-core 2181 pass; 152 test-result-ok lines; 0 failed)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "11 new pinion-core unit tests (9 tokenizer + 2 attach_highlighter) + 15 example tests",
+        "tools/demos/r904_syntax_highlight.py 33 assertions PASS (runs/colours/ranges/edit-rehighlight)",
+        "3b self-grep: no lift (is_word_char independent concept; attach_*/derive = idiom not dup)"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "theme-reactive syntax palette deferred (fixed scheme; editors theme code independently)",
+        "incremental/memoised highlighting deferred (re-scan per read; no measured large-file consumer)",
+        "multiline code editor deferred (single-line example; tokenizer + derive work multiline)",
+        "one grammar family (block comments / char / raw strings / number suffixes out of scope)",
+        "Language trait/registry deferred (attach_highlighter closure is the seam; 2nd grammar = sibling fn)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

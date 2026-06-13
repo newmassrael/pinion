@@ -273,6 +273,37 @@ pub struct TextEditState {
     /// canonical editor "Match Whole Word" toggle. `false` (the default)
     /// matches any substring. Reactive peer of the other find axes.
     find_whole_word: Signal<bool>,
+    /// R904 §5.36 — optional **syntax highlighter**: a pure
+    /// `Fn(&str) -> Vec<StyleRun>` deriving the displayed styled runs from the
+    /// buffer content (a tokeniser; see [`crate::syntax::highlight_code`]).
+    /// `None` (the default) leaves [`style_runs`](Self::style_runs) returning
+    /// the manually-applied runs (the rich-text path). When a binding calls
+    /// [`attach_highlighter`](Self::attach_highlighter), `style_runs` instead
+    /// re-derives from the live text on every read (the
+    /// [`find_matches`](Self::find_matches) re-derive shape) so paint, caret
+    /// geometry, and the `scene/style_runs` RPC all see the syntax coloring —
+    /// a highlighter and manual styling are the editor's two mutually-exclusive
+    /// modes (code editor vs rich-text). A `RefCell` (not a `Signal`): the
+    /// attachment is wiring, not observable content — the reactive dependency
+    /// is the *text* the closure reads through [`style_runs`](Self::style_runs).
+    highlighter: RefCell<Option<Highlighter>>,
+}
+
+/// R904 §5.36 — a syntax-highlighter closure: derives the displayed
+/// [`StyleRun`]s from buffer text. See
+/// [`TextEditState::attach_highlighter`].
+pub type HighlighterFn = Rc<dyn Fn(&str) -> Vec<StyleRun>>;
+
+/// R904 §5.36 — boxed syntax-highlighter closure. A newtype solely so
+/// [`TextEditState`] keeps its `#[derive(Debug)]` (a bare `dyn Fn` is not
+/// `Debug`); the manual impl prints a placeholder.
+#[derive(Clone)]
+struct Highlighter(HighlighterFn);
+
+impl core::fmt::Debug for Highlighter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("Highlighter(..)")
+    }
 }
 
 /// R796 §5.52 — which edits may coalesce. Two commands fold into one undo
@@ -607,6 +638,7 @@ impl TextEditState {
             find_query: Signal::new(String::new()),
             find_case_sensitive: Signal::new(false),
             find_whole_word: Signal::new(false),
+            highlighter: RefCell::new(None),
         }
     }
 
@@ -648,6 +680,7 @@ impl TextEditState {
             find_query: Signal::new(String::new()),
             find_case_sensitive: Signal::new(false),
             find_whole_word: Signal::new(false),
+            highlighter: RefCell::new(None),
         }
     }
 
@@ -882,9 +915,35 @@ impl TextEditState {
     /// re-runs when an edit shifts / clips them. Empty for a plain
     /// single-style field. See the [`style_runs`](Self::style_runs)
     /// field doc for the maintenance contract.
+    ///
+    /// R904 §5.36 — when a [`highlighter`](Self::highlighter) is attached
+    /// ([`attach_highlighter`](Self::attach_highlighter)), this **derives** the
+    /// runs from the live text instead (subscribing to the text `Signal`, so a
+    /// view-fn re-runs on every edit and re-highlights), and the manually
+    /// stored runs are shadowed. The single read site — paint, caret geometry,
+    /// hit-test, and the `scene/style_runs` RPC all call this — so all four see
+    /// the syntax coloring with no per-consumer change (the
+    /// [`find_matches`](Self::find_matches) derive shape).
     #[must_use]
     pub fn style_runs(&self) -> Vec<StyleRun> {
+        if let Some(highlighter) = self.highlighter.borrow().as_ref() {
+            return (highlighter.0)(&self.text.get());
+        }
         self.style_runs.get()
+    }
+
+    /// R904 §5.36 — attach a **syntax highlighter**: a pure
+    /// `Fn(&str) -> Vec<StyleRun>` (a tokeniser — see
+    /// [`crate::syntax::highlight_code`]) that derives the displayed runs from
+    /// the buffer content. Once attached, [`style_runs`](Self::style_runs)
+    /// re-derives on every read and the manual styling path
+    /// ([`apply_style_run`](Self::apply_style_run) etc.) is shadowed — a field
+    /// is either a code editor (highlighted) or a rich-text editor (manually
+    /// styled), not both. The closure is the language-agnostic seam: the
+    /// grammar lives in the caller's tokeniser, not in a framework `Language`
+    /// trait ([[abstraction-needs-second-consumer]]).
+    pub fn attach_highlighter(&self, highlighter: HighlighterFn) {
+        *self.highlighter.borrow_mut() = Some(Highlighter(highlighter));
     }
 
     /// R767 §5.36 §5.22 — replace the styled-run list wholesale. The
@@ -3938,6 +3997,40 @@ mod tests {
             assert_eq!(st.caret(), 2, "setting the needle leaves the caret put");
             assert_eq!(st.selection_range(), None);
             assert_eq!(st.find_query(), "at");
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R904 §5.36 — syntax highlighter (derived style_runs)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r904_attach_highlighter_derives_style_runs_from_text() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("let x".to_string());
+            // No highlighter → the manual (empty) runs.
+            assert!(st.style_runs().is_empty(), "no highlighter → manual runs");
+            st.attach_highlighter(std::rc::Rc::new(|t: &str| {
+                crate::syntax::highlight_code(t, &["let"], crate::syntax::SyntaxPalette::classic(), 16)
+            }));
+            let runs = st.style_runs();
+            assert_eq!(runs.len(), 1, "highlighter colours the 'let' keyword");
+            assert_eq!((runs[0].start, runs[0].end), (0, 3));
+        });
+    }
+
+    #[test]
+    fn r904_highlighter_redrives_after_edit() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial(String::new());
+            st.attach_highlighter(std::rc::Rc::new(|t: &str| {
+                crate::syntax::highlight_code(t, &["fn"], crate::syntax::SyntaxPalette::classic(), 16)
+            }));
+            assert!(st.style_runs().is_empty(), "empty buffer → no tokens");
+            st.insert("fn");
+            assert_eq!(st.style_runs().len(), 1, "typing a keyword re-highlights it");
+            // The shadowed manual runs stay empty under a highlighter.
+            assert!(st.style_runs.get().is_empty(), "manual runs shadowed, not written");
         });
     }
 }

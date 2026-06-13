@@ -38,6 +38,7 @@ pub mod revision;
 pub mod scene;
 pub mod storage;
 pub mod style;
+pub mod syntax;
 pub mod text_scale;
 pub mod theme;
 pub mod topology;
@@ -91,6 +92,7 @@ pub use style::{
     LineHeight, PathStyle, Size, SizeValue, Stroke, StrokeCap, TextAlign, TextDecoration,
     TextOverflow, TextStyle, scale_normalized_to_px,
 };
+pub use syntax::{highlight_code, SyntaxPalette};
 pub use theme::{
     ColorRole, SystemColorScheme, THEME_FADE_SPRING, Theme, ThemeMode, ThemeProvider,
     set_system_color_scheme, system_color_scheme, use_theme,
