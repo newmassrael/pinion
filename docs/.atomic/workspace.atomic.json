@@ -38631,6 +38631,58 @@
         "Language trait/registry deferred (attach_highlighter closure is the seam; 2nd grammar = sibling fn)"
       ]
     },
+    "R905": {
+      "decision_summary": "R905 scene-outliner batch operations (cost-no-object textbook; diversify off the R903-R904 text axis back to the editor/DCC axis with a NEW editing capability — the payoff of R902's multi-selection). delete-selected + rename-selected on the stable-id multi-selection, each ONE undo step. delete-selected removes only the TOP-LEVEL selected subtrees (a selected descendant rides along inside its selected ancestor via collect_top_level dedup), captured granularly (parent+index+subtree, not a whole-tree snapshot) so undo restores the exact shape (redo removes by id, undo reinserts ascending-by-index). rename-selected expands a {n} template numbered in pre-order (or a literal). Both are AI-first invoke ops on the multi-select coordinator (delete_selected/rename_selected return the count, undo/redo a bool) — the §2 RPC primary path. Structural mutation is example-local on the concrete OutlinerNode: TreeNode::children_mut returns a slice (can't resize), so a generic tree structural-edit substrate needs a trait extension (children_vec_mut) deferred to a 2nd consumer. Self-grep NO lift: TreeBatchDelete/Rename are peers of file_browser's single-select delete_selected/rename_selected (different cardinality / model / undo) — coupling = wrong-abstraction; the R903 macro axis was NOT forced (a single multi-target command is cleaner for position-coupled deletes than a macro of N, the hello-node-editor shape).",
+      "changes_bullets": [
+        "hello-tree-grid: TreeState.undo_stack (pre-resolved before the state cache factory)",
+        "hello-tree-grid: collect_top_level dedup + find_location + remove_subtree/insert_subtree",
+        "hello-tree-grid: TreeBatchDelete (granular parent+index+subtree capture, one undo step)",
+        "hello-tree-grid: TreeBatchRename ({n} template numbered pre-order, one undo step)",
+        "hello-tree-grid: delete_selected / rename_selected / undo / redo on TreeState",
+        "hello-tree-grid: TreeSelectExternal invoke delete_selected+rename_selected (count) + undo/redo (bool)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (hello-tree-grid 31; 152 test-result-ok lines; 0 failed)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "6 new batch-op unit tests (delete / top-level-dedup / rename-numbered / rename-literal / 2 no-op)",
+        "tools/demos/r905_batch_ops.py 33 assertions PASS (delete/dedup/rename/undo/redo/screenshot)",
+        "3b self-grep: NO lift — TreeBatch* peers of file_browser ops (diff cardinality/model/undo)"
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "generic tree structural-edit substrate deferred (TreeNode needs children_vec_mut; 2nd consumer)",
+        "keyboard Ctrl+Z / Ctrl+Shift+Z on the outliner deferred (RPC undo/redo is the §2 primary path)",
+        "batch delete count = top-level subtrees removed (selected descendants ride along, not re-counted)"
+      ],
+      "publishable_decision_summary": "R905 scene-outliner batch operations (cost-no-object textbook; diversify off the R903-R904 text axis back to the editor/DCC axis with a NEW editing capability — the payoff of R902's multi-selection). delete-selected + rename-selected on the stable-id multi-selection, each ONE undo step. delete-selected removes only the TOP-LEVEL selected subtrees (a selected descendant rides along inside its selected ancestor via collect_top_level dedup), captured granularly (parent+index+subtree, not a whole-tree snapshot) so undo restores the exact shape (redo removes by id, undo reinserts ascending-by-index). rename-selected expands a {n} template numbered in pre-order (or a literal). Both are AI-first invoke ops on the multi-select coordinator (delete_selected/rename_selected return the count, undo/redo a bool) — the §2 RPC primary path. Structural mutation is example-local on the concrete OutlinerNode: TreeNode::children_mut returns a slice (can't resize), so a generic tree structural-edit substrate needs a trait extension (children_vec_mut) deferred to a 2nd consumer. Self-grep NO lift: TreeBatchDelete/Rename are peers of file_browser's single-select delete_selected/rename_selected (different cardinality / model / undo) — coupling = wrong-abstraction; the R903 macro axis was NOT forced (a single multi-target command is cleaner for position-coupled deletes than a macro of N, the hello-node-editor shape).",
+      "publishable_changes_bullets": [
+        "hello-tree-grid: TreeState.undo_stack (pre-resolved before the state cache factory)",
+        "hello-tree-grid: collect_top_level dedup + find_location + remove_subtree/insert_subtree",
+        "hello-tree-grid: TreeBatchDelete (granular parent+index+subtree capture, one undo step)",
+        "hello-tree-grid: TreeBatchRename ({n} template numbered pre-order, one undo step)",
+        "hello-tree-grid: delete_selected / rename_selected / undo / redo on TreeState",
+        "hello-tree-grid: TreeSelectExternal invoke delete_selected+rename_selected (count) + undo/redo (bool)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (hello-tree-grid 31; 152 test-result-ok lines; 0 failed)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "6 new batch-op unit tests (delete / top-level-dedup / rename-numbered / rename-literal / 2 no-op)",
+        "tools/demos/r905_batch_ops.py 33 assertions PASS (delete/dedup/rename/undo/redo/screenshot)",
+        "3b self-grep: NO lift — TreeBatch* peers of file_browser ops (diff cardinality/model/undo)"
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "generic tree structural-edit substrate deferred (TreeNode needs children_vec_mut; 2nd consumer)",
+        "keyboard Ctrl+Z / Ctrl+Shift+Z on the outliner deferred (RPC undo/redo is the §2 primary path)",
+        "batch delete count = top-level subtrees removed (selected descendants ride along, not re-counted)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -94,8 +94,10 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::composite_tag::{split_send_payload, GridTag};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
+use pinion_core::undo::{use_undo_stack, UndoCommand, UndoStack};
 use pinion_core::widgets::tree_nav::{
-    flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode, VisibleRow,
+    find_node_mut, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
+    VisibleRow,
 };
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Modifiers, Owner, Scene, SelectionChord, Signal, WidgetCore};
@@ -105,6 +107,7 @@ use pinion_widget_paint::table::GridScroll;
 use pinion_widget_paint::tree_view::{
     view_virtual_treegrid, TreeGridData, TreeRowClickExternal, TreeViewStyle,
 };
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
@@ -329,6 +332,183 @@ fn contains_id(nodes: &[OutlinerNode], id: &str) -> bool {
     nodes.iter().any(|n| n.id == id || contains_id(&n.children, id))
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// R905 §5.27 §5.52 — batch edit: structural tree mutation + undo commands.
+//
+// The mutation operates on the concrete `OutlinerNode` tree (the app owns its
+// data model): the `TreeNode::children_mut` trait method returns a `&mut [Self]`
+// slice, which cannot resize for remove / insert, so a *generic* tree
+// structural-edit substrate would need a `TreeNode` trait extension
+// (`children_vec_mut`) — deferred to a second consumer
+// ([[abstraction-needs-second-consumer]]). These helpers stay example-local.
+// ─────────────────────────────────────────────────────────────────────────
+
+/// R905 — the ids in `selection` whose nearest selected ancestor is themselves
+/// (no *ancestor* is selected), in tree pre-order. Deleting only these removes
+/// each selected subtree exactly once: a selected descendant of a selected node
+/// is removed by its ancestor's deletion, so it must not be deleted again.
+fn collect_top_level(nodes: &[OutlinerNode], selection: &BTreeSet<String>, out: &mut Vec<String>) {
+    for n in nodes {
+        if selection.contains(&n.id) {
+            out.push(n.id.clone());
+            // Do not descend: this whole subtree goes with `n`.
+        } else {
+            collect_top_level(&n.children, selection, out);
+        }
+    }
+}
+
+/// R905 — every selected id in tree pre-order (visible AND collapsed-hidden),
+/// the stable order batch-rename numbers over.
+fn collect_selected_preorder(
+    nodes: &[OutlinerNode],
+    selection: &BTreeSet<String>,
+    out: &mut Vec<String>,
+) {
+    for n in nodes {
+        if selection.contains(&n.id) {
+            out.push(n.id.clone());
+        }
+        collect_selected_preorder(&n.children, selection, out);
+    }
+}
+
+/// R905 — locate `id` without mutating: its parent id (`None` at root), its
+/// index among its siblings, and a clone of its subtree. The capture a
+/// [`TreeBatchDelete`] reverses; `None` when `id` is absent.
+fn find_location(
+    nodes: &[OutlinerNode],
+    parent: Option<&str>,
+    id: &str,
+) -> Option<(Option<String>, usize, OutlinerNode)> {
+    if let Some(pos) = nodes.iter().position(|n| n.id == id) {
+        return Some((parent.map(str::to_owned), pos, nodes[pos].clone()));
+    }
+    for n in nodes {
+        if let Some(found) = find_location(&n.children, Some(&n.id), id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// R905 — remove the subtree rooted at `id` (depth-first), returning it. The
+/// redo half of a delete.
+fn remove_subtree(nodes: &mut Vec<OutlinerNode>, id: &str) -> Option<OutlinerNode> {
+    if let Some(pos) = nodes.iter().position(|n| n.id == id) {
+        return Some(nodes.remove(pos));
+    }
+    for n in nodes.iter_mut() {
+        if let Some(found) = remove_subtree(&mut n.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// R905 — re-insert `node` under `parent` (`None` = root) at `index` (clamped).
+/// The undo half of a delete; the parent of a top-level-selected node is never
+/// itself deleted, so it always exists at undo time.
+fn insert_subtree(nodes: &mut Vec<OutlinerNode>, parent: Option<&str>, index: usize, node: OutlinerNode) {
+    match parent {
+        None => {
+            let i = index.min(nodes.len());
+            nodes.insert(i, node);
+        }
+        Some(pid) => {
+            if let Some(p) = find_node_mut(nodes, pid) {
+                let i = index.min(p.children.len());
+                p.children.insert(i, node);
+            } else {
+                nodes.push(node);
+            }
+        }
+    }
+}
+
+/// R905 — expand a rename template against a 1-based counter: `{n}` is replaced
+/// by the counter (`"Layer {n}"` → `Layer 1`, `Layer 2`, …); a template without
+/// `{n}` renames every selected node to the same literal.
+fn apply_template(template: &str, n: usize) -> String {
+    if template.contains("{n}") {
+        template.replace("{n}", &n.to_string())
+    } else {
+        template.to_owned()
+    }
+}
+
+/// R905 §5.52 — delete a set of selected subtrees as **one** undo step. Captures
+/// each removed subtree with its `(parent, index)` so undo restores the exact
+/// shape; `redo` removes by id, `undo` re-inserts ascending by index so original
+/// positions are recovered. One command (not a macro of single deletes): the
+/// removals are position-coupled, so the whole batch reverses atomically — the
+/// `hello-node-editor` `GraphEdit` multi-delete shape, applied to a tree.
+struct TreeBatchDelete {
+    nodes: Signal<Vec<OutlinerNode>>,
+    removed: Vec<(Option<String>, usize, OutlinerNode)>,
+}
+
+impl UndoCommand for TreeBatchDelete {
+    fn label(&self) -> Cow<'static, str> {
+        Cow::Borrowed("Delete selected")
+    }
+
+    fn redo(&self) {
+        let mut tree = self.nodes.get();
+        for (_, _, node) in &self.removed {
+            remove_subtree(&mut tree, &node.id);
+        }
+        self.nodes.set(tree);
+    }
+
+    fn undo(&self) {
+        let mut tree = self.nodes.get();
+        // Re-insert ascending by (parent, index): each insert shifts the
+        // following originals back into place (the standard multi-undelete).
+        let mut ordered: Vec<&(Option<String>, usize, OutlinerNode)> = self.removed.iter().collect();
+        ordered.sort_by(|a, b| (a.0.as_deref(), a.1).cmp(&(b.0.as_deref(), b.1)));
+        for (parent, index, node) in ordered {
+            insert_subtree(&mut tree, parent.as_deref(), *index, node.clone());
+        }
+        self.nodes.set(tree);
+    }
+}
+
+/// R905 §5.52 — rename a set of selected nodes as **one** undo step. Each entry
+/// is `(id, old, new)`; `redo` sets `new`, `undo` restores `old` (both via
+/// [`find_node_mut`]). One command groups the batch — the rename is the Qt
+/// `setData`-on-many shape.
+struct TreeBatchRename {
+    nodes: Signal<Vec<OutlinerNode>>,
+    renames: Vec<(String, String, String)>,
+}
+
+impl TreeBatchRename {
+    fn apply(&self, pick: impl Fn(&(String, String, String)) -> &String) {
+        let mut tree = self.nodes.get();
+        for entry in &self.renames {
+            if let Some(node) = find_node_mut(&mut tree, &entry.0) {
+                node.label.clone_from(pick(entry));
+            }
+        }
+        self.nodes.set(tree);
+    }
+}
+
+impl UndoCommand for TreeBatchRename {
+    fn label(&self) -> Cow<'static, str> {
+        Cow::Borrowed("Rename selected")
+    }
+
+    fn redo(&self) {
+        self.apply(|entry| &entry.2);
+    }
+
+    fn undo(&self) {
+        self.apply(|entry| &entry.1);
+    }
+}
+
 /// Reactive holder for the retained tree + the keyboard cursor + the R902
 /// multi-select state, lifted into [`Owner::cache`] so the view-fn, the a11y
 /// pass, the click reducer, the keyboard `apply_key`, and the [`SELECT_TAG`]
@@ -351,11 +531,19 @@ struct TreeState {
     /// (the [`VirtualSelect`](pinion_core::widgets::virtual_select) `anchor`'s
     /// stable-id analogue).
     anchor: Signal<Option<String>>,
+    /// R905 §5.52 — undo / redo history for the structural batch edits
+    /// (delete-selected / rename-selected). Each batch lands as ONE step
+    /// ([`TreeBatchDelete`] / [`TreeBatchRename`]) so a single undo reverses it.
+    undo_stack: Rc<UndoStack>,
 }
 
 fn use_tree_state() -> Rc<TreeState> {
     let owner = Owner::current().expect("use_tree_state must run inside a CoreShell view / reducer wrap");
-    owner.cache("hello_tree_grid::state", || TreeState {
+    // R905 — pre-resolve the undo stack before the `state` cache factory: a
+    // cache factory must not re-enter `Owner::cache` ([[owner-cache-no-nested-factory]]),
+    // and `use_undo_stack` is itself a cache hook.
+    let undo_stack = use_undo_stack("hello_tree_grid::undo");
+    owner.cache("hello_tree_grid::state", move || TreeState {
         nodes: Signal::new(initial_nodes()),
         // R864 — boot the keyboard cursor on the first row (the WAI-ARIA tree
         // convention `hello-virtual-tree` also uses): the outliner is a single
@@ -367,6 +555,7 @@ fn use_tree_state() -> Rc<TreeState> {
         focused_id: Signal::new(Some(String::from("f0"))),
         selection: Signal::new(BTreeSet::from([String::from("f0")])),
         anchor: Signal::new(Some(String::from("f0"))),
+        undo_stack,
     })
 }
 
@@ -478,6 +667,69 @@ impl TreeState {
         });
         true
     }
+
+    /// R905 §5.52 — delete every selected subtree as one undo step. Only the
+    /// *top-level* selected nodes are removed (a selected descendant rides along
+    /// inside its selected ancestor's subtree — [`collect_top_level`]), so each
+    /// subtree is deleted once. Returns the number of subtrees removed (0 leaves
+    /// the tree + history untouched). The selection is cleared afterwards (its
+    /// members no longer exist). The edit applies through
+    /// [`UndoStack::record`](pinion_core::undo::UndoStack::record) (which calls
+    /// the command's `redo`), so one undo restores the whole batch.
+    fn delete_selected(&self) -> usize {
+        let nodes = self.nodes.get();
+        let selection = self.selection.get();
+        let mut top = Vec::new();
+        collect_top_level(&nodes, &selection, &mut top);
+        let removed: Vec<(Option<String>, usize, OutlinerNode)> =
+            top.iter().filter_map(|id| find_location(&nodes, None, id)).collect();
+        if removed.is_empty() {
+            return 0;
+        }
+        let count = removed.len();
+        self.undo_stack.record(TreeBatchDelete { nodes: self.nodes.clone(), removed });
+        self.clear();
+        count
+    }
+
+    /// R905 §5.52 — rename every selected node from `template` as one undo step.
+    /// `{n}` in the template expands to a 1-based counter in tree pre-order
+    /// ([`apply_template`]); a no-`{n}` template renames all to the same literal.
+    /// Nodes whose label is already the target are skipped. Returns the number
+    /// renamed (0 leaves the tree + history untouched). The selection is left
+    /// intact (the same nodes, new labels).
+    fn rename_selected(&self, template: &str) -> usize {
+        let nodes = self.nodes.get();
+        let selection = self.selection.get();
+        let mut ordered = Vec::new();
+        collect_selected_preorder(&nodes, &selection, &mut ordered);
+        let mut renames: Vec<(String, String, String)> = Vec::new();
+        for (i, id) in ordered.iter().enumerate() {
+            if let Some((_, _, node)) = find_location(&nodes, None, id) {
+                let new_label = apply_template(template, i + 1);
+                if new_label != node.label {
+                    renames.push((id.clone(), node.label.clone(), new_label));
+                }
+            }
+        }
+        if renames.is_empty() {
+            return 0;
+        }
+        let count = renames.len();
+        self.undo_stack.record(TreeBatchRename { nodes: self.nodes.clone(), renames });
+        count
+    }
+
+    /// R905 §5.52 — step the batch-edit history back one step. `false` (no-op)
+    /// at the bottom of the stack.
+    fn undo(&self) -> bool {
+        self.undo_stack.undo()
+    }
+
+    /// R905 §5.52 — re-apply the next undone batch-edit step.
+    fn redo(&self) -> bool {
+        self.undo_stack.redo()
+    }
 }
 
 /// R902 §5.40 §5.12 — the [`SELECT_TAG`] multi-select coordinator: the AI-first
@@ -556,6 +808,9 @@ impl ExternalIntrospect for TreeSelectExternal {
         // `anchor`    — the range-extension origin id (query only), Null when none.
         // The interaction ops (`select` / `toggle` / `extend_to` / `select_all`
         // / `clear`) are `invoke`-only, mirroring `VirtualSelectExternal`.
+        // R905 — `delete_selected` / `rename_selected` / `undo` / `redo` are the
+        // batch-edit `invoke` ops (delete/rename return the count, undo/redo a
+        // bool).
         IntrospectSchema::new(&[("selection", "json"), ("count", "int"), ("anchor", "string")])
     }
 
@@ -632,6 +887,23 @@ impl ExternalIntrospect for TreeSelectExternal {
                 self.state.clear();
                 Ok(self.selection_value())
             }
+            // R905 §5.52 — batch edit on the selection. `delete_selected` (Null)
+            // and `rename_selected` (Text template) each land as one undo step
+            // and return the count affected; `undo` / `redo` step the history.
+            "delete_selected" => match args {
+                IntrospectValue::Null => Ok(IntrospectValue::Int(
+                    i64::try_from(self.state.delete_selected()).unwrap_or(i64::MAX),
+                )),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "rename_selected" => match args {
+                IntrospectValue::Text(ref template) => Ok(IntrospectValue::Int(
+                    i64::try_from(self.state.rename_selected(template)).unwrap_or(i64::MAX),
+                )),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "undo" => Ok(IntrospectValue::Bool(self.state.undo())),
+            "redo" => Ok(IntrospectValue::Bool(self.state.redo())),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1410,6 +1682,100 @@ mod tests {
                 IntrospectValue::Json(serde_json::json!(["f0", "f0-o0", "f0-o1", "f0-o2"])),
                 "extend_to ranges from the anchor over the visible flattening",
             );
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R905 §5.52 — batch delete / rename + undo
+    // ─────────────────────────────────────────────────────────────
+
+    fn label_of(state: &TreeState, id: &str) -> Option<String> {
+        find_location(&state.nodes.get(), None, id).map(|(_, _, n)| n.label)
+    }
+
+    #[test]
+    fn r905_delete_selected_removes_subtrees_one_undo_step() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            state.set_selection(&BTreeSet::from([String::from("f5"), String::from("f6")]));
+            assert_eq!(state.delete_selected(), 2, "two top-level subtrees removed");
+            // Both folders and their object children are gone.
+            assert!(!contains_id(&state.nodes.get(), "f5"));
+            assert!(!contains_id(&state.nodes.get(), "f6"));
+            assert!(!contains_id(&state.nodes.get(), "f5-o0"), "child subtree removed too");
+            assert!(selection_of(&state).is_empty(), "selection cleared after delete");
+            // One undo restores the whole batch.
+            assert!(state.undo(), "undo steps");
+            assert!(contains_id(&state.nodes.get(), "f5"), "f5 restored");
+            assert!(contains_id(&state.nodes.get(), "f6-o3"), "f6's children restored");
+            assert!(state.redo(), "redo re-applies");
+            assert!(!contains_id(&state.nodes.get(), "f5"), "redo deletes again");
+        });
+    }
+
+    #[test]
+    fn r905_delete_dedups_selected_ancestor_and_descendant() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            // f0 is expanded at boot, so f0-o0 is a real selectable descendant.
+            state.set_selection(&BTreeSet::from([String::from("f0"), String::from("f0-o0")]));
+            assert_eq!(
+                state.delete_selected(),
+                1,
+                "ancestor + its descendant = ONE top-level subtree",
+            );
+            assert!(!contains_id(&state.nodes.get(), "f0"));
+            assert!(!contains_id(&state.nodes.get(), "f0-o0"));
+            assert!(state.undo(), "undo restores");
+            assert!(contains_id(&state.nodes.get(), "f0-o0"), "descendant came back with ancestor");
+        });
+    }
+
+    #[test]
+    fn r905_rename_selected_template_numbers_and_undoes() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            state.set_selection(&BTreeSet::from([String::from("f10"), String::from("f11")]));
+            let before10 = label_of(&state, "f10").unwrap();
+            assert_eq!(state.rename_selected("Layer {n}"), 2, "two renamed");
+            // Pre-order numbering: f10 then f11.
+            assert_eq!(label_of(&state, "f10").as_deref(), Some("Layer 1"));
+            assert_eq!(label_of(&state, "f11").as_deref(), Some("Layer 2"));
+            assert!(state.undo(), "undo steps");
+            assert_eq!(label_of(&state, "f10"), Some(before10), "label restored");
+        });
+    }
+
+    #[test]
+    fn r905_rename_literal_template_renames_all_same() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            state.set_selection(&BTreeSet::from([String::from("f2"), String::from("f3")]));
+            assert_eq!(state.rename_selected("Group"), 2);
+            assert_eq!(label_of(&state, "f2").as_deref(), Some("Group"));
+            assert_eq!(label_of(&state, "f3").as_deref(), Some("Group"));
+        });
+    }
+
+    #[test]
+    fn r905_delete_empty_selection_is_noop() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            state.clear();
+            assert_eq!(state.delete_selected(), 0, "nothing selected, nothing deleted");
+            assert!(!state.undo(), "no undo step was recorded");
+        });
+    }
+
+    #[test]
+    fn r905_rename_noop_when_label_unchanged() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            // Rename f4 to its current label → no change, no undo step.
+            let current = label_of(&state, "f4").unwrap();
+            state.set_selection(&BTreeSet::from([String::from("f4")]));
+            assert_eq!(state.rename_selected(&current), 0, "same label is a no-op");
+            assert!(!state.undo(), "no undo step recorded for a no-op rename");
         });
     }
 }
