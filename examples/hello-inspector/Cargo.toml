@@ -1,0 +1,43 @@
+[package]
+name = "hello-inspector"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R909 §5.38 §5.22 selection-driven detail panel — an object list (Player/Camera/Light, each a different typed CellValue schema) + a detail panel that reactively reflects the selection; select + edit over RPC (the Unreal Details / Qt property-browser editor loop, 4th CellValue consumer)"
+publish = false
+
+[[bin]]
+name = "hello-inspector"
+path = "src/main.rs"
+
+[dependencies]
+# CellValue typed-value substrate (the 4th consumer after property-grid /
+# data-grid / node-editor port defaults); the inspector reuses its
+# parse / display / to_introspect / with_intervene wholesale.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for the derived `Group` access node.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the `HelloInspectorRenderer` struct emitted by `build.rs`
+# names `::vello::*` directly.
+vello = { workspace = true }
+# Signal<Vec<ObjectData>> requires the model derive Serialize/Deserialize.
+serde = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

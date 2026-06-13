@@ -63,6 +63,7 @@ members = [
     "examples/hello-syntax-highlight",
     "examples/hello-frame-profiler",
     "examples/hello-pdf-export",
+    "examples/hello-inspector",
     "examples/hello-textfield-tui",
     "examples/hello-toggle",
     "examples/hello-toggle-tui",

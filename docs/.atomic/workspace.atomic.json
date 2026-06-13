@@ -38871,6 +38871,64 @@
         "External/ImmediateModeNode opaque by §3 (no interior in structured scene): honest no-render, not a gap"
       ]
     },
+    "R909": {
+      "decision_summary": "R909 §5.38 §5.22 selection-driven detail/inspector panel; CellValue 4th consumer",
+      "changes_bullets": [
+        "new example hello-inspector: object list (Player/Camera/Light, heterogeneous schemas) + detail panel",
+        "InspectorExternal (peer of PropertyGridExternal): value.<i> resolves against the SELECTED object + select action",
+        "reuses CellValue display/to_introspect/with_intervene/kind wholesale (4th consumer after grid/data-grid/node)",
+        "selection + edit over RPC (§2 AI-first): invoke /external/select, intervene /external/{selected,value.<i>}",
+        "typed edits via CellValue::with_intervene: Int/Bool/Float coerce, Choice by option index, Color by hex",
+        "per-object state isolation: an edit on one object leaves the others untouched, persists across re-select",
+        "reactive view: read_state reads 'selected' off the introspect -> drives which object's props paint",
+        "demo r909_inspector: 43 assertions (boot schema / select retarget / typed edit / isolation / errors)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 157 result-ok, 0 failures (hello-inspector 10 unit tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo tools/demos/r909_inspector.py: PASS, 43 assertions on the release binary",
+        "self-grep: InspectorExternal = new peer among 20 ExternalIntrospect impls (idiom, not a lift)",
+        "self-grep: value_visual is a divergent 2nd CellValue-paint consumer; cell paint is per-binding by substrate doc"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "pointer click-to-select on the object list + keyboard selection deferred; RPC select (§2 primary) = vertical slice",
+        "inline click-to-edit cell delegates (property-grid popup/scrub richness) deferred; AI-first RPC intervene primary",
+        "richer a11y (per-row List/ListItem + property rows) deferred; derived Group root node is minimal",
+        "value_visual CellValue->paint stays per-binding (substrate Rule-of-Three ruling); lift only at a 3rd identical"
+      ],
+      "publishable_decision_summary": "R909 §5.38 §5.22 selection-driven detail/inspector panel; CellValue 4th consumer",
+      "publishable_changes_bullets": [
+        "new example hello-inspector: object list (Player/Camera/Light, heterogeneous schemas) + detail panel",
+        "InspectorExternal (peer of PropertyGridExternal): value.<i> resolves against the SELECTED object + select action",
+        "reuses CellValue display/to_introspect/with_intervene/kind wholesale (4th consumer after grid/data-grid/node)",
+        "selection + edit over RPC (§2 AI-first): invoke /external/select, intervene /external/{selected,value.<i>}",
+        "typed edits via CellValue::with_intervene: Int/Bool/Float coerce, Choice by option index, Color by hex",
+        "per-object state isolation: an edit on one object leaves the others untouched, persists across re-select",
+        "reactive view: read_state reads 'selected' off the introspect -> drives which object's props paint",
+        "demo r909_inspector: 43 assertions (boot schema / select retarget / typed edit / isolation / errors)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 157 result-ok, 0 failures (hello-inspector 10 unit tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo tools/demos/r909_inspector.py: PASS, 43 assertions on the release binary",
+        "self-grep: InspectorExternal = new peer among 20 ExternalIntrospect impls (idiom, not a lift)",
+        "self-grep: value_visual is a divergent 2nd CellValue-paint consumer; cell paint is per-binding by substrate doc"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pointer click-to-select on the object list + keyboard selection deferred; RPC select (§2 primary) = vertical slice",
+        "inline click-to-edit cell delegates (property-grid popup/scrub richness) deferred; AI-first RPC intervene primary",
+        "richer a11y (per-row List/ListItem + property rows) deferred; derived Group root node is minimal",
+        "value_visual CellValue->paint stays per-binding (substrate Rule-of-Three ruling); lift only at a 3rd identical"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

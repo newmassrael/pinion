@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R909 §5.38 selection-driven detail panel: pinion-forge renderer
+  manifest for hello-inspector. Emits `HelloInspectorRenderer`
+  (Vello-backed RenderContext + RenderSurface + Renderer wrapper). Same
+  single-source emit template as the rest of the gallery; only the struct
+  name diverges. `aa` omitted -> defaults to Area (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloInspectorRenderer"
+        backend="vello"/>
