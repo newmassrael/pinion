@@ -39341,6 +39341,86 @@
         "deferred (R914 carry; shape/architecture reasons, not effort)."
       ]
     },
+    "R916": {
+      "decision_summary": "Add node-editor Details panel reflecting the single selected node's properties + selection-relative detail.* RPC (read+intervene alias for node.<selected>.*), the editor select->inspect->edit loop",
+      "changes_bullets": [
+        "Add a Details panel (right sidebar) to hello-node-editor: reflects the single",
+        "selected node's editable properties (title / x / y / per-port defaults) as",
+        "rows, the Unreal \"select -> inspect\" surface. Placeholder when not exactly one",
+        "node is selected.",
+        "Add selection-relative `detail.<field>` RPC: a thin alias for",
+        "`node.<selected>.<field>` (read + intervene), delegating through one",
+        "`selected_node_path` SSOT so the panel's read and write address the same node;",
+        "`Null` / UnknownPath when the selection is not exactly one node (R909 pattern).",
+        "`detail.*` editing routes through the identical rename / move / set-default",
+        "funnels the absolute `node.<id>` path uses (one mutation path, undoable).",
+        "Widen the window to TOTAL_W (palette + canvas + panel) and SSOT it with the",
+        "root container's size so the flex row never shrinks (canvas stays at its",
+        "PALETTE_W offset — the geometry every demo's coordinates assume)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: all pass (3 new R916 detail tests; node-editor 112).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean.",
+        "demos: r916 node Details panel (37 assert, NEW) + r838 / r879 / r901 node-editor",
+        "all PASS (release); geometry probe confirms canvas back at x=132 (unchanged).",
+        "in-panel inline click-to-edit deferred (additive GUI affordance, the R909->R910",
+        "sequencing) — editing is the AI-first `intervene detail.*` / card path today."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "In-panel click-to-edit (a row -> inline field in the panel) is deferred: the",
+        "panel reflects + edits via `intervene detail.*` / the node card today; the GUI",
+        "click-to-edit affordance is the R910-style follow-up (additive, not a blocker).",
+        "detail_row paint is panel-local (the property-grid view_row is example-local,",
+        "different geometry/model) — per the R909 \"cell paint is opinionated\" rule, no",
+        "cross-example lift until a 3rd identical consumer.",
+        "A fixed-size flex row shrinks its sidebars when the window is narrower than the",
+        "row's declared width (the canvas then shifts off PALETTE_W and breaks demos",
+        "with hardcoded coords) — window width and root width are now one TOTAL_W const."
+      ],
+      "publishable_decision_summary": "Add node-editor Details panel reflecting the single selected node's properties + selection-relative detail.* RPC (read+intervene alias for node.<selected>.*), the editor select->inspect->edit loop",
+      "publishable_changes_bullets": [
+        "Add a Details panel (right sidebar) to hello-node-editor: reflects the single",
+        "selected node's editable properties (title / x / y / per-port defaults) as",
+        "rows, the Unreal \"select -> inspect\" surface. Placeholder when not exactly one",
+        "node is selected.",
+        "Add selection-relative `detail.<field>` RPC: a thin alias for",
+        "`node.<selected>.<field>` (read + intervene), delegating through one",
+        "`selected_node_path` SSOT so the panel's read and write address the same node;",
+        "`Null` / UnknownPath when the selection is not exactly one node (R909 pattern).",
+        "`detail.*` editing routes through the identical rename / move / set-default",
+        "funnels the absolute `node.<id>` path uses (one mutation path, undoable).",
+        "Widen the window to TOTAL_W (palette + canvas + panel) and SSOT it with the",
+        "root container's size so the flex row never shrinks (canvas stays at its",
+        "PALETTE_W offset — the geometry every demo's coordinates assume)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: all pass (3 new R916 detail tests; node-editor 112).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean.",
+        "demos: r916 node Details panel (37 assert, NEW) + r838 / r879 / r901 node-editor",
+        "all PASS (release); geometry probe confirms canvas back at x=132 (unchanged).",
+        "in-panel inline click-to-edit deferred (additive GUI affordance, the R909->R910",
+        "sequencing) — editing is the AI-first `intervene detail.*` / card path today."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "In-panel click-to-edit (a row -> inline field in the panel) is deferred: the",
+        "panel reflects + edits via `intervene detail.*` / the node card today; the GUI",
+        "click-to-edit affordance is the R910-style follow-up (additive, not a blocker).",
+        "detail_row paint is panel-local (the property-grid view_row is example-local,",
+        "different geometry/model) — per the R909 \"cell paint is opinionated\" rule, no",
+        "cross-example lift until a 3rd identical consumer.",
+        "A fixed-size flex row shrinks its sidebars when the window is narrower than the",
+        "row's declared width (the canvas then shifts off PALETTE_W and breaks demos",
+        "with hardcoded coords) — window width and root width are now one TOTAL_W const."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

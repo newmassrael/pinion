@@ -238,6 +238,18 @@ const PALETTE_W: u32 = 132;
 const PALETTE_TAG: &str = "node_palette";
 /// R849 — the editor a11y root wrapping the palette + the canvas.
 const ROOT_TAG: &str = "node_editor";
+/// R916 — the Details panel (right sidebar) width + container tag. The panel
+/// reflects the single selected node's properties as rows; it is a sibling of
+/// the canvas (outside `GRAPH_TAG`), so the capture-drag / hit-test math is
+/// unchanged — like the palette, it merely sits beside the canvas.
+const DETAIL_W: u32 = 192;
+const DETAIL_TAG: &str = "node_details";
+/// R916 — the full editor width: palette + canvas + Details panel. The root
+/// container's declared size AND the window's `SizeStrategy` width MUST be this
+/// same value — if the window is narrower the flex row shrinks the sidebars and
+/// the canvas shifts off its `PALETTE_W` offset (the node / wire geometry every
+/// demo's coordinates assume). One const so the two cannot drift.
+const TOTAL_W: u32 = PALETTE_W + WIN_W + DETAIL_W;
 
 /// R851 — the [`UndoStackExternal`] anchor: the AI-first undo-history surface
 /// (`query can_undo` / `index` / `undo_label`; `invoke undo` / `redo` / `clear`),
@@ -1656,6 +1668,15 @@ impl NodeGraphExternal {
         self.nodes.get().into_iter().find(|n| n.id == id)
     }
 
+    /// R916 — the absolute `node.<id>.<field>` path the Details panel's
+    /// selection-relative `detail.<field>` resolves to, or `None` when the
+    /// selection is not exactly one node. The single SSOT for the alias both the
+    /// `detail` query (read) and the `detail` intervene (write) delegate through,
+    /// so the panel's read and write address the identical node.
+    fn selected_node_path(&self, field: &str) -> Option<String> {
+        self.selection.get().node().map(|id| format!("node.{}.{field}", id.raw()))
+    }
+
     // ── R877 viewport (pan = scroll offset, zoom = shared Signal) ──
 
     /// The graph-space point under a canvas-relative cursor fraction
@@ -2770,6 +2791,16 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("node.<id>.input_types", "string"),
             ("node.<id>.output_types", "string"),
             ("node.<id>.input_default.<port>", "json"),
+            // R916 — the Details panel's selection-relative addressing: each
+            // `detail.<field>` resolves against the *single* selected node (the
+            // R909 inspector pattern, now inside the node-graph editor). `Null`
+            // when the selection is not exactly one node.
+            ("detail.node", "int"),
+            ("detail.title", "string"),
+            ("detail.x", "int"),
+            ("detail.y", "int"),
+            ("detail.inputs", "int"),
+            ("detail.input_default.<port>", "json"),
             ("edge.<id>", "string"),
             ("viewport.x", "float"),
             ("viewport.y", "float"),
@@ -2848,7 +2879,21 @@ impl ExternalIntrospect for NodeGraphExternal {
                 Some(IntrospectValue::Float(f64::from(self.scroll.offset().1) / self.zoom.get()))
             }
             "viewport.zoom" => Some(IntrospectValue::Float(self.zoom.get())),
+            // R916 — `detail.node` is the single selected node id (the alias the
+            // Details panel addresses against, same answer as `selected`).
+            "detail.node" => self.query("selected"),
             _ => {
+                // R916 — `detail.<field>` is a selection-relative alias for
+                // `node.<selected>.<field>`: resolve the single selected node and
+                // delegate to the existing absolute-addressing read. `Null` when
+                // the selection is not exactly one node (no unambiguous "the"
+                // node) — the R909 selection-driven detail-panel pattern.
+                if let Some(field) = path.strip_prefix("detail.") {
+                    return Some(match self.selected_node_path(field) {
+                        Some(node_path) => self.query(&node_path).unwrap_or(IntrospectValue::Null),
+                        None => IntrospectValue::Null,
+                    });
+                }
                 if let Some(rest) = path.strip_prefix("node.") {
                     let (id_str, field) = rest.split_once('.')?;
                     let id = NodeId(id_str.parse().ok()?);
@@ -2949,6 +2994,16 @@ impl ExternalIntrospect for NodeGraphExternal {
                 }
                 _ => Err(InterveneError::TypeMismatch),
             };
+        }
+        // R916 — `detail.<field>` writes the *single selected* node's property
+        // (the Details panel's AI-first edit), routing through the identical
+        // `node.<selected>.<field>` funnel the absolute path uses — so a drag, a
+        // card edit, an `intervene node.<id>`, and an `intervene detail.<field>`
+        // are one mutation path. Rejected (`UnknownPath`) when the selection is
+        // not exactly one node — there is no unambiguous "the" node to edit.
+        if let Some(field) = path.strip_prefix("detail.") {
+            let node_path = self.selected_node_path(field).ok_or(InterveneError::UnknownPath)?;
+            return self.intervene(&node_path, value);
         }
         let Some(rest) = path.strip_prefix("node.") else {
             return Err(InterveneError::UnknownPath);
@@ -3661,6 +3716,95 @@ fn view_palette(theme: &Theme) -> Scene {
     )
 }
 
+/// R916 — one Details-panel property row: a left-aligned `label` and the
+/// property's current `value` display. Tagged `node_details#<key>` so a future
+/// in-panel click-to-edit (the R910 inspector follow-up) can route to it; for
+/// now the row is a read reflection of the model (edits arrive via the node
+/// card, a drag, or the `intervene detail.<field>` / `node.<id>.<field>` paths,
+/// and the reactive view re-reflects them).
+fn detail_row(key: &str, label: &str, value: &str, theme: &Theme) -> Scene {
+    let name = Scene::Text(TextNode::styled(
+        label.to_owned(),
+        Rect::default(),
+        TextStyle::new().with_size_px(12).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+    ));
+    let val = Scene::Text(TextNode::styled(
+        value.to_owned(),
+        Rect::default(),
+        TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+    ));
+    Scene::Container(
+        ContainerNode::new(vec![name, val])
+            .with_tag(format!("{DETAIL_TAG}#{key}"))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_gap(2)
+                    .with_size(Size::width_px(DETAIL_W - 16))
+                    .with_padding(Rect::new(10, 4, 8, 4)),
+            ),
+    )
+}
+
+/// R916 — the Details panel: the single selected node's editable properties
+/// (title / position / per-port defaults) reflected as rows, the Unreal Details
+/// "select → inspect" surface. Mirrors the palette sidebar's shape (a sibling
+/// column of the canvas). When the selection is not exactly one node it shows a
+/// placeholder — there is no unambiguous "the" node to inspect (the `selected` /
+/// `detail.node` `Null` case made visible).
+fn view_details_panel(nodes: &[GraphNode], selection: &Selection, theme: &Theme) -> Scene {
+    let mut items: Vec<Scene> = vec![Scene::Text(
+        TextNode::styled(
+            "Details",
+            Rect::default(),
+            TextStyle::new().with_size_px(NODE_TITLE_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+        )
+        .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 12, 12, 4))),
+    )];
+
+    if let Some(node) = selection.node().and_then(|id| node_ref(nodes, id)) {
+        items.push(detail_row("title", "Title", &node.title, theme));
+        items.push(detail_row("x", "Position X", &node.x.to_string(), theme));
+        items.push(detail_row("y", "Position Y", &node.y.to_string(), theme));
+        for (port, ty) in node.input_ports.iter().enumerate() {
+            let value = node.input_default(port).map_or_else(String::new, CellValue::display);
+            items.push(detail_row(
+                &format!("in_{port}"),
+                &format!("In {port} · {}", ty.name()),
+                &value,
+                theme,
+            ));
+        }
+    } else {
+        let placeholder = if selection.nodes().len() > 1 {
+            "Multiple nodes selected"
+        } else {
+            "No node selected"
+        };
+        items.push(Scene::Text(
+            TextNode::styled(
+                placeholder.to_owned(),
+                Rect::default(),
+                TextStyle::new().with_size_px(12).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            )
+            .with_layout(LayoutStyle::new().with_padding(Rect::new(12, 4, 12, 4))),
+        ));
+    }
+
+    Scene::Container(
+        ContainerNode::new(items)
+            .with_tag(DETAIL_TAG)
+            .with_aria_label("Details")
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerLow)))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Column)
+                    .with_gap(4)
+                    .with_size(Size::px(DETAIL_W, WIN_H)),
+            ),
+    )
+}
+
 #[allow(clippy::trivially_copy_pass_by_ref)]
 /// R878 — the cached paint posture: the shared inline edit field's interaction
 /// state + caret byte (the data-grid `RootState` shape).
@@ -3821,13 +3965,21 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
     );
-    // R849 — palette sidebar beside the canvas. The canvas keeps its
-    // `WIN_W × WIN_H` coordinate system (its rect is merely offset by the
-    // palette width; `capture_normalize` resolves against that offset rect), so
-    // none of the node geometry / drag math changes.
+    // R849 — palette sidebar beside the canvas. R916 — Details panel sidebar on
+    // the right. The canvas keeps its `WIN_W × WIN_H` coordinate system (its rect
+    // is merely offset by the palette width; `capture_normalize` resolves against
+    // that offset rect), so none of the node geometry / drag math changes — both
+    // sidebars are siblings outside `GRAPH_TAG`.
     Scene::Container(
-        ContainerNode::new(vec![view_palette(&theme), canvas]).with_layout(
-            LayoutStyle::new().flex(FlexDirection::Row).with_size(Size::px(PALETTE_W + WIN_W, WIN_H)),
+        ContainerNode::new(vec![
+            view_palette(&theme),
+            canvas,
+            view_details_panel(&nodes, &selection, &theme),
+        ])
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_size(Size::px(TOTAL_W, WIN_H)),
         ),
     )
 }
@@ -4054,7 +4206,11 @@ impl WidgetView for NodeEditorView {
     type Renderer = HelloNodeEditorRenderer;
 
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed { width: PALETTE_W + WIN_W, height: WIN_H }
+        // R916 — the window fits the palette + canvas + the Details panel
+        // ([`TOTAL_W`], the same value the root container declares), so the flex
+        // row never shrinks: the canvas keeps its `WIN_W` width at the
+        // `PALETTE_W` offset, so the node / wire geometry is unchanged.
+        pinion_shell::SizeStrategy::Fixed { width: TOTAL_W, height: WIN_H }
     }
 }
 
@@ -4114,6 +4270,82 @@ mod tests {
             assert_eq!(intro.query("node.3.outputs"), Some(IntrospectValue::Int(0)));
             assert_eq!(intro.query("edge.0"), Some(IntrospectValue::Text("0:0->2:0".to_owned())));
             assert_eq!(intro.query("node.9.title"), None, "out-of-range -> None");
+        });
+    }
+
+    /// R916 — `detail.<field>` reflects the single selected node (the Details
+    /// panel's selection-relative addressing), and equals the absolute
+    /// `node.<selected>.<field>` read.
+    #[test]
+    fn r916_detail_reflects_single_selected_node() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Nothing selected at boot -> the panel has no node to inspect.
+            assert_eq!(graph_intro(&scene).query("detail.node"), Some(IntrospectValue::Null));
+            assert_eq!(graph_intro(&scene).query("detail.title"), Some(IntrospectValue::Null));
+            // Select node 2 (Multiply, 2 Vector inputs at x=250).
+            {
+                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                intro.intervene("selected_ids", IntrospectValue::Text("2".to_owned())).unwrap();
+            }
+            let intro = graph_intro(&scene);
+            assert_eq!(intro.query("detail.node"), Some(IntrospectValue::Int(2)), "the single selected id");
+            assert_eq!(intro.query("detail.title"), Some(IntrospectValue::Text("Multiply".to_owned())));
+            assert_eq!(intro.query("detail.x"), Some(IntrospectValue::Int(250)));
+            assert_eq!(intro.query("detail.inputs"), Some(IntrospectValue::Int(2)));
+            // The alias equals the absolute address of the selected node.
+            assert_eq!(intro.query("detail.title"), intro.query("node.2.title"));
+            assert_eq!(intro.query("detail.x"), intro.query("node.2.x"));
+            assert_eq!(intro.query("detail.input_default.0"), intro.query("node.2.input_default.0"));
+        });
+    }
+
+    /// R916 — when the selection is not exactly one node, `detail.*` is `Null`
+    /// (no unambiguous "the" node — the panel shows its placeholder).
+    #[test]
+    fn r916_detail_null_when_not_single_selection() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                intro.intervene("selected_ids", IntrospectValue::Text("0, 2".to_owned())).unwrap();
+            }
+            let intro = graph_intro(&scene);
+            assert_eq!(intro.query("detail.node"), Some(IntrospectValue::Null), "multi-select has no single detail node");
+            assert_eq!(intro.query("detail.title"), Some(IntrospectValue::Null));
+            assert_eq!(intro.query("detail.x"), Some(IntrospectValue::Null));
+            assert_eq!(intro.query("detail.input_default.0"), Some(IntrospectValue::Null));
+        });
+    }
+
+    /// R916 — `intervene detail.<field>` writes the *selected* node through the
+    /// identical funnel `node.<id>.<field>` uses (rename / move), and is rejected
+    /// when the selection is not exactly one node.
+    #[test]
+    fn r916_detail_intervene_edits_the_selected_node() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                intro.intervene("selected_ids", IntrospectValue::Text("0".to_owned())).unwrap();
+                // The Details panel's AI-first edits route to node 0.
+                assert!(intro.intervene("detail.title", IntrospectValue::Text("Albedo".to_owned())).is_ok());
+                assert!(intro.intervene("detail.x", IntrospectValue::Int(88)).is_ok());
+            }
+            {
+                let intro = graph_intro(&scene);
+                assert_eq!(intro.query("node.0.title"), Some(IntrospectValue::Text("Albedo".to_owned())), "detail.title wrote node 0");
+                assert_eq!(intro.query("node.0.x"), Some(IntrospectValue::Int(88)));
+                assert_eq!(intro.query("detail.title"), Some(IntrospectValue::Text("Albedo".to_owned())), "the panel reflects the edit");
+            }
+            // Clearing the single-selection makes a detail write unaddressable.
+            let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+            intro.intervene("selected_ids", IntrospectValue::Text("0, 1".to_owned())).unwrap();
+            assert_eq!(
+                intro.intervene("detail.title", IntrospectValue::Text("X".to_owned())),
+                Err(InterveneError::UnknownPath),
+                "a detail write with no single selection is rejected",
+            );
         });
     }
 
