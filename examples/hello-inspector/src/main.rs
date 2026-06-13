@@ -239,13 +239,32 @@ struct CommonProperty {
     mixed: bool,
 }
 
+/// Whether two property values are the **same property** for multi-object
+/// editing: the same [`CellValue` kind](pinion_core::cell_value::CellKind),
+/// and for a [`CellValue::Choice`] the same option list (only the selected
+/// index — the *value* — may differ). A choice over `[Red, Blue]` and one over
+/// `[Red, Blue, Green]` are NOT the same property: a write-all of "option 2"
+/// is in range for one and out of range for the other, so grouping them would
+/// silently half-apply the edit ([`with_intervene`](CellValue::with_intervene)
+/// bounds a `Choice` index to its own `options.len()`). For every scalar kind
+/// `with_intervene` is value-shape-independent, so kind equality suffices.
+fn same_property_shape(a: &CellValue, b: &CellValue) -> bool {
+    match (a, b) {
+        (CellValue::Choice { options: oa, .. }, CellValue::Choice { options: ob, .. }) => oa == ob,
+        _ => a.kind() == b.kind(),
+    }
+}
+
 /// The properties common to **every** selected object, in the order they
 /// appear on the lowest-indexed selected object (a stable order: it does not
 /// shift when the cursor moves within a fixed selection). A property is
-/// "common" when every selected object has one with the same name **and**
-/// [`CellValue` kind](pinion_core::cell_value::CellKind). The free-fn SSOT
-/// that the RPC query, the paint, and the a11y all derive their rows from —
-/// one gate, no drift (R886.1). An empty selection yields no rows.
+/// "common" when every selected object has one with the same name and the
+/// same [`same_property_shape`] (kind, plus a `Choice`'s option list). The
+/// free-fn SSOT that the RPC query, the paint, and the a11y all derive their
+/// rows from — one gate, no drift (R886.1). An empty selection yields no rows.
+///
+/// Assumes property names are unique within an object (the schema invariant of
+/// every Details model); a duplicate name resolves to the first match.
 ///
 /// For a single selection this is exactly that object's full property list
 /// (every value trivially uniform), so the cardinality-1 case is the
@@ -258,14 +277,15 @@ fn common_properties(objects: &[ObjectData], selection: &BTreeSet<usize>) -> Vec
     let others: Vec<usize> = indices.collect();
     let mut rows = Vec::new();
     for prop in &objects[first].properties {
-        let kind = prop.value.kind();
-        // Every other selected object must carry a same-name, same-kind
+        // Every other selected object must carry a same-name, same-shape
         // property for this to be common; collect their values to test mix.
         let mut values = Vec::with_capacity(others.len());
         let mut all_have = true;
         for &j in &others {
-            if let Some(p) =
-                objects[j].properties.iter().find(|p| p.name == prop.name && p.value.kind() == kind)
+            if let Some(p) = objects[j]
+                .properties
+                .iter()
+                .find(|p| p.name == prop.name && same_property_shape(&p.value, &prop.value))
             {
                 values.push(&p.value);
             } else {
@@ -386,6 +406,16 @@ impl InspectorExternal {
     /// edge the held modifiers decode through [`SelectionChord`] — `Ctrl`/`Cmd`
     /// toggles, `Shift` extends the range from the anchor, a plain click
     /// replaces — exactly the keyboard ops, one funnel.
+    ///
+    /// This body mirrors `VirtualSelectExternal::handle_send`, but is NOT a
+    /// liftable duplicate: the chord DECISION is already the shared
+    /// [`SelectionChord`] / [`is_activation_event`] SSOT; what differs is the
+    /// key parse (the wrapper also decodes grid `r:c` keys) and the mutate tail
+    /// (the wrapper pushes a §5.20 intent through its `IntentEmitter`; this
+    /// embedder writes its shared `Signal`). A scroll-free dispatch core taking
+    /// `&mut VirtualSelect` would serve neither cleanly — it lifts only when a
+    /// 3rd bare-model embedder makes the mutate tail uniform (R922.1 carry; the
+    /// keyboard `apply_key` is the peer fork of `nav_select_key`).
     fn handle_send(&self, payload: &str) {
         let Some((key, event_name, modifiers)) = split_send_payload(payload) else {
             return;
@@ -410,22 +440,32 @@ impl InspectorExternal {
     fn set_property(&self, idx: usize, value: &IntrospectValue) -> Result<(), InterveneError> {
         let common = self.common();
         let target = common.get(idx).ok_or(InterveneError::UnknownPath)?;
-        // All selected objects share this common property's kind, so the
-        // representative's accept/reject is the verdict for the whole write.
+        // Validate against the representative once. Every selected object's
+        // matching property has the SAME shape (`same_property_shape` — kind
+        // plus a Choice's option list), so this accept/reject is the verdict
+        // for the whole write: a value the representative accepts cannot be
+        // rejected by a same-shape property.
         target.value.with_intervene(value.clone())?;
         let name = target.name.clone();
-        let kind = target.value.kind();
+        let shape = target.value.clone();
         let selection = self.selection_set();
         let value = value.clone();
         self.objects.set_with(move |prev| {
             let mut next = prev.clone();
             for &j in &selection {
-                if let Some(prop) = next
-                    .get_mut(j)
-                    .and_then(|o| o.properties.iter_mut().find(|p| p.name == name && p.value.kind() == kind))
-                {
-                    if let Ok(updated) = prop.value.with_intervene(value.clone()) {
-                        prop.value = updated;
+                if let Some(prop) = next.get_mut(j).and_then(|o| {
+                    o.properties.iter_mut().find(|p| p.name == name && same_property_shape(&p.value, &shape))
+                }) {
+                    match prop.value.with_intervene(value.clone()) {
+                        Ok(updated) => prop.value = updated,
+                        // Unreachable: same shape as the representative, which
+                        // accepted `value`. Fail loud in dev, preserve the
+                        // existing value in release (R906 — no silent fallback
+                        // on a should-be-impossible branch).
+                        Err(e) => debug_assert!(
+                            false,
+                            "multi-write: a value valid for the representative was rejected by a same-shape property: {e:?}"
+                        ),
                     }
                 }
             }
@@ -698,10 +738,10 @@ fn value_visual(value: &CellValue, fg: Color, accent: Color, muted: Color) -> Sc
             )
         }
         CellValue::Bool(b) => {
-            let (label, fill) = if *b { ("On", accent) } else { ("Off", muted) };
+            let fill = if *b { accent } else { muted };
             Scene::Container(
                 ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                    label,
+                    bool_label(*b),
                     Rect::default(),
                     TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(Color::rgb(0xff, 0xff, 0xff)),
                 ))])
@@ -723,13 +763,41 @@ fn value_visual(value: &CellValue, fg: Color, accent: Color, muted: Color) -> Sc
     }
 }
 
+/// The placeholder shown for a property whose selected objects disagree (the
+/// Unreal "Multiple Values" mixed state). One SSOT so the painted text and the
+/// a11y name announce the same word.
+const MULTIPLE_VALUES: &str = "Multiple Values";
+
+/// The On/Off label for a bool value — one SSOT for the painted pill text and
+/// the a11y name (they must announce the same word, R886.1 one-gate).
+fn bool_label(b: bool) -> &'static str {
+    if b { "On" } else { "Off" }
+}
+
+/// The text rendering of a common-property value for a11y / introspection: the
+/// "Multiple Values" placeholder when mixed, else the typed value the way the
+/// paint shows it (the bool pill word, a colour's hex, otherwise `display`).
+/// The a11y peer of [`detail_value_visual`]'s paint — one gate on the mixed
+/// state so a screen reader and the screen never disagree.
+fn common_value_label(prop: &CommonProperty) -> String {
+    if prop.mixed {
+        return MULTIPLE_VALUES.to_owned();
+    }
+    match &prop.value {
+        CellValue::Bool(b) => bool_label(*b).to_owned(),
+        CellValue::Color(c) => c.to_hex(),
+        other => other.display(),
+    }
+}
+
 /// The right-column visual for a common-property row: the typed value when
 /// the selection agrees, the "Multiple Values" placeholder when it differs
-/// (the Unreal mixed-value state — paint peer of `query mixed.<i>`).
+/// (the Unreal mixed-value state — paint peer of `query mixed.<i>` and of the
+/// a11y [`common_value_label`]).
 fn detail_value_visual(prop: &CommonProperty, fg: Color, accent: Color, muted: Color) -> Scene {
     if prop.mixed {
         Scene::Text(TextNode::styled(
-            "Multiple Values",
+            MULTIPLE_VALUES,
             Rect::default(),
             TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(muted),
         ))
@@ -967,16 +1035,27 @@ fn read_count(intro: &dyn ExternalIntrospect) -> usize {
     }
 }
 
+/// The Details-panel tag — a WAI-ARIA `list` of the common properties.
+const DETAIL_TAG: &str = "detail_panel";
+
 impl WidgetA11y for InspectorView {
-    /// The object list as a multi-select WAI-ARIA `listbox`
-    /// ([`listbox_option_nodes`]): the container `aria-multiselectable`, each
-    /// row an `option` whose `aria-selected` is its membership and whose
-    /// `focused` (active descendant) is the cursor — the a11y peer of the
-    /// painted accent fill (selected) + border (cursor), one gate. The root
-    /// `Group` references the listbox; the Details rows enrich their names
-    /// from the painted text.
+    /// The whole inspector a11y tree, all derived from one `InspectorState`:
+    ///
+    /// - the object list as a multi-select WAI-ARIA `listbox`
+    ///   ([`listbox_option_nodes`]): `aria-multiselectable`, each row an
+    ///   `option` whose `aria-selected` is its membership and whose `focused`
+    ///   (active descendant) is the cursor — the peer of the painted accent
+    ///   fill (selected) + border (cursor);
+    /// - the **Details panel** as a `list` named by the selection summary,
+    ///   one `listitem` per common property named `"{name}: {value}"` — the
+    ///   value text is [`common_value_label`], the SAME source the paint
+    ///   renders, so "Multiple Values" announces exactly when it paints
+    ///   (R886.1 one-gate: the panel content is AT-reachable, not orphaned).
+    ///
+    /// The root `Group` references both regions.
     fn access_node(state: &InspectorState, _focused: Option<&str>) -> Vec<AccessNode> {
         let objects = use_objects().get();
+        let selection = state.selection_set();
         let tags: Vec<String> = (0..objects.len()).map(|i| format!("{INSPECTOR_TAG}#{i}")).collect();
         let options: Vec<ListOption<'_>> = objects
             .iter()
@@ -993,9 +1072,27 @@ impl WidgetA11y for InspectorView {
         let mut nodes = vec![
             AccessNode::new(INSPECTOR_TAG, AriaRole::Group)
                 .with_name("Scene Inspector")
-                .with_child(OBJECTS_TAG),
+                .with_child(OBJECTS_TAG)
+                .with_child(DETAIL_TAG),
         ];
         nodes.extend(listbox_option_nodes(OBJECTS_TAG, "Scene objects", true, &options));
+
+        // The Details panel: a `list` named by the selection summary, one
+        // `listitem` per common property (tagged `prop_<i>`, the same tag the
+        // paint uses, so the AT node resolves to the painted row's bounds).
+        let rows = common_properties(&objects, &selection);
+        let mut panel = AccessNode::new(DETAIL_TAG, AriaRole::List)
+            .with_name(selection_summary(&objects, &selection));
+        for i in 0..rows.len() {
+            panel = panel.with_child(format!("prop_{i}"));
+        }
+        nodes.push(panel);
+        for (i, prop) in rows.iter().enumerate() {
+            nodes.push(
+                AccessNode::new(format!("prop_{i}"), AriaRole::ListItem)
+                    .with_name(format!("{}: {}", prop.name, common_value_label(prop))),
+            );
+        }
         nodes
     }
 }
@@ -1227,6 +1324,110 @@ mod tests {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<InspectorView>(
             InspectorState::from_parts(&[0], Some(0)),
             &Frame::new(),
+        );
+    }
+
+    // ─── R922.1 audit-clearance regressions ───────────────────────
+
+    #[test]
+    fn r922_1_choice_is_common_only_with_equal_options() {
+        // Two objects, each with a "Mode" Choice. The correctness fix: a Choice
+        // is "common" only if the option lists match (not just kind==Choice),
+        // so a write-all index can never be valid for one object and out of
+        // range for another (the silent half-write the audit found).
+        let mode = |opts: &[&str]| {
+            ObjectData::new(
+                "obj",
+                vec![Property::new(
+                    "Mode",
+                    CellValue::Choice {
+                        selected: 0,
+                        options: opts.iter().map(|s| (*s).to_owned()).collect(),
+                    },
+                )],
+            )
+        };
+        let sel: BTreeSet<usize> = [0, 1].into_iter().collect();
+        // Equal option lists → the Choice IS a common property.
+        let equal = vec![mode(&["A", "B", "C"]), mode(&["A", "B", "C"])];
+        let common = common_properties(&equal, &sel);
+        assert_eq!(common.len(), 1, "equal-option Choice is common");
+        assert_eq!(common[0].name, "Mode");
+        // Different option lists → NOT common (grouping them would let a
+        // write-all of option 2 silently half-apply: valid for [A,B,C], out of
+        // range for [A,B]).
+        let diverge = vec![mode(&["A", "B", "C"]), mode(&["A", "B"])];
+        assert!(
+            common_properties(&diverge, &sel).is_empty(),
+            "divergent-option Choice is NOT a common property"
+        );
+    }
+
+    #[test]
+    fn r922_1_write_all_applies_to_an_equal_shape_choice() {
+        // A same-shape common Choice: the write-all reaches every selected
+        // object (no silent skip — the fail-loud path stays unreached).
+        let owner = Owner::new();
+        let mut e = owner.run(|| {
+            let mode = |selected: usize| {
+                ObjectData::new(
+                    "o",
+                    vec![Property::new(
+                        "Mode",
+                        CellValue::Choice {
+                            selected,
+                            options: vec!["A".to_owned(), "B".to_owned(), "C".to_owned()],
+                        },
+                    )],
+                )
+            };
+            let objects = Rc::new(Signal::new(vec![mode(0), mode(1)]));
+            let mut model = VirtualSelect::new(2, SelectionMode::Multi);
+            model.set_selection(&[0usize, 1].into_iter().collect());
+            InspectorExternal::new(objects, Rc::new(Signal::new(model)))
+        });
+        // value.0 (the common "Mode") set to option index 2 across both.
+        e.intervene("value.0", IntrospectValue::Int(2)).unwrap();
+        let selected_index = |e: &InspectorExternal| match e.query("value.0") {
+            Some(IntrospectValue::Json(v)) => v["selected"].as_u64(),
+            other => panic!("expected a Choice json, got {other:?}"),
+        };
+        e.invoke("select", IntrospectValue::Int(0)).unwrap();
+        assert_eq!(selected_index(&e), Some(2), "object 0 written to option 2");
+        e.invoke("select", IntrospectValue::Int(1)).unwrap();
+        assert_eq!(selected_index(&e), Some(2), "object 1 also written to option 2");
+    }
+
+    #[test]
+    fn r922_1_details_panel_is_a11y_reachable_with_mixed_label() {
+        // All three objects selected → the base properties are mixed. The
+        // Details panel (the headline content) must be IN the a11y tree
+        // (not orphaned), with each property a `listitem` whose name carries
+        // the value the paint shows ("Multiple Values" when mixed).
+        let nodes = Owner::new().run(|| {
+            <InspectorView as WidgetA11y>::access_node(
+                &InspectorState::from_parts(&[0, 1, 2], Some(2)),
+                None,
+            )
+        });
+        assert!(
+            nodes[0].children.iter().any(|c| c.as_str() == DETAIL_TAG),
+            "root references the Details panel"
+        );
+        let panel = nodes.iter().find(|n| n.tag == DETAIL_TAG).expect("detail panel node");
+        assert_eq!(panel.role, AriaRole::List);
+        assert_eq!(panel.name.as_deref(), Some("3 objects selected"));
+        let items: Vec<&AccessNode> = nodes.iter().filter(|n| n.role == AriaRole::ListItem).collect();
+        assert!(!items.is_empty(), "common properties are AT-reachable listitems");
+        // "Visible" is (true, true, false) across the trio → mixed.
+        let visible = items
+            .iter()
+            .find(|n| n.name.as_deref().is_some_and(|s| s.starts_with("Visible")))
+            .expect("Visible row present");
+        assert_eq!(
+            visible.name.as_deref(),
+            Some("Visible: Multiple Values"),
+            "a mixed property announces Multiple Values (one-gate with the paint)"
         );
     }
 }

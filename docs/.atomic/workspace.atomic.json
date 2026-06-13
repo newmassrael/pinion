@@ -39851,6 +39851,54 @@
         "CommonProperty / common_properties example-local; lift at a 2nd panel consumer"
       ]
     },
+    "R922.1": {
+      "decision_summary": "R922.1 session-review audit clearance: fix the silent half-write on divergent Choice options, the orphaned Details-panel a11y, and dispatch-fork doc-honesty — all surfaced by the adversarial review",
+      "changes_bullets": [
+        "common_properties: a Choice is common only with EQUAL options (same_property_shape), not kind-only",
+        "set_property: per-object with_intervene fail-loud (debug_assert) on the now-unreachable error (R906)",
+        "a11y: the Details panel is emitted as a List of ListItems (was orphaned from the tree); root refs it",
+        "a11y row name = common_value_label (Multiple Values / On-Off one SSOT, one-gate with the paint)",
+        "doc: handle_send fork honestly noted (chord DECISION is SSOT; key-parse + mutate tail diverge)",
+        "doc: r909/r910 docstrings note the cardinality-1 framing of the now-multi-select model"
+      ],
+      "verification_bullets": [
+        "20 hello-inspector unit tests (+3 R922.1: choice-shape predicate, choice write-all, panel a11y)",
+        "clippy -D pedantic clean; r909 + r910 + r922 demos PASS on the release binary"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "handle_send + apply_key are forks of VirtualSelectExternal/nav_select_key dispatch (decision SSOT'd)",
+        "lift a scroll-free dispatch core when a 3rd bare-model embedder makes the mutate tail uniform",
+        "bitmap [bool;N] assumes a fixed object count (test-guarded); object add/remove would need a relift"
+      ],
+      "publishable_decision_summary": "R922.1 session-review audit clearance: fix the silent half-write on divergent Choice options, the orphaned Details-panel a11y, and dispatch-fork doc-honesty — all surfaced by the adversarial review",
+      "publishable_changes_bullets": [
+        "common_properties: a Choice is common only with EQUAL options (same_property_shape), not kind-only",
+        "set_property: per-object with_intervene fail-loud (debug_assert) on the now-unreachable error (R906)",
+        "a11y: the Details panel is emitted as a List of ListItems (was orphaned from the tree); root refs it",
+        "a11y row name = common_value_label (Multiple Values / On-Off one SSOT, one-gate with the paint)",
+        "doc: handle_send fork honestly noted (chord DECISION is SSOT; key-parse + mutate tail diverge)",
+        "doc: r909/r910 docstrings note the cardinality-1 framing of the now-multi-select model"
+      ],
+      "publishable_verification_bullets": [
+        "20 hello-inspector unit tests (+3 R922.1: choice-shape predicate, choice write-all, panel a11y)",
+        "clippy -D pedantic clean; r909 + r910 + r922 demos PASS on the release binary"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "handle_send + apply_key are forks of VirtualSelectExternal/nav_select_key dispatch (decision SSOT'd)",
+        "lift a scroll-free dispatch core when a 3rd bare-model embedder makes the mutate tail uniform",
+        "bitmap [bool;N] assumes a fixed object count (test-guarded); object add/remove would need a relift"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

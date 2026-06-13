@@ -14,6 +14,12 @@ The typed value model + write reuse `CellValue` wholesale — the 4th
 consumer after the property grid, the data grid, and the node-editor
 port defaults ([[abstraction-needs-second-consumer]] payoff).
 
+Since R922 the inspector is a MULTI-select model; this demo drives the
+cardinality-1 case (one object selected), where the panel's "common
+properties" reduce to that single object's full schema. The multi-object
+core (common properties / Multiple Values / write-all) is
+`r922_inspector_multi.py`.
+
 ## The verification idea: scene-as-data, deterministic
 
 Everything is introspectable over RPC (§2 #2 AI-first primary path), so

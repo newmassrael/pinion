@@ -18,6 +18,11 @@ Both share the one select path the RPC `invoke /external/select` uses, so
 pointer, keyboard, and AI agent cannot diverge. All observable as
 scene-as-data ([[ai-first-rpc-introspection-obligation]]).
 
+Since R922 the inspector is a MULTI-select model; this demo exercises the
+cardinality-1 path (a plain click / unmodified Arrow replaces the selection
+with a single row). The modifier-click + chord-keyboard multi-select paths
+live in `r922_inspector_multi.py`.
+
 ## Demo scope (>=30 assertions, sections A-E)
 
   (A) Boot: default selection + object roster.
