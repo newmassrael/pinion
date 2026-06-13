@@ -594,12 +594,15 @@ pub fn is_activation_event(event_name: &str) -> bool {
 }
 
 /// The press-time snapshot a [`DragCalibration`] holds between the first
-/// captured move and the release: the per-consumer `payload` plus the cursor's
-/// `press_x_rel` anchor fraction across the basis rect.
+/// captured move and the release: the per-consumer `payload`, the cursor's
+/// `press_x_rel` anchor fraction across the basis rect, and the largest cursor
+/// fraction the drag has strayed from the press so far (the click-vs-drag
+/// discriminator — see [`DragCalibration::traveled_beyond`]).
 #[derive(Clone, Copy, Debug)]
 struct DragAnchor<T: Copy> {
     payload: T,
     press_x_rel: f64,
+    max_abs_delta: f64,
 }
 
 /// R914 §5.27 §5.35 — the capture-drag **calibration** substrate: the
@@ -678,12 +681,40 @@ impl<T: Copy> DragCalibration<T> {
         match self.anchor.get() {
             None => {
                 if let Some(payload) = seed() {
-                    self.anchor.set(Some(DragAnchor { payload, press_x_rel: x_rel }));
+                    self.anchor.set(Some(DragAnchor {
+                        payload,
+                        press_x_rel: x_rel,
+                        max_abs_delta: 0.0,
+                    }));
                 }
                 None
             }
-            Some(anchor) => Some((anchor.payload, x_rel - anchor.press_x_rel)),
+            Some(mut anchor) => {
+                let delta = x_rel - anchor.press_x_rel;
+                anchor.max_abs_delta = anchor.max_abs_delta.max(delta.abs());
+                self.anchor.set(Some(anchor));
+                Some((anchor.payload, delta))
+            }
         }
+    }
+
+    /// Has the drag strayed far enough from the press to be a **drag**, not a
+    /// **click**? `true` once the cursor's largest pixel travel from the press
+    /// (`max fraction-delta · basis`) reaches `threshold_px` — pass
+    /// [`DRAG_CLICK_THRESHOLD_PX`] for the framework's click-vs-drag SSOT (Qt
+    /// `startDragDistance`, the DOM no-`click`-after-drag rule). `false` while
+    /// idle or still within the dead zone.
+    ///
+    /// The opt-in discriminator for calibration consumers that ALSO have a
+    /// click action on the same press (a scrub cell that a plain click should
+    /// instead *focus*): gate both the live mutation and the trailing-click
+    /// suppression on this so a sub-threshold press stays a click. Consumers
+    /// with no click action (column resize, splitter) ignore it.
+    #[must_use]
+    pub fn traveled_beyond(&self, basis: f64, threshold_px: f64) -> bool {
+        self.anchor
+            .get()
+            .is_some_and(|a| a.max_abs_delta * basis >= threshold_px)
     }
 
     /// Tear the drag down at release (`PointerUp` / `PointerCancel`). Returns
@@ -1388,5 +1419,31 @@ mod drag_calibration_tests {
         assert!(cal.end(), "a calibrated drag is reported on teardown");
         assert!(!cal.is_active(), "teardown clears the snapshot");
         assert!(!cal.end(), "a second teardown reports no drag (idempotent)");
+    }
+
+    /// `traveled_beyond` discriminates a click (within the dead zone) from a
+    /// drag (strayed past `threshold_px` of pixel travel) using the consumer's
+    /// basis width — the click-to-focus vs drag-to-scrub split.
+    #[test]
+    fn traveled_beyond_discriminates_click_from_drag() {
+        let cal = DragCalibration::<u32>::new();
+        // basis 100px, threshold 4px => a 0.04 fraction delta is the boundary.
+        assert!(!cal.traveled_beyond(100.0, 4.0), "idle: no travel");
+
+        cal.drive(0.5, || Some(0)); // calibrate at the press (the R51.35 forward)
+        assert!(!cal.traveled_beyond(100.0, 4.0), "the calibration frame is a click so far");
+
+        cal.drive(0.52, || unreachable!("seeded")); // 0.02 * 100 = 2px < 4px
+        assert!(!cal.traveled_beyond(100.0, 4.0), "a 2px stray is still within the click dead zone");
+
+        cal.drive(0.56, || unreachable!("seeded")); // 0.06 * 100 = 6px >= 4px
+        assert!(cal.traveled_beyond(100.0, 4.0), "a 6px stray crossed into a drag");
+
+        // The max is sticky: returning toward the press stays a drag.
+        cal.drive(0.5, || unreachable!("seeded"));
+        assert!(cal.traveled_beyond(100.0, 4.0), "max travel is sticky — still a drag");
+
+        cal.end();
+        assert!(!cal.traveled_beyond(100.0, 4.0), "teardown resets the discriminator");
     }
 }

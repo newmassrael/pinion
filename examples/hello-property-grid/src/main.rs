@@ -119,7 +119,7 @@ use pinion_a11y::{
     GridColumn, GroupedGridSelection, GroupedGridSpec, ListOption, WidgetA11y,
 };
 use pinion_core::composite_tag::split_send_payload;
-use pinion_core::input::DragCalibration;
+use pinion_core::input::{DragCalibration, DRAG_CLICK_THRESHOLD_PX};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
     IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
@@ -646,6 +646,13 @@ impl PropertyGridExternal {
         }) else {
             return;
         };
+        // R915 — a sub-threshold press is a click, not a scrub: stay in the dead
+        // zone (no mutation) until the cursor strays past DRAG_CLICK_THRESHOLD_PX,
+        // so a plain click on a numeric row moves the roving cursor onto it
+        // instead of nudging its value.
+        if !self.is_scrubbing() {
+            return;
+        }
         let travel_px = delta * GRID_W_PX;
         let next = match drag.kind {
             CellKind::Int => {
@@ -657,18 +664,24 @@ impl PropertyGridExternal {
         self.set_value(drag.source, next);
     }
 
-    /// R875 — tear down the scrub at release. Returns whether a drag was in
-    /// flight (a real scrub committed live), so `PointerUp` can suppress the
-    /// click action: a scrub must not also open the inline editor or move the
-    /// cursor as a plain click would.
+    /// R875 / R915 — tear down the scrub at release. Returns whether a real
+    /// scrub ran (the cursor strayed past the click dead zone), so `PointerUp`
+    /// can suppress the click action: a scrub must not also open the inline
+    /// editor or move the cursor. A sub-threshold press returns `false` — it was
+    /// a click, so the release moves the roving cursor as usual.
     fn end_scrub(&self) -> bool {
         self.scrub_armed.set(None);
-        self.scrub_cal.end()
+        let was_scrub = self.is_scrubbing();
+        self.scrub_cal.end();
+        was_scrub
     }
 
-    /// Whether a numeric scrub is live (the AI-first `scrubbing` query slot).
+    /// R875 / R915 — whether a *real* numeric scrub is live: the press has
+    /// strayed past `DRAG_CLICK_THRESHOLD_PX` of travel across the grid basis
+    /// (`GRID_W_PX`). The one decision the scrub mutation gate, the
+    /// click-suppression at release, and the AI-first `scrubbing` query share.
     fn is_scrubbing(&self) -> bool {
-        self.scrub_cal.is_active()
+        self.scrub_cal.traveled_beyond(GRID_W_PX, DRAG_CLICK_THRESHOLD_PX)
     }
 
     /// Enter edit mode on `row`. A text / int / float row latches
@@ -2310,8 +2323,11 @@ mod tests {
             node.handle.pointer_move(0.5, 0.5); // calibrate (no mutation)
             assert_eq!(node.handle.introspect().unwrap().query("value.6"), Some(IntrospectValue::Float(12.5)),
                 "first move only calibrates");
-            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(true)));
-            node.handle.pointer_move(0.75, 0.5); // apply +100px
+            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(false)),
+                "R915: the calibration frame is a click so far, not yet a scrub");
+            node.handle.pointer_move(0.75, 0.5); // apply +100px (past the 4px dead zone)
+            assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(true)),
+                "a real drag past the threshold is a scrub");
             let IntrospectValue::Float(v) = node.handle.introspect().unwrap().query("value.6").unwrap() else {
                 panic!("Pos X stays a float");
             };

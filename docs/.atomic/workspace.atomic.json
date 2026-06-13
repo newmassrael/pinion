@@ -39273,6 +39273,74 @@
         "click/scrub split is a follow-up for both grids."
       ]
     },
+    "R915": {
+      "decision_summary": "Add DragCalibration::traveled_beyond click-vs-drag discriminator; wire into both numeric scrubs so a click focuses the cell and only a past-threshold drag scrubs (completes R914 the canonical DCC way)",
+      "changes_bullets": [
+        "Add DragCalibration::traveled_beyond(basis, threshold_px): the click-vs-drag",
+        "discriminator (max cursor travel from press >= threshold), tracked via a new",
+        "max_abs_delta on the press anchor (+1 unit test).",
+        "Wire it into both numeric scrubs (data-grid + property-grid): is_scrubbing now",
+        "means \"past the DRAG_CLICK_THRESHOLD_PX dead zone\", gating the scrub mutation,",
+        "the trailing-click suppression, and the AI `scrubbing` query in one decision.",
+        "Result (canonical DCC gesture): a click on a numeric cell now FOCUSES it",
+        "(clears the R914 absorption); only a drag past the threshold scrubs.",
+        "column-resize + splitter ignore the gate (no click action) — unchanged."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: all pass (DragCalibration 5 incl traveled_beyond;",
+        "data-grid 44; property-grid 45; the R914 click test renamed + flipped to assert",
+        "click-focuses; r875 calibration-frame scrubbing assertion updated).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean.",
+        "demos: r915 click-vs-scrub split (34 assert, NEW) + r914 (section H now asserts",
+        "click focuses) + r875 (property-grid, unchanged-pass) all PASS (release)."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "The threshold gate is opt-in per consumer: scrubs use it (click vs drag);",
+        "column-resize / splitter have no click action so they ignore it. Documented on",
+        "DragCalibration::traveled_beyond.",
+        "Dead-zone jump: crossing the 4px threshold applies travel from the press, so an",
+        "int scrub steps by ~round(4/8)=~0/1 at the boundary (negligible, standard).",
+        "scrollbar (SCXML-embedded 1-D) + dock + node (2-D) DragCalibration routing still",
+        "deferred (R914 carry; shape/architecture reasons, not effort)."
+      ],
+      "publishable_decision_summary": "Add DragCalibration::traveled_beyond click-vs-drag discriminator; wire into both numeric scrubs so a click focuses the cell and only a past-threshold drag scrubs (completes R914 the canonical DCC way)",
+      "publishable_changes_bullets": [
+        "Add DragCalibration::traveled_beyond(basis, threshold_px): the click-vs-drag",
+        "discriminator (max cursor travel from press >= threshold), tracked via a new",
+        "max_abs_delta on the press anchor (+1 unit test).",
+        "Wire it into both numeric scrubs (data-grid + property-grid): is_scrubbing now",
+        "means \"past the DRAG_CLICK_THRESHOLD_PX dead zone\", gating the scrub mutation,",
+        "the trailing-click suppression, and the AI `scrubbing` query in one decision.",
+        "Result (canonical DCC gesture): a click on a numeric cell now FOCUSES it",
+        "(clears the R914 absorption); only a drag past the threshold scrubs.",
+        "column-resize + splitter ignore the gate (no click action) — unchanged."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: all pass (DragCalibration 5 incl traveled_beyond;",
+        "data-grid 44; property-grid 45; the R914 click test renamed + flipped to assert",
+        "click-focuses; r875 calibration-frame scrubbing assertion updated).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean.",
+        "demos: r915 click-vs-scrub split (34 assert, NEW) + r914 (section H now asserts",
+        "click focuses) + r875 (property-grid, unchanged-pass) all PASS (release)."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The threshold gate is opt-in per consumer: scrubs use it (click vs drag);",
+        "column-resize / splitter have no click action so they ignore it. Documented on",
+        "DragCalibration::traveled_beyond.",
+        "Dead-zone jump: crossing the 4px threshold applies travel from the press, so an",
+        "int scrub steps by ~round(4/8)=~0/1 at the boundary (negligible, standard).",
+        "scrollbar (SCXML-embedded 1-D) + dock + node (2-D) DragCalibration routing still",
+        "deferred (R914 carry; shape/architecture reasons, not effort)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

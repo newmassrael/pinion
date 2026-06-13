@@ -179,17 +179,18 @@ def body() -> None:
         assert abs(gq(tf, "value.0.3") - 1.0) < 0.05, "Scale untouched by the Count scrubs"
         assert_eq(gq(tf, "value.1.2"), 24, "Count of row 1 untouched")
 
-        # ── (H) a click on a numeric cell is absorbed (no-op) ───────
-        # The R51.34 capture lock + R51.35 click-to-position forward calibrate a
-        # zero-travel scrub on press, which the release suppresses — so a click
-        # on a numeric cell neither scrubs nor edits (matching the property
-        # grid; click-to-focus a numeric cell is a deferred axis for both grids).
+        # ── (H) a click on a numeric cell FOCUSES it (R915) ─────────
+        # A press within DRAG_CLICK_THRESHOLD_PX is a click, not a scrub: it
+        # focuses the cell (value unchanged, no scrub, no edit). Only a drag past
+        # the threshold scrubs (sections C-F). R915 fixed the R914 absorption.
         before = gq(tf, "value.1.2")
         tf.click(path=f"{GRID}#1_2")
         # No-op verification: the dispatch commits before the RPC response.
         assert_eq(gq(tf, "value.1.2"), before, "a click leaves the numeric value unchanged")
         assert_eq(gq(tf, "scrubbing"), False, "a click leaves no scrub live")
         assert_eq(gq(tf, "editing_row"), None, "a single click on a numeric cell does not edit")
+        assert_eq(gq(tf, "focused_row"), 1, "R915: the click focuses the numeric cell's row")
+        assert_eq(gq(tf, "focused_col"), 2, "R915: the click focuses the numeric cell's column")
 
         # ── (I) a click on a non-numeric (bool) cell still toggles ──
         # The bool column never arms a scrub, so its click falls through to the

@@ -163,7 +163,7 @@ use pinion_core::external::{
     ExternalIntrospect, IntrospectSchema, IntrospectValue, InterveneError, InvokeError,
     RepaintOwner, ThreadOwnership,
 };
-use pinion_core::input::DragCalibration;
+use pinion_core::input::{DragCalibration, DRAG_CLICK_THRESHOLD_PX};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -871,6 +871,13 @@ impl DataGridExternal {
         }) else {
             return;
         };
+        // R915 — a sub-threshold press is a click, not a scrub: stay in the dead
+        // zone (no mutation) until the cursor strays past DRAG_CLICK_THRESHOLD_PX
+        // (the framework click/drag SSOT), so a plain click focuses the cell
+        // instead of nudging its value.
+        if !self.is_scrubbing() {
+            return;
+        }
         let travel_px = delta * f64::from(GRID_VIEWPORT_W);
         let next = match cell.kind {
             CellKind::Int => {
@@ -882,19 +889,25 @@ impl DataGridExternal {
         self.set_cell(cell.row, cell.col, next);
     }
 
-    /// R914 — tear the scrub down at release. Returns whether a drag was in
-    /// flight (a real scrub committed live), so `PointerUp` can suppress the
-    /// click action: a scrub must not also focus / toggle the cell as a plain
-    /// click would.
+    /// R914 / R915 — tear the scrub down at release. Returns whether a real
+    /// scrub ran (the cursor strayed past the click dead zone), so `PointerUp`
+    /// can suppress the click action: a scrub must not also focus / toggle the
+    /// cell. A sub-threshold press returns `false` — it was a click, so the
+    /// release focuses the cell as usual.
     fn end_scrub(&self) -> bool {
         self.scrub_armed.set(None);
-        self.scrub_cal.end()
+        let was_scrub = self.is_scrubbing();
+        self.scrub_cal.end();
+        was_scrub
     }
 
-    /// R914 — whether a numeric cell scrub is live (the AI-first `scrubbing`
-    /// query slot).
+    /// R914 / R915 — whether a *real* numeric cell scrub is live: the press has
+    /// strayed past `DRAG_CLICK_THRESHOLD_PX` of travel across the grid basis
+    /// (`GRID_VIEWPORT_W`). The one decision the scrub mutation gate, the
+    /// click-suppression at release, and the AI-first `scrubbing` query share —
+    /// a calibrated-but-still-within-the-dead-zone press is a click, not a scrub.
     fn is_scrubbing(&self) -> bool {
-        self.scrub_cal.is_active()
+        self.scrub_cal.traveled_beyond(f64::from(GRID_VIEWPORT_W), DRAG_CLICK_THRESHOLD_PX)
     }
 
     /// R837 / R914 — route a composite cell `send` event to the cell at
@@ -3008,19 +3021,21 @@ mod tests {
     #[test]
     fn r914_float_cell_scrub_tracks_cursor() {
         // Scale (col 3, Float, unbounded) boots at 1.0 in row 0. A press arms
-        // the cell; the first captured move calibrates (no mutation); each later
-        // move scrubs `base + travel_px · 0.01`, travel_px = delta·GRID_VIEWPORT_W.
+        // the cell; the calibration frame + the dead zone do not scrub (R915);
+        // once the cursor strays past the click threshold each move scrubs
+        // `base + travel_px · 0.01`, travel_px = delta·GRID_VIEWPORT_W.
         Owner::new().run(|| {
             let mut scene = boot_scene();
             grid_send(&mut scene, "0_3:PointerDown");
             assert!(!scrubbing(&scene), "armed but not yet calibrated => not scrubbing");
-            grid_pointer_move(&mut scene, 0.5); // calibrate (no mutation)
-            assert!(scrubbing(&scene), "the first move calibrates => scrubbing");
+            grid_pointer_move(&mut scene, 0.5); // calibrate (the R51.35 press forward)
+            assert!(!scrubbing(&scene), "R915: the calibration frame is a click so far, not a scrub");
             assert!(
                 (cell_float(&scene, "value.0.3") - 1.0).abs() < f64::EPSILON,
                 "the calibration frame does not mutate",
             );
-            grid_pointer_move(&mut scene, 0.75); // +0.25 fraction
+            grid_pointer_move(&mut scene, 0.75); // +0.25 fraction (well past the dead zone)
+            assert!(scrubbing(&scene), "a real drag past the threshold is a scrub");
             let expected = 1.0 + 0.25 * f64::from(GRID_VIEWPORT_W) * SCRUB_FLOAT_PER_PX;
             let got = cell_float(&scene, "value.0.3");
             assert!((got - expected).abs() < 1e-6, "Scale scrubbed to ~{expected}, got {got}");
@@ -3077,34 +3092,43 @@ mod tests {
     }
 
     #[test]
-    fn r914_numeric_click_is_absorbed_and_non_numeric_click_acts() {
-        // The R51.34 capture lock + R51.35 click-to-position forward calibrate a
-        // zero-travel scrub on the press of a numeric cell (the framework
-        // forwards the press cursor as the first `pointer_move`), so the release
-        // suppresses the click: a click on a numeric cell neither scrubs nor
-        // focuses (matching the property grid). A non-numeric cell never arms,
-        // so its click falls through to the focus / toggle action.
+    fn r915_numeric_click_focuses_within_dead_zone_and_drag_scrubs() {
+        // R915 — a press whose cursor stays within DRAG_CLICK_THRESHOLD_PX is a
+        // CLICK, not a scrub: it focuses the numeric cell (and never nudges the
+        // value), exactly like a non-numeric cell. Only a press that strays past
+        // the threshold becomes a scrub (which suppresses the focus-click).
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            // (a) numeric cell: press arms + the press-time forward calibrates;
-            //     the release is absorbed (no focus change, value unchanged).
+            // (a) numeric cell click: press + the R51.35 press-time forward, no
+            //     real travel => a click; the release focuses the cell.
             grid_send(&mut scene, "0_2:PointerDown");
-            grid_pointer_move(&mut scene, 0.5); // the R51.35 press-time forward
-            assert!(scrubbing(&scene), "the press-time forward calibrates a (zero-travel) scrub");
+            grid_pointer_move(&mut scene, 0.5); // the press-time forward (delta 0)
+            assert!(!scrubbing(&scene), "the calibration frame alone is a click, not a scrub");
             grid_send(&mut scene, "0_2:PointerUp");
-            assert!(!scrubbing(&scene), "the release tears the scrub down");
-            assert_eq!(cell_int(&scene, "value.0.2"), 1, "Count unchanged by the absorbed click");
+            assert!(!scrubbing(&scene), "the release tears the calibration down");
+            assert_eq!(cell_int(&scene, "value.0.2"), 1, "Count unchanged by the click");
             assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(0)));
-            assert_eq!(grid_intro(&scene).query("focused_col"), Some(IntrospectValue::Int(0)),
-                "the absorbed click did not move the cursor onto the numeric cell");
+            assert_eq!(grid_intro(&scene).query("focused_col"), Some(IntrospectValue::Int(2)),
+                "R915: the click focuses the numeric cell (no longer absorbed)");
 
-            // (b) the Active bool (col 4, row 2 = false) never arms; even a real
-            //     cursor march never scrubs, and the release toggles the bool.
+            // (b) dead-zone drag: a press that strays only ~1px (< 4px threshold,
+            //     1/370 ≈ 0.0027 fraction) is still a click — value unchanged.
+            grid_send(&mut scene, "0_3:PointerDown");
+            grid_pointer_move(&mut scene, 0.5);
+            // +~1px: 1/370 ≈ 0.0027 fraction, well within the 4px click dead zone.
+            grid_pointer_move(&mut scene, 0.5027);
+            assert!(!scrubbing(&scene), "a 1px stray stays within the click dead zone");
+            grid_send(&mut scene, "0_3:PointerUp");
+            assert!((cell_float(&scene, "value.0.3") - 1.0).abs() < f64::EPSILON,
+                "the dead-zone press did not scrub Scale");
+
+            // (c) the Active bool (col 4, row 2 = false) never arms a scrub; even a
+            //     real cursor march stays a click → the release toggles the bool.
             assert_eq!(grid_intro(&scene).query("value.2.4"), Some(IntrospectValue::Bool(false)));
             grid_send(&mut scene, "2_4:PointerDown");
             grid_pointer_move(&mut scene, 0.5);
             grid_pointer_move(&mut scene, 0.8); // a real cursor march, but col 4 is not numeric
-            assert!(!scrubbing(&scene), "a non-numeric press never calibrates a scrub");
+            assert!(!scrubbing(&scene), "a non-numeric press never scrubs");
             grid_send(&mut scene, "2_4:PointerUp");
             assert_eq!(
                 grid_intro(&scene).query("value.2.4"),
@@ -3113,9 +3137,6 @@ mod tests {
             );
             assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(2)),
                 "the non-numeric click focuses its cell");
-
-            // (c) isolation: none of the above touched a neighbouring numeric cell.
-            assert!((cell_float(&scene, "value.0.3") - 1.0).abs() < f64::EPSILON, "Scale untouched");
         });
     }
 }
