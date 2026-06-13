@@ -36,7 +36,7 @@
 //! (`expanded`) state. A **leaf** node's id IS its value index in decimal ("6"),
 //! so the painted row tag `{GRID_TAG}#{i}`, the `reset{i}` arrow and the
 //! `value.<i>` path are byte-identical to the flat era; a **branch** node's id
-//! is prefixed (`cat:` / `struct:`). Four externals:
+//! is prefixed (`cat.` / `struct.`). Four externals:
 //!
 //! * **`PropertyGridExternal`** (`property_grid`, primary) — the coordinator. It
 //!   owns the value model, the structure tree + the roving cursor (a node id),
@@ -106,8 +106,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    listbox_option_nodes, tree_access_nodes, AccessFocus, AccessNode, AriaRole, ListOption,
-    WidgetA11y,
+    listbox_option_nodes, tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, AriaRole,
+    ListOption, WidgetA11y,
 };
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::input::{DragCalibration, DRAG_CLICK_THRESHOLD_PX};
@@ -149,10 +149,10 @@ vello_renderer_impl!(HelloPropertyGridRenderer, HelloPropertyGridRendererError);
 // ─── window + layout constants ─────────────────────────────────────
 
 const WIN_W: u32 = 460;
-// R871 — 12 typed property rows grouped under 5 collapsible category headers,
-// plus the `Property` / `Value` column header and the title band: 18 visible
-// rows when every category is expanded (a popup may flip above its row near
-// the bottom). Collapsing a category hides its data rows, shrinking the list.
+// R921 — the property tree fully expanded is 23 visible rows (5 category
+// branches + 2 struct branches + 16 leaf rows), plus the `Property` / `Value`
+// column header and the title band (a popup may flip above its row near the
+// bottom). Collapsing a branch hides its subtree, shrinking the list.
 const WIN_H: u32 = 820;
 const THEME_TAG: &str = "app";
 
@@ -367,7 +367,7 @@ fn default_properties() -> Vec<CellValue> {
 // panel migrates off the 2-level `GroupOrderState` group-by proxy onto the
 // arbitrary-depth WAI-ARIA Tree substrate (`flat_visible` / `resolve_tree_key`
 // / `TreeNode`, R811/R820/R821): one visible-row sequence the paint, the
-// id-keyed roving cursor, the collapse set, the a11y `treegrid` and the
+// id-keyed roving cursor, the collapse set, the a11y `tree` and the
 // name filter all read, so no two derived sequences can diverge.
 //
 // The value model stays a flat `Vec<CellValue>` keyed by **value index** (the
@@ -449,7 +449,7 @@ impl TreeNode for PropertyNode {
 }
 
 /// The leaf value index a tree-row id addresses, or `None` for a branch id
-/// (which has a non-numeric `cat:` / `struct:` prefix). The one place the
+/// (which has a non-numeric `cat.` / `struct.` prefix). The one place the
 /// "is this row an editable leaf?" decision is made, shared by the click
 /// router, the keyboard activation and the a11y builder.
 fn row_value_index(id: &str) -> Option<usize> {
@@ -498,10 +498,20 @@ fn struct_value_summary(model: &[CellValue], tree: &[PropertyNode], struct_id: &
 /// one-gate extended to the struct row, so the arrow, the AT button and the
 /// query can never disagree.
 fn struct_is_modified(model: &[CellValue], defaults: &[CellValue], tree: &[PropertyNode], id: &str) -> bool {
-    struct_field_indices(tree, id).iter().any(|&i| match (model.get(i), defaults.get(i)) {
-        (Some(v), Some(d)) => property_modified(v, d),
+    struct_field_indices(tree, id).iter().any(|&i| leaf_modified(model, defaults, i))
+}
+
+/// R921.1 — whether the leaf at `value_index` differs from its class default.
+/// The ONE leaf modified-gate the paint (reset arrow), the a11y (reset
+/// `button`), the External (`is_modified` / `struct_is_modified`) and the RPC
+/// (`modified.<i>`) share — the R886.1 one-gate, the leaf peer of
+/// [`struct_is_modified`] (lifted at R921.1 so the arrow and the AT button can
+/// never disagree). Out-of-range / absent reads as not-modified.
+fn leaf_modified(model: &[CellValue], defaults: &[CellValue], value_index: usize) -> bool {
+    match (model.get(value_index), defaults.get(value_index)) {
+        (Some(value), Some(baseline)) => property_modified(value, baseline),
         _ => false,
-    })
+    }
 }
 
 /// R921 — the number of leaf (editable property) descendants of a branch — the
@@ -753,6 +763,12 @@ struct PropertyGridExternal {
     /// R921 — the roving keyboard cursor (a visible-row node id). Held so a
     /// data-row click can move the cursor onto the clicked row.
     cursor: Rc<Signal<Option<String>>>,
+    /// R921.1 — the live search/filter text (the same `TextEditState` the search
+    /// box owns). Held so the RPC `query` path (no Owner) can compute the filtered
+    /// visible flatten to gate `editing`/`popup_cursor` on row visibility — a
+    /// collapsed/filtered edit must report as not-editing (R901.1 introspection
+    /// must match paint), `.text()` reads the `Rc` with no Owner scope.
+    search: Rc<TextEditState>,
     editing_row: Rc<Signal<Option<usize>>>,
     editor: Rc<TextEditState>,
     popup_cursor: Rc<Signal<Option<usize>>>,
@@ -783,6 +799,9 @@ impl PropertyGridExternal {
             defaults: use_property_defaults(),
             tree,
             cursor,
+            // Resolved via its hook (like `defaults`) — the same cached
+            // `TextEditState` the search box owns (Owner::cache dedup).
+            search: use_text_edit_state(SEARCH_TF_TAG),
             editing_row,
             editor,
             popup_cursor,
@@ -796,14 +815,28 @@ impl PropertyGridExternal {
         self.model.get().len()
     }
 
+    /// R921.1 — the editing leaf's value index, but only when its row is
+    /// actually visible in the current flatten (not collapsed / filtered away).
+    /// The visibility gate the `editing` / `popup_cursor` queries share with the
+    /// paint + a11y (`popup_view_pos`): a collapsed / filtered edit reports as
+    /// not-editing, so the RPC introspection matches what the screen shows
+    /// (R901.1 — `editing` must point at a painted row). Reads the captured tree
+    /// + search `Rc`s, so it is sound on the RPC thread (no Owner scope).
+    fn editing_if_visible(&self) -> Option<usize> {
+        let row = self.editing_row.get()?;
+        let query = self.search.text().trim().to_lowercase();
+        let id = row.to_string();
+        visible_property_rows(&self.tree.get(), &query)
+            .iter()
+            .any(|r| r.id == id)
+            .then_some(row)
+    }
+
     /// R919 — whether the property at `source` differs from its class default
     /// (the modified-indicator predicate; the reset arrow paints only when true).
     /// Out-of-range / absent reads as not-modified.
     fn is_modified(&self, source: usize) -> bool {
-        match (self.model.get().get(source), self.defaults.get(source)) {
-            (Some(value), Some(baseline)) => property_modified(value, baseline),
-            _ => false,
-        }
+        leaf_modified(&self.model.get(), &self.defaults, source)
     }
 
     /// R919 — whether any property is modified (the "Reset all" enable gate / the
@@ -1281,7 +1314,7 @@ impl ExternalIntrospect for PropertyGridExternal {
             ("toggle_branch", "bool"),
             ("reset_struct", "int"),
             // R921 — the roving keyboard cursor's node id (read + intervene; a
-            // leaf value-index string "6" or a branch `cat:` / `struct:` id,
+            // leaf value-index string "6" or a branch `cat.` / `struct.` id,
             // Null when unset). The AI-first cursor move (no click side effect).
             ("cursor", "string"),
             ("popup_cursor", "int"),
@@ -1302,13 +1335,19 @@ impl ExternalIntrospect for PropertyGridExternal {
             "row_count" => Some(IntrospectValue::Int(
                 i64::try_from(self.count()).expect("row count fits in i64"),
             )),
-            "editing" => Some(IntrospectValue::Json(match self.editing_row.get() {
+            // R921.1 — gated on `editing_if_visible`: an edit whose row is
+            // collapsed / filtered out of the flatten reports Null (it paints
+            // nowhere, so advertising it would be an R901.1 introspection lie).
+            "editing" => Some(IntrospectValue::Json(match self.editing_if_visible() {
                 Some(row) => serde_json::Value::from(
                     i64::try_from(row).expect("row index fits in i64"),
                 ),
                 None => serde_json::Value::Null,
             })),
-            "popup_cursor" => Some(match self.popup_cursor.get() {
+            // R921.1 — Null unless the open popup's row is visible (same gate):
+            // a popup hidden by a collapse / filter paints no panel, so its
+            // cursor is not reported either.
+            "popup_cursor" => Some(match self.editing_if_visible().and(self.popup_cursor.get()) {
                 Some(i) => {
                     IntrospectValue::Int(i64::try_from(i).expect("cursor index fits in i64"))
                 }
@@ -1581,7 +1620,13 @@ fn editing_kind() -> Option<CellKind> {
 /// popup is open. While a popup is open the grid keeps focus but the popup
 /// owns the keymap.
 fn open_popup_kind() -> Option<(usize, CellKind)> {
-    let row = use_editing_row().get()?;
+    // R921.1 — gate on `popup_view_pos` (the same visibility predicate the paint
+    // + a11y use): a popup whose row is collapsed / filtered out of the flatten
+    // paints no panel, so it must NOT intercept the grid keymap (else an
+    // invisible popup hijacks the arrows and traps tree navigation — the row
+    // can never be re-expanded by keyboard). Only a *visible* open popup keeps
+    // the keymap.
+    let (row, _) = popup_view_pos(use_editing_row().get())?;
     match use_property_model().get().get(row).map(CellValue::kind) {
         Some(kind @ (CellKind::Choice | CellKind::Color)) => Some((row, kind)),
         _ => None,
@@ -2423,7 +2468,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             // A leaf (editable) row.
             let value = &model[vi];
             let edit_active = editing == Some(vi) && value.kind().is_text_editable();
-            let modified = defaults.get(vi).is_some_and(|d| property_modified(value, d));
+            let modified = leaf_modified(&model, &defaults, vi);
             rows.push(view_row(vr, value, is_focused, edit_active, modified, &theme, (edit_state, edit_caret)));
         } else if vr.id.starts_with(STRUCT_PREFIX) {
             // A struct branch row: disclosure + name + the collapsed-value tuple.
@@ -2704,7 +2749,7 @@ impl WidgetA11y for PropertyGridView {
         // one-gate). A collapsed / filtered-out row emits neither.
         for r in &rows {
             let (modified, name) = if let Some(vi) = row_value_index(&r.id) {
-                let m = defaults.get(vi).is_some_and(|d| property_modified(&model[vi], d));
+                let m = leaf_modified(&model, &defaults, vi);
                 (m, PROPERTY_NAMES.get(vi).copied().unwrap_or(r.label.as_str()).to_owned())
             } else if r.id.starts_with(STRUCT_PREFIX) {
                 (struct_is_modified(&model, &defaults, &tree_nodes, &r.id), r.label.clone())
@@ -2715,7 +2760,9 @@ impl WidgetA11y for PropertyGridView {
                 continue;
             }
             let reset_tag = format!("{GRID_TAG}#{RESET_PREFIX}{}", r.id);
-            let row_tag = format!("{GRID_TAG}#{}", r.id);
+            // The row node tag must equal what `tree_access_nodes` emitted — use
+            // its `tree_row_tag` SSOT so they cannot drift (R921.1 use-substrate).
+            let row_tag = tree_row_tag(GRID_TAG, &r.id);
             if let Some(node) = nodes.iter_mut().find(|n| n.tag == row_tag) {
                 node.children.push(reset_tag.clone());
             }
@@ -2757,7 +2804,7 @@ impl WidgetA11y for PropertyGridView {
     /// it names the active popup option / swatch; otherwise it names the
     /// focused value cell (the roving row cursor). This is the authoritative
     /// active-descendant channel (the per-node `with_focused` flag is a
-    /// redundant marker the AT layer does not lower) — the combobox / treegrid
+    /// redundant marker the AT layer does not lower) — the combobox / tree
     /// pattern, previously missing here.
     fn access_focus_target(_state: &RootState, focused: Option<&str>) -> Option<AccessFocus> {
         // A different element (the search box / inline editor) owns focus → ring
@@ -2789,11 +2836,12 @@ impl WidgetA11y for PropertyGridView {
             }
         }
         // Otherwise the active descendant follows the roving tree cursor (a leaf
-        // value-index id or a branch `cat:` / `struct:` id), ringing its row tag
-        // `{GRID_TAG}#{id}`; the grid atomically when no cursor is set yet.
+        // value-index id or a branch `cat.` / `struct.` id), ringing its row tag
+        // via the `tree_row_tag` SSOT (so it matches what `tree_access_nodes`
+        // emitted — R921.1 use-substrate); the grid atomically when no cursor yet.
         Some(use_property_cursor().get().map_or_else(
             || AccessFocus::atomic(GRID_TAG),
-            |id| AccessFocus::composite(GRID_TAG, format!("{GRID_TAG}#{id}")),
+            |id| AccessFocus::composite(GRID_TAG, tree_row_tag(GRID_TAG, &id)),
         ))
     }
 }
@@ -3117,6 +3165,53 @@ mod tests {
         });
     }
 
+    /// R921.1 (audit) — an edit/popup whose row is collapsed away must NOT be
+    /// advertised by `query editing` / `popup_cursor` (it paints nowhere — the
+    /// R901.1 introspection-must-match-paint invariant), and the invisible popup
+    /// must NOT hijack the grid keymap (else the arrows are trapped and the
+    /// branch can never be re-expanded by keyboard). Re-expanding re-advertises.
+    #[test]
+    fn r921_1_collapsed_edit_not_advertised_and_no_keymap_hijack() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Open the Blend choice popup (value 9, under cat.Appearance).
+            with_grid_mut(&mut scene, |i| {
+                let _ = i.invoke("begin", IntrospectValue::Int(9));
+            });
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from(9))),
+                "while visible the open popup is advertised",
+            );
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(0)));
+            // Collapse Appearance (hides the Blend row) via RPC.
+            with_grid_mut(&mut scene, |i| {
+                let _ = i.invoke("toggle_branch", IntrospectValue::Text("cat.Appearance".to_owned()));
+            });
+            // The now-hidden edit/popup reports as not-editing (matches paint).
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null)),
+                "a collapsed edit is not advertised",
+            );
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Null));
+            // The invisible popup does not intercept the grid keymap: ArrowDown
+            // moves the tree cursor (Identity branch -> its first leaf).
+            set_cursor_id("cat.Identity");
+            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", Modifiers::empty()));
+            assert_eq!(cursor_id().as_deref(), Some("0"), "tree nav advanced, not hijacked by the hidden popup");
+            // Re-expanding re-advertises the still-open edit (state suspended, not destroyed).
+            with_grid_mut(&mut scene, |i| {
+                let _ = i.invoke("toggle_branch", IntrospectValue::Text("cat.Appearance".to_owned()));
+            });
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from(9))),
+                "re-expanding restores the advertisement",
+            );
+        });
+    }
+
     #[test]
     fn r836_toggle_invoke_flips_bool_by_source() {
         Owner::new().run(|| {
@@ -3317,7 +3412,7 @@ mod tests {
     }
 
     /// Park the roving cursor on tree node `id` (a leaf value-index string or a
-    /// branch `cat:` / `struct:` id) — the tree-cursor peer of the old visual
+    /// branch `cat.` / `struct.` id) — the tree-cursor peer of the old visual
     /// `set_cursor(pos)`.
     fn set_cursor_id(id: &str) {
         use_property_cursor().set(Some(id.to_owned()));

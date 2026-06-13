@@ -39737,6 +39737,60 @@
         "multi-object editing + property-grid crate-lift remain (editor 2nd consumer = Phase D)"
       ]
     },
+    "R921.1": {
+      "decision_summary": "Session-review adversarial audit clearance of R921: 3 subagents (correctness/SSOT/doc-honesty) surfaced candidates; every one re-verified by grep+read into REAL/reject/defer. REAL fixes: gate editing/popup_cursor query + open_popup_kind keymap on row visibility so a collapsed/filtered edit is not advertised and an invisible popup cannot hijack the grid keymap (R901.1); lift leaf_modified one-gate free-fn; use tree_row_tag SSOT in the a11y; doc-honesty fixes (row counts, treegrid->tree, colon->dot prefix prose).",
+      "changes_bullets": [
+        "C1 gate editing/popup_cursor query + open_popup_kind keymap on row visibility (editing_if_visible)",
+        "C1 collapsed/filtered edit now reports not-editing (R901.1 paint==query); no popup keymap hijack",
+        "SSOT lift leaf_modified free-fn (one-gate peer of struct_is_modified); view+a11y+is_modified route",
+        "use-substrate access_focus_target + a11y reset-loop use tree_row_tag SSOT (match a11y builder)",
+        "DH doc fixes: WIN_H 12/18->23/16 rows; treegrid->tree x2; cat:/struct: colon->dot prose x5",
+        "External holds the search TextEditState Rc so the RPC query path computes the filtered flatten"
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-property-grid: 52 (incl. r921_1 regression: collapsed edit hidden + no hijack)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean",
+        "8 property-grid demos PASS on release binary (r921/r836/r867/r869/r871/r872/r875/r919)",
+        "3 adversarial subagents -> every finding grep+read re-verified by me -> REAL/reject/defer bucket"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "reject over-reach: popup_cursor write-gap (AI uses choose); 3-way classifier (arms diverge R735.1)",
+        "reject: model[vi] index (static tree, test-pinned); name-match struct shows full value (correct)",
+        "defer justified: find_node = immutable peer of tree_nav find_node_mut (1 consumer); tree a11y",
+        "multi-object editing + property-grid crate-lift remain (R922+; editor 2nd consumer = Phase D)"
+      ],
+      "publishable_decision_summary": "Session-review adversarial audit clearance of R921: 3 subagents (correctness/SSOT/doc-honesty) surfaced candidates; every one re-verified by grep+read into REAL/reject/defer. REAL fixes: gate editing/popup_cursor query + open_popup_kind keymap on row visibility so a collapsed/filtered edit is not advertised and an invisible popup cannot hijack the grid keymap (R901.1); lift leaf_modified one-gate free-fn; use tree_row_tag SSOT in the a11y; doc-honesty fixes (row counts, treegrid->tree, colon->dot prefix prose).",
+      "publishable_changes_bullets": [
+        "C1 gate editing/popup_cursor query + open_popup_kind keymap on row visibility (editing_if_visible)",
+        "C1 collapsed/filtered edit now reports not-editing (R901.1 paint==query); no popup keymap hijack",
+        "SSOT lift leaf_modified free-fn (one-gate peer of struct_is_modified); view+a11y+is_modified route",
+        "use-substrate access_focus_target + a11y reset-loop use tree_row_tag SSOT (match a11y builder)",
+        "DH doc fixes: WIN_H 12/18->23/16 rows; treegrid->tree x2; cat:/struct: colon->dot prose x5",
+        "External holds the search TextEditState Rc so the RPC query path computes the filtered flatten"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-property-grid: 52 (incl. r921_1 regression: collapsed edit hidden + no hijack)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic clean",
+        "8 property-grid demos PASS on release binary (r921/r836/r867/r869/r871/r872/r875/r919)",
+        "3 adversarial subagents -> every finding grep+read re-verified by me -> REAL/reject/defer bucket"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "reject over-reach: popup_cursor write-gap (AI uses choose); 3-way classifier (arms diverge R735.1)",
+        "reject: model[vi] index (static tree, test-pinned); name-match struct shows full value (correct)",
+        "defer justified: find_node = immutable peer of tree_nav find_node_mut (1 consumer); tree a11y",
+        "multi-object editing + property-grid crate-lift remain (R922+; editor 2nd consumer = Phase D)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
