@@ -39503,6 +39503,68 @@
         "real edit-surface redesign (card vs panel field ownership) — fresh budget."
       ]
     },
+    "R918": {
+      "decision_summary": "R918 node Details panel in-panel click-to-edit: card and panel coexist as edit surfaces over one shared field via a new EditSurface axis; panel rows route to the coordinator and open PosX/PosY/Title/PortDefault edits sharing the existing mutation funnels (apply_set_pos for position)",
+      "changes_bullets": [
+        "EditSurface{Card,Panel} + ActiveEdit{target,surface}: the inline edit gains a surface axis",
+        "EditTarget += PosX/PosY (panel position edits); use_edit_target -> use_active_edit",
+        "Details panel rows click-to-edit: a detail_<key> wire routes to the coordinator (palette idiom)",
+        "begin_edit_detail(field) opens the ONE shared field IN the panel row (surface=Panel)",
+        "apply_set_pos funnel: panel PosX/PosY commit + intervene x/y share one coalescable undoable move",
+        "set_pos_clamped lifts clamp-set (set_node_pos + apply_set_pos); the dead record_move is retired",
+        "detail_rows SSOT enumerates panel rows for paint + a11y (tag/label/value/target cannot drift)",
+        "a11y: EDIT_TF textbox re-parents card<->panel-row by surface; new Details group + per-row nodes",
+        "query editing reports surface; begin_edit_detail RPC twin closes the read-write symmetry",
+        "the panel edits a WIRED port default the card hides (a panel row always paints its value)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (hello-node-editor 122; +8 R918 incl move-coalesce funnel + a11y)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "13 node-editor demos PASS incl new r918 (>=30 assert) + retagged r916 + r901 surface-key fix",
+        "r918 demo: click row -> field in panel (x>=772) -> type+Enter -> node moves; Escape cancels",
+        "self-grep: apply_set_pos 1/3 callers; set_pos_clamped 1/2; detail_rows 1/2; no use_edit_target"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "card + panel inline-edit COEXIST (path i); SEED's (ii)=Unreal-true claim was inverted by audit",
+        "SCRUB_* 2-copy defer holds; a 3rd numeric-scrub consumer lifts scrub_project to pinion-core",
+        "r838 hardcoded canvas coords stay pre-existing fragility; TOTAL_W SSOT documents the coupling",
+        "no new RPC to begin a panel edit beyond begin_edit_detail; AI path stays intervene detail.<field>"
+      ],
+      "publishable_decision_summary": "R918 node Details panel in-panel click-to-edit: card and panel coexist as edit surfaces over one shared field via a new EditSurface axis; panel rows route to the coordinator and open PosX/PosY/Title/PortDefault edits sharing the existing mutation funnels (apply_set_pos for position)",
+      "publishable_changes_bullets": [
+        "EditSurface{Card,Panel} + ActiveEdit{target,surface}: the inline edit gains a surface axis",
+        "EditTarget += PosX/PosY (panel position edits); use_edit_target -> use_active_edit",
+        "Details panel rows click-to-edit: a detail_<key> wire routes to the coordinator (palette idiom)",
+        "begin_edit_detail(field) opens the ONE shared field IN the panel row (surface=Panel)",
+        "apply_set_pos funnel: panel PosX/PosY commit + intervene x/y share one coalescable undoable move",
+        "set_pos_clamped lifts clamp-set (set_node_pos + apply_set_pos); the dead record_move is retired",
+        "detail_rows SSOT enumerates panel rows for paint + a11y (tag/label/value/target cannot drift)",
+        "a11y: EDIT_TF textbox re-parents card<->panel-row by surface; new Details group + per-row nodes",
+        "query editing reports surface; begin_edit_detail RPC twin closes the read-write symmetry",
+        "the panel edits a WIRED port default the card hides (a panel row always paints its value)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (hello-node-editor 122; +8 R918 incl move-coalesce funnel + a11y)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "13 node-editor demos PASS incl new r918 (>=30 assert) + retagged r916 + r901 surface-key fix",
+        "r918 demo: click row -> field in panel (x>=772) -> type+Enter -> node moves; Escape cancels",
+        "self-grep: apply_set_pos 1/3 callers; set_pos_clamped 1/2; detail_rows 1/2; no use_edit_target"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "card + panel inline-edit COEXIST (path i); SEED's (ii)=Unreal-true claim was inverted by audit",
+        "SCRUB_* 2-copy defer holds; a 3rd numeric-scrub consumer lifts scrub_project to pinion-core",
+        "r838 hardcoded canvas coords stay pre-existing fragility; TOTAL_W SSOT documents the coupling",
+        "no new RPC to begin a panel edit beyond begin_edit_detail; AI path stays intervene detail.<field>"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

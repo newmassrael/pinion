@@ -100,7 +100,7 @@ def retype(tf, new_text: str) -> None:
 def open_pin(tf, node_id: int, port: int) -> None:
     tf.double_click(path=f"{G}#idefault_{node_id}_{port}")
     wait_until(
-        lambda: editing(tf) == {"kind": "port_default", "node": node_id, "port": port},
+        lambda: editing(tf) == {"kind": "port_default", "node": node_id, "port": port, "surface": "card"},
         timeout=4.0,
         interval=0.03,
         desc=f"dblclick opens the editor on node {node_id} port {port}",
@@ -132,8 +132,8 @@ def body() -> None:
         assert_eq(tf.request("focus/get").result.get("focused"), EDIT,
                   "the field owns keyboard focus")
         # `editing` is the port-default target; `renaming` is the honest Null.
-        assert_eq(editing(tf), {"kind": "port_default", "node": lerp, "port": 2},
-                  "query editing reports the port-default target")
+        assert_eq(editing(tf), {"kind": "port_default", "node": lerp, "port": 2, "surface": "card"},
+                  "query editing reports the port-default target (card surface)")
         assert_eq(renaming(tf), None, "a port-default edit is not a rename")
 
         # ── (C) typing + Enter commits (one undoable step) ──────────
@@ -176,8 +176,8 @@ def body() -> None:
 
         # ── (F) the RPC pair: begin_edit_default / editing ──────────
         assert_eq(tf.invoke("/external/begin_edit_default", f"{lerp}.1"), True, "begin_edit_default opens a pin")
-        assert_eq(editing(tf), {"kind": "port_default", "node": lerp, "port": 1},
-                  "query editing reports the RPC-opened target")
+        assert_eq(editing(tf), {"kind": "port_default", "node": lerp, "port": 1, "surface": "card"},
+                  "query editing reports the RPC-opened target (card surface)")
         assert_eq(renaming(tf), None, "the port-default edit is not a rename")
         assert_eq(tf.invoke("/external/begin_edit_default", "99.0"), False, "an unknown node is rejected")
         assert_eq(tf.invoke("/external/begin_edit_default", f"{lerp}.9"), False,
@@ -192,7 +192,7 @@ def body() -> None:
         wait_until(lambda: editor_text(tf) == "2.5", timeout=4.0, interval=0.03,
                    desc="typed the migration candidate")
         tf.double_click(path=f"{G}#node_2")  # opening a title rename migrates
-        wait_until(lambda: editing(tf) == {"kind": "title", "node": 2}, timeout=4.0, interval=0.03,
+        wait_until(lambda: editing(tf) == {"kind": "title", "node": 2, "surface": "card"}, timeout=4.0, interval=0.03,
                    desc="the editor migrated to the title target")
         assert_eq(pin_default(tf, lerp, 2), 2.5, "opening the title editor committed the in-flight pin default")
         assert_eq(editor_text(tf), "Multiply", "the editor reseeded from the title target")

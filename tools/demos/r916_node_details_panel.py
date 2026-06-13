@@ -66,7 +66,7 @@ def body() -> None:
         assert_eq(gq(tf, "detail.node"), None, "detail.node Null with no selection")
         assert_eq(gq(tf, "detail.title"), None, "detail.title Null with no selection")
         assert_eq(gq(tf, "detail.x"), None, "detail.x Null with no selection")
-        assert not has_tag(tf, f"{DETAIL}#title"), "no property rows while nothing is selected"
+        assert not has_tag(tf, f"{G}#detail_title"), "no property rows while nothing is selected"
 
         # ── (B) select node 2 (Multiply, 2 Vector inputs at x=250) ──
         select(tf, "2")
@@ -76,11 +76,11 @@ def body() -> None:
         assert_eq(gq(tf, "detail.x"), 250, "detail.x reflects node 2")
         assert_eq(gq(tf, "detail.y"), 110, "detail.y reflects node 2")
         assert_eq(gq(tf, "detail.inputs"), 2, "detail.inputs reflects node 2's arity")
-        assert has_tag(tf, f"{DETAIL}#title"), "the Title row paints"
-        assert has_tag(tf, f"{DETAIL}#x"), "the Position X row paints"
-        assert has_tag(tf, f"{DETAIL}#y"), "the Position Y row paints"
-        assert has_tag(tf, f"{DETAIL}#in_0"), "the input-0 default row paints"
-        assert has_tag(tf, f"{DETAIL}#in_1"), "the input-1 default row paints"
+        assert has_tag(tf, f"{G}#detail_title"), "the Title row paints"
+        assert has_tag(tf, f"{G}#detail_x"), "the Position X row paints"
+        assert has_tag(tf, f"{G}#detail_y"), "the Position Y row paints"
+        assert has_tag(tf, f"{G}#detail_in_0"), "the input-0 default row paints"
+        assert has_tag(tf, f"{G}#detail_in_1"), "the input-1 default row paints"
 
         # ── (C) selection-relative alias == absolute address ────────
         assert_eq(gq(tf, "detail.title"), gq(tf, "node.2.title"), "detail.title == node.2.title")
@@ -102,14 +102,14 @@ def body() -> None:
         assert_eq(gq(tf, "detail.node"), 0, "detail.node follows the selection")
         assert_eq(gq(tf, "detail.title"), "Texture", "detail.title now reflects node 0")
         assert_eq(gq(tf, "detail.inputs"), 0, "node 0 has no input ports")
-        assert not has_tag(tf, f"{DETAIL}#in_0"), "no input-default rows for a source node"
-        assert has_tag(tf, f"{DETAIL}#title"), "the Title row still paints"
+        assert not has_tag(tf, f"{G}#detail_in_0"), "no input-default rows for a source node"
+        assert has_tag(tf, f"{G}#detail_title"), "the Title row still paints"
 
         # ── (F) multi-select then clear — detail.* Null + placeholder ─
         select(tf, "0, 2")
         assert_eq(gq(tf, "detail.node"), None, "a multi-selection has no single detail node")
         assert_eq(gq(tf, "detail.title"), None, "detail.title Null under multi-select")
-        assert not has_tag(tf, f"{DETAIL}#title"), "no property rows under multi-select"
+        assert not has_tag(tf, f"{G}#detail_title"), "no property rows under multi-select"
         assert has_tag(tf, DETAIL), "the panel itself stays present (placeholder)"
         select(tf, "")
         assert_eq(gq(tf, "detail.node"), None, "cleared selection -> detail.node Null")

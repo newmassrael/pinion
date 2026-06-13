@@ -907,25 +907,63 @@ enum EditTarget {
     Title(NodeId),
     /// Editing node `node`'s input port `port`'s literal default value (R901).
     PortDefault { node: NodeId, port: usize },
+    /// R918 — editing node `id`'s `x` position (the Details panel's "Position X"
+    /// row). Panel-only: a node card has no position field to swap, so this
+    /// target is only ever opened with [`EditSurface::Panel`].
+    PosX(NodeId),
+    /// R918 — editing node `id`'s `y` position (the Details panel's "Position Y"
+    /// row). Panel-only, like [`EditTarget::PosX`].
+    PosY(NodeId),
 }
 
 impl EditTarget {
-    /// The node whose card hosts the inline field. Both targets edit a value
-    /// painted within a single node card, so the migration-commit, the paint
-    /// switch, and the a11y child all key off this id.
+    /// The node whose property this target edits. The migration-commit, the
+    /// paint switch, and the a11y child all key off this id.
     fn node(self) -> NodeId {
         match self {
-            EditTarget::Title(id) | EditTarget::PortDefault { node: id, .. } => id,
+            EditTarget::Title(id)
+            | EditTarget::PortDefault { node: id, .. }
+            | EditTarget::PosX(id)
+            | EditTarget::PosY(id) => id,
         }
     }
 }
 
-/// R878 / R901 — what the shared inline field is editing (`None` when no edit
-/// is in flight). Shared by the coordinator (begin / commit), the view fn
-/// (paints the field over the target's title or pin default), and the
-/// keyboard / blur-intent commit paths. Transient UI state — never persisted.
-fn use_edit_target() -> Rc<Signal<Option<EditTarget>>> {
-    let owner = Owner::current().expect("use_edit_target requires an active Owner scope");
+/// R918 — which surface hosts the ONE shared inline field while an edit is in
+/// flight. The card (R878 header title / R901 pin default) and the Details panel
+/// (R916) both edit a single selected node's properties through the *same*
+/// field, focus, keymap, blur-commit, and undo funnel; this names which one
+/// paints the field (and hosts its a11y textbox child) so the field — unique by
+/// its [`EDIT_TF_TAG`] tag — renders in exactly one place. Orthogonal to *what*
+/// is edited ([`EditTarget`]): a title is editable from either surface.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+enum EditSurface {
+    /// The node card in the canvas — a header title (R878) or a pin default
+    /// label (R901).
+    Card,
+    /// A Details panel row (R918) — the Unreal "click a property to edit it"
+    /// surface.
+    Panel,
+}
+
+/// R918 — the in-flight inline edit: *what* is being edited ([`EditTarget`]) and
+/// on *which* surface ([`EditSurface`]). Generalises the R878/R901
+/// `Option<EditTarget>` so the same field machinery drives both the node card
+/// and the Details panel without a second field. `None` (the holder's idle
+/// state) means no edit is open.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+struct ActiveEdit {
+    target: EditTarget,
+    surface: EditSurface,
+}
+
+/// R878 / R901 / R918 — the in-flight inline edit (`None` when none is open):
+/// *what* is being edited and on *which* surface ([`ActiveEdit`]). Shared by the
+/// coordinator (begin / commit), the view fn (paints the field over the card
+/// title / pin default or the Details panel row), and the keyboard / blur-intent
+/// commit paths. Transient UI state — never persisted.
+fn use_active_edit() -> Rc<Signal<Option<ActiveEdit>>> {
+    let owner = Owner::current().expect("use_active_edit requires an active Owner scope");
     owner.cache("node_graph.editing", || Signal::new(None))
 }
 
@@ -995,6 +1033,27 @@ fn parse_node_sub(sub: &str) -> Option<NodeId> {
 /// sidebar card.
 fn parse_palette_sub(sub: &str) -> Option<usize> {
     sub.strip_prefix("palette_")?.parse().ok()
+}
+
+/// R918 — `node_graph#detail_<field>` → the Details-panel property key (`title`,
+/// `x`, `y`, `in_<port>`). A click on a panel row routes to the coordinator (the
+/// palette precedent — a view sibling tagged with the primary's prefix), which
+/// opens the inline editor on the selected node's matching property.
+fn parse_detail_sub(sub: &str) -> Option<&str> {
+    sub.strip_prefix("detail_")
+}
+
+/// R918 — a Details-panel field key → the [`EditTarget`] it edits on node `id`
+/// (the inverse of the `detail_<key>` row tags / `view_details_panel` keys).
+/// `None` for an unknown key. A port's existence is validated later by
+/// [`NodeGraphExternal::edit_seed_text`], so this stays a pure string map.
+fn detail_edit_target(id: NodeId, field: &str) -> Option<EditTarget> {
+    match field {
+        "title" => Some(EditTarget::Title(id)),
+        "x" => Some(EditTarget::PosX(id)),
+        "y" => Some(EditTarget::PosY(id)),
+        _ => field.strip_prefix("in_")?.parse().ok().map(|port| EditTarget::PortDefault { node: id, port }),
+    }
 }
 
 /// R901.1 (session-review audit) — the `"<id>_<index>"` → (node id, port
@@ -1147,6 +1206,11 @@ enum PendingPress {
     /// name so a future input-port-specific branch can never misread a palette
     /// press as a real input-port press.
     Palette,
+    /// R918 — a press on a Details-panel property row. A non-drag press whose
+    /// inline-editor activation runs on the matching `PointerUp` (the palette
+    /// precedent); recorded as its own variant so it is never mistaken for an
+    /// input-port or empty-canvas press.
+    DetailRow,
 }
 
 // ─── reversible structural edit (the UndoCommand) ──────────────────
@@ -1399,7 +1463,7 @@ fn apply_rename(
     };
     if before == trimmed {
         // Committing the unchanged title is a successful no-op — no
-        // signal churn, no spurious undo step (the `record_move`
+        // signal churn, no spurious undo step (the `record_moves`
         // `before == after` guard's analogue).
         return true;
     }
@@ -1500,6 +1564,53 @@ fn apply_set_default(
     true
 }
 
+/// R853 / R918 — clamp `(x, y)` into the world bounds and write node `id`'s
+/// position, returning `(before, after)` window positions (`None` for an absent
+/// id). The non-journaling reposition primitive shared by [`set_node_pos`]
+/// (the capture drag, called once per frame) and [`apply_set_pos`] (the
+/// journaling single-move funnel) — the ONE place a node's position is clamped
+/// and written.
+fn set_pos_clamped(
+    nodes: &Rc<Signal<Vec<GraphNode>>>,
+    id: NodeId,
+    x: i32,
+    y: i32,
+) -> Option<((i32, i32), (i32, i32))> {
+    let mut result = None;
+    nodes.set_with(|prev| {
+        let mut next = prev.clone();
+        if let Some(node) = next.iter_mut().find(|n| n.id == id) {
+            let before = (node.x, node.y);
+            node.x = clamp_node_x(x);
+            node.y = clamp_node_y(y);
+            result = Some((before, (node.x, node.y)));
+        }
+        next
+    });
+    result
+}
+
+/// R918 — commit node `id`'s position to a clamped `(x, y)` and journal it as
+/// one *coalescable* [`MoveNodesCmd`], so a Details-panel `x` edit then `y` edit
+/// (or an arrow-nudge burst) fold into a single undo step. An unchanged position
+/// journals nothing (the [`apply_rename`] / [`apply_set_default`] no-op
+/// discipline). The ONE position-commit funnel the panel's PosX/PosY inline
+/// editor and the `intervene node.<id>.{x,y}` arm share, so a panel edit and an
+/// RPC move are one undoable mutation path ([[setter-wire-returns-read-outcome]]).
+fn apply_set_pos(nodes: &Rc<Signal<Vec<GraphNode>>>, undo: &UndoStack, id: NodeId, x: i32, y: i32) -> bool {
+    let Some((before, after)) = set_pos_clamped(nodes, id, x, y) else {
+        return false;
+    };
+    if before != after {
+        undo.push_applied(MoveNodesCmd {
+            nodes: Rc::clone(nodes),
+            moves: vec![(id, before, after)],
+            coalescable: true,
+        });
+    }
+    true
+}
+
 /// R901 — the [`CellKind`] of node `node`'s input port `port`'s default, or
 /// `None` when the node / port is absent. Drives the inline editor's keystroke
 /// gate (a `Float` accepts digits / sign / `.`, a `Color` hex digits + `#`)
@@ -1530,6 +1641,24 @@ fn apply_edit_commit(
             if let Some(value) = port_default_kind(&nodes.get(), node, port).and_then(|k| k.parse(text))
             {
                 let _ = apply_set_default(nodes, undo, node, port, value);
+            }
+        }
+        // R918 — a position edit parses the typed coordinate and routes to the
+        // shared `apply_set_pos` funnel. A malformed value keeps the prior
+        // position (no data loss — the `CellKind::Int` keystroke gate already
+        // bars non-numeric input, this guards a lone `-` or empty field).
+        EditTarget::PosX(id) => {
+            if let (Ok(coord), Some(node)) =
+                (text.trim().parse::<i32>(), nodes.get().into_iter().find(|n| n.id == id))
+            {
+                let _ = apply_set_pos(nodes, undo, id, coord, node.y);
+            }
+        }
+        EditTarget::PosY(id) => {
+            if let (Ok(coord), Some(node)) =
+                (text.trim().parse::<i32>(), nodes.get().into_iter().find(|n| n.id == id))
+            {
+                let _ = apply_set_pos(nodes, undo, id, node.x, coord);
             }
         }
     }
@@ -1570,7 +1699,7 @@ struct GraphServices {
     /// R878 / R901 — what the shared inline field is editing (shared with the
     /// view fn's title-or-field / pin-default switch and the keyboard / blur
     /// commit paths).
-    editing: Rc<Signal<Option<EditTarget>>>,
+    editing: Rc<Signal<Option<ActiveEdit>>>,
     /// R878 — the shared inline field's text buffer
     /// ([`use_text_edit_state`]`(EDIT_TF_TAG)`) — `begin_edit` seeds it with
     /// the target's current text, a commit reads it back.
@@ -1608,7 +1737,7 @@ struct NodeGraphExternal {
     scroll: Rc<ScrollState>,
     /// R878 / R901 — the in-flight inline edit (`None` when idle); the same
     /// Signal the view fn's title-or-field / pin-default switch reads.
-    editing: Rc<Signal<Option<EditTarget>>>,
+    editing: Rc<Signal<Option<ActiveEdit>>>,
     /// R878 — the shared inline field's text buffer (seeded on begin,
     /// read back on commit).
     edit_buffer: Rc<TextEditState>,
@@ -1810,12 +1939,6 @@ impl NodeGraphExternal {
         self.undo.push_applied(MoveNodesCmd { nodes: Rc::clone(&self.nodes), moves, coalescable });
     }
 
-    /// The single-node convenience over [`record_moves`](Self::record_moves)
-    /// (the `intervene node.<id>.x/.y` path).
-    fn record_move(&self, id: NodeId, before: (i32, i32), after: (i32, i32), coalescable: bool) {
-        self.record_moves(vec![(id, before, after)], coalescable);
-    }
-
     /// R852 — snapshot the persistable graph (nodes + edges + the monotonic id
     /// counters; the selection is transient and omitted).
     fn snapshot(&self) -> SerializedGraph {
@@ -1896,17 +2019,7 @@ impl NodeGraphExternal {
     /// callers (`end_gesture` / `nudge_selected` / the `x`,`y` intervene arm)
     /// record the [`MoveNodeCmd`] once the gesture / keystroke settles.
     fn set_node_pos(&self, id: NodeId, x: i32, y: i32) -> bool {
-        let mut moved = false;
-        self.nodes.set_with(|prev| {
-            let mut next = prev.clone();
-            if let Some(node) = next.iter_mut().find(|n| n.id == id) {
-                node.x = clamp_node_x(x);
-                node.y = clamp_node_y(y);
-                moved = true;
-            }
-            next
-        });
-        moved
+        set_pos_clamped(&self.nodes, id, x, y).is_some()
     }
 
     /// R849 — create a new node of [`PALETTE`] kind `kind` at the next cascade
@@ -2301,20 +2414,23 @@ impl NodeGraphExternal {
     /// edit of a *different* target first (the Qt item-view discipline — an
     /// open editor commits when another item enters edit; without it the
     /// migration would silently discard the typed text), flag
-    /// [`use_edit_target`], seed the shared field with the target's current
+    /// [`use_active_edit`], seed the shared field with the target's current
     /// text (caret parked at the end — the todomvc `begin_edit` UX), and hand
     /// focus to the field through the focus-request mailbox.
-    fn begin_edit(&self, target: EditTarget) -> bool {
+    fn begin_edit(&self, target: EditTarget, surface: EditSurface) -> bool {
         let Some(seed) = self.edit_seed_text(target) else {
             return false;
         };
+        // R901 — committing a *different* in-flight target first (the Qt item-view
+        // discipline). Re-opening the SAME target reseeds without committing (the
+        // R878 todomvc restart-editing UX), regardless of surface.
         if let Some(prev) = self.editing.get() {
-            if prev != target {
+            if prev.target != target {
                 let text = self.edit_buffer.text();
-                apply_edit_commit(&self.nodes, &self.undo, prev, &text);
+                apply_edit_commit(&self.nodes, &self.undo, prev.target, &text);
             }
         }
-        self.editing.set(Some(target));
+        self.editing.set(Some(ActiveEdit { target, surface }));
         self.edit_buffer.seed(seed);
         pinion_core::focus_request::request(EDIT_TF_TAG);
         true
@@ -2330,6 +2446,8 @@ impl NodeGraphExternal {
         Some(match target {
             EditTarget::Title(_) => node.title.clone(),
             EditTarget::PortDefault { port, .. } => node.input_default(port)?.edit_text(),
+            EditTarget::PosX(_) => node.x.to_string(),
+            EditTarget::PosY(_) => node.y.to_string(),
         })
     }
 
@@ -2337,7 +2455,7 @@ impl NodeGraphExternal {
     /// `invoke begin_rename` entry). A thin [`Self::begin_edit`] wrapper that
     /// keeps the established `begin_rename` verb name.
     fn begin_rename(&self, id: NodeId) -> bool {
-        self.begin_edit(EditTarget::Title(id))
+        self.begin_edit(EditTarget::Title(id), EditSurface::Card)
     }
 
     /// R901 — open the inline editor on node `node`'s input port `port`'s
@@ -2356,7 +2474,28 @@ impl NodeGraphExternal {
         if self.input_wired(node, port) {
             return false;
         }
-        self.begin_edit(EditTarget::PortDefault { node, port })
+        self.begin_edit(EditTarget::PortDefault { node, port }, EditSurface::Card)
+    }
+
+    /// R918 — open the inline editor on the Details panel's `field` row of the
+    /// *single selected* node (a panel-row click via the `detail_<field>` wire,
+    /// or `invoke begin_edit_detail`). The field key matches the `detail_<key>`
+    /// row tag and the `detail.<field>` query alias: `title`, `x`, `y`, or
+    /// `in_<port>`. `false` when nothing is selected, the selection is not a
+    /// single node, or the field key is unknown / the port is absent.
+    ///
+    /// Unlike the card's `begin_edit_default`, a *wired* port is editable here:
+    /// the panel row always paints its default value (the canvas pin label is
+    /// the only thing wiring hides), so the field has a painted anchor either
+    /// way — no R901.1 phantom-textbox risk.
+    fn begin_edit_detail(&self, field: &str) -> bool {
+        let Some(id) = self.selection.get().node() else {
+            return false;
+        };
+        let Some(target) = detail_edit_target(id, field) else {
+            return false;
+        };
+        self.begin_edit(target, EditSurface::Panel)
     }
 
     /// R901.1 — whether an edge feeds node `node`'s input `port`. The wired-pin
@@ -2396,6 +2535,10 @@ impl NodeGraphExternal {
                     // edge-probe is suppressed without lying about what was
                     // pressed (the activation runs on the matching PointerUp).
                     self.pending_press.set(PendingPress::Palette);
+                } else if parse_detail_sub(s).is_some() {
+                    // R918 — a Details-panel row press: like a palette press, the
+                    // inline-editor open runs on the matching PointerUp.
+                    self.pending_press.set(PendingPress::DetailRow);
                 } else {
                     // An input-port press — distinct from a background press so
                     // it never triggers the edge-click probe.
@@ -2409,6 +2552,10 @@ impl NodeGraphExternal {
                 // gesture is reset by `end_gesture` after this branch.)
                 if let Some(kind) = parse_palette_sub(s) {
                     self.add_node(kind);
+                } else if let Some(field) = parse_detail_sub(s) {
+                    // R918 — a Details-panel row release opens the inline editor
+                    // on the selected node's matching property (surface = Panel).
+                    self.begin_edit_detail(field);
                 } else if let Some(n) = parse_node_sub(s) {
                     // R879 — modifier-aware select (the R781 wire segment,
                     // decoded through the framework `SelectionChord` policy SSOT (R880.1)). The
@@ -2783,6 +2930,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("editing", "json"),
             ("begin_rename", "int"),
             ("begin_edit_default", "string"),
+            ("begin_edit_detail", "string"),
             ("node.<id>.title", "string"),
             ("node.<id>.x", "int"),
             ("node.<id>.y", "int"),
@@ -2865,15 +3013,18 @@ impl ExternalIntrospect for NodeGraphExternal {
             // [[wire-form-read-write-symmetry]], the representation-richer-but-
             // old-contract-preserved discipline).
             "renaming" => Some(match self.editing.get() {
-                Some(EditTarget::Title(id)) => IntrospectValue::Int(i64::from(id.raw())),
+                Some(ActiveEdit { target: EditTarget::Title(id), .. }) => {
+                    IntrospectValue::Int(i64::from(id.raw()))
+                }
                 _ => IntrospectValue::Null,
             }),
-            // R901 — the in-flight inline edit target, the honest generalised
-            // read: `Null` when idle, else `{ kind: "title"|"port_default",
-            // node, port? }` (the read twin of `invoke begin_rename` /
-            // `begin_edit_default` + the double-click entries).
+            // R901 / R918 — the in-flight inline edit, the honest generalised
+            // read: `Null` when idle, else `{ kind, node, port?, surface }` where
+            // `kind` is `title` / `port_default` / `pos_x` / `pos_y` and `surface`
+            // is `card` / `panel` (the read twin of the `begin_*` invokes + the
+            // double-click / panel-row-click entries).
             "editing" => {
-                Some(self.editing.get().map_or(IntrospectValue::Null, edit_target_introspect))
+                Some(self.editing.get().map_or(IntrospectValue::Null, active_edit_introspect))
             }
             // R852 — the whole graph as one JSON blob (the AI-first read; its
             // write-twin is `invoke set_graph`).
@@ -3029,16 +3180,12 @@ impl ExternalIntrospect for NodeGraphExternal {
                     return Err(InterveneError::TypeMismatch);
                 };
                 let coord = i32::try_from(v).map_err(|_| InterveneError::TypeMismatch)?;
-                let before = (node.x, node.y);
-                if field == "x" {
-                    self.set_node_pos(id, coord, node.y);
-                } else {
-                    self.set_node_pos(id, node.x, coord);
-                }
-                // R853 — journal the RPC move (coalescable, so an `x` then `y` on
-                // the same node fold into one undo step).
-                let after = self.node_by_id(id).map_or(before, |n| (n.x, n.y));
-                self.record_move(id, before, after, true);
+                // R918 — route through the shared `apply_set_pos` funnel (clamp +
+                // coalescable journal), the SAME path the Details panel's PosX/PosY
+                // inline editor commits through, so an RPC move and a panel edit are
+                // one undoable mutation. `x` then `y` still fold into one undo step.
+                let (x, y) = if field == "x" { (coord, node.y) } else { (node.x, coord) };
+                apply_set_pos(&self.nodes, &self.undo, id, x, y);
                 Ok(())
             }
             // R878 — the write twin of `query node.<id>.title` ([[wire-form-
@@ -3140,6 +3287,17 @@ impl ExternalIntrospect for NodeGraphExternal {
                     let (node, port) = parse_node_port(&s).ok_or(InvokeError::Rejected)?;
                     Ok(IntrospectValue::Bool(self.begin_edit_default(node, port)))
                 }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R918 — open the Details panel's inline editor on the selected
+            // node's `field` row (the RPC twin of a panel-row click, mirroring
+            // `begin_rename` / `begin_edit_default` for the card). The resulting
+            // `editing` reads with surface = "panel"; `false` when nothing /
+            // multiple nodes are selected or the field key is unknown. The AI's
+            // direct edit path is `intervene detail.<field>` — this opens the
+            // *inline field* surface symmetrically with the card begins.
+            "begin_edit_detail" => match args {
+                IntrospectValue::Text(s) => Ok(IntrospectValue::Bool(self.begin_edit_detail(&s))),
                 _ => Err(InvokeError::TypeMismatch),
             },
             // R877 — fit the node bbox into the canvas (the keyboard `f`
@@ -3255,11 +3413,11 @@ fn zoom_verb(key: &str, modifiers: Modifiers) -> Option<ZoomKey> {
 /// value keeps the prior — no data loss, no spurious undo step). Mirrors
 /// `hello-data-grid::commit_edit`.
 fn commit_edit(restore_focus: bool) {
-    let Some(target) = use_edit_target().get() else {
+    let Some(active) = use_active_edit().get() else {
         return;
     };
     let text = use_text_edit_state(EDIT_TF_TAG).text();
-    apply_edit_commit(&use_nodes(), &use_undo(), target, &text);
+    apply_edit_commit(&use_nodes(), &use_undo(), active.target, &text);
     end_edit_mode(restore_focus);
 }
 
@@ -3273,7 +3431,7 @@ fn cancel_edit() {
 /// the next edit starts from a fresh seed; restore canvas focus on request
 /// (the keyboard paths; a blur commit leaves focus where the click landed).
 fn end_edit_mode(restore_focus: bool) {
-    use_edit_target().set(None);
+    use_active_edit().set(None);
     use_text_edit_state(EDIT_TF_TAG).set_text(String::new());
     if restore_focus {
         pinion_core::focus_request::request(GRAPH_TAG);
@@ -3288,7 +3446,7 @@ fn end_edit_mode(restore_focus: bool) {
 /// accepts digits / sign / `.`, a `Color` hex digits + `#`). Stray named keys
 /// defer — inert while the field owns focus.
 fn apply_key_edit(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
-    let kind = use_edit_target().get().map_or(CellKind::Text, edit_target_kind);
+    let kind = use_active_edit().get().map_or(CellKind::Text, |a| edit_target_kind(a.target));
     pinion_core::edit_field_keymap(
         scene,
         EDIT_TF_TAG,
@@ -3310,22 +3468,31 @@ fn edit_target_kind(target: EditTarget) -> CellKind {
         EditTarget::PortDefault { node, port } => {
             port_default_kind(&use_nodes().get(), node, port).unwrap_or(CellKind::Text)
         }
+        // R918 — a position is an integer: the gate accepts digits and a leading
+        // sign, the same `CellKind::Int` the data-grid / property-grid use.
+        EditTarget::PosX(_) | EditTarget::PosY(_) => CellKind::Int,
     }
 }
 
-/// R901 — the structured `query editing` read for an in-flight target: a
-/// `{ kind, node }` for a title, `{ kind, node, port }` for a port default
-/// (the honest generalisation of the R878 `query renaming` int — that read
-/// survives as a degenerate projection over `Title` targets).
-fn edit_target_introspect(target: EditTarget) -> IntrospectValue {
-    match target {
-        EditTarget::Title(id) => {
-            IntrospectValue::Json(serde_json::json!({ "kind": "title", "node": id.raw() }))
+/// R901 / R918 — the structured `query editing` read for an in-flight edit:
+/// `{ kind, node, port?, surface }`. `kind` is `title` / `port_default` /
+/// `pos_x` / `pos_y`; `surface` is `card` / `panel` (R918 — *which* surface
+/// hosts the field). The honest generalisation of the R878 `query renaming` int,
+/// which survives as a degenerate projection over `Title` targets.
+fn active_edit_introspect(active: ActiveEdit) -> IntrospectValue {
+    let mut obj = match active.target {
+        EditTarget::Title(id) => serde_json::json!({ "kind": "title", "node": id.raw() }),
+        EditTarget::PortDefault { node, port } => {
+            serde_json::json!({ "kind": "port_default", "node": node.raw(), "port": port })
         }
-        EditTarget::PortDefault { node, port } => IntrospectValue::Json(
-            serde_json::json!({ "kind": "port_default", "node": node.raw(), "port": port }),
-        ),
-    }
+        EditTarget::PosX(id) => serde_json::json!({ "kind": "pos_x", "node": id.raw() }),
+        EditTarget::PosY(id) => serde_json::json!({ "kind": "pos_y", "node": id.raw() }),
+    };
+    obj["surface"] = serde_json::Value::from(match active.surface {
+        EditSurface::Card => "card",
+        EditSurface::Panel => "panel",
+    });
+    IntrospectValue::Json(obj)
 }
 
 fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
@@ -3724,26 +3891,42 @@ fn view_palette(theme: &Theme) -> Scene {
     )
 }
 
-/// R916 — one Details-panel property row: a left-aligned `label` and the
-/// property's current `value` display. Tagged `node_details#<key>` so a future
-/// in-panel click-to-edit (the R910 inspector follow-up) can route to it; for
-/// now the row is a read reflection of the model (edits arrive via the node
-/// card, a drag, or the `intervene detail.<field>` / `node.<id>.<field>` paths,
-/// and the reactive view re-reflects them).
-fn detail_row(key: &str, label: &str, value: &str, theme: &Theme) -> Scene {
+/// R916 / R918 — one Details-panel property row: a left-aligned `label` over the
+/// property's current `value`. Tagged `node_graph#detail_<key>` so a click routes
+/// to the coordinator (the palette precedent — a view sibling carrying the
+/// primary's prefix), which opens the inline editor on the selected node's
+/// matching property. While *this* row hosts the in-flight panel edit, `editing`
+/// is `Some(field_state)` and the value display swaps for the ONE shared inline
+/// field ([`EDIT_TF_TAG`]) — the card's title-or-field switch, applied to a panel
+/// row. A non-edited row stays a read reflection of the model (edits also arrive
+/// via the node card, a drag, or `intervene detail.<field>`, and the reactive
+/// view re-reflects them).
+fn detail_row(key: &str, label: &str, value: &str, editing: Option<RootState>, theme: &Theme) -> Scene {
     let name = Scene::Text(TextNode::styled(
         label.to_owned(),
         Rect::default(),
         TextStyle::new().with_size_px(12).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
     ));
-    let val = Scene::Text(TextNode::styled(
-        value.to_owned(),
-        Rect::default(),
-        TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
-    ));
+    let val = match editing {
+        Some(field) => {
+            let style = tf_paint::TextFieldStyle {
+                field_w: DETAIL_W - 16,
+                field_h: 22,
+                field_pad: 4,
+                font_size_px: 13,
+                ..tf_paint::TextFieldStyle::m3_filled()
+            };
+            tf_paint::view_field(EDIT_TF_TAG, field.0, field.1, theme, &style, label)
+        }
+        None => Scene::Text(TextNode::styled(
+            value.to_owned(),
+            Rect::default(),
+            TextStyle::new().with_size_px(13).with_fg(theme.resolve(ColorRole::OnSurface)),
+        )),
+    };
     Scene::Container(
         ContainerNode::new(vec![name, val])
-            .with_tag(format!("{DETAIL_TAG}#{key}"))
+            .with_tag(format!("{GRAPH_TAG}#detail_{key}"))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -3754,13 +3937,57 @@ fn detail_row(key: &str, label: &str, value: &str, theme: &Theme) -> Scene {
     )
 }
 
+/// R918 — one Details-panel property row's spec: its `node_graph#detail_<key>`
+/// routing key, display `label`, current `value`, and the [`EditTarget`] a click
+/// edits. The SSOT [`detail_rows`] enumerates, consumed by both the panel paint
+/// ([`view_details_panel`]) and the panel a11y ([`details_access_nodes`]).
+struct DetailRow {
+    key: String,
+    label: String,
+    value: String,
+    target: EditTarget,
+}
+
+/// R918 — the Details panel's property rows for a selected `node`: title,
+/// position x / y, then one row per input port's default. The single source the
+/// panel paint and a11y both enumerate, so a row's tag / label / value / edit
+/// target can never drift between the painted row and its AccessNode (the
+/// R886.1 paint==a11y discipline).
+fn detail_rows(node: &GraphNode) -> Vec<DetailRow> {
+    let id = node.id;
+    let mut rows = vec![
+        DetailRow { key: "title".to_owned(), label: "Title".to_owned(), value: node.title.clone(), target: EditTarget::Title(id) },
+        DetailRow { key: "x".to_owned(), label: "Position X".to_owned(), value: node.x.to_string(), target: EditTarget::PosX(id) },
+        DetailRow { key: "y".to_owned(), label: "Position Y".to_owned(), value: node.y.to_string(), target: EditTarget::PosY(id) },
+    ];
+    for (port, ty) in node.input_ports.iter().enumerate() {
+        rows.push(DetailRow {
+            key: format!("in_{port}"),
+            label: format!("In {port} · {}", ty.name()),
+            value: node.input_default(port).map_or_else(String::new, CellValue::display),
+            target: EditTarget::PortDefault { node: id, port },
+        });
+    }
+    rows
+}
+
 /// R916 — the Details panel: the single selected node's editable properties
 /// (title / position / per-port defaults) reflected as rows, the Unreal Details
 /// "select → inspect" surface. Mirrors the palette sidebar's shape (a sibling
 /// column of the canvas). When the selection is not exactly one node it shows a
 /// placeholder — there is no unambiguous "the" node to inspect (the `selected` /
 /// `detail.node` `Null` case made visible).
-fn view_details_panel(nodes: &[GraphNode], selection: &Selection, theme: &Theme) -> Scene {
+fn view_details_panel(
+    nodes: &[GraphNode],
+    selection: &Selection,
+    active: Option<ActiveEdit>,
+    edit_field: RootState,
+    theme: &Theme,
+) -> Scene {
+    // R918 — the target (if any) the panel is editing: a `Panel`-surface edit
+    // whose target's row swaps its value display for the shared field.
+    let panel_edit = active.filter(|a| a.surface == EditSurface::Panel).map(|a| a.target);
+    let row_field = |target: EditTarget| (panel_edit == Some(target)).then_some(edit_field);
     let mut items: Vec<Scene> = vec![Scene::Text(
         TextNode::styled(
             "Details",
@@ -3771,17 +3998,8 @@ fn view_details_panel(nodes: &[GraphNode], selection: &Selection, theme: &Theme)
     )];
 
     if let Some(node) = selection.node().and_then(|id| node_ref(nodes, id)) {
-        items.push(detail_row("title", "Title", &node.title, theme));
-        items.push(detail_row("x", "Position X", &node.x.to_string(), theme));
-        items.push(detail_row("y", "Position Y", &node.y.to_string(), theme));
-        for (port, ty) in node.input_ports.iter().enumerate() {
-            let value = node.input_default(port).map_or_else(String::new, CellValue::display);
-            items.push(detail_row(
-                &format!("in_{port}"),
-                &format!("In {port} · {}", ty.name()),
-                &value,
-                theme,
-            ));
+        for row in detail_rows(node) {
+            items.push(detail_row(&row.key, &row.label, &row.value, row_field(row.target), theme));
         }
     } else {
         let placeholder = if selection.nodes().len() > 1 {
@@ -3826,11 +4044,14 @@ fn view_node_cards(
     nodes: &[GraphNode],
     edges: &[Edge],
     selected: &BTreeSet<NodeId>,
-    editing: Option<EditTarget>,
+    active: Option<ActiveEdit>,
     edit_field: RootState,
     theme: &Theme,
     zoom: f64,
 ) -> Vec<Scene> {
+    // R918 — only a *card*-surface edit paints over a node card; a panel-surface
+    // edit hosts the field in the Details panel instead.
+    let card_edit_target = active.filter(|a| a.surface == EditSurface::Card).map(|a| a.target);
     nodes
         .iter()
         .map(|node| {
@@ -3839,7 +4060,7 @@ fn view_node_cards(
             // R901 — only the card hosting the in-flight edit paints the shared
             // field (a title or one pin default); every other card paints
             // statically. `None` once the target's node is a different card.
-            let card_edit = editing.filter(|t| t.node() == node.id);
+            let card_edit = card_edit_target.filter(|t| t.node() == node.id);
             view_node(
                 node,
                 selected.contains(&node.id),
@@ -3864,10 +4085,10 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let selected = selection.nodes();
     let selected_edge = selection.edge();
     let preview = use_preview().get();
-    // R878 / R901 — the in-flight inline edit: a node paints the shared field
-    // instead of its title (a rename) or a pin's default label (a port-default
-    // edit).
-    let editing = use_edit_target().get();
+    // R878 / R901 / R918 — the in-flight inline edit: the shared field paints
+    // over a node card's title / pin default (surface = Card) or a Details panel
+    // row (surface = Panel), per the active edit's surface.
+    let active = use_active_edit().get();
     // R877 — the viewport: zoom projects every world coordinate below;
     // pan is the scroll offset (reading the zoom Signal subscribes the
     // paint Effect, so a wheel zoom repaints reactively; the offset is
@@ -3898,7 +4119,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         }
     }
 
-    world_children.extend(view_node_cards(&nodes, &edges, &selected, editing, state, &theme, zoom));
+    world_children.extend(view_node_cards(&nodes, &edges, &selected, active, state, &theme, zoom));
 
     // R880 — the live marquee rubber band layers over everything in the
     // world (reading the Signal subscribes the paint Effect, so each drag
@@ -3982,7 +4203,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         ContainerNode::new(vec![
             view_palette(&theme),
             canvas,
-            view_details_panel(&nodes, &selection, &theme),
+            view_details_panel(&nodes, &selection, active, state, &theme),
         ])
         .with_layout(
             LayoutStyle::new()
@@ -4017,7 +4238,7 @@ impl WidgetCore for NodeEditorView {
                 storage: use_graph_storage(),
                 zoom: use_zoom(),
                 scroll: use_canvas_scroll(),
-                editing: use_edit_target(),
+                editing: use_active_edit(),
                 edit_buffer: use_text_edit_state(EDIT_TF_TAG),
                 marquee_rect: use_marquee_rect(),
             },
@@ -4120,11 +4341,57 @@ impl WidgetCore for NodeEditorView {
     /// → commit without restoring focus. The `editing` gate makes the
     /// post-commit blur a no-op (the data-grid `update` arm verbatim).
     fn update(_state: RootState, intent: &pinion_core::Intent) -> Vec<Command> {
-        if intent.tag_str() == EDIT_TF_BLUR_INTENT_TAG && use_edit_target().get().is_some() {
+        if intent.tag_str() == EDIT_TF_BLUR_INTENT_TAG && use_active_edit().get().is_some() {
             commit_edit(false);
         }
         Vec::new()
     }
+}
+
+/// R918 — the Details panel a11y subtree: a `group` named "Details" whose
+/// children are the selected node's property rows (each named "label: value",
+/// tagged `node_graph#detail_<key>` to byte-match the painted row — R886.1).
+/// While a panel-surface edit is in flight the edited row hosts the shared inline
+/// field's textbox child ([`EDIT_TF_TAG`]) — the same paint==a11y one-gate the
+/// card uses (R873 / R901.1), so the AT tree advertises the editor exactly when
+/// and where it paints. Group-only (no rows) when the selection is not a single
+/// node — the panel shows only its placeholder then.
+fn details_access_nodes(
+    nodes: &[GraphNode],
+    selection: &Selection,
+    active: Option<ActiveEdit>,
+    field_state: TextFieldState,
+    focused: Option<&str>,
+) -> Vec<AccessNode> {
+    let mut group = AccessNode::new(DETAIL_TAG, AriaRole::Group).with_name("Details");
+    let panel_edit = active.filter(|a| a.surface == EditSurface::Panel).map(|a| a.target);
+    let mut rows_out: Vec<AccessNode> = Vec::new();
+    let mut editor: Option<AccessNode> = None;
+    if let Some(node) = selection.node().and_then(|id| node_ref(nodes, id)) {
+        for row in detail_rows(node) {
+            let tag = format!("{GRAPH_TAG}#detail_{}", row.key);
+            group = group.with_child(tag.clone());
+            let mut entry =
+                AccessNode::new(tag, AriaRole::Generic).with_name(format!("{}: {}", row.label, row.value));
+            if panel_edit == Some(row.target) {
+                entry = entry.with_child(EDIT_TF_TAG);
+                editor = Some(
+                    tf_paint::text_field_a11y_node(
+                        EDIT_TF_TAG,
+                        use_text_edit_state(EDIT_TF_TAG).text(),
+                        field_state,
+                        focused == Some(EDIT_TF_TAG),
+                    )
+                    .with_name(row.label),
+                );
+            }
+            rows_out.push(entry);
+        }
+    }
+    let mut out = vec![group];
+    out.append(&mut rows_out);
+    out.extend(editor);
+    out
 }
 
 impl WidgetA11y for NodeEditorView {
@@ -4142,15 +4409,20 @@ impl WidgetA11y for NodeEditorView {
     /// on the RPC axis (`query edge.<i>`) per [[ai-first-rpc-introspection-obligation]].
     fn access_node(state: &RootState, focused: Option<&str>) -> Vec<AccessNode> {
         let nodes = use_nodes().get();
-        let selected = use_selection().get().nodes();
-        let editing = use_edit_target().get();
-        // R849/R850 — the editor lowers to a root with two regions: the add-node
-        // palette (a `toolbar` of `button`s that create nodes) and the graph
-        // canvas (the R840 unordered `group` of node `generic`s).
+        let selection = use_selection().get();
+        let selected = selection.nodes();
+        let active = use_active_edit().get();
+        // R918 — only a card-surface edit hosts the field on a node card; a
+        // panel-surface edit hosts it in the Details panel subtree instead.
+        let card_edit = active.filter(|a| a.surface == EditSurface::Card).map(|a| a.target);
+        // R849/R850 / R918 — the editor lowers to a root with three regions: the
+        // add-node palette (a `toolbar` of `button`s), the graph canvas (the R840
+        // unordered `group` of node `generic`s), and the Details panel `group`.
         let root = AccessNode::new(ROOT_TAG, AriaRole::Group)
             .with_name("Node editor")
             .with_child(PALETTE_TAG)
-            .with_child(GRAPH_TAG);
+            .with_child(GRAPH_TAG)
+            .with_child(DETAIL_TAG);
         // R850 — the palette `toolbar` + `button`s come from the
         // `toolbar_button_nodes` SSOT (gaining aria-posinset/setsize), not a
         // hand-rolled equivalent. `focused_control: None` because the palette is
@@ -4182,14 +4454,15 @@ impl WidgetA11y for NodeEditorView {
             let mut entry = AccessNode::new(format!("{GRAPH_TAG}#node_{}", node.id), AriaRole::Generic)
                 .with_name(format!("{} ({} in, {} out)", node.title, node.inputs(), node.outputs()))
                 .with_selected(selected.contains(&node.id));
-            // R878 / R901 — while this node hosts the in-flight inline edit,
+            // R878 / R901 — while this node hosts a *card*-surface inline edit,
             // the shared field is its child textbox (the lifted
             // `text_field_a11y_node` SSOT), named for the edit kind ("Rename
             // node" for a title, "Port default" for a pin default). Gated on
-            // the SAME `editing` predicate the paint uses, so the AT tree never
-            // advertises an unpainted editor.
-            if editing.is_some_and(|t| t.node() == node.id) {
-                let name = match editing {
+            // the SAME `card_edit` predicate the card paint uses, so the AT tree
+            // never advertises an unpainted editor. A panel-surface edit hosts
+            // the field in the Details subtree instead (R918).
+            if card_edit.is_some_and(|t| t.node() == node.id) {
+                let name = match card_edit {
                     Some(EditTarget::PortDefault { .. }) => "Port default",
                     _ => "Rename node",
                 };
@@ -4206,6 +4479,9 @@ impl WidgetA11y for NodeEditorView {
             }
             out.push(entry);
         }
+        // R918 — the Details panel subtree (rows + the in-panel editor when a
+        // panel edit is in flight).
+        out.extend(details_access_nodes(&nodes, &selection, active, state.0, focused));
         out
     }
 }
@@ -4261,6 +4537,22 @@ mod tests {
         let node = scene.find_external_with_tag_mut(GRAPH_TAG).expect("present");
         let intro = node.handle.introspect_mut().expect("introspectable");
         let _ = intro.invoke("send", IntrospectValue::Text(wire.to_owned()));
+    }
+
+    // These build the `Option<ActiveEdit>` value an `assert_eq!` compares
+    // `use_active_edit().get()` against, so the `Some` wrap is the point — not a
+    // candidate for `unnecessary_wraps`.
+    /// R918 — an in-flight edit on `target` hosted by the node card (the R878 /
+    /// R901 surface), the expected `use_active_edit()` value for a card edit.
+    #[allow(clippy::unnecessary_wraps)]
+    fn card(target: EditTarget) -> Option<ActiveEdit> {
+        Some(ActiveEdit { target, surface: EditSurface::Card })
+    }
+
+    /// R918 — an in-flight edit on `target` hosted by the Details panel row.
+    #[allow(clippy::unnecessary_wraps)]
+    fn panel(target: EditTarget) -> Option<ActiveEdit> {
+        Some(ActiveEdit { target, surface: EditSurface::Panel })
     }
 
     #[test]
@@ -4631,14 +4923,14 @@ mod tests {
             let lerp = coord.add_node(6).expect("Lerp"); // input 2 = Float port
             assert!(coord.begin_edit_default(lerp, 2), "the Float pin default opens for edit");
             assert_eq!(
-                use_edit_target().get(),
-                Some(EditTarget::PortDefault { node: lerp, port: 2 }),
+                use_active_edit().get(),
+                card(EditTarget::PortDefault { node: lerp, port: 2 }),
                 "the editor targets the Float pin default",
             );
             assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "0", "seeded with the current default");
             use_text_edit_state(EDIT_TF_TAG).set_text("0.75".to_owned());
             commit_edit(true);
-            assert_eq!(use_edit_target().get(), None, "commit leaves edit mode");
+            assert_eq!(use_active_edit().get(), None, "commit leaves edit mode");
             assert_eq!(
                 coord.node_by_id(lerp).and_then(|n| n.input_default(2).cloned()),
                 Some(CellValue::Float(0.75)),
@@ -4822,11 +5114,11 @@ mod tests {
             assert_eq!(textbox.name.as_deref(), Some("Port default"), "named for the port-default edit kind");
             // Cancel, then a double-click on the pin's default label re-opens it.
             cancel_edit();
-            assert_eq!(use_edit_target().get(), None);
+            assert_eq!(use_active_edit().get(), None);
             send(&mut scene, &format!("idefault_{}_2:DoubleClick", lerp.raw()));
             assert_eq!(
-                use_edit_target().get(),
-                Some(EditTarget::PortDefault { node: lerp, port: 2 }),
+                use_active_edit().get(),
+                card(EditTarget::PortDefault { node: lerp, port: 2 }),
                 "double-clicking the pin default opens its editor",
             );
         });
@@ -4852,8 +5144,8 @@ mod tests {
                 "the in-flight port default committed on migration",
             );
             assert_eq!(
-                use_edit_target().get(),
-                Some(EditTarget::Title(NodeId(2))),
+                use_active_edit().get(),
+                card(EditTarget::Title(NodeId(2))),
                 "the editor migrated to the title target",
             );
             assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "Multiply", "reseeded from the new target");
@@ -4873,7 +5165,7 @@ mod tests {
             // Seed graph: node 2 (Multiply) input 0 is wired by edge 0 (0:0->2:0).
             assert!(coord.input_wired(NodeId(2), 0), "node 2 port 0 is wired in the seed graph");
             assert!(!coord.begin_edit_default(NodeId(2), 0), "a wired port rejects the inline editor");
-            assert_eq!(use_edit_target().get(), None, "the rejected begin left no edit in flight");
+            assert_eq!(use_active_edit().get(), None, "the rejected begin left no edit in flight");
             // The a11y tree advertises no textbox while idle (the gate that the
             // wired-port begin must not falsely trip).
             let a11y = NodeEditorView::access_node(&IDLE_TF, Some(GRAPH_TAG));
@@ -4883,9 +5175,220 @@ mod tests {
             assert!(!coord.input_wired(lerp, 2), "the fresh Lerp's pin is unwired");
             assert!(coord.begin_edit_default(lerp, 2), "an unwired port opens the editor");
             assert_eq!(
-                use_edit_target().get(),
-                Some(EditTarget::PortDefault { node: lerp, port: 2 }),
+                use_active_edit().get(),
+                card(EditTarget::PortDefault { node: lerp, port: 2 }),
             );
+        });
+    }
+
+    /// R918 — a Details-panel field key maps to the [`EditTarget`] it edits (the
+    /// inverse of the `detail_<key>` row tags). Unknown / malformed keys reject.
+    #[test]
+    fn r918_detail_edit_target_maps_field_keys() {
+        let id = NodeId(7);
+        assert_eq!(detail_edit_target(id, "title"), Some(EditTarget::Title(id)));
+        assert_eq!(detail_edit_target(id, "x"), Some(EditTarget::PosX(id)));
+        assert_eq!(detail_edit_target(id, "y"), Some(EditTarget::PosY(id)));
+        assert_eq!(detail_edit_target(id, "in_3"), Some(EditTarget::PortDefault { node: id, port: 3 }));
+        assert_eq!(detail_edit_target(id, "bogus"), None, "an unknown key rejects");
+        assert_eq!(detail_edit_target(id, "in_x"), None, "a non-numeric port rejects");
+    }
+
+    /// R918 — a position edit is integer-gated and seeds from the node's current
+    /// coordinate; the begin sets surface = Panel.
+    #[test]
+    fn r918_pos_edit_target_kind_and_seed() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            assert_eq!(edit_target_kind(EditTarget::PosX(NodeId(2))), CellKind::Int);
+            assert_eq!(edit_target_kind(EditTarget::PosY(NodeId(2))), CellKind::Int);
+            coord.select_node(Some(NodeId(2))); // Multiply, at (250, 110)
+            assert!(coord.begin_edit_detail("x"));
+            assert_eq!(use_active_edit().get(), panel(EditTarget::PosX(NodeId(2))));
+            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "250", "seeded from node.x");
+            cancel_edit();
+            assert!(coord.begin_edit_detail("y"));
+            assert_eq!(use_active_edit().get(), panel(EditTarget::PosY(NodeId(2))));
+            assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "110", "seeded from node.y");
+        });
+    }
+
+    /// R918 — a Details-panel row click (the `detail_<key>` wire) opens the inline
+    /// editor on the selected node's property; the field paints in the panel and
+    /// `query editing` reports the kind + the `panel` surface.
+    #[test]
+    fn r918_panel_row_click_opens_editor() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                intro.intervene("selected_ids", IntrospectValue::Text("2".to_owned())).unwrap();
+            }
+            send(&mut scene, "detail_x:PointerDown");
+            send(&mut scene, "detail_x:PointerUp");
+            assert_eq!(use_active_edit().get(), panel(EditTarget::PosX(NodeId(2))), "the panel row opened a PosX edit");
+            let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
+                panic!("editing reads as json while an edit is in flight");
+            };
+            assert_eq!(j["kind"], serde_json::json!("pos_x"));
+            assert_eq!(j["surface"], serde_json::json!("panel"), "the surface is the Details panel");
+            assert_eq!(j["node"], serde_json::json!(2));
+            let painted = view((TextFieldState::Editing, 0), &Frame::new());
+            assert!(painted.contains_tag(EDIT_TF_TAG), "the shared field paints (in the panel row)");
+        });
+    }
+
+    /// R918 — committing a panel position edit moves the node through the SAME
+    /// `apply_set_pos` funnel the `intervene node.<id>.{x,y}` arm uses: an
+    /// undoable move, and a panel `x` then `y` edit coalesce into ONE undo step.
+    #[test]
+    fn r918_panel_pos_commit_shares_move_funnel() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            coord.select_node(Some(NodeId(2)));
+            assert!(coord.begin_edit_detail("x"));
+            use_text_edit_state(EDIT_TF_TAG).set_text("400".to_owned());
+            commit_edit(true);
+            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.x), Some(400), "the panel x edit moved the node");
+            assert_eq!(use_active_edit().get(), None, "commit leaves edit mode");
+            assert_eq!(use_undo().undo_label().as_deref(), Some("Move node"), "the panel move is undoable");
+            assert!(coord.begin_edit_detail("y"));
+            use_text_edit_state(EDIT_TF_TAG).set_text("200".to_owned());
+            commit_edit(true);
+            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| (n.x, n.y)), Some((400, 200)));
+            // One undo reverts BOTH axes — the two single-axis commits coalesced,
+            // exactly like `intervene x` then `intervene y` (the shared funnel).
+            assert!(use_undo().undo(), "undo the coalesced move");
+            assert_eq!(
+                coord.node_by_id(NodeId(2)).map(|n| (n.x, n.y)),
+                Some((250, 110)),
+                "x and y reverted in one undo step",
+            );
+            assert!(!use_undo().can_undo(), "the two panel edits coalesced into one undo step");
+        });
+    }
+
+    /// R918 — a malformed coordinate keeps the prior position (the `CellKind::Int`
+    /// no-data-loss discipline); the commit is a no-op with no undo step.
+    #[test]
+    fn r918_panel_pos_commit_malformed_keeps_prior() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            coord.select_node(Some(NodeId(2)));
+            assert!(coord.begin_edit_detail("x"));
+            use_text_edit_state(EDIT_TF_TAG).set_text("-".to_owned()); // a lone sign: not an i32
+            commit_edit(true);
+            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.x), Some(250), "the position is unchanged");
+            assert!(!use_undo().can_undo(), "no undo step for a rejected value");
+        });
+    }
+
+    /// R918 — the Details panel edits a node's title and (unlike the card) a
+    /// WIRED port's default: a panel row always paints its value, so the field has
+    /// a painted anchor even for a wired pin the card hides (no R901.1 risk).
+    #[test]
+    fn r918_panel_edits_title_and_wired_port_default() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            coord.select_node(Some(NodeId(2)));
+            assert!(coord.begin_edit_detail("title"));
+            assert_eq!(use_active_edit().get(), panel(EditTarget::Title(NodeId(2))));
+            use_text_edit_state(EDIT_TF_TAG).set_text("Albedo".to_owned());
+            commit_edit(true);
+            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.title.clone()), Some("Albedo".to_owned()));
+            // Node 2 port 0 is wired (edge 0: 0:0->2:0): the CARD rejects it...
+            assert!(coord.input_wired(NodeId(2), 0));
+            assert!(!coord.begin_edit_default(NodeId(2), 0), "the card rejects a wired pin");
+            // ...but the PANEL edits it (the row paints regardless of wiring).
+            assert!(coord.begin_edit_detail("in_0"), "the panel edits a wired port default");
+            assert_eq!(
+                use_active_edit().get(),
+                panel(EditTarget::PortDefault { node: NodeId(2), port: 0 }),
+            );
+        });
+    }
+
+    /// R918 — a panel edit needs a single selected node and a known field key.
+    #[test]
+    fn r918_begin_edit_detail_rejects_no_or_multi_selection() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            assert!(!coord.begin_edit_detail("title"), "no selection rejects");
+            coord.select_node(Some(NodeId(2)));
+            coord.add_node_to_selection(NodeId(0));
+            assert!(!coord.begin_edit_detail("title"), "a multi-selection has no single node");
+            coord.select_node(Some(NodeId(2)));
+            assert!(!coord.begin_edit_detail("bogus"), "an unknown field key rejects");
+            assert_eq!(use_active_edit().get(), None, "no edit left in flight");
+        });
+    }
+
+    /// R918 — the `begin_edit_detail` RPC invoke opens the panel inline editor
+    /// (the twin of a panel-row click, symmetric with `begin_rename` /
+    /// `begin_edit_default` for the card): the `editing` read then reports the
+    /// `panel` surface, so the surface a human can reach by clicking is also
+    /// RPC-reachable ([[wire-form-read-write-symmetry]]).
+    #[test]
+    fn r918_begin_edit_detail_rpc_pair() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                intro.intervene("selected_ids", IntrospectValue::Text("2".to_owned())).unwrap();
+                assert_eq!(
+                    intro.invoke("begin_edit_detail", IntrospectValue::Text("y".to_owned())),
+                    Ok(IntrospectValue::Bool(true)),
+                    "the RPC opens the Position Y panel editor",
+                );
+            }
+            assert_eq!(use_active_edit().get(), panel(EditTarget::PosY(NodeId(2))));
+            let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
+                panic!("editing reads as json");
+            };
+            assert_eq!(j["surface"], serde_json::json!("panel"), "the RPC-opened edit reads as the panel surface");
+            // An unknown field key is Rejected (`false`); a non-Text arg is a type
+            // mismatch — the `begin_rename` / `begin_edit_default` reject shape.
+            let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+            assert_eq!(
+                intro.invoke("begin_edit_detail", IntrospectValue::Text("bogus".to_owned())),
+                Ok(IntrospectValue::Bool(false)),
+                "an unknown field key is rejected",
+            );
+            assert_eq!(intro.invoke("begin_edit_detail", IntrospectValue::Int(2)), Err(InvokeError::TypeMismatch));
+        });
+    }
+
+    /// R918 — while a panel edit is in flight, the editor textbox lowers under the
+    /// panel ROW (not a node card) — the paint==a11y one-gate, re-parented by
+    /// surface (R873 / R901.1).
+    #[test]
+    fn r918_panel_edit_a11y_hosts_textbox_under_row_not_card() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            coord.select_node(Some(NodeId(2)));
+            assert!(coord.begin_edit_detail("x"));
+            let a11y = NodeEditorView::access_node(&(TextFieldState::Editing, 0), Some(EDIT_TF_TAG));
+            let textbox = a11y.iter().find(|n| n.tag == EDIT_TF_TAG).expect("the panel hosts the editor textbox");
+            assert_eq!(textbox.role, AriaRole::TextInput);
+            let row_tag = format!("{GRAPH_TAG}#detail_x");
+            let row = a11y.iter().find(|n| n.tag == row_tag).expect("the Position X row node");
+            assert!(row.children.iter().any(|c| c.as_str() == EDIT_TF_TAG), "the editor is the panel row's child");
+            let card = a11y
+                .iter()
+                .find(|n| n.tag == format!("{GRAPH_TAG}#node_2"))
+                .expect("node 2 card");
+            assert!(
+                !card.children.iter().any(|c| c.as_str() == EDIT_TF_TAG),
+                "the card does not host the editor while the panel does",
+            );
+            let group = a11y.iter().find(|n| n.tag == DETAIL_TAG).expect("the Details group");
+            assert!(group.children.contains(&row_tag), "the group lists the row");
         });
     }
 
@@ -5055,7 +5558,7 @@ mod tests {
                 storage: mem_storage(),
                 zoom: use_zoom(),
                 scroll: use_canvas_scroll(),
-                editing: use_edit_target(),
+                editing: use_active_edit(),
                 edit_buffer: use_text_edit_state(EDIT_TF_TAG),
                 marquee_rect: use_marquee_rect(),
             },
@@ -5520,9 +6023,19 @@ mod tests {
             let _scene = boot_scene();
             use_selection().set(Selection::single(NodeId(2)));
             let nodes = NodeEditorView::access_node(&IDLE_TF, Some(GRAPH_TAG));
-            // R849 — root + palette toolbar + 5 palette buttons + graph group +
-            // one generic per node.
-            assert_eq!(nodes.len(), 1 + 1 + PALETTE.len() + 1 + 4, "root + palette + graph");
+            // R849 / R918 — root + palette toolbar + 5 palette buttons + graph
+            // group + one generic per node (4) + the Details group + its 5 rows
+            // (title / x / y + node 2's 2 input ports; no editor — idle).
+            assert_eq!(nodes.len(), 1 + 1 + PALETTE.len() + 1 + 4 + 1 + 5, "root + palette + graph + details");
+            // R918 — the Details panel lowers to a `group` listing the selected
+            // node's property rows.
+            let details = nodes.iter().find(|n| n.tag == DETAIL_TAG).expect("Details group present");
+            assert_eq!(details.role, AriaRole::Group);
+            assert_eq!(details.name.as_deref(), Some("Details"));
+            assert!(
+                nodes.iter().any(|n| n.tag == format!("{GRAPH_TAG}#detail_x")),
+                "the Position X row lowers to a node",
+            );
             // The root wraps the palette + the canvas; the focusable canvas is
             // the graph group (found by tag, not position).
             assert_eq!(nodes[0].role, AriaRole::Group, "editor root is a group");
@@ -6457,8 +6970,8 @@ mod tests {
             send(&mut scene, "node_2:PointerDown");
             send(&mut scene, "node_2:DoubleClick");
             assert_eq!(
-                use_edit_target().get(),
-                Some(EditTarget::Title(NodeId(2))),
+                use_active_edit().get(),
+                card(EditTarget::Title(NodeId(2))),
                 "rename armed on node 2"
             );
             let editor = use_text_edit_state(EDIT_TF_TAG);
@@ -6468,15 +6981,15 @@ mod tests {
             send(&mut scene, "node_2:PointerUp");
             assert_eq!(use_selection().get(), Selection::single(NodeId(2)));
             assert_eq!(
-                use_edit_target().get(),
-                Some(EditTarget::Title(NodeId(2))),
+                use_active_edit().get(),
+                card(EditTarget::Title(NodeId(2))),
                 "selection does not cancel the rename"
             );
             // A background double-click begins nothing.
             send(&mut scene, "DoubleClick");
             assert_eq!(
-                use_edit_target().get(),
-                Some(EditTarget::Title(NodeId(2))),
+                use_active_edit().get(),
+                card(EditTarget::Title(NodeId(2))),
                 "background dblclick is inert"
             );
         });
@@ -6509,7 +7022,7 @@ mod tests {
                     Ok(IntrospectValue::Bool(true))
                 );
             }
-            assert_eq!(use_edit_target().get(), Some(EditTarget::Title(NodeId(0))));
+            assert_eq!(use_active_edit().get(), card(EditTarget::Title(NodeId(0))));
             assert_eq!(
                 graph_intro(&scene).query("renaming"),
                 Some(IntrospectValue::Int(0)),
@@ -6525,7 +7038,7 @@ mod tests {
                 intro.invoke("begin_rename", IntrospectValue::Null),
                 Ok(IntrospectValue::Bool(true))
             );
-            assert_eq!(use_edit_target().get(), Some(EditTarget::Title(NodeId(3))));
+            assert_eq!(use_active_edit().get(), card(EditTarget::Title(NodeId(3))));
         });
     }
 
@@ -6538,7 +7051,7 @@ mod tests {
             assert!(coord.begin_rename(NodeId(2)));
             use_text_edit_state(EDIT_TF_TAG).set_text("Mix".to_owned());
             commit_edit(true);
-            assert_eq!(use_edit_target().get(), None, "commit leaves rename mode");
+            assert_eq!(use_active_edit().get(), None, "commit leaves rename mode");
             assert_eq!(
                 coord.node_by_id(NodeId(2)).expect("present").title,
                 "Mix",
@@ -6564,7 +7077,7 @@ mod tests {
             use_text_edit_state(EDIT_TF_TAG).set_text("   ".to_owned());
             commit_edit(false);
             assert_eq!(coord.node_by_id(NodeId(1)).expect("present").title, "Color", "whitespace kept");
-            assert_eq!(use_edit_target().get(), None);
+            assert_eq!(use_active_edit().get(), None);
             assert!(!stack.can_undo(), "no spurious undo step");
             // Unchanged commit: successful no-op, still no undo step.
             assert!(coord.begin_rename(NodeId(1)));
@@ -6632,7 +7145,7 @@ mod tests {
             // node 0's typed text first (the Qt item-view discipline).
             assert!(coord.begin_rename(NodeId(1)));
             assert_eq!(coord.node_by_id(NodeId(0)).expect("present").title, "Albedo");
-            assert_eq!(use_edit_target().get(), Some(EditTarget::Title(NodeId(1))));
+            assert_eq!(use_active_edit().get(), card(EditTarget::Title(NodeId(1))));
             assert_eq!(
                 use_text_edit_state(EDIT_TF_TAG).text(),
                 "Color",
@@ -6661,7 +7174,7 @@ mod tests {
                 Modifiers::empty()
             ));
             assert_eq!(coord.node_by_id(NodeId(3)).expect("present").title, "Result", "Enter commits");
-            assert_eq!(use_edit_target().get(), None);
+            assert_eq!(use_active_edit().get(), None);
             // Escape cancels without touching the title.
             assert!(coord.begin_rename(NodeId(3)));
             use_text_edit_state(EDIT_TF_TAG).set_text("Scrap".to_owned());
@@ -6672,7 +7185,7 @@ mod tests {
                 Modifiers::empty()
             ));
             assert_eq!(coord.node_by_id(NodeId(3)).expect("present").title, "Result", "Escape cancels");
-            assert_eq!(use_edit_target().get(), None);
+            assert_eq!(use_active_edit().get(), None);
         });
     }
 
@@ -6687,10 +7200,10 @@ mod tests {
                 pinion_core::Intent::new_owned(EDIT_TF_BLUR_INTENT_TAG.to_owned(), IntrospectValue::Null);
             let _ = NodeEditorView::update(IDLE_TF, &intent);
             assert_eq!(coord.node_by_id(NodeId(0)).expect("present").title, "Diffuse", "blur commits");
-            assert_eq!(use_edit_target().get(), None);
+            assert_eq!(use_active_edit().get(), None);
             // A blur with no rename in flight is a no-op (the post-commit blur).
             let _ = NodeEditorView::update(IDLE_TF, &intent);
-            assert_eq!(use_edit_target().get(), None);
+            assert_eq!(use_active_edit().get(), None);
         });
     }
 
@@ -6956,7 +7469,7 @@ mod tests {
                 Ok(IntrospectValue::Bool(false)),
                 "F2 on a multi-selection is ambiguous and refuses",
             );
-            assert_eq!(use_edit_target().get(), None);
+            assert_eq!(use_active_edit().get(), None);
         });
     }
 
