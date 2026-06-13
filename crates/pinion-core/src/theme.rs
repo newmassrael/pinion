@@ -1285,15 +1285,29 @@ impl ThemeProvider {
     /// convention.
     #[must_use]
     pub fn theme(&self) -> Theme {
+        if self.is_dark() {
+            self.dark_palette.get()
+        } else {
+            self.light_palette.get()
+        }
+    }
+
+    /// R906 §5.50 — whether the **effective** scheme resolves to dark: an
+    /// explicit [`ThemeMode::Dark`] / [`ThemeMode::Light`], or — under
+    /// [`ThemeMode::System`] — the global [`SystemColorScheme`]
+    /// (`prefers-color-scheme`, `NoPreference` → light per the W3C baseline).
+    /// The single resolution SSOT [`theme`](Self::theme) /
+    /// [`theme_animated`](Self::theme_animated) pick the palette through, and
+    /// the read a binding uses to choose a *non-`ColorRole`* asset by
+    /// light/dark (e.g. a syntax-highlight scheme). Reactive: subscribes the
+    /// caller to `mode` (+ the global `SystemColorScheme` when mode is
+    /// `System`), so a `prefers-color-scheme` flip re-runs it.
+    #[must_use]
+    pub fn is_dark(&self) -> bool {
         match self.mode.get() {
-            ThemeMode::Light => self.light_palette.get(),
-            ThemeMode::Dark => self.dark_palette.get(),
-            ThemeMode::System => match system_color_scheme() {
-                SystemColorScheme::Dark => self.dark_palette.get(),
-                SystemColorScheme::Light | SystemColorScheme::NoPreference => {
-                    self.light_palette.get()
-                }
-            },
+            ThemeMode::Dark => true,
+            ThemeMode::Light => false,
+            ThemeMode::System => system_color_scheme() == SystemColorScheme::Dark,
         }
     }
 

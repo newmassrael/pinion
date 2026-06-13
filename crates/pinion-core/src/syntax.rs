@@ -60,8 +60,7 @@ pub struct SyntaxPalette {
 impl SyntaxPalette {
     /// A classic light-background scheme (VS Code "Light+" inspired): blue
     /// keywords, dark-red strings, green comments, teal numbers. Distinct hues
-    /// that read on a light surface; the exact bytes are asserted over RPC by
-    /// the demo (theme-independent because the scheme is fixed).
+    /// that read on a *light* surface.
     #[must_use]
     pub const fn classic() -> Self {
         Self {
@@ -69,6 +68,34 @@ impl SyntaxPalette {
             string: Color::rgb(0xA3, 0x15, 0x15),
             comment: Color::rgb(0x00, 0x80, 0x00),
             number: Color::rgb(0x09, 0x86, 0x58),
+        }
+    }
+
+    /// R906 §5.36 — a dark-background scheme (VS Code "Dark+" inspired): the
+    /// light hues are illegible on a dark surface, so the dark variant lifts
+    /// them — sky-blue keywords, salmon strings, muted-green comments,
+    /// pale-green numbers. A binding picks [`classic`](Self::classic) /
+    /// [`dark`](Self::dark) by the effective theme scheme
+    /// ([`ThemeProvider::is_dark`](crate::theme::ThemeProvider::is_dark)) so
+    /// the code reads against whichever surface the field paints.
+    #[must_use]
+    pub const fn dark() -> Self {
+        Self {
+            keyword: Color::rgb(0x56, 0x9C, 0xD6),
+            string: Color::rgb(0xCE, 0x91, 0x78),
+            comment: Color::rgb(0x6A, 0x99, 0x55),
+            number: Color::rgb(0xB5, 0xCE, 0xA8),
+        }
+    }
+
+    /// R906 §5.36 — the scheme for the effective theme: [`dark`](Self::dark)
+    /// when `is_dark`, else [`classic`](Self::classic).
+    #[must_use]
+    pub const fn for_dark(is_dark: bool) -> Self {
+        if is_dark {
+            Self::dark()
+        } else {
+            Self::classic()
         }
     }
 }
@@ -274,5 +301,17 @@ mod tests {
     fn r904_mixed_line_orders_runs_by_position() {
         // `let x = 42 // n` -> keyword, number, comment in order.
         assert_eq!(spans("let x = 42 // n"), vec![(0, 3), (8, 10), (11, 15)]);
+    }
+
+    #[test]
+    fn r906_dark_scheme_differs_from_light_and_for_dark_selects() {
+        // The dark variant must actually differ (the R904 light-on-dark fix).
+        assert_ne!(
+            SyntaxPalette::dark().keyword,
+            SyntaxPalette::classic().keyword,
+            "dark keyword colour lifts off the light scheme",
+        );
+        assert_eq!(SyntaxPalette::for_dark(true), SyntaxPalette::dark());
+        assert_eq!(SyntaxPalette::for_dark(false), SyntaxPalette::classic());
     }
 }

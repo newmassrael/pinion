@@ -38683,6 +38683,66 @@
         "batch delete count = top-level subtrees removed (selected descendants ride along, not re-counted)"
       ]
     },
+    "R906": {
+      "decision_summary": "R906 cost-no-object session-review audit clearance (user '교과서적/SSOT/북극성?' on R903-R905). 3-lens adversarial subagents (SSOT/correctness/scope-deferral) + my own grep+read re-verification, bucketed real / over-reach / genuine-defer. REAL fixed: (A) splice_inner SSOT — R903 added the splice primitive but left 3 pre-existing selection branches (insert/backspace/delete-forward) as copies -> routed through splice_inner (4->1, behaviour-identical). (B) dark-mode defect — R904 baked the classic() light palette unconditionally (illegible on a dark surface); added SyntaxPalette::dark()/for_dark + ThemeProvider::is_dark() (the single resolution SSOT theme() now uses) and the example's highlighter picks by theme.is_dark() (captures the provider Rc + calls is_dark() = pure Signal reads -> reactive in the view AND safe from the Owner-less RPC path). (C) insert_subtree silent push-to-root fallback -> debug_assert (R889 silent-corruption-mask). (E) 3-copy band-box emit (find/selection/preedit) -> push_band SSOT (R903 lifted rect_to_band geometry but not the emit). (F) the outliner had NO keyboard editing -> Delete/Backspace=delete_selected, Ctrl+Z/Ctrl+Y=undo/redo (node-editor precedent; methods existed; was scope-avoidance). (G) begin_macro/end_macro pub but undo/redo unguarded mid-macro -> debug_assert + no-op guard. REJECTED over-reach (verified): is_word_char lift (find search-boundary vs syntax identifier-char = independent concepts coincidentally \\w, wrong-abstraction); find_matches.ranges [s,e] vs selection {start,end} (bulk-list pairs vs single W3C range, conventional); replace_all count over-reports no-op replacements (= matches replaced, VS Code convention; a no-op records no undo step, correct). Verdict: cross-round SSOT discipline strong; the gaps were within-round 'added the primitive, did not sweep existing copies' (splice / band) + a dark-mode feature gap + missing editor keys.",
+      "changes_bullets": [
+        "text_edit.rs: route insert/backspace/delete-forward selection branches via splice_inner (4->1 SSOT)",
+        "syntax.rs SyntaxPalette::dark()/for_dark + theme.rs ThemeProvider::is_dark() (theme() SSOT refactor)",
+        "hello-syntax-highlight: highlighter picks scheme by theme.is_dark() (reactive, RPC-safe) = dark-mode fix",
+        "widget-paint: push_band SSOT for the 3 band-emit loops (find/selection/preedit), keeping rect_to_band",
+        "hello-tree-grid: Delete/Backspace + Ctrl+Z/Ctrl+Y edit keys; insert_subtree fallback -> debug_assert (R889)",
+        "undo.rs: undo()/redo() debug_assert + no-op guard against stepping mid-open-macro"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-core 2183 pass; 152 test-result-ok lines; 0 failed)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "new regression tests: syntax dark!=light, macro-guard should_panic, outliner Delete+Ctrl+Z/Shift+Z",
+        "r903/r904/r905 demos re-run PASS (splice consolidation / dark palette / edit keys no regression)",
+        "3-lens adversarial subagents + my own grep+read re-verify; bucketed real / over-reach / genuine-defer"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.36",
+        "5.50",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "REJECT (over-reach, verified): is_word_char lift (find boundary vs syntax ident = independent \\w)",
+        "REJECT: find_matches [s,e] vs selection {start,end} (bulk-list vs single W3C range); replace_all count (= matches)",
+        "DEFER genuine: children_vec_mut generic tree-edit (2nd consumer) / text_match family axis (policy differs)",
+        "DEFER genuine: multiline find/syntax examples (line-agnostic feature, proven) / F2 inline-rename + find-bar (UI)",
+        "DEFER genuine: incremental highlight (no measured consumer) / regex (dep) / tree_nav.rs:66 stale doc (R820, pre-session)"
+      ],
+      "publishable_decision_summary": "R906 cost-no-object session-review audit clearance (user '교과서적/SSOT/북극성?' on R903-R905). 3-lens adversarial subagents (SSOT/correctness/scope-deferral) + my own grep+read re-verification, bucketed real / over-reach / genuine-defer. REAL fixed: (A) splice_inner SSOT — R903 added the splice primitive but left 3 pre-existing selection branches (insert/backspace/delete-forward) as copies -> routed through splice_inner (4->1, behaviour-identical). (B) dark-mode defect — R904 baked the classic() light palette unconditionally (illegible on a dark surface); added SyntaxPalette::dark()/for_dark + ThemeProvider::is_dark() (the single resolution SSOT theme() now uses) and the example's highlighter picks by theme.is_dark() (captures the provider Rc + calls is_dark() = pure Signal reads -> reactive in the view AND safe from the Owner-less RPC path). (C) insert_subtree silent push-to-root fallback -> debug_assert (R889 silent-corruption-mask). (E) 3-copy band-box emit (find/selection/preedit) -> push_band SSOT (R903 lifted rect_to_band geometry but not the emit). (F) the outliner had NO keyboard editing -> Delete/Backspace=delete_selected, Ctrl+Z/Ctrl+Y=undo/redo (node-editor precedent; methods existed; was scope-avoidance). (G) begin_macro/end_macro pub but undo/redo unguarded mid-macro -> debug_assert + no-op guard. REJECTED over-reach (verified): is_word_char lift (find search-boundary vs syntax identifier-char = independent concepts coincidentally \\w, wrong-abstraction); find_matches.ranges [s,e] vs selection {start,end} (bulk-list pairs vs single W3C range, conventional); replace_all count over-reports no-op replacements (= matches replaced, VS Code convention; a no-op records no undo step, correct). Verdict: cross-round SSOT discipline strong; the gaps were within-round 'added the primitive, did not sweep existing copies' (splice / band) + a dark-mode feature gap + missing editor keys.",
+      "publishable_changes_bullets": [
+        "text_edit.rs: route insert/backspace/delete-forward selection branches via splice_inner (4->1 SSOT)",
+        "syntax.rs SyntaxPalette::dark()/for_dark + theme.rs ThemeProvider::is_dark() (theme() SSOT refactor)",
+        "hello-syntax-highlight: highlighter picks scheme by theme.is_dark() (reactive, RPC-safe) = dark-mode fix",
+        "widget-paint: push_band SSOT for the 3 band-emit loops (find/selection/preedit), keeping rect_to_band",
+        "hello-tree-grid: Delete/Backspace + Ctrl+Z/Ctrl+Y edit keys; insert_subtree fallback -> debug_assert (R889)",
+        "undo.rs: undo()/redo() debug_assert + no-op guard against stepping mid-open-macro"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-core 2183 pass; 152 test-result-ok lines; 0 failed)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "new regression tests: syntax dark!=light, macro-guard should_panic, outliner Delete+Ctrl+Z/Shift+Z",
+        "r903/r904/r905 demos re-run PASS (splice consolidation / dark palette / edit keys no regression)",
+        "3-lens adversarial subagents + my own grep+read re-verify; bucketed real / over-reach / genuine-defer"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.36",
+        "5.50",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "REJECT (over-reach, verified): is_word_char lift (find boundary vs syntax ident = independent \\w)",
+        "REJECT: find_matches [s,e] vs selection {start,end} (bulk-list vs single W3C range); replace_all count (= matches)",
+        "DEFER genuine: children_vec_mut generic tree-edit (2nd consumer) / text_match family axis (policy differs)",
+        "DEFER genuine: multiline find/syntax examples (line-agnostic feature, proven) / F2 inline-rename + find-bar (UI)",
+        "DEFER genuine: incremental highlight (no measured consumer) / regex (dep) / tree_nav.rs:66 stale doc (R820, pre-session)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

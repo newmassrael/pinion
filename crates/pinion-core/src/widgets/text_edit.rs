@@ -1374,18 +1374,10 @@ impl TextEditState {
         let mut buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
-            buf.drain(start..end);
-            buf.insert_str(start, s);
-            let new_caret = start + s.len();
-            let mut runs = self.style_runs.get();
-            clip_runs_for_delete(&mut runs, start, end);
-            shift_runs_for_insert(&mut runs, start, s.len());
-            batch(|| {
-                self.text.set(buf);
-                self.caret_pos.set(new_caret);
-                self.selection_anchor.set(None);
-                self.style_runs.set(runs);
-            });
+            // R906 — a selection-replacing insert IS the splice primitive
+            // (`replace_range`'s inner): drain `[start, end)`, lay in `s`, clip
+            // + shift runs, collapse the selection. One SSOT, not a 4th copy.
+            self.splice_inner(start, end, s);
             return;
         }
         let snapped = clamp_to_char_boundary(&buf, caret);
@@ -1426,15 +1418,8 @@ impl TextEditState {
         let mut buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
-            buf.drain(start..end);
-            let mut runs = self.style_runs.get();
-            clip_runs_for_delete(&mut runs, start, end);
-            batch(|| {
-                self.text.set(buf);
-                self.caret_pos.set(start);
-                self.selection_anchor.set(None);
-                self.style_runs.set(runs);
-            });
+            // R906 — selection-delete is `splice_inner(start, end, "")` (the SSOT).
+            self.splice_inner(start, end, "");
             return;
         }
         if caret == 0 {
@@ -1479,15 +1464,8 @@ impl TextEditState {
         let mut buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
-            buf.drain(start..end);
-            let mut runs = self.style_runs.get();
-            clip_runs_for_delete(&mut runs, start, end);
-            batch(|| {
-                self.text.set(buf);
-                self.caret_pos.set(start);
-                self.selection_anchor.set(None);
-                self.style_runs.set(runs);
-            });
+            // R906 — selection-delete is `splice_inner(start, end, "")` (the SSOT).
+            self.splice_inner(start, end, "");
             return;
         }
         if caret >= buf.len() {

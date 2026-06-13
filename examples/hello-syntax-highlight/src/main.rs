@@ -250,8 +250,16 @@ impl WidgetCore for SyntaxView {
             text_state.set_text(SEED_CODE.to_string());
         }
         let font = tf_paint::TextFieldStyle::m3_filled().font_size_px;
+        // R906 — pick the syntax scheme by the effective theme so the code reads
+        // on the field's surface (light vs dark). The provider `Rc` is resolved
+        // here (an `Owner` scope exists in `create_external`); the closure calls
+        // `is_dark()` — pure `Signal` reads, no hook — at highlight time, so the
+        // colouring is reactive in the view AND safe from the hook-less RPC
+        // `scene/style_runs` path. Fixes the R904 light-on-dark defect.
+        let theme_provider = use_theme(THEME_TAG);
         text_state.attach_highlighter(Rc::new(move |code: &str| {
-            highlight_code(code, KEYWORDS, SyntaxPalette::classic(), font)
+            let palette = SyntaxPalette::for_dark(theme_provider.is_dark());
+            highlight_code(code, KEYWORDS, palette, font)
         }));
         // R796 §5.52 — journal edits onto a shared undo stack so Ctrl+Z /
         // Ctrl+Shift+Z (Ctrl+Y) undo / redo with word-level coalescing.

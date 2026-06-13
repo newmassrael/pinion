@@ -428,6 +428,13 @@ impl UndoStack {
     /// Step the cursor back one command, replaying its inverse. Returns
     /// `false` (a no-op) when already at the bottom of the stack.
     pub fn undo(&self) -> bool {
+        // R906 — an open macro buffers edits off the timeline; stepping the
+        // cursor mid-macro would commit the folded step at the wrong index and
+        // truncate live history. Fail loud in dev, no-op in release.
+        if self.macro_depth.get() > 0 {
+            debug_assert!(false, "undo() called while a macro transaction is open");
+            return false;
+        }
         let cursor = self.index.get();
         if cursor == 0 {
             return false;
@@ -444,6 +451,11 @@ impl UndoStack {
     /// Step the cursor forward one command, re-applying it. Returns `false`
     /// (a no-op) when already at the top of the stack.
     pub fn redo(&self) -> bool {
+        // R906 — see [`undo`](Self::undo): redo is undefined mid-macro.
+        if self.macro_depth.get() > 0 {
+            debug_assert!(false, "redo() called while a macro transaction is open");
+            return false;
+        }
         let cursor = self.index.get();
         let len = self.commands.borrow().len();
         if cursor >= len {
@@ -863,6 +875,17 @@ mod tests {
             let (_counter, stack) = fixture();
             stack.end_macro(); // no open macro
             assert_eq!(stack.len(), 0);
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "macro transaction is open")]
+    fn r906_undo_during_open_macro_panics_in_debug() {
+        // R906 guard: stepping the cursor mid-macro would truncate live history.
+        Owner::new().run(|| {
+            let (_counter, stack) = fixture();
+            stack.begin_macro("open");
+            stack.undo(); // debug_assert fires (loud in dev)
         });
     }
 

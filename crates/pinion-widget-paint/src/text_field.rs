@@ -458,6 +458,24 @@ fn rect_to_band(r: CaretRect, font_floor: u32) -> (u32, u32, u32, u32) {
     )
 }
 
+/// R906 §5.22 — push one absolute-positioned background band (find-match
+/// highlight / selection / preedit tint) into the field's child list, anchored
+/// at `inner_pad + (x, y)`. A zero-width band is skipped. The single `Box`-emit
+/// the three band kinds share — their geometry comes from [`rect_to_band`],
+/// only the `fill` differs (the prior 3 byte-identical loops are now one site).
+fn push_band(children: &mut Vec<Scene>, x: u32, y: u32, w: u32, h: u32, inner_pad: u32, fill: Color) {
+    if w == 0 {
+        return;
+    }
+    children.push(Scene::Box(
+        BoxNode::new(Rect::default(), BoxStyle::filled(fill)).with_layout(
+            LayoutStyle::new()
+                .with_size(Size::px(w, h))
+                .with_absolute_position(inner_pad.saturating_add(x), inner_pad.saturating_add(y)),
+        ),
+    ));
+}
+
 /// R765 §5.22 §5.45 — canonical **scroll-into-view**: the minimal new
 /// vertical scroll offset that keeps the caret visible given the
 /// *previous* offset. The caret window is `[prev, prev + viewport_h]`
@@ -728,66 +746,24 @@ pub fn view_field(
     // selection band and the text), so the current match's stronger selection
     // band layers on top of its fainter find tint. Same absolute-position +
     // anchor rule as the selection band.
+    let find_fill = find_highlight_fill(theme, style.find_highlight_alpha);
     for &(fx, fy, fw, fh) in &find_pixel {
-        if fw > 0 {
-            let f_left = inner_pad.saturating_add(fx);
-            let f_top = inner_pad.saturating_add(fy);
-            let find_box = Scene::Box(
-                BoxNode::new(
-                    Rect::default(),
-                    BoxStyle::filled(find_highlight_fill(theme, style.find_highlight_alpha)),
-                )
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_size(Size::px(fw, fh))
-                        .with_absolute_position(f_left, f_top),
-                ),
-            );
-            field_children.push(find_box);
-        }
+        push_band(&mut field_children, fx, fy, fw, fh, inner_pad, find_fill);
     }
 
     // R56.1.f.3 §5.22 — selection rect paints BEFORE text_node so
     // glyphs render on top. Vello composites children in vector
     // order (later children paint atop earlier).
+    let sel_fill = selection_fill(theme, style.selection_alpha);
     for &(sel_x, sel_y, sel_w, sel_h) in &selection_pixel {
-        if sel_w > 0 {
-            let sel_left = inner_pad.saturating_add(sel_x);
-            let sel_top = inner_pad.saturating_add(sel_y);
-            let selection_box = Scene::Box(
-                BoxNode::new(
-                    Rect::default(),
-                    BoxStyle::filled(selection_fill(theme, style.selection_alpha)),
-                )
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_size(Size::px(sel_w, sel_h))
-                        .with_absolute_position(sel_left, sel_top),
-                ),
-            );
-            field_children.push(selection_box);
-        }
+        push_band(&mut field_children, sel_x, sel_y, sel_w, sel_h, inner_pad, sel_fill);
     }
 
     // R56.1.g.3 §5.22 — preedit background tint paints BEFORE text
     // (same layering rule as selection band).
     if let Some((pre_x, pre_y, pre_w, pre_h)) = preedit_pixel {
-        if pre_w > 0 {
-            let pre_left = inner_pad.saturating_add(pre_x);
-            let pre_top = inner_pad.saturating_add(pre_y);
-            let preedit_bg = Scene::Box(
-                BoxNode::new(
-                    Rect::default(),
-                    BoxStyle::filled(preedit_bg_fill(theme, style.preedit_bg_alpha)),
-                )
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_size(Size::px(pre_w, pre_h))
-                        .with_absolute_position(pre_left, pre_top),
-                ),
-            );
-            field_children.push(preedit_bg);
-        }
+        let pre_fill = preedit_bg_fill(theme, style.preedit_bg_alpha);
+        push_band(&mut field_children, pre_x, pre_y, pre_w, pre_h, inner_pad, pre_fill);
     }
 
     field_children.push(text_node);

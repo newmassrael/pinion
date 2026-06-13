@@ -420,6 +420,15 @@ fn insert_subtree(nodes: &mut Vec<OutlinerNode>, parent: Option<&str>, index: us
                 let i = index.min(p.children.len());
                 p.children.insert(i, node);
             } else {
+                // Unreachable: a top-level-selected node's parent is never itself
+                // deleted (it is not selected, by `collect_top_level`), so it
+                // exists at undo time. Fail LOUD in dev rather than silently
+                // mis-parenting to root (R889 — a silent fallback masks a broken
+                // invariant); in release, keep the node so nothing is lost.
+                debug_assert!(
+                    false,
+                    "insert_subtree: parent '{pid}' vanished — undo invariant broken",
+                );
                 nodes.push(node);
             }
         }
@@ -931,6 +940,20 @@ impl ExternalIntrospect for TreeSelectExternal {
 /// a plain move, matching `nav_select_key`.)
 fn apply_key_impl(key: &str, modifiers: Modifiers) -> bool {
     let state = use_tree_state();
+    // R906 — structural-edit keys (the R905 batch ops over the keyboard, the
+    // node-editor's `Delete` + the text field's undo chords applied to the
+    // outliner): `Delete` / `Backspace` remove the selection, `Ctrl`/`Cmd`+`Z`
+    // undoes, `Ctrl`/`Cmd`+`Shift`+`Z` or `Ctrl`/`Cmd`+`Y` redoes — each one
+    // undo step (R905). Plain `z` / `y` (no command modifier) fall through to
+    // type-ahead. The keys reach the methods the RPC ops already drive, so
+    // keyboard and `scene/invoke` are one funnel.
+    let cmd = modifiers.ctrl || modifiers.meta;
+    match key {
+        "Delete" | "Backspace" if !cmd => return state.delete_selected() > 0,
+        "z" | "Z" if cmd => return if modifiers.shift { state.redo() } else { state.undo() },
+        "y" | "Y" if cmd => return state.redo(),
+        _ => {}
+    }
     // R902.1 — the non-navigation multi-select chords (Ctrl+A / Ctrl+Space) via
     // the shared [`MultiSelectKeyOp`] gate (the same one `nav_select_key` uses,
     // so list/grid/tree never diverge on which keys are set-ops). Plain Space /
@@ -1776,6 +1799,24 @@ mod tests {
             state.set_selection(&BTreeSet::from([String::from("f4")]));
             assert_eq!(state.rename_selected(&current), 0, "same label is a no-op");
             assert!(!state.undo(), "no undo step recorded for a no-op rename");
+        });
+    }
+
+    #[test]
+    fn r906_delete_key_removes_selection_and_ctrl_z_undoes() {
+        Owner::new().run(|| {
+            let state = use_tree_state();
+            state.set_selection(&BTreeSet::from([String::from("f7")]));
+            // Delete (no command modifier) removes the selected subtree.
+            assert!(apply_key_impl("Delete", Modifiers::empty()), "Delete removes the selection");
+            assert!(!contains_id(&state.nodes.get(), "f7"), "f7 deleted via the keyboard");
+            // Ctrl+Z restores it (the same undo the RPC `undo` op drives).
+            assert!(apply_key_impl("z", CTRL), "Ctrl+Z undoes");
+            assert!(contains_id(&state.nodes.get(), "f7"), "f7 restored via the keyboard");
+            // Ctrl+Shift+Z redoes.
+            let shift_ctrl = Modifiers { shift: true, ctrl: true, alt: false, meta: false };
+            assert!(apply_key_impl("z", shift_ctrl), "Ctrl+Shift+Z redoes");
+            assert!(!contains_id(&state.nodes.get(), "f7"), "f7 re-deleted");
         });
     }
 }
