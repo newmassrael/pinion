@@ -65,6 +65,7 @@ members = [
     "examples/hello-pdf-export",
     "examples/hello-inspector",
     "examples/hello-command-palette",
+    "examples/hello-status-bar",
     "examples/hello-textfield-tui",
     "examples/hello-toggle",
     "examples/hello-toggle-tui",

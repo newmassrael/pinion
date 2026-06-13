@@ -2630,6 +2630,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-status-bar"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-stepper"
 version = "0.0.1"
 dependencies = [

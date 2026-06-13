@@ -112,29 +112,37 @@ pub fn compose_send_payload(key: Option<&str>, event_name: &str, mods: Modifiers
     }
 }
 
-/// The composite sub-target index a send payload addresses **on its
-/// activation edge** — [`split_send_payload`] + activation gate
-/// ([`is_activation_event`](crate::input::is_activation_event)) + a
-/// `usize` parse of the key — or `None` for a non-activation event
-/// (hover / press), a non-numeric key, or a malformed payload.
+/// The `<key>` a send payload addresses **on its activation edge** —
+/// [`split_send_payload`] + the activation gate
+/// ([`is_activation_event`](crate::input::is_activation_event)) — or
+/// `None` for a non-activation event (hover / press) or a malformed
+/// payload.
 ///
-/// The one home of the click-to-activate decode that
-/// `<base>#<i>`-tagged-row consumers share: a click routes the full
-/// `PointerEnter` / `PointerDown` / `PointerUp` / `PointerLeave` cycle
-/// through the External `send` wire, and a list / palette wants to act
-/// only once, on the `PointerUp` edge, against row `<i>`. Lifted at the
-/// 2nd consumer (R910 `hello-inspector` select, R912
-/// `hello-command-palette` select + run) so the two cannot decode the
-/// same wire differently — a divergence would be a routing bug, not a
-/// style choice (the [`is_activation_event`](crate::input::is_activation_event)
-/// SSOT precedent). The *action* taken on the index stays per-binding.
+/// The one home of the click-to-activate decode every `<base>#<key>`
+/// consumer shares: a click routes the full `PointerEnter` /
+/// `PointerDown` / `PointerUp` / `PointerLeave` cycle through the
+/// External `send` wire, and a list / palette / status bar wants to act
+/// once, on the `PointerUp` edge, against `<key>`. What the caller does
+/// with the key is its own concern — parse it as a row index
+/// ([`send_activation_index`]) or match it as a named segment (R913
+/// `hello-status-bar`'s `mode` / `encoding`). Lifted so no two consumers
+/// can decode the activation gate differently — a divergence would be a
+/// routing bug, not a style choice (the
+/// [`is_activation_event`](crate::input::is_activation_event) precedent).
+#[must_use]
+pub fn send_activation_key(payload: &str) -> Option<&str> {
+    let (key, event, _mods) = split_send_payload(payload)?;
+    crate::input::is_activation_event(event).then_some(key)
+}
+
+/// The numeric sub-target index a send payload addresses on its
+/// activation edge — [`send_activation_key`] parsed as a `usize`, or
+/// `None` for a non-activation event or a non-numeric key. The indexed
+/// specialization the `<base>#<i>` row-select consumers use (R910
+/// `hello-inspector` select, R912 `hello-command-palette` select + run).
 #[must_use]
 pub fn send_activation_index(payload: &str) -> Option<usize> {
-    let (key, event, _mods) = split_send_payload(payload)?;
-    if !crate::input::is_activation_event(event) {
-        return None;
-    }
-    key.parse::<usize>().ok()
+    send_activation_key(payload)?.parse::<usize>().ok()
 }
 
 /// Parse a R51.42 §5.35 composite-tag send payload
@@ -371,8 +379,8 @@ pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::{
-        compose_send_payload, parse_send_payload, send_activation_index, split_send_payload,
-        split_subindex, GridSendKey, GridTag,
+        compose_send_payload, parse_send_payload, send_activation_index, send_activation_key,
+        split_send_payload, split_subindex, GridSendKey, GridTag,
     };
     use crate::input::Modifiers;
 
@@ -543,6 +551,20 @@ mod tests {
         // from an older protocol revision.
         let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("-1:PointerDown");
         assert_eq!(parsed, None);
+    }
+
+    #[test]
+    fn r913_send_activation_key_returns_the_named_key_on_activation() {
+        // The named cousin of send_activation_index: the raw key string
+        // on the activation edge (a status-bar segment name, not an
+        // index). Gate is shared with send_activation_index.
+        assert_eq!(send_activation_key("mode:PointerUp"), Some("mode"));
+        assert_eq!(send_activation_key("encoding:KeyboardActivate"), Some("encoding"));
+        assert_eq!(send_activation_key("mode:PointerEnter"), None, "hover does not activate");
+        assert_eq!(send_activation_key("mode:PointerDown"), None, "press does not activate");
+        // The index form is the parsed specialization of the key form.
+        assert_eq!(send_activation_index("7:PointerUp"), Some(7));
+        assert_eq!(send_activation_key("7:PointerUp"), Some("7"));
     }
 
     #[test]

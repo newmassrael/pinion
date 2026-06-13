@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R913 §5.38 editor status bar: pinion-forge renderer manifest for
+  hello-status-bar. Emits `HelloStatusBarRenderer` (Vello).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloStatusBarRenderer"
+        backend="vello"/>
