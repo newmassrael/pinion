@@ -1776,6 +1776,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-command-palette"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-commands"
 version = "0.0.1"
 dependencies = [

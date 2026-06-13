@@ -39029,6 +39029,58 @@
         "spooled PDF exposed as an introspect string (fine for a small doc); a content-len/hash projection if docs grow large"
       ]
     },
+    "R912": {
+      "decision_summary": "R912 §5.38 §5.22 fuzzy command palette + send_activation_index SSOT lift",
+      "changes_bullets": [
+        "new example hello-command-palette: fuzzy command search (VS Code Ctrl+P) — query filters, Arrow/click select, Enter/click run",
+        "PaletteExternal (peer): query/result_count/result.<i>/selected/selected_command/last_executed + intervene/invoke(select/execute/send)",
+        "fuzzy_score = pure subsequence matcher scored for consecutive runs + word-starts; visible_commands filters + stable-ranks",
+        "send_activation_index lifted to pinion-core composite_tag (split_send_payload + is_activation_event + parse usize) = decode SSOT",
+        "R910 inspector + R912 palette both route the click-to-select through send_activation_index (2nd-consumer mechanical lift)",
+        "demo r912_command_palette: 32 assertions (fuzzy filter / word-start rank / execute / keyboard nav / click-run / errors)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 158 result-ok, 0 failures (palette 11 unit, inspector 12 re-routed, core +1 send_activation_index test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo r912_command_palette.py: PASS, 32 assertions (release); r910_inspector_interaction re-verified PASS after the lift",
+        "self-grep: send_activation_index has 2 consumers (inspector+palette) = clean mechanical SSOT lift; PaletteExternal = new External peer"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "live GUI typing via a TextField deferred (query set over RPC intervene = §2 primary); property-grid search-box is the follow-up",
+        "fuzzy_score is a simple subsequence heuristic (consecutive + word-start bonus); no Levenshtein / typo-tolerance",
+        "command execute records the name (example effect); a real binding dispatches each through the §5.23 command system"
+      ],
+      "publishable_decision_summary": "R912 §5.38 §5.22 fuzzy command palette + send_activation_index SSOT lift",
+      "publishable_changes_bullets": [
+        "new example hello-command-palette: fuzzy command search (VS Code Ctrl+P) — query filters, Arrow/click select, Enter/click run",
+        "PaletteExternal (peer): query/result_count/result.<i>/selected/selected_command/last_executed + intervene/invoke(select/execute/send)",
+        "fuzzy_score = pure subsequence matcher scored for consecutive runs + word-starts; visible_commands filters + stable-ranks",
+        "send_activation_index lifted to pinion-core composite_tag (split_send_payload + is_activation_event + parse usize) = decode SSOT",
+        "R910 inspector + R912 palette both route the click-to-select through send_activation_index (2nd-consumer mechanical lift)",
+        "demo r912_command_palette: 32 assertions (fuzzy filter / word-start rank / execute / keyboard nav / click-run / errors)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 158 result-ok, 0 failures (palette 11 unit, inspector 12 re-routed, core +1 send_activation_index test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo r912_command_palette.py: PASS, 32 assertions (release); r910_inspector_interaction re-verified PASS after the lift",
+        "self-grep: send_activation_index has 2 consumers (inspector+palette) = clean mechanical SSOT lift; PaletteExternal = new External peer"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live GUI typing via a TextField deferred (query set over RPC intervene = §2 primary); property-grid search-box is the follow-up",
+        "fuzzy_score is a simple subsequence heuristic (consecutive + word-start bonus); no Levenshtein / typo-tolerance",
+        "command execute records the name (example effect); a real binding dispatches each through the §5.23 command system"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

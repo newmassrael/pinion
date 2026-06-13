@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R912 §5.38 command palette: pinion-forge renderer manifest for
+  hello-command-palette. Emits `HelloCommandPaletteRenderer` (Vello).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloCommandPaletteRenderer"
+        backend="vello"/>

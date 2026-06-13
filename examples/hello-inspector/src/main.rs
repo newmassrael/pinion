@@ -49,12 +49,11 @@
 use std::rc::Rc;
 
 use pinion_core::cell_value::CellValue;
-use pinion_core::composite_tag::split_send_payload;
+use pinion_core::composite_tag::send_activation_index;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use pinion_core::input::is_activation_event;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle, Size,
@@ -363,12 +362,8 @@ impl ExternalIntrospect for InspectorExternal {
             // half of the pointer cycle so hover does not select.
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    if let Some((key, event, _mods)) = split_send_payload(payload) {
-                        if is_activation_event(event) {
-                            if let Ok(idx) = key.parse::<usize>() {
-                                self.select(idx);
-                            }
-                        }
+                    if let Some(idx) = send_activation_index(payload) {
+                        self.select(idx);
                     }
                     Ok(IntrospectValue::Bool(true))
                 }

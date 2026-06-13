@@ -112,6 +112,31 @@ pub fn compose_send_payload(key: Option<&str>, event_name: &str, mods: Modifiers
     }
 }
 
+/// The composite sub-target index a send payload addresses **on its
+/// activation edge** — [`split_send_payload`] + activation gate
+/// ([`is_activation_event`](crate::input::is_activation_event)) + a
+/// `usize` parse of the key — or `None` for a non-activation event
+/// (hover / press), a non-numeric key, or a malformed payload.
+///
+/// The one home of the click-to-activate decode that
+/// `<base>#<i>`-tagged-row consumers share: a click routes the full
+/// `PointerEnter` / `PointerDown` / `PointerUp` / `PointerLeave` cycle
+/// through the External `send` wire, and a list / palette wants to act
+/// only once, on the `PointerUp` edge, against row `<i>`. Lifted at the
+/// 2nd consumer (R910 `hello-inspector` select, R912
+/// `hello-command-palette` select + run) so the two cannot decode the
+/// same wire differently — a divergence would be a routing bug, not a
+/// style choice (the [`is_activation_event`](crate::input::is_activation_event)
+/// SSOT precedent). The *action* taken on the index stays per-binding.
+#[must_use]
+pub fn send_activation_index(payload: &str) -> Option<usize> {
+    let (key, event, _mods) = split_send_payload(payload)?;
+    if !crate::input::is_activation_event(event) {
+        return None;
+    }
+    key.parse::<usize>().ok()
+}
+
 /// Parse a R51.42 §5.35 composite-tag send payload
 /// `"<key>:<EventName>[:<mods>]"` into `(key, event_name, modifiers)`.
 ///
@@ -345,7 +370,10 @@ pub fn split_subindex(tag: &str) -> (&str, Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{compose_send_payload, parse_send_payload, split_send_payload, split_subindex, GridSendKey, GridTag};
+    use super::{
+        compose_send_payload, parse_send_payload, send_activation_index, split_send_payload,
+        split_subindex, GridSendKey, GridTag,
+    };
     use crate::input::Modifiers;
 
     const NONE: Modifiers = Modifiers::empty();
@@ -515,5 +543,19 @@ mod tests {
         // from an older protocol revision.
         let parsed: Option<(u64, &str, Modifiers)> = parse_send_payload("-1:PointerDown");
         assert_eq!(parsed, None);
+    }
+
+    #[test]
+    fn r912_send_activation_index_gates_on_the_activation_edge() {
+        // Only the PointerUp / KeyboardActivate edge yields the index.
+        assert_eq!(send_activation_index("3:PointerUp"), Some(3));
+        assert_eq!(send_activation_index("3:KeyboardActivate"), Some(3));
+        // Hover / press half of the cycle does not activate.
+        assert_eq!(send_activation_index("3:PointerEnter"), None);
+        assert_eq!(send_activation_index("3:PointerDown"), None);
+        assert_eq!(send_activation_index("3:PointerLeave"), None);
+        // Non-numeric key / malformed payload.
+        assert_eq!(send_activation_index("xx:PointerUp"), None);
+        assert_eq!(send_activation_index("PointerUp"), None);
     }
 }
