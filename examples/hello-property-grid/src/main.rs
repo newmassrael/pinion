@@ -382,12 +382,14 @@ fn use_property_defaults() -> Rc<Vec<CellValue>> {
     owner.cache("property_grid.defaults", default_properties)
 }
 
-/// R919 — whether `value` differs from its class default `baseline`. Compares by
-/// the substrate's TOTAL order ([`CellValue::sort_cmp`]), not the derived IEEE
-/// `PartialEq`, so a `Float` of `NaN` reads as unmodified against a `NaN` default
-/// (the R900 no-spurious-state discipline — a `NaN == NaN` guard).
+/// R919 / R920 — whether `value` differs from its class default `baseline`. Uses
+/// the substrate's NaN-safe value equality ([`CellValue::value_eq`], built on the
+/// TOTAL order), not the derived IEEE `PartialEq`, so a `Float` of `NaN` reads as
+/// unmodified against a `NaN` default (the R900 no-spurious-state discipline). The
+/// 2nd consumer of `value_eq` (after the node-editor's no-op guard) — R920 lifted
+/// the shared `sort_cmp == Equal` decision onto `CellValue`.
 fn property_modified(value: &CellValue, baseline: &CellValue) -> bool {
-    value.sort_cmp(baseline) != core::cmp::Ordering::Equal
+    !value.value_eq(baseline)
 }
 
 /// R871 — the grouped-collapse + roving-cursor SSOT (the R843
@@ -1362,6 +1364,9 @@ fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
         match key {
             "Space" => return activate_source(scene, source, false),
             "Enter" | "F2" => return activate_source(scene, source, true),
+            // R920 — Delete resets the cursor row to its class default (the
+            // keyboard path to the reset arrow, which is not itself a tab stop).
+            "Delete" => return reset_source(scene, source),
             _ => {}
         }
     }
@@ -1403,6 +1408,23 @@ fn activate_source(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
         _ if allow_edit => intro.invoke("begin", arg).is_ok(),
         _ => false,
     }
+}
+
+/// R920 — reset the data row at stable source index `row` to its class default
+/// via the coordinator's `reset` invoke (the keyboard twin of the reset-arrow
+/// click + the RPC — one funnel). The reset arrow's AccessNode is not itself a
+/// tab stop, so this `Delete`-on-the-cursor-row path is how a keyboard / AT user
+/// reaches reset. Consumes the key on any data row (a no-op on an already-default
+/// row), so `Delete` never falls through to navigation.
+fn reset_source(scene: &mut Scene, row: usize) -> bool {
+    let Some(node) = scene.find_external_with_tag_mut(GRID_TAG) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    let _ = intro.invoke("reset", IntrospectValue::Int(i64::try_from(row).expect("row fits in i64")));
+    true
 }
 
 /// Edit-mode keymap over the shared inline field — the lifted
@@ -2469,6 +2491,24 @@ mod tests {
             assert_eq!(btn.name.as_deref(), Some("Reset Layer to default"), "named for the property");
             let cell = a11y.iter().find(|n| n.tag == "pg_cell4_1").expect("value cell present");
             assert!(cell.children.iter().any(|c| c.as_str() == arrow_tag), "the button is the value cell's child");
+        });
+    }
+
+    /// R920 (audit) — `Delete` on the cursor data row resets it to default (the
+    /// keyboard path to the reset arrow, whose AccessNode is not a tab stop). The
+    /// keyboard, click, and RPC all share the one `reset` funnel.
+    #[test]
+    fn r920_keyboard_delete_resets_cursor_row() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            with_grid_mut(&mut scene, |i| i.intervene("value.4", IntrospectValue::Int(17)).unwrap());
+            // Click row 4 (an Int row: a click only moves the roving cursor onto it).
+            with_grid_mut(&mut scene, |i| {
+                let _ = i.invoke("send", IntrospectValue::Text("4:PointerUp".to_owned()));
+            });
+            assert!(apply_key_grid(&mut scene, "Delete"), "Delete on a data row is consumed");
+            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "Delete reset the cursor row");
+            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(false)));
         });
     }
 

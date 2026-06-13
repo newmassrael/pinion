@@ -39619,6 +39619,62 @@
         "property_modified stays example-local (1st consumer); no data-grid/node default baseline yet"
       ]
     },
+    "R920": {
+      "decision_summary": "R920 session-review adversarial audit clearance of R918-R919: 3 subagents (correctness/SSOT/doc-honesty) surfaced candidates, all re-verified by my own grep+read and bucketed. REAL fixes: selection change commits an orphaned panel edit (query-editing introspection lie), cross-surface same-target migration preserves the buffer, delete cancels an edit of the deleted node, CellValue::value_eq (NaN-safe) lifted to pinion-core for the 2 consumers, property-grid keyboard reset. Over-reach rejected; panel keyboard-focus deferred honestly",
+      "changes_bullets": [
+        "C1: a selection change commits an in-flight PANEL edit (set_selection wrapper over 7 mutators)",
+        "C1 fixes the query-editing lie: an orphaned panel edit no longer paints nowhere while advertised",
+        "C2: begin_edit same-target cross-surface = migration (keep buffer); same-surface still restarts",
+        "C3: delete cancels an in-flight edit of the deleted node (no query editing on an absent node)",
+        "SSOT: CellValue::value_eq (NaN-safe sort_cmp==Equal) lifted to pinion-core next to matches_filter",
+        "SSOT: apply_set_default (R900) + property_modified (R919, 2nd consumer) route through value_eq",
+        "DH: property-grid Delete-on-cursor-row keyboard reset; the reset Button is now keyboard-reachable"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 + clippy --features vello (-D pedantic): node 125, grid 50, core +1",
+        "19 node-editor + property-grid demos PASS (no regression from the C1/C2/C3/SSOT/DH fixes)",
+        "adversarial 3-subagent review (correctness/SSOT/doc); every finding re-verified by my grep+read",
+        "buckets: 5 REAL fixed w/ regression test; over-reach rejected; panel keyboard-focus deferred"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "defer: no keyboard path to OPEN a panel edit + idle panel rows are Generic (AT can't find edit)",
+        "both root in 'the Details panel has no keyboard-focus model' = a future axis, not a 5-line fix",
+        "R919 value honestly = polish-tier; R921+ target higher-value Phase B (nested/multi-object/M-V)",
+        "detail_rows 'cannot drift' reworded: row DATA is SSOT; each consumer composes its own presentation"
+      ],
+      "publishable_decision_summary": "R920 session-review adversarial audit clearance of R918-R919: 3 subagents (correctness/SSOT/doc-honesty) surfaced candidates, all re-verified by my own grep+read and bucketed. REAL fixes: selection change commits an orphaned panel edit (query-editing introspection lie), cross-surface same-target migration preserves the buffer, delete cancels an edit of the deleted node, CellValue::value_eq (NaN-safe) lifted to pinion-core for the 2 consumers, property-grid keyboard reset. Over-reach rejected; panel keyboard-focus deferred honestly",
+      "publishable_changes_bullets": [
+        "C1: a selection change commits an in-flight PANEL edit (set_selection wrapper over 7 mutators)",
+        "C1 fixes the query-editing lie: an orphaned panel edit no longer paints nowhere while advertised",
+        "C2: begin_edit same-target cross-surface = migration (keep buffer); same-surface still restarts",
+        "C3: delete cancels an in-flight edit of the deleted node (no query editing on an absent node)",
+        "SSOT: CellValue::value_eq (NaN-safe sort_cmp==Equal) lifted to pinion-core next to matches_filter",
+        "SSOT: apply_set_default (R900) + property_modified (R919, 2nd consumer) route through value_eq",
+        "DH: property-grid Delete-on-cursor-row keyboard reset; the reset Button is now keyboard-reachable"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 + clippy --features vello (-D pedantic): node 125, grid 50, core +1",
+        "19 node-editor + property-grid demos PASS (no regression from the C1/C2/C3/SSOT/DH fixes)",
+        "adversarial 3-subagent review (correctness/SSOT/doc); every finding re-verified by my grep+read",
+        "buckets: 5 REAL fixed w/ regression test; over-reach rejected; panel keyboard-focus deferred"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "defer: no keyboard path to OPEN a panel edit + idle panel rows are Generic (AT can't find edit)",
+        "both root in 'the Details panel has no keyboard-focus model' = a future axis, not a 5-line fix",
+        "R919 value honestly = polish-tier; R921+ target higher-value Phase B (nested/multi-object/M-V)",
+        "detail_rows 'cannot drift' reworded: row DATA is SSOT; each consumer composes its own presentation"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

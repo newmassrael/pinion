@@ -145,6 +145,22 @@ impl CellValue {
         }
     }
 
+    /// R920 §5.40 — whether two values are equal by the substrate's TOTAL order
+    /// ([`sort_cmp`](Self::sort_cmp)), NOT the derived IEEE `PartialEq`. A `Float`
+    /// of `NaN` is equal to `NaN` under this (where `==` would be `false`), so a
+    /// no-op guard ("re-setting the same value journals nothing") and a
+    /// modified-from-default check ("is this property changed?") are both correct
+    /// for every kind. The single home for "same typed value (NaN-safe)" — the
+    /// node-editor's `apply_set_default` no-op guard (R900) and the property
+    /// grid's modified indicator (R919) are its two consumers; both must avoid
+    /// the `#[derive(PartialEq)]` on this type, which is right there and wrong for
+    /// `NaN`. Peer of [`matches_filter`](Self::matches_filter) (typed equality vs
+    /// a wire string) and [`sort_cmp`](Self::sort_cmp) (the ordering it builds on).
+    #[must_use]
+    pub fn value_eq(&self, other: &Self) -> bool {
+        self.sort_cmp(other) == core::cmp::Ordering::Equal
+    }
+
     /// R891 §5.40 — whether this cell passes an equality filter whose wire
     /// value is `value`. The typed peer of [`sort_cmp`](Self::sort_cmp): a
     /// filter matches by the cell's TYPED value, never its display label, so
@@ -590,6 +606,22 @@ mod tests {
             CellValue::Text("9".into()).sort_cmp(&CellValue::Text("12".into())),
             Ordering::Less,
         );
+    }
+
+    #[test]
+    fn r920_value_eq_is_nan_safe_unlike_derived_partial_eq() {
+        // The whole point: `NaN == NaN` is `false` under the derived `PartialEq`,
+        // but `value_eq` (built on `sort_cmp`'s `total_cmp`) reports equal — so a
+        // no-op guard / modified check never spuriously fires on a `NaN` default.
+        let nan = CellValue::Float(f64::NAN);
+        assert!(nan != nan.clone(), "derived PartialEq: NaN != NaN (the trap)");
+        assert!(nan.value_eq(&nan.clone()), "value_eq: NaN equals NaN (NaN-safe)");
+        // Ordinary equality / inequality still hold for every kind.
+        assert!(CellValue::Int(7).value_eq(&CellValue::Int(7)));
+        assert!(!CellValue::Int(7).value_eq(&CellValue::Int(8)));
+        assert!(CellValue::Float(2.5).value_eq(&CellValue::Float(2.5)));
+        assert!(!CellValue::Bool(true).value_eq(&CellValue::Bool(false)));
+        assert!(CellValue::Text("x".into()).value_eq(&CellValue::Text("x".into())));
     }
 
     #[test]

@@ -1550,12 +1550,13 @@ fn apply_set_default(
     else {
         return false;
     };
-    // R900 — the no-op guard compares by the substrate's TOTAL order
-    // (`CellValue::sort_cmp`), not the derived IEEE `PartialEq`: a `Float`
-    // default of `NaN` is `!= NaN` under `==`, so re-setting it would journal a
-    // spurious second undo step ("an unchanged write journals nothing" would be
-    // false). `sort_cmp`'s `total_cmp` arm makes `NaN == NaN` for this guard.
-    if before.sort_cmp(&value) == core::cmp::Ordering::Equal {
+    // R900 / R920 — the no-op guard compares by the substrate's NaN-safe value
+    // equality (`CellValue::value_eq`, built on the TOTAL order), not the derived
+    // IEEE `PartialEq`: a `Float` default of `NaN` is `!= NaN` under `==`, so
+    // re-setting it would journal a spurious second undo step. The one home for
+    // "same typed value (NaN-safe)", shared with the property grid's modified
+    // check (R920 lift).
+    if before.value_eq(&value) {
         return true;
     }
     let cmd = SetPortDefaultCmd { nodes: Rc::clone(nodes), id, port, before, after: value };
@@ -2218,6 +2219,13 @@ impl NodeGraphExternal {
         );
         self.grabbed_node.set(None);
         *self.node_drag.borrow_mut() = None;
+        // R920 — cancel an in-flight edit of a deleted node (card or panel): the
+        // node is gone, so committing would be a no-op and `query editing` would
+        // otherwise keep advertising an edit on an absent node.
+        if self.editing.get().is_some_and(|a| removed_ids.contains(&a.target.node())) {
+            self.editing.set(None);
+            self.edit_buffer.set_text(String::new());
+        }
         true
     }
 
@@ -2294,11 +2302,31 @@ impl NodeGraphExternal {
 
     /// Select a node by id (must exist). The sum type makes any prior edge
     /// selection vanish for free — no "clear the other" bookkeeping.
+    /// R920 — write the selection, first committing any in-flight *panel* edit
+    /// whose node is leaving the single selection. The Details panel renders only
+    /// the single selected node, so a selection change that orphans a panel edit
+    /// must end it (Unreal commit-on-selection-change, like a blur) — otherwise
+    /// the shared field would paint nowhere while `query editing` still advertised
+    /// it (an introspection lie reachable on the RPC path). A *card* edit is
+    /// selection-independent (its card always paints), so it is left untouched.
+    /// Every user-facing selection mutator routes through here.
+    fn set_selection(&self, next: Selection) {
+        if let Some(active) = self.editing.get() {
+            if active.surface == EditSurface::Panel && next.node() != Some(active.target.node()) {
+                let text = self.edit_buffer.text();
+                apply_edit_commit(&self.nodes, &self.undo, active.target, &text);
+                self.editing.set(None);
+                self.edit_buffer.set_text(String::new());
+            }
+        }
+        self.selection.set(next);
+    }
+
     fn select_node(&self, id: Option<NodeId>) {
         let next = id
             .filter(|id| self.nodes.get().iter().any(|n| n.id == *id))
             .map_or(Selection::None, Selection::single);
-        self.selection.set(next);
+        self.set_selection(next);
     }
 
     /// R879 — `Ctrl`-toggle `id`'s membership, leaving the rest of the node
@@ -2311,7 +2339,7 @@ impl NodeGraphExternal {
         }
         let mut set = self.selection.get().nodes();
         toggle_member(&mut set, id);
-        self.selection.set(Selection::from_nodes(set));
+        self.set_selection(Selection::from_nodes(set));
     }
 
     /// R879 — `Shift`-add `id` to the node selection (an unordered graph
@@ -2323,7 +2351,7 @@ impl NodeGraphExternal {
         }
         let mut set = self.selection.get().nodes();
         set.insert(id);
-        self.selection.set(Selection::from_nodes(set));
+        self.set_selection(Selection::from_nodes(set));
     }
 
     /// R880 — select every node (`Ctrl`+`A` / `invoke select_all` — the
@@ -2334,7 +2362,7 @@ impl NodeGraphExternal {
         if all.is_empty() {
             return false;
         }
-        self.selection.set(Selection::from_nodes(all));
+        self.set_selection(Selection::from_nodes(all));
         true
     }
 
@@ -2371,7 +2399,7 @@ impl NodeGraphExternal {
             }
             SelectionChord::Replace => hit,
         };
-        self.selection.set(Selection::from_nodes(next));
+        self.set_selection(Selection::from_nodes(next));
     }
 
     /// R879 — the `intervene selected_ids` arm: a CSV of node ids replaces
@@ -2385,7 +2413,7 @@ impl NodeGraphExternal {
         };
         let trimmed = csv.trim();
         if trimmed.is_empty() {
-            self.selection.set(Selection::None);
+            self.set_selection(Selection::None);
             return Ok(());
         }
         let mut members = BTreeSet::new();
@@ -2397,7 +2425,7 @@ impl NodeGraphExternal {
             }
             members.insert(id);
         }
-        self.selection.set(Selection::from_nodes(members));
+        self.set_selection(Selection::from_nodes(members));
         Ok(())
     }
 
@@ -2406,7 +2434,7 @@ impl NodeGraphExternal {
         let next = id
             .filter(|id| self.edges.get().iter().any(|e| e.id == *id))
             .map_or(Selection::None, Selection::Edge);
-        self.selection.set(next);
+        self.set_selection(next);
     }
 
     /// R878 / R901 — begin an inline edit of `target` (a node title or an
@@ -2421,17 +2449,25 @@ impl NodeGraphExternal {
         let Some(seed) = self.edit_seed_text(target) else {
             return false;
         };
-        // R901 — committing a *different* in-flight target first (the Qt item-view
-        // discipline). Re-opening the SAME target reseeds without committing (the
-        // R878 todomvc restart-editing UX), regardless of surface.
-        if let Some(prev) = self.editing.get() {
+        let prev = self.editing.get();
+        // R920 — moving the SAME target between surfaces (card title <-> the panel
+        // Title row) is a *migration*: keep the in-flight buffer, just relocate the
+        // field. Only a fresh open / a same-surface re-open reseeds from the model
+        // (the R878 todomvc restart-editing UX); committing the buffer on a
+        // surface move would be the very silent-discard the migration-commit guards.
+        let migrate_surface = prev.is_some_and(|p| p.target == target && p.surface != surface);
+        // R901 — opening a *different* target commits the in-flight one first (the
+        // Qt item-view discipline), so the migration never silently drops text.
+        if let Some(prev) = prev {
             if prev.target != target {
                 let text = self.edit_buffer.text();
                 apply_edit_commit(&self.nodes, &self.undo, prev.target, &text);
             }
         }
         self.editing.set(Some(ActiveEdit { target, surface }));
-        self.edit_buffer.seed(seed);
+        if !migrate_surface {
+            self.edit_buffer.seed(seed);
+        }
         pinion_core::focus_request::request(EDIT_TF_TAG);
         true
     }
@@ -3950,9 +3986,12 @@ struct DetailRow {
 
 /// R918 — the Details panel's property rows for a selected `node`: title,
 /// position x / y, then one row per input port's default. The single source the
-/// panel paint and a11y both enumerate, so a row's tag / label / value / edit
-/// target can never drift between the painted row and its AccessNode (the
-/// R886.1 paint==a11y discipline).
+/// panel paint and a11y both enumerate, so a row's *data* — its key (hence tag),
+/// label, value, and edit target — is computed once and cannot drift between the
+/// painted row and its AccessNode (the R886.1 paint==a11y discipline). Each
+/// consumer still composes its own *presentation* of that shared data (the panel
+/// paints `label` and `value` as two cells; the a11y joins them into the node
+/// name) — presentation, not row identity, so the byte-matched tag still binds.
 fn detail_rows(node: &GraphNode) -> Vec<DetailRow> {
     let id = node.id;
     let mut rows = vec![
@@ -5389,6 +5428,72 @@ mod tests {
             );
             let group = a11y.iter().find(|n| n.tag == DETAIL_TAG).expect("the Details group");
             assert!(group.children.contains(&row_tag), "the group lists the row");
+        });
+    }
+
+    /// R920 (audit) — a selection change commits an in-flight PANEL edit (the
+    /// Unreal commit-on-selection-change): otherwise the field paints nowhere
+    /// while `query editing` still advertises it. A card edit is selection-
+    /// independent and survives. Re-selecting the SAME node keeps the edit.
+    #[test]
+    fn r920_selection_change_commits_orphaned_panel_edit() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            coord.select_node(Some(NodeId(2)));
+            assert!(coord.begin_edit_detail("x"));
+            use_text_edit_state(EDIT_TF_TAG).set_text("333".to_owned());
+            // Re-selecting the same node does NOT orphan the edit.
+            coord.select_node(Some(NodeId(2)));
+            assert_eq!(use_active_edit().get(), panel(EditTarget::PosX(NodeId(2))), "same selection keeps the edit");
+            // Changing selection commits the panel edit to node 2 and ends it.
+            coord.select_node(Some(NodeId(0)));
+            assert_eq!(use_active_edit().get(), None, "selection change ended the orphaned panel edit");
+            assert_eq!(coord.node_by_id(NodeId(2)).map(|n| n.x), Some(333), "the orphaned edit committed to node 2");
+            // A CARD edit survives a selection change (its card always paints).
+            coord.select_node(Some(NodeId(2)));
+            assert!(coord.begin_rename(NodeId(2)));
+            coord.select_node(Some(NodeId(0)));
+            assert_eq!(
+                use_active_edit().get(),
+                card(EditTarget::Title(NodeId(2))),
+                "a card edit is selection-independent",
+            );
+        });
+    }
+
+    /// R920 (audit) — moving the SAME target between surfaces (card <-> panel) is
+    /// a migration that keeps the in-flight buffer; only a fresh / same-surface
+    /// open reseeds (the R878 restart UX, still covered by its own test).
+    #[test]
+    fn r920_cross_surface_migration_preserves_buffer() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            coord.select_node(Some(NodeId(2)));
+            assert!(coord.begin_rename(NodeId(2))); // Card, Title(2), seeds "Multiply"
+            use_text_edit_state(EDIT_TF_TAG).set_text("Foo".to_owned());
+            assert!(coord.begin_edit_detail("title")); // Panel, Title(2) -> migration
+            assert_eq!(use_active_edit().get(), panel(EditTarget::Title(NodeId(2))), "migrated to the panel surface");
+            assert_eq!(
+                use_text_edit_state(EDIT_TF_TAG).text(),
+                "Foo",
+                "the in-flight buffer survives a surface migration (no silent discard)",
+            );
+        });
+    }
+
+    /// R920 (audit) — deleting the edited node cancels the in-flight edit, so
+    /// `query editing` never advertises an edit on an absent node.
+    #[test]
+    fn r920_delete_cancels_edit_of_deleted_node() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let coord = coordinator();
+            coord.select_node(Some(NodeId(2)));
+            assert!(coord.begin_rename(NodeId(2)));
+            assert!(coord.delete_node(NodeId(2)));
+            assert_eq!(use_active_edit().get(), None, "deleting the edited node cancelled the edit");
         });
     }
 
