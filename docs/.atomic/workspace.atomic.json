@@ -38743,6 +38743,68 @@
         "DEFER genuine: incremental highlight (no measured consumer) / regex (dep) / tree_nav.rs:66 stale doc (R820, pre-session)"
       ]
     },
+    "R907": {
+      "decision_summary": "R907 frame-timing profiler substrate + scene/frame_timings RPC: per-window build/encode/render/total us rolling window (the measure-first pro-tool-performance axis), AI-introspectable without pixels",
+      "changes_bullets": [
+        "pinion-runtime frame_timing.rs: FrameTiming + FrameTimingStats(ring 120) + FrameTimingsSnapshot",
+        "record() pushes ring + cumulative count; snapshot() folds last + min/mean/max + phase means + fps",
+        "shell ShellCore: frame_timings_per_window + record_frame_timing + frame_timings_for_window project",
+        "shell render_window: build/encode/render/total Instant spans -> record_frame_timing after finalize",
+        "shell: WindowScopedRpcReads.frame_timings + window_scoped resolve + remove_window cleanup term",
+        "rpc scene/frame_timings mirrors cache_stats: DispatchContext field + builder + handler + routing",
+        "example hello-frame-profiler: text workload + Toggle drives the repaints the profiler measures",
+        "demo r907_frame_profiler.py: 31 asserts, deterministic invariants on wall-clock timing data",
+        "self-grep: 2nd consumer of per-window-telemetry; NO generic-wrapper lift (decision-free map ops)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (runtime frame_timing 8, rpc frame_timings 6, shell r907 5)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "demo r907_frame_profiler.py PASS on release binary (1.9s)",
+        "invariant: total >= build+encode+render and total == build+encode+render+other exactly",
+        "invariant: min<=mean<=max; window_len == min(frame_count,120); mean_fps == 1e6/mean_total_us",
+        "unknown window id rejected -32602; FrameTimingsUnavailable before first paint"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "render_us is CPU-side GPU-submit cost, not GPU execution wall-clock (timestamp queries deferred)",
+        "TUI publishes no frame timings -> FrameTimingsUnavailable (different paint model, cf cache_stats)",
+        "on-screen frame-time HUD deferred (needs view->stats plumbing; RPC read is the §2 primary path)",
+        "live animation-clock single-step vs scene/tick substep asymmetry unchanged (frame_pacing carry)"
+      ],
+      "publishable_decision_summary": "R907 frame-timing profiler substrate + scene/frame_timings RPC: per-window build/encode/render/total us rolling window (the measure-first pro-tool-performance axis), AI-introspectable without pixels",
+      "publishable_changes_bullets": [
+        "pinion-runtime frame_timing.rs: FrameTiming + FrameTimingStats(ring 120) + FrameTimingsSnapshot",
+        "record() pushes ring + cumulative count; snapshot() folds last + min/mean/max + phase means + fps",
+        "shell ShellCore: frame_timings_per_window + record_frame_timing + frame_timings_for_window project",
+        "shell render_window: build/encode/render/total Instant spans -> record_frame_timing after finalize",
+        "shell: WindowScopedRpcReads.frame_timings + window_scoped resolve + remove_window cleanup term",
+        "rpc scene/frame_timings mirrors cache_stats: DispatchContext field + builder + handler + routing",
+        "example hello-frame-profiler: text workload + Toggle drives the repaints the profiler measures",
+        "demo r907_frame_profiler.py: 31 asserts, deterministic invariants on wall-clock timing data",
+        "self-grep: 2nd consumer of per-window-telemetry; NO generic-wrapper lift (decision-free map ops)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (runtime frame_timing 8, rpc frame_timings 6, shell r907 5)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello pedantic clean",
+        "demo r907_frame_profiler.py PASS on release binary (1.9s)",
+        "invariant: total >= build+encode+render and total == build+encode+render+other exactly",
+        "invariant: min<=mean<=max; window_len == min(frame_count,120); mean_fps == 1e6/mean_total_us",
+        "unknown window id rejected -32602; FrameTimingsUnavailable before first paint"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "render_us is CPU-side GPU-submit cost, not GPU execution wall-clock (timestamp queries deferred)",
+        "TUI publishes no frame timings -> FrameTimingsUnavailable (different paint model, cf cache_stats)",
+        "on-screen frame-time HUD deferred (needs view->stats plumbing; RPC read is the §2 primary path)",
+        "live animation-clock single-step vs scene/tick substep asymmetry unchanged (frame_pacing carry)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

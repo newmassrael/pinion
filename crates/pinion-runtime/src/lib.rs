@@ -29,6 +29,7 @@ pub mod command;
 pub mod core_shell;
 pub mod focus;
 pub mod frame_pacing;
+pub mod frame_timing;
 pub mod input;
 pub mod intent_queue;
 pub mod layout;
@@ -46,6 +47,7 @@ pub use command::{
 pub use core_shell::{CoreShell, DispatchTail, StateChange, DEFAULT_WINDOW};
 pub use focus::FocusManager;
 pub use frame_pacing::{clamp_frame_dt, substep, FixedTimestep, PacingState, MAX_FRAME_DT_SECS};
+pub use frame_timing::{FrameTiming, FrameTimingStats, FrameTimingsSnapshot, FRAME_TIMING_WINDOW};
 pub use input::{rect_for_tag, InputRouter, PanRelease, Modifiers, PointerId, Touch, TouchPhase};
 pub use intent_queue::{walk_scene_and_drain, walk_scene_and_drain_immediate, IntentQueue};
 pub use layout::{compute_layout, compute_layout_with_scroll_dirty};

@@ -50,7 +50,8 @@ use pinion_rpc::{
 use pinion_runtime::{
     clamp_frame_dt, compute_layout, compute_layout_with_scroll_dirty, rect_for_tag,
     walk_scene_and_drain_immediate, CommandExecutor, CoreShell, DispatchTail,
-    FocusManager, IntentQueue, PanRelease, Modifiers, PointerId, Touch, TouchPhase,
+    FocusManager, FrameTiming, FrameTimingStats, FrameTimingsSnapshot, IntentQueue,
+    PanRelease, Modifiers, PointerId, Touch, TouchPhase,
 };
 use pinion_text::LayoutCache;
 
@@ -63,11 +64,15 @@ use super::WidgetView;
 /// ([`ShellCore::window_scoped_rpc_reads`]) stays one call inside the
 /// dispatch fn's 100-line clippy budget — the R888 extraction's
 /// successor shape, grown a field per axis (R682.B cache stats / R885
-/// input / R888 pacing / R889 unknown-window verdict).
+/// input / R888 pacing / R889 unknown-window verdict / R907 frame
+/// timings).
 struct WindowScopedRpcReads {
     /// R682.B — `scene/cache_stats`; `None` → `CacheStatsUnavailable`
     /// (known window that has not painted, or embedder opt-out).
     cache_stats: Option<FragmentCacheStats>,
+    /// R907 — `scene/frame_timings`; `None` →
+    /// `FrameTimingsUnavailable` (window has not painted yet).
+    frame_timings: Option<FrameTimingsSnapshot>,
     /// R885 — `scene/input_state`; `None` → `InputStateUnavailable`.
     input_state: Option<pinion_core::InputStateSnapshot>,
     /// R888 — `scene/pacing_state`; `None` → `PacingStateUnavailable`.
@@ -367,6 +372,18 @@ pub struct ShellCore<V: WidgetView> {
     /// [`Self::fragment_cache_stats_for_window`] without crossing the
     /// substrate ↔ vello boundary (the stats struct is GUI-agnostic).
     fragment_cache_stats_per_window: HashMap<String, FragmentCacheStats>,
+    /// R907 §5.16 §5.7 — per-window frame-timing profiler accumulator.
+    /// The surface-side `AppShell::render_window` brackets each paint's
+    /// build / encode / render phases with [`std::time::Instant`] spans
+    /// and calls [`Self::record_frame_timing`] to feed the rolling
+    /// window. Unlike the `Copy` [`FragmentCacheStats`] (published
+    /// every frame), the non-`Copy`
+    /// [`pinion_runtime::FrameTimingStats`] ring is the SSOT here and
+    /// the `Copy` [`FrameTimingsSnapshot`] is projected at the AI-paced
+    /// `scene/frame_timings` read ([`Self::frame_timings_for_window`]),
+    /// so the O(window) fold never touches the 60–144fps paint path
+    /// (the R890 "store the source, project on read" rule).
+    frame_timings_per_window: HashMap<String, FrameTimingStats>,
 
     /// R763 §5.36 §5.22 — in-progress pointer-driven text selection.
     ///
@@ -505,6 +522,7 @@ impl<V: WidgetView> ShellCore<V> {
             pending_immediate_dt_per_window: HashMap::new(),
             sim_accumulator_per_window: HashMap::new(),
             fragment_cache_stats_per_window: HashMap::new(),
+            frame_timings_per_window: HashMap::new(),
             text_select_drag: None,
         }
     }
@@ -841,6 +859,7 @@ impl<V: WidgetView> ShellCore<V> {
         let wid = window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
         WindowScopedRpcReads {
             cache_stats: self.fragment_cache_stats_for_window(wid),
+            frame_timings: self.frame_timings_for_window(wid),
             input_state: self.core.input_state_snapshot(wid, Some(self.modifiers)),
             pacing_state: self.core.is_window_known(wid).then(|| {
                 match self.target_fps_for_window(wid) {
@@ -877,6 +896,19 @@ impl<V: WidgetView> ShellCore<V> {
             .insert(window_id.to_owned(), stats);
     }
 
+    /// R907 §5.16 §5.7 — record one painted frame's phase breakdown
+    /// into the window's rolling [`FrameTimingStats`] window. The
+    /// surface-side `AppShell::render_window` calls this after each
+    /// paint cycle with the measured build / encode / render / total
+    /// microseconds. Lazily inserts a fresh accumulator on the
+    /// window's first paint (the `sim_accumulator_per_window` pattern).
+    pub fn record_frame_timing(&mut self, window_id: &str, timing: FrameTiming) {
+        self.frame_timings_per_window
+            .entry(window_id.to_owned())
+            .or_default()
+            .record(timing);
+    }
+
     /// R683 §5.16 §5.41 — drop every shell-side per-window state
     /// entry for `window_id`.
     ///
@@ -884,8 +916,9 @@ impl<V: WidgetView> ShellCore<V> {
     /// R680 atomic 2 / R681 atomic 3 / R682 atomic 3 / R829 / R831
     /// (`redraw_requested_per_window`, `last_paint_instants`,
     /// `target_fps_per_window`, `fragment_cache_stats_per_window`,
-    /// `pending_immediate_dt_per_window`, `sim_accumulator_per_window`)
-    /// and drops the entry keyed by `window_id`. Then forwards into
+    /// `frame_timings_per_window`, `pending_immediate_dt_per_window`,
+    /// `sim_accumulator_per_window`) and drops the entry keyed by
+    /// `window_id`. Then forwards into
     /// [`pinion_runtime::CoreShell::remove_window`] which drains the
     /// runtime-side per-window state (`routers`, `window_owners`).
     ///
@@ -918,6 +951,10 @@ impl<V: WidgetView> ShellCore<V> {
                 .is_some()
             | self
                 .fragment_cache_stats_per_window
+                .remove(window_id)
+                .is_some()
+            | self
+                .frame_timings_per_window
                 .remove(window_id)
                 .is_some();
         // CoreShell::remove_window returns true on at least one
@@ -966,6 +1003,25 @@ impl<V: WidgetView> ShellCore<V> {
         self.fragment_cache_stats_per_window
             .get(window_id)
             .copied()
+    }
+
+    /// R907 §5.16 §5.7 — project the window's rolling
+    /// [`FrameTimingStats`] into a `Copy` [`FrameTimingsSnapshot`].
+    ///
+    /// `None` for a window that has not painted yet (no accumulator
+    /// inserted) OR whose accumulator is still empty (lazy-inserted but
+    /// not yet recorded) — the bootstrap state `scene/frame_timings`
+    /// surfaces as `FrameTimingsUnavailable`, distinct from an all-zero
+    /// snapshot. `Some` after the first paint, carrying the last
+    /// frame's phases plus the window's min/mean/max + per-phase means.
+    ///
+    /// The O(window) aggregate fold runs here, at the AI-paced RPC
+    /// read — never on the paint path ([[r890]] read-time projection).
+    #[must_use]
+    pub fn frame_timings_for_window(&self, window_id: &str) -> Option<FrameTimingsSnapshot> {
+        self.frame_timings_per_window
+            .get(window_id)
+            .and_then(FrameTimingStats::snapshot)
     }
 
     /// R682 §5.16 atomic 3 — iterator over every window key that has
@@ -3121,6 +3177,9 @@ impl<V: WidgetView> ShellCore<V> {
             // `*Unavailable` token).
             if let Some(stats) = window_reads.cache_stats {
                 ctx = ctx.with_fragment_cache_stats(stats);
+            }
+            if let Some(timings) = window_reads.frame_timings {
+                ctx = ctx.with_frame_timings(timings);
             }
             if let Some(snapshot) = window_reads.input_state {
                 ctx = ctx.with_input_state(snapshot);

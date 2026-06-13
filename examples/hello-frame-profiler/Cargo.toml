@@ -1,0 +1,42 @@
+[package]
+name = "hello-frame-profiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R907 §5.16 §5.7 frame-timing profiler substrate consumer — a small text workload plus a Toggle that drives repaints; each painted frame's build/encode/render/total µs feed the per-window rolling window read back via scene/frame_timings (the measure-first pro-tool-performance axis, AI-introspectable without pixels)"
+publish = false
+
+[[bin]]
+name = "hello-frame-profiler"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Toggle reused purely as the RPC-drivable repaint trigger (each
+# flip re-runs the view → a measured frame); the substrate under test
+# is the frame-timing profiler, not the Toggle.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively); the §5.16 R907 frame-timing instrumentation
+# lives in `AppShell::render_window`.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the `HelloFrameProfilerRenderer` struct emitted by
+# `build.rs` names `::vello::*` directly.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

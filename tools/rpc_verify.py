@@ -424,6 +424,23 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None and isinstance(resp.result, dict)
         return resp.result
 
+    def frame_timings(self, *, window: Optional[str] = None) -> dict[str, Any]:
+        """`scene/frame_timings` typed wrapper (R907 §5.16 §5.7).
+
+        Returns the per-window frame-timing profiler snapshot: the last
+        frame's `{build,encode,render,total,other}_us`, the rolling
+        `window` min/mean/max + per-phase means, the cumulative
+        `frame_count`, the `window_len`, and `mean_fps`. Raises if the
+        window has not painted yet (`-32602 FrameTimingsUnavailable`);
+        gate on it via [`wait_frame_timings`] before a hard read.
+        """
+        params: dict[str, Any] = {}
+        if window is not None:
+            params["window"] = window
+        resp = self.request("scene/frame_timings", params)
+        assert resp is not None and isinstance(resp.result, dict)
+        return resp.result
+
     def intents(self) -> list[Any]:
         resp = self.request("scene/intents")
         assert resp is not None

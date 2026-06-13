@@ -3393,6 +3393,91 @@ mod r682_fragment_cache_stats_substrate {
 }
 
 // ─────────────────────────────────────────────────────────────
+// R907 §5.16 §5.7 — frame-timing profiler substrate. Mirrors the
+// R682 cache-stats topology: the surface records per-frame phase
+// samples, the substrate projects a rolling-window snapshot at the
+// AI-paced `scene/frame_timings` read.
+// ─────────────────────────────────────────────────────────────
+mod r907_frame_timing_substrate {
+    use pinion_runtime::FrameTiming;
+    use pinion_shell::ShellCore;
+
+    use super::TestView;
+
+    #[test]
+    fn r907_timings_for_unknown_window_returns_none() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let core: ShellCore<TestView> = ShellCore::new();
+        // No paint recorded → bootstrap state, projected as None
+        // (mapped to FrameTimingsUnavailable at the RPC layer).
+        assert!(core.frame_timings_for_window("main").is_none());
+        assert!(core.frame_timings_for_window("inspector").is_none());
+    }
+
+    #[test]
+    fn r907_record_round_trips_projected_snapshot() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.record_frame_timing("main", FrameTiming::new(300, 100, 80, 540));
+        let snap = core
+            .frame_timings_for_window("main")
+            .expect("recorded → projectable");
+        assert_eq!(snap.frame_count, 1);
+        assert_eq!(snap.window_len, 1);
+        assert_eq!(snap.last, FrameTiming::new(300, 100, 80, 540));
+        assert_eq!(snap.mean_total_us, 540);
+        // total >= build + encode + render holds on the projected last.
+        assert!(snap.last.total_us >= snap.last.phase_sum_us());
+    }
+
+    #[test]
+    fn r907_record_per_window_independent() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.record_frame_timing("main", FrameTiming::new(100, 50, 30, 200));
+        core.record_frame_timing("inspector", FrameTiming::new(900, 80, 60, 1100));
+        let main = core.frame_timings_for_window("main").unwrap();
+        let inspector = core.frame_timings_for_window("inspector").unwrap();
+        assert_eq!(main.last.total_us, 200);
+        assert_eq!(inspector.last.total_us, 1100);
+        // Counters are per-window, not shared.
+        assert_eq!(main.frame_count, 1);
+        assert_eq!(inspector.frame_count, 1);
+    }
+
+    #[test]
+    fn r907_cumulative_count_survives_window_aggregate() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        // Three frames of growing cost: count = 3, window folds all 3.
+        core.record_frame_timing("main", FrameTiming::new(100, 50, 30, 200));
+        core.record_frame_timing("main", FrameTiming::new(200, 60, 40, 400));
+        core.record_frame_timing("main", FrameTiming::new(300, 70, 50, 600));
+        let snap = core.frame_timings_for_window("main").unwrap();
+        assert_eq!(snap.frame_count, 3);
+        assert_eq!(snap.window_len, 3);
+        assert_eq!(snap.min_total_us, 200);
+        assert_eq!(snap.max_total_us, 600);
+        assert_eq!(snap.mean_total_us, (200 + 400 + 600) / 3);
+        // The freshest frame is `last`, not the max.
+        assert_eq!(snap.last.total_us, 600);
+    }
+
+    #[test]
+    fn r907_remove_window_drops_timing_entry() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.register_window("inspector");
+        core.record_frame_timing("inspector", FrameTiming::new(100, 50, 30, 200));
+        assert!(core.frame_timings_for_window("inspector").is_some());
+        // Cleanup removes the per-window accumulator (the remove_window
+        // OR-of-maps reports at least one map carried an entry).
+        assert!(core.remove_window("inspector"));
+        assert!(core.frame_timings_for_window("inspector").is_none());
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
 // R885 §5.49 — scene/input_state RPC dispatch wire (READ peer of the
 // out-of-band input writes; each read mirrors its write shape)
 // ─────────────────────────────────────────────────────────────

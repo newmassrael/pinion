@@ -18,6 +18,7 @@ pub mod dispatch;
 pub mod dry_run;
 pub mod focus;
 pub mod font;
+pub mod frame_timings;
 pub mod intents;
 pub mod intervene;
 pub mod invoke;
@@ -47,6 +48,9 @@ pub use animate_control::{
 };
 pub use animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
 pub use cache_stats::{cache_stats, CacheStatsError, CacheStatsOutcome, CacheStatsRect};
+pub use frame_timings::{
+    frame_timings, FrameTimingsError, FrameTimingsLast, FrameTimingsOutcome, FrameTimingsWindow,
+};
 pub use caret_state::{caret_state, CaretStateError, CaretStateOutcome};
 pub use commands::{
     list_in_flight_commands, list_pending_commands, CommandsError, PendingCommandView,

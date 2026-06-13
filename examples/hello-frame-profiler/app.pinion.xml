@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R907 §5.16 §5.7 frame-timing profiler consumer: pinion-forge renderer
+  manifest for hello-frame-profiler. Emits `HelloFrameProfilerRenderer`
+  (Vello-backed RenderContext + RenderSurface + Renderer wrapper).
+  Same single-source emit template as the rest of the gallery; only the
+  struct name diverges. `aa` omitted -> defaults to Area (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloFrameProfilerRenderer"
+        backend="vello"/>

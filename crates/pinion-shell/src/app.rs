@@ -619,9 +619,23 @@ impl<V: WidgetView> AppShell<V> {
         // `&Cow<'static, str>` to `&str` through `Cow`'s `Deref`
         // impl, so the substrate signature (which takes `&str`)
         // stays unchanged.
+        // R907 §5.16 §5.7 — frame-timing profiler: bracket the whole
+        // productive frame (build → finalize) and each named phase with
+        // `Instant` spans. `build_us` is the `view` + layout pass; the
+        // scope below measures `encode_us` (to_vello_cached) and
+        // `render_us` (GPU submit) into these vars; `total_us` closes
+        // after finalize. `total >= build + encode + render` holds by
+        // construction (disjoint sub-intervals).
+        let frame_start = Instant::now();
         let paint_scene = self
             .core
             .compute_paint_scene_for_window(&spec_id, w.get(), h.get());
+        let build_us = instant_delta_us(frame_start, Instant::now());
+        // Assigned exactly once inside the paint scope below; the
+        // scope's `else { return; }` arms diverge, so the fall-through
+        // path that reaches `record_frame_timing` always assigns both.
+        let encode_us;
+        let render_us;
         // Re-acquire the slot mutable borrow now that the substrate
         // borrow released, then bind window + renderer for the
         // intrinsic-resize hook + vello submit. Scope the borrow
@@ -681,6 +695,7 @@ impl<V: WidgetView> AppShell<V> {
         // via the generic box path and `scene/snapshot from: paint`
         // observes it (§2 #1 + #7). The pre-R705 opaque
         // `paint_adapter::paint_focus_ring` vello stroke is retired.
+        let encode_start = Instant::now();
         paint_adapter::to_vello_cached(
             &paint_scene,
             &|_b: &BoxNode| None,
@@ -689,6 +704,7 @@ impl<V: WidgetView> AppShell<V> {
             &mut slot.fragment_cache,
             &mut slot.vello_scene,
         );
+        encode_us = instant_delta_us(encode_start, Instant::now());
         // R51.109.1 §5.41 — call through the backend-agnostic
         // `WidgetRenderer` trait. `VelloContext::base_color` carries
         // the window background sampled from
@@ -696,9 +712,11 @@ impl<V: WidgetView> AppShell<V> {
         // forwards to the inherent `<R>::render(frame, base_color)`.
         // `renderer.render` auto-derefs through `Box<R>` because the
         // `WidgetRenderer` trait is in scope.
+        let render_start = Instant::now();
         if let Err(e) = renderer.render(&slot.vello_scene, VelloContext { base_color: base }) {
             eprintln!("shell: vello render: {e}");
         }
+        render_us = instant_delta_us(render_start, Instant::now());
             size
         };
         // The post-paint helpers (`emit_accesskit_for_window`,
@@ -786,6 +804,15 @@ impl<V: WidgetView> AppShell<V> {
         // cross-window paint cycles no longer flip-flop hover state.
         self.core
             .finalize_frame_for_window(target_window, paint_scene);
+        // R907 §5.16 §5.7 — close the total-frame span (after finalize)
+        // and record the sample into the per-window rolling profiler
+        // window. The O(window) aggregate fold is deferred to the
+        // AI-paced `scene/frame_timings` read, never run here.
+        let total_us = instant_delta_us(frame_start, Instant::now());
+        self.core.record_frame_timing(
+            target_window,
+            pinion_runtime::FrameTiming::new(build_us, encode_us, render_us, total_us),
+        );
     }
 
     /// R670.B §5.16 — per-window IME candidate publish helper.
@@ -1806,6 +1833,16 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
 ///
 /// R51.92.1 §5.40 — module-local helper (sole caller is
 /// [`AppShell::handle_key_press`] above).
+/// R907 §5.16 §5.7 — microseconds elapsed between two `Instant`s for
+/// the frame-timing profiler, saturating to `u64::MAX`.
+/// `saturating_duration_since` guards the (monotonic-clock-impossible)
+/// `end < start` case; the `u128 → u64` cast saturates a frame longer
+/// than ~584,000 years, which keeps clippy + the type honest without a
+/// real overflow path.
+fn instant_delta_us(start: Instant, end: Instant) -> u64 {
+    u64::try_from(end.saturating_duration_since(start).as_micros()).unwrap_or(u64::MAX)
+}
+
 fn named_key_str(named: NamedKey) -> Option<&'static str> {
     match named {
         NamedKey::ArrowLeft => Some("ArrowLeft"),

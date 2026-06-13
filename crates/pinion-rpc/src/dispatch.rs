@@ -36,6 +36,7 @@ use serde_json::Value;
 use crate::animation_state::{animation_state, AnimationStateError, AnimationStateOutcome};
 use crate::cache_stats::{cache_stats, CacheStatsError, CacheStatsOutcome};
 use crate::caret_state::{caret_state, CaretStateOutcome};
+use crate::frame_timings::{frame_timings, FrameTimingsError, FrameTimingsOutcome};
 use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
 use crate::simulate::{simulate, simulate_with_owner, SimulateError, SimulateStep};
@@ -381,6 +382,17 @@ pub struct DispatchContext<'a> {
     /// cases so the AI client can distinguish "no data yet" from
     /// "all zeros".
     pub fragment_cache_stats: Option<pinion_runtime::FragmentCacheStats>,
+
+    /// R907 §5.16 §5.7 — per-window frame-timing profiler snapshot.
+    /// Resolved by the embedder before dispatch (the
+    /// [`Self::fragment_cache_stats`] pattern:
+    /// `pinion-shell::ShellCore::window_scoped_rpc_reads` reads
+    /// `ShellCore::frame_timings_for_window`). Consumed by
+    /// `scene/frame_timings` to surface per-phase build/encode/render
+    /// timings + rolling-window aggregates. `None` →
+    /// `FrameTimingsUnavailable` (window has not painted yet, or
+    /// headless embedder opt-out), distinct from an all-zero snapshot.
+    pub frame_timings: Option<pinion_runtime::FrameTimingsSnapshot>,
 
     /// R885 §5.49 — out-of-band input state snapshot, resolved by the
     /// embedder before dispatch (the [`Self::fragment_cache_stats`]
@@ -890,6 +902,7 @@ impl<'a> DispatchContext<'a> {
             deferred_inputs: None,
             window_id: None,
             fragment_cache_stats: None,
+            frame_timings: None,
             input_state: None,
             pacing_state: None,
             unknown_window: None,
@@ -1037,6 +1050,21 @@ impl<'a> DispatchContext<'a> {
         stats: pinion_runtime::FragmentCacheStats,
     ) -> Self {
         self.fragment_cache_stats = Some(stats);
+        self
+    }
+
+    /// R907 §5.16 §5.7 — builder: attach the per-window frame-timing
+    /// profiler snapshot the embedder pre-resolved from
+    /// `pinion-shell::ShellCore::frame_timings_for_window`.
+    /// `scene/frame_timings` reads the slot; every other arm ignores
+    /// it. `None` (the default) causes `scene/frame_timings` to
+    /// surface `FrameTimingsUnavailable`.
+    #[must_use]
+    pub fn with_frame_timings(
+        mut self,
+        snapshot: pinion_runtime::FrameTimingsSnapshot,
+    ) -> Self {
+        self.frame_timings = Some(snapshot);
         self
     }
 
@@ -1217,6 +1245,11 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // context for the dispatch lifetime; `scene/cache_stats` reads
     // the value, every other arm ignores it.
     let fragment_cache_stats = ctx.fragment_cache_stats;
+    // R907 §5.16 — per-window frame-timing profiler snapshot the
+    // embedder pre-resolved from `ShellCore::frame_timings_for_window`.
+    // Copy out for the dispatch lifetime; `scene/frame_timings` reads
+    // it, every other arm ignores it.
+    let frame_timings = ctx.frame_timings;
     // R885 §5.49 — embedder-resolved input-state snapshot; taken out
     // for the dispatch lifetime (the slot is per-dispatch like the
     // inbox), `scene/input_state` is the only consumer.
@@ -1513,6 +1546,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
         ),
         "scene/cache_stats" => (
             handle_scene_cache_stats(fragment_cache_stats),
+            HandlerKind::Read,
+        ),
+        "scene/frame_timings" => (
+            handle_scene_frame_timings(frame_timings),
             HandlerKind::Read,
         ),
         "scene/pacing_state" => (
@@ -4074,6 +4111,36 @@ fn cache_stats_error_to_rpc(err: &CacheStatsError) -> RpcError {
         CacheStatsError::CacheStatsUnavailable => {
             RpcError::invalid_params("fragment cache stats unavailable for this window")
                 .with_data_string("CacheStatsUnavailable")
+        }
+    }
+}
+
+/// R907 §5.16 §5.7 — `scene/frame_timings` typed handler. Projects the
+/// embedder-resolved [`pinion_runtime::FrameTimingsSnapshot`] onto the
+/// nested wire shape (last frame + window aggregates + cumulative
+/// count); `None` surfaces `FrameTimingsUnavailable`.
+fn handle_scene_frame_timings(
+    snapshot: Option<pinion_runtime::FrameTimingsSnapshot>,
+) -> Result<Value, RpcError> {
+    match frame_timings(snapshot) {
+        Ok(outcome) => frame_timings_outcome_to_json(outcome),
+        Err(err) => Err(frame_timings_error_to_rpc(&err)),
+    }
+}
+
+fn frame_timings_outcome_to_json(out: FrameTimingsOutcome) -> Result<Value, RpcError> {
+    serde_json::to_value(out).map_err(|e| {
+        RpcError::internal_error(format!(
+            "scene/frame_timings: failed to serialize outcome: {e}",
+        ))
+    })
+}
+
+fn frame_timings_error_to_rpc(err: &FrameTimingsError) -> RpcError {
+    match err {
+        FrameTimingsError::FrameTimingsUnavailable => {
+            RpcError::invalid_params("frame timings unavailable for this window")
+                .with_data_string("FrameTimingsUnavailable")
         }
     }
 }
