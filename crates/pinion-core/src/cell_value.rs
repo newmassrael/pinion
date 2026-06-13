@@ -151,10 +151,11 @@ impl CellValue {
     /// no-op guard ("re-setting the same value journals nothing") and a
     /// modified-from-default check ("is this property changed?") are both correct
     /// for every kind. The single home for "same typed value (NaN-safe)" — the
-    /// node-editor's `apply_set_default` no-op guard (R900) and the property
-    /// grid's modified indicator (R919) are its two consumers; both must avoid
-    /// the `#[derive(PartialEq)]` on this type, which is right there and wrong for
-    /// `NaN`. Peer of [`matches_filter`](Self::matches_filter) (typed equality vs
+    /// node-editor's `apply_set_default` no-op guard (R900), the property grid's
+    /// modified indicator (R919), and the inspector's multi-object "Multiple
+    /// Values" detection (R922, "do the selected objects agree?") are its three
+    /// consumers; all must avoid the `#[derive(PartialEq)]` on this type, which
+    /// is right there and wrong for `NaN`. Peer of [`matches_filter`](Self::matches_filter) (typed equality vs
     /// a wire string) and [`sort_cmp`](Self::sort_cmp) (the ordering it builds on).
     #[must_use]
     pub fn value_eq(&self, other: &Self) -> bool {

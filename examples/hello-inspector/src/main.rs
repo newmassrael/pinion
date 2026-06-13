@@ -1,71 +1,95 @@
-//! `hello-inspector` — R909 §5.38 §5.22 selection-driven detail panel.
+//! `hello-inspector` — R909/R910/R922 §5.38 §5.22 §5.40 multi-object inspector.
 //!
 //! ## What this demonstrates
 //!
-//! The central editor interaction loop — *select an object, inspect and
-//! edit its properties* — that Unreal's "Details" panel, Unity's
-//! Inspector, and Qt's `QtPropertyBrowser` are built around. The
-//! `hello-property-grid` (R836) shows the typed-property machinery for
-//! **one fixed object**; this binding adds the missing piece: a panel
-//! whose property set is **driven by a selection** across several
-//! heterogeneous objects (each with its own property schema), so
-//! selecting a different object re-populates the inspector.
+//! The editor "Details" panel that Unreal, Unity (Inspector), and Qt
+//! (`QtPropertyBrowser`) are built around — extended (R922) to its
+//! **multi-object** core: select several scene objects at once and the
+//! panel shows the properties **common** to every selected object, a
+//! "Multiple Values" placeholder wherever the selected objects disagree,
+//! and an edit that writes the new value into **all** of them at once.
 //!
-//! - An object list (left) of scene entities — a Player, a Camera, a
-//!   Light — each carrying a different typed [`CellValue`] property set.
-//! - A detail panel (right) that reactively reflects the selected
-//!   object: a header (its name) plus a row per property (name + a
-//!   type-appropriate value visual — a colour swatch, an On/Off pill,
-//!   text).
+//! - An object list (left) of scene entities — Player / Camera / Light —
+//!   each carrying a typed [`CellValue`] property schema that *shares a
+//!   common base* (`Visible` / `Layer` / `Locked`, the actor-level
+//!   properties) plus its own type-specific tail. The list is a
+//!   **multi-select** WAI-ARIA `listbox`.
+//! - A Details panel (right) that reactively reflects the selection: a
+//!   header (the selection summary — one object's name, or "N objects
+//!   selected"), then one row per property **common to all selected
+//!   objects**. A common property whose value is identical across the
+//!   selection shows that value; one that differs shows **"Multiple
+//!   Values"**.
 //! - Selection + editing over RPC (the §2 #2 AI-first primary path):
-//!   `scene/invoke .../select {index}` selects, `scene/intervene
-//!   .../value.<i>` edits the selected object's property (the
-//!   [`CellValue::with_intervene`] typed-write — the 4th consumer of the
-//!   `CellValue` substrate after property-grid, data-grid, and the
-//!   node-editor port defaults).
+//!   `invoke select/toggle/extend_to/select_all/clear` drive the
+//!   multi-select model; `intervene value.<i>` edits common property `i`
+//!   on **every** selected object at once (the [`CellValue::with_intervene`]
+//!   typed write). `query mixed.<i>` reports whether the selected objects
+//!   disagree on that property.
 //!
-//! Per-object state is isolated: editing the Player's `Health` leaves
-//! the Camera untouched, and re-selecting the Player shows the edit.
+//! ## Substrate reuse (no hand-rolled equivalents)
+//!
+//! - The selection is the pure [`VirtualSelect`] index-set model (R780),
+//!   embedded directly as a shared reactive holder — flat, stable object
+//!   indices, so `Shift`-range / `Ctrl`-toggle / `Ctrl+A` come from the
+//!   model, not a re-implementation. (A collapse/expand tree, whose flat
+//!   index shifts, needs a stable-id model instead — R902's `TreeSelect`.)
+//! - Modifier-aware click selection decodes through [`SelectionChord`];
+//!   keyboard navigation through [`clamp_nav`] + [`MultiSelectKeyOp`]; the
+//!   composite pointer wire through [`split_send_payload`]. Keyboard,
+//!   pointer, and RPC all converge on one select / toggle / extend funnel.
+//! - "Do the selected objects agree on this value?" is
+//!   [`CellValue::value_eq`] — the NaN-safe total-order equality (the 3rd
+//!   consumer after the node-editor no-op guard and the property grid's
+//!   modified indicator), never the derived IEEE `PartialEq`.
+//! - The `"selection"` / `"selected"` wire reuses the canonical
+//!   [`selection_to_value`] / [`selected_to_value`] encode + [`read_selection`]
+//!   / [`read_selected`] decode SSOTs.
+//! - The object list a11y is the multi-select [`listbox_option_nodes`]
+//!   (`aria-multiselectable`, per-option `aria-selected` + the active
+//!   descendant as `focused`).
 //!
 //! ## Scope
 //!
-//! The novel contribution is the *selection → reactive inspector*
-//! binding + per-object heterogeneous schemas. The value model and
-//! typed write reuse [`CellValue`] wholesale (no re-implementation).
-//! Selection is driven three ways — RPC (`invoke select` / `intervene
-//! selected`), keyboard (Arrow / Home / End via `apply_key`), and a
-//! pointer click on an object row (the R910 composite-send wire) — all
-//! sharing one select funnel. Property *editing* is the AI-first RPC
-//! `intervene value.<i>` path (the §2 primary); inline click-to-edit
-//! cell delegates (the property-grid's popup/scrub richness) are the
-//! remaining documented follow-up.
+//! The §2 AI-first vertical slice — multi-select (RPC + keyboard +
+//! modifier-click), common-property derivation, mixed-value reporting, and
+//! the write-all edit — is complete and entirely RPC-driven. Inline
+//! click-to-edit cell delegates (the property grid's popup / scrub
+//! richness) remain the documented GUI follow-up; the property *value* is
+//! edited through `intervene value.<i>` (the §2 primary path).
 //!
 //! ## Verification
 //!
-//! `tools/demos/r909_inspector.py` drives selection + editing over RPC
-//! (select each object → its schema; intervene a property → re-query;
-//! per-object isolation across re-selects). `tools/demos/r910_inspector_interaction.py`
-//! drives the pointer click-to-select + keyboard navigation. All
-//! scene-as-data, deterministic
+//! `tools/demos/r909_inspector.py` drives single-select + editing (the
+//! cardinality-1 degenerate case), `tools/demos/r910_inspector_interaction.py`
+//! the pointer/keyboard navigation, and `tools/demos/r922_inspector_multi.py`
+//! the multi-object core (multi-select, common-property panel, "Multiple
+//! Values", write-all). All scene-as-data, deterministic
 //! ([[ai-first-rpc-introspection-obligation]],
 //! [[introspection-from-paint-not-screen]]).
 
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use pinion_core::cell_value::CellValue;
-use pinion_core::composite_tag::send_activation_index;
+use pinion_core::composite_tag::split_send_payload;
+use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
-use pinion_core::external::query_proxy_external_impl;
+use pinion_core::input::{is_activation_event, Modifiers, MultiSelectKeyOp, SelectionChord};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle, Size,
-    TextStyle,
+    AlignItems, Border, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle,
+    Size, TextStyle,
+};
+use pinion_core::widgets::virtual_select::{
+    clamp_nav, read_selected, read_selection, selected_to_value, selection_to_value, SelectionMode,
+    VirtualSelect,
 };
 use pinion_core::{ColorRole, Frame, Owner, Scene, Signal, use_theme};
-#[cfg(test)]
-use pinion_a11y::{AriaRole, WidgetA11y};
+use pinion_a11y::{listbox_option_nodes, AccessNode, AriaRole, ListOption, WidgetA11y};
+use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
 
@@ -80,6 +104,8 @@ const WIN_W: u32 = 460;
 const WIN_H: u32 = 420;
 
 const INSPECTOR_TAG: &str = "inspector";
+/// The object-list container tag — the `aria-multiselectable` `listbox`.
+const OBJECTS_TAG: &str = "inspector_objects";
 const THEME_TAG: &str = "app";
 
 const TITLE_FONT_PX: u32 = 16;
@@ -118,15 +144,20 @@ impl ObjectData {
     }
 }
 
-/// Three heterogeneous scene objects — each a different property schema,
-/// which is what makes the inspector a *selection-driven* panel rather
-/// than a fixed property grid.
+/// Three scene objects. Each carries the **common actor base** — `Visible`
+/// (Bool), `Layer` (Int), `Locked` (Bool) — that the multi-object panel
+/// edits across a selection, plus its own type-specific tail. The base
+/// values are deliberately a mix so a multi-selection surfaces both uniform
+/// rows (Player + Camera both `Layer 1`) and "Multiple Values" rows (all
+/// three: `Layer` is `1, 1, 2`).
 fn default_objects() -> Vec<ObjectData> {
     vec![
         ObjectData::new(
             "Player",
             vec![
                 Property::new("Visible", CellValue::Bool(true)),
+                Property::new("Layer", CellValue::Int(1)),
+                Property::new("Locked", CellValue::Bool(false)),
                 Property::new("Health", CellValue::Int(100)),
                 Property::new("Speed", CellValue::Float(6.5)),
                 Property::new(
@@ -142,7 +173,9 @@ fn default_objects() -> Vec<ObjectData> {
         ObjectData::new(
             "Main Camera",
             vec![
-                Property::new("Active", CellValue::Bool(true)),
+                Property::new("Visible", CellValue::Bool(true)),
+                Property::new("Layer", CellValue::Int(1)),
+                Property::new("Locked", CellValue::Bool(false)),
                 Property::new("Field of View", CellValue::Float(60.0)),
                 Property::new(
                     "Projection",
@@ -156,7 +189,9 @@ fn default_objects() -> Vec<ObjectData> {
         ObjectData::new(
             "Sun Light",
             vec![
-                Property::new("Enabled", CellValue::Bool(true)),
+                Property::new("Visible", CellValue::Bool(false)),
+                Property::new("Layer", CellValue::Int(2)),
+                Property::new("Locked", CellValue::Bool(true)),
                 Property::new("Intensity", CellValue::Float(1.2)),
                 Property::new("Color", CellValue::Color(Color::rgb(0xff, 0xe0, 0x9a))),
                 Property::new("Cast Shadows", CellValue::Bool(false)),
@@ -172,72 +207,228 @@ fn use_objects() -> Rc<Signal<Vec<ObjectData>>> {
     owner.cache("inspector.objects", || Signal::new(default_objects()))
 }
 
-/// The shared selection index (clamped to the object range by the
-/// External's `select`).
-fn use_selected() -> Rc<Signal<usize>> {
-    let owner = Owner::current().expect("use_selected requires an active Owner scope");
-    owner.cache("inspector.selected", || Signal::new(0usize))
+/// The shared multi-select model over the object list (R922): the pure
+/// [`VirtualSelect`] index-set, persisted across rebuilds like the object
+/// model. Constructed in `Multi` mode so `Shift`-range / `Ctrl`-toggle /
+/// `Ctrl+A` all hold an arbitrary set with an anchor.
+fn use_selection() -> Rc<Signal<VirtualSelect>> {
+    let owner = Owner::current().expect("use_selection requires an active Owner scope");
+    owner.cache("inspector.selection", || {
+        let mut model = VirtualSelect::new(default_objects().len(), SelectionMode::Multi);
+        // Boot with the first object selected (the pre-R922 default selection,
+        // so the single-object demos keep their cardinality-1 contract).
+        model.select(0);
+        Signal::new(model)
+    })
+}
+
+// ─── Common-property derivation (the SSOT shared by query / paint / a11y) ──
+
+/// One row of the multi-object Details panel: a property common to every
+/// selected object, plus whether the selection agrees on its value.
+#[derive(Clone, Debug, PartialEq)]
+struct CommonProperty {
+    name: String,
+    /// The representative value — the first selected object's value for this
+    /// property (the order source). Concrete even when [`mixed`](Self::mixed),
+    /// so an AI reading `value.<i>` always sees a typed value.
+    value: CellValue,
+    /// `true` when the selected objects disagree on this property's value (the
+    /// Details "Multiple Values" state), tested with the NaN-safe
+    /// [`CellValue::value_eq`].
+    mixed: bool,
+}
+
+/// The properties common to **every** selected object, in the order they
+/// appear on the lowest-indexed selected object (a stable order: it does not
+/// shift when the cursor moves within a fixed selection). A property is
+/// "common" when every selected object has one with the same name **and**
+/// [`CellValue` kind](pinion_core::cell_value::CellKind). The free-fn SSOT
+/// that the RPC query, the paint, and the a11y all derive their rows from —
+/// one gate, no drift (R886.1). An empty selection yields no rows.
+///
+/// For a single selection this is exactly that object's full property list
+/// (every value trivially uniform), so the cardinality-1 case is the
+/// pre-R922 fixed Details panel.
+fn common_properties(objects: &[ObjectData], selection: &BTreeSet<usize>) -> Vec<CommonProperty> {
+    let mut indices = selection.iter().copied().filter(|&i| i < objects.len());
+    let Some(first) = indices.next() else {
+        return Vec::new();
+    };
+    let others: Vec<usize> = indices.collect();
+    let mut rows = Vec::new();
+    for prop in &objects[first].properties {
+        let kind = prop.value.kind();
+        // Every other selected object must carry a same-name, same-kind
+        // property for this to be common; collect their values to test mix.
+        let mut values = Vec::with_capacity(others.len());
+        let mut all_have = true;
+        for &j in &others {
+            if let Some(p) =
+                objects[j].properties.iter().find(|p| p.name == prop.name && p.value.kind() == kind)
+            {
+                values.push(&p.value);
+            } else {
+                all_have = false;
+                break;
+            }
+        }
+        if !all_have {
+            continue;
+        }
+        let mixed = values.iter().any(|v| !v.value_eq(&prop.value));
+        rows.push(CommonProperty { name: prop.name.clone(), value: prop.value.clone(), mixed });
+    }
+    rows
+}
+
+/// The Details header text for a selection: the lone object's name when one
+/// is selected, "N objects selected" for several, "No selection" for none.
+fn selection_summary(objects: &[ObjectData], selection: &BTreeSet<usize>) -> String {
+    let live: Vec<usize> = selection.iter().copied().filter(|&i| i < objects.len()).collect();
+    match live.as_slice() {
+        [] => "No selection".to_owned(),
+        [only] => objects[*only].name.clone(),
+        many => format!("{} objects selected", many.len()),
+    }
 }
 
 // ─── External (the §5.15 AI surface) ──────────────────────────────
 
-/// The inspector coordinator: owns the object model + selection, and
-/// exposes selection-relative property query / intervene plus a `select`
-/// action. The selection-relative addressing (`value.<i>` resolves
-/// against the *selected* object) is what distinguishes this from the
-/// fixed `PropertyGridExternal`.
+/// The inspector coordinator: owns the object model + a [`VirtualSelect`]
+/// multi-selection, and exposes the selection wire (mirroring
+/// `VirtualSelectExternal`) plus selection-relative common-property
+/// query / intervene. The `value.<i>` addressing resolves against the
+/// derived common-property list, and an edit writes through to every
+/// selected object — the Unreal multi-object Details core.
 struct InspectorExternal {
     objects: Rc<Signal<Vec<ObjectData>>>,
-    selected: Rc<Signal<usize>>,
+    selection: Rc<Signal<VirtualSelect>>,
 }
 
 impl InspectorExternal {
-    fn new(objects: Rc<Signal<Vec<ObjectData>>>, selected: Rc<Signal<usize>>) -> Self {
-        Self { objects, selected }
+    fn new(objects: Rc<Signal<Vec<ObjectData>>>, selection: Rc<Signal<VirtualSelect>>) -> Self {
+        Self { objects, selection }
     }
 
     fn object_count(&self) -> usize {
         self.objects.get().len()
     }
 
-    /// The selected index, clamped to a valid object (the model is never
-    /// empty, but a stale selection past a shrunk model clamps).
-    fn sel(&self) -> usize {
-        self.selected.get().min(self.object_count().saturating_sub(1))
+    /// The selected object indices.
+    fn selection_set(&self) -> BTreeSet<usize> {
+        self.selection.get().selection().clone()
     }
 
-    /// Select object `idx`. `false` (no change) if out of range.
-    fn select(&self, idx: usize) -> bool {
-        if idx < self.object_count() {
-            self.selected.set(idx);
-            true
-        } else {
-            false
+    /// The active (cursor) object index, the `"selected"` value.
+    fn cursor(&self) -> Option<usize> {
+        self.selection.get().cursor()
+    }
+
+    /// The Details rows for the current selection (the [`common_properties`]
+    /// SSOT over the live object + selection state).
+    fn common(&self) -> Vec<CommonProperty> {
+        common_properties(&self.objects.get(), &self.selection_set())
+    }
+
+    // ─── selection funnel (keyboard / pointer / RPC all converge here) ──
+
+    fn select(&self, index: usize) {
+        self.selection.set_with(|prev| {
+            let mut next = prev.clone();
+            next.select(index);
+            next
+        });
+    }
+
+    fn toggle(&self, index: usize) {
+        self.selection.set_with(|prev| {
+            let mut next = prev.clone();
+            next.toggle(index);
+            next
+        });
+    }
+
+    fn extend_to(&self, index: usize) {
+        self.selection.set_with(|prev| {
+            let mut next = prev.clone();
+            next.extend_to(index);
+            next
+        });
+    }
+
+    fn select_all(&self) {
+        self.selection.set_with(|prev| {
+            let mut next = prev.clone();
+            next.select_all();
+            next
+        });
+    }
+
+    fn clear(&self) {
+        self.selection.set_with(|prev| {
+            let mut next = prev.clone();
+            next.clear();
+            next
+        });
+    }
+
+    fn set_selection(&self, indices: BTreeSet<usize>) {
+        self.selection.set_with(move |prev| {
+            let mut next = prev.clone();
+            next.set_selection(&indices);
+            next
+        });
+    }
+
+    /// The R902.1 modifier-aware composite click wire: `inspector#<i>` routes
+    /// the pointer arc here as `"<i>:<Event>[:<mods>]"`. On the activation
+    /// edge the held modifiers decode through [`SelectionChord`] — `Ctrl`/`Cmd`
+    /// toggles, `Shift` extends the range from the anchor, a plain click
+    /// replaces — exactly the keyboard ops, one funnel.
+    fn handle_send(&self, payload: &str) {
+        let Some((key, event_name, modifiers)) = split_send_payload(payload) else {
+            return;
+        };
+        let Some(index) = key.parse::<usize>().ok() else {
+            return;
+        };
+        if is_activation_event(event_name) {
+            match SelectionChord::from_modifiers(modifiers) {
+                SelectionChord::Toggle => self.toggle(index),
+                SelectionChord::Extend => self.extend_to(index),
+                SelectionChord::Replace => self.select(index),
+            }
         }
     }
 
-    /// Property count of the selected object.
-    fn row_count(&self) -> usize {
-        self.objects.get().get(self.sel()).map_or(0, |o| o.properties.len())
-    }
-
-    /// Typed write into the selected object's property `idx`, reusing
-    /// [`CellValue::with_intervene`] (the same path the property grid /
-    /// data grid use) so a choice sets its option by index and a colour
-    /// parses a hex string.
-    fn set_property(&self, idx: usize, value: IntrospectValue) -> Result<(), InterveneError> {
-        let sel = self.sel();
-        let current = self
-            .objects
-            .get()
-            .get(sel)
-            .and_then(|o| o.properties.get(idx))
-            .map(|p| p.value.clone())
-            .ok_or(InterveneError::UnknownPath)?;
-        let new_value = current.with_intervene(value)?;
+    /// Typed write into common property `idx` across **every** selected
+    /// object (the multi-object edit). Validates the wire value once against
+    /// the representative (surfacing a `TypeMismatch` without mutating), then
+    /// applies [`CellValue::with_intervene`] per object so a choice sets its
+    /// own option index and a colour parses the hex against its own value.
+    fn set_property(&self, idx: usize, value: &IntrospectValue) -> Result<(), InterveneError> {
+        let common = self.common();
+        let target = common.get(idx).ok_or(InterveneError::UnknownPath)?;
+        // All selected objects share this common property's kind, so the
+        // representative's accept/reject is the verdict for the whole write.
+        target.value.with_intervene(value.clone())?;
+        let name = target.name.clone();
+        let kind = target.value.kind();
+        let selection = self.selection_set();
+        let value = value.clone();
         self.objects.set_with(move |prev| {
             let mut next = prev.clone();
-            next[sel].properties[idx].value = new_value.clone();
+            for &j in &selection {
+                if let Some(prop) = next
+                    .get_mut(j)
+                    .and_then(|o| o.properties.iter_mut().find(|p| p.name == name && p.value.kind() == kind))
+                {
+                    if let Ok(updated) = prop.value.with_intervene(value.clone()) {
+                        prop.value = updated;
+                    }
+                }
+            }
             next
         });
         Ok(())
@@ -248,16 +439,16 @@ impl core::fmt::Debug for InspectorExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("InspectorExternal")
             .field("object_count", &self.object_count())
-            .field("selected", &self.sel())
+            .field("selection", &self.selection_set())
+            .field("cursor", &self.cursor())
             .finish()
     }
 }
 
-// R913.1 — the Gui+Rpc / Framework / UiThreadSync `impl External`
-// skeleton is the `query_proxy_external_impl!` SSOT (a config-holder
-// External whose state is a shared reactive holder); hand-rolling it was
-// a [[use-substrate-not-hand-rolled-equivalent]] miss. The macro needs
-// the `ExternalIntrospect` impl below.
+// R913.1 — the Gui+Rpc / Framework / UiThreadSync `impl External` skeleton is
+// the `query_proxy_external_impl!` SSOT (a config-holder External whose state
+// is a shared reactive holder); hand-rolling it was a
+// [[use-substrate-not-hand-rolled-equivalent]] miss.
 query_proxy_external_impl!(InspectorExternal);
 
 impl ExternalIntrospect for InspectorExternal {
@@ -265,42 +456,61 @@ impl ExternalIntrospect for InspectorExternal {
         IntrospectSchema::new(&[
             ("object_count", "int"),
             ("selected", "int"),
-            ("selected_name", "string"),
+            ("selection", "json"),
+            ("selection_count", "int"),
+            ("selection_summary", "string"),
+            ("mode", "string"),
             ("row_count", "int"),
             ("object_name.<j>", "string"),
             ("name.<i>", "string"),
             ("kind.<i>", "string"),
             ("value.<i>", "json"),
+            ("mixed.<i>", "bool"),
             ("select", "int"),
+            ("toggle", "int"),
+            ("extend_to", "int"),
+            ("select_all", "null"),
+            ("clear", "null"),
             ("send", "string"),
         ])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         let objects = self.objects.get();
-        let sel = self.sel();
+        let selection = self.selection_set();
         match path {
             "object_count" => Some(IntrospectValue::Int(i64::try_from(objects.len()).ok()?)),
-            "selected" => Some(IntrospectValue::Int(i64::try_from(sel).ok()?)),
-            "selected_name" => objects.get(sel).map(|o| IntrospectValue::Text(o.name.clone())),
-            "row_count" => Some(IntrospectValue::Int(i64::try_from(self.row_count()).ok()?)),
+            "selected" => Some(selected_to_value(self.cursor())),
+            "selection" => Some(selection_to_value(&selection)),
+            "selection_count" => Some(IntrospectValue::Int(i64::try_from(selection.len()).ok()?)),
+            "selection_summary" => {
+                Some(IntrospectValue::Text(selection_summary(&objects, &selection)))
+            }
+            "mode" => Some(IntrospectValue::Text("multi".to_owned())),
+            "row_count" => {
+                Some(IntrospectValue::Int(i64::try_from(common_properties(&objects, &selection).len()).ok()?))
+            }
             _ => {
                 if let Some(j) = path.strip_prefix("object_name.") {
                     let j: usize = j.parse().ok()?;
                     return objects.get(j).map(|o| IntrospectValue::Text(o.name.clone()));
                 }
-                let props = &objects.get(sel)?.properties;
+                let common = common_properties(&objects, &selection);
                 if let Some(i) = path.strip_prefix("name.") {
                     let i: usize = i.parse().ok()?;
-                    return props.get(i).map(|p| IntrospectValue::Text(p.name.clone()));
+                    return common.get(i).map(|c| IntrospectValue::Text(c.name.clone()));
                 }
                 if let Some(i) = path.strip_prefix("kind.") {
                     let i: usize = i.parse().ok()?;
-                    return props.get(i).map(|p| IntrospectValue::Text(p.value.kind().name().to_owned()));
+                    return common.get(i).map(|c| IntrospectValue::Text(c.value.kind().name().to_owned()));
                 }
                 if let Some(i) = path.strip_prefix("value.") {
                     let i: usize = i.parse().ok()?;
-                    return props.get(i).map(|p| p.value.to_introspect());
+                    return common.get(i).map(|c| c.value.to_introspect());
+                }
+                if let Some(i) = path.strip_prefix("mixed.") {
+                    let i: usize = i.parse().ok()?;
+                    return common.get(i).map(|c| IntrospectValue::Bool(c.mixed));
                 }
                 None
             }
@@ -309,52 +519,104 @@ impl ExternalIntrospect for InspectorExternal {
 
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
-            "object_count" | "selected_name" | "row_count" => Err(InterveneError::ReadOnly),
+            "object_count" | "selection_count" | "selection_summary" | "mode" | "row_count" => {
+                Err(InterveneError::ReadOnly)
+            }
+            // Admin / restore: move the cursor + replace the selection with a
+            // single row (`Int`) or clear it (`Null`).
             "selected" => match value {
                 IntrospectValue::Int(n) => {
                     let idx = usize::try_from(n).map_err(|_| InterveneError::OutOfRange)?;
-                    if self.select(idx) {
-                        Ok(())
-                    } else {
-                        Err(InterveneError::OutOfRange)
+                    if idx >= self.object_count() {
+                        return Err(InterveneError::OutOfRange);
                     }
+                    self.select(idx);
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.clear();
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            // Admin / restore: replace the whole selection set (out-of-range
+            // indices are dropped by the model); `Null` clears.
+            "selection" => match value {
+                IntrospectValue::Json(serde_json::Value::Array(items)) => {
+                    let indices: BTreeSet<usize> = items
+                        .iter()
+                        .filter_map(serde_json::Value::as_u64)
+                        .filter_map(|v| usize::try_from(v).ok())
+                        .collect();
+                    self.set_selection(indices);
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.set_selection(BTreeSet::new());
+                    Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
             },
             _ => {
+                if path.starts_with("name.")
+                    || path.starts_with("kind.")
+                    || path.starts_with("mixed.")
+                    || path.starts_with("object_name.")
+                {
+                    return Err(InterveneError::ReadOnly);
+                }
                 let Some(idx_str) = path.strip_prefix("value.") else {
                     return Err(InterveneError::UnknownPath);
                 };
                 let idx: usize = idx_str.parse().map_err(|_| InterveneError::UnknownPath)?;
-                self.set_property(idx, value)
+                self.set_property(idx, &value)
             }
         }
     }
 
     fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let int_arg = |a: IntrospectValue| match a {
+            IntrospectValue::Int(n) => usize::try_from(n).map_err(|_| InvokeError::TypeMismatch),
+            _ => Err(InvokeError::TypeMismatch),
+        };
         match path {
-            "select" => match args {
-                IntrospectValue::Int(n) => {
-                    let idx = usize::try_from(n).map_err(|_| InvokeError::TypeMismatch)?;
-                    if self.select(idx) {
-                        Ok(IntrospectValue::Int(n))
-                    } else {
-                        Err(InvokeError::Rejected)
-                    }
+            "select" => {
+                let idx = int_arg(args)?;
+                if idx >= self.object_count() {
+                    return Err(InvokeError::Rejected);
                 }
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            // R910 — the composite send wire: a click on an `inspector#<i>`
-            // object row (or the keyboard nav in `apply_key`) routes here
-            // as `"<i>:<EventName>"`. Select on the activation edge
-            // (PointerUp / KeyboardActivate), ignoring the enter/down/leave
-            // half of the pointer cycle so hover does not select.
+                self.select(idx);
+                Ok(selected_to_value(self.cursor()))
+            }
+            "toggle" => {
+                let idx = int_arg(args)?;
+                if idx >= self.object_count() {
+                    return Err(InvokeError::Rejected);
+                }
+                self.toggle(idx);
+                Ok(selection_to_value(&self.selection_set()))
+            }
+            "extend_to" => {
+                let idx = int_arg(args)?;
+                if idx >= self.object_count() {
+                    return Err(InvokeError::Rejected);
+                }
+                self.extend_to(idx);
+                Ok(selection_to_value(&self.selection_set()))
+            }
+            "select_all" => {
+                self.select_all();
+                Ok(selection_to_value(&self.selection_set()))
+            }
+            "clear" => {
+                self.clear();
+                Ok(selected_to_value(self.cursor()))
+            }
+            // R910/R902.1 — the composite pointer wire (modifier-aware).
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
-                    if let Some(idx) = send_activation_index(payload) {
-                        self.select(idx);
-                    }
-                    Ok(IntrospectValue::Bool(true))
+                    self.handle_send(payload);
+                    Ok(selection_to_value(&self.selection_set()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -364,41 +626,55 @@ impl ExternalIntrospect for InspectorExternal {
 }
 
 fn make_inspector_external() -> InspectorExternal {
-    InspectorExternal::new(use_objects(), use_selected())
-}
-
-/// Resolve the keyboard target object index for a nav key, read off the
-/// External's introspect (`object_count` + `selected`). Arrow Down/Right
-/// = next, Up/Left = previous (both clamp), Home/End = first/last.
-/// `None` for a non-nav key or an empty model.
-fn resolve_target_index(intro: Option<&dyn ExternalIntrospect>, key: &str) -> Option<usize> {
-    let intro = intro?;
-    let count = match intro.query("object_count")? {
-        IntrospectValue::Int(n) => usize::try_from(n).ok()?,
-        _ => return None,
-    };
-    if count == 0 {
-        return None;
-    }
-    let last = count - 1;
-    let cur = match intro.query("selected")? {
-        IntrospectValue::Int(n) => usize::try_from(n).unwrap_or(0),
-        _ => 0,
-    };
-    match key {
-        "ArrowDown" | "ArrowRight" => Some((cur + 1).min(last)),
-        "ArrowUp" | "ArrowLeft" => Some(cur.saturating_sub(1)),
-        "Home" => Some(0),
-        "End" => Some(last),
-        _ => None,
-    }
+    InspectorExternal::new(use_objects(), use_selection())
 }
 
 // ─── View ─────────────────────────────────────────────────────────
 
-/// A type-appropriate value visual for the right column of a property
-/// row: a swatch for a colour, an On/Off pill for a bool, the display
-/// text otherwise.
+/// The number of scene objects (fixed). The selection bitmap in
+/// [`InspectorState`] is sized by it; `default_objects().len()` must match it
+/// (asserted in tests).
+const N_OBJECTS: usize = 3;
+
+/// The widget state read back from the External's introspect: the selected
+/// object indices + the active (cursor) index. `Copy` (the `WidgetCore::State`
+/// bound), so the multi-selection is an **absolute-index bitmap** rather than a
+/// `Vec` ([[virtualized-multiselect-state-window-independent]] — the
+/// `hello-multi-select` `[bool; N]` shape): `selected[i]` is object `i`'s
+/// membership, `cursor` the active (WAI-ARIA active-descendant) object. Drives
+/// both the painted selection highlight and the a11y `aria-selected` / active
+/// descendant.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct InspectorState {
+    selected: [bool; N_OBJECTS],
+    cursor: Option<usize>,
+}
+
+impl InspectorState {
+    /// Build the bitmap state from the decoded selection set + cursor.
+    fn from_parts(selection: &[usize], cursor: Option<usize>) -> Self {
+        let mut selected = [false; N_OBJECTS];
+        for &i in selection {
+            if let Some(slot) = selected.get_mut(i) {
+                *slot = true;
+            }
+        }
+        Self { selected, cursor }
+    }
+
+    fn is_selected(&self, index: usize) -> bool {
+        self.selected.get(index).copied().unwrap_or(false)
+    }
+
+    /// The selected object indices as a set — for the object-count-agnostic
+    /// [`common_properties`] / [`selection_summary`] derivations.
+    fn selection_set(&self) -> BTreeSet<usize> {
+        (0..N_OBJECTS).filter(|&i| self.selected[i]).collect()
+    }
+}
+
+/// A type-appropriate value visual for the right column of a property row: a
+/// swatch for a colour, an On/Off pill for a bool, the display text otherwise.
 fn value_visual(value: &CellValue, fg: Color, accent: Color, muted: Color) -> Scene {
     match value {
         CellValue::Color(c) => {
@@ -447,16 +723,31 @@ fn value_visual(value: &CellValue, fg: Color, accent: Color, muted: Color) -> Sc
     }
 }
 
-/// One inspector property row: `name` (left, muted) + value visual
-/// (right). Tagged `prop_<i>` so the demo can locate it.
-fn property_row(index: usize, prop: &Property, fg: Color, muted: Color, accent: Color) -> Scene {
+/// The right-column visual for a common-property row: the typed value when
+/// the selection agrees, the "Multiple Values" placeholder when it differs
+/// (the Unreal mixed-value state — paint peer of `query mixed.<i>`).
+fn detail_value_visual(prop: &CommonProperty, fg: Color, accent: Color, muted: Color) -> Scene {
+    if prop.mixed {
+        Scene::Text(TextNode::styled(
+            "Multiple Values",
+            Rect::default(),
+            TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(muted),
+        ))
+    } else {
+        value_visual(&prop.value, fg, accent, muted)
+    }
+}
+
+/// One Details row: `name` (left, muted) + value visual (right). Tagged
+/// `prop_<i>` so the demo can locate it.
+fn property_row(index: usize, prop: &CommonProperty, fg: Color, muted: Color, accent: Color) -> Scene {
     let name = Scene::Text(TextNode::styled(
         prop.name.clone(),
         Rect::default(),
         TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(muted),
     ));
     Scene::Container(
-        ContainerNode::new(vec![name, value_visual(&prop.value, fg, accent, muted)])
+        ContainerNode::new(vec![name, detail_value_visual(prop, fg, accent, muted)])
             .with_tag(format!("prop_{index}"))
             .with_layout(
                 LayoutStyle::new()
@@ -468,22 +759,29 @@ fn property_row(index: usize, prop: &Property, fg: Color, muted: Color, accent: 
     )
 }
 
-/// One object-list entry. The selected one carries an accent background.
-fn object_row(index: usize, name: &str, selected: bool, fg: Color, accent: Color) -> Scene {
+/// One object-list entry. A selected row carries an accent background; the
+/// active (cursor) row additionally carries a light border — the paint peer
+/// of the a11y `aria-selected` (fill) and active descendant (`focused`,
+/// border).
+fn object_row(index: usize, name: &str, selected: bool, is_cursor: bool, fg: Color, accent: Color) -> Scene {
     let fill = if selected { accent } else { Color::TRANSPARENT };
     let text_fg = if selected { Color::rgb(0xff, 0xff, 0xff) } else { fg };
+    let mut style = BoxStyle::filled(fill).with_corner_radius(5);
+    if is_cursor {
+        style = style.with_border(Border::new(Color::rgb(0xff, 0xff, 0xff), 2));
+    }
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             name.to_owned(),
             Rect::default(),
             TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(text_fg),
         ))])
-        // Composite tag `inspector#<i>`: the input router's `#` split
-        // (R51.42) routes a click here to the primary External's `send`
-        // wire as `"<i>:<EventName>"` — the hello-tabs / radio-group
-        // click-to-select pattern.
+        // Composite tag `inspector#<i>`: the input router's `#` split (R51.42)
+        // routes a click here to the primary External's `send` wire as
+        // `"<i>:<EventName>[:<mods>]"` — the hello-tabs / radio-group click
+        // pattern, now modifier-aware for multi-select.
         .with_tag(format!("{INSPECTOR_TAG}#{index}"))
-        .with_style(BoxStyle::filled(fill).with_corner_radius(5))
+        .with_style(style)
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
@@ -493,10 +791,10 @@ fn object_row(index: usize, name: &str, selected: bool, fg: Color, accent: Color
     )
 }
 
-/// view-fn (§6.3): pure sync. `selected` comes from the External's
+/// view-fn (§6.3): pure sync. The selection comes from the External's
 /// introspect (`read_state`); the object data is read reactively.
 #[allow(clippy::trivially_copy_pass_by_ref)]
-fn view(selected: usize, _frame: &Frame) -> Scene {
+fn view(state: &InspectorState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let on_surface = theme.resolve(ColorRole::OnSurface);
     let surface = theme.resolve(ColorRole::Surface);
@@ -505,7 +803,7 @@ fn view(selected: usize, _frame: &Frame) -> Scene {
     let accent = theme.resolve(ColorRole::Accent);
 
     let objects = use_objects().get();
-    let sel = selected.min(objects.len().saturating_sub(1));
+    let selection = state.selection_set();
 
     let title = Scene::Text(TextNode::styled(
         "Scene Inspector",
@@ -513,14 +811,15 @@ fn view(selected: usize, _frame: &Frame) -> Scene {
         TextStyle::new().with_size_px(TITLE_FONT_PX).with_weight(FontWeight::BOLD).with_fg(on_surface),
     ));
 
-    // Left: object list.
+    // Left: the multi-select object list.
     let list_rows: Vec<Scene> = objects
         .iter()
         .enumerate()
-        .map(|(i, o)| object_row(i, &o.name, i == sel, on_surface, accent))
+        .map(|(i, o)| object_row(i, &o.name, state.is_selected(i), state.cursor == Some(i), on_surface, accent))
         .collect();
     let list = Scene::Container(
         ContainerNode::new(list_rows)
+            .with_tag(OBJECTS_TAG)
             .with_style(BoxStyle::filled(surface_alt).with_corner_radius(6))
             .with_layout(
                 LayoutStyle::new()
@@ -530,18 +829,15 @@ fn view(selected: usize, _frame: &Frame) -> Scene {
             ),
     );
 
-    // Right: detail panel for the selected object.
-    let selected_obj = objects.get(sel);
+    // Right: the Details panel for the common properties of the selection.
     let header = Scene::Text(TextNode::styled(
-        selected_obj.map_or_else(|| "—".to_owned(), |o| o.name.clone()),
+        selection_summary(&objects, &selection),
         Rect::default(),
         TextStyle::new().with_size_px(HEADER_FONT_PX).with_weight(FontWeight::BOLD).with_fg(on_surface),
     ));
     let mut detail_children = vec![header];
-    if let Some(obj) = selected_obj {
-        for (i, prop) in obj.properties.iter().enumerate() {
-            detail_children.push(property_row(i, prop, on_surface, muted, accent));
-        }
+    for (i, prop) in common_properties(&objects, &selection).iter().enumerate() {
+        detail_children.push(property_row(i, prop, on_surface, muted, accent));
     }
     let detail = Scene::Container(
         ContainerNode::new(detail_children)
@@ -575,66 +871,132 @@ fn view(selected: usize, _frame: &Frame) -> Scene {
 
 // ─── Binding ──────────────────────────────────────────────────────
 
-/// `WidgetView` binding. `#[widget]` derives the [`WidgetCore`] /
-/// `WidgetA11y` / `WidgetView` trio; the selection lives in
-/// [`InspectorExternal`] and is read back through introspect.
+/// `WidgetView` binding. `#[widget]` derives the [`WidgetCore`] / `WidgetView`
+/// pair; `a11y_manual` keeps the multi-select listbox a11y below
+/// (`aria-multiselectable` is past the macro's single-node derive). The
+/// selection lives in [`InspectorExternal`] and is read back through introspect.
 ///
 /// [`WidgetCore`]: pinion_core::WidgetCore
 #[widget(
     tag = "inspector",
-    state = usize,
+    state = InspectorState,
     event = (),
-    title = "pinion hello-inspector (R909 §5.38 detail panel)",
+    title = "pinion hello-inspector (R922 §5.40 multi-object Details)",
     renderer = HelloInspectorRenderer,
     initial_size = (WIN_W, WIN_H),
     external = make_inspector_external,
-    role = Group,
+    a11y_manual,
     apply_key,
 )]
 struct InspectorView;
 
 impl InspectorView {
-    /// Read the selection index off the primary External's introspect.
-    fn read_state(scene: &Scene) -> usize {
+    /// Read the selection (set + cursor) off the primary External's introspect,
+    /// reusing the canonical [`read_selection`] / [`read_selected`] decoders.
+    fn read_state(scene: &Scene) -> InspectorState {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                if let Some(IntrospectValue::Int(n)) = intro.query("selected") {
-                    return usize::try_from(n).unwrap_or(0);
-                }
+                return InspectorState::from_parts(&read_selection(intro), read_selected(intro));
             }
         }
-        0
+        InspectorState::default()
     }
 
-    fn view(state: usize, frame: Frame) -> Scene {
-        view(state, &frame)
+    fn view(state: InspectorState, frame: Frame) -> Scene {
+        view(&state, &frame)
     }
 
     fn event_name(_event: ()) -> &'static str {
         "__internal__"
     }
 
-    /// Keyboard navigation over the object list: Arrow keys move the
-    /// selection (clamped), Home/End jump to the ends. Routes through the
-    /// External's `send` wire (`"<i>:KeyboardActivate"`) so keyboard and
-    /// pointer share the one select path.
-    fn apply_key(
-        scene: &mut Scene,
-        _focused: Option<&str>,
-        key: &str,
-        _modifiers: pinion_core::Modifiers,
-    ) -> bool {
+    /// Keyboard control over the multi-select object list, reusing the policy
+    /// substrate (no scroll — the object list is not virtualized, so the full
+    /// `nav_select_key` controller does not apply): `Ctrl+A` selects all,
+    /// `Ctrl+Space` toggles the active row ([`MultiSelectKeyOp`]); Arrow /
+    /// Home / End navigate ([`clamp_nav`]) and, with `Shift`, extend the
+    /// range. Every op goes through the External's `select` / `toggle` /
+    /// `extend_to` / `select_all` funnel — keyboard and RPC are one path.
+    fn apply_key(scene: &mut Scene, _focused: Option<&str>, key: &str, modifiers: Modifiers) -> bool {
         let Scene::External(node) = scene else {
             return false;
         };
-        let Some(target) = resolve_target_index(node.handle.introspect(), key) else {
+        let Some(intro) = node.handle.introspect() else {
             return false;
         };
-        let Some(intro) = node.handle.introspect_mut() else {
+        let count = read_count(intro);
+        let cursor = read_selected(intro);
+
+        match MultiSelectKeyOp::classify(key, modifiers) {
+            Some(MultiSelectKeyOp::SelectAll) => {
+                if let Some(intro) = node.handle.introspect_mut() {
+                    let _ = intro.invoke("select_all", IntrospectValue::Null);
+                }
+                return true;
+            }
+            Some(MultiSelectKeyOp::ToggleCursor) => {
+                if let (Some(intro), Some(c)) = (node.handle.introspect_mut(), cursor) {
+                    if let Ok(c) = i64::try_from(c) {
+                        let _ = intro.invoke("toggle", IntrospectValue::Int(c));
+                    }
+                }
+                return cursor.is_some();
+            }
+            None => {}
+        }
+
+        // Plain / Shift navigation. `clamp_nav` maps the key to a target index
+        // (no paging here, so page == item_count); Shift extends, else replace.
+        let Some(target) = clamp_nav(cursor, key, count, count) else {
             return false;
         };
-        let _ = intro.invoke("send", IntrospectValue::Text(format!("{target}:KeyboardActivate")));
+        let action = if modifiers.shift_key() { "extend_to" } else { "select" };
+        if let (Some(intro), Ok(t)) = (node.handle.introspect_mut(), i64::try_from(target)) {
+            let _ = intro.invoke(action, IntrospectValue::Int(t));
+        }
         true
+    }
+}
+
+/// The object count off the External's introspect (the `clamp_nav` /
+/// activation bound).
+fn read_count(intro: &dyn ExternalIntrospect) -> usize {
+    match intro.query("object_count") {
+        Some(IntrospectValue::Int(n)) => usize::try_from(n).unwrap_or(0),
+        _ => 0,
+    }
+}
+
+impl WidgetA11y for InspectorView {
+    /// The object list as a multi-select WAI-ARIA `listbox`
+    /// ([`listbox_option_nodes`]): the container `aria-multiselectable`, each
+    /// row an `option` whose `aria-selected` is its membership and whose
+    /// `focused` (active descendant) is the cursor — the a11y peer of the
+    /// painted accent fill (selected) + border (cursor), one gate. The root
+    /// `Group` references the listbox; the Details rows enrich their names
+    /// from the painted text.
+    fn access_node(state: &InspectorState, _focused: Option<&str>) -> Vec<AccessNode> {
+        let objects = use_objects().get();
+        let tags: Vec<String> = (0..objects.len()).map(|i| format!("{INSPECTOR_TAG}#{i}")).collect();
+        let options: Vec<ListOption<'_>> = objects
+            .iter()
+            .enumerate()
+            .map(|(i, o)| ListOption {
+                tag: &tags[i],
+                label: Some(&o.name),
+                state: ListboxItemState::Idle,
+                selected: state.is_selected(i),
+                focused: state.cursor == Some(i),
+            })
+            .collect();
+
+        let mut nodes = vec![
+            AccessNode::new(INSPECTOR_TAG, AriaRole::Group)
+                .with_name("Scene Inspector")
+                .with_child(OBJECTS_TAG),
+        ];
+        nodes.extend(listbox_option_nodes(OBJECTS_TAG, "Scene objects", true, &options));
+        nodes
     }
 }
 
@@ -651,86 +1013,151 @@ mod tests {
         owner.run(make_inspector_external)
     }
 
+    fn json_indices(v: &IntrospectValue) -> Vec<u64> {
+        match v {
+            IntrospectValue::Json(serde_json::Value::Array(items)) => {
+                items.iter().filter_map(serde_json::Value::as_u64).collect()
+            }
+            _ => panic!("expected a JSON array, got {v:?}"),
+        }
+    }
+
+    const SHIFT: Modifiers = Modifiers { shift: true, ctrl: false, alt: false, meta: false };
+    const CTRL: Modifiers = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+
     #[test]
     fn r909_default_selection_is_first_object() {
         let e = ext();
         assert_eq!(e.object_count(), 3);
-        assert_eq!(e.sel(), 0);
-        assert_eq!(e.query("selected_name"), Some(IntrospectValue::Text("Player".to_owned())));
+        assert_eq!(e.cursor(), Some(0));
+        assert!(e.query("selected_name").is_none(), "no selected_name slot (use selection_summary)");
+        assert_eq!(
+            e.query("selection_summary"),
+            Some(IntrospectValue::Text("Player".to_owned()))
+        );
     }
 
     #[test]
-    fn r909_select_re_targets_the_property_set() {
+    fn r909_select_re_targets_the_common_property_set() {
         let mut e = ext();
-        // Player has 5 props, Main Camera has 3.
-        assert_eq!(e.row_count(), 5);
+        // Single selection: the common list IS that object's full schema.
+        // Player has 7 props, Main Camera has 5.
+        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(7)));
         e.invoke("select", IntrospectValue::Int(1)).unwrap();
-        assert_eq!(e.sel(), 1);
-        assert_eq!(e.row_count(), 3);
-        assert_eq!(e.query("selected_name"), Some(IntrospectValue::Text("Main Camera".to_owned())));
-        assert_eq!(e.query("name.0"), Some(IntrospectValue::Text("Active".to_owned())));
+        assert_eq!(e.cursor(), Some(1));
+        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(5)));
+        assert_eq!(e.query("selection_summary"), Some(IntrospectValue::Text("Main Camera".to_owned())));
+        assert_eq!(e.query("name.0"), Some(IntrospectValue::Text("Visible".to_owned())));
     }
 
     #[test]
     fn r909_select_out_of_range_is_rejected() {
         let mut e = ext();
         assert!(e.invoke("select", IntrospectValue::Int(9)).is_err());
-        assert_eq!(e.sel(), 0, "selection unchanged after a rejected select");
+        assert_eq!(e.cursor(), Some(0), "selection unchanged after a rejected select");
     }
 
     #[test]
-    fn r909_intervene_edits_the_selected_object_only() {
+    fn r909_intervene_edits_the_selected_object_only_when_single() {
         let mut e = ext();
-        // Edit Player.Health (index 1) to 42.
-        e.intervene("value.1", IntrospectValue::Int(42)).unwrap();
-        assert_eq!(e.query("value.1"), Some(IntrospectValue::Int(42)));
-        // Camera (object 1) is untouched: its value.1 is Field of View.
+        // Single-selected Player: edit Health (index 3) to 42.
+        e.intervene("value.3", IntrospectValue::Int(42)).unwrap();
+        assert_eq!(e.query("value.3"), Some(IntrospectValue::Int(42)));
+        // Camera (object 1) is untouched.
         e.invoke("select", IntrospectValue::Int(1)).unwrap();
-        assert_eq!(e.query("value.1"), Some(IntrospectValue::Float(60.0)));
-        // Re-select Player: the edit persisted (per-object state).
+        // Camera index 3 is Field of View (60.0), not Health.
+        assert_eq!(e.query("value.3"), Some(IntrospectValue::Float(60.0)));
+        // Re-select Player: the edit persisted.
         e.invoke("select", IntrospectValue::Int(0)).unwrap();
-        assert_eq!(e.query("value.1"), Some(IntrospectValue::Int(42)));
+        assert_eq!(e.query("value.3"), Some(IntrospectValue::Int(42)));
     }
 
     #[test]
-    fn r909_intervene_selected_axis_moves_the_selection() {
+    fn r922_multi_select_panel_is_the_common_properties() {
         let mut e = ext();
-        e.intervene("selected", IntrospectValue::Int(2)).unwrap();
-        assert_eq!(e.query("selected_name"), Some(IntrospectValue::Text("Sun Light".to_owned())));
-        assert!(e.intervene("selected", IntrospectValue::Int(99)).is_err());
+        // Select Player + Camera: their common base is Visible / Layer / Locked
+        // (the type-specific tails are not shared).
+        e.invoke("select", IntrospectValue::Int(0)).unwrap();
+        e.invoke("toggle", IntrospectValue::Int(1)).unwrap();
+        assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 1]);
+        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(3)));
+        assert_eq!(e.query("name.0"), Some(IntrospectValue::Text("Visible".to_owned())));
+        assert_eq!(e.query("name.1"), Some(IntrospectValue::Text("Layer".to_owned())));
+        assert_eq!(e.query("name.2"), Some(IntrospectValue::Text("Locked".to_owned())));
+        // Player + Camera agree on every base property.
+        assert_eq!(e.query("mixed.0"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("value.1"), Some(IntrospectValue::Int(1)), "both Layer 1");
+    }
+
+    #[test]
+    fn r922_multi_select_mixed_values_reported() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 1, 2]);
+        assert_eq!(e.query("selection_summary"), Some(IntrospectValue::Text("3 objects selected".to_owned())));
+        // All three: Visible (true,true,false) and Layer (1,1,2) differ.
+        assert_eq!(e.query("mixed.0"), Some(IntrospectValue::Bool(true)), "Visible mixed");
+        assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(true)), "Layer mixed");
+    }
+
+    #[test]
+    fn r922_edit_writes_every_selected_object() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        // Set the common Layer (index 1) to 5 across all three objects.
+        e.intervene("value.1", IntrospectValue::Int(5)).unwrap();
+        // Now uniform → not mixed, value 5.
+        assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("value.1"), Some(IntrospectValue::Int(5)));
+        // Each object individually carries Layer 5.
+        for obj in 0..3 {
+            e.invoke("select", IntrospectValue::Int(obj)).unwrap();
+            assert_eq!(e.query("value.1"), Some(IntrospectValue::Int(5)), "object {obj} Layer == 5");
+        }
+    }
+
+    #[test]
+    fn r922_shift_extend_and_ctrl_toggle() {
+        let mut e = ext();
+        // Plain select 0, Shift-extend to 2 → {0,1,2}.
+        e.invoke("send", IntrospectValue::Text("0:PointerUp".to_owned())).unwrap();
+        e.invoke("send", IntrospectValue::Text(format!("2:PointerUp:{}", SHIFT.as_wire_token()))).unwrap();
+        assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 1, 2]);
+        // Ctrl-toggle 1 out → {0,2}.
+        e.invoke("send", IntrospectValue::Text(format!("1:PointerUp:{}", CTRL.as_wire_token()))).unwrap();
+        assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 2]);
+    }
+
+    #[test]
+    fn r922_clear_empties_the_panel() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        e.invoke("clear", IntrospectValue::Null).unwrap();
+        assert_eq!(json_indices(&e.query("selection").unwrap()), Vec::<u64>::new());
+        assert_eq!(e.query("selected"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(0)));
+        assert_eq!(e.query("selection_summary"), Some(IntrospectValue::Text("No selection".to_owned())));
+    }
+
+    #[test]
+    fn r922_selection_intervene_restores_a_set() {
+        let mut e = ext();
+        e.intervene("selection", IntrospectValue::Json(serde_json::json!([2, 0]))).unwrap();
+        assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 2]);
+        // Player + Light share the base; Layer is 1 vs 2 → mixed.
+        assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(true)));
     }
 
     #[test]
     fn r910_send_wire_selects_on_activation_edge() {
         let mut e = ext();
-        // The full pointer cycle a composite click produces: only the
-        // PointerUp activation edge selects.
         e.invoke("send", IntrospectValue::Text("2:PointerEnter".to_owned())).unwrap();
-        assert_eq!(e.sel(), 0, "hover (PointerEnter) must not select");
+        assert_eq!(e.cursor(), Some(0), "hover (PointerEnter) must not select");
         e.invoke("send", IntrospectValue::Text("2:PointerDown".to_owned())).unwrap();
-        assert_eq!(e.sel(), 0, "press (PointerDown) must not select");
+        assert_eq!(e.cursor(), Some(0), "press (PointerDown) must not select");
         e.invoke("send", IntrospectValue::Text("2:PointerUp".to_owned())).unwrap();
-        assert_eq!(e.sel(), 2, "release (PointerUp) selects");
-        assert_eq!(e.query("selected_name"), Some(IntrospectValue::Text("Sun Light".to_owned())));
-    }
-
-    #[test]
-    fn r910_keyboard_nav_clamps_at_both_ends() {
-        let mut e = ext();
-        let activate = |e: &mut InspectorExternal, idx: usize| {
-            e.invoke("send", IntrospectValue::Text(format!("{idx}:KeyboardActivate"))).unwrap();
-        };
-        // resolve_target_index drives the index; here we exercise the
-        // clamp arithmetic the keyboard path applies.
-        assert_eq!(resolve_target_index(Some(&e), "ArrowDown"), Some(1));
-        activate(&mut e, 1);
-        assert_eq!(resolve_target_index(Some(&e), "End"), Some(2));
-        activate(&mut e, 2);
-        assert_eq!(resolve_target_index(Some(&e), "ArrowDown"), Some(2), "clamps at last");
-        assert_eq!(resolve_target_index(Some(&e), "Home"), Some(0));
-        activate(&mut e, 0);
-        assert_eq!(resolve_target_index(Some(&e), "ArrowUp"), Some(0), "clamps at first");
-        assert_eq!(resolve_target_index(Some(&e), "Tab"), None, "non-nav key ignored");
+        assert_eq!(e.cursor(), Some(2), "release (PointerUp) selects");
     }
 
     #[test]
@@ -746,6 +1173,8 @@ mod tests {
         let mut e = ext();
         assert_eq!(e.intervene("object_count", IntrospectValue::Int(1)), Err(InterveneError::ReadOnly));
         assert_eq!(e.intervene("row_count", IntrospectValue::Int(1)), Err(InterveneError::ReadOnly));
+        assert_eq!(e.intervene("mixed.0", IntrospectValue::Bool(true)), Err(InterveneError::ReadOnly));
+        assert_eq!(e.intervene("selection_summary", IntrospectValue::Text("x".to_owned())), Err(InterveneError::ReadOnly));
     }
 
     fn has_text(scene: &Scene, needle: &str) -> bool {
@@ -757,23 +1186,47 @@ mod tests {
     }
 
     #[test]
-    fn view_reflects_selected_object() {
+    fn default_object_count_matches_state_bitmap() {
+        assert_eq!(default_objects().len(), N_OBJECTS, "the bitmap N must track the object roster");
+    }
+
+    #[test]
+    fn view_reflects_multi_selection_with_mixed_placeholder() {
         let owner = Owner::new();
-        let scene = owner.run(|| view(2, &Frame::new()));
-        // The Sun Light panel must carry its name + first property.
-        assert!(has_text(&scene, "Sun Light"), "header names the selected object");
-        assert!(has_text(&scene, "Intensity"), "selected object's property shown");
+        let scene = owner.run(|| {
+            view(&InspectorState::from_parts(&[0, 1, 2], Some(2)), &Frame::new())
+        });
+        assert!(has_text(&scene, "3 objects selected"), "header summarises the selection");
+        assert!(has_text(&scene, "Layer"), "common property shown");
+        assert!(has_text(&scene, "Multiple Values"), "mixed property shows the placeholder");
+    }
+
+    #[test]
+    fn a11y_object_list_is_multiselectable_with_aria_selected() {
+        let nodes = Owner::new().run(|| {
+            <InspectorView as WidgetA11y>::access_node(
+                &InspectorState::from_parts(&[0, 2], Some(2)),
+                None,
+            )
+        });
+        // [root Group, listbox, option_0, option_1, option_2]
+        assert_eq!(nodes[0].role, AriaRole::Group);
+        assert_eq!(nodes[0].tag, INSPECTOR_TAG);
+        let listbox = nodes.iter().find(|n| n.tag == OBJECTS_TAG).expect("listbox node");
+        assert_eq!(listbox.role, AriaRole::Listbox);
+        assert!(listbox.multiselectable, "object list is aria-multiselectable");
+        let opt = |i: usize| nodes.iter().find(|n| n.tag == format!("{INSPECTOR_TAG}#{i}")).unwrap();
+        assert_eq!(opt(0).selected, Some(true), "object 0 selected");
+        assert_eq!(opt(1).selected, Some(false), "object 1 not selected");
+        assert_eq!(opt(2).selected, Some(true), "object 2 selected");
+        assert!(opt(2).state.focused, "cursor object is the active descendant");
     }
 
     #[test]
     fn r55_g20_view_carries_composite_paint_root_tag() {
-        pinion_core::test_fixtures::assert_widget_view_carries_tag::<InspectorView>(0, &Frame::new());
-    }
-
-    #[test]
-    fn inspector_root_reports_group_role() {
-        let nodes = <InspectorView as WidgetA11y>::access_node(&0, None);
-        assert_eq!(nodes[0].role, AriaRole::Group);
-        assert_eq!(nodes[0].tag, INSPECTOR_TAG);
+        pinion_core::test_fixtures::assert_widget_view_carries_tag::<InspectorView>(
+            InspectorState::from_parts(&[0], Some(0)),
+            &Frame::new(),
+        );
     }
 }

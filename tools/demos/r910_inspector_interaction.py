@@ -64,44 +64,46 @@ def _assert_boot(tf: RpcSubprocess) -> None:
     """(A) default selection + roster."""
     assert _q(tf, "object_count") == 3
     assert _q(tf, "selected") == 0
-    assert _q(tf, "selected_name") == "Player"
+    assert _q(tf, "selection_summary") == "Player"
     assert _q(tf, "object_name.0") == "Player"
     assert _q(tf, "object_name.1") == "Main Camera"
     assert _q(tf, "object_name.2") == "Sun Light"
 
 
 def _assert_click_selection(tf: RpcSubprocess) -> None:
-    """(B) clicking each row selects it and re-targets the property set."""
+    """(B) clicking each row selects it and re-targets the property set
+    (a plain click replaces the selection — the cardinality-1 case)."""
     _click_row(tf, 2)
     wait_query(tf, "/external/selected", 2, desc="click row 2 -> selected 2")
-    assert _q(tf, "selected_name") == "Sun Light"
-    assert _q(tf, "row_count") == 4, "Sun Light has four properties"
-    assert _q(tf, "name.0") == "Enabled", "Sun Light's first property"
-    assert _q(tf, "kind.0") == "bool", "Enabled is a bool"
-    assert _q(tf, "value.0") is True, "Enabled seed True"
+    assert _q(tf, "selection_summary") == "Sun Light"
+    assert _q(tf, "row_count") == 6, "Sun Light has six properties"
+    assert _q(tf, "name.0") == "Visible", "Sun Light's first property is the common base"
+    assert _q(tf, "kind.0") == "bool", "Visible is a bool"
+    assert _q(tf, "value.0") is False, "Sun Light Visible seed False"
 
     _click_row(tf, 1)
     wait_query(tf, "/external/selected", 1, desc="click row 1 -> selected 1")
-    assert _q(tf, "selected_name") == "Main Camera"
-    assert _q(tf, "row_count") == 3
-    assert _q(tf, "name.0") == "Active"
-    assert _q(tf, "kind.1") == "float", "Field of View is a float"
+    assert _q(tf, "selection_summary") == "Main Camera"
+    assert _q(tf, "row_count") == 5
+    assert _q(tf, "name.0") == "Visible"
+    assert _q(tf, "kind.3") == "float", "Field of View is a float"
 
     _click_row(tf, 0)
     wait_query(tf, "/external/selected", 0, desc="click row 0 -> selected 0")
-    assert _q(tf, "selected_name") == "Player"
-    assert _q(tf, "row_count") == 5
-    assert _q(tf, "kind.3") == "choice", "Team is a choice"
+    assert _q(tf, "selection_summary") == "Player"
+    assert _q(tf, "row_count") == 7
+    assert _q(tf, "kind.5") == "choice", "Team is a choice"
 
 
 def _assert_value_follows_selection(tf: RpcSubprocess) -> None:
-    """(C) value.<i> addresses the clicked object's property."""
+    """(C) value.<i> addresses the clicked object's property — index 3 is the
+    first type-specific row, so it diverges across objects."""
     _click_row(tf, 1)  # Camera.
     wait_query(tf, "/external/selected", 1, desc="re-select Camera")
-    assert abs(float(_q(tf, "value.1")) - 60.0) < 1e-9, "Camera value.1 = Field of View"
+    assert abs(float(_q(tf, "value.3")) - 60.0) < 1e-9, "Camera value.3 = Field of View"
     _click_row(tf, 0)  # Player.
     wait_query(tf, "/external/selected", 0, desc="re-select Player")
-    assert _q(tf, "value.1") == 100, "Player value.1 = Health"
+    assert _q(tf, "value.3") == 100, "Player value.3 = Health"
 
 
 def _assert_keyboard_nav(tf: RpcSubprocess) -> None:

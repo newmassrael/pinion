@@ -19,7 +19,7 @@ port defaults ([[abstraction-needs-second-consumer]] payoff).
 Everything is introspectable over RPC (§2 #2 AI-first primary path), so
 no pixels:
 
-  - schema: object_count / selected / selected_name / row_count, and the
+  - schema: object_count / selected / selection_summary / row_count, and the
     per-object object_name.<j>.
   - selection: invoke `/external/select {i}` and intervene
     `/external/selected {i}` both move the selection; the property set
@@ -77,30 +77,38 @@ def _wait_ready(tf: RpcSubprocess) -> None:
 
 
 def _assert_boot_schema(tf: RpcSubprocess) -> None:
-    """(A) object roster + default selection."""
+    """(A) object roster + default selection. R922: the panel is now the
+    common-property list of the (here single) selection, and the header is the
+    selection summary; a single selection is the cardinality-1 case where the
+    common list IS that object's full schema."""
     assert _q(tf, "object_count") == 3, "three scene objects"
-    assert _q(tf, "selected") == 0, "Player selected by default"
-    assert _q(tf, "selected_name") == "Player", "default selection name"
-    assert _q(tf, "row_count") == 5, "Player has five properties"
+    assert _q(tf, "selected") == 0, "Player is the cursor by default"
+    assert _q(tf, "selection_count") == 1, "exactly one object selected at boot"
+    assert _q(tf, "selection_summary") == "Player", "single-selection header is the name"
+    assert _q(tf, "row_count") == 7, "Player has seven properties"
     assert _q(tf, "object_name.0") == "Player"
     assert _q(tf, "object_name.1") == "Main Camera"
     assert _q(tf, "object_name.2") == "Sun Light"
 
 
 def _assert_player_schema(tf: RpcSubprocess) -> None:
-    """(B) Player's heterogeneous typed property schema."""
+    """(B) Player's typed property schema: the common actor base
+    (Visible / Layer / Locked) then its type-specific tail."""
     assert _q(tf, "name.0") == "Visible" and _q(tf, "kind.0") == "bool"
     assert _q(tf, "value.0") is True, "Visible seed True"
-    assert _q(tf, "name.1") == "Health" and _q(tf, "kind.1") == "int"
-    assert _q(tf, "value.1") == 100, "Health seed 100"
-    assert _q(tf, "name.2") == "Speed" and _q(tf, "kind.2") == "float"
-    assert abs(float(_q(tf, "value.2")) - 6.5) < 1e-9, "Speed seed 6.5"
-    assert _q(tf, "name.3") == "Team" and _q(tf, "kind.3") == "choice"
-    team = _q(tf, "value.3")
+    assert _q(tf, "name.1") == "Layer" and _q(tf, "kind.1") == "int"
+    assert _q(tf, "value.1") == 1, "Layer seed 1"
+    assert _q(tf, "name.2") == "Locked" and _q(tf, "kind.2") == "bool"
+    assert _q(tf, "name.3") == "Health" and _q(tf, "kind.3") == "int"
+    assert _q(tf, "value.3") == 100, "Health seed 100"
+    assert _q(tf, "name.4") == "Speed" and _q(tf, "kind.4") == "float"
+    assert abs(float(_q(tf, "value.4")) - 6.5) < 1e-9, "Speed seed 6.5"
+    assert _q(tf, "name.5") == "Team" and _q(tf, "kind.5") == "choice"
+    team = _q(tf, "value.5")
     assert isinstance(team, dict) and team["label"] == "Red", "Team seed = first option"
     assert team["options"] == ["Red", "Blue", "Neutral"], "Team option domain"
-    assert _q(tf, "name.4") == "Tint" and _q(tf, "kind.4") == "color"
-    tint = _q(tf, "value.4")
+    assert _q(tf, "name.6") == "Tint" and _q(tf, "kind.6") == "color"
+    tint = _q(tf, "value.6")
     assert isinstance(tint, dict) and (tint["r"], tint["g"], tint["b"]) == (0x4F, 0x9D, 0xFF), (
         f"Tint seed channels; got {tint!r}"
     )
@@ -108,21 +116,22 @@ def _assert_player_schema(tf: RpcSubprocess) -> None:
 
 def _assert_select_retargets(tf: RpcSubprocess) -> None:
     """(C) invoke select re-targets the whole property set."""
-    assert _select(tf, 1) == 1, "select returns the new index"
+    assert _select(tf, 1) == 1, "select returns the new cursor index"
     assert _q(tf, "selected") == 1
-    assert _q(tf, "selected_name") == "Main Camera"
-    assert _q(tf, "row_count") == 3, "Camera has three properties"
-    assert _q(tf, "name.0") == "Active", "Camera's first property"
-    assert _q(tf, "name.1") == "Field of View"
-    assert abs(float(_q(tf, "value.1")) - 60.0) < 1e-9, "Camera FoV seed"
+    assert _q(tf, "selection_summary") == "Main Camera"
+    assert _q(tf, "row_count") == 5, "Camera has five properties"
+    assert _q(tf, "name.0") == "Visible", "Camera's first property is the common base"
+    assert _q(tf, "name.3") == "Field of View"
+    assert abs(float(_q(tf, "value.3")) - 60.0) < 1e-9, "Camera FoV seed"
 
 
 def _assert_intervene_selected(tf: RpcSubprocess) -> None:
     """(D) intervene 'selected' also moves the selection."""
     tf.intervene("/external/selected", 2)
     assert _q(tf, "selected") == 2
-    assert _q(tf, "selected_name") == "Sun Light"
-    assert _q(tf, "name.0") == "Enabled"
+    assert _q(tf, "selection_summary") == "Sun Light"
+    assert _q(tf, "name.0") == "Visible"
+    assert _q(tf, "name.3") == "Intensity"
     # back to Player for the editing section.
     _select(tf, 0)
     assert _q(tf, "selected") == 0
@@ -130,31 +139,31 @@ def _assert_intervene_selected(tf: RpcSubprocess) -> None:
 
 def _assert_typed_editing(tf: RpcSubprocess) -> None:
     """(E) int + bool editing of the selected (Player) object."""
-    tf.intervene("/external/value.1", 42)  # Health int.
-    assert _q(tf, "value.1") == 42, "Health edited to 42"
+    tf.intervene("/external/value.3", 42)  # Health int.
+    assert _q(tf, "value.3") == 42, "Health edited to 42"
     tf.intervene("/external/value.0", False)  # Visible bool.
     assert _q(tf, "value.0") is False, "Visible toggled off"
 
 
 def _assert_choice_and_color(tf: RpcSubprocess) -> None:
     """(F) Choice (option index) + Color (hex) edits via with_intervene."""
-    tf.intervene("/external/value.3", 1)  # Team -> Blue.
-    team = _q(tf, "value.3")
+    tf.intervene("/external/value.5", 1)  # Team -> Blue.
+    team = _q(tf, "value.5")
     assert team["selected"] == 1 and team["label"] == "Blue", f"Team -> Blue; got {team!r}"
-    tf.intervene("/external/value.4", "#ff0000")  # Tint -> red.
-    tint = _q(tf, "value.4")
+    tf.intervene("/external/value.6", "#ff0000")  # Tint -> red.
+    tint = _q(tf, "value.6")
     assert (tint["r"], tint["g"], tint["b"]) == (0xFF, 0x00, 0x00), f"Tint -> red; got {tint!r}"
 
 
 def _assert_per_object_isolation(tf: RpcSubprocess) -> None:
-    """(G) edits on Player do not leak to Camera, and persist across a
-    re-select (per-object state)."""
+    """(G) edits on the single-selected Player do not leak to Camera, and
+    persist across a re-select (per-object state)."""
     _select(tf, 1)  # Camera.
-    assert abs(float(_q(tf, "value.1")) - 60.0) < 1e-9, "Camera FoV untouched by Player edits"
+    assert abs(float(_q(tf, "value.3")) - 60.0) < 1e-9, "Camera FoV untouched by Player edits"
     _select(tf, 0)  # back to Player.
-    assert _q(tf, "value.1") == 42, "Player Health edit persisted"
+    assert _q(tf, "value.3") == 42, "Player Health edit persisted"
     assert _q(tf, "value.0") is False, "Player Visible edit persisted"
-    team = _q(tf, "value.3")
+    team = _q(tf, "value.5")
     assert team["label"] == "Blue", "Player Team edit persisted"
 
 

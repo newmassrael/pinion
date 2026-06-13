@@ -55,7 +55,7 @@ use std::collections::BTreeSet;
 /// extension. The mode is fixed at construction — a list is built either
 /// single- or multi-select, exactly as `QAbstractItemView::setSelectionMode`
 /// is a property of the view, not a per-interaction flag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SelectionMode {
     /// At most one selected row (the pre-R780 behaviour). Range/toggle
     /// operations collapse to a plain replace.
@@ -65,8 +65,7 @@ pub enum SelectionMode {
     Multi,
 }
 
-/// R746 §5.27 §5.38 / R780 §5.40 — the index-set holder wrapped by
-/// [`VirtualSelectExternal`].
+/// R746 §5.27 §5.38 / R780 §5.40 — the pure index-set selection model.
 ///
 /// Pure selection-by-index state, no interaction statechart and no §5.20
 /// queue of its own — the [`IntentEmitter`] wrapper owns the pending
@@ -76,13 +75,28 @@ pub enum SelectionMode {
 /// materialization; `item_count` bounds every mutation so a malformed wire
 /// payload can never select a non-existent row.
 ///
+/// Two embeddings (R922): [`VirtualSelectExternal`] wraps it with the §5.20
+/// intent channel + the standalone-list RPC wire (a list / grid whose only
+/// state *is* the selection); a coordinator that owns a **richer** model —
+/// the inspector's object list, where the same External also carries the
+/// selected objects' shared property panel — embeds the model directly as
+/// its selection axis (`Rc<Signal<VirtualSelect>>`), reusing the
+/// anchor-range-extend logic without the standalone wrapper. The flat,
+/// stable data index keys this model; a collapse/expand tree (whose flat
+/// index shifts) needs its own stable-id model instead (R902's `TreeSelect`).
+///
 /// The set generalises the pre-R780 `selected: Option<usize>`: a `Single`
 /// model keeps the set at cardinality ≤ 1, so [`cursor`](Self::cursor) (the
 /// active row, the `query("selected")` value) coincides with the sole
 /// member and every old assertion holds. `Multi` lets the set grow, with
 /// `anchor` recording where a `Shift`-range began.
-#[derive(Debug, Clone)]
-struct VirtualSelect {
+///
+/// `Serialize`/`Deserialize`/`PartialEq` (R922) so a coordinator can hold the
+/// model in a `Signal` (the §2 #7 scene-as-data bound every reactive holder
+/// carries); `VirtualSelectExternal` wraps it in an `IntentEmitter` instead and
+/// does not need them, but they are harmless there.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VirtualSelect {
     /// The selected data indices. In `Single` mode this is held at
     /// cardinality ≤ 1.
     selection: BTreeSet<usize>,
@@ -101,7 +115,12 @@ struct VirtualSelect {
 }
 
 impl VirtualSelect {
-    fn new(item_count: usize, mode: SelectionMode) -> Self {
+    /// Construct an empty selection over an `item_count`-row dataset with the
+    /// given cardinality policy. `pub` so a coordinator can embed the model
+    /// directly (R922); a standalone list uses [`VirtualSelectExternal::new`]
+    /// / [`new_multi`](VirtualSelectExternal::new_multi) instead.
+    #[must_use]
+    pub fn new(item_count: usize, mode: SelectionMode) -> Self {
         Self {
             selection: BTreeSet::new(),
             anchor: None,
@@ -111,11 +130,38 @@ impl VirtualSelect {
         }
     }
 
+    /// The selected data indices (ascending — a `BTreeSet`). Cardinality ≤ 1
+    /// in a `Single` model.
+    #[must_use]
+    pub fn selection(&self) -> &BTreeSet<usize> {
+        &self.selection
+    }
+
+    /// The active row (the `query("selected")` value, the WAI-ARIA active
+    /// descendant): the sole selected row in a `Single` model, the
+    /// keyboard-navigation reference in a `Multi` one. `None` when empty.
+    #[must_use]
+    pub fn cursor(&self) -> Option<usize> {
+        self.cursor
+    }
+
+    /// Whether `index` is selected.
+    #[must_use]
+    pub fn is_selected(&self, index: usize) -> bool {
+        self.selection.contains(&index)
+    }
+
+    /// Total dataset size — the validity bound for any selection.
+    #[must_use]
+    pub fn item_count(&self) -> usize {
+        self.item_count
+    }
+
     /// Move the active row to `index` and replace the selection with just
     /// it (a plain click / unmodified arrow). Out-of-range indices are
     /// ignored. Sets the `anchor` (a later `Shift`-extend grows from here).
     /// Returns `true` if anything changed.
-    fn select(&mut self, index: usize) -> bool {
+    pub fn select(&mut self, index: usize) -> bool {
         if index >= self.item_count {
             return false;
         }
@@ -135,7 +181,7 @@ impl VirtualSelect {
     /// mode this collapses to a plain [`select`](Self::select) (a single
     /// model cannot hold two rows). Out-of-range indices are ignored.
     /// Returns `true` if anything changed.
-    fn toggle(&mut self, index: usize) -> bool {
+    pub fn toggle(&mut self, index: usize) -> bool {
         if index >= self.item_count {
             return false;
         }
@@ -158,7 +204,7 @@ impl VirtualSelect {
     /// as a plain [`select`](Self::select). In `Single` mode it also
     /// collapses to a plain select. Out-of-range indices are ignored.
     /// Returns `true` if anything changed.
-    fn extend_to(&mut self, index: usize) -> bool {
+    pub fn extend_to(&mut self, index: usize) -> bool {
         if index >= self.item_count {
             return false;
         }
@@ -179,7 +225,7 @@ impl VirtualSelect {
     /// Select every row (`Ctrl+A`). A no-op in `Single` mode or on an empty
     /// dataset. Leaves the active row and `anchor` put. Returns `true` if
     /// the selection grew.
-    fn select_all(&mut self) -> bool {
+    pub fn select_all(&mut self) -> bool {
         if self.mode == SelectionMode::Single || self.item_count == 0 {
             return false;
         }
@@ -190,7 +236,7 @@ impl VirtualSelect {
         true
     }
 
-    fn clear(&mut self) -> bool {
+    pub fn clear(&mut self) -> bool {
         let had = !self.selection.is_empty();
         self.selection.clear();
         self.anchor = None;
@@ -224,7 +270,7 @@ impl VirtualSelect {
     /// Out-of-range indices are dropped. The active row / anchor become the
     /// greatest selected index (or `None` when empty). Returns `true` if the
     /// set changed.
-    fn set_selection(&mut self, indices: &BTreeSet<usize>) -> bool {
+    pub fn set_selection(&mut self, indices: &BTreeSet<usize>) -> bool {
         let next: BTreeSet<usize> = indices.iter().copied().filter(|&i| i < self.item_count).collect();
         if next == self.selection {
             return false;
@@ -484,26 +530,18 @@ impl VirtualSelectExternal {
 
     /// The active index as an `IntrospectValue` (`Int` or `Null`) — the
     /// uniform return for the single-select mutating `invoke` paths and the
-    /// `"selected"` query.
+    /// `"selected"` query. Delegates to the [`selected_to_value`] serialize
+    /// SSOT (the encode peer of [`read_selected`]).
     fn selected_value(&self) -> IntrospectValue {
-        self.selected()
-            .and_then(|i| i64::try_from(i).ok())
-            .map_or(IntrospectValue::Null, IntrospectValue::Int)
+        selected_to_value(self.selected())
     }
 
     /// The full selection as a JSON array of indices — the uniform return
     /// for the multi-select mutating `invoke` paths and the `"selection"`
-    /// query. Always an array (empty `[]` when nothing is selected), never
-    /// `Null`, so an AI consumer can treat the slot as a list unconditionally.
+    /// query. Delegates to the [`selection_to_value`] serialize SSOT (the
+    /// encode peer of [`read_selection`]).
     fn selection_value(&self) -> IntrospectValue {
-        IntrospectValue::Json(serde_json::Value::Array(
-            self.em
-                .inner
-                .selection
-                .iter()
-                .map(|&i| serde_json::Value::from(i))
-                .collect(),
-        ))
+        selection_to_value(&self.em.inner.selection)
     }
 
     /// The mode as its canonical wire string (`"single"` / `"multi"`).
@@ -705,13 +743,15 @@ impl ExternalIntrospect for VirtualSelectExternal {
 }
 
 /// R782 §5.40 — **deserialize peer** of the coordinator's `"selection"`
-/// query (the `selection_value` encode): decode the multi-select index set
-/// from an introspection surface that delegates it to a
-/// [`VirtualSelectExternal`] in `Multi` mode. The inverse of that encode,
-/// kept in the same module so a slot rename can't silently break a binding's
-/// hand-decode (the R743.1 `read_reorder` decode-of-encode rule; the
-/// `"selection"` array is now read by both `hello-multi-select` and
-/// `hello-grid-multi-select`). Returns the indices in the coordinator's order
+/// query (the [`selection_to_value`] encode): decode the multi-select index set
+/// from any introspection surface that emits the canonical `"selection"` array
+/// — a standalone [`VirtualSelectExternal`] in `Multi` mode or a coordinator
+/// embedding the [`VirtualSelect`] model directly (the inspector's object list,
+/// R922). The inverse of that encode, kept in the same module so a slot rename
+/// can't silently break a binding's hand-decode (the R743.1 `read_reorder`
+/// decode-of-encode rule; the `"selection"` array is read by `hello-multi-select`,
+/// `hello-grid-multi-select`, and `hello-inspector`). Returns the indices in
+/// the coordinator's order
 /// (ascending — a `BTreeSet`); the empty array decodes to an empty `Vec`, and
 /// an absent / mistyped slot likewise yields `Vec::new()`. Bindings map this
 /// into their own `Copy` paint projection (e.g. a per-row bitmap).
@@ -742,6 +782,32 @@ pub fn read_selected(intro: &dyn ExternalIntrospect) -> Option<usize> {
         Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     }
+}
+
+/// R922 §5.40 — **serialize peer** of [`read_selection`]: encode a multi-select
+/// index set as the canonical `"selection"` JSON array (ascending). Kept beside
+/// its decoder so the array shape has one definition for both producers — the
+/// standalone [`VirtualSelectExternal`] and any coordinator that embeds the
+/// [`VirtualSelect`] model directly (the inspector's object list, R922) — and a
+/// shape drift can never silently break a [`read_selection`] hand-decoder
+/// (the R743.1 decode-of-encode symmetry, now closed on the encode side too).
+/// Always an array (empty `[]` when nothing is selected), never `Null`, so an
+/// AI consumer treats the slot as a list unconditionally.
+#[must_use]
+pub fn selection_to_value(selection: &BTreeSet<usize>) -> IntrospectValue {
+    IntrospectValue::Json(serde_json::Value::Array(
+        selection.iter().map(|&i| serde_json::Value::from(i)).collect(),
+    ))
+}
+
+/// R922 §5.40 — **serialize peer** of [`read_selected`]: encode the active-row
+/// cursor as the canonical `"selected"` slot (`Int`, or `Null` when nothing is
+/// active). The scalar sibling of [`selection_to_value`].
+#[must_use]
+pub fn selected_to_value(cursor: Option<usize>) -> IntrospectValue {
+    cursor
+        .and_then(|i| i64::try_from(i).ok())
+        .map_or(IntrospectValue::Null, IntrospectValue::Int)
 }
 
 /// R777 §5.27 — the standard **linear-clamp** keyboard navigation policy

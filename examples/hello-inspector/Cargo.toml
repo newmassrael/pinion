@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R909 §5.38 §5.22 selection-driven detail panel — an object list (Player/Camera/Light, each a different typed CellValue schema) + a detail panel that reactively reflects the selection; select + edit over RPC (the Unreal Details / Qt property-browser editor loop, 4th CellValue consumer)"
+description = "R909/R922 §5.38 §5.22 §5.40 multi-object inspector — an object list + a Details panel that reactively reflects a MULTI-selection: the properties common to every selected object, a 'Multiple Values' placeholder where they differ, and an edit that writes all selected at once (the Unreal Details multi-object core; VirtualSelect + CellValue substrate consumer)"
 publish = false
 
 [[bin]]
@@ -30,6 +30,9 @@ pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 vello = { workspace = true }
 # Signal<Vec<ObjectData>> requires the model derive Serialize/Deserialize.
 serde = { workspace = true }
+# R922 — the `selection` query encodes the multi-select index set as a JSON
+# array (mirroring `VirtualSelectExternal`'s `selection_value`).
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # R55.G.22 §5.49 — composite-paint-root-tag regression helper.

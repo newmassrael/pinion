@@ -39791,6 +39791,66 @@
         "multi-object editing + property-grid crate-lift remain (R922+; editor 2nd consumer = Phase D)"
       ]
     },
+    "R922": {
+      "decision_summary": "R922 multi-object inspector: select N objects, edit the properties common to all at once, with 'Multiple Values' where they differ — the Unreal Details multi-select core; embeds the pure VirtualSelect model",
+      "changes_bullets": [
+        "hello-inspector: single-select panel -> multi-object; common-property panel + write-all edit",
+        "objects gain a shared base (Visible/Layer/Locked) so a selection has common + mixed rows",
+        "selection = pure VirtualSelect model (made pub) embedded as Rc<Signal>; flat stable index",
+        "mixed = CellValue::value_eq (3rd consumer); paint/a11y/query share one common_properties SSOT",
+        "wire adds selection/selection_count/mode/mixed.<i> + toggle/extend_to/select_all/clear invoke",
+        "value.<i> intervene writes the property to all selected objects (per-object with_intervene)",
+        "modifier-click via split_send_payload+SelectionChord; keyboard via clamp_nav+MultiSelectKeyOp",
+        "a11y: object list = aria-multiselectable listbox_option_nodes (a11y_manual); selected + cursor",
+        "lifted selection_to_value/selected_to_value encode peers of read_selection/read_selected",
+        "State = [bool;N] bitmap (Copy bound); VirtualSelect/SelectionMode gain serde + PartialEq"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; 17 hello-inspector unit tests + pinion-core 2192 unchanged",
+        "clippy -D pedantic clean (pinion-core + hello-inspector touched crates)",
+        "r922_inspector_multi.py PASS: multi-select, mixed values, write-all, modifier-click, keyboard",
+        "r909_inspector.py + r910_inspector_interaction.py migrated to new schema, PASS (release)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "inline cell-edit delegates (popup/scrub) remain the GUI follow-up; values via intervene (§2)",
+        "nav_select_key dispatch is scroll-coupled; 3rd non-scrolled consumer -> extract a core",
+        "CommonProperty / common_properties example-local; lift at a 2nd panel consumer"
+      ],
+      "publishable_decision_summary": "R922 multi-object inspector: select N objects, edit the properties common to all at once, with 'Multiple Values' where they differ — the Unreal Details multi-select core; embeds the pure VirtualSelect model",
+      "publishable_changes_bullets": [
+        "hello-inspector: single-select panel -> multi-object; common-property panel + write-all edit",
+        "objects gain a shared base (Visible/Layer/Locked) so a selection has common + mixed rows",
+        "selection = pure VirtualSelect model (made pub) embedded as Rc<Signal>; flat stable index",
+        "mixed = CellValue::value_eq (3rd consumer); paint/a11y/query share one common_properties SSOT",
+        "wire adds selection/selection_count/mode/mixed.<i> + toggle/extend_to/select_all/clear invoke",
+        "value.<i> intervene writes the property to all selected objects (per-object with_intervene)",
+        "modifier-click via split_send_payload+SelectionChord; keyboard via clamp_nav+MultiSelectKeyOp",
+        "a11y: object list = aria-multiselectable listbox_option_nodes (a11y_manual); selected + cursor",
+        "lifted selection_to_value/selected_to_value encode peers of read_selection/read_selected",
+        "State = [bool;N] bitmap (Copy bound); VirtualSelect/SelectionMode gain serde + PartialEq"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; 17 hello-inspector unit tests + pinion-core 2192 unchanged",
+        "clippy -D pedantic clean (pinion-core + hello-inspector touched crates)",
+        "r922_inspector_multi.py PASS: multi-select, mixed values, write-all, modifier-click, keyboard",
+        "r909_inspector.py + r910_inspector_interaction.py migrated to new schema, PASS (release)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "inline cell-edit delegates (popup/scrub) remain the GUI follow-up; values via intervene (§2)",
+        "nav_select_key dispatch is scroll-coupled; 3rd non-scrolled consumer -> extract a core",
+        "CommonProperty / common_properties example-local; lift at a 2nd panel consumer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
