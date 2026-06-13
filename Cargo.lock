@@ -2428,6 +2428,7 @@ dependencies = [
  "pinion-a11y",
  "pinion-core",
  "pinion-forge",
+ "pinion-pdf",
  "pinion-platform-print",
  "pinion-shell",
  "pinion-widget-paint",

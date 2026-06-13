@@ -14,6 +14,10 @@ path = "src/main.rs"
 
 [dependencies]
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R911 §5.53 — own-renderer Scene -> PDF: the print job now carries the
+# rendered document (the 2nd consumer of the R908 pinion-pdf substrate),
+# completing the own-renderer print story (was a plain-text blob).
+pinion-pdf = { path = "../../crates/pinion-pdf", version = "0.0.1" }
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }

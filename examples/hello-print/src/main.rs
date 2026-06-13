@@ -37,10 +37,12 @@ use pinion_core::print::{
     InMemoryPrintBackend, PrintBackend, PrintError, PrintJob, PrintReceipt, PrinterInfo,
 };
 use pinion_core::reactive::{batch, Owner, Signal};
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
+    AlignItems, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle, Size,
+    SizeValue, TextStyle,
 };
+use pinion_pdf::{render_scene, PageSize};
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
@@ -74,9 +76,62 @@ const INC_CLICK: &str = intent_tag!("inc", "click");
 const BODY_FONT_PX: u32 = 15;
 const STATUS_FONT_PX: u32 = 13;
 
-/// The document this dialog prints (plain text this round; scene → PDF
-/// page render is a future axis).
-const DOCUMENT: &str = "Quarterly Report\nRevenue up 12% QoQ\nPrepared by pinion";
+/// The printed document's title + body lines. R911 — the dialog now
+/// prints the *rendered* document (a vector PDF), not a plain-text blob:
+/// `document_scene` lays these out as an explicitly-positioned scene and
+/// [`render_print_pdf`] walks it through the §5.53 own-renderer
+/// `pinion-pdf` pipeline. The page is US Letter (the in-memory backend
+/// records the PDF bytes; a real `lp` destination auto-detects PDF).
+const DOC_TITLE: &str = "Quarterly Report";
+const DOC_BODY: [&str; 3] = [
+    "Revenue up 12% QoQ",
+    "Operating margin steady at 18%",
+    "Prepared by pinion",
+];
+
+/// The printed page size (US Letter, portrait).
+const DOC_PAGE: PageSize = PageSize::LETTER;
+/// Left/top margin for the document body, in points.
+const DOC_MARGIN: u32 = 54;
+
+/// Build the print document as an explicitly-positioned [`Scene`] (no
+/// layout pass needed — a print document is hand-placed, the textbook
+/// PDF-generator approach): a bold title, an accent rule, then the body
+/// lines stacked at a fixed line height.
+fn document_scene() -> Scene {
+    let ink = Color::rgb(0x11, 0x11, 0x11);
+    let accent = Color::rgb(0x2f, 0x6f, 0xed);
+    let body_w = DOC_PAGE.width_pt - DOC_MARGIN * 2;
+
+    let mut children: Vec<Scene> = Vec::with_capacity(DOC_BODY.len() + 2);
+    children.push(Scene::Text(TextNode::styled(
+        DOC_TITLE,
+        Rect::new(DOC_MARGIN, DOC_MARGIN, body_w, 28),
+        TextStyle::new().with_size_px(24).with_weight(FontWeight::BOLD).with_fg(ink),
+    )));
+    // An accent rule under the title.
+    children.push(Scene::Box(BoxNode::filled(
+        Rect::new(DOC_MARGIN, DOC_MARGIN + 38, body_w, 2),
+        accent,
+    )));
+    let mut y = DOC_MARGIN + 58;
+    for line in DOC_BODY {
+        children.push(Scene::Text(TextNode::styled(
+            line,
+            Rect::new(DOC_MARGIN, y, body_w, 18),
+            TextStyle::new().with_size_px(14).with_fg(ink),
+        )));
+        y += 26;
+    }
+    Scene::Container(ContainerNode::new(children))
+}
+
+/// Render the print document to a PDF document string through the §5.53
+/// own-renderer `pinion-pdf` pipeline — the 2nd consumer of the R908
+/// renderer substrate.
+fn render_print_pdf() -> String {
+    render_scene(&document_scene(), DOC_PAGE).document
+}
 
 /// R833 §5.38 — the print dialog's reactive state: copies, the selected
 /// printer index, and the last submitted receipt. Shared (one `Rc`) by
@@ -89,6 +144,9 @@ struct PrintUiModel {
     last_printer: Signal<String>,
     last_copies: Signal<u32>,
     last_job: Signal<String>,
+    /// R911 — the rendered PDF document of the last submitted job (the
+    /// own-renderer print payload), exposed for AI-first verification.
+    last_content: Signal<String>,
 }
 
 impl PrintUiModel {
@@ -100,6 +158,7 @@ impl PrintUiModel {
             last_printer: Signal::new(String::new()),
             last_copies: Signal::new(0),
             last_job: Signal::new(String::new()),
+            last_content: Signal::new(String::new()),
         }
     }
 }
@@ -124,6 +183,7 @@ impl QuerySource for PrintIntrospect {
             ("last_printer", "string"),
             ("last_copies", "int"),
             ("last_job", "string"),
+            ("last_content", "string"),
         ])
     }
 
@@ -142,6 +202,7 @@ impl QuerySource for PrintIntrospect {
             "last_printer" => Some(IntrospectValue::Text(self.model.last_printer.get())),
             "last_copies" => Some(IntrospectValue::Int(i64::from(self.model.last_copies.get()))),
             "last_job" => Some(IntrospectValue::Text(self.model.last_job.get())),
+            "last_content" => Some(IntrospectValue::Text(self.model.last_content.get())),
             _ => None,
         }
     }
@@ -447,13 +508,17 @@ fn submit_current_job(backend: &AppPrintBackend, model: &PrintUiModel) {
     let Some(printer) = printers.get(model.selected.get()) else {
         return;
     };
-    let job = PrintJob::new("hello-print document", DOCUMENT).with_copies(model.copies.get());
+    // R911 — render the document to a vector PDF (the §5.53 own-renderer
+    // payload) and spool that, instead of a plain-text blob.
+    let pdf = render_print_pdf();
+    let job = PrintJob::new("hello-print document", pdf.clone()).with_copies(model.copies.get());
     if let Ok(receipt) = backend.submit(&printer.id, &job) {
         batch(|| {
             model.submit_count.set(model.submit_count.get() + 1);
             model.last_printer.set(receipt.printer_id);
             model.last_copies.set(receipt.copies);
             model.last_job.set(receipt.job_id);
+            model.last_content.set(pdf);
         });
     }
 }
@@ -522,5 +587,37 @@ mod tests {
         assert_eq!(nodes[0].role, AriaRole::Group);
         assert_eq!(nodes[0].children.len(), 4);
         assert!(nodes[1..].iter().all(|n| n.role == AriaRole::Button));
+    }
+
+    #[test]
+    fn r911_print_payload_is_a_pdf_carrying_the_document() {
+        // The print job content is now the own-rendered PDF, not text.
+        let pdf = render_print_pdf();
+        assert!(pdf.starts_with("%PDF-1.7"), "print payload is a PDF document");
+        assert!(pdf.trim_end().ends_with("%%EOF"), "PDF trailer present");
+        // US Letter MediaBox.
+        assert!(pdf.contains("/MediaBox [0 0 612 792]"), "Letter page box");
+        // The title + a body line are embedded as text-show operators.
+        assert!(pdf.contains(&format!("({DOC_TITLE}) Tj")), "title embedded");
+        assert!(pdf.contains(&format!("({}) Tj", DOC_BODY[0])), "first body line embedded");
+        // The accent rule fills a rect.
+        assert!(pdf.contains("re\nf\n"), "accent rule filled");
+    }
+
+    #[test]
+    fn r911_submit_records_the_rendered_pdf() {
+        let owner = Owner::new();
+        owner.run(|| {
+            let model = use_model();
+            let backend = AppPrintBackend {
+                inner: Box::new(InMemoryPrintBackend::with_sample_printers()),
+                kind: "memory",
+            };
+            submit_current_job(&backend, &model);
+            assert_eq!(model.submit_count.get(), 1);
+            let content = model.last_content.get();
+            assert!(content.starts_with("%PDF-1.7"), "recorded content is the rendered PDF");
+            assert!(content.contains(&format!("({DOC_TITLE}) Tj")), "PDF carries the title");
+        });
     }
 }

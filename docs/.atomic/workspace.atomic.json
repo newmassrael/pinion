@@ -38981,6 +38981,54 @@
         "resolve_target_index clamps (no wrap) - intentional divergence from tabs' cyclic roving (pager-vs-cycle, R754)"
       ]
     },
+    "R911": {
+      "decision_summary": "R911 §5.53 §3 own-renderer print spools a rendered vector PDF (pinion-pdf 2nd consumer)",
+      "changes_bullets": [
+        "hello-print Print action renders the document to a vector PDF (pinion-pdf) and spools it, not a text blob",
+        "pinion-pdf 2nd consumer (after scene/export_pdf) = [[substrate-incompleteness-signal]] payoff; completes §5.53 print",
+        "document_scene = explicitly-positioned print doc (bold title + accent rule + body lines), rendered direct (no layout pass)",
+        "last_content Signal exposes the spooled PDF via /job/external/last_content for AI-first verification",
+        "demo r911_print_pdf: 31 assertions (PDF skeleton + embedded report text + print metadata + render determinism)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 157 result-ok, 0 failures (hello-print 4 unit incl render-payload + submit-records-PDF)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo r911_print_pdf.py: PASS, 31 assertions (release); spooled content parsed as a valid PDF carrying the report",
+        "self-grep: render_scene has exactly 2 consumers (export_pdf + hello-print) = clean 2nd consumer, no lift"
+      ],
+      "impact_refs": [
+        "5.53",
+        "3"
+      ],
+      "carry_forward_bullets": [
+        "print doc is explicitly positioned (no compute_layout); multi-paragraph reflow / per-node styled-runs still flat (R908 carry)",
+        "CUPS-real PDF spool unverified on this box (no destination); in-mem backend records + the demo validates the bytes",
+        "spooled PDF exposed as an introspect string (fine for a small doc); a content-len/hash projection if docs grow large"
+      ],
+      "publishable_decision_summary": "R911 §5.53 §3 own-renderer print spools a rendered vector PDF (pinion-pdf 2nd consumer)",
+      "publishable_changes_bullets": [
+        "hello-print Print action renders the document to a vector PDF (pinion-pdf) and spools it, not a text blob",
+        "pinion-pdf 2nd consumer (after scene/export_pdf) = [[substrate-incompleteness-signal]] payoff; completes §5.53 print",
+        "document_scene = explicitly-positioned print doc (bold title + accent rule + body lines), rendered direct (no layout pass)",
+        "last_content Signal exposes the spooled PDF via /job/external/last_content for AI-first verification",
+        "demo r911_print_pdf: 31 assertions (PDF skeleton + embedded report text + print metadata + render determinism)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 157 result-ok, 0 failures (hello-print 4 unit incl render-payload + submit-records-PDF)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo r911_print_pdf.py: PASS, 31 assertions (release); spooled content parsed as a valid PDF carrying the report",
+        "self-grep: render_scene has exactly 2 consumers (export_pdf + hello-print) = clean 2nd consumer, no lift"
+      ],
+      "publishable_impact_refs": [
+        "5.53",
+        "3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "print doc is explicitly positioned (no compute_layout); multi-paragraph reflow / per-node styled-runs still flat (R908 carry)",
+        "CUPS-real PDF spool unverified on this box (no destination); in-mem backend records + the demo validates the bytes",
+        "spooled PDF exposed as an introspect string (fine for a small doc); a content-len/hash projection if docs grow large"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
