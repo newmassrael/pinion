@@ -16,6 +16,7 @@ pub mod caret_state;
 pub mod commands;
 pub mod dispatch;
 pub mod dry_run;
+pub mod export_pdf;
 pub mod focus;
 pub mod font;
 pub mod frame_timings;

@@ -441,6 +441,34 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None and isinstance(resp.result, dict)
         return resp.result
 
+    def export_pdf(
+        self,
+        *,
+        page: Optional[str] = None,
+        orientation: Optional[str] = None,
+        window: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """`scene/export_pdf` typed wrapper (R908 §3 §5.53).
+
+        Renders the addressed window's current paint scene to a vector
+        PDF and returns `{page_count, page_width_pt, page_height_pt,
+        object_count, byte_len, document}` (the `document` is the full
+        ASCII PDF). `page` ("letter"|"a4") / `orientation`
+        ("portrait"|"landscape") are optional; absent `page` sizes the
+        page to the scene's own pixel bounds. Raises `-32602 NoPaintScene`
+        until the window has painted; gate via [`wait_export_pdf`].
+        """
+        params: dict[str, Any] = {}
+        if page is not None:
+            params["page"] = page
+        if orientation is not None:
+            params["orientation"] = orientation
+        if window is not None:
+            params["window"] = window
+        resp = self.request("scene/export_pdf", params)
+        assert resp is not None and isinstance(resp.result, dict)
+        return resp.result
+
     def intents(self) -> list[Any]:
         resp = self.request("scene/intents")
         assert resp is not None

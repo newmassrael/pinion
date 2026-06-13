@@ -48,6 +48,21 @@ impl Orientation {
             Self::Landscape => Self::Portrait,
         }
     }
+
+    /// Parse the canonical lowercase wire token — the read inverse of
+    /// [`Self::as_str`] ([[wire-form-read-write-symmetry]]). `None` for
+    /// any other string. The one home of the `"portrait"` / `"landscape"`
+    /// vocabulary, so consumers that read orientation off the wire
+    /// (`scene/export_pdf`, R908) cannot drift from the spool token
+    /// [`Self::as_str`] writes.
+    #[must_use]
+    pub fn from_wire(token: &str) -> Option<Self> {
+        match token {
+            "portrait" => Some(Self::Portrait),
+            "landscape" => Some(Self::Landscape),
+            _ => None,
+        }
+    }
 }
 
 /// A printer a [`PrintBackend`] can target.
@@ -247,6 +262,15 @@ mod tests {
         assert_eq!(Orientation::Portrait.toggled(), Orientation::Landscape);
         assert_eq!(Orientation::Landscape.toggled(), Orientation::Portrait);
         assert_eq!(Orientation::default(), Orientation::Portrait);
+    }
+
+    #[test]
+    fn orientation_from_wire_inverts_as_str() {
+        for o in [Orientation::Portrait, Orientation::Landscape] {
+            assert_eq!(Orientation::from_wire(o.as_str()), Some(o), "round-trip {o:?}");
+        }
+        assert_eq!(Orientation::from_wire("sideways"), None);
+        assert_eq!(Orientation::from_wire("Portrait"), None, "strict lowercase token");
     }
 
     #[test]

@@ -1,0 +1,20 @@
+[package]
+name = "pinion-pdf"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R908 §3 §5.53 — own-renderer Scene -> PDF document pipeline. Walks a post-layout pinion_core::Scene (rects / text / containers / scroll) into a vector PDF byte stream, no rasterizer / GPU / font embedding (standard-14 fonts). The documented-future axis pinion_core::print reserved; the scene-as-data (inv #1, #7) analogue of the vello paint adapter, projecting the same structured tree to a portable document instead of GPU fragments."
+
+[lints]
+workspace = true
+
+[dependencies]
+# The structured scene + style the renderer projects to PDF operators.
+# Pure: no GPU / vello / winit. A leaf peer of pinion-widget-paint
+# (Scene -> vello) and pinion-a11y (Scene -> AccessNode) — each walks
+# the same tree to a different target; PDF's target is vector page
+# operators. Reused so the renderer stays in pinion-core's coordinate
+# system (Rect u32, Color sRGB u8).
+pinion-core = { path = "../pinion-core", version = "0.0.1" }

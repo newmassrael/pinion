@@ -39,6 +39,7 @@ use crate::caret_state::{caret_state, CaretStateOutcome};
 use crate::frame_timings::{frame_timings, FrameTimingsError, FrameTimingsOutcome};
 use crate::commands::{list_pending_commands, CommandsError};
 use crate::dry_run::{dry_run, DryRunError};
+use crate::export_pdf::{export_pdf, ExportPdfError, ExportPdfParams};
 use crate::simulate::{simulate, simulate_with_owner, SimulateError, SimulateStep};
 use crate::font::{self, FontError, FontRegistry};
 use crate::intents::{drain_intents, IntentsError};
@@ -1550,6 +1551,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
         ),
         "scene/frame_timings" => (
             handle_scene_frame_timings(frame_timings),
+            HandlerKind::Read,
+        ),
+        "scene/export_pdf" => (
+            handle_scene_export_pdf(last_paint_scene, request.params.as_ref()),
             HandlerKind::Read,
         ),
         "scene/pacing_state" => (
@@ -4141,6 +4146,47 @@ fn frame_timings_error_to_rpc(err: &FrameTimingsError) -> RpcError {
         FrameTimingsError::FrameTimingsUnavailable => {
             RpcError::invalid_params("frame timings unavailable for this window")
                 .with_data_string("FrameTimingsUnavailable")
+        }
+    }
+}
+
+/// R908 §5.53 — `scene/export_pdf`: render the addressed window's paint
+/// scene to a vector PDF. The render peer of `scene/layout`: both
+/// project the same per-window `last_paint_scene` borrow, only on their
+/// own arm (R890.1).
+fn handle_scene_export_pdf(
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    // Params are optional (an empty object / absent params exports the
+    // scene-bounds page), so a missing object deserializes to the
+    // all-default `ExportPdfParams` rather than erroring.
+    let typed: ExportPdfParams = match params {
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?,
+        None => ExportPdfParams::default(),
+    };
+    match export_pdf(last_paint_scene, &typed) {
+        Ok(outcome) => serde_json::to_value(outcome).map_err(|e| {
+            RpcError::internal_error(format!("scene/export_pdf: failed to serialize outcome: {e}"))
+        }),
+        Err(err) => Err(export_pdf_error_to_rpc(&err)),
+    }
+}
+
+fn export_pdf_error_to_rpc(err: &ExportPdfError) -> RpcError {
+    match err {
+        ExportPdfError::NoPaintScene => {
+            RpcError::invalid_params("no paint scene for this window yet")
+                .with_data_string("NoPaintScene")
+        }
+        ExportPdfError::UnknownPageSize(name) => {
+            RpcError::invalid_params(format!("unknown page size: {name}"))
+                .with_data_string("UnknownPageSize")
+        }
+        ExportPdfError::UnknownOrientation(name) => {
+            RpcError::invalid_params(format!("unknown orientation: {name}"))
+                .with_data_string("UnknownOrientation")
         }
     }
 }

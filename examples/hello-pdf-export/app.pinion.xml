@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R908 §3 §5.53 Scene -> PDF consumer: pinion-forge renderer manifest for
+  hello-pdf-export. Emits `HelloPdfExportRenderer` (Vello-backed
+  RenderContext + RenderSurface + Renderer wrapper). Same single-source
+  emit template as the rest of the gallery; only the struct name
+  diverges. `aa` omitted -> defaults to Area (R46.2.1).
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloPdfExportRenderer"
+        backend="vello"/>

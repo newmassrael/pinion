@@ -38805,6 +38805,72 @@
         "live animation-clock single-step vs scene/tick substep asymmetry unchanged (frame_pacing carry)"
       ]
     },
+    "R908": {
+      "decision_summary": "R908 §5.53 §5.7 own-renderer Scene->PDF vector export pipeline + scene/export_pdf RPC",
+      "changes_bullets": [
+        "new pinion-pdf leaf crate (dep pinion-core only): render_scene(Scene, PageSize) -> RenderedPdf, pure",
+        "walks post-layout Scene to PDF vector ops: Box/Container fill+border+rounded, Text std-14, Scroll clip+xlate",
+        "coord y-flip (PDF bottom-left), DeviceRGB sRGB no-linearize, alpha via ExtGState, octal-escaped pure-ASCII doc",
+        "peer Scene-walker of pinion-widget-paint (vello) and pinion-a11y (AccessNode); target = PDF page operators",
+        "scene/export_pdf RPC: read peer of scene/layout, consumes per-window last_paint_scene, NoPaintScene error",
+        "params page(letter/a4) + orientation; orientation via new Orientation::from_wire (read peer of as_str, SSOT)",
+        "lands the documented-future axis pinion_core::print reserved (scene to PDF page-render pipeline)",
+        "example hello-pdf-export (title/swatches/body/border/watermark) + demo r908_pdf_export (48 assertions)",
+        "where scene/screenshot is RenderBackendUnavailable (RHI pending), vector PDF needs no rasterizer (inv #1)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 156 result-ok, 0 failures (pinion-pdf 15 / rpc export_pdf 6 / core from_wire / example 5)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo tools/demos/r908_pdf_export.py: PASS, 48 assertions on the release binary",
+        "external validators: qpdf --check (no errors), pdfinfo (valid PDF 1.7, 1 page, A4), pdftotext extracts text",
+        "Scene to PDF is a pure function: byte-identical output pinned by r908_render_is_deterministic",
+        "deterministic structure asserted (header/MediaBox/object-tree/operators/text), zero wall-clock -> zero flake"
+      ],
+      "impact_refs": [
+        "3",
+        "5.53",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "deferred: Scene Path/Image, BoxStyle gradient/shadow, TextNode styled-runs render nothing (additive on consumer)",
+        "deferred: UTF-8 to WinAnsi transcoding + font embedding (non-Latin text octal-escaped, won't render under std-14)",
+        "deferred: multi-page pagination (whole scene -> one page) + scale-to-fit a standard page (1:1 px->pt for now)",
+        "deferred: print-spool PDF integration (CupsPrintBackend still text-only; wire render into submit when needed)",
+        "External/ImmediateModeNode opaque by §3 (no interior in structured scene): honest no-render, not a gap"
+      ],
+      "publishable_decision_summary": "R908 §5.53 §5.7 own-renderer Scene->PDF vector export pipeline + scene/export_pdf RPC",
+      "publishable_changes_bullets": [
+        "new pinion-pdf leaf crate (dep pinion-core only): render_scene(Scene, PageSize) -> RenderedPdf, pure",
+        "walks post-layout Scene to PDF vector ops: Box/Container fill+border+rounded, Text std-14, Scroll clip+xlate",
+        "coord y-flip (PDF bottom-left), DeviceRGB sRGB no-linearize, alpha via ExtGState, octal-escaped pure-ASCII doc",
+        "peer Scene-walker of pinion-widget-paint (vello) and pinion-a11y (AccessNode); target = PDF page operators",
+        "scene/export_pdf RPC: read peer of scene/layout, consumes per-window last_paint_scene, NoPaintScene error",
+        "params page(letter/a4) + orientation; orientation via new Orientation::from_wire (read peer of as_str, SSOT)",
+        "lands the documented-future axis pinion_core::print reserved (scene to PDF page-render pipeline)",
+        "example hello-pdf-export (title/swatches/body/border/watermark) + demo r908_pdf_export (48 assertions)",
+        "where scene/screenshot is RenderBackendUnavailable (RHI pending), vector PDF needs no rasterizer (inv #1)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 156 result-ok, 0 failures (pinion-pdf 15 / rpc export_pdf 6 / core from_wire / example 5)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "demo tools/demos/r908_pdf_export.py: PASS, 48 assertions on the release binary",
+        "external validators: qpdf --check (no errors), pdfinfo (valid PDF 1.7, 1 page, A4), pdftotext extracts text",
+        "Scene to PDF is a pure function: byte-identical output pinned by r908_render_is_deterministic",
+        "deterministic structure asserted (header/MediaBox/object-tree/operators/text), zero wall-clock -> zero flake"
+      ],
+      "publishable_impact_refs": [
+        "3",
+        "5.53",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "deferred: Scene Path/Image, BoxStyle gradient/shadow, TextNode styled-runs render nothing (additive on consumer)",
+        "deferred: UTF-8 to WinAnsi transcoding + font embedding (non-Latin text octal-escaped, won't render under std-14)",
+        "deferred: multi-page pagination (whole scene -> one page) + scale-to-fit a standard page (1:1 px->pt for now)",
+        "deferred: print-spool PDF integration (CupsPrintBackend still text-only; wire render into submit when needed)",
+        "External/ImmediateModeNode opaque by §3 (no interior in structured scene): honest no-render, not a gap"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -51946,5 +52012,5 @@
   "entities": {},
   "predicates": {},
   "narrative_facts": {},
-  "schema_version": 20
+  "schema_version": 21
 }

@@ -2383,6 +2383,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-pdf-export"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-popover"
 version = "0.0.1"
 dependencies = [
@@ -4196,6 +4208,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pinion-pdf"
+version = "0.0.1"
+dependencies = [
+ "pinion-core",
+]
+
+[[package]]
 name = "pinion-platform-clipboard"
 version = "0.0.1"
 dependencies = [
@@ -4231,6 +4250,7 @@ name = "pinion-rpc"
 version = "0.0.1"
 dependencies = [
  "pinion-core",
+ "pinion-pdf",
  "pinion-runtime",
  "pinion-text-font",
  "pinion-text-unicode",

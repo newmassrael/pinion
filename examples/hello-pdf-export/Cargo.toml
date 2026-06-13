@@ -1,0 +1,43 @@
+[package]
+name = "hello-pdf-export"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R908 §3 §5.53 own-renderer Scene -> PDF consumer — a document-style scene (title / body text / coloured rounded swatches / bordered box / a Toggle-driven watermark) exported to a vector PDF via scene/export_pdf; the AI reads the document structure back without pixels (the inv #1 structured-scene payoff scene/screenshot cannot give)"
+publish = false
+
+[[bin]]
+name = "hello-pdf-export"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Toggle reused purely as the RPC-drivable repaint trigger that
+# flips the watermark label (DRAFT <-> FINAL), so the demo can prove the
+# exported PDF tracks live scene state; the substrate under test is the
+# Scene -> PDF pipeline, not the Toggle.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R653 §5.16 — `#[pinion_derive::widget(...)]` emits the WidgetCore +
+# WidgetA11y + WidgetView forwarding trio.
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+# R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
+# winit transitively); `scene/export_pdf` reads the per-window
+# last_paint_scene this shell stores each frame.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R46.5 §5.16: the `HelloPdfExportRenderer` struct emitted by `build.rs`
+# names `::vello::*` directly.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the Vello renderer wrapper.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
