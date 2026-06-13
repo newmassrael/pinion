@@ -39565,6 +39565,60 @@
         "no new RPC to begin a panel edit beyond begin_edit_detail; AI path stays intervene detail.<field>"
       ]
     },
+    "R919": {
+      "decision_summary": "R919 property-grid reset-to-default: a property changed from its class-default baseline (use_property_defaults) shows a clickable reset arrow; modified = sort_cmp != Equal (NaN-safe); reset_to_default/reset_all route through the shared set_value funnel, exposed by RPC (modified/any_modified query, reset/reset_all invoke), click routing, and a one-gated a11y reset button",
+      "changes_bullets": [
+        "property-grid gains a Details reset arrow: a property off its default shows a reset affordance",
+        "use_property_defaults() = frozen default_properties() baseline (one Rc home: External, view, a11y)",
+        "property_modified(v, baseline) = sort_cmp != Equal (R900 NaN-safe total order, not IEEE PartialEq)",
+        "reset_to_default / reset_all route through the shared set_value funnel; an unchanged row no-ops",
+        "RPC: query modified.<index> / any_modified; invoke reset <source> / reset_all (count) + schema",
+        "paint: a modified row paints a clickable accent reset arrow (property_grid#reset<src>) at row end",
+        "routing: dispatch_send RESET_PREFIX branch -> reset (peer of opt/sw prefixes; R803 inline encode)",
+        "a11y: a reset button child of the value cell, one-gated with the painted arrow (R886.1)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (hello-property-grid 49; +4 R919: derive, reset, RPC, paint+a11y)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "8 property-grid demos PASS incl new r919 (>=30 assert, wait-gated): edit -> arrow -> reset",
+        "self-grep: property_modified 1 home/3 readers; reset-arrow tag inline (R803); dispatch_send decode"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "diversified off the node editor (R898 ~12-round local-optimum) to property-grid depth (order #1)",
+        "reset is RPC + click; a keyboard reset key on the cursor row is an additive follow-up",
+        "property_modified stays example-local (1st consumer); no data-grid/node default baseline yet"
+      ],
+      "publishable_decision_summary": "R919 property-grid reset-to-default: a property changed from its class-default baseline (use_property_defaults) shows a clickable reset arrow; modified = sort_cmp != Equal (NaN-safe); reset_to_default/reset_all route through the shared set_value funnel, exposed by RPC (modified/any_modified query, reset/reset_all invoke), click routing, and a one-gated a11y reset button",
+      "publishable_changes_bullets": [
+        "property-grid gains a Details reset arrow: a property off its default shows a reset affordance",
+        "use_property_defaults() = frozen default_properties() baseline (one Rc home: External, view, a11y)",
+        "property_modified(v, baseline) = sort_cmp != Equal (R900 NaN-safe total order, not IEEE PartialEq)",
+        "reset_to_default / reset_all route through the shared set_value funnel; an unchanged row no-ops",
+        "RPC: query modified.<index> / any_modified; invoke reset <source> / reset_all (count) + schema",
+        "paint: a modified row paints a clickable accent reset arrow (property_grid#reset<src>) at row end",
+        "routing: dispatch_send RESET_PREFIX branch -> reset (peer of opt/sw prefixes; R803 inline encode)",
+        "a11y: a reset button child of the value cell, one-gated with the painted arrow (R886.1)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (hello-property-grid 49; +4 R919: derive, reset, RPC, paint+a11y)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "8 property-grid demos PASS incl new r919 (>=30 assert, wait-gated): edit -> arrow -> reset",
+        "self-grep: property_modified 1 home/3 readers; reset-arrow tag inline (R803); dispatch_send decode"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "diversified off the node editor (R898 ~12-round local-optimum) to property-grid depth (order #1)",
+        "reset is RPC + click; a keyboard reset key on the cursor row is an additive follow-up",
+        "property_modified stays example-local (1st consumer); no data-grid/node default baseline yet"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

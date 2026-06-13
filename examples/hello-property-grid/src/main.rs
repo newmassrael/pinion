@@ -173,6 +173,10 @@ const CELL_PX: u32 = 15;
 const NAME_COL_W: u32 = 150;
 const VALUE_COL_W: u32 = 250;
 const ROW_H: u32 = 38;
+/// R919 — the reset-arrow mark size (px) and its inset from the row's trailing
+/// edge (mark size + a small margin), for a modified row's reset affordance.
+const RESET_DOT: u32 = 10;
+const RESET_DOT_X: u32 = 16;
 const CELL_PAD: u32 = 10;
 const CHECKBOX_SIZE: u32 = 20;
 const PANEL_PAD: u32 = 20;
@@ -241,6 +245,10 @@ const POPUP_DISMISS_TAG: &str = "property_grid#dismiss";
 /// Composite sub-tag prefix for a popup option cell (`{GRID_TAG}#opt{i}`),
 /// routing the click / hover to the coordinator's `send`.
 const CHOICE_OPT_PREFIX: &str = "opt";
+/// R919 — composite sub-tag prefix for a row's reset arrow
+/// (`{GRID_TAG}#reset{source}`), routing its click to the coordinator's `reset`.
+/// A distinct prefix so `dispatch_send` never reads it as a numeric cell index.
+const RESET_PREFIX: &str = "reset";
 
 // ─── colour-cell popup (R869) ─────────────────────────────────────
 
@@ -359,6 +367,27 @@ fn default_properties() -> Vec<CellValue> {
 fn use_property_model() -> Rc<Signal<Vec<CellValue>>> {
     let owner = Owner::current().expect("use_property_model requires an active Owner scope");
     owner.cache("property_grid.model", || Signal::new(default_properties()))
+}
+
+/// R919 — the frozen baseline: the class default value of every property (the
+/// same `default_properties()` the model starts from). A property is "modified"
+/// when its current value differs from this baseline (the Unreal / Qt Details
+/// "reset arrow" appears only on a changed property), and `reset` restores it.
+/// One immutable home (an `Rc<Vec<…>>`, never a `Signal` — defaults do not
+/// change) the External, the view, and the a11y all read, so the modified
+/// indicator and the reset target can never disagree.
+#[must_use]
+fn use_property_defaults() -> Rc<Vec<CellValue>> {
+    let owner = Owner::current().expect("use_property_defaults requires an active Owner scope");
+    owner.cache("property_grid.defaults", default_properties)
+}
+
+/// R919 — whether `value` differs from its class default `baseline`. Compares by
+/// the substrate's TOTAL order ([`CellValue::sort_cmp`]), not the derived IEEE
+/// `PartialEq`, so a `Float` of `NaN` reads as unmodified against a `NaN` default
+/// (the R900 no-spurious-state discipline — a `NaN == NaN` guard).
+fn property_modified(value: &CellValue, baseline: &CellValue) -> bool {
+    value.sort_cmp(baseline) != core::cmp::Ordering::Equal
 }
 
 /// R871 — the grouped-collapse + roving-cursor SSOT (the R843
@@ -523,6 +552,10 @@ struct ScrubDrag {
 
 struct PropertyGridExternal {
     model: Rc<Signal<Vec<CellValue>>>,
+    /// R919 — the class-default baseline ([`use_property_defaults`]). A property
+    /// is modified when `model[i]` differs from `defaults[i]`; `reset` writes the
+    /// baseline back through the [`set_value`](Self::set_value) funnel.
+    defaults: Rc<Vec<CellValue>>,
     /// The grouped-collapse + roving-cursor SSOT — held so a data-row click can
     /// move the visual-row cursor onto the clicked source (R871). The keyboard
     /// path moves it through [`group_nav`]; collapse lives here too.
@@ -553,6 +586,7 @@ impl PropertyGridExternal {
     ) -> Self {
         Self {
             model,
+            defaults: use_property_defaults(),
             groups,
             editing_row,
             editor,
@@ -565,6 +599,41 @@ impl PropertyGridExternal {
 
     fn count(&self) -> usize {
         self.model.get().len()
+    }
+
+    /// R919 — whether the property at `source` differs from its class default
+    /// (the modified-indicator predicate; the reset arrow paints only when true).
+    /// Out-of-range / absent reads as not-modified.
+    fn is_modified(&self, source: usize) -> bool {
+        match (self.model.get().get(source), self.defaults.get(source)) {
+            (Some(value), Some(baseline)) => property_modified(value, baseline),
+            _ => false,
+        }
+    }
+
+    /// R919 — whether any property is modified (the "Reset all" enable gate / the
+    /// AI-first "is this object dirty?" read).
+    fn any_modified(&self) -> bool {
+        (0..self.count()).any(|i| self.is_modified(i))
+    }
+
+    /// R919 — reset the property at `source` to its class default, returning
+    /// whether it actually changed (a no-op `false` for an already-default or
+    /// out-of-range row — no spurious model churn). Routes through the shared
+    /// [`set_value`](Self::set_value) funnel, so a reset is the same model write
+    /// a keyboard commit / RPC `intervene value.<i>` makes.
+    fn reset_to_default(&self, source: usize) -> bool {
+        if !self.is_modified(source) {
+            return false;
+        }
+        self.set_value(source, self.defaults[source].clone());
+        true
+    }
+
+    /// R919 — reset every modified property to its default, returning the count
+    /// reset (`0` when nothing was modified).
+    fn reset_all(&self) -> usize {
+        (0..self.count()).filter(|&i| self.reset_to_default(i)).count()
     }
 
     /// Move the roving visual-row cursor onto the data row whose stable source
@@ -828,6 +897,15 @@ impl PropertyGridExternal {
             }
             return Ok(IntrospectValue::Null);
         }
+        // R919 — a click on a row's reset arrow resets that property to its
+        // default (the same `reset_to_default` funnel the RPC / keyboard use).
+        if let Some(src) = key.strip_prefix(RESET_PREFIX) {
+            let i: usize = src.parse().map_err(|_| InvokeError::Rejected)?;
+            if event_name == "PointerUp" {
+                self.reset_to_default(i);
+            }
+            return Ok(IntrospectValue::Null);
+        }
         let idx: usize = key.parse().map_err(|_| InvokeError::Rejected)?;
         if idx >= self.count() {
             return Err(InvokeError::Rejected);
@@ -940,6 +1018,11 @@ impl ExternalIntrospect for PropertyGridExternal {
             ("name.<index>", "string"),
             ("kind.<index>", "string"),
             ("value.<index>", "json"),
+            // R919 — the modified-from-default reads + the reset writes.
+            ("modified.<index>", "bool"),
+            ("any_modified", "bool"),
+            ("reset", "int"),
+            ("reset_all", "json"),
             ("popup_cursor", "int"),
             // R875 — live numeric-scrub flag (true between the first drag move
             // and the release); the AI-first witness of a scrub in flight.
@@ -971,7 +1054,18 @@ impl ExternalIntrospect for PropertyGridExternal {
                 None => IntrospectValue::Null,
             }),
             "scrubbing" => Some(IntrospectValue::Bool(self.is_scrubbing())),
+            // R919 — any property modified from its default (the dirty read).
+            "any_modified" => Some(IntrospectValue::Bool(self.any_modified())),
             _ => {
+                // R919 — is property `<index>` modified from its class default?
+                // (out-of-range -> `None`, like the other `<index>` reads).
+                if let Some(idx_str) = path.strip_prefix("modified.") {
+                    let idx: usize = idx_str.parse().ok()?;
+                    if idx >= self.count() {
+                        return None;
+                    }
+                    return Some(IntrospectValue::Bool(self.is_modified(idx)));
+                }
                 if let Some(idx_str) = path.strip_prefix("name.") {
                     let idx: usize = idx_str.parse().ok()?;
                     return PROPERTY_NAMES
@@ -1038,6 +1132,21 @@ impl ExternalIntrospect for PropertyGridExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R919 — reset the property at a given source row to its class
+            // default (the RPC twin of clicking its reset arrow). `false` when the
+            // row is already default / out of range. The keyboard + click paths
+            // route here too, so a reset is one funnel.
+            "reset" => match args {
+                IntrospectValue::Int(i) => {
+                    let row = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.reset_to_default(row)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R919 — reset every modified property; returns the count reset.
+            "reset_all" => Ok(IntrospectValue::Int(
+                i64::try_from(self.reset_all()).expect("reset count fits in i64"),
+            )),
             // Enter edit mode on a given row (the `Enter` / `F2` keyboard
             // path + the RPC edit-entry affordance) — text edit, or for a
             // choice row, opens the popup.
@@ -1366,6 +1475,7 @@ fn view_row(
     value: &CellValue,
     is_focused: bool,
     edit_active: bool,
+    modified: bool,
     theme: &Theme,
     edit_field: (TextFieldState, u32),
 ) -> Scene {
@@ -1419,8 +1529,18 @@ fn view_row(
         ),
     );
 
+    // R919 — a modified row paints its reset arrow at the trailing edge: a
+    // clickable accent mark (`{GRID_TAG}#reset<index>`) whose presence IS the
+    // modified indicator (the Unreal / Qt "reset to default" arrow appears only
+    // on a changed property). Absolutely positioned, so it overlays the row's
+    // trailing padding without shifting the Property / Value column layout, and
+    // last in paint order so its click wins over the row beneath it.
+    let mut children = vec![name_cell, value_cell];
+    if modified {
+        children.push(reset_arrow(index, theme));
+    }
     Scene::Container(
-        ContainerNode::new(vec![name_cell, value_cell])
+        ContainerNode::new(children)
             .with_tag(format!("{GRID_TAG}#{index}"))
             .with_style(BoxStyle::filled(row_fill(theme, is_focused)))
             .with_layout(
@@ -1428,6 +1548,27 @@ fn view_row(
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
                     .with_size(Size::px(NAME_COL_W + VALUE_COL_W, ROW_H)),
+            ),
+    )
+}
+
+/// R919 — the reset arrow for a modified row `index`: a small accent mark at the
+/// row's trailing edge, tagged `{GRID_TAG}#reset<index>` so a click routes to the
+/// coordinator's `reset` (the same funnel the RPC / keyboard use). Painted only
+/// for a modified row, so its presence doubles as the modified indicator; its
+/// a11y `button` peer is gated on the same predicate (R886.1 one-gate).
+fn reset_arrow(index: usize, theme: &Theme) -> Scene {
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag(format!("{GRID_TAG}#{RESET_PREFIX}{index}"))
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Accent)))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(
+                        (NAME_COL_W + VALUE_COL_W).saturating_sub(RESET_DOT_X),
+                        ROW_H.saturating_sub(RESET_DOT) / 2,
+                    )
+                    .with_size(Size::px(RESET_DOT, RESET_DOT)),
             ),
     )
 }
@@ -1784,6 +1925,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let ((edit_state, edit_caret), (search_state, search_caret)) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
     let model = use_property_model().get();
+    // R919 — the class-default baseline, to paint a reset arrow on any row whose
+    // value differs from it.
+    let defaults = use_property_defaults();
     let groups = use_property_groups();
     // Reading `rows()` (collapse + order) and `cursor()` inside the view-fn
     // subscribes, so a category collapse / cursor move repaints (R871).
@@ -1837,11 +1981,13 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             GroupRow::Data { source } => {
                 let value = &model[source];
                 let edit_active = editing == Some(source) && value.kind().is_text_editable();
+                let modified = defaults.get(source).is_some_and(|d| property_modified(value, d));
                 rows.push(view_row(
                     source,
                     value,
                     Some(source) == cursor_source,
                     edit_active,
+                    modified,
                     &theme,
                     (edit_state, edit_caret),
                 ));
@@ -2090,6 +2236,28 @@ impl WidgetA11y for PropertyGridView {
             },
             |r| r.composite_tag(GROUP_TAG, GRID_TAG),
         );
+        // R919 — each modified *visible* data row's value cell gains a reset
+        // `button` child (`{GRID_TAG}#reset<source>`), named for the property and
+        // gated on the SAME modified predicate the painted reset arrow uses, so
+        // the AT tree advertises the reset action exactly when it paints (R886.1
+        // one-gate). A collapsed / filtered-out row paints no arrow and emits no
+        // button (it has no cell to host one).
+        let defaults = use_property_defaults();
+        for source in rows.iter().filter_map(GroupRow::source) {
+            let modified =
+                defaults.get(source).is_some_and(|d| property_modified(&model[source], d));
+            if !modified {
+                continue;
+            }
+            let reset_tag = format!("{GRID_TAG}#{RESET_PREFIX}{source}");
+            if let Some(cell) = nodes.iter_mut().find(|n| n.tag == format!("pg_cell{source}_1")) {
+                cell.children.push(reset_tag.clone());
+            }
+            nodes.push(
+                AccessNode::new(reset_tag, pinion_a11y::AriaRole::Button)
+                    .with_name(format!("Reset {} to default", PROPERTY_NAMES[source])),
+            );
+        }
         // R873 — the live search box is a Tab stop; emit its textbox node (the
         // lifted `text_field_a11y_node` SSOT) so an AT user who tabs into it
         // hears a named `textbox` with the current query, not a silent node.
@@ -2211,6 +2379,112 @@ mod tests {
             .find_external_with_tag(GRID_TAG)
             .and_then(|n| n.handle.introspect())
             .expect("grid external present")
+    }
+
+    /// Run `f` against the grid's mutable introspection in a borrow scope.
+    fn with_grid_mut<R>(scene: &mut Scene, f: impl FnOnce(&mut dyn ExternalIntrospect) -> R) -> R {
+        let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+        f(node.handle.introspect_mut().expect("introspectable"))
+    }
+
+    /// R919 — a property is modified once its value differs from the class
+    /// default; `reset` restores it through the shared value funnel, and the
+    /// reads (`modified.<i>` / `any_modified`) track it. Row 4 ("Layer") is an
+    /// `Int` defaulting to 3.
+    #[test]
+    fn r919_modified_and_reset_via_rpc() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)), "boot: clean");
+            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(false)));
+            with_grid_mut(&mut scene, |i| i.intervene("value.4", IntrospectValue::Int(17)).unwrap());
+            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(true)), "an edited value is modified");
+            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(grid_intro(&scene).query("modified.6"), Some(IntrospectValue::Bool(false)), "an untouched row stays clean");
+            assert_eq!(grid_intro(&scene).query("modified.99"), None, "out-of-range modified -> None");
+            // Reset restores the default and clears modified.
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset", IntrospectValue::Int(4))),
+                Ok(IntrospectValue::Bool(true)),
+                "reset changed the modified row",
+            );
+            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "reset restored the default");
+            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)));
+            // Resetting an already-default row is a no-op `false`.
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset", IntrospectValue::Int(4))),
+                Ok(IntrospectValue::Bool(false)),
+                "reset of an unmodified row is a no-op",
+            );
+        });
+    }
+
+    /// R919 — `reset_all` restores every modified property and reports the count.
+    #[test]
+    fn r919_reset_all_restores_every_modified() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.4", IntrospectValue::Int(17)).unwrap();
+                i.intervene("value.6", IntrospectValue::Float(99.0)).unwrap();
+                i.intervene("value.2", IntrospectValue::Bool(false)).unwrap();
+            });
+            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset_all", IntrospectValue::Null)),
+                Ok(IntrospectValue::Int(3)),
+                "reset_all returns the count reset",
+            );
+            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "Int restored");
+            assert_eq!(grid_intro(&scene).query("value.6"), Some(IntrospectValue::Float(12.5)), "Float restored");
+            assert_eq!(grid_intro(&scene).query("value.2"), Some(IntrospectValue::Bool(true)), "Bool restored");
+            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset_all", IntrospectValue::Null)),
+                Ok(IntrospectValue::Int(0)),
+                "reset_all on a clean grid resets nothing",
+            );
+        });
+    }
+
+    /// R919 — a modified row paints its reset arrow, and the a11y tree advertises
+    /// a matching reset `button` child of the value cell (the paint==a11y one-gate,
+    /// R886.1); an unmodified row paints / advertises neither.
+    #[test]
+    fn r919_modified_row_paints_reset_arrow_with_a11y_button() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let arrow_tag = format!("{GRID_TAG}#{RESET_PREFIX}4");
+            assert!(!view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "no reset arrow on a clean row");
+            assert!(
+                PropertyGridView::access_node(&idle_state(), Some(GRID_TAG)).iter().all(|n| n.tag != arrow_tag),
+                "no reset button advertised while clean",
+            );
+            with_grid_mut(&mut scene, |i| i.intervene("value.4", IntrospectValue::Int(17)).unwrap());
+            assert!(view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "the modified row paints a reset arrow");
+            let a11y = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
+            let btn = a11y.iter().find(|n| n.tag == arrow_tag).expect("reset button advertised");
+            assert_eq!(btn.role, pinion_a11y::AriaRole::Button);
+            assert_eq!(btn.name.as_deref(), Some("Reset Layer to default"), "named for the property");
+            let cell = a11y.iter().find(|n| n.tag == "pg_cell4_1").expect("value cell present");
+            assert!(cell.children.iter().any(|c| c.as_str() == arrow_tag), "the button is the value cell's child");
+        });
+    }
+
+    /// R919 — clicking a row's reset arrow routes to the same `reset` funnel the
+    /// RPC and keyboard use (the `{GRID_TAG}#reset<source>` wire).
+    #[test]
+    fn r919_reset_arrow_click_routes_to_reset() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.4", IntrospectValue::Int(17)).unwrap();
+                let _ = i.invoke("send", IntrospectValue::Text(format!("{RESET_PREFIX}4:PointerUp")));
+            });
+            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "the arrow click reset the row");
+            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(false)));
+        });
     }
 
     #[test]
