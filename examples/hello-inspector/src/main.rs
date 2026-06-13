@@ -31,18 +31,22 @@
 //!
 //! The novel contribution is the *selection → reactive inspector*
 //! binding + per-object heterogeneous schemas. The value model and
-//! typed write reuse [`CellValue`] wholesale (no re-implementation). The
-//! AI-first edit path (RPC intervene) is the §2 primary; inline
-//! click-to-edit delegates (the property-grid's popup/scrub richness)
-//! and pointer click-to-select on the object list are documented
-//! follow-ups — keyboard + RPC selection is a complete vertical slice.
+//! typed write reuse [`CellValue`] wholesale (no re-implementation).
+//! Selection is driven three ways — RPC (`invoke select` / `intervene
+//! selected`), keyboard (Arrow / Home / End via `apply_key`), and a
+//! pointer click on an object row (the R910 composite-send wire) — all
+//! sharing one select funnel. Property *editing* is the AI-first RPC
+//! `intervene value.<i>` path (the §2 primary); inline click-to-edit
+//! cell delegates (the property-grid's popup/scrub richness) are the
+//! remaining documented follow-up.
 //!
 //! ## Verification
 //!
-//! `tools/demos/r909_inspector.py` drives it over RPC: select each
-//! object → the inspector reports that object's schema; intervene a
-//! typed property → re-query confirms; re-select → per-object isolation
-//! holds. All scene-as-data, deterministic
+//! `tools/demos/r909_inspector.py` drives selection + editing over RPC
+//! (select each object → its schema; intervene a property → re-query;
+//! per-object isolation across re-selects). `tools/demos/r910_inspector_interaction.py`
+//! drives the pointer click-to-select + keyboard navigation. All
+//! scene-as-data, deterministic
 //! ([[ai-first-rpc-introspection-obligation]],
 //! [[introspection-from-paint-not-screen]]).
 
@@ -51,9 +55,9 @@ use std::rc::Rc;
 use pinion_core::cell_value::CellValue;
 use pinion_core::composite_tag::send_activation_index;
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
+use pinion_core::external::query_proxy_external_impl;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle, Size,
@@ -249,27 +253,12 @@ impl core::fmt::Debug for InspectorExternal {
     }
 }
 
-impl External for InspectorExternal {
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
-    }
-
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-}
+// R913.1 — the Gui+Rpc / Framework / UiThreadSync `impl External`
+// skeleton is the `query_proxy_external_impl!` SSOT (a config-holder
+// External whose state is a shared reactive holder); hand-rolling it was
+// a [[use-substrate-not-hand-rolled-equivalent]] miss. The macro needs
+// the `ExternalIntrospect` impl below.
+query_proxy_external_impl!(InspectorExternal);
 
 impl ExternalIntrospect for InspectorExternal {
     fn schema(&self) -> IntrospectSchema {

@@ -39133,6 +39133,62 @@
         "framework maturity means fresh high-value ZERO-FLAKE gaps are scarce; remaining high-leverage = DCC depth (value-order #1)"
       ]
     },
+    "R913.1": {
+      "decision_summary": "R913.1 session-review audit clearance: pinion-pdf alpha leak + External-macro SSOT + doc/hardening",
+      "changes_bullets": [
+        "pinion-pdf alpha-leak fix (REAL bug): track current_alpha (init 255), emit /GSn gs only on change incl reset-to-opaque (ca=1)",
+        "save/restore current_alpha around Scroll q/Q (graphics state persists; Q restores) — sub-opaque alpha no longer leaks into opaque draws",
+        "2 regression tests (opaque-after-translucent resets + all-opaque emits no ExtGState)",
+        "External scaffold: inspector/palette/status-bar routed through query_proxy_external_impl! SSOT macro (was hand-rolled = use-substrate miss)",
+        "inspector module doc corrected: pointer click-to-select + keyboard ARE implemented R910 (doc falsely said deferred)",
+        "status-bar mode_name/encoding_name accessor SSOT (was split-brain: raw MODES[get()] in invoke vs % len in query/view)",
+        "fmt_num debug_assert(is_finite) fail-loud (release keeps safe \"0\"); PDF Path/Image deferred-debt vs opaque-correct comment clarified; WYSIWYG wording softened"
+      ],
+      "verification_bullets": [
+        "adversarial review: 3 subagents + my own grep+read; every finding independently verified and bucketed (REAL-fixed / over-reach-rejected / justified-defer)",
+        "cargo test --workspace -j2: 159 result-ok, 0 failures (pinion-pdf 17 incl 2 new alpha-leak regression tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "all 6 session demos (r908 export / r909 + r910 inspector / r911 print / r912 palette / r913 status bar) re-run PASS after the fixes"
+      ],
+      "impact_refs": [
+        "5.53",
+        "5.38",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "resolve_target_index 2-copy (inspector+palette clamping nav): Rule-of-Three defer (2 copies, nav-policy semi-opinionated, NOT divergence-is-a-bug, no clamp substrate yet) -> lift at the 3rd clamping consumer",
+        "read_state introspect-readback scaffold: pre-existing repo-wide (~90 files), not an R908-R913 regression -> separate dedicated round if ever",
+        "has_text test helper (3 copies, test-only, == vs contains divergence): low-value carry, lift to test_fixtures only if it grows",
+        "PDF real font-metrics (true baseline + styled-runs + text wrap): genuine deferred axis; the ASCENT_RATIO baseline is honestly documented as approximate"
+      ],
+      "publishable_decision_summary": "R913.1 session-review audit clearance: pinion-pdf alpha leak + External-macro SSOT + doc/hardening",
+      "publishable_changes_bullets": [
+        "pinion-pdf alpha-leak fix (REAL bug): track current_alpha (init 255), emit /GSn gs only on change incl reset-to-opaque (ca=1)",
+        "save/restore current_alpha around Scroll q/Q (graphics state persists; Q restores) — sub-opaque alpha no longer leaks into opaque draws",
+        "2 regression tests (opaque-after-translucent resets + all-opaque emits no ExtGState)",
+        "External scaffold: inspector/palette/status-bar routed through query_proxy_external_impl! SSOT macro (was hand-rolled = use-substrate miss)",
+        "inspector module doc corrected: pointer click-to-select + keyboard ARE implemented R910 (doc falsely said deferred)",
+        "status-bar mode_name/encoding_name accessor SSOT (was split-brain: raw MODES[get()] in invoke vs % len in query/view)",
+        "fmt_num debug_assert(is_finite) fail-loud (release keeps safe \"0\"); PDF Path/Image deferred-debt vs opaque-correct comment clarified; WYSIWYG wording softened"
+      ],
+      "publishable_verification_bullets": [
+        "adversarial review: 3 subagents + my own grep+read; every finding independently verified and bucketed (REAL-fixed / over-reach-rejected / justified-defer)",
+        "cargo test --workspace -j2: 159 result-ok, 0 failures (pinion-pdf 17 incl 2 new alpha-leak regression tests)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "all 6 session demos (r908 export / r909 + r910 inspector / r911 print / r912 palette / r913 status bar) re-run PASS after the fixes"
+      ],
+      "publishable_impact_refs": [
+        "5.53",
+        "5.38",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "resolve_target_index 2-copy (inspector+palette clamping nav): Rule-of-Three defer (2 copies, nav-policy semi-opinionated, NOT divergence-is-a-bug, no clamp substrate yet) -> lift at the 3rd clamping consumer",
+        "read_state introspect-readback scaffold: pre-existing repo-wide (~90 files), not an R908-R913 regression -> separate dedicated round if ever",
+        "has_text test helper (3 copies, test-only, == vs contains divergence): low-value carry, lift to test_fixtures only if it grows",
+        "PDF real font-metrics (true baseline + styled-runs + text wrap): genuine deferred axis; the ASCENT_RATIO baseline is honestly documented as approximate"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

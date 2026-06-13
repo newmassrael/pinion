@@ -52,8 +52,14 @@
 //! scene pixel to one PDF point (72-per-inch CSS-pixel parity) and flips
 //! y: a scene rect at `(x, y, w, h)` becomes a PDF box whose lower-left
 //! corner is `(x, page_height - y - h)`. Scaling-to-fit a standard page
-//! is a deferred axis; the page defaults to the scene's own bounds
-//! (WYSIWYG) but a caller may request an explicit [`PageSize`].
+//! is a deferred axis; the page defaults to the scene's own pixel bounds
+//! (rect geometry is reproduced 1:1) but a caller may request an explicit
+//! [`PageSize`]. *Rect* geometry is exact; *text* placement is
+//! approximate — glyph baselines use a fixed cap-height ratio
+//! ([`ASCENT_RATIO`]), not the real per-font metrics the on-screen paint
+//! path resolves, so text is structurally faithful (right string, right
+//! line, within the page box) rather than pixel-identical to the screen.
+//! Threading real font metrics in is the font-metric deferred axis.
 //!
 //! ## Determinism
 //!
@@ -178,14 +184,24 @@ pub fn render_scene(scene: &Scene, page: PageSize) -> RenderedPdf {
 struct ContentBuilder {
     ops: String,
     page_h: f64,
-    /// alpha (`< 255`) → 0-based `ExtGState` index. `BTreeMap` keeps
-    /// emission deterministic; the index is assigned on first encounter.
+    /// alpha → 0-based `ExtGState` index. `BTreeMap` keeps emission
+    /// deterministic; the index is assigned on first encounter. Includes
+    /// `255` (a `ca = 1` reset state) when an opaque draw must undo a
+    /// prior sub-opaque one.
     alpha_gs: BTreeMap<u8, u32>,
+    /// The constant alpha currently active in the PDF graphics state.
+    /// The graphics state is *persistent* across operators, so we track
+    /// it and emit a `/GSn gs` only when it actually changes — including
+    /// resetting back to opaque (`ca = 1`) after a translucent draw,
+    /// which a naive "opaque needs no `gs`" skip gets wrong (a prior
+    /// sub-opaque `ca` would otherwise leak into the opaque draw).
+    /// Initialized to `255`: the PDF default graphics state is `ca = 1`.
+    current_alpha: u8,
 }
 
 impl ContentBuilder {
     fn new(page_h: f64) -> Self {
-        Self { ops: String::new(), page_h, alpha_gs: BTreeMap::new() }
+        Self { ops: String::new(), page_h, alpha_gs: BTreeMap::new(), current_alpha: 0xff }
     }
 
     /// Depth-first walk mirroring `pinion_runtime::paint_adapter`: the
@@ -206,19 +222,28 @@ impl ContentBuilder {
             Scene::Scroll(n) => {
                 // Viewport clip in the current frame, then content under
                 // the scroll translate (R55.E.1 paint-adapter parity).
+                // `q` saves the graphics state and `Q` restores it, so the
+                // active alpha reverts on `Q` — mirror that in our tracker
+                // so a post-scroll draw re-emits its `gs` if needed.
+                let saved_alpha = self.current_alpha;
                 self.ops.push_str("q\n");
                 self.clip_rect(n.viewport, tx, ty);
                 let cx = tx + f64::from(n.viewport.x) - f64::from(n.offset_x);
                 let cy = ty + f64::from(n.viewport.y) - f64::from(n.offset_y);
                 self.walk(&n.content, cx, cy);
                 self.ops.push_str("Q\n");
+                self.current_alpha = saved_alpha;
             }
-            // Deferred / opaque primitives render nothing (module doc):
-            // Path + Image (vector paths / image XObjects, a deferred
-            // axis), Effect (no geometry), External + ImmediateModeNode
-            // (opaque by the §3 contract — no interior in the structured
-            // scene), and — `Scene` being `#[non_exhaustive]` — any
-            // future primitive until a vector projection exists for it.
+            // Render nothing — two distinct reasons (grep `Scene::Path` /
+            // `Scene::Image` for the debt):
+            //   * DEFERRED debt — `Scene::Path` (vector paths) and
+            //     `Scene::Image` (raster XObjects): geometry exists, no
+            //     vector projection written yet; additive on a consumer.
+            //   * CORRECT silence — `Scene::Effect` (no geometry),
+            //     `Scene::External` / `Scene::ImmediateModeNode` (opaque by
+            //     the §3 contract — no interior in the structured scene).
+            // `Scene` is `#[non_exhaustive]`, so this also absorbs any
+            // future primitive until a projection exists for it.
             _ => {}
         }
     }
@@ -348,16 +373,22 @@ impl ContentBuilder {
         self.ops.push_str("h\n");
     }
 
-    /// Register `alpha` (when `< 255`) and emit a `/GSn gs` operator so
-    /// the next fill / stroke / text uses that constant alpha. Opaque
-    /// (`255`) needs no `ExtGState` — the PDF default is `ca = CA = 1`.
+    /// Make `alpha` the active constant alpha for the next fill / stroke
+    /// / text. Emits a `/GSn gs` operator **only when the active alpha
+    /// changes** — the PDF graphics state persists, so a redundant `gs`
+    /// is skipped, but a transition (including *back to opaque*) must be
+    /// emitted: a prior sub-opaque `ca` stays in effect until overridden,
+    /// so an opaque draw after a translucent one needs an explicit `ca =
+    /// 1` reset (`255` gets its own `ExtGState`). All-opaque scenes never
+    /// register an `ExtGState` (the initial `current_alpha` is `255`).
     fn set_alpha(&mut self, alpha: u8) {
-        if alpha == 0xff {
+        if alpha == self.current_alpha {
             return;
         }
         let next = u32::try_from(self.alpha_gs.len()).unwrap_or(u32::MAX);
         let idx = *self.alpha_gs.entry(alpha).or_insert(next);
         let _ = writeln!(self.ops, "/GS{idx} gs");
+        self.current_alpha = alpha;
     }
 
     fn set_fill_color(&mut self, c: Color) {
@@ -421,7 +452,12 @@ fn rgb_unit(c: Color) -> (f64, f64, f64) {
 /// (no locale, no exponent form — PDF forbids `1e3`).
 fn fmt_num(v: f64) -> String {
     // Guard the degenerate inputs PDF cannot express, then prefer the
-    // compact integer form.
+    // compact integer form. A non-finite coordinate is unreachable today
+    // (all geometry derives from `u32` `Rect` fields), but fail loud in
+    // dev if a future `f32` coordinate source ever feeds a NaN/Inf here
+    // rather than silently painting at the origin; release keeps a safe
+    // `"0"` fallback (a valid PDF number).
+    debug_assert!(v.is_finite(), "PDF coordinate must be finite, got {v}");
     if !v.is_finite() {
         return "0".to_owned();
     }
@@ -677,6 +713,44 @@ mod tests {
         let body9 = &doc[obj9..obj10];
         assert!(body9.contains("/ca 0.784"), "GS0's object carries a=200");
         assert_eq!(pdf.object_count, 10, "8 base + 2 alpha objects");
+    }
+
+    #[test]
+    fn r913_1_opaque_after_translucent_resets_alpha() {
+        // Regression for the persistent-graphics-state alpha leak: a
+        // sub-opaque fill sets ca=0.5, and without an explicit reset the
+        // *next* opaque fill would inherit it (PDF state persists; sibling
+        // boxes are not q/Q-wrapped). The opaque draw must re-assert ca=1.
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgba(0xff, 0, 0, 0x80))),
+            Scene::Box(BoxNode::filled(Rect::new(20, 0, 10, 10), Color::rgb(0, 0, 0xff))),
+        ]));
+        let pdf = render_scene(&scene, PageSize::new(40, 40));
+        let doc = &pdf.document;
+        // Two ExtGStates: the 0x80 (ca~=0.5) and the 0xff reset (ca=1).
+        assert_eq!(pdf.object_count, 10, "8 base + half-alpha + opaque-reset");
+        assert!(doc.contains("/ca 0.502"), "sub-opaque fill alpha present");
+        assert!(doc.contains("/ca 1 /CA 1"), "an opaque-reset ExtGState exists");
+        // The reset gs must appear before the opaque blue fill so blue is
+        // not painted at the translucent alpha.
+        let blue = doc.find("0 0 1 rg").expect("opaque blue fill");
+        let reset_gs = doc[..blue].rfind(" gs\n").expect("a gs precedes the blue fill");
+        // The gs immediately governing the blue fill is the reset one
+        // (its index maps to the ca=1 ExtGState).
+        assert!(reset_gs < blue, "alpha reset precedes the opaque fill");
+    }
+
+    #[test]
+    fn r913_1_all_opaque_scene_emits_no_extgstate() {
+        // The current-alpha tracker starts at 255, so a fully opaque scene
+        // never emits a `gs` or registers an ExtGState.
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgb(1, 2, 3))),
+            Scene::Box(BoxNode::filled(Rect::new(0, 0, 10, 10), Color::rgb(4, 5, 6))),
+        ]));
+        let pdf = render_scene(&scene, PageSize::new(40, 40));
+        assert_eq!(pdf.object_count, 8, "no ExtGState for an all-opaque scene");
+        assert!(!pdf.document.contains(" gs\n"), "no alpha gs emitted");
     }
 
     #[test]

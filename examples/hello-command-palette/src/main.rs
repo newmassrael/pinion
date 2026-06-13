@@ -41,9 +41,9 @@ use std::rc::Rc;
 
 use pinion_core::composite_tag::send_activation_index;
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
+use pinion_core::external::query_proxy_external_impl;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, Size, TextStyle,
@@ -222,23 +222,9 @@ impl core::fmt::Debug for PaletteExternal {
     }
 }
 
-impl External for PaletteExternal {
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
-    }
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-}
+// R913.1 — Gui+Rpc config-holder External skeleton via the SSOT macro
+// (was hand-rolled — [[use-substrate-not-hand-rolled-equivalent]]).
+query_proxy_external_impl!(PaletteExternal);
 
 impl ExternalIntrospect for PaletteExternal {
     fn schema(&self) -> IntrospectSchema {

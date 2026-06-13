@@ -34,9 +34,9 @@ use std::rc::Rc;
 
 use pinion_core::composite_tag::send_activation_key;
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
+use pinion_core::external::query_proxy_external_impl;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -66,6 +66,18 @@ const MODES: [&str; 5] = ["Plain Text", "Rust", "Python", "Markdown", "JSON"];
 
 /// Text encodings the encoding segment cycles through.
 const ENCODINGS: [&str; 3] = ["UTF-8", "UTF-16 LE", "Latin-1"];
+
+/// The mode / encoding name for an index — the one place the `% len`
+/// range-bound lives, so the query, the cycle return, and the view all
+/// resolve a name identically (no split between defensive `% len`
+/// readers and a raw-index reader that would panic on an out-of-range
+/// value the others silently mask).
+fn mode_name(idx: usize) -> &'static str {
+    MODES[idx % MODES.len()]
+}
+fn encoding_name(idx: usize) -> &'static str {
+    ENCODINGS[idx % ENCODINGS.len()]
+}
 
 // ─── Shared reactive state ────────────────────────────────────────
 
@@ -113,23 +125,9 @@ impl core::fmt::Debug for StatusBarExternal {
     }
 }
 
-impl External for StatusBarExternal {
-    fn backends(&self) -> BackendSupport {
-        BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
-    }
-    fn repaint_ownership(&self) -> RepaintOwner {
-        RepaintOwner::Framework
-    }
-    fn thread_ownership(&self) -> ThreadOwnership {
-        ThreadOwnership::UiThreadSync
-    }
-    fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
-        Some(self)
-    }
-    fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
-        Some(self)
-    }
-}
+// R913.1 — Gui+Rpc config-holder External skeleton via the SSOT macro
+// (was hand-rolled — [[use-substrate-not-hand-rolled-equivalent]]).
+query_proxy_external_impl!(StatusBarExternal);
 
 impl ExternalIntrospect for StatusBarExternal {
     fn schema(&self) -> IntrospectSchema {
@@ -152,10 +150,10 @@ impl ExternalIntrospect for StatusBarExternal {
             "line" => Some(IntrospectValue::Int(i64::from(self.line.get()))),
             "col" => Some(IntrospectValue::Int(i64::from(self.col.get()))),
             "position" => Some(IntrospectValue::Text(self.position())),
-            "mode" => Some(IntrospectValue::Text(MODES[self.mode.get() % MODES.len()].to_owned())),
+            "mode" => Some(IntrospectValue::Text(mode_name(self.mode.get()).to_owned())),
             "mode_index" => Some(IntrospectValue::Int(i64::try_from(self.mode.get()).ok()?)),
             "encoding" => {
-                Some(IntrospectValue::Text(ENCODINGS[self.encoding.get() % ENCODINGS.len()].to_owned()))
+                Some(IntrospectValue::Text(encoding_name(self.encoding.get()).to_owned()))
             }
             "message" => Some(IntrospectValue::Text(self.message.get())),
             _ => None,
@@ -194,11 +192,11 @@ impl ExternalIntrospect for StatusBarExternal {
         match path {
             "cycle_mode" => {
                 self.cycle_mode();
-                Ok(IntrospectValue::Text(MODES[self.mode.get()].to_owned()))
+                Ok(IntrospectValue::Text(mode_name(self.mode.get()).to_owned()))
             }
             "cycle_encoding" => {
                 self.cycle_encoding();
-                Ok(IntrospectValue::Text(ENCODINGS[self.encoding.get()].to_owned()))
+                Ok(IntrospectValue::Text(encoding_name(self.encoding.get()).to_owned()))
             }
             // Named-segment send wire: a click on `statusbar#mode` /
             // `statusbar#encoding` cycles that segment on the activation
@@ -267,8 +265,8 @@ fn view(_mode_index: usize, _frame: &Frame) -> Scene {
     let muted = theme.resolve(ColorRole::OnSurfaceMuted);
 
     let position = format!("Ln {}, Col {}", use_line().get(), use_col().get());
-    let mode = MODES[use_mode().get() % MODES.len()];
-    let encoding = ENCODINGS[use_encoding().get() % ENCODINGS.len()];
+    let mode = mode_name(use_mode().get());
+    let encoding = encoding_name(use_encoding().get());
     let message = use_message().get();
 
     // Left: cursor position. Middle: message (flex spacer). Right:
