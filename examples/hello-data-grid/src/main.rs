@@ -833,6 +833,12 @@ impl DataGridExternal {
     /// A press on a non-numeric (or out-of-range) cell leaves the arm clear (it
     /// never scrubs — text cells edit, bool cells toggle).
     fn arm_scrub(&self, row: usize, col: usize) {
+        // R917 — a fresh press starts a fresh calibration: drop any prior anchor
+        // so the scrub is self-contained and never inherits a stale base/source
+        // from a drag whose release was missed (the R51.34 capture lock pairs
+        // one release per press, so this is unreachable today — but arming a new
+        // scrub should not depend on that contract holding).
+        self.scrub_cal.end();
         let numeric = col < NCOLS && matches!(COL_KINDS[col], CellKind::Int | CellKind::Float);
         self.scrub_armed.set((numeric && row < NROWS).then_some((row, col)));
     }
@@ -3088,6 +3094,26 @@ mod tests {
             grid_pointer_move(&mut scene, -50.0); // far left => < 0 before clamp
             assert_eq!(cell_int(&scene, "value.0.2"), 0, "leftward scrub clamps to the min");
             grid_send(&mut scene, "0_2:PointerUp");
+        });
+    }
+
+    /// R917 — arming a fresh press starts a fresh calibration: re-arming a cell
+    /// (even without an intervening release — a lost PointerUp) drops the stale
+    /// anchor, so a scrub never inherits the prior drag's base/cell.
+    #[test]
+    fn r917_re_arming_starts_a_fresh_calibration() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Scrub Count of row 0 past the threshold.
+            grid_send(&mut scene, "0_2:PointerDown");
+            grid_pointer_move(&mut scene, 0.5); // calibrate
+            grid_pointer_move(&mut scene, 0.8); // a real drag
+            assert!(scrubbing(&scene), "row 0 scrub is live");
+            // Re-arm a DIFFERENT cell WITHOUT a release: the stale calibration is
+            // dropped, so the scrub is self-contained (no inherited base/cell).
+            grid_send(&mut scene, "1_2:PointerDown");
+            assert!(!scrubbing(&scene), "re-arming cleared the stale calibration");
+            grid_send(&mut scene, "1_2:PointerUp");
         });
     }
 

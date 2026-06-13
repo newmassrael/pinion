@@ -39421,6 +39421,88 @@
         "with hardcoded coords) — window width and root width are now one TOTAL_W const."
       ]
     },
+    "R917": {
+      "decision_summary": "Session-review audit clearance (R914-R916): declare the complete detail.* schema mirror, make arm_scrub a self-contained fresh start, fix property-grid set_value doc overclaim; all other adversarial findings verified sound or justified-defer",
+      "changes_bullets": [
+        "Session-review adversarial audit (R914-R916) via 3 subagents, every finding",
+        "re-verified by hand and bucketed REAL / over-reach / justified-defer.",
+        "REAL: node-editor `detail.*` schema under-declared its surface — the generic",
+        "delegation answers detail.outputs/input_types/output_types but the schema",
+        "listed only 6 of the node.<id>.* fields. Declared the full mirror (AI-first",
+        "contract = resolvable surface) + a parity regression test.",
+        "REAL: arm_scrub now drops any stale calibration first (self-contained press —",
+        "a re-arm never inherits a prior drag's base/cell); both grids + a test.",
+        "Doc honesty: property-grid set_value comment no longer implies a shared funnel",
+        "(it writes the shared model Signal, not a shared function — unlike data-grid",
+        "set_cell); detail.node documented read-only (write via selected/selected_ids).",
+        "Verified-sound (no change): DragCalibration routing complete; scrollbar (SCXML)",
+        "/ dock+node (2-D) deferrals correct; SCRUB_* 2-copy defer to 3rd consumer;",
+        "TOTAL_W SSOT; detail.* recursion bounded 1-deep; detail_row != view_row."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: all pass (2 new R917 regression tests: detail.*",
+        "schema-mirror parity, arm_scrub fresh-calibration; node-editor 114, data-grid 45).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean.",
+        "demos r916 / r914 / r875 PASS (release) — the schema + arm changes are additive.",
+        "audit-clearance round (no new demo); fixes carry regression tests per policy."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "SCRUB_FLOAT_PER_PX / SCRUB_INT_PX_PER_STEP byte-identical across property-grid +",
+        "data-grid (2 example sites): the substrate doc reserves the value projection",
+        "per-caller (int-steps vs float), and per-widget scrub feel is a design choice",
+        "(not divergence-is-a-bug), so per-binding is sound — but a 3rd numeric-scrub",
+        "consumer MUST lift a scrub_project() helper to pinion-core, not copy a 3rd time.",
+        "r838 demo uses hardcoded canvas pixel coords with no flex-shrink floor; TOTAL_W",
+        "documents the window==root coupling. The wire-bezier hit-test is hard to express",
+        "path-relatively; pre-existing fragility, acceptable, watched.",
+        "R918 = in-panel click-to-edit (R916 follow-up) is the value-first lead but a",
+        "real edit-surface redesign (card vs panel field ownership) — fresh budget."
+      ],
+      "publishable_decision_summary": "Session-review audit clearance (R914-R916): declare the complete detail.* schema mirror, make arm_scrub a self-contained fresh start, fix property-grid set_value doc overclaim; all other adversarial findings verified sound or justified-defer",
+      "publishable_changes_bullets": [
+        "Session-review adversarial audit (R914-R916) via 3 subagents, every finding",
+        "re-verified by hand and bucketed REAL / over-reach / justified-defer.",
+        "REAL: node-editor `detail.*` schema under-declared its surface — the generic",
+        "delegation answers detail.outputs/input_types/output_types but the schema",
+        "listed only 6 of the node.<id>.* fields. Declared the full mirror (AI-first",
+        "contract = resolvable surface) + a parity regression test.",
+        "REAL: arm_scrub now drops any stale calibration first (self-contained press —",
+        "a re-arm never inherits a prior drag's base/cell); both grids + a test.",
+        "Doc honesty: property-grid set_value comment no longer implies a shared funnel",
+        "(it writes the shared model Signal, not a shared function — unlike data-grid",
+        "set_cell); detail.node documented read-only (write via selected/selected_ids).",
+        "Verified-sound (no change): DragCalibration routing complete; scrollbar (SCXML)",
+        "/ dock+node (2-D) deferrals correct; SCRUB_* 2-copy defer to 3rd consumer;",
+        "TOTAL_W SSOT; detail.* recursion bounded 1-deep; detail_row != view_row."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: all pass (2 new R917 regression tests: detail.*",
+        "schema-mirror parity, arm_scrub fresh-calibration; node-editor 114, data-grid 45).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean.",
+        "demos r916 / r914 / r875 PASS (release) — the schema + arm changes are additive.",
+        "audit-clearance round (no new demo); fixes carry regression tests per policy."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SCRUB_FLOAT_PER_PX / SCRUB_INT_PX_PER_STEP byte-identical across property-grid +",
+        "data-grid (2 example sites): the substrate doc reserves the value projection",
+        "per-caller (int-steps vs float), and per-widget scrub feel is a design choice",
+        "(not divergence-is-a-bug), so per-binding is sound — but a 3rd numeric-scrub",
+        "consumer MUST lift a scrub_project() helper to pinion-core, not copy a 3rd time.",
+        "r838 demo uses hardcoded canvas pixel coords with no flex-shrink floor; TOTAL_W",
+        "documents the window==root coupling. The wire-bezier hit-test is hard to express",
+        "path-relatively; pre-existing fragility, acceptable, watched.",
+        "R918 = in-panel click-to-edit (R916 follow-up) is the value-first lead but a",
+        "real edit-surface redesign (card vs panel field ownership) — fresh budget."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

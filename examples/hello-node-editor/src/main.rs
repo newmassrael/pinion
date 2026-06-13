@@ -2794,12 +2794,20 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R916 — the Details panel's selection-relative addressing: each
             // `detail.<field>` resolves against the *single* selected node (the
             // R909 inspector pattern, now inside the node-graph editor). `Null`
-            // when the selection is not exactly one node.
+            // when the selection is not exactly one node. R917 — the mirror is
+            // *complete*: every readable `node.<id>.<field>` above has a
+            // `detail.<field>` twin (the delegation answers any field), so the
+            // schema declares the full set, not a subset. `detail.node` is the
+            // selected id, read-only (write the selection via `selected` /
+            // `selected_ids`); the rest are read + intervene.
             ("detail.node", "int"),
             ("detail.title", "string"),
             ("detail.x", "int"),
             ("detail.y", "int"),
             ("detail.inputs", "int"),
+            ("detail.outputs", "int"),
+            ("detail.input_types", "string"),
+            ("detail.output_types", "string"),
             ("detail.input_default.<port>", "json"),
             ("edge.<id>", "string"),
             ("viewport.x", "float"),
@@ -4345,6 +4353,41 @@ mod tests {
                 intro.intervene("detail.title", IntrospectValue::Text("X".to_owned())),
                 Err(InterveneError::UnknownPath),
                 "a detail write with no single selection is rejected",
+            );
+        });
+    }
+
+    /// R917 — the `detail.*` mirror is *complete*: every readable
+    /// `node.<id>.<field>` resolves through `detail.<field>` with the identical
+    /// value, AND the schema declares the full set (the AI-first contract
+    /// matches the resolvable surface — no silently-undeclared path).
+    /// `detail.node` is a read-only selection mirror.
+    #[test]
+    fn r917_detail_mirror_is_complete_and_schema_declared() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+                intro.intervene("selected_ids", IntrospectValue::Text("2".to_owned())).unwrap(); // Multiply
+            }
+            let intro = graph_intro(&scene);
+            // Parity: the previously-undeclared fields resolve and match the
+            // absolute address of the selected node.
+            assert_eq!(intro.query("detail.outputs"), intro.query("node.2.outputs"));
+            assert_eq!(intro.query("detail.input_types"), intro.query("node.2.input_types"));
+            assert_eq!(intro.query("detail.output_types"), intro.query("node.2.output_types"));
+            assert_eq!(intro.query("detail.outputs"), Some(IntrospectValue::Int(1)), "Multiply has 1 output");
+            // The schema declares the full mirror (no undeclared-but-resolvable path).
+            let fields: Vec<&str> = intro.schema().fields.iter().map(|(p, _)| *p).collect();
+            for f in ["detail.outputs", "detail.input_types", "detail.output_types"] {
+                assert!(fields.contains(&f), "{f} must be schema-declared (mirrors node.<id>.*)");
+            }
+            // `detail.node` is read-only: write the selection via `selected_ids`.
+            let intro = scene.find_external_with_tag_mut(GRAPH_TAG).unwrap().handle.introspect_mut().unwrap();
+            assert_eq!(
+                intro.intervene("detail.node", IntrospectValue::Int(0)),
+                Err(InterveneError::UnknownPath),
+                "detail.node is a read-only selection mirror",
             );
         });
     }

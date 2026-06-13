@@ -591,10 +591,11 @@ impl PropertyGridExternal {
         toggled
     }
 
-    /// Write a typed value into the model slot — the scrub's live commit, the
-    /// same `Signal` the inline editor (`commit_edit`) and the RPC
-    /// `value.<i>` intervene write, so a drag, a typed edit, and an RPC set are
-    /// one source of truth.
+    /// Write a typed value into the model slot — the scrub's live commit. It
+    /// writes the same shared model `Signal` the inline editor (`commit_edit`)
+    /// and the RPC `value.<i>` intervene also write — each through its own path,
+    /// converging on one source of truth (the grid has no per-column range, so
+    /// unlike the data-grid's `set_cell` there is no clamp/re-anchor to funnel).
     fn set_value(&self, source: usize, value: CellValue) {
         self.model.set_with(|prev| {
             let mut next = prev.clone();
@@ -610,6 +611,11 @@ impl PropertyGridExternal {
     /// calibrate. A press on a non-numeric row leaves the arm clear (it never
     /// scrubs — bool toggles, choice / colour open popups, text edits).
     fn arm_scrub(&self, source: usize) {
+        // R917 — a fresh press starts a fresh calibration (self-contained scrub;
+        // never inherits a stale base from a drag whose release was missed — the
+        // R51.34 capture lock makes that unreachable, but the arm should not
+        // depend on it).
+        self.scrub_cal.end();
         let numeric = matches!(
             self.model.get().get(source).map(CellValue::kind),
             Some(CellKind::Int | CellKind::Float)
