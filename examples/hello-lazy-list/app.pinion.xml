@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R924 §5.22 §5.23 §5.27 infinite-scroll virtualized lazy-load: pinion-forge
+  renderer manifest for hello-lazy-list. Emits `HelloLazyListRenderer`
+  (Vello-backed). Same single-source-of-truth template as the other hello-*
+  renderers; only the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloLazyListRenderer"
+        backend="vello"/>

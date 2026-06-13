@@ -39963,6 +39963,68 @@
         "R924 follow-up: infinite-scroll virtualized lazy-load (Signal<PageStore> + virtual_list windowing + auto-fetch-on-scroll)"
       ]
     },
+    "R924": {
+      "decision_summary": "Infinite-scroll virtualized lazy-load (hello-lazy-list): R744 windowing x R923 async paging — an Effect on the scroll-offset Signal lazy-fetches each visible page via DeferredReady through the pump, skeletons until resolved. Surfaced + fixed a framework gap: about_to_wait now keeps the event loop awake while LocalTaskPump.has_pending(), so async work spawned by a HandlerKind::Read RPC (scene/scroll) drives to completion.",
+      "changes_bullets": [
+        "new example hello-lazy-list: infinite-scroll virtualized lazy-load (R744 virtualization x R923 async paging)",
+        "10,000 rows windowed via view_virtual_list (~16 rendered); per-page Resource cache (HashMap in Owner::cache)",
+        "an Effect on the scroll-offset Signal lazy-fetches each visible page via DeferredReady through the pump",
+        "not-yet-loaded rows render as skeletons, resolved rows as data; view is pure (reads offset + page states)",
+        "windowed_list_nodes a11y (setsize=N, windowed posinset) + scrollbar peer + role=status band line reused",
+        "FRAMEWORK FIX (app.rs about_to_wait): keep the event loop awake while root LocalTaskPump.has_pending()",
+        "a HandlerKind::Read RPC (scene/scroll) mutates reactive state without the intent-tail redraw arming a Mutate gets",
+        "so an Effect-spawned fetch would stall; the LocalTaskPump doc already promised this stay-awake contract (now wired)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 6527 passed / 0 failed (hello-lazy-list 7 new)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "r924_lazy_list.py PASS: boot band loads; scroll to fresh band -> skeletons -> data; window small at depth; cached top",
+        "regression: r744 (virtualization) / r923 (async) / r761 (deferred pump) all PASS -> the loop fix is non-regressive",
+        "ZERO-FLAKE: deterministic DeferredReady + the now-awake loop drive skeleton->data with no wall-clock race"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "per-page Resource cache (HashMap<page, Rc<Resource>>) = 1st consumer; unified Model layer still premature (view_order.rs:63)",
+        "page_rows/AssetRow synthetic data = example-local in R923+R924, intentionally NOT shared (diverges; demo scaffolding)",
+        "scroll-driven prefetch Effect = R665 Effect-marker idiom (peer of R923 refetch / settings-panel save), distinct closures",
+        "eviction/LRU of far pages deferred (bounded 100-page dataset; a true infinite source would evict) = honest follow-up",
+        "about_to_wait keep-alive is winit-loop code (integration-tested by the r924 live demo, not unit-testable in isolation)"
+      ],
+      "publishable_decision_summary": "Infinite-scroll virtualized lazy-load (hello-lazy-list): R744 windowing x R923 async paging — an Effect on the scroll-offset Signal lazy-fetches each visible page via DeferredReady through the pump, skeletons until resolved. Surfaced + fixed a framework gap: about_to_wait now keeps the event loop awake while LocalTaskPump.has_pending(), so async work spawned by a HandlerKind::Read RPC (scene/scroll) drives to completion.",
+      "publishable_changes_bullets": [
+        "new example hello-lazy-list: infinite-scroll virtualized lazy-load (R744 virtualization x R923 async paging)",
+        "10,000 rows windowed via view_virtual_list (~16 rendered); per-page Resource cache (HashMap in Owner::cache)",
+        "an Effect on the scroll-offset Signal lazy-fetches each visible page via DeferredReady through the pump",
+        "not-yet-loaded rows render as skeletons, resolved rows as data; view is pure (reads offset + page states)",
+        "windowed_list_nodes a11y (setsize=N, windowed posinset) + scrollbar peer + role=status band line reused",
+        "FRAMEWORK FIX (app.rs about_to_wait): keep the event loop awake while root LocalTaskPump.has_pending()",
+        "a HandlerKind::Read RPC (scene/scroll) mutates reactive state without the intent-tail redraw arming a Mutate gets",
+        "so an Effect-spawned fetch would stall; the LocalTaskPump doc already promised this stay-awake contract (now wired)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 6527 passed / 0 failed (hello-lazy-list 7 new)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "r924_lazy_list.py PASS: boot band loads; scroll to fresh band -> skeletons -> data; window small at depth; cached top",
+        "regression: r744 (virtualization) / r923 (async) / r761 (deferred pump) all PASS -> the loop fix is non-regressive",
+        "ZERO-FLAKE: deterministic DeferredReady + the now-awake loop drive skeleton->data with no wall-clock race"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "per-page Resource cache (HashMap<page, Rc<Resource>>) = 1st consumer; unified Model layer still premature (view_order.rs:63)",
+        "page_rows/AssetRow synthetic data = example-local in R923+R924, intentionally NOT shared (diverges; demo scaffolding)",
+        "scroll-driven prefetch Effect = R665 Effect-marker idiom (peer of R923 refetch / settings-panel save), distinct closures",
+        "eviction/LRU of far pages deferred (bounded 100-page dataset; a true infinite source would evict) = honest follow-up",
+        "about_to_wait keep-alive is winit-loop code (integration-tested by the r924 live demo, not unit-testable in isolation)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

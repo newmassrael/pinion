@@ -1807,6 +1807,21 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // per drain regardless of how many times we set the flag.
             self.core.request_redraw_for_window(&spec_id);
         }
+        // R924 §5.22 — keep the event loop awake while the owner-scoped
+        // `LocalTaskPump` has async work in flight (a `Resource` fetch
+        // spawned by a reactive `Effect` — e.g. lazy page loading driven
+        // by a scroll). `compute_paint_scene_internal` polls the pump and
+        // re-arms `redraw_requested` while pending, but that self-sustaining
+        // loop needs a frame to *start* it: a `HandlerKind::Read` RPC
+        // (`scene/scroll`) mutates reactive state without the intent-tail
+        // redraw arming a `Mutate` handler gets, so the pump would otherwise
+        // stall until the next unrelated input. This is the "stay awake while
+        // active" contract the `LocalTaskPump` doc names (sibling of the
+        // `any_animation_active` redraw arming in the substrate).
+        if self.core.root_owner().local_task_pump().has_pending() {
+            self.core.request_redraw();
+            earliest_deadline = Some(earliest_deadline.map_or(now, |d| d.min(now)));
+        }
         match earliest_deadline {
             Some(deadline) => event_loop.set_control_flow(ControlFlow::WaitUntil(deadline)),
             None => event_loop.set_control_flow(ControlFlow::Wait),
