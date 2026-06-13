@@ -50,12 +50,11 @@
 //! widget — the same placement rationale as [`Storage`](crate::Storage)
 //! and [`Clipboard`](crate::Clipboard).
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::task::{Context, Poll};
 
 /// R761 §5.15 — boxed UI-thread future returned by every [`FileDialog`]
 /// method.
@@ -288,28 +287,6 @@ struct ScriptedResponse {
     pending_polls: u32,
 }
 
-/// R761.1 §5.15 — future that yields `Pending` `remaining` times then
-/// `Ready(outcome)`. The deterministic stand-in for a deferred native
-/// dialog reply; lets a headless RPC demo prove the shell pump drives a
-/// multi-frame future to completion (the dialog reads `Loading` until
-/// the count hits zero, then `Ready`).
-struct DeferredOutcome {
-    remaining: Cell<u32>,
-    outcome: Option<PathBuf>,
-}
-
-impl Future for DeferredOutcome {
-    type Output = Option<PathBuf>;
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<PathBuf>> {
-        if self.remaining.get() == 0 {
-            Poll::Ready(self.outcome.clone())
-        } else {
-            self.remaining.set(self.remaining.get() - 1);
-            Poll::Pending
-        }
-    }
-}
-
 impl ScriptedFileDialog {
     /// Construct a scripted dialog with an empty outcome queue. Until
     /// an outcome is queued, every call resolves [`None`] (cancelled).
@@ -397,14 +374,14 @@ impl ScriptedFileDialog {
                 pending_polls: 0,
             }) => Box::pin(core::future::ready(outcome)),
             // Deferred response: Pending for `pending_polls` polls,
-            // driven to completion by the shell's per-frame pump.
+            // driven to completion by the shell's per-frame pump. R923 —
+            // the deterministic deferred future is the shared
+            // `DeferredReady` SSOT (was a local `DeferredOutcome`; lifted
+            // on the third identical `Pending`-countdown future).
             Some(ScriptedResponse {
                 outcome,
                 pending_polls,
-            }) => Box::pin(DeferredOutcome {
-                remaining: Cell::new(pending_polls),
-                outcome,
-            }),
+            }) => Box::pin(crate::reactive::DeferredReady::new(pending_polls, outcome)),
         }
     }
 }

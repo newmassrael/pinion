@@ -20,7 +20,7 @@ use std::cell::Cell;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::task::{Context, Waker};
+use std::task::{Context, Poll, Waker};
 
 use serde::{Deserialize, Serialize};
 use serde::de::DeserializeOwned;
@@ -328,6 +328,59 @@ pub fn use_local_task_pump() -> Rc<LocalTaskPump> {
         .local_task_pump()
 }
 
+/// A deterministic deferred future: yields [`Poll::Pending`] exactly
+/// `pending_polls` times, then [`Poll::Ready`]`(value)` once. The
+/// runtime-agnostic, wall-clock-free stand-in for real async latency — a
+/// native dialog awaiting an `xdg-portal` reply, a paged data source awaiting
+/// a disk / DB / network read.
+///
+/// Each poll advances it one step, so a caller that drives it through the
+/// shell-polled [`LocalTaskPump`] (or whose RPC harness drives the pump one
+/// step per `scene/snapshot from=paint`) observes `Loading` across exactly
+/// `pending_polls` frames before the value lands. The fixed poll count — never
+/// a timed sleep — is what makes the `Loading` arm **deterministically
+/// observable** (ZERO-FLAKE): there is no wall-clock race between the demo's
+/// polling and the resolution.
+///
+/// This is the SSOT behind every scripted-latency consumer — the
+/// [`crate::ScriptedFileDialog`] deferred reply (R761.1) and the R923 paged
+/// data source both fetch through it (lifted R923 on the third identical
+/// `Pending`-countdown future, per the Rule-of-Three self-grep mandate). The
+/// payload is moved out on completion, so `T` need not be `Clone`; `T: Unpin`
+/// is the only bound (every concrete payload here — `Option<PathBuf>`,
+/// `Result<Vec<_>, _>` — satisfies it).
+pub struct DeferredReady<T> {
+    remaining: u32,
+    value: Option<T>,
+}
+
+impl<T> DeferredReady<T> {
+    /// Construct a future that is `Pending` `pending_polls` times, then
+    /// `Ready(value)`. `pending_polls == 0` resolves on the first poll (the
+    /// immediately-ready scripted path).
+    #[must_use]
+    pub fn new(pending_polls: u32, value: T) -> Self {
+        Self {
+            remaining: pending_polls,
+            value: Some(value),
+        }
+    }
+}
+
+impl<T: Unpin> Future for DeferredReady<T> {
+    type Output = T;
+
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<T> {
+        let this = self.get_mut();
+        if this.remaining == 0 {
+            Poll::Ready(this.value.take().expect("DeferredReady polled after Ready"))
+        } else {
+            this.remaining -= 1;
+            Poll::Pending
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,26 +591,6 @@ mod tests {
     // R761.1 §5.22 — LocalTaskPump (production deferred-future driver)
     // ────────────────────────────────────────────────────────────────
 
-    /// Future that yields `Pending` `remaining` times, then `Ready(value)`.
-    /// Models a deferred task (e.g. a native dialog awaiting a portal
-    /// reply) without a real async runtime.
-    struct Defer {
-        remaining: Cell<u32>,
-        value: i32,
-    }
-
-    impl Future for Defer {
-        type Output = i32;
-        fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<i32> {
-            if self.remaining.get() == 0 {
-                Poll::Ready(self.value)
-            } else {
-                self.remaining.set(self.remaining.get() - 1);
-                Poll::Pending
-            }
-        }
-    }
-
     #[test]
     fn r761_1_pump_drives_ready_future_in_one_poll() {
         let pump = LocalTaskPump::new();
@@ -577,11 +610,7 @@ mod tests {
         let out = Rc::new(Cell::new(0));
         let o = Rc::clone(&out);
         pump.spawn_local(Box::pin(async move {
-            let v = Defer {
-                remaining: Cell::new(2),
-                value: 42,
-            }
-            .await;
+            let v = DeferredReady::new(2, 42).await;
             o.set(v);
         }));
         assert!(pump.poll(), "still pending after poll 1");
@@ -603,11 +632,7 @@ mod tests {
         let pump = LocalTaskPump::new();
         let r = Resource::<i32, String>::ready(0);
         r.fetch_with(&pump, async {
-            let v = Defer {
-                remaining: Cell::new(1),
-                value: 7,
-            }
-            .await;
+            let v = DeferredReady::new(1, 7).await;
             Ok::<i32, String>(v)
         });
         assert_eq!(r.state(), ResourceState::Loading, "fetch_with marks Loading");

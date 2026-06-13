@@ -1,0 +1,35 @@
+[package]
+name = "hello-async-data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R923 §5.22 §5.23 §2 async/lazy data view — the first framework consumer that renders a view over a page-fetched, out-of-memory data source: a paged asset browser whose rows arrive asynchronously through the Resource async-reactive carrier, an Effect-driven auto-refetch on the page/reload Signal, and the shell-polled LocalTaskPump. Loading / Ready / Error are all introspectable as scene-as-data"
+publish = false
+
+[[bin]]
+name = "hello-async-data"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R727 §5.49 — button paint SSOT (`button_scene` / `read_button_state`).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+# R923 — `Resource<Vec<AssetRow>, String>` requires the payload type to be
+# (de)serializable; `AssetRow` derives serde.
+serde = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — composite-paint-root-tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

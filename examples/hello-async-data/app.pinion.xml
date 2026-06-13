@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R923 §5.22 §5.23 §2 async/lazy data view: pinion-forge renderer manifest
+  for hello-async-data. Emits `HelloAsyncDataRenderer` (Vello-backed). Same
+  manifest shape as hello-file-dialog — only the struct name diverges; the
+  scene structure lives entirely in the binding's view fn.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloAsyncDataRenderer"
+        backend="vello"/>

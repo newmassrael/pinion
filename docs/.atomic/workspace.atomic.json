@@ -39899,6 +39899,70 @@
         "bitmap [bool;N] assumes a fixed object count (test-guarded); object add/remove would need a relift"
       ]
     },
+    "R923": {
+      "decision_summary": "First framework consumer of an async/out-of-memory paged data view: Resource + Effect-driven auto-refetch on page/nonce Signals, shell-polled LocalTaskPump, Loading/Ready/Error scene-as-data; lifts a shared DeferredReady<T> deterministic deferred future (Rule-of-Three over file_dialog + example + test).",
+      "changes_bullets": [
+        "new example hello-async-data: first framework consumer rendering a view over an async/out-of-memory paged source",
+        "Resource<Vec<AssetRow>,String> in Owner::cache; an Effect on page+reload_nonce Signals auto-refetches the page",
+        "reducer (Prev/Next/Reload) mutates only the query Signals; view reads resource.state() (pure §6.3)",
+        "boot fetch via the Effect eager run installed in create_extra_externals (preserves view-fn purity)",
+        "Loading/Ready/Error all scene-as-data: pager role=status + List/ListItem rows + in-list note line",
+        "ERROR_PAGE scripted-unavailable exercises the Error arm in nav flow; Next/Prev clamp at bounds (Disabled)",
+        "a11y: List(setsize=TOTAL_ASSETS) + ListItem(global posinset, name=row_label SSOT) + status + 3 buttons",
+        "LIFT: DeferredReady<T> pub in pinion-core reactive::resource (deterministic Pending-countdown future)",
+        "migrated 3 identical Pending-countdown futures to it: file_dialog DeferredOutcome, resource test Defer, example"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 6520 passed / 0 failed (pinion-core 2192; async-data 11; file-dialog 7)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "r923_async_data.py PASS: boot->page1; Next->Loading->page2; Next->ERROR->Loading->Error; clamp; Reload; Prev",
+        "r761_file_dialog.py PASS: the DeferredReady lift preserves file-dialog deferred-reply behavior",
+        "ZERO-FLAKE: DeferredReady Pending N->Ready; each snapshot advances pump 1 step; Loading observable, no race"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.23",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "self-grep peers judged NOT lifts (honest): ResourceState 3-arm match (status_line + pager_line) = domain phrasing",
+        "boot-Effect marker (todomvc/settings-panel + RefetchMarker) = R665 idiom each instantiates; 1-field net-zero wrapper",
+        "clamped(posture,disabled) = trivial ternary, zero decision encoded, local (R758 decision-encoding test)",
+        "non-windowed List+ListItem built inline (per virtual_list.rs doc; windowed builder is the R924 path)",
+        "R924 follow-up: infinite-scroll virtualized lazy-load (Signal<PageStore> + virtual_list windowing + auto-fetch-on-scroll)"
+      ],
+      "publishable_decision_summary": "First framework consumer of an async/out-of-memory paged data view: Resource + Effect-driven auto-refetch on page/nonce Signals, shell-polled LocalTaskPump, Loading/Ready/Error scene-as-data; lifts a shared DeferredReady<T> deterministic deferred future (Rule-of-Three over file_dialog + example + test).",
+      "publishable_changes_bullets": [
+        "new example hello-async-data: first framework consumer rendering a view over an async/out-of-memory paged source",
+        "Resource<Vec<AssetRow>,String> in Owner::cache; an Effect on page+reload_nonce Signals auto-refetches the page",
+        "reducer (Prev/Next/Reload) mutates only the query Signals; view reads resource.state() (pure §6.3)",
+        "boot fetch via the Effect eager run installed in create_extra_externals (preserves view-fn purity)",
+        "Loading/Ready/Error all scene-as-data: pager role=status + List/ListItem rows + in-list note line",
+        "ERROR_PAGE scripted-unavailable exercises the Error arm in nav flow; Next/Prev clamp at bounds (Disabled)",
+        "a11y: List(setsize=TOTAL_ASSETS) + ListItem(global posinset, name=row_label SSOT) + status + 3 buttons",
+        "LIFT: DeferredReady<T> pub in pinion-core reactive::resource (deterministic Pending-countdown future)",
+        "migrated 3 identical Pending-countdown futures to it: file_dialog DeferredOutcome, resource test Defer, example"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 6520 passed / 0 failed (pinion-core 2192; async-data 11; file-dialog 7)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "r923_async_data.py PASS: boot->page1; Next->Loading->page2; Next->ERROR->Loading->Error; clamp; Reload; Prev",
+        "r761_file_dialog.py PASS: the DeferredReady lift preserves file-dialog deferred-reply behavior",
+        "ZERO-FLAKE: DeferredReady Pending N->Ready; each snapshot advances pump 1 step; Loading observable, no race"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.23",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "self-grep peers judged NOT lifts (honest): ResourceState 3-arm match (status_line + pager_line) = domain phrasing",
+        "boot-Effect marker (todomvc/settings-panel + RefetchMarker) = R665 idiom each instantiates; 1-field net-zero wrapper",
+        "clamped(posture,disabled) = trivial ternary, zero decision encoded, local (R758 decision-encoding test)",
+        "non-windowed List+ListItem built inline (per virtual_list.rs doc; windowed builder is the R924 path)",
+        "R924 follow-up: infinite-scroll virtualized lazy-load (Signal<PageStore> + virtual_list windowing + auto-fetch-on-scroll)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

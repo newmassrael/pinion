@@ -77,9 +77,9 @@ pub use input::{
 };
 pub use intent::{Intent, IntentTag};
 pub use reactive::{
-    is_simulating, use_local_task_pump, Computed, Effect, FetchToken, IntoIntrospectValue,
-    JsonValue, LocalSpawner, LocalTaskPump, Owner, OwnerSnapshot, Resource, ResourceState, Signal,
-    SignalExternal,
+    is_simulating, use_local_task_pump, Computed, DeferredReady, Effect, FetchToken,
+    IntoIntrospectValue, JsonValue, LocalSpawner, LocalTaskPump, Owner, OwnerSnapshot, Resource,
+    ResourceState, Signal, SignalExternal,
     SimulationGuard, SnapshotRestoreError, SnapshotableSignal, batch,
 };
 pub use revision::SceneRevision;

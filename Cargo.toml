@@ -85,6 +85,7 @@ members = [
     "examples/hello-badge",
     "examples/hello-fab",
     "examples/hello-file-dialog",
+    "examples/hello-async-data",
     "examples/hello-segmented-button",
     "examples/hello-segmented-multi",
     "examples/hello-listbox",
