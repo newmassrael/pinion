@@ -45,7 +45,6 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
-    cursor_to_source,
     find_by_tag,
     run_demo,
     wait_until,
@@ -56,7 +55,6 @@ VIEWPORT = (460, 820)
 GRID = "property_grid"
 POPUP = "property_grid_choice"
 DISMISS = "property_grid#dismiss"
-CAT = "property_grid_cat"  # R871 group-by proxy (collapse set + roving cursor)
 
 BLEND = 9   # 4 options: Normal / Additive / Multiply / Screen (default Normal)
 BODY = 10   # 3 options: None / Trigger / Solid (default Solid)
@@ -83,7 +81,7 @@ def _editing(tf):
 def body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
         # ── (A) boot taxonomy ────────────────────────────────────────
-        assert_eq(tf.query("/external/row_count"), 12, "12 rows (quartet + 2 choice + colour)")
+        assert_eq(tf.query("/external/row_count"), 16, "16 value slots (incl. struct fields)")
         assert_eq(tf.query("/external/kind.9"), "choice", "Blend is a choice")
         assert_eq(tf.query("/external/kind.10"), "choice", "Body is a choice")
         blend = tf.query("/external/value.9")
@@ -100,7 +98,7 @@ def body() -> None:
 
         # ── (B) keyboard: open, rove + clamp, Enter commits ──────────
         _focus_grid(tf)
-        cursor_to_source(tf, CAT, BLEND)
+        tf.intervene("/external/cursor", str(BLEND))
         tf.key(path=GRID, name="Enter")  # open the popup
         wait_until(lambda: _editing(tf) == BLEND, timeout=4.0, interval=0.03,
                    desc="Enter opens the choice popup")
@@ -120,7 +118,7 @@ def body() -> None:
         assert_eq(tf.query("/external/popup_cursor"), None, "cursor cleared after commit")
 
         # ── (C) keyboard: Escape dismisses, value untouched ──────────
-        cursor_to_source(tf, CAT, BODY)
+        tf.intervene("/external/cursor", str(BODY))
         tf.key(path=GRID, name="Enter")
         wait_until(lambda: _editing(tf) == BODY, timeout=4.0, interval=0.03,
                    desc="open Body popup")

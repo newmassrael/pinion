@@ -48,7 +48,6 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
-    cursor_to_source,
     find_by_tag,
     run_demo,
     wait_until,
@@ -60,7 +59,6 @@ GRID = "property_grid"
 EDIT = "property_grid_edit"
 POPUP = "property_grid_color"
 DISMISS = "property_grid#dismiss"
-CAT = "property_grid_cat"  # R871 group-by proxy (collapse set + roving cursor)
 
 TINT = 11  # the colour row; boots Blue (#1e88e5), swatch index 4
 
@@ -86,7 +84,7 @@ def _editing(tf):
 def body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
         # ── (A) boot taxonomy ────────────────────────────────────────
-        assert_eq(tf.query("/external/row_count"), 12, "12 rows (incl. the colour row)")
+        assert_eq(tf.query("/external/row_count"), 16, "16 value slots (incl. struct fields)")
         assert_eq(tf.query("/external/kind.11"), "color", "Tint is a colour")
         tint = tf.query("/external/value.11")
         assert_eq(tint["hex"], "#1e88e5", "Tint boots Blue")
@@ -96,7 +94,7 @@ def body() -> None:
 
         # ── (B) keyboard: open, rove, Enter commits ──────────────────
         _focus_grid(tf)
-        cursor_to_source(tf, CAT, TINT)
+        tf.intervene("/external/cursor", str(TINT))
         tf.key(path=GRID, name="Enter")  # open
         wait_until(lambda: _editing(tf) == TINT, timeout=4.0, interval=0.03,
                    desc="Enter opens the colour popup")

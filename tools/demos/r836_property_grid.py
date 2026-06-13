@@ -13,19 +13,20 @@ kind reads through the primary external, and a value can be set
 programmatically without simulating typing (`intervene /external/value.<i>`).
 
 Coordinator slots (`property_grid`, the primary external):
-  /external/row_count        -> 12
-  /external/editing          -> null | int (source being text-edited)
-  /external/name.<source>    -> property name
-  /external/kind.<source>    -> "bool" | "int" | "float" | "text" | "choice" | "color"
-  /external/value.<source>   -> the typed value
-  /external/toggle           -> invoke(int): flip the bool at a source row
-  /external/begin            -> invoke(int): enter edit mode on a source row
-  /external/send             -> invoke: composite "<source>:<Event>" routing
+  /external/row_count        -> 16 (value-model slots: scalars + struct fields)
+  /external/editing          -> null | int (value index being text-edited)
+  /external/name.<i>         -> property name (qualified for a struct field)
+  /external/kind.<i>         -> "bool" | "int" | "float" | "text" | "choice" | "color"
+  /external/value.<i>        -> the typed value
+  /external/cursor           -> roving cursor node id (null | leaf "6" | branch cat./struct.)
+  /external/toggle           -> invoke(int): flip the bool at a value index
+  /external/begin            -> invoke(int): enter edit mode on a value index
+  /external/send             -> invoke: composite "<id>:<Event>" routing
 
-Group-by proxy slots (`property_grid_cat`, the R871 extra external):
-  /external/cursor           -> roving visual-row cursor (null | int)
-  /external/source_at.<pos>  -> data-row source at a visual position (null on a header)
-  /external/visible_len      -> headers + visible data rows
+Tree-structure introspection (`property_grid_tree`, the R921 read-only extra):
+  /external/row_count        -> visible row count (the tree flatten)
+  /external/cursor_index     -> the cursor's visual position (null | int)
+  /external/id_at.<pos>      -> a row's node id; /external/level_at.<pos> -> aria-level
 
 Verified (>= 30 assertions):
   (A) boot taxonomy — 9 rows, the kind quartet, the seed values
@@ -48,7 +49,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
-    cursor_to_source,
     find_by_tag,
     run_demo,
     wait_until,
@@ -58,15 +58,14 @@ VIEWPORT = (460, 820)
 
 GRID = "property_grid"
 EDIT = "property_grid_edit"
-CAT = "property_grid_cat"  # R871 group-by proxy (collapse set + roving cursor)
+TREE = "property_grid_tree"  # R921 read-only tree-structure introspection
 
 
 def _cursor_source(tf):
-    """The stable source index under the roving visual-row cursor, or None."""
-    pos = tf.query(f"/{CAT}/external/cursor")
-    if pos is None:
-        return None
-    return tf.query(f"/{CAT}/external/source_at.{pos}")
+    """The leaf value index under the roving cursor, or None (the cursor is the
+    leaf's node id — its value index in decimal; a branch id is non-numeric)."""
+    cur = tf.query("/external/cursor")
+    return int(cur) if isinstance(cur, str) and cur.isdigit() else None
 
 
 def _focus_grid(tf) -> None:
@@ -89,8 +88,8 @@ def body() -> None:
         # ── (A) boot taxonomy ────────────────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid present"
-        assert_eq(tf.query("/external/row_count"), 12, "12 property rows")
-        assert_eq(tf.query(f"/{CAT}/external/cursor"), None, "no cursor at boot")
+        assert_eq(tf.query("/external/row_count"), 16, "12 scalars + 4 struct fields")
+        assert_eq(tf.query("/external/cursor"), None, "no cursor at boot")
         assert_eq(tf.query("/external/editing"), None, "no row editing at boot")
         assert_eq(tf.query("/external/name.0"), "Name", "row 0 name")
         assert_eq(tf.query("/external/name.4"), "Layer", "row 4 name")
@@ -103,25 +102,27 @@ def body() -> None:
         assert_eq(tf.query("/external/value.4"), 3, "seed Layer")
         assert_eq(tf.query("/external/value.6"), 12.5, "seed Pos X")
 
-        # ── (B) keyboard roving over the flatten (headers + data) ────
+        # ── (B) keyboard roving over the flatten (the WAI-ARIA Tree) ─
+        # The cursor is an id-keyed node; the tree introspection reports its
+        # visual position as `cursor_index` over the `row_count` flatten.
         _focus_grid(tf)
-        # From no cursor, ArrowDown lands on visual row 0 (Identity header).
+        # From no cursor, ArrowDown lands on visual row 0 (the Identity branch).
         tf.key(path=GRID, name="ArrowDown")
-        wait_until(lambda: tf.query(f"/{CAT}/external/cursor") == 0, timeout=4.0,
-                   interval=0.03, desc="ArrowDown -> visual row 0 (Identity header)")
-        last = tf.query(f"/{CAT}/external/visible_len") - 1
+        wait_until(lambda: tf.query(f"/{TREE}/external/cursor_index") == 0, timeout=4.0,
+                   interval=0.03, desc="ArrowDown -> visual row 0 (Identity category)")
+        last = tf.query(f"/{TREE}/external/row_count") - 1
         tf.key(path=GRID, name="End")
-        wait_until(lambda: tf.query(f"/{CAT}/external/cursor") == last, timeout=4.0,
+        wait_until(lambda: tf.query(f"/{TREE}/external/cursor_index") == last, timeout=4.0,
                    interval=0.03, desc="End -> last visual row")
         tf.key(path=GRID, name="ArrowDown")
         # Clamp no-op: the dispatch commits before the response.
-        assert_eq(tf.query(f"/{CAT}/external/cursor"), last, "ArrowDown at bottom clamps")
+        assert_eq(tf.query(f"/{TREE}/external/cursor_index"), last, "ArrowDown at bottom clamps")
         tf.key(path=GRID, name="Home")
-        wait_until(lambda: tf.query(f"/{CAT}/external/cursor") == 0, timeout=4.0,
+        wait_until(lambda: tf.query(f"/{TREE}/external/cursor_index") == 0, timeout=4.0,
                    interval=0.03, desc="Home -> visual row 0")
 
         # ── (C) bool toggle: Space on the focused bool, then click ───
-        cursor_to_source(tf, CAT, 2)  # Visible (bool)
+        tf.intervene("/external/cursor", str(2))  # Visible (bool)
         assert_eq(tf.query("/external/value.2"), True, "Visible true before")
         tf.key(path=GRID, name="Space")
         wait_until(lambda: tf.query("/external/value.2") is False, timeout=4.0,
@@ -135,7 +136,7 @@ def body() -> None:
 
         # ── (D) text edit via keyboard: Enter -> type -> Enter ───────
         _focus_grid(tf)
-        cursor_to_source(tf, CAT, 0)  # Name (text)
+        tf.intervene("/external/cursor", str(0))  # Name (text)
         tf.key(path=GRID, name="Enter")  # enter edit mode
         wait_until(lambda: tf.query("/external/editing") == 0, timeout=4.0,
                    interval=0.03, desc="Enter starts editing row 0")
@@ -155,7 +156,7 @@ def body() -> None:
 
         # ── (E) int edit + numeric gate (letters dropped) ───────────
         _focus_grid(tf)
-        cursor_to_source(tf, CAT, 4)  # Layer (int) = 3
+        tf.intervene("/external/cursor", str(4))  # Layer (int) = 3
         tf.key(path=GRID, name="Enter")
         wait_until(lambda: tf.query("/external/editing") == 4, timeout=4.0,
                    interval=0.03, desc="Enter starts editing the int row")
@@ -171,7 +172,7 @@ def body() -> None:
 
         # ── (F) Escape cancels — the value is untouched ─────────────
         _focus_grid(tf)
-        cursor_to_source(tf, CAT, 1)  # Tag (text) = "hero"
+        tf.intervene("/external/cursor", str(1))  # Tag (text) = "hero"
         tf.key(path=GRID, name="Enter")
         wait_until(lambda: tf.query("/external/editing") == 1, timeout=4.0,
                    interval=0.03, desc="editing the Tag row")

@@ -3,100 +3,91 @@
 // (WAI-ARIA, PropertyGridExternal, TextFieldExternal, gridcell, …).
 #![allow(clippy::doc_markdown)]
 
-//! `hello-property-grid` — R836 §5.38 §5.40 §5.50 **property-grid /
+//! `hello-property-grid` — R836 / R921 §5.38 §5.40 §5.50 **property-grid /
 //! inspector detail panel**: the editor's "Details" panel (Unreal Details
-//! / Qt `QtPropertyBrowser` / a CSS-devtools style editor) — a vertical
-//! list of `(name, typed-value)` rows where each value is editable in place
-//! by a *type-appropriate* control, **grouped under collapsible category
-//! sections** (R871 — Identity / Appearance / Physics / …, the Inspector
-//! grouping every DCC details panel has), with a **live name search box**
-//! (R872 — the Details-panel filter, composing the R844 filter → group chain).
+//! / Qt `QtPropertyBrowser` / a CSS-devtools style editor) — a **tree** of
+//! `(name, typed-value)` rows where each value is editable in place by a
+//! *type-appropriate* control. Scalar properties nest under collapsible
+//! **category** branches (Identity / Appearance / Transform / …) and **struct**
+//! branches (a `Vector3` like Position expands into its X / Y / Z field rows —
+//! the Unreal / Qt Details core depth), with a **live name search box** (R872 —
+//! the Details-panel filter).
 //!
 //! ## Why this is the Phase-B #1 leverage item
 //!
 //! The northern-star is an Unreal-class editor self-hosted in pinion. That
-//! editor's Details / Inspector panel is a property grid; nothing in the
-//! catalog composed one yet. This binding builds it as a **pure composition
-//! of existing substrate** — no new framework crate, the
-//! `[[abstraction-needs-second-consumer]]` discipline (the property-grid is
-//! the 1st consumer of a typed-editable-row model; the self-hosted editor
-//! will be the 2nd, at which point the stable parts lift to a framework
-//! crate). It is the accordion (R697) / settings-panel (R667) "Nth-consumer
-//! validates substrate health" pattern applied to the editable-grid axis.
+//! editor's Details / Inspector panel is a property grid; this binding builds
+//! it as a **pure composition of existing substrate** — no new framework crate.
+//! R836–R920 built the flat, category-grouped grid; **R921** migrated its row
+//! backbone from the 2-level `GroupOrderState` group-by proxy to the
+//! arbitrary-depth WAI-ARIA Tree substrate (`flat_visible` / `resolve_tree_key`
+//! / `tree_access_nodes`), because categories and struct properties are the
+//! same thing — a collapsible branch — and a struct's X/Y/Z fields need a third
+//! level the group proxy cannot express. The self-hosted editor will be the 2nd
+//! consumer of the typed-editable-row model, at which point the stable parts
+//! lift to a framework crate (`[[abstraction-needs-second-consumer]]`).
 //!
-//! ## Architecture — four externals, the todomvc edit-in-cell shape
+//! ## Architecture — the value model ⊥ the structure tree
 //!
-//! The fourth is the R872 **search box** (`property_grid_search`, extra): a
-//! `TextFieldExternal` whose live text is the filter query. The grouped order
-//! source (`use_group_order_with_source`) keeps only the rows whose name
-//! matches, so categories with no surviving member drop their header — the
-//! R844 filter → group proxy composition, here with a name-search filter.
-//! Below:
+//! The **value model** stays a flat `Signal<Vec<CellValue>>` keyed by **value
+//! index** (the scrub / popup / inline-edit / reset / `value.<i>` RPC machinery
+//! is unchanged across the R921 migration); the **structure tree** is a separate
+//! `Signal<Vec<PropertyNode>>` carrying the hierarchy + the per-branch collapse
+//! (`expanded`) state. A **leaf** node's id IS its value index in decimal ("6"),
+//! so the painted row tag `{GRID_TAG}#{i}`, the `reset{i}` arrow and the
+//! `value.<i>` path are byte-identical to the flat era; a **branch** node's id
+//! is prefixed (`cat:` / `struct:`). Four externals:
 //!
-//! * **`PropertyGridExternal`** (`property_grid`, primary) — the grid
-//!   coordinator. It owns the typed value model ([`Signal<Vec<CellValue>>`] —
-//!   the value SSOT, source-keyed) and the edit-mode latch
-//!   ([`Signal<Option<usize>>`] `editing_row`, the todomvc `editing_id` keyed
-//!   by source index), and holds the shared [`GroupOrderState`] so a data-row
-//!   click can move the cursor. It exposes the grid for AI-first introspection
-//!   (§2 #2): `query "value.<source>"` reads each typed value, `"name.<source>"`
-//!   / `"kind.<source>"` the row metadata, `intervene "value.<source>"` sets a
-//!   value programmatically (the deterministic AI driving path — no simulated
-//!   typing), `invoke "toggle" <source>` flips a bool, `invoke "begin" <source>`
-//!   enters edit mode. The *source* index is the row's stable identity — it
-//!   survives collapse and regroup.
-//! * **`GroupOrderExternal`** (`property_grid_cat`, extra) — R871, the R843
-//!   group-by proxy coordinator. It owns the **category collapse set** + the
-//!   **roving visual-row cursor** (a position over the flattened headers +
-//!   visible data rows). AI drives the grouping through its wire:
-//!   `query "label_at.<pos>"` / `"member_count_at.<pos>"` / `"collapsed.<g>"` /
-//!   `"cursor"` / `"visible_len"`, `intervene "collapsed.<g>"` / `"cursor"`,
-//!   `invoke "toggle_group" <g>` / `"collapse_all"` / `"expand_all"`. The
-//!   property grid is the **3rd structural consumer** of this substrate, after
-//!   `hello-grouped-list` and `hello-grouped-grid`.
-//! * **`TextFieldExternal`** (`property_grid_edit`, extra) — ONE shared
-//!   inline editor reused across every text / int / float row (the todomvc
-//!   single-editor pattern; scales to any row count). It paints only inside
-//!   the value cell of the row being edited; the rest of the time the value
-//!   cell shows the formatted value as text (or a checkbox glyph for bools).
+//! * **`PropertyGridExternal`** (`property_grid`, primary) — the coordinator. It
+//!   owns the value model, the structure tree + the roving cursor (a node id),
+//!   and the edit-mode latch. AI-first introspection (§2 #2): `query
+//!   "value.<i>"` reads a typed value, `"name.<i>"` / `"kind.<i>"` the metadata,
+//!   `"modified.<i>"` the dirty flag; `intervene "value.<i>"` sets a value;
+//!   `invoke "toggle"/"begin"/"reset"/"reset_all" <i>` drive a leaf;
+//!   `"expanded.<branch_id>"` (read/intervene) + `invoke "toggle_branch"` drive
+//!   collapse; `"struct_summary.<id>"` / `"struct_modified.<id>"` + `invoke
+//!   "reset_struct"` drive the struct aggregate.
+//! * **`TreeViewIntrospect`** (`property_grid_tree`, extra, read-only) — surfaces
+//!   the visible-row flatten + the cursor to `scene/query` (`row_count` /
+//!   `id_at.<pos>` / `level_at.<pos>` / `expanded_at.<pos>` / `cursor`), so an AI
+//!   client walks the Inspector hierarchy as data. Collapse / cursor *mutation*
+//!   routes through the primary, so this node owns no mutation path.
+//! * **`TextFieldExternal`** (`property_grid_edit`, extra) — ONE shared inline
+//!   editor reused across every text / int / float leaf (the todomvc
+//!   single-editor pattern). It paints only inside the editing leaf's value cell.
+//! * **`TextFieldExternal`** (`property_grid_search`, extra) — the R872 search
+//!   box whose live text is the name filter (`flat_visible_filtered`'s
+//!   path-to-match reveals matches inside collapsed branches).
 //!
-//! There is no per-row external — bools toggle through the coordinator
-//! (`Space` / single-click, the checkbox affordance), and text / number
-//! rows route their inline edit through the one shared field.
+//! There is no per-row external — bools toggle through the coordinator, and
+//! text / number leaves route their inline edit through the one shared field.
 //!
-//! ## Keyboard model (WAI-ARIA editable data-grid + grouped tree)
+//! ## Keyboard model (WAI-ARIA APG Tree)
 //!
-//! The grid is a **single Tab stop** with a roving cursor over the flattened
-//! category headers + visible data rows (the APG data-grid pattern, scales to
-//! large grids — unlike one-Tab-stop-per-row). While the grid holds focus the
-//! shared [`group_nav`] policy moves the cursor (`ArrowUp` / `ArrowDown` /
-//! `Home` / `End`, clamped — no wrap) and expands / collapses a **category
-//! header** (`ArrowRight` / `ArrowLeft`, or `Enter` / `Space` on a header). On
-//! a **data row**, `Space` toggles a bool and `Enter` / `F2` toggles a bool or
-//! enters edit mode on a text / int / float row (focus moves into the shared
-//! inline field via the [`pinion_core::focus_request`] mailbox). While editing:
-//! `Enter` commits (parse → write back to the model), `Escape` cancels (the
-//! value is left untouched), and the int / float rows gate non-numeric
-//! keystrokes the way `hello-number-input` does. A click-away commit-on-blur
-//! rides the field's `with_blur_intent` (R793), the todomvc commit-on-blur
-//! shape.
+//! The grid is a **single Tab stop** with a roving id-keyed cursor over the
+//! flattened tree (the shared [`resolve_tree_key`] policy: `ArrowUp` /
+//! `ArrowDown` / `Home` / `End` clamp, no wrap; `ArrowRight` / `ArrowLeft` /
+//! `Enter` / `Space` expand / collapse / descend a **branch**). On a **leaf**,
+//! `Space` toggles a bool, `Enter` / `F2` edits a text / int / float leaf or
+//! opens a choice / colour popup, and `Delete` resets it (focus moves into the
+//! shared inline field via the [`pinion_core::focus_request`] mailbox). While
+//! editing: `Enter` commits, `Escape` cancels, and int / float leaves gate
+//! non-numeric keystrokes. A click-away commit-on-blur rides the field's
+//! `with_blur_intent` (R793).
 //!
-//! ## a11y (R836 / R871 / R874 §5.40 §5.27) — grouped grid SSOT
+//! ## a11y (R921 §5.40 §5.27 §5.50) — WAI-ARIA Tree SSOT
 //!
-//! The panel lowers to a WAI-ARIA `treegrid` (hierarchical category headers +
-//! columns; R874) with spanning group-header rows through the lifted
-//! [`pinion_a11y::grouped_grid_access_nodes`] builder: a `Property` / `Value`
-//! column-header row, then per visible row either a spanning `aria-level = 1`
-//! category `row` (`aria-expanded`, `"<category> (<count>)"`) or an
-//! `aria-level = 2` data `row` carrying two `gridcell` children named by bare
-//! value (the column label lives on the `columnheader`, not repeated per cell).
-//! The inspector has **no selection model** ([`GroupedGridSelection::Display`]),
-//! so data rows carry **no** `aria-selected`: the roving cursor is keyboard
-//! focus, exposed as
-//! `aria-activedescendant` through `access_focus_target` → the lifted
-//! [`pinion_a11y::grouped_focus_target`] (R850/R871 — the authoritative
-//! channel; the per-node `focused` flag is a redundant marker), so the ring
-//! frames the cursor's category header or data row identically.
+//! The panel lowers to a WAI-ARIA `tree` through the lifted
+//! [`pinion_a11y::tree_access_nodes`] builder: each visible row is a `treeitem`
+//! carrying its hierarchical axes (`aria-level` = depth + 1, `aria-expanded` on
+//! branches, `aria-posinset` / `aria-setsize`). The single-column tree folds
+//! each row's value into its accessible name (a leaf → `"Position X: 12.5"`, a
+//! struct → `"Position (12.5, -4, 0)"`, a category → `"Identity (3)"`), so the
+//! value is announced without a separate `gridcell`. The Inspector has **no
+//! selection model**, so no row carries `aria-selected`: the roving cursor is
+//! keyboard focus, exposed as `aria-activedescendant` through
+//! `access_focus_target` (the authoritative channel; the per-node `focused`
+//! flag is a redundant marker), ringing the cursor's row tag `{GRID_TAG}#{id}`.
 //!
 //! ## Known gaps (honest carry)
 //!
@@ -111,12 +102,12 @@
 //!   metadata is an additive model field (the `hello-number-input`
 //!   `parse_clamp` shape) deferred to the same 2nd-consumer round.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    grouped_focus_target, grouped_grid_access_nodes, listbox_option_nodes, AccessFocus, AccessNode,
-    GridColumn, GroupedGridSelection, GroupedGridSpec, ListOption, WidgetA11y,
+    listbox_option_nodes, tree_access_nodes, AccessFocus, AccessNode, AriaRole, ListOption,
+    WidgetA11y,
 };
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::input::{DragCalibration, DRAG_CLICK_THRESHOLD_PX};
@@ -133,14 +124,13 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
-use pinion_core::widgets::group_order::{
-    group_nav, use_group_order_with_source, GroupNavOutcome, GroupOrderExternal, GroupOrderState,
-    GroupRow,
-};
 use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
-use pinion_core::widgets::virtual_list::VisibleWindow;
+use pinion_core::widgets::tree_nav::{
+    flat_visible, flat_visible_filtered, resolve_tree_key, set_expanded_in, toggle_expanded,
+    tree_view_introspection_extra, TreeKey, TreeNode, VisibleRow,
+};
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -181,6 +171,15 @@ const CELL_PAD: u32 = 10;
 const CHECKBOX_SIZE: u32 = 20;
 const PANEL_PAD: u32 = 20;
 const ROW_GAP: u32 = 2;
+/// R921 — per-depth indent (px) of a nested tree row's name cell (leaf rows
+/// under a category = depth 1; struct fields = depth 2 — the Details panel's
+/// hierarchical inset).
+const INDENT_STEP: u32 = 16;
+/// U+25B8 BLACK RIGHT-POINTING SMALL TRIANGLE — a collapsed branch's disclosure
+/// ([[non-ascii-literal-named-const-escape]]).
+const DISCLOSURE_COLLAPSED: &str = "\u{25B8}";
+/// U+25BE BLACK DOWN-POINTING SMALL TRIANGLE — an expanded branch's disclosure.
+const DISCLOSURE_EXPANDED: &str = "\u{25BE}";
 
 // ─── numeric scrub (R875) ─────────────────────────────────────────
 
@@ -219,11 +218,13 @@ const CHOICE_CHEVRON: &str = "\u{25BE}";
 
 /// Primary External — the grid coordinator (the single keyboard Tab stop).
 const GRID_TAG: &str = "property_grid";
-/// Extra External — the group-by proxy coordinator (R843 `GroupOrderExternal`,
-/// R871): owns the category collapse set + the roving visual-row cursor.
-/// A category-header click routes to `{GROUP_TAG}#{group}` (the collapse
-/// coordinator); the grid's data rows stay under `{GRID_TAG}#{source}`.
-const GROUP_TAG: &str = "property_grid_cat";
+/// Extra External — the read-only tree-structure introspection node (R921
+/// `TreeViewIntrospect`): surfaces the visible-row flatten + the roving cursor
+/// to `scene/query` (`row_count` / `cursor` / `id_at.<pos>` / `level_at.<pos>` /
+/// `expanded_at.<pos>` …). Collapse / cursor *mutation* routes through the
+/// primary `{GRID_TAG}` coordinator (a branch row is tagged `{GRID_TAG}#{id}`
+/// and `scene/key` drives the cursor), so this node owns no mutation path.
+const TREE_TAG: &str = "property_grid_tree";
 /// Extra External — the one shared inline text / number editor.
 const EDIT_TF_TAG: &str = "property_grid_edit";
 /// Extra External — the live property-name search / filter box (R872), in the
@@ -280,65 +281,57 @@ const COLOR_SWATCHES: [(Color, &str); 8] = [
 
 // ─── typed property model ─────────────────────────────────────────
 
-const ROW_COUNT: usize = 12;
+/// Value-model slot count: the 12 R836 scalar leaves (indices 0..12, unchanged —
+/// their `value.<i>` RPC path, edit latch and reset baseline stay stable) plus
+/// the R921 struct-field leaves appended at 12.. (Position Z, Scale X/Y/Z), so a
+/// composite never displaces an existing leaf's `value_index`.
+const VALUE_COUNT: usize = 16;
 
-/// The property row names. Static — only the [`CellValue`]s mutate, so
-/// names live in a `const` (the value SSOT is the coordinator's Signal).
-const PROPERTY_NAMES: [&str; ROW_COUNT] = [
-    "Name", "Tag", "Visible", "Locked", "Layer", "Health", "Pos X", "Pos Y", "Opacity", "Blend",
-    "Body", "Tint",
+/// The property names, indexed by **value index** (the leaf-node id, the RPC
+/// `name.<i>` answer). Struct-field leaves are *qualified* ("Position X") so the
+/// AI-first read names a field unambiguously; the *tree* gives each field its
+/// short in-context label ("X") under its struct branch (R921). Static — only
+/// the [`CellValue`]s mutate, so names live in a `const`.
+const PROPERTY_NAMES: [&str; VALUE_COUNT] = [
+    "Name",       // 0  Identity
+    "Tag",        // 1  Identity
+    "Visible",    // 2  Appearance
+    "Locked",     // 3  Physics
+    "Layer",      // 4  Identity
+    "Health",     // 5  Stats
+    "Position X", // 6  Transform → Position
+    "Position Y", // 7  Transform → Position
+    "Opacity",    // 8  Appearance
+    "Blend",      // 9  Appearance
+    "Body",       // 10 Physics
+    "Tint",       // 11 Appearance
+    "Position Z", // 12 Transform → Position
+    "Scale X",    // 13 Transform → Scale
+    "Scale Y",    // 14 Transform → Scale
+    "Scale Z",    // 15 Transform → Scale
 ];
-
-// R871 §5.27 §5.40 — collapsible category sections (Inspector grouping). The
-// flat 12-row list groups under named categories through the R843
-// `GroupOrderState` substrate (the 3rd structural consumer after grouped-list +
-// grouped-grid): the *source* index stays the row's stable identity (the value
-// SSOT, RPC `value.<source>` path, edit latch — all source-keyed and stable
-// across collapse / regroup), while the visible-row cursor and the collapse set
-// live in the group proxy. Categories appear in **first-appearance order** over
-// the source order, so `PROPERTY_GROUPS` below yields the display order
-// Identity → Appearance → Physics → Stats → Transform.
-
-/// Category id of each property (an index into [`CATEGORY_LABELS`]).
-const PROPERTY_GROUPS: [usize; ROW_COUNT] = [
-    0, // Name     → Identity
-    0, // Tag      → Identity
-    1, // Visible  → Appearance
-    2, // Locked   → Physics
-    0, // Layer    → Identity
-    3, // Health   → Stats
-    4, // Pos X    → Transform
-    4, // Pos Y    → Transform
-    1, // Opacity  → Appearance
-    1, // Blend    → Appearance
-    2, // Body     → Physics
-    1, // Tint     → Appearance
-];
-
-/// Category labels, indexed by the [`PROPERTY_GROUPS`] id. The visible header
-/// text per category (the group proxy appends the member count).
-const CATEGORY_LABELS: [&str; 5] = ["Identity", "Appearance", "Physics", "Stats", "Transform"];
 
 // R837 §5.38 — the typed value model + its pure helpers (kind dispatch,
 // display / edit formatting, parse, the keystroke gate, the introspect read
 // / intervene write) were lifted to `pinion_core::cell_value` at the 2nd
-// consumer (`hello-data-grid`); this binding consumes that SSOT. The R836
-// `CellValue` / `CellKind` are now `CellValue` / `CellKind`.
+// consumer (`hello-data-grid`); this binding consumes that SSOT.
 
-/// First-paint property values. A game-object inspector — the kinds the
-/// self-hosted editor's Details panel needs (name / tag text, visibility /
-/// lock flags, layer / health ints, transform / opacity floats).
+/// First-paint property values, indexed by [value index](PROPERTY_NAMES). A
+/// game-object inspector — the kinds the self-hosted editor's Details panel
+/// needs (name / tag text, visibility / lock flags, layer / health ints, the
+/// transform / opacity floats), now including the R921 composite **Position**
+/// and **Scale** `Vector3` struct fields (12..16).
 fn default_properties() -> Vec<CellValue> {
     vec![
-        CellValue::Text("Player".to_owned()),
-        CellValue::Text("hero".to_owned()),
-        CellValue::Bool(true),
-        CellValue::Bool(false),
-        CellValue::Int(3),
-        CellValue::Int(100),
-        CellValue::Float(12.5),
-        CellValue::Float(-4.0),
-        CellValue::Float(1.0),
+        CellValue::Text("Player".to_owned()), // 0  Name
+        CellValue::Text("hero".to_owned()),   // 1  Tag
+        CellValue::Bool(true),                // 2  Visible
+        CellValue::Bool(false),               // 3  Locked
+        CellValue::Int(3),                    // 4  Layer
+        CellValue::Int(100),                  // 5  Health
+        CellValue::Float(12.5),               // 6  Position X
+        CellValue::Float(-4.0),               // 7  Position Y
+        CellValue::Float(1.0),                // 8  Opacity
         // R867 — enum/choice rows (the popup-listbox cell): a render blend
         // mode (4 options) and a collision-body type (3 options, Solid set).
         CellValue::Choice {
@@ -349,13 +342,212 @@ fn default_properties() -> Vec<CellValue> {
                 "Multiply".to_owned(),
                 "Screen".to_owned(),
             ],
-        },
+        }, // 9  Blend
         CellValue::Choice {
             selected: 2,
             options: vec!["None".to_owned(), "Trigger".to_owned(), "Solid".to_owned()],
-        },
+        }, // 10 Body
         // R869 — the colour cell (popup swatch palette): the object tint.
-        CellValue::Color(COLOR_SWATCHES[4].0), // Blue
+        CellValue::Color(COLOR_SWATCHES[4].0), // 11 Tint (Blue)
+        // R921 — the composite struct fields (Transform → Position / Scale).
+        CellValue::Float(0.0), // 12 Position Z
+        CellValue::Float(1.0), // 13 Scale X
+        CellValue::Float(1.0), // 14 Scale Y
+        CellValue::Float(1.0), // 15 Scale Z
+    ]
+}
+
+// ─── property tree (R921 §5.38 §5.50) ─────────────────────────────
+//
+// The Inspector is a **tree**, not a flat list: the editor's Details panel
+// nests scalar properties under collapsible **category** branches (Identity /
+// Appearance / Transform …) and **struct** branches (a `Vector3` like Position
+// expands into its X / Y / Z field rows — the Unreal / Qt Details core depth).
+// Categories and structs are the SAME thing — a collapsible branch — so the
+// panel migrates off the 2-level `GroupOrderState` group-by proxy onto the
+// arbitrary-depth WAI-ARIA Tree substrate (`flat_visible` / `resolve_tree_key`
+// / `TreeNode`, R811/R820/R821): one visible-row sequence the paint, the
+// id-keyed roving cursor, the collapse set, the a11y `treegrid` and the
+// name filter all read, so no two derived sequences can diverge.
+//
+// The value model stays a flat `Vec<CellValue>` keyed by **value index** (the
+// scrub / popup / inline-edit / reset / `value.<i>` RPC machinery is unchanged):
+// a **leaf** node's id IS its value index in decimal ("6"), so the existing
+// `{GRID_TAG}#{i}` row tag, `reset{i}` and `value.<i>` paths are byte-identical;
+// a **branch** node's id is prefixed ([`CAT_PREFIX`] / [`STRUCT_PREFIX`]) so the
+// id namespaces never collide and the click router / cursor disambiguate them.
+
+/// Branch-node id prefix for a category section (`cat.Identity`). The separator
+/// is `.` (not `:`): a branch id rides the composite-tag pointer wire as the
+/// `send` payload's key, and that payload is `:`-delimited
+/// ([`split_send_payload`]), so a `:` in the id would mis-split a header click.
+const CAT_PREFIX: &str = "cat.";
+/// Branch-node id prefix for a struct property (`struct.Position`).
+const STRUCT_PREFIX: &str = "struct.";
+
+/// One node of the Inspector property tree: a collapsible **branch** (a category
+/// section or a struct property, `value_index = None`, `children` non-empty) or
+/// an editable **leaf** (a scalar property / struct field, `value_index =
+/// Some`, no children). Held in a `Signal<Vec<PropertyNode>>` carrying the
+/// structure + the collapse (`expanded`) state — the *values* live in the
+/// separate value-model `Signal`, keyed by `value_index`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct PropertyNode {
+    /// Stable node id: a leaf's value index in decimal ("6"); a branch's
+    /// prefixed label ([`CAT_PREFIX`] / [`STRUCT_PREFIX`]).
+    id: String,
+    /// In-context display label: a top-level property's name, a struct field's
+    /// short axis ("X"), a section's category name.
+    label: String,
+    /// Whether this branch is expanded (a leaf is always `false`).
+    expanded: bool,
+    /// `Some(value_index)` for a leaf; `None` for a branch.
+    value_index: Option<usize>,
+    /// Child nodes (empty for a leaf).
+    children: Vec<PropertyNode>,
+}
+
+impl PropertyNode {
+    /// A scalar / struct-field leaf addressing value-model slot `value_index`,
+    /// shown with `label`.
+    fn leaf(value_index: usize, label: &str) -> Self {
+        Self {
+            id: value_index.to_string(),
+            label: label.to_owned(),
+            expanded: false,
+            value_index: Some(value_index),
+            children: Vec::new(),
+        }
+    }
+
+    /// A collapsible branch (`id` already prefixed) with `children`, expanded by
+    /// default (the Details panel boots fully open).
+    fn branch(id: String, label: &str, children: Vec<PropertyNode>) -> Self {
+        Self { id, label: label.to_owned(), expanded: true, value_index: None, children }
+    }
+}
+
+impl TreeNode for PropertyNode {
+    fn id(&self) -> &str {
+        &self.id
+    }
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn expanded(&self) -> bool {
+        self.expanded
+    }
+    fn children(&self) -> &[Self] {
+        &self.children
+    }
+    fn children_mut(&mut self) -> &mut [Self] {
+        &mut self.children
+    }
+    fn set_expanded(&mut self, expanded: bool) {
+        self.expanded = expanded;
+    }
+}
+
+/// The leaf value index a tree-row id addresses, or `None` for a branch id
+/// (which has a non-numeric `cat:` / `struct:` prefix). The one place the
+/// "is this row an editable leaf?" decision is made, shared by the click
+/// router, the keyboard activation and the a11y builder.
+fn row_value_index(id: &str) -> Option<usize> {
+    id.parse::<usize>().ok()
+}
+
+/// Depth-first find of the node carrying `id` in a `PropertyNode` tree — the
+/// shared lookup behind the struct aggregate (field indices) and the by-id
+/// collapse read. `None` for an unknown id.
+fn find_node<'a>(nodes: &'a [PropertyNode], id: &str) -> Option<&'a PropertyNode> {
+    for n in nodes {
+        if n.id == id {
+            return Some(n);
+        }
+        if let Some(found) = find_node(&n.children, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// The value indices of a struct branch's field leaves (in order), or empty for
+/// a non-struct / unknown id — the SSOT for a struct's aggregate summary, its
+/// modified-from-default roll-up, and its reset-all funnel.
+fn struct_field_indices(tree: &[PropertyNode], struct_id: &str) -> Vec<usize> {
+    find_node(tree, struct_id)
+        .map(|n| n.children.iter().filter_map(|c| c.value_index).collect())
+        .unwrap_or_default()
+}
+
+/// R921 — a struct's collapsed-summary tuple, the parenthesised list of its
+/// field display values (`"(12.5, -4, 0)"`). The ONE summary decision the paint
+/// (struct header value cell), the RPC (`struct_summary.<id>`) and the External
+/// share, so they never disagree.
+fn struct_value_summary(model: &[CellValue], tree: &[PropertyNode], struct_id: &str) -> String {
+    let parts: Vec<String> = struct_field_indices(tree, struct_id)
+        .into_iter()
+        .filter_map(|i| model.get(i).map(CellValue::display))
+        .collect();
+    format!("({})", parts.join(", "))
+}
+
+/// R921 — whether any field of struct `struct_id` differs from its class
+/// default. The ONE roll-up the paint (struct reset arrow), the a11y (struct
+/// reset `button`) and the RPC (`struct_modified.<id>`) share — the R886.1
+/// one-gate extended to the struct row, so the arrow, the AT button and the
+/// query can never disagree.
+fn struct_is_modified(model: &[CellValue], defaults: &[CellValue], tree: &[PropertyNode], id: &str) -> bool {
+    struct_field_indices(tree, id).iter().any(|&i| match (model.get(i), defaults.get(i)) {
+        (Some(v), Some(d)) => property_modified(v, d),
+        _ => false,
+    })
+}
+
+/// R921 — the number of leaf (editable property) descendants of a branch — the
+/// `(count)` detail a category header shows ("Identity (3)", "Transform (6)").
+fn leaf_descendant_count(tree: &[PropertyNode], id: &str) -> usize {
+    fn count(node: &PropertyNode) -> usize {
+        if node.value_index.is_some() {
+            1
+        } else {
+            node.children.iter().map(count).sum()
+        }
+    }
+    find_node(tree, id).map_or(0, count)
+}
+
+/// The Inspector property tree (R921): five category branches, with the
+/// **Transform** category nesting the **Position** and **Scale** `Vector3`
+/// struct branches (each expanding to X / Y / Z field leaves). The structure +
+/// labels SSOT — `default_tree` builds the structure, the value model holds the
+/// editable values keyed by the leaf ids' value indices.
+fn default_tree() -> Vec<PropertyNode> {
+    let cat = |label: &str, children: Vec<PropertyNode>| {
+        PropertyNode::branch(format!("{CAT_PREFIX}{label}"), label, children)
+    };
+    let vec3 = |label: &str, x: usize, y: usize, z: usize| {
+        PropertyNode::branch(
+            format!("{STRUCT_PREFIX}{label}"),
+            label,
+            vec![PropertyNode::leaf(x, "X"), PropertyNode::leaf(y, "Y"), PropertyNode::leaf(z, "Z")],
+        )
+    };
+    vec![
+        cat("Identity", vec![
+            PropertyNode::leaf(0, "Name"),
+            PropertyNode::leaf(1, "Tag"),
+            PropertyNode::leaf(4, "Layer"),
+        ]),
+        cat("Appearance", vec![
+            PropertyNode::leaf(2, "Visible"),
+            PropertyNode::leaf(8, "Opacity"),
+            PropertyNode::leaf(9, "Blend"),
+            PropertyNode::leaf(11, "Tint"),
+        ]),
+        cat("Physics", vec![PropertyNode::leaf(3, "Locked"), PropertyNode::leaf(10, "Body")]),
+        cat("Stats", vec![PropertyNode::leaf(5, "Health")]),
+        cat("Transform", vec![vec3("Position", 6, 7, 12), vec3("Scale", 13, 14, 15)]),
     ]
 }
 
@@ -392,65 +584,61 @@ fn property_modified(value: &CellValue, baseline: &CellValue) -> bool {
     !value.value_eq(baseline)
 }
 
-/// R871 — the grouped-collapse + roving-cursor SSOT (the R843
-/// [`GroupOrderState`]). Shared by the [`GroupOrderExternal`] (mutates the
-/// collapse set + cursor), the [`PropertyGridExternal`] (moves the cursor on a
-/// data-row click), the view fn (reads `rows()` / `cursor()` — both subscribe,
-/// so a collapse / cursor move repaints) and the a11y tree. The roving cursor
-/// is a **visual position** into the flattened rows (headers + visible data),
-/// not a source index — the grouped peer of the old flat `focused_row`.
+/// R921 — the Inspector property **tree** SSOT (structure + per-branch collapse
+/// state). Shared by the [`PropertyGridExternal`] (toggles a branch / moves the
+/// cursor on a click), the view fn (flattens it for paint — reading it
+/// subscribes, so a collapse repaints), the keyboard nav and the a11y tree.
+/// Built once from [`default_tree`]; the editable *values* live in the separate
+/// [`use_property_model`] `Signal`, keyed by the leaf ids' value indices.
 #[must_use]
-fn use_property_groups() -> Rc<GroupOrderState> {
-    // R872/R873 — the search box's text is the live filter query. Resolve the
-    // search state + the filter memo BEFORE the group cache factory (captured
-    // in the order-source closure) so the `Owner::cache` calls never nest
-    // ([[owner-cache-no-nested-factory]]). Reading `search.text()` inside the
-    // closure subscribes, so typing repaints and re-filters — the filter ->
-    // group composition (R844). The filter is **memoized on the query string**
-    // (R873): an unchanged query returns the SAME `Rc`, so
-    // `GroupOrderState::rows()`'s pointer-keyed memo hits — minting a fresh
-    // `Rc` per read would silently defeat that memo (the `order_memo.rs`-warned
-    // anti-pattern), mirroring how `view_order::order()` returns a stable `Rc`.
-    let search = use_text_edit_state(SEARCH_TF_TAG);
-    let memo = use_filter_memo();
-    use_group_order_with_source(
-        GROUP_TAG,
-        || (PROPERTY_GROUPS.to_vec(), CATEGORY_LABELS.iter().map(|s| (*s).to_owned()).collect()),
-        move || {
-            let query = search.text();
-            let mut slot = memo.borrow_mut();
-            if slot.as_ref().map(|(q, _)| q.as_str()) != Some(query.as_str()) {
-                *slot = Some((query.clone(), Rc::new(filtered_source_order(&query))));
-            }
-            Rc::clone(&slot.as_ref().expect("just populated above").1)
-        },
-    )
+fn use_property_tree() -> Rc<Signal<Vec<PropertyNode>>> {
+    let owner = Owner::current().expect("use_property_tree requires an active Owner scope");
+    owner.cache("property_grid.tree", || Signal::new(default_tree()))
 }
 
-/// The filter memo's held shape — the last query string + its memoized order.
-type FilterMemo = Rc<RefCell<Option<(String, Rc<Vec<usize>>)>>>;
-
-/// R873 — single-entry memo of the filtered order keyed on the search query
-/// (the example-local peer of the crate-private `OrderMemo`): an unchanged
-/// query returns the same `Rc<Vec<usize>>` so the downstream
-/// `GroupOrderState::rows()` pointer memo can hit instead of re-flattening
-/// every read.
+/// R921 — the roving keyboard cursor: the **node id** of the focused visible row
+/// (a leaf value index "6" or a branch id `cat:…` / `struct:…`), or `None`
+/// before the first key. Id-keyed (not a visual position) so it survives a
+/// collapse / filter that reshuffles the flatten — the WAI-ARIA Tree cursor
+/// model ([`resolve_tree_key`]). Read inside the view-fn it subscribes, so a
+/// cursor move repaints and `access_focus_target` rings the cursor row.
 #[must_use]
-fn use_filter_memo() -> FilterMemo {
-    let owner = Owner::current().expect("use_filter_memo requires an active Owner scope");
-    owner.cache("property_grid.filter_memo", || RefCell::new(None))
+fn use_property_cursor() -> Rc<Signal<Option<String>>> {
+    let owner = Owner::current().expect("use_property_cursor requires an active Owner scope");
+    owner.cache("property_grid.cursor", || Signal::new(None))
 }
 
-/// R872 — the source indices kept by the live search query, in source order
-/// (the base order [`use_property_groups`] groups). A case-insensitive
-/// substring match on the property name; an empty / whitespace query keeps
-/// every row. A category whose every member is filtered out contributes no
-/// header (`group_rows` omits empty groups).
-fn filtered_source_order(query: &str) -> Vec<usize> {
-    let q = query.trim().to_lowercase();
-    (0..ROW_COUNT)
-        .filter(|&s| q.is_empty() || PROPERTY_NAMES[s].to_lowercase().contains(&q))
-        .collect()
+/// The live filter query (the R872 search box text), trimmed + lowercased; the
+/// empty string means "no filter".
+fn current_search_query() -> String {
+    use_text_edit_state(SEARCH_TF_TAG).text().trim().to_lowercase()
+}
+
+/// R921 — the per-node filter match: a node survives the search iff its
+/// *searchable name* contains the (already-lowercased) query. A **leaf** matches
+/// on its qualified [`PROPERTY_NAMES`] entry (so "position" finds "Position X"
+/// even though the in-tree label is the short "X"); a **branch** matches on its
+/// category / struct label. [`flat_visible_filtered`] then keeps any node on a
+/// path to a match (Qt recursive-filter semantics).
+fn node_matches_query(node: &PropertyNode, query: &str) -> bool {
+    let name = match node.value_index {
+        Some(i) => PROPERTY_NAMES.get(i).copied().unwrap_or(node.label.as_str()),
+        None => node.label.as_str(),
+    };
+    name.to_lowercase().contains(query)
+}
+
+/// R921 — the visible-row flatten the paint, the cursor, the a11y and the
+/// geometry all read (one SSOT). With no filter it is the depth-first flatten
+/// honouring each branch's collapse state ([`flat_visible`]); with a live query
+/// it is the recursive path-to-match flatten that reveals matches inside
+/// collapsed branches ([`flat_visible_filtered`]).
+fn visible_property_rows(tree: &[PropertyNode], query: &str) -> Vec<VisibleRow> {
+    if query.is_empty() {
+        flat_visible(tree)
+    } else {
+        flat_visible_filtered(tree, |n| node_matches_query(n, query))
+    }
 }
 
 /// Edit-mode latch — `Some(row)` while that row's value is being text-edited
@@ -558,10 +746,13 @@ struct PropertyGridExternal {
     /// is modified when `model[i]` differs from `defaults[i]`; `reset` writes the
     /// baseline back through the [`set_value`](Self::set_value) funnel.
     defaults: Rc<Vec<CellValue>>,
-    /// The grouped-collapse + roving-cursor SSOT — held so a data-row click can
-    /// move the visual-row cursor onto the clicked source (R871). The keyboard
-    /// path moves it through [`group_nav`]; collapse lives here too.
-    groups: Rc<GroupOrderState>,
+    /// R921 — the property tree SSOT (structure + per-branch collapse). Held so
+    /// a click on a branch row can toggle its expand state, and so the struct
+    /// aggregate (summary / modified / reset) can read a struct's field indices.
+    tree: Rc<Signal<Vec<PropertyNode>>>,
+    /// R921 — the roving keyboard cursor (a visible-row node id). Held so a
+    /// data-row click can move the cursor onto the clicked row.
+    cursor: Rc<Signal<Option<String>>>,
     editing_row: Rc<Signal<Option<usize>>>,
     editor: Rc<TextEditState>,
     popup_cursor: Rc<Signal<Option<usize>>>,
@@ -580,7 +771,8 @@ struct PropertyGridExternal {
 impl PropertyGridExternal {
     fn new(
         model: Rc<Signal<Vec<CellValue>>>,
-        groups: Rc<GroupOrderState>,
+        tree: Rc<Signal<Vec<PropertyNode>>>,
+        cursor: Rc<Signal<Option<String>>>,
         editing_row: Rc<Signal<Option<usize>>>,
         editor: Rc<TextEditState>,
         popup_cursor: Rc<Signal<Option<usize>>>,
@@ -589,7 +781,8 @@ impl PropertyGridExternal {
         Self {
             model,
             defaults: use_property_defaults(),
-            groups,
+            tree,
+            cursor,
             editing_row,
             editor,
             popup_cursor,
@@ -638,13 +831,48 @@ impl PropertyGridExternal {
         (0..self.count()).filter(|&i| self.reset_to_default(i)).count()
     }
 
-    /// Move the roving visual-row cursor onto the data row whose stable source
-    /// index is `source` (a no-op leaving the cursor cleared if that source is
-    /// not in the current flatten — i.e. its category is collapsed). The
-    /// pointer peer of the keyboard [`group_nav`] cursor motion.
-    fn set_cursor_to_source(&self, source: usize) {
-        let pos = self.groups.rows().iter().position(|r| r.source() == Some(source));
-        self.groups.set_cursor(pos);
+    /// R921 — move the roving cursor onto the tree node `id` (a leaf value index
+    /// or a branch id), the pointer peer of the keyboard [`resolve_tree_key`]
+    /// cursor motion. The cursor is id-keyed, so it stays valid across a
+    /// collapse / filter that hides the row (a hidden cursor simply rings
+    /// nothing until the row reappears).
+    fn move_cursor(&self, id: &str) {
+        self.cursor.set(Some(id.to_owned()));
+    }
+
+    /// R921 — toggle a branch's (category / struct) collapse state through the
+    /// `tree_nav` flag-store SSOT (the click peer of the keyboard `ArrowLeft` /
+    /// `ArrowRight` / `Enter` expand-collapse). A leaf / unknown id is a no-op.
+    fn toggle_branch(&self, id: &str) {
+        toggle_expanded(&self.tree, id);
+    }
+
+    /// R921 — whether any field of struct `struct_id` is modified from its
+    /// default (the struct row's reset-arrow gate — a struct is "modified" iff
+    /// any of its components is, the Unreal Details struct-row roll-up). Delegates
+    /// to the [`struct_is_modified`] one-gate the paint + a11y also use.
+    fn struct_modified(&self, struct_id: &str) -> bool {
+        struct_is_modified(&self.model.get(), &self.defaults, &self.tree.get(), struct_id)
+    }
+
+    /// R921 — reset every field of struct `struct_id` to its class default,
+    /// returning the count reset. Routes each field through the shared
+    /// [`reset_to_default`](Self::reset_to_default) → [`set_value`](Self::set_value)
+    /// funnel, so a struct reset is N ordinary field writes (no special path).
+    fn reset_struct(&self, struct_id: &str) -> usize {
+        struct_field_indices(&self.tree.get(), struct_id)
+            .into_iter()
+            .filter(|&i| self.reset_to_default(i))
+            .count()
+    }
+
+    /// R921 — a struct row's collapsed-summary value, the parenthesised tuple of
+    /// its field display values (`"(12.5, -4, 0)"` for a `Vector3`), so a
+    /// collapsed struct still shows its value at a glance (the Unreal / Qt
+    /// Details struct-row summary). Reads the field displays through the same
+    /// [`CellValue::display`] the leaf cells use.
+    fn struct_summary(&self, struct_id: &str) -> String {
+        struct_value_summary(&self.model.get(), &self.tree.get(), struct_id)
     }
 
     /// Toggle the bool at `row`; no-op (returns `false`) if the row is not a
@@ -871,8 +1099,10 @@ impl PropertyGridExternal {
 
     /// Route a composite-tag `send` payload: the dismiss barrier (`dismiss`),
     /// a popup option (`opt<i>` commits a choice), a colour swatch (`sw<i>`
-    /// commits a colour), or a numeric row (focus + bool-toggle / popup-open /
-    /// `DoubleClick`-edit) — all four route into this one coordinator.
+    /// commits a colour), a row's reset arrow (`reset<i>` leaf / `reset<branch>`
+    /// struct), a **branch** row (`cat:…` / `struct:…` toggles collapse), or a
+    /// numeric leaf row (focus + bool-toggle / popup-open / `DoubleClick`-edit)
+    /// — all route into this one coordinator.
     fn dispatch_send(&mut self, s: &str) -> Result<IntrospectValue, InvokeError> {
         let (key, event_name, _) = split_send_payload(s).ok_or(InvokeError::Rejected)?;
         if key == "dismiss" {
@@ -899,12 +1129,29 @@ impl PropertyGridExternal {
             }
             return Ok(IntrospectValue::Null);
         }
-        // R919 — a click on a row's reset arrow resets that property to its
-        // default (the same `reset_to_default` funnel the RPC / keyboard use).
-        if let Some(src) = key.strip_prefix(RESET_PREFIX) {
-            let i: usize = src.parse().map_err(|_| InvokeError::Rejected)?;
+        // R919 / R921 — a click on a row's reset arrow resets that property to
+        // its default (the same `reset_*` funnel the RPC / keyboard use). The
+        // suffix is a leaf value index (`reset6`) or a struct branch id
+        // (`resetstruct.Position`, resetting every field).
+        if let Some(rest) = key.strip_prefix(RESET_PREFIX) {
             if event_name == "PointerUp" {
-                self.reset_to_default(i);
+                match row_value_index(rest) {
+                    Some(i) => {
+                        self.reset_to_default(i);
+                    }
+                    None => {
+                        self.reset_struct(rest);
+                    }
+                }
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        // R921 — a click on a branch row (category / struct) toggles its
+        // collapse on the activation edge and moves the cursor onto it.
+        if key.starts_with(CAT_PREFIX) || key.starts_with(STRUCT_PREFIX) {
+            if event_name == "PointerUp" {
+                self.toggle_branch(key);
+                self.move_cursor(key);
             }
             return Ok(IntrospectValue::Null);
         }
@@ -926,7 +1173,7 @@ impl PropertyGridExternal {
                 if self.end_scrub() {
                     return Ok(IntrospectValue::Null);
                 }
-                self.set_cursor_to_source(idx);
+                self.move_cursor(key);
                 match self.model.get().get(idx) {
                     Some(CellValue::Bool(_)) => {
                         self.toggle(idx);
@@ -958,7 +1205,7 @@ impl core::fmt::Debug for PropertyGridExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PropertyGridExternal")
             .field("row_count", &self.count())
-            .field("cursor", &self.groups.cursor())
+            .field("cursor", &self.cursor.get())
             .field("editing_row", &self.editing_row.get())
             .finish_non_exhaustive()
     }
@@ -1010,10 +1257,11 @@ impl External for PropertyGridExternal {
 
 impl ExternalIntrospect for PropertyGridExternal {
     fn schema(&self) -> IntrospectSchema {
-        // The roving visual-row cursor + the category collapse set live on the
-        // sibling `GROUP_TAG` `GroupOrderExternal` (R871) — query `cursor` /
-        // `collapsed.<group>` / `label_at.<pos>` there. This coordinator owns
-        // the source-keyed value model + the edit / popup state.
+        // R921 — the *visible-row structure* (the flatten + the roving cursor)
+        // is read off the sibling `TREE_TAG` `TreeViewIntrospect` (`row_count` /
+        // `cursor` / `id_at.<pos>` / `level_at.<pos>` / `expanded_at.<pos>`).
+        // This coordinator owns the value-index-keyed value model + the
+        // per-branch collapse / struct aggregate / edit / popup state.
         IntrospectSchema::new(&[
             ("row_count", "int"),
             ("editing", "json"),
@@ -1025,6 +1273,17 @@ impl ExternalIntrospect for PropertyGridExternal {
             ("any_modified", "bool"),
             ("reset", "int"),
             ("reset_all", "json"),
+            // R921 — per-branch collapse (read + intervene + toggle) and the
+            // struct aggregate (summary tuple + modified roll-up + reset-all).
+            ("expanded.<branch_id>", "bool"),
+            ("struct_summary.<struct_id>", "string"),
+            ("struct_modified.<struct_id>", "bool"),
+            ("toggle_branch", "bool"),
+            ("reset_struct", "int"),
+            // R921 — the roving keyboard cursor's node id (read + intervene; a
+            // leaf value-index string "6" or a branch `cat:` / `struct:` id,
+            // Null when unset). The AI-first cursor move (no click side effect).
+            ("cursor", "string"),
             ("popup_cursor", "int"),
             // R875 — live numeric-scrub flag (true between the first drag move
             // and the release); the AI-first witness of a scrub in flight.
@@ -1056,6 +1315,8 @@ impl ExternalIntrospect for PropertyGridExternal {
                 None => IntrospectValue::Null,
             }),
             "scrubbing" => Some(IntrospectValue::Bool(self.is_scrubbing())),
+            // R921 — the roving cursor's node id (Null when unset).
+            "cursor" => Some(self.cursor.get().map_or(IntrospectValue::Null, IntrospectValue::Text)),
             // R919 — any property modified from its default (the dirty read).
             "any_modified" => Some(IntrospectValue::Bool(self.any_modified())),
             _ => {
@@ -1086,6 +1347,30 @@ impl ExternalIntrospect for PropertyGridExternal {
                     let value = model.get(idx)?;
                     return Some(value.to_introspect());
                 }
+                // R921 — a branch's collapse flag, by node id (`expanded.cat:…`
+                // / `expanded.struct:…`). Null for a leaf / unknown id.
+                if let Some(id) = path.strip_prefix("expanded.") {
+                    let tree = self.tree.get();
+                    return Some(
+                        find_node(&tree, id)
+                            .filter(|n| !n.children.is_empty())
+                            .map_or(IntrospectValue::Null, |n| IntrospectValue::Bool(n.expanded)),
+                    );
+                }
+                // R921 — a struct's collapsed-summary tuple (`struct_summary.struct.Position`).
+                if let Some(id) = path.strip_prefix("struct_summary.") {
+                    if struct_field_indices(&self.tree.get(), id).is_empty() {
+                        return Some(IntrospectValue::Null);
+                    }
+                    return Some(IntrospectValue::Text(self.struct_summary(id)));
+                }
+                // R921 — whether any of a struct's fields is modified.
+                if let Some(id) = path.strip_prefix("struct_modified.") {
+                    if struct_field_indices(&self.tree.get(), id).is_empty() {
+                        return Some(IntrospectValue::Null);
+                    }
+                    return Some(IntrospectValue::Bool(self.struct_modified(id)));
+                }
                 None
             }
         }
@@ -1094,7 +1379,36 @@ impl ExternalIntrospect for PropertyGridExternal {
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "row_count" | "editing" | "popup_cursor" => Err(InterveneError::ReadOnly),
+            // R921 — move the roving cursor to a node id (the AI-first cursor
+            // move, no click side effect); Null clears it. A stale / off-screen
+            // id is stored as given (it simply rings nothing), the tree-cursor
+            // contract.
+            "cursor" => match value {
+                IntrospectValue::Text(id) => {
+                    self.cursor.set(Some(id));
+                    Ok(())
+                }
+                IntrospectValue::Null => {
+                    self.cursor.set(None);
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
             _ => {
+                // R921 — set a branch's collapse flag by node id (admin / restore;
+                // `set_expanded_in` is a no-op on a leaf / redundant set). A
+                // non-Bool is a type mismatch; an unknown branch is a silent
+                // no-op (symmetric with the `query` Null), so only a non-`value.`
+                // / non-`expanded.` path is a malformed path.
+                if let Some(id) = path.strip_prefix("expanded.") {
+                    return match value {
+                        IntrospectValue::Bool(b) => {
+                            set_expanded_in(&self.tree, id, b);
+                            Ok(())
+                        }
+                        _ => Err(InterveneError::TypeMismatch),
+                    };
+                }
                 let Some(idx_str) = path.strip_prefix("value.") else {
                     return Err(InterveneError::UnknownPath);
                 };
@@ -1149,6 +1463,27 @@ impl ExternalIntrospect for PropertyGridExternal {
             "reset_all" => Ok(IntrospectValue::Int(
                 i64::try_from(self.reset_all()).expect("reset count fits in i64"),
             )),
+            // R921 — toggle a branch's (category / struct) collapse by node id
+            // (the RPC twin of clicking the disclosure / the keyboard
+            // ArrowLeft/Right). Returns the resulting expanded flag; a leaf /
+            // unknown id is a no-op returning `false`.
+            "toggle_branch" => match args {
+                IntrospectValue::Text(ref id) => {
+                    self.toggle_branch(id);
+                    let expanded = find_node(&self.tree.get(), id).is_some_and(|n| n.expanded);
+                    Ok(IntrospectValue::Bool(expanded))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R921 — reset every field of a struct to its default by struct id
+            // (the RPC twin of the struct row's reset arrow); returns the count
+            // reset. Routes each field through the shared `reset_to_default`.
+            "reset_struct" => match args {
+                IntrospectValue::Text(ref id) => Ok(IntrospectValue::Int(
+                    i64::try_from(self.reset_struct(id)).expect("reset count fits in i64"),
+                )),
+                _ => Err(InvokeError::TypeMismatch),
+            },
             // Enter edit mode on a given row (the `Enter` / `F2` keyboard
             // path + the RPC edit-entry affordance) — text edit, or for a
             // choice row, opens the popup.
@@ -1332,20 +1667,20 @@ fn apply_key_color(row: usize, key: &str) -> bool {
     true
 }
 
-/// Grid-focused keymap (R871): the roving cursor moves over the flattened
-/// category headers + visible data rows. An open choice / colour popup
-/// intercepts the keymap first. Otherwise:
+/// Grid-focused keymap (R921): the roving cursor moves over the flattened
+/// tree (category headers + struct headers + visible leaf rows). An open
+/// choice / colour popup intercepts the keymap first. Otherwise:
 ///
-/// - On a **data row**, `Space` toggles a bool and `Enter` / `F2` edits a
-///   text / int / float row or opens a choice / colour popup — routed through
-///   the coordinator's `invoke` so the keyboard path is identical to the RPC
-///   path. (The data rows are editable cells, so these keys activate the cell
-///   rather than re-affirming a selection the way [`group_nav`] would.)
+/// - On a **leaf** row, `Space` toggles a bool, `Enter` / `F2` edits a text /
+///   int / float leaf or opens a choice / colour popup, and `Delete` resets it
+///   — routed through the coordinator's `invoke` so the keyboard path is
+///   identical to the RPC path. (Leaves are editable cells, so these keys
+///   activate the cell rather than re-affirming a selection.)
 /// - Everything else — `ArrowUp` / `ArrowDown` / `Home` / `End` movement over
-///   headers + data, and `ArrowRight` / `ArrowLeft` / `Enter` / `Space` on a
-///   **category header** to expand / collapse it — is the shared [`group_nav`]
-///   policy (the grouped-list / grouped-grid SSOT, so the collapse + roving
-///   semantics cannot diverge between the grouped collections).
+///   the whole flatten, and `ArrowRight` / `ArrowLeft` / `Enter` / `Space` on a
+///   **branch** (category / struct) to expand / collapse / descend — is the
+///   shared WAI-ARIA Tree [`resolve_tree_key`] policy, so the collapse +
+///   roving semantics match every other tree consumer.
 fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
     if let Some((row, kind)) = open_popup_kind() {
         return match kind {
@@ -1353,41 +1688,55 @@ fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
             _ => apply_key_choice(row, key),
         };
     }
-    let groups = use_property_groups();
-    let rows = groups.rows();
+    let tree = use_property_tree();
+    let cursor = use_property_cursor();
+    let query = current_search_query();
+    let rows = visible_property_rows(&tree.get(), &query);
     if rows.is_empty() {
         return false;
     }
-    let cursor = groups.cursor();
-    // In-cell activation when the cursor rests on a data row.
-    if let Some(source) = cursor.and_then(|c| rows.get(c)).and_then(GroupRow::source) {
+    let cursor_id = cursor.get();
+    // In-cell activation when the cursor rests on a leaf (editable) row. A
+    // branch cursor falls through to the tree policy (Space / Enter toggle it).
+    if let Some(vi) = cursor_id.as_deref().and_then(row_value_index) {
         match key {
-            "Space" => return activate_source(scene, source, false),
-            "Enter" | "F2" => return activate_source(scene, source, true),
-            // R920 — Delete resets the cursor row to its class default (the
+            "Space" => return activate_source(scene, vi, false),
+            "Enter" | "F2" => return activate_source(scene, vi, true),
+            // R920 — Delete resets the cursor leaf to its class default (the
             // keyboard path to the reset arrow, which is not itself a tab stop).
-            "Delete" => return reset_source(scene, source),
+            "Delete" => return reset_source(scene, vi),
             _ => {}
         }
     }
-    // Movement over the flatten + header expand / collapse — the shared policy.
-    let page = rows.len(); // non-virtualized: PageUp / PageDown jump to the ends.
-    let Some(outcome) = group_nav(&rows, cursor, key, page) else {
-        return false;
-    };
-    match outcome {
-        GroupNavOutcome::MoveTo(pos) => groups.set_cursor(Some(pos)),
-        GroupNavOutcome::Toggle(group) => {
-            groups.toggle_group(group);
+    // The WAI-ARIA Tree keyboard policy over the visible flatten (clamp, not
+    // wrap — the tree has ends). `page = rows.len()` (non-virtualized) so
+    // PageUp / PageDown jump to the ends.
+    match resolve_tree_key(&rows, cursor_id.as_deref(), key, rows.len()) {
+        TreeKey::Focus(id) => {
+            cursor.set(Some(id));
+            true
         }
+        TreeKey::Expand(id) => {
+            set_expanded_in(&tree, &id, true);
+            true
+        }
+        TreeKey::Collapse(id) => {
+            set_expanded_in(&tree, &id, false);
+            true
+        }
+        TreeKey::Toggle(id) => {
+            toggle_expanded(&tree, &id);
+            true
+        }
+        TreeKey::Consumed => true,
+        TreeKey::Unhandled => false,
     }
-    true
 }
 
-/// Activate the data row at stable source index `row`: toggle a bool, open a
-/// choice / colour popup, or (when `allow_edit`) enter edit mode on a text /
-/// int / float row. Routes through the coordinator's `invoke` so toggle /
-/// begin live in one place (the RPC path).
+/// Activate the leaf at value index `row`: toggle a bool, open a choice /
+/// colour popup, or (when `allow_edit`) enter edit mode on a text / int / float
+/// leaf. Routes through the coordinator's `invoke` so toggle / begin live in
+/// one place (the RPC path).
 fn activate_source(scene: &mut Scene, row: usize, allow_edit: bool) -> bool {
     let kind = match use_property_model().get().get(row) {
         Some(value) => value.kind(),
@@ -1488,12 +1837,14 @@ fn cell_checkbox_style() -> CheckboxStyle {
     CheckboxStyle { box_size: CHECKBOX_SIZE, glyph_size_px: 16, ..CheckboxStyle::m3_filled() }
 }
 
-/// One property row: `[ name cell | value cell ]`, tagged `property_grid#<i>`
-/// so a click routes to the coordinator. The value cell paints the shared
-/// inline field while editing, else a checkbox glyph (bool) or the value
-/// text.
+/// One leaf property row: `[ name cell | value cell ]`, tagged
+/// `property_grid#<value_index>` (`row.id`, the leaf node id) so a click routes
+/// to the coordinator. `row.label` is the in-context name (a struct field's
+/// short "X", a top-level property's full name); `row.depth` insets the name
+/// cell under its branch. The value cell paints the shared inline field while
+/// editing, else a checkbox glyph (bool) or the value text.
 fn view_row(
-    index: usize,
+    row: &VisibleRow,
     value: &CellValue,
     is_focused: bool,
     edit_active: bool,
@@ -1501,21 +1852,30 @@ fn view_row(
     theme: &Theme,
     edit_field: (TextFieldState, u32),
 ) -> Scene {
+    let mut name_children: Vec<Scene> = Vec::new();
+    let indent_px = row.depth * INDENT_STEP;
+    if indent_px > 0 {
+        name_children.push(Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_layout(LayoutStyle::new().with_size(Size::px(indent_px, ROW_H))),
+        ));
+    }
+    name_children.push(Scene::Text(TextNode::styled(
+        row.label.as_str(),
+        Rect::default(),
+        TextStyle::new()
+            .with_size_px(CELL_PX)
+            .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+    )));
     let name_cell = Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            PROPERTY_NAMES[index],
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(CELL_PX)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        ))])
-        .with_layout(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
-                .with_size(Size::px(NAME_COL_W, ROW_H)),
-        ),
+        ContainerNode::new(name_children)
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
+                    .with_size(Size::px(NAME_COL_W, ROW_H)),
+            ),
     );
 
     let value_inner = if edit_active {
@@ -1559,11 +1919,11 @@ fn view_row(
     // last in paint order so its click wins over the row beneath it.
     let mut children = vec![name_cell, value_cell];
     if modified {
-        children.push(reset_arrow(index, theme));
+        children.push(reset_arrow(&row.id, theme));
     }
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag(format!("{GRID_TAG}#{index}"))
+            .with_tag(format!("{GRID_TAG}#{}", row.id))
             .with_style(BoxStyle::filled(row_fill(theme, is_focused)))
             .with_layout(
                 LayoutStyle::new()
@@ -1574,15 +1934,16 @@ fn view_row(
     )
 }
 
-/// R919 — the reset arrow for a modified row `index`: a small accent mark at the
-/// row's trailing edge, tagged `{GRID_TAG}#reset<index>` so a click routes to the
-/// coordinator's `reset` (the same funnel the RPC / keyboard use). Painted only
-/// for a modified row, so its presence doubles as the modified indicator; its
-/// a11y `button` peer is gated on the same predicate (R886.1 one-gate).
-fn reset_arrow(index: usize, theme: &Theme) -> Scene {
+/// R919 / R921 — the reset arrow for a modified row, a small accent mark at the
+/// row's trailing edge tagged `{GRID_TAG}#reset<suffix>` so a click routes to
+/// the coordinator's reset funnel (`suffix` = a leaf value index "6" or a struct
+/// branch id `struct.Position`). Painted only for a modified row, so its
+/// presence doubles as the modified indicator; its a11y `button` peer is gated
+/// on the same predicate (R886.1 one-gate).
+fn reset_arrow(suffix: &str, theme: &Theme) -> Scene {
     Scene::Container(
         ContainerNode::new(Vec::new())
-            .with_tag(format!("{GRID_TAG}#{RESET_PREFIX}{index}"))
+            .with_tag(format!("{GRID_TAG}#{RESET_PREFIX}{suffix}"))
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Accent)))
             .with_layout(
                 LayoutStyle::new()
@@ -1591,6 +1952,67 @@ fn reset_arrow(index: usize, theme: &Theme) -> Scene {
                         ROW_H.saturating_sub(RESET_DOT) / 2,
                     )
                     .with_size(Size::px(RESET_DOT, RESET_DOT)),
+            ),
+    )
+}
+
+/// R921 — a **struct** branch header row: `[ ⟨disclosure⟩ name | (x, y, z)
+/// summary ]`, tagged `{GRID_TAG}#<id>` (the `row`'s node id) so a click toggles
+/// its collapse. Indented by the row's depth, with the disclosure glyph
+/// reflecting its expanded flag, the collapsed-value `summary` in the value
+/// column, and — when `modified` — the reset arrow (resetting every field). The
+/// Unreal / Qt Details struct row.
+fn struct_header_row(row: &VisibleRow, summary: &str, modified: bool, is_focused: bool, theme: &Theme) -> Scene {
+    let struct_id = row.id.as_str();
+    let label = row.label.as_str();
+    let glyph = if row.expanded { DISCLOSURE_EXPANDED } else { DISCLOSURE_COLLAPSED };
+    let mut name_children: Vec<Scene> = Vec::new();
+    let indent_px = row.depth * INDENT_STEP;
+    if indent_px > 0 {
+        name_children.push(Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_layout(LayoutStyle::new().with_size(Size::px(indent_px, ROW_H))),
+        ));
+    }
+    name_children.push(Scene::Text(TextNode::styled(
+        format!("{glyph}  {label}"),
+        Rect::default(),
+        TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+    )));
+    let name_cell = Scene::Container(ContainerNode::new(name_children).with_layout(
+        LayoutStyle::new()
+            .flex(FlexDirection::Row)
+            .with_align_items(AlignItems::Center)
+            .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
+            .with_size(Size::px(NAME_COL_W, ROW_H)),
+    ));
+    let value_cell = Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            summary,
+            Rect::default(),
+            TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))])
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
+                .with_size(Size::px(VALUE_COL_W, ROW_H)),
+        ),
+    );
+    let mut children = vec![name_cell, value_cell];
+    if modified {
+        children.push(reset_arrow(struct_id, theme));
+    }
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(format!("{GRID_TAG}#{struct_id}"))
+            .with_style(BoxStyle::filled(row_fill(theme, is_focused)))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(NAME_COL_W + VALUE_COL_W, ROW_H)),
             ),
     )
 }
@@ -1860,7 +2282,10 @@ fn view_header(theme: &Theme) -> Scene {
 /// RPC-driven filter on an open popup would otherwise expose).
 fn popup_view_pos(editing: Option<usize>) -> Option<(usize, usize)> {
     let row = editing?;
-    let pos = use_property_groups().rows().iter().position(|r| r.source() == Some(row))?;
+    let id = row.to_string();
+    let tree = use_property_tree();
+    let rows = visible_property_rows(&tree.get(), &current_search_query());
+    let pos = rows.iter().position(|r| r.id == id)?;
     Some((row, pos))
 }
 
@@ -1942,29 +2367,12 @@ fn view_popup_overlay(
     }
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn view(state: RootState, _frame: &Frame) -> Scene {
-    let ((edit_state, edit_caret), (search_state, search_caret)) = state;
-    let theme = use_theme(THEME_TAG).theme_animated();
-    let model = use_property_model().get();
-    // R919 — the class-default baseline, to paint a reset arrow on any row whose
-    // value differs from it.
-    let defaults = use_property_defaults();
-    let groups = use_property_groups();
-    // Reading `rows()` (collapse + order) and `cursor()` inside the view-fn
-    // subscribes, so a category collapse / cursor move repaints (R871).
-    let group_rows = groups.rows();
-    let cursor = groups.cursor();
-    let editing = use_editing_row().get();
-    // The data row the roving cursor rests on (for the focused-row highlight);
-    // `None` when the cursor is on a category header or unset.
-    let cursor_source = cursor.and_then(|c| group_rows.get(c)).and_then(GroupRow::source);
-
-    // Fixed-height title band — the "Inspector" label + the live search box
-    // (R872). Fixed height keeps the row → choice-popup anchor math
-    // deterministic (a bare Text node's height is font-metric dependent), and
-    // hosting the search box here (not above the grid) keeps `popup_origin`
-    // unchanged — the grid does not shift down.
+/// Fixed-height title band — the "Inspector" label + the live search box
+/// (R872). Fixed height keeps the row → choice-popup anchor math deterministic
+/// (a bare Text node's height is font-metric dependent), and hosting the search
+/// box here (not above the grid) keeps `popup_origin` unchanged — the grid does
+/// not shift down.
+fn view_title(search_state: TextFieldState, search_caret: u32, theme: &Theme) -> Scene {
     let title_label = Scene::Text(TextNode::styled(
         "Inspector",
         Rect::default(),
@@ -1976,8 +2384,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         ..tf_paint::TextFieldStyle::m3_filled()
     };
     let search_field =
-        tf_paint::view_field(SEARCH_TF_TAG, search_state, search_caret, &theme, &search_style, "Filter");
-    let title = Scene::Container(
+        tf_paint::view_field(SEARCH_TF_TAG, search_state, search_caret, theme, &search_style, "Filter");
+    Scene::Container(
         ContainerNode::new(vec![title_label, search_field]).with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
@@ -1985,35 +2393,55 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
                 .with_justify(JustifyContent::SpaceBetween)
                 .with_size(Size::px(NAME_COL_W + VALUE_COL_W, TITLE_H)),
         ),
-    );
+    )
+}
 
-    let mut rows: Vec<Scene> = Vec::with_capacity(group_rows.len() + 1);
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn view(state: RootState, _frame: &Frame) -> Scene {
+    let ((edit_state, edit_caret), (search_state, search_caret)) = state;
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let model = use_property_model().get();
+    // R919 — the class-default baseline, to paint a reset arrow on any row whose
+    // value differs from it.
+    let defaults = use_property_defaults();
+    // R921 — the property tree + the live name filter flatten to the one visible
+    // row sequence the paint, the cursor and the a11y share. Reading the tree
+    // `Signal` (collapse), the cursor `Signal` and the search text inside the
+    // view-fn subscribes, so a collapse / cursor move / filter change repaints.
+    let tree_nodes = use_property_tree().get();
+    let visible = visible_property_rows(&tree_nodes, &current_search_query());
+    let cursor_id = use_property_cursor().get();
+    let editing = use_editing_row().get();
+
+    let title = view_title(search_state, search_caret, &theme);
+
+    let mut rows: Vec<Scene> = Vec::with_capacity(visible.len() + 1);
     rows.push(view_header(&theme));
-    for row in group_rows.iter() {
-        match *row {
-            GroupRow::Header { group, member_count, collapsed } => rows.push(group_header_row(
-                format!("{GROUP_TAG}#{group}"),
-                CATEGORY_LABELS[group],
-                &member_count.to_string(),
-                collapsed,
+    for vr in &visible {
+        let is_focused = cursor_id.as_deref() == Some(vr.id.as_str());
+        if let Some(vi) = row_value_index(&vr.id) {
+            // A leaf (editable) row.
+            let value = &model[vi];
+            let edit_active = editing == Some(vi) && value.kind().is_text_editable();
+            let modified = defaults.get(vi).is_some_and(|d| property_modified(value, d));
+            rows.push(view_row(vr, value, is_focused, edit_active, modified, &theme, (edit_state, edit_caret)));
+        } else if vr.id.starts_with(STRUCT_PREFIX) {
+            // A struct branch row: disclosure + name + the collapsed-value tuple.
+            let summary = struct_value_summary(&model, &tree_nodes, &vr.id);
+            let modified = struct_is_modified(&model, &defaults, &tree_nodes, &vr.id);
+            rows.push(struct_header_row(vr, &summary, modified, is_focused, &theme));
+        } else {
+            // A category branch row: the full-width section header (`collapsed`
+            // is the inverse of `expanded`; a filter auto-expands branches).
+            rows.push(group_header_row(
+                format!("{GRID_TAG}#{}", vr.id),
+                &vr.label,
+                &leaf_descendant_count(&tree_nodes, &vr.id).to_string(),
+                !vr.expanded,
                 &theme,
                 NAME_COL_W + VALUE_COL_W,
                 ROW_H,
-            )),
-            GroupRow::Data { source } => {
-                let value = &model[source];
-                let edit_active = editing == Some(source) && value.kind().is_text_editable();
-                let modified = defaults.get(source).is_some_and(|d| property_modified(value, d));
-                rows.push(view_row(
-                    source,
-                    value,
-                    Some(source) == cursor_source,
-                    edit_active,
-                    modified,
-                    &theme,
-                    (edit_state, edit_caret),
-                ));
-            }
+            ));
         }
     }
     let grid = Scene::Container(
@@ -2071,14 +2499,16 @@ impl WidgetCore for PropertyGridView {
 
     fn create_external() -> Box<dyn External> {
         let model = use_property_model();
-        let groups = use_property_groups();
+        let tree = use_property_tree();
+        let cursor = use_property_cursor();
         let editing = use_editing_row();
         let editor = use_text_edit_state(EDIT_TF_TAG);
         let popup_cursor = use_popup_cursor();
         let popup_hover = use_popup_hover();
         Box::new(PropertyGridExternal::new(
             model,
-            groups,
+            tree,
+            cursor,
             editing,
             editor,
             popup_cursor,
@@ -2099,11 +2529,28 @@ impl WidgetCore for PropertyGridView {
         let blink = use_caret_blink(EDIT_TF_TAG);
         let search_state = use_text_edit_state(SEARCH_TF_TAG);
         let search_blink = use_caret_blink(SEARCH_TF_TAG);
+        // R921 — resolve the tree / cursor / filter `Rc`s NOW (this hook runs in
+        // an Owner scope); the introspection closures run at RPC-query time
+        // *outside* any Owner, so they read the captured `Rc`s rather than call a
+        // `use_*` hook (which would `Owner::current().expect` panic).
+        let tree = use_property_tree();
+        let cursor = use_property_cursor();
+        let filter = use_text_edit_state(SEARCH_TF_TAG);
         vec![
-            // The group-by proxy coordinator: owns the category collapse set +
-            // the roving visual-row cursor, exposed to AI through the §5.12
-            // wire (`collapsed.<group>` / `cursor` / `toggle_group` / …).
-            ExtraExternal::new(GROUP_TAG, Box::new(GroupOrderExternal::new(use_property_groups()))),
+            // R921 — the read-only tree-structure introspection node: surfaces
+            // the visible-row flatten + the roving cursor to `scene/query`
+            // (`row_count` / `id_at.<pos>` / `level_at.<pos>` / `expanded_at.<pos>`
+            // / `cursor`), so an AI client walks the Inspector's hierarchy as
+            // data. Collapse / cursor *mutation* routes through the primary
+            // `{GRID_TAG}` coordinator (the branch click wire + `scene/key`).
+            tree_view_introspection_extra(
+                TREE_TAG,
+                move || {
+                    let query = filter.text().trim().to_lowercase();
+                    visible_property_rows(&tree.get(), &query)
+                },
+                move || cursor.get(),
+            ),
             ExtraExternal::new(
                 EDIT_TF_TAG,
                 Box::new(
@@ -2138,7 +2585,7 @@ impl WidgetCore for PropertyGridView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-property-grid (R836 §5.38 inspector detail panel)"
+        "pinion hello-property-grid (R921 §5.38 inspector detail tree)"
     }
 
     fn keybinding(_key: &str) -> Option<()> {
@@ -2199,15 +2646,31 @@ impl WidgetCore for PropertyGridView {
     }
 }
 
+/// R921 — a visible row's WAI-ARIA accessible name. The single-column `tree`
+/// folds the row's VALUE into its name so an AT user hears it without a separate
+/// `gridcell`: a leaf → `"Position X: 12.5"` (the qualified [`PROPERTY_NAMES`]
+/// entry, since a struct field's in-tree label is the short "X"), a struct →
+/// `"Position (12.5, -4, 0)"`, a category → `"Identity (3)"`.
+fn row_access_name(row: &VisibleRow, model: &[CellValue], tree: &[PropertyNode]) -> String {
+    if let Some(vi) = row_value_index(&row.id) {
+        let name = PROPERTY_NAMES.get(vi).copied().unwrap_or(row.label.as_str());
+        model.get(vi).map_or_else(|| name.to_owned(), |v| format!("{name}: {}", v.display()))
+    } else if row.id.starts_with(STRUCT_PREFIX) {
+        format!("{} {}", row.label, struct_value_summary(model, tree, &row.id))
+    } else {
+        format!("{} ({})", row.label, leaf_descendant_count(tree, &row.id))
+    }
+}
+
 impl WidgetA11y for PropertyGridView {
-    /// R836 / R874 §5.40 — the panel lowers to a WAI-ARIA `treegrid` through the
-    /// lifted [`grouped_grid_access_nodes`] SSOT (3rd consumer): a `Property` /
-    /// `Value` columnheader row over level-1 category headers + level-2 data
-    /// rows. The roving cursor's `aria-activedescendant` is supplied by
-    /// [`Self::access_focus_target`] (R870); the typed value is the bare cell
-    /// name (the column label is on the columnheader). The inspector has no
-    /// selection model ([`GroupedGridSelection::Display`]), so no data row
-    /// carries `aria-selected` (R873/R874).
+    /// R921 §5.40 §5.50 — the Inspector lowers to a WAI-ARIA `tree` through the
+    /// lifted [`tree_access_nodes`] SSOT: each visible row is a `treeitem` with
+    /// its hierarchical axes (`aria-level` / `aria-expanded` / `aria-posinset` /
+    /// `aria-setsize`). The single-column tree folds each row's value into its
+    /// accessible name ([`row_access_name`]), so a leaf, a struct summary and a
+    /// category count are all announced. The roving cursor's
+    /// `aria-activedescendant` is supplied by [`Self::access_focus_target`]; the
+    /// Inspector has no selection model, so no row carries `aria-selected`.
     ///
     /// R867 — an open choice popup additionally lowers to a WAI-ARIA
     /// `listbox` (the lifted [`listbox_option_nodes`] SSOT, the combobox a11y
@@ -2216,68 +2679,49 @@ impl WidgetA11y for PropertyGridView {
     /// option / swatch.
     fn access_node(state: &RootState, focused: Option<&str>) -> Vec<AccessNode> {
         let model = use_property_model().get();
-        let groups = use_property_groups();
-        let rows = groups.rows();
-        let cursor = groups.cursor();
-        // Non-virtualized: every flattened row (category headers + visible data
-        // rows) is in the a11y window.
-        let window = VisibleWindow { first: 0, count: rows.len() };
-        let columns = vec![
-            GridColumn { tag: "pg_col_name".to_owned(), label: "Property".to_owned(), sort: None },
-            GridColumn { tag: "pg_col_value".to_owned(), label: "Value".to_owned(), sort: None },
-        ];
-        let spec = GroupedGridSpec {
-            grid_tag: GRID_TAG,
-            name: Some("Inspector"),
-            header_row_tag: "pg_header",
-            columns: &columns,
-            // R873/R874 — the roving cursor is keyboard FOCUS, exposed as
-            // `aria-activedescendant` via `focused_view_pos` + `access_focus_target`.
-            // The property grid has NO selection model, so the selection is
-            // `Display`: data rows carry no `aria-selected` axis at all (a focus
-            // cursor must not stamp `aria-selected`, which would mis-announce the
-            // grid as a selection widget).
-            selection: GroupedGridSelection::Display,
-            focused_view_pos: cursor,
-            // R895 — row-focus: the activedescendant is the whole property row
-            // (label + value), not a single cell.
-            focused_cell: None,
-        };
-        let mut nodes = grouped_grid_access_nodes(
-            &spec,
-            &rows,
-            window,
-            |g| CATEGORY_LABELS[g].to_owned(),
-            |source, col| format!("pg_cell{source}_{col}"),
-            |source, col| {
-                if col == 0 {
-                    PROPERTY_NAMES[source].to_owned()
-                } else {
-                    model[source].display()
-                }
-            },
-            |r| r.composite_tag(GROUP_TAG, GRID_TAG),
-        );
-        // R919 — each modified *visible* data row's value cell gains a reset
-        // `button` child (`{GRID_TAG}#reset<source>`), named for the property and
-        // gated on the SAME modified predicate the painted reset arrow uses, so
-        // the AT tree advertises the reset action exactly when it paints (R886.1
-        // one-gate). A collapsed / filtered-out row paints no arrow and emits no
-        // button (it has no cell to host one).
         let defaults = use_property_defaults();
-        for source in rows.iter().filter_map(GroupRow::source) {
-            let modified =
-                defaults.get(source).is_some_and(|d| property_modified(&model[source], d));
+        let tree_nodes = use_property_tree().get();
+        let rows = visible_property_rows(&tree_nodes, &current_search_query());
+        let cursor = use_property_cursor().get();
+        // The single-column tree names each row with its value folded in. The
+        // row tags (`{GRID_TAG}#{id}`) match the painted rows, so bounds resolve.
+        let labelled: Vec<VisibleRow> = rows
+            .iter()
+            .map(|r| VisibleRow { label: row_access_name(r, &model, &tree_nodes), ..r.clone() })
+            .collect();
+        let mut nodes = tree_access_nodes(
+            GRID_TAG,
+            GRID_TAG,
+            Some("Inspector"),
+            &labelled,
+            None, // no selection model — the cursor is keyboard focus only
+            cursor.as_deref(),
+        );
+        // R919 / R921 — each modified *visible* row (leaf or struct) gains a
+        // reset `button` child (`{GRID_TAG}#reset<id>`), named for the property /
+        // struct and gated on the SAME modified predicate the painted reset arrow
+        // uses, so the AT tree advertises reset exactly when it paints (R886.1
+        // one-gate). A collapsed / filtered-out row emits neither.
+        for r in &rows {
+            let (modified, name) = if let Some(vi) = row_value_index(&r.id) {
+                let m = defaults.get(vi).is_some_and(|d| property_modified(&model[vi], d));
+                (m, PROPERTY_NAMES.get(vi).copied().unwrap_or(r.label.as_str()).to_owned())
+            } else if r.id.starts_with(STRUCT_PREFIX) {
+                (struct_is_modified(&model, &defaults, &tree_nodes, &r.id), r.label.clone())
+            } else {
+                continue; // a category is never modified-resettable
+            };
             if !modified {
                 continue;
             }
-            let reset_tag = format!("{GRID_TAG}#{RESET_PREFIX}{source}");
-            if let Some(cell) = nodes.iter_mut().find(|n| n.tag == format!("pg_cell{source}_1")) {
-                cell.children.push(reset_tag.clone());
+            let reset_tag = format!("{GRID_TAG}#{RESET_PREFIX}{}", r.id);
+            let row_tag = format!("{GRID_TAG}#{}", r.id);
+            if let Some(node) = nodes.iter_mut().find(|n| n.tag == row_tag) {
+                node.children.push(reset_tag.clone());
             }
             nodes.push(
-                AccessNode::new(reset_tag, pinion_a11y::AriaRole::Button)
-                    .with_name(format!("Reset {} to default", PROPERTY_NAMES[source])),
+                AccessNode::new(reset_tag, AriaRole::Button)
+                    .with_name(format!("Reset {name} to default")),
             );
         }
         // R873 — the live search box is a Tab stop; emit its textbox node (the
@@ -2293,12 +2737,12 @@ impl WidgetA11y for PropertyGridView {
             )
             .with_name("Filter properties"),
         );
-        // R873 — a polite live region reporting the filtered data-row count, so
+        // R873 — a polite live region reporting the filtered leaf-row count, so
         // the filter narrowing / emptying the set is announced (the search/
         // filter APG pattern). Recomputed from the live flatten.
-        let data_count = rows.iter().filter(|r| r.source().is_some()).count();
+        let data_count = rows.iter().filter(|r| row_value_index(&r.id).is_some()).count();
         nodes.push(
-            AccessNode::new("pg_search_status", pinion_a11y::AriaRole::Status)
+            AccessNode::new("pg_search_status", AriaRole::Status)
                 .with_name(format!("{data_count} properties")),
         );
         // The open choice / colour popup's `listbox` nodes (gated on the same
@@ -2316,38 +2760,41 @@ impl WidgetA11y for PropertyGridView {
     /// redundant marker the AT layer does not lower) — the combobox / treegrid
     /// pattern, previously missing here.
     fn access_focus_target(_state: &RootState, focused: Option<&str>) -> Option<AccessFocus> {
+        // A different element (the search box / inline editor) owns focus → ring
+        // it atomically (the `grouped_focus_target` non-owner arm).
+        if focused != Some(GRID_TAG) {
+            return focused.map(AccessFocus::atomic);
+        }
         // A popup open while the grid holds focus → the active descendant is the
         // cursor option / swatch in the popup (the combobox a11y shape, R870).
-        if focused == Some(GRID_TAG) {
-            // Only point the active descendant into the popup when that popup is
-            // actually visible (its row not filtered / collapsed away) — the
-            // same `popup_view_pos` gate the paint + access_node use (R873).
-            if let Some((row, _)) = popup_view_pos(use_editing_row().get()) {
-                let cur = use_popup_cursor().get().unwrap_or(0);
-                match use_property_model().get().get(row).map(CellValue::kind) {
-                    Some(CellKind::Choice) => {
-                        return Some(AccessFocus::composite(
-                            GRID_TAG,
-                            format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{cur}"),
-                        ));
-                    }
-                    Some(CellKind::Color) => {
-                        return Some(AccessFocus::composite(
-                            GRID_TAG,
-                            format!("{GRID_TAG}#{COLOR_SW_PREFIX}{cur}"),
-                        ));
-                    }
-                    _ => {}
+        // Only when that popup is actually visible (its row not filtered /
+        // collapsed away) — the same `popup_view_pos` gate the paint + access_node
+        // use (R873).
+        if let Some((row, _)) = popup_view_pos(use_editing_row().get()) {
+            let cur = use_popup_cursor().get().unwrap_or(0);
+            match use_property_model().get().get(row).map(CellValue::kind) {
+                Some(CellKind::Choice) => {
+                    return Some(AccessFocus::composite(
+                        GRID_TAG,
+                        format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{cur}"),
+                    ));
                 }
+                Some(CellKind::Color) => {
+                    return Some(AccessFocus::composite(
+                        GRID_TAG,
+                        format!("{GRID_TAG}#{COLOR_SW_PREFIX}{cur}"),
+                    ));
+                }
+                _ => {}
             }
         }
-        // Otherwise the active descendant follows the roving visual-row cursor
-        // over the category headers + data rows — the grouped-collection ring
-        // SSOT (R850/R871), shared with grouped-list / grouped-grid. Rings the
-        // cursor's row tag (`{GROUP_TAG}#{group}` header or `{GRID_TAG}#{source}`
-        // data) when the grid owns focus, else the focused element atomically.
-        let groups = use_property_groups();
-        grouped_focus_target(&groups, GRID_TAG, GROUP_TAG, groups.cursor(), focused)
+        // Otherwise the active descendant follows the roving tree cursor (a leaf
+        // value-index id or a branch `cat:` / `struct:` id), ringing its row tag
+        // `{GRID_TAG}#{id}`; the grid atomically when no cursor is set yet.
+        Some(use_property_cursor().get().map_or_else(
+            || AccessFocus::atomic(GRID_TAG),
+            |id| AccessFocus::composite(GRID_TAG, format!("{GRID_TAG}#{id}")),
+        ))
     }
 }
 
@@ -2374,13 +2821,26 @@ mod tests {
     // keyboard, a11y, paint) on top of the lifted SSOT.
 
     #[test]
-    fn r836_default_model_matches_name_count() {
-        assert_eq!(default_properties().len(), ROW_COUNT);
-        assert_eq!(PROPERTY_NAMES.len(), ROW_COUNT);
-        assert_eq!(PROPERTY_GROUPS.len(), ROW_COUNT, "every property has a category");
-        assert!(
-            PROPERTY_GROUPS.iter().all(|&g| g < CATEGORY_LABELS.len()),
-            "every category id indexes the label table",
+    fn r921_tree_leaves_cover_every_value_slot_once() {
+        // Every leaf id in the tree indexes the value model, and every value
+        // slot is reached by exactly one leaf (no orphan / no duplicate).
+        fn collect(nodes: &[PropertyNode], out: &mut Vec<usize>) {
+            for n in nodes {
+                if let Some(i) = n.value_index {
+                    out.push(i);
+                }
+                collect(&n.children, out);
+            }
+        }
+        assert_eq!(default_properties().len(), VALUE_COUNT);
+        assert_eq!(PROPERTY_NAMES.len(), VALUE_COUNT);
+        let mut leaves = Vec::new();
+        collect(&default_tree(), &mut leaves);
+        leaves.sort_unstable();
+        assert_eq!(
+            leaves,
+            (0..VALUE_COUNT).collect::<Vec<_>>(),
+            "every value slot is reached by exactly one tree leaf",
         );
     }
 
@@ -2487,10 +2947,12 @@ mod tests {
             assert!(view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "the modified row paints a reset arrow");
             let a11y = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
             let btn = a11y.iter().find(|n| n.tag == arrow_tag).expect("reset button advertised");
-            assert_eq!(btn.role, pinion_a11y::AriaRole::Button);
+            assert_eq!(btn.role, AriaRole::Button);
             assert_eq!(btn.name.as_deref(), Some("Reset Layer to default"), "named for the property");
-            let cell = a11y.iter().find(|n| n.tag == "pg_cell4_1").expect("value cell present");
-            assert!(cell.children.iter().any(|c| c.as_str() == arrow_tag), "the button is the value cell's child");
+            // R921 — the reset button is a child of the Layer leaf's `treeitem`
+            // row node (`{GRID_TAG}#4`), the painted-row tag.
+            let row = a11y.iter().find(|n| n.tag == format!("{GRID_TAG}#4")).expect("Layer row node");
+            assert!(row.children.iter().any(|c| c.as_str() == arrow_tag), "the button is the row's child");
         });
     }
 
@@ -2532,8 +2994,9 @@ mod tests {
         Owner::new().run(|| {
             let scene = boot_scene();
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(12)));
+            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(16)), "12 scalars + 4 struct fields");
             assert_eq!(intro.query("name.0"), Some(IntrospectValue::Text("Name".to_owned())));
+            assert_eq!(intro.query("name.6"), Some(IntrospectValue::Text("Position X".to_owned())));
             assert_eq!(intro.query("kind.2"), Some(IntrospectValue::Text("bool".to_owned())));
             assert_eq!(intro.query("kind.4"), Some(IntrospectValue::Text("int".to_owned())));
             assert_eq!(intro.query("kind.6"), Some(IntrospectValue::Text("float".to_owned())));
@@ -2569,26 +3032,88 @@ mod tests {
         });
     }
 
+    /// R921 — the tree structure is read off the `TREE_TAG` introspection
+    /// (`row_count` / `id_at` / `level_at` / `expanded_at`), and the primary
+    /// coordinator owns the per-branch collapse + struct aggregate (collapse via
+    /// `toggle_branch`, the struct summary / modified roll-up / `reset_struct`).
     #[test]
-    fn r871_group_external_exposes_categories_cursor_collapse() {
+    fn r921_tree_introspection_and_collapse_struct_rpc() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let gn = scene.find_external_with_tag_mut(GROUP_TAG).expect("group external present");
-            let gi = gn.handle.introspect_mut().expect("introspectable");
-            // 5 categories, first-appearance order; Identity is first with 3
-            // members (Name, Tag, Layer).
-            assert_eq!(gi.query("group_count"), Some(IntrospectValue::Int(5)));
-            assert_eq!(gi.query("label_at.0"), Some(IntrospectValue::Text("Identity".to_owned())));
-            assert_eq!(gi.query("member_count_at.0"), Some(IntrospectValue::Int(3)));
-            // The roving cursor is read/write (a visual position over the flatten).
-            assert_eq!(gi.query("cursor"), Some(IntrospectValue::Null), "no cursor at boot");
-            assert!(gi.intervene("cursor", IntrospectValue::Int(1)).is_ok());
-            assert_eq!(gi.query("cursor"), Some(IntrospectValue::Int(1)));
-            // 5 headers + 12 data rows = 17 visible; collapsing Identity hides
-            // its 3 data rows (toggle_group returns the new visible_len).
-            assert_eq!(gi.query("visible_len"), Some(IntrospectValue::Int(17)));
-            assert_eq!(gi.invoke("toggle_group", IntrospectValue::Int(0)), Ok(IntrospectValue::Int(14)));
-            assert_eq!(gi.query("collapsed.0"), Some(IntrospectValue::Bool(true)));
+            let tree_intro = |scene: &Scene| -> (i64, String, i64, bool, String, i64) {
+                let tn = scene
+                    .find_external_with_tag(TREE_TAG)
+                    .and_then(|n| n.handle.introspect())
+                    .expect("tree introspection present");
+                let int = |p: &str| match tn.query(p) {
+                    Some(IntrospectValue::Int(i)) => i,
+                    other => panic!("{p} -> {other:?}"),
+                };
+                let text = |p: &str| match tn.query(p) {
+                    Some(IntrospectValue::Text(t)) => t,
+                    other => panic!("{p} -> {other:?}"),
+                };
+                let expanded0 = tn.query("expanded_at.0") == Some(IntrospectValue::Bool(true));
+                // Row 15 = the Position struct header (after 5 cats + Identity's 3
+                // leaves + Appearance's 4 + Physics's 2 + Stats's 1 + the Transform
+                // header); row 16 = its first field (Position X).
+                (int("row_count"), text("id_at.0"), int("level_at.0"), expanded0, text("id_at.15"), int("level_at.16"))
+            };
+            // 5 categories + 2 structs + 16 leaves = 23 visible rows (all open).
+            let (rows, id0, level0, exp0, id15, level16) = tree_intro(&scene);
+            assert_eq!(rows, 23, "5 categories + 2 structs + 16 leaves");
+            assert_eq!(id0, "cat.Identity");
+            assert_eq!(level0, 1, "a category is aria-level 1");
+            assert!(exp0, "categories boot expanded");
+            assert_eq!(id15, "struct.Position", "the Transform category nests the Position struct");
+            assert_eq!(level16, 3, "a struct field is aria-level 3 (category > struct > field)");
+            // The primary owns the struct aggregate + the per-branch collapse.
+            let gi = grid_intro(&scene);
+            let IntrospectValue::Text(summary) = gi.query("struct_summary.struct.Position").expect("summary") else {
+                panic!("summary is text");
+            };
+            assert!(
+                summary.starts_with('(') && summary.ends_with(')') && summary.contains("12.5"),
+                "Position summary is a tuple of its field values, got {summary}",
+            );
+            assert_eq!(gi.query("struct_modified.struct.Position"), Some(IntrospectValue::Bool(false)), "boot clean");
+            assert_eq!(gi.query("expanded.cat.Identity"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(gi.query("expanded.0"), Some(IntrospectValue::Null), "a leaf has no expanded flag");
+            // Collapse Identity via toggle_branch → its 3 leaves vanish (23 − 3).
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("toggle_branch", IntrospectValue::Text("cat.Identity".to_owned()))),
+                Ok(IntrospectValue::Bool(false)),
+                "toggle_branch returns the resulting expanded flag",
+            );
+            assert_eq!(grid_intro(&scene).query("expanded.cat.Identity"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(tree_intro(&scene).0, 20, "23 − 3 Identity leaves");
+            // Editing a struct field marks the struct modified; reset_struct clears it.
+            with_grid_mut(&mut scene, |i| i.intervene("value.6", IntrospectValue::Float(99.0)).unwrap());
+            assert_eq!(grid_intro(&scene).query("struct_modified.struct.Position"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset_struct", IntrospectValue::Text("struct.Position".to_owned()))),
+                Ok(IntrospectValue::Int(1)),
+                "reset_struct restores 1 modified field",
+            );
+            assert_eq!(grid_intro(&scene).query("value.6"), Some(IntrospectValue::Float(12.5)));
+            assert_eq!(grid_intro(&scene).query("struct_modified.struct.Position"), Some(IntrospectValue::Bool(false)));
+        });
+    }
+
+    /// R921 — the roving cursor is read/write over RPC (the AI-first cursor
+    /// move): `intervene cursor` sets a node id with no click side effect, `query
+    /// cursor` reads it, and `Null` clears it.
+    #[test]
+    fn r921_cursor_read_write_over_rpc() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert_eq!(grid_intro(&scene).query("cursor"), Some(IntrospectValue::Null), "no cursor at boot");
+            with_grid_mut(&mut scene, |i| i.intervene("cursor", IntrospectValue::Text("struct.Position".to_owned())).unwrap());
+            assert_eq!(grid_intro(&scene).query("cursor"), Some(IntrospectValue::Text("struct.Position".to_owned())));
+            // A pure cursor move does NOT toggle / edit the row (no side effect).
+            assert_eq!(grid_intro(&scene).query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
+            with_grid_mut(&mut scene, |i| i.intervene("cursor", IntrospectValue::Null).unwrap());
+            assert_eq!(grid_intro(&scene).query("cursor"), Some(IntrospectValue::Null), "Null clears the cursor");
         });
     }
 
@@ -2614,15 +3139,13 @@ mod tests {
             let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
             let intro = node.handle.introspect_mut().expect("introspectable");
             // PointerUp on the Locked bool (source 3) moves the cursor onto its
-            // visual row + toggles it.
+            // leaf-id row + toggles it.
             let _ = intro.invoke("send", IntrospectValue::Text("3:PointerUp".to_owned()));
             assert_eq!(intro.query("value.3"), Some(IntrospectValue::Bool(true)), "false -> true");
-            let pos = use_property_groups().rows().iter().position(|r| r.source() == Some(3));
-            assert_eq!(use_property_groups().cursor(), pos, "cursor moved onto the clicked row");
+            assert_eq!(cursor_id().as_deref(), Some("3"), "cursor moved onto the clicked leaf");
             // PointerUp on a text row moves the cursor but does not toggle.
             let _ = intro.invoke("send", IntrospectValue::Text("0:PointerUp".to_owned()));
-            let name_pos = use_property_groups().rows().iter().position(|r| r.source() == Some(0));
-            assert_eq!(use_property_groups().cursor(), name_pos);
+            assert_eq!(cursor_id().as_deref(), Some("0"));
         });
     }
 
@@ -2777,54 +3300,73 @@ mod tests {
 
     // ----- keyboard -----
 
-    /// The visual position of source `s` in the current flatten (panics if its
-    /// category is collapsed — the test setups keep everything expanded).
-    fn view_pos_of(source: usize) -> usize {
-        use_property_groups()
-            .rows()
-            .iter()
-            .position(|r| r.source() == Some(source))
-            .expect("source is in the flatten")
+    /// The current visible-row flatten (tree + live filter), the SSOT the paint /
+    /// cursor / a11y read.
+    fn visible() -> Vec<VisibleRow> {
+        visible_property_rows(&use_property_tree().get(), &current_search_query())
+    }
+
+    /// The visible rows' node ids, in flatten order.
+    fn visible_ids() -> Vec<String> {
+        visible().into_iter().map(|r| r.id).collect()
+    }
+
+    /// The value indices of the visible LEAF rows, in flatten order.
+    fn visible_leaf_indices() -> Vec<usize> {
+        visible().iter().filter_map(|r| row_value_index(&r.id)).collect()
+    }
+
+    /// Park the roving cursor on tree node `id` (a leaf value-index string or a
+    /// branch `cat:` / `struct:` id) — the tree-cursor peer of the old visual
+    /// `set_cursor(pos)`.
+    fn set_cursor_id(id: &str) {
+        use_property_cursor().set(Some(id.to_owned()));
+    }
+
+    /// The roving cursor's node id, or `None`.
+    fn cursor_id() -> Option<String> {
+        use_property_cursor().get()
     }
 
     #[test]
-    fn r871_grid_arrows_navigate_over_flatten_and_clamp() {
+    fn r921_grid_arrows_navigate_over_flatten_and_clamp() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let groups = use_property_groups();
-            let last = groups.rows().len() - 1; // 16 (5 headers + 12 data − 1)
+            let ids = visible_ids();
+            let first = ids.first().expect("non-empty flatten").clone(); // "cat.Identity"
+            let last = ids.last().expect("non-empty flatten").clone(); // "15" (Scale Z)
             // First ArrowDown from no cursor lands on row 0 (the Identity header).
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", Modifiers::empty()));
-            assert_eq!(groups.cursor(), Some(0));
+            assert_eq!(cursor_id().as_deref(), Some(first.as_str()));
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "End", Modifiers::empty()));
-            assert_eq!(groups.cursor(), Some(last));
+            assert_eq!(cursor_id().as_deref(), Some(last.as_str()));
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", Modifiers::empty()));
-            assert_eq!(groups.cursor(), Some(last), "clamps at the bottom");
+            assert_eq!(cursor_id().as_deref(), Some(last.as_str()), "clamps at the bottom");
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Home", Modifiers::empty()));
-            assert_eq!(groups.cursor(), Some(0));
+            assert_eq!(cursor_id().as_deref(), Some(first.as_str()));
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowUp", Modifiers::empty()));
-            assert_eq!(groups.cursor(), Some(0), "clamps at the top");
+            assert_eq!(cursor_id().as_deref(), Some(first.as_str()), "clamps at the top");
         });
     }
 
     #[test]
-    fn r871_keyboard_collapses_and_expands_category_header() {
+    fn r921_keyboard_collapses_and_expands_category_header() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            let groups = use_property_groups();
-            // Cursor on the Identity header (visual position 0).
-            groups.set_cursor(Some(0));
-            // ArrowLeft on an expanded header collapses it; its 3 data rows vanish.
+            // Cursor on the Identity category branch.
+            set_cursor_id("cat.Identity");
+            let collapsed = || !find_node(&use_property_tree().get(), "cat.Identity").unwrap().expanded;
+            // ArrowLeft on an expanded branch collapses it; its 3 leaves vanish.
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowLeft", Modifiers::empty()));
-            assert!(groups.is_collapsed(0), "ArrowLeft collapses the focused category");
-            assert_eq!(groups.visible_len(), 14, "17 − 3 Identity data rows");
+            assert!(collapsed(), "ArrowLeft collapses the focused category");
+            assert_eq!(visible().len(), 20, "23 − 3 Identity leaves");
             // ArrowRight re-expands.
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowRight", Modifiers::empty()));
-            assert!(!groups.is_collapsed(0));
-            assert_eq!(groups.visible_len(), 17);
-            // Enter on a header toggles it too.
+            assert!(!collapsed());
+            assert_eq!(visible().len(), 23);
+            // Enter on a branch toggles it too.
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
-            assert!(groups.is_collapsed(0), "Enter on a header toggles collapse");
+            assert!(collapsed(), "Enter on a branch toggles collapse");
         });
     }
 
@@ -2832,12 +3374,12 @@ mod tests {
     fn r836_space_toggles_bool_enter_edits_text() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            // Cursor onto the Visible bool (source 2) and Space-toggle it.
-            use_property_groups().set_cursor(Some(view_pos_of(2)));
+            // Cursor onto the Visible bool (leaf 2) and Space-toggle it.
+            set_cursor_id("2");
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Space", Modifiers::empty()));
             assert_eq!(grid_intro(&scene).query("value.2"), Some(IntrospectValue::Bool(false)));
-            // Cursor onto the Name text row (source 0) and Enter -> edit mode.
-            use_property_groups().set_cursor(Some(view_pos_of(0)));
+            // Cursor onto the Name text row (leaf 0) and Enter -> edit mode.
+            set_cursor_id("0");
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
             assert_eq!(
                 grid_intro(&scene).query("editing"),
@@ -2881,53 +3423,67 @@ mod tests {
         Owner::new().run(|| {
             let mut scene = boot_scene();
             assert!(!PropertyGridView::apply_key(&mut scene, None, "ArrowDown", Modifiers::empty()));
-            assert_eq!(use_property_groups().cursor(), None, "cursor unchanged");
+            assert_eq!(cursor_id(), None, "cursor unchanged");
         });
     }
 
     // ----- a11y -----
 
     #[test]
-    fn r871_access_node_emits_grouped_grid_with_headers_and_active_row() {
+    fn r921_access_node_emits_tree_with_levels_and_active_row() {
         Owner::new().run(|| {
             let _scene = boot_scene();
-            // Cursor on the Visible data row (source 2).
-            scene_focus(view_pos_of(2));
-            let nodes = PropertyGridView::access_node(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG));
-            // R874 — treegrid (hierarchical category headers + columns).
-            assert_eq!(nodes[0].role, pinion_a11y::AriaRole::TreeGrid);
+            // Cursor on the Visible leaf (value 2).
+            scene_focus("2");
+            let nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
+            // R921 — role=tree; the root carries the Inspector name.
+            assert_eq!(nodes[0].role, AriaRole::Tree);
             assert_eq!(nodes[0].name.as_deref(), Some("Inspector"));
-            // A category lowers to a spanning level-1 row with aria-expanded.
-            let header = nodes
+            // A category lowers to a level-1 treeitem (aria-expanded + a count name).
+            let cat = nodes
                 .iter()
-                .find(|n| n.tag == format!("{GROUP_TAG}#0"))
-                .expect("Identity category header node");
-            assert_eq!(header.role, pinion_a11y::AriaRole::Row);
-            assert_eq!(header.level, Some(1), "category header is aria-level 1");
-            assert_eq!(header.expanded, Some(true), "expanded category header");
-            // The cursor's data row is the active descendant (keyboard focus),
-            // but carries NO `aria-selected` axis — the property grid has no
-            // selection model (R873/R874, `Display`): focus is conveyed by
-            // `state.focused` / `aria-activedescendant`, not selection.
+                .find(|n| n.tag == format!("{GRID_TAG}#cat.Identity"))
+                .expect("Identity category treeitem");
+            assert_eq!(cat.role, AriaRole::TreeItem);
+            assert_eq!(cat.level, Some(1), "a category is aria-level 1");
+            assert_eq!(cat.expanded, Some(true), "expanded category");
+            assert_eq!(cat.name.as_deref(), Some("Identity (3)"), "category name folds its leaf count");
+            // The cursor leaf is the active descendant (focus, NO aria-selected —
+            // the Inspector has no selection model), level 2, value folded in.
             let active = nodes
                 .iter()
                 .find(|n| n.tag == format!("{GRID_TAG}#2"))
-                .expect("Visible data row node");
-            assert_eq!(active.level, Some(2), "data row is aria-level 2");
+                .expect("Visible leaf node");
+            assert_eq!(active.level, Some(2), "a category leaf is aria-level 2");
             assert!(active.state.focused, "cursor row is the active descendant");
             assert_eq!(active.selected, None, "no selection model → no aria-selected axis");
-            // The value gridcell carries the bare value (the column label lives
-            // on the `Value` columnheader, not repeated per cell — R874).
-            let value_cell = nodes
+            assert_eq!(active.name.as_deref(), Some("Visible: On"), "leaf name folds its value");
+            // A struct branch lowers to a level-2 treeitem with its summary; its
+            // fields are level-3 treeitems named with the qualified property name.
+            let pos = nodes
                 .iter()
-                .find(|n| n.tag == "pg_cell2_1")
-                .expect("Visible value gridcell present");
-            assert_eq!(value_cell.name.as_deref(), Some("On"));
+                .find(|n| n.tag == format!("{GRID_TAG}#struct.Position"))
+                .expect("Position struct node");
+            assert_eq!(pos.level, Some(2));
+            assert_eq!(pos.expanded, Some(true));
+            assert!(
+                pos.name.as_deref().unwrap_or("").starts_with("Position ("),
+                "struct name folds its summary, got {:?}",
+                pos.name,
+            );
+            let field =
+                nodes.iter().find(|n| n.tag == format!("{GRID_TAG}#6")).expect("Position X field node");
+            assert_eq!(field.level, Some(3), "a struct field is aria-level 3");
+            assert!(
+                field.name.as_deref().unwrap_or("").starts_with("Position X:"),
+                "field name is qualified, got {:?}",
+                field.name,
+            );
         });
     }
 
-    fn scene_focus(view_pos: usize) {
-        use_property_groups().set_cursor(Some(view_pos));
+    fn scene_focus(id: &str) {
+        set_cursor_id(id);
     }
 
     // ----- choice popup (R867) -----
@@ -3221,17 +3777,17 @@ mod tests {
     fn r870_access_focus_target_tracks_the_cursor() {
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            // Navigating: the active descendant is the cursor's data row tag.
-            use_property_groups().set_cursor(Some(view_pos_of(2)));
-            let f = PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG))
+            // Navigating: the active descendant is the cursor's leaf row tag.
+            set_cursor_id("2");
+            let f = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
                 .expect("grid focused -> composite focus target");
             assert_eq!(f.focus_tag, GRID_TAG);
             assert_eq!(f.active_descendant.as_deref(), Some(format!("{GRID_TAG}#2").as_str()));
-            // Cursor on a category header rings the header's composite tag.
-            use_property_groups().set_cursor(Some(0));
-            let h = PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG))
+            // Cursor on a category branch rings the branch's composite tag.
+            set_cursor_id("cat.Identity");
+            let h = PropertyGridView::access_focus_target(&idle_state(), Some(GRID_TAG))
                 .expect("composite");
-            assert_eq!(h.active_descendant.as_deref(), Some(format!("{GROUP_TAG}#0").as_str()));
+            assert_eq!(h.active_descendant.as_deref(), Some(format!("{GRID_TAG}#cat.Identity").as_str()));
             // Choice popup open -> the active option (Blend cursor boots 0).
             open_choice(&mut scene, BLEND_ROW);
             let f = PropertyGridView::access_focus_target(&((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), Some(GRID_TAG))
@@ -3286,27 +3842,33 @@ mod tests {
             let _ = boot_scene();
             let scene = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(scene.contains_tag(GRID_TAG), "grid root painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#0")), "data row 0 painted");
-            assert!(scene.contains_tag(&format!("{GRID_TAG}#8")), "data row 8 painted");
-            assert!(scene.contains_tag(&format!("{GROUP_TAG}#0")), "Identity header painted");
-            assert!(scene.contains_tag(&format!("{GROUP_TAG}#4")), "Transform header painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#0")), "leaf row 0 painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#8")), "leaf row 8 painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#cat.Identity")), "Identity header painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#cat.Transform")), "Transform header painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#struct.Position")), "Position struct header painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#12")), "Position Z field row painted");
         });
     }
 
     #[test]
-    fn r871_collapse_hides_category_data_rows_in_view() {
+    fn r921_collapse_hides_branch_rows_in_view() {
         Owner::new().run(|| {
             let _ = boot_scene();
-            let before = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
+            let before = view(idle_state(), &Frame::new());
             assert!(before.contains_tag(&format!("{GRID_TAG}#0")), "Name row painted when expanded");
-            assert!(before.contains_tag(&format!("{GROUP_TAG}#0")), "Identity header painted");
-            // Collapse Identity (category 0): its data rows (Name/Tag/Layer)
-            // vanish, the header stays.
-            use_property_groups().set_collapsed(0, true);
-            let after = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
-            assert!(after.contains_tag(&format!("{GROUP_TAG}#0")), "header stays on collapse");
+            assert!(before.contains_tag(&format!("{GRID_TAG}#cat.Identity")), "Identity header painted");
+            assert!(before.contains_tag(&format!("{GRID_TAG}#6")), "Position X painted when struct expanded");
+            // Collapse Identity: its leaves (Name/Tag/Layer) vanish, header stays.
+            set_expanded_in(&use_property_tree(), "cat.Identity", false);
+            // Collapse the Position struct: its X/Y/Z fields vanish, header stays.
+            set_expanded_in(&use_property_tree(), "struct.Position", false);
+            let after = view(idle_state(), &Frame::new());
+            assert!(after.contains_tag(&format!("{GRID_TAG}#cat.Identity")), "category header stays on collapse");
             assert!(!after.contains_tag(&format!("{GRID_TAG}#0")), "Name row hidden when collapsed");
             assert!(!after.contains_tag(&format!("{GRID_TAG}#1")), "Tag row hidden when collapsed");
+            assert!(after.contains_tag(&format!("{GRID_TAG}#struct.Position")), "struct header stays on collapse");
+            assert!(!after.contains_tag(&format!("{GRID_TAG}#6")), "Position X hidden when struct collapsed");
         });
     }
 
@@ -3336,34 +3898,31 @@ mod tests {
     fn r872_search_filters_rows_and_clears() {
         Owner::new().run(|| {
             let _scene = boot_scene();
-            let groups = use_property_groups();
-            assert_eq!(groups.visible_len(), 17, "5 headers + 12 data with empty query");
-            // "pos" matches Pos X (6) + Pos Y (7), both Transform.
+            assert_eq!(visible().len(), 23, "5 cats + 2 structs + 16 leaves with empty query");
+            // "pos" matches the qualified Position X/Y/Z field names; the
+            // recursive filter reveals the Transform > Position path.
             use_text_edit_state(SEARCH_TF_TAG).set_text("pos".to_owned());
-            assert_eq!(groups.visible_len(), 3, "Transform header + the 2 Pos rows");
-            let data: Vec<usize> = groups.rows().iter().filter_map(GroupRow::source).collect();
-            assert_eq!(data, vec![6, 7], "only Pos X / Pos Y match");
-            // Clearing restores every row (filter -> group recomputes reactively).
+            assert_eq!(
+                visible_ids(),
+                vec!["cat.Transform", "struct.Position", "6", "7", "12"],
+                "path-to-match reveals the matching fields inside their struct",
+            );
+            assert_eq!(visible_leaf_indices(), vec![6, 7, 12], "only the Position fields match");
+            // Clearing restores every row (the filter recomputes reactively).
             use_text_edit_state(SEARCH_TF_TAG).set_text(String::new());
-            assert_eq!(groups.visible_len(), 17, "cleared query restores every row");
+            assert_eq!(visible().len(), 23, "cleared query restores every row");
         });
     }
 
     #[test]
-    fn r872_filter_drops_empty_categories() {
+    fn r872_filter_drops_unmatched_branches() {
         Owner::new().run(|| {
             let _scene = boot_scene();
-            let groups = use_property_groups();
-            // "name" matches only Name (source 0, Identity) — every other
-            // category contributes no header (group_rows omits empty groups).
+            // "name" matches only Name (leaf 0, under Identity) — every other
+            // branch is pruned (no match anywhere on its path).
             use_text_edit_state(SEARCH_TF_TAG).set_text("name".to_owned());
-            assert_eq!(groups.visible_len(), 2, "Identity header + Name only");
-            let rows = groups.rows();
-            assert!(
-                matches!(rows[0], GroupRow::Header { group: 0, .. }),
-                "the only header is Identity",
-            );
-            assert_eq!(rows.iter().filter_map(GroupRow::source).collect::<Vec<_>>(), vec![0]);
+            assert_eq!(visible_ids(), vec!["cat.Identity", "0"], "only Identity > Name survives");
+            assert_eq!(visible_leaf_indices(), vec![0]);
         });
     }
 
@@ -3421,11 +3980,11 @@ mod tests {
                     .expect("a polite status live region")
             };
             let (role, name) = status_count();
-            assert_eq!(role, pinion_a11y::AriaRole::Status, "filter result = aria-live Status");
-            assert_eq!(name.as_deref(), Some("12 properties"), "all 12 with no filter");
+            assert_eq!(role, AriaRole::Status, "filter result = aria-live Status");
+            assert_eq!(name.as_deref(), Some("16 properties"), "all 16 leaves with no filter");
             // Narrowing the filter updates the announced count.
             use_text_edit_state(SEARCH_TF_TAG).set_text("pos".to_owned());
-            assert_eq!(status_count().1.as_deref(), Some("2 properties"), "filtered to Pos X/Pos Y");
+            assert_eq!(status_count().1.as_deref(), Some("3 properties"), "filtered to Position X/Y/Z");
         });
     }
 

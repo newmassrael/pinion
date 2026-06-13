@@ -39675,6 +39675,68 @@
         "detail_rows 'cannot drift' reworded: row DATA is SSOT; each consumer composes its own presentation"
       ]
     },
+    "R921": {
+      "decision_summary": "Property-grid nested struct properties: migrate the row backbone from the 2-level GroupOrderState group-by proxy to the arbitrary-depth WAI-ARIA Tree substrate so a Vector3 (Position/Scale) expands into X/Y/Z field rows under collapsible category+struct branches; the flat value model stays value-index-keyed so all leaf machinery and the value.<i> RPC are unchanged.",
+      "changes_bullets": [
+        "Migrate hello-property-grid row backbone GroupOrderState -> TreeNode/flat_visible Tree substrate",
+        "PropertyNode tree: category + struct branches (collapsible) + leaf nodes keyed by value_index",
+        "Vector3 struct properties (Position/Scale) expand into X/Y/Z field rows (category>struct>field)",
+        "Leaf id = value_index string: value.<i>/name.<i>/reset<i>/{GRID}#{i} paths byte-identical",
+        "New primary RPC: expanded.<id>/struct_summary/struct_modified/toggle_branch/reset_struct/cursor",
+        "TreeViewIntrospect extra property_grid_tree: row_count/id_at/level_at/expanded_at/cursor RO",
+        "Keyboard group_nav -> resolve_tree_key (id-keyed cursor); a11y grouped_grid -> tree_access_nodes",
+        "a11y WAI-ARIA tree: aria-level/expanded; value folded into row name; no selection model",
+        "Filter flat_visible_filtered path-to-match reveals matches inside collapsed branches",
+        "struct summary/modified/leaf-count free-fn SSOT shared by paint+a11y+RPC (R886.1 one-gate)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; hello-property-grid 51 tests (tree/struct/collapse/cursor/a11y)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "demos PASS on release binary: r921 (new struct) + r836/r867/r869/r871/r872/r875/r919",
+        "branch id separator '.' not ':' (split_send_payload ':' split would break header clicks)",
+        "group_order.rs doc updated: property-grid dropped as use_group_order_with_source consumer (3->2)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "find_node (immutable by-id) = example-local peer of tree_nav find_node_mut; lift at 2nd consumer",
+        "collapse_all/expand_all not ported from GroupOrderExternal (no consumer); per-branch toggle only",
+        "multi-object editing + property-grid crate-lift remain (editor 2nd consumer = Phase D)"
+      ],
+      "publishable_decision_summary": "Property-grid nested struct properties: migrate the row backbone from the 2-level GroupOrderState group-by proxy to the arbitrary-depth WAI-ARIA Tree substrate so a Vector3 (Position/Scale) expands into X/Y/Z field rows under collapsible category+struct branches; the flat value model stays value-index-keyed so all leaf machinery and the value.<i> RPC are unchanged.",
+      "publishable_changes_bullets": [
+        "Migrate hello-property-grid row backbone GroupOrderState -> TreeNode/flat_visible Tree substrate",
+        "PropertyNode tree: category + struct branches (collapsible) + leaf nodes keyed by value_index",
+        "Vector3 struct properties (Position/Scale) expand into X/Y/Z field rows (category>struct>field)",
+        "Leaf id = value_index string: value.<i>/name.<i>/reset<i>/{GRID}#{i} paths byte-identical",
+        "New primary RPC: expanded.<id>/struct_summary/struct_modified/toggle_branch/reset_struct/cursor",
+        "TreeViewIntrospect extra property_grid_tree: row_count/id_at/level_at/expanded_at/cursor RO",
+        "Keyboard group_nav -> resolve_tree_key (id-keyed cursor); a11y grouped_grid -> tree_access_nodes",
+        "a11y WAI-ARIA tree: aria-level/expanded; value folded into row name; no selection model",
+        "Filter flat_visible_filtered path-to-match reveals matches inside collapsed branches",
+        "struct summary/modified/leaf-count free-fn SSOT shared by paint+a11y+RPC (R886.1 one-gate)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; hello-property-grid 51 tests (tree/struct/collapse/cursor/a11y)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "demos PASS on release binary: r921 (new struct) + r836/r867/r869/r871/r872/r875/r919",
+        "branch id separator '.' not ':' (split_send_payload ':' split would break header clicks)",
+        "group_order.rs doc updated: property-grid dropped as use_group_order_with_source consumer (3->2)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "find_node (immutable by-id) = example-local peer of tree_nav find_node_mut; lift at 2nd consumer",
+        "collapse_all/expand_all not ported from GroupOrderExternal (no consumer); per-branch toggle only",
+        "multi-object editing + property-grid crate-lift remain (editor 2nd consumer = Phase D)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

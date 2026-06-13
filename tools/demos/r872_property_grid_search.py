@@ -1,31 +1,30 @@
 #!/usr/bin/env python3
-"""R872 §5.27 §5.40 §5.38 — property-grid live name search / filter.
+"""R872 / R921 §5.27 §5.40 §5.38 — property-grid live name search / filter.
 
 The Details-panel search box: typing in the title-bar search field filters the
-visible property rows by name, live (every keystroke), composing with the R871
-category grouping — the R844 filter -> group proxy chain, here with a
-name-search filter feeding `use_group_order_with_source`. A category whose every
-member is filtered out contributes no header.
+visible property rows by name, live (every keystroke), over the R921 property
+**tree**. The recursive path-to-match filter (`flat_visible_filtered`, Qt
+`setRecursiveFilteringEnabled`) keeps any node on a path to a match and reveals
+it even inside a collapsed branch, so searching "pos" surfaces the Position
+struct's fields under their Transform > Position path. A branch with no match
+anywhere on its path is pruned.
 
 Two cooperating wires:
-  property_grid_search (extra TextField) -> the live filter query (its text)
-  property_grid_cat    (GroupOrderExternal) -> the grouped/filtered flatten
-
-Group-by proxy slots (`property_grid_cat`), reflecting the *filtered* flatten:
-  /external/visible_len           -> headers + visible data rows after filtering
-  /external/kind_at.<pos>         -> "header" | "data"
-  /external/source_at.<pos>       -> a data row's source index (null on header)
-  /external/label_at.<pos>        -> a header's category label
-  /external/member_count_at.<pos> -> member count (over the base order)
-  /external/toggle_group          -> invoke(int): collapse/expand a category
+  property_grid_search (extra TextField)         -> the live filter query (text)
+  property_grid_tree   (TreeViewIntrospect, RO)  -> the filtered visible flatten:
+    /external/row_count       -> visible row count after filtering
+    /external/id_at.<pos>     -> a row's node id (leaf "6" / branch cat./struct.)
+    /external/label_at.<pos>  -> a row's label
+    /external/level_at.<pos>  -> aria-level (depth + 1)
+  property_grid        (coordinator) -> /external/toggle_branch (collapse a branch)
 
 Verified (>= 30 assertions):
-  (A) boot — search box painted, empty query, all 17 rows
-  (B) name filter — "pos" narrows to Transform's 2 Pos rows + its header
+  (A) boot — search box painted, empty query, the full 23-row tree
+  (B) name filter — "pos" reveals Transform > Position > X/Y/Z (5 rows)
   (C) clear via Backspace restores every row
-  (D) category narrowing — "name" leaves only Identity + Name
-  (E) no-match query -> empty flatten (no headers, no rows)
-  (F) filter + collapse compose — collapse a filtered category to its header
+  (D) deep prune — "name" leaves only Identity > Name
+  (E) no-match query -> empty flatten
+  (F) collapse (no filter) hides a branch's subtree; a filter auto-reveals it
   (G) Escape clears the filter and hands focus back to the grid
 """
 
@@ -47,9 +46,10 @@ VIEWPORT = (460, 820)
 
 GRID = "property_grid"
 SEARCH = "property_grid_search"
-CAT = "property_grid_cat"
+TREE = "property_grid_tree"
 
-TRANSFORM = 4  # the Transform category id (Pos X / Pos Y)
+TRANSFORM = "cat.Transform"
+POSITION = "struct.Position"
 
 
 def _focus_search(tf) -> None:
@@ -60,8 +60,20 @@ def _focus_search(tf) -> None:
     )
 
 
-def _vlen(tf) -> int:
-    return tf.query(f"/{CAT}/external/visible_len")
+def _rows(tf) -> int:
+    return tf.query(f"/{TREE}/external/row_count")
+
+
+def _id(tf, pos: int):
+    return tf.query(f"/{TREE}/external/id_at.{pos}")
+
+
+def _label(tf, pos: int):
+    return tf.query(f"/{TREE}/external/label_at.{pos}")
+
+
+def _level(tf, pos: int):
+    return tf.query(f"/{TREE}/external/level_at.{pos}")
 
 
 def _clear(tf, n: int) -> None:
@@ -72,64 +84,74 @@ def _clear(tf, n: int) -> None:
 
 def body() -> None:
     with RpcSubprocess("hello-property-grid", boot_grace=1.5) as tf:
-        # ── (A) boot: search box painted, empty query, all rows ──────
+        # ── (A) boot: search box painted, empty query, full tree ─────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid present"
         assert find_by_tag(snap, SEARCH) is not None, "search box painted in the title band"
-        assert_eq(tf.query(f"/{CAT}/external/group_count"), 5, "5 categories")
-        assert_eq(_vlen(tf), 17, "boot: 5 headers + 12 data, no filter")
+        assert_eq(_rows(tf), 23, "boot: 5 categories + 2 structs + 16 leaves")
+        assert_eq(_id(tf, 0), "cat.Identity", "the first row is the Identity category")
 
-        # ── (B) name filter: "pos" -> Transform header + Pos X / Pos Y ─
+        # ── (B) name filter: "pos" -> Transform > Position > X/Y/Z ───
         _focus_search(tf)
         tf.text("pos", path=SEARCH)
-        wait_until(lambda: _vlen(tf) == 3, timeout=4.0, interval=0.03,
-                   desc="'pos' narrows to the Transform header + 2 Pos rows")
-        assert_eq(tf.query(f"/{CAT}/external/kind_at.0"), "header", "row 0 is the category header")
-        assert_eq(tf.query(f"/{CAT}/external/label_at.0"), "Transform", "the surviving header is Transform")
-        assert_eq(tf.query(f"/{CAT}/external/member_count_at.0"), 2, "Transform has 2 members")
-        assert_eq(tf.query(f"/{CAT}/external/kind_at.1"), "data", "row 1 is a data row")
-        assert_eq(tf.query(f"/{CAT}/external/source_at.1"), 6, "Pos X (source 6)")
-        assert_eq(tf.query(f"/{CAT}/external/source_at.2"), 7, "Pos Y (source 7)")
+        wait_until(lambda: _rows(tf) == 5, timeout=4.0, interval=0.03,
+                   desc="'pos' reveals the Transform > Position path + its 3 fields")
+        assert_eq(_id(tf, 0), TRANSFORM, "the surviving category is Transform")
+        assert_eq(_label(tf, 0), "Transform", "its label is Transform")
+        assert_eq(_level(tf, 0), 1, "the category is aria-level 1")
+        assert_eq(_id(tf, 1), POSITION, "the Position struct is revealed on the match path")
+        assert_eq(_level(tf, 1), 2, "the struct is aria-level 2")
+        assert_eq(_id(tf, 2), "6", "Position X (value 6)")
+        assert_eq(_level(tf, 2), 3, "a struct field is aria-level 3")
+        assert_eq(_id(tf, 3), "7", "Position Y (value 7)")
+        assert_eq(_id(tf, 4), "12", "Position Z (value 12)")
 
         # ── (C) clear restores every row ─────────────────────────────
         _clear(tf, 3)
-        wait_until(lambda: _vlen(tf) == 17, timeout=4.0, interval=0.03,
+        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03,
                    desc="clearing the query restores all rows")
 
-        # ── (D) category narrowing: "name" -> Identity + Name only ────
+        # ── (D) deep prune: "name" -> Identity > Name only ───────────
         tf.text("name", path=SEARCH)
-        wait_until(lambda: _vlen(tf) == 2, timeout=4.0, interval=0.03,
-                   desc="'name' leaves Identity header + Name")
-        assert_eq(tf.query(f"/{CAT}/external/label_at.0"), "Identity", "surviving header is Identity")
-        assert_eq(tf.query(f"/{CAT}/external/source_at.1"), 0, "Name (source 0)")
+        wait_until(lambda: _rows(tf) == 2, timeout=4.0, interval=0.03,
+                   desc="'name' leaves Identity > Name")
+        assert_eq(_id(tf, 0), "cat.Identity", "surviving category is Identity")
+        assert_eq(_id(tf, 1), "0", "Name (value 0)")
         _clear(tf, 4)
-        wait_until(lambda: _vlen(tf) == 17, timeout=4.0, interval=0.03, desc="cleared again")
+        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03, desc="cleared again")
 
         # ── (E) no-match query -> empty flatten ──────────────────────
         tf.text("zzz", path=SEARCH)
-        wait_until(lambda: _vlen(tf) == 0, timeout=4.0, interval=0.03,
-                   desc="no-match query empties the flatten (no headers)")
-        assert_eq(tf.query(f"/{CAT}/external/kind_at.0"), None, "no row at position 0 when empty")
+        wait_until(lambda: _rows(tf) == 0, timeout=4.0, interval=0.03,
+                   desc="no-match query empties the flatten")
+        assert_eq(_id(tf, 0), None, "no row at position 0 when empty")
         _clear(tf, 3)
-        wait_until(lambda: _vlen(tf) == 17, timeout=4.0, interval=0.03, desc="restored after no-match")
+        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03, desc="restored after no-match")
 
-        # ── (F) filter + collapse compose ────────────────────────────
+        # ── (F) collapse (no filter) hides a subtree; a filter reveals it ─
+        # With no filter, collapsing Transform hides its 2 structs + 6 fields.
+        assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", TRANSFORM), False, "Transform collapses")
+        wait_until(lambda: _rows(tf) == 15, timeout=4.0, interval=0.03,
+                   desc="collapsing Transform hides its 8-row subtree (23 - 8)")
+        # The recursive filter auto-reveals matches regardless of collapse state.
+        _focus_search(tf)
         tf.text("pos", path=SEARCH)
-        wait_until(lambda: _vlen(tf) == 3, timeout=4.0, interval=0.03, desc="'pos' -> 3 rows")
-        # Collapse the (filtered) Transform category -> only its header remains.
-        assert_eq(tf.invoke(f"/{CAT}/external/toggle_group", TRANSFORM), 1,
-                  "collapse the filtered Transform -> header only")
-        assert_eq(tf.query(f"/{CAT}/external/kind_at.0"), "header", "the lone row is the header")
-        assert_eq(tf.invoke(f"/{CAT}/external/toggle_group", TRANSFORM), 3, "re-expand -> 3 rows")
+        wait_until(lambda: _rows(tf) == 5, timeout=4.0, interval=0.03,
+                   desc="'pos' reveals the Position path even though Transform is collapsed")
+        _clear(tf, 3)
+        # Re-expand Transform so the tree is whole again.
+        assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", TRANSFORM), True, "Transform re-expands")
+        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03, desc="full tree restored")
 
         # ── (G) Escape clears the filter + returns focus to the grid ──
-        assert _vlen(tf) == 3, "still filtered before Escape"
+        tf.text("pos", path=SEARCH)
+        wait_until(lambda: _rows(tf) == 5, timeout=4.0, interval=0.03, desc="filtered before Escape")
         tf.key(path=SEARCH, name="Escape")
-        wait_until(lambda: _vlen(tf) == 17, timeout=4.0, interval=0.03,
+        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03,
                    desc="Escape clears the filter")
         wait_until(lambda: tf.request("focus/get").result.get("focused") == GRID,
                    timeout=4.0, interval=0.03, desc="Escape returns focus to the grid")
 
 
 if __name__ == "__main__":
-    sys.exit(run_demo("hello-property-grid R872 §5.27 live property search/filter", body))
+    sys.exit(run_demo("hello-property-grid R872 / R921 §5.27 live property search/filter", body))

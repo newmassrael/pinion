@@ -574,10 +574,12 @@ pub fn use_group_order(
 ///
 /// The lifted SSOT for the *cache + `with_tag` + `with_order_source`* boilerplate
 /// the filter → sort → group proxy chain repeats: `hello-grouped-sort` (group a
-/// `ViewOrderState` order), `hello-grouped-grid-sort` (group a `GridSortState`
-/// order), and `hello-property-grid` (group a name-filtered order) are its three
-/// consumers — the R758 Rule-of-Three the identity [`use_group_order`] already
-/// modelled.
+/// `ViewOrderState` order) and `hello-grouped-grid-sort` (group a `GridSortState`
+/// order) are its two consumers — the R758 Rule-of-Three the identity
+/// [`use_group_order`] already modelled. (`hello-property-grid` was a third
+/// consumer through R920; R921 migrated it off this 2-level group-by proxy onto
+/// the arbitrary-depth `tree_nav` Tree substrate, because the Inspector's struct
+/// properties need a third hierarchy level the flat group-by cannot express.)
 ///
 /// Resolve any upstream proxy **before** calling this (capture its `Rc` in
 /// `source`), never inside `source` / `data`, so the two `Owner::cache` calls do
