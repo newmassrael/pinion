@@ -39189,6 +39189,90 @@
         "PDF real font-metrics (true baseline + styled-runs + text wrap): genuine deferred axis; the ASCENT_RATIO baseline is honestly documented as approximate"
       ]
     },
+    "R914": {
+      "decision_summary": "Lift DragCalibration<T> capture-drag substrate; route 4 1-D coordinators (column resize, property-grid scrub, data-grid scrub, splitter); add data-grid numeric cell scrub",
+      "changes_bullets": [
+        "Lift DragCalibration<T> to pinion-core input.rs: the press-anchored \"first",
+        "move calibrates, later moves yield delta\" capture-drag substrate (4 tests).",
+        "Route 4 standalone 1-D calibration coordinators through it (within-round SSOT):",
+        "column resize (R786), property-grid scrub (R875), data-grid scrub (R914 new),",
+        "splitter ratio drag (R683); each migration is behaviour-preserving.",
+        "New deliverable: data-grid numeric cell scrub (Blender/Unreal drag-to-edit) on",
+        "hello-data-grid: wants_pointer_capture + capture_normalize(GRID_TAG) +",
+        "pointer_move arm/scrub/end; scrubbing query slot.",
+        "Factor set_cell clamped-write funnel shared by the AI value intervene write and",
+        "the live scrub, so a drag cannot exceed a bound a keyboard/RPC edit cannot.",
+        "Defer isomorphic siblings with documented shape reasons: scrollbar (1-D but",
+        "calibration embedded in its SCXML gesture statechart), dock + node-editor (2-D,",
+        "a future DragCalibration2D)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: all pass (DragCalibration 4 + column_widths 19 +",
+        "property-grid 45 + data-grid 44 + splitter 28).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean",
+        "(-D pedantic); too_many_lines resolved by SRP extraction (handle_cell_send).",
+        "demos: r914 data-grid scrub (31 assert, NEW) + r837 data-grid + r875",
+        "property-grid scrub + r785 grid resize + r685/r683/r686 dock/splitter all PASS."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.35",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "scrollbar is a 1-D isomorphic calibration site but its snapshot is gated by +",
+        "embedded in its {Idle,Hover,Dragging,Disabled} SCXML gesture statechart",
+        "(scroll_max pinned for re-measure stability); route on a gesture-lifecycle round.",
+        "dock tear-off + node-graph node drag are 2-D (snapshot an x,y grab offset);",
+        "future DragCalibration2D (2 consumers exist = its own justified lift).",
+        "SCRUB_FLOAT_PER_PX / SCRUB_INT_PX_PER_STEP are 2 example-local tuning consts",
+        "(property-grid + data-grid); per-binding feel, Rule-of-Three defer (2 copies).",
+        "data-grid click-to-focus a numeric cell is absorbed as a zero-travel scrub",
+        "(R51.35 press-forward calibrates); matches property grid. Threshold-based",
+        "click/scrub split is a follow-up for both grids."
+      ],
+      "publishable_decision_summary": "Lift DragCalibration<T> capture-drag substrate; route 4 1-D coordinators (column resize, property-grid scrub, data-grid scrub, splitter); add data-grid numeric cell scrub",
+      "publishable_changes_bullets": [
+        "Lift DragCalibration<T> to pinion-core input.rs: the press-anchored \"first",
+        "move calibrates, later moves yield delta\" capture-drag substrate (4 tests).",
+        "Route 4 standalone 1-D calibration coordinators through it (within-round SSOT):",
+        "column resize (R786), property-grid scrub (R875), data-grid scrub (R914 new),",
+        "splitter ratio drag (R683); each migration is behaviour-preserving.",
+        "New deliverable: data-grid numeric cell scrub (Blender/Unreal drag-to-edit) on",
+        "hello-data-grid: wants_pointer_capture + capture_normalize(GRID_TAG) +",
+        "pointer_move arm/scrub/end; scrubbing query slot.",
+        "Factor set_cell clamped-write funnel shared by the AI value intervene write and",
+        "the live scrub, so a drag cannot exceed a bound a keyboard/RPC edit cannot.",
+        "Defer isomorphic siblings with documented shape reasons: scrollbar (1-D but",
+        "calibration embedded in its SCXML gesture statechart), dock + node-editor (2-D,",
+        "a future DragCalibration2D)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: all pass (DragCalibration 4 + column_widths 19 +",
+        "property-grid 45 + data-grid 44 + splitter 28).",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean",
+        "(-D pedantic); too_many_lines resolved by SRP extraction (handle_cell_send).",
+        "demos: r914 data-grid scrub (31 assert, NEW) + r837 data-grid + r875",
+        "property-grid scrub + r785 grid resize + r685/r683/r686 dock/splitter all PASS."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.35",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "scrollbar is a 1-D isomorphic calibration site but its snapshot is gated by +",
+        "embedded in its {Idle,Hover,Dragging,Disabled} SCXML gesture statechart",
+        "(scroll_max pinned for re-measure stability); route on a gesture-lifecycle round.",
+        "dock tear-off + node-graph node drag are 2-D (snapshot an x,y grab offset);",
+        "future DragCalibration2D (2 consumers exist = its own justified lift).",
+        "SCRUB_FLOAT_PER_PX / SCRUB_INT_PX_PER_STEP are 2 example-local tuning consts",
+        "(property-grid + data-grid); per-binding feel, Rule-of-Three defer (2 copies).",
+        "data-grid click-to-focus a numeric cell is absorbed as a zero-travel scrub",
+        "(R51.35 press-forward calibrates); matches property grid. Threshold-based",
+        "click/scrub split is a follow-up for both grids."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

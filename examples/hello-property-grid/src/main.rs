@@ -119,6 +119,7 @@ use pinion_a11y::{
     GridColumn, GroupedGridSelection, GroupedGridSpec, ListOption, WidgetA11y,
 };
 use pinion_core::composite_tag::split_send_payload;
+use pinion_core::input::DragCalibration;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
     IntrospectSchema, IntrospectValue, InterveneError, InvokeError, RepaintOwner, ThreadOwnership,
@@ -507,17 +508,17 @@ fn clear_popup(
 /// [`Self::begin_edit`] can seed it. Mutations write the Signals directly —
 /// no hooks at invoke time, so the External is self-contained on any thread
 /// (the todomvc `TodoEditExternal` shape).
-/// R875 — the live numeric-scrub calibration. The first capture `pointer_move`
-/// of an armed drag snapshots the dragged source, its kind, its value at press,
-/// and the cursor's anchor fraction; each later move applies
-/// `base + travel_px · sensitivity`. `Copy` so it lives in a `Cell` (the
-/// column-resize `ResizeDragStart` idiom).
+/// R875 / R914 — the per-drag payload the numeric scrub's [`DragCalibration`]
+/// snapshots on the first capture `pointer_move`: the dragged source, its
+/// [`CellKind`], and its value at press. The cursor's anchor fraction lives in
+/// the [`DragCalibration`] itself; each later move applies
+/// `base + travel_px · sensitivity`. `Copy` so it rides in the calibration's
+/// `Cell`.
 #[derive(Clone, Copy)]
 struct ScrubDrag {
     source: usize,
     kind: CellKind,
     base: f64,
-    press_x_rel: f64,
 }
 
 struct PropertyGridExternal {
@@ -534,10 +535,11 @@ struct PropertyGridExternal {
     /// before the first `pointer_move` calibrates the drag. `None` for a press
     /// on a non-numeric row (which never scrubs).
     scrub_armed: Cell<Option<usize>>,
-    /// R875 — the live scrub calibration once dragging begins; `Some` between
-    /// the first `pointer_move` and the release. Its presence at `PointerUp`
-    /// distinguishes a scrub (commit, suppress the click) from a click.
-    scrub_drag: Cell<Option<ScrubDrag>>,
+    /// R875 / R914 — the live scrub calibration ([`DragCalibration`]) once
+    /// dragging begins; active between the first `pointer_move` and the release.
+    /// Its activity at `PointerUp` distinguishes a scrub (commit, suppress the
+    /// click) from a click.
+    scrub_cal: DragCalibration<ScrubDrag>,
 }
 
 impl PropertyGridExternal {
@@ -557,7 +559,7 @@ impl PropertyGridExternal {
             popup_cursor,
             popup_hover,
             scrub_armed: Cell::new(None),
-            scrub_drag: Cell::new(None),
+            scrub_cal: DragCalibration::new(),
         }
     }
 
@@ -615,14 +617,15 @@ impl PropertyGridExternal {
         self.scrub_armed.set(numeric.then_some(source));
     }
 
-    /// R875 — drive the live numeric scrub from the captured cursor's horizontal
-    /// fraction `x_rel` across the grid (`GRID_TAG`). The first move calibrates
-    /// (snapshot the base value + anchor fraction, no mutation — the user has
-    /// not dragged yet, exactly the column-resize first-move rule); each later
-    /// move writes `base + travel_px · sensitivity`, where
-    /// `travel_px = (x_rel − press_x_rel) · GRID_W_PX` recovers true pixels from
-    /// the fraction. An int scrub steps in whole units; a float scrub is
-    /// continuous.
+    /// R875 / R914 — drive the live numeric scrub from the captured cursor's
+    /// horizontal fraction `x_rel` across the grid (`GRID_TAG`) through the
+    /// [`DragCalibration`] substrate. The first move calibrates: `seed` snapshots
+    /// the armed source's kind + base value (declining — `None` — if nothing is
+    /// armed or the source is no longer numeric), and the move mutates nothing
+    /// (the user has not dragged yet). Each later move yields the fraction delta,
+    /// which `· GRID_W_PX` recovers as pixel travel; the scrub writes
+    /// `base + travel_px · sensitivity`. An int scrub steps in whole units; a
+    /// float scrub is continuous.
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
@@ -631,30 +634,27 @@ impl PropertyGridExternal {
                   i64's range; the f64→i64 step is an intentional round-to-unit"
     )]
     fn scrub_to(&self, x_rel: f64) {
-        match self.scrub_drag.get() {
-            None => {
-                let Some(source) = self.scrub_armed.get() else { return };
-                let model = self.model.get();
-                let (kind, base) = match model.get(source) {
-                    Some(CellValue::Int(i)) => (CellKind::Int, *i as f64),
-                    Some(CellValue::Float(f)) => (CellKind::Float, *f),
-                    // Armed source is no longer numeric (model changed under us).
-                    _ => return,
-                };
-                self.scrub_drag.set(Some(ScrubDrag { source, kind, base, press_x_rel: x_rel }));
+        let Some((drag, delta)) = self.scrub_cal.drive(x_rel, || {
+            let source = self.scrub_armed.get()?;
+            let model = self.model.get();
+            match model.get(source) {
+                Some(CellValue::Int(i)) => Some(ScrubDrag { source, kind: CellKind::Int, base: *i as f64 }),
+                Some(CellValue::Float(f)) => Some(ScrubDrag { source, kind: CellKind::Float, base: *f }),
+                // Nothing armed, or the armed source is no longer numeric.
+                _ => None,
             }
-            Some(drag) => {
-                let travel_px = (x_rel - drag.press_x_rel) * GRID_W_PX;
-                let next = match drag.kind {
-                    CellKind::Int => {
-                        let steps = (travel_px / SCRUB_INT_PX_PER_STEP).round() as i64;
-                        CellValue::Int(drag.base as i64 + steps)
-                    }
-                    _ => CellValue::Float(drag.base + travel_px * SCRUB_FLOAT_PER_PX),
-                };
-                self.set_value(drag.source, next);
+        }) else {
+            return;
+        };
+        let travel_px = delta * GRID_W_PX;
+        let next = match drag.kind {
+            CellKind::Int => {
+                let steps = (travel_px / SCRUB_INT_PX_PER_STEP).round() as i64;
+                CellValue::Int(drag.base as i64 + steps)
             }
-        }
+            _ => CellValue::Float(drag.base + travel_px * SCRUB_FLOAT_PER_PX),
+        };
+        self.set_value(drag.source, next);
     }
 
     /// R875 — tear down the scrub at release. Returns whether a drag was in
@@ -663,12 +663,12 @@ impl PropertyGridExternal {
     /// cursor as a plain click would.
     fn end_scrub(&self) -> bool {
         self.scrub_armed.set(None);
-        self.scrub_drag.take().is_some()
+        self.scrub_cal.end()
     }
 
     /// Whether a numeric scrub is live (the AI-first `scrubbing` query slot).
     fn is_scrubbing(&self) -> bool {
-        self.scrub_drag.get().is_some()
+        self.scrub_cal.is_active()
     }
 
     /// Enter edit mode on `row`. A text / int / float row latches

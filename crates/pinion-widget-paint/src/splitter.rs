@@ -72,14 +72,13 @@
 //! the contract is satisfied automatically.
 
 use std::borrow::Cow;
-use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
-use pinion_core::input::PointerWireEvent;
+use pinion_core::input::{DragCalibration, PointerWireEvent};
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Scene};
 use pinion_core::style::{
@@ -534,26 +533,6 @@ pub fn view_splitter(
 /// (R683.B §5.16) Cursor + ratio snapshot captured on the first
 /// `pointer_move` under capture lock.
 ///
-/// The press-time frame the framework supplies under capture lock
-/// is the calibration point — subsequent frames apply `delta_fraction
-/// × extent` to the press-time ratio and dispatch `Signal::set` on
-/// the shared `ratio` handle. Mirror of
-/// [`pinion_core::widgets::scrollbar::ScrollBarExternal`]'s
-/// `DragStart` discipline (R660 §5.45).
-#[derive(Debug, Clone, Copy)]
-struct SplitterDragStart {
-    /// Cursor fraction at press time along the drag axis.
-    /// `x_rel` for `Horizontal`, `y_rel` for `Vertical`. May exceed
-    /// `[0.0, 1.0]` under capture lock when the cursor strays past
-    /// the splitter rect — the drag math saturates via the
-    /// `[min_ratio, max_ratio]` clamp.
-    cursor_fraction: f32,
-    /// Ratio value at press time. The drag formula is
-    /// `new_ratio = clamp(ratio_at_press + (cursor_fraction_now -
-    /// cursor_fraction_at_press), min_ratio, max_ratio)`.
-    ratio_at_press: f32,
-}
-
 /// (R683.B §5.16) Draggable handle External for the
 /// [`view_splitter`] paint helper. Captures the press → drag → release
 /// span, projects normalised cursor delta into the shared
@@ -603,16 +582,15 @@ pub struct SplitterExternal {
     ratio: Option<Rc<Signal<f32>>>,
     min_ratio: f32,
     max_ratio: f32,
-    drag_start: Cell<Option<SplitterDragStart>>,
-    /// Splitter Container's extent along the drag axis at the
-    /// moment of `pointer_down`, in normalised cursor-fraction
-    /// units. Always `1.0` because [`Self::pointer_move`] receives
-    /// `x_rel` / `y_rel` already normalised to the Container's
-    /// post-layout rect — drag delta in cursor-fraction units is
-    /// directly the drag delta in ratio units. Kept as a field so a
-    /// future "snap-to-handle" mode can scale the projection
-    /// without churning the pointer-move body shape.
-    is_dragging: Cell<bool>,
+    /// R914 — the press-anchored capture-drag calibration ([`DragCalibration`],
+    /// the SSOT shared with the R786 column resize + the R875 / R914 grid
+    /// scrubs). The payload is the `ratio_at_press` (f32); the first move
+    /// snapshots it + the cursor's anchor fraction, each later move yields the
+    /// fraction delta the ratio is moved by. The cursor delta is already in
+    /// ratio units (`x_rel` / `y_rel` are normalised to the splitter rect, a
+    /// basis of `1.0`), so no pixel-width multiply is needed — the `[min_ratio,
+    /// max_ratio]` clamp saturates a stray past the panel edge.
+    drag: DragCalibration<f32>,
 }
 
 impl core::fmt::Debug for SplitterExternal {
@@ -622,7 +600,7 @@ impl core::fmt::Debug for SplitterExternal {
             .field("ratio_attached", &self.ratio.is_some())
             .field("min_ratio", &self.min_ratio)
             .field("max_ratio", &self.max_ratio)
-            .field("is_dragging", &self.is_dragging.get())
+            .field("is_dragging", &self.is_dragging())
             .finish_non_exhaustive()
     }
 }
@@ -642,8 +620,7 @@ impl SplitterExternal {
             ratio: None,
             min_ratio: 0.05,
             max_ratio: 0.95,
-            drag_start: Cell::new(None),
-            is_dragging: Cell::new(false),
+            drag: DragCalibration::new(),
         }
     }
 
@@ -686,7 +663,7 @@ impl SplitterExternal {
     /// (the M3 dragged state-layer overlay).
     #[must_use]
     pub fn is_dragging(&self) -> bool {
-        self.is_dragging.get()
+        self.drag.is_active()
     }
 
     /// Currently-attached ratio Signal handle (diagnostic / test
@@ -696,15 +673,12 @@ impl SplitterExternal {
         self.ratio.as_ref()
     }
 
-    /// Project the cursor fraction along the drag axis into the
-    /// new ratio. Pure function — the [`Self::pointer_move`]
-    /// dispatcher uses it, and the unit tests pin the projection
-    /// without spinning up the full drag wire.
-    fn project_ratio(&self, cursor_fraction: f32) -> Option<f32> {
-        let drag_start = self.drag_start.get()?;
-        let delta = cursor_fraction - drag_start.cursor_fraction;
-        let new_ratio = (drag_start.ratio_at_press + delta).clamp(self.min_ratio, self.max_ratio);
-        Some(new_ratio)
+    /// Project the press-anchored ratio + the cursor-fraction `delta` into the
+    /// clamped new ratio (`ratio_at_press + delta`, the basis-`1.0` application
+    /// of the [`DragCalibration`] travel). Pure helper the [`Self::pointer_move`]
+    /// dispatcher uses once the calibration has yielded a delta.
+    fn project_ratio(&self, ratio_at_press: f32, delta: f32) -> f32 {
+        (ratio_at_press + delta).clamp(self.min_ratio, self.max_ratio)
     }
 }
 
@@ -751,6 +725,12 @@ impl External for SplitterExternal {
     /// No-op without an attached `ratio` handle (paint-only mode —
     /// the demo's bring-up sequence lands the visible peer first +
     /// wires the reactive state later).
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "the cursor fraction is in [~-1, ~2] under the capture lock; the \
+                  f64 delta narrows to f32 with no meaningful precision loss for a \
+                  ratio in [0, 1]"
+    )]
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         let cursor_fraction = match self.orientation {
             SplitterOrientation::Horizontal => x_rel,
@@ -759,19 +739,12 @@ impl External for SplitterExternal {
         let Some(ratio_handle) = self.ratio.as_ref() else {
             return;
         };
-        if self.drag_start.get().is_none() {
-            // Press-time calibration frame. Capture the snapshot +
-            // arm the drag-in-progress flag; do not mutate the
-            // ratio (the user has not dragged yet).
-            self.drag_start.set(Some(SplitterDragStart {
-                cursor_fraction,
-                ratio_at_press: ratio_handle.get(),
-            }));
-            self.is_dragging.set(true);
-            return;
-        }
-        if let Some(new_ratio) = self.project_ratio(cursor_fraction) {
-            ratio_handle.set(new_ratio);
+        // R914 — the first move calibrates (snapshot `ratio_at_press` + the
+        // cursor anchor, no mutation); each later move yields the fraction delta.
+        if let Some((ratio_at_press, delta)) =
+            self.drag.drive(f64::from(cursor_fraction), || Some(ratio_handle.get()))
+        {
+            ratio_handle.set(self.project_ratio(ratio_at_press, delta as f32));
         }
     }
 
@@ -797,8 +770,7 @@ impl External for SplitterExternal {
 /// the introspect surface so the teardown path is exercised end-to-
 /// end without spinning up the full `InputRouter` capture lock.
 fn clear_drag_state(ext: &SplitterExternal) {
-    ext.drag_start.set(None);
-    ext.is_dragging.set(false);
+    ext.drag.end();
 }
 
 impl ExternalIntrospect for SplitterExternal {
@@ -818,7 +790,7 @@ impl ExternalIntrospect for SplitterExternal {
                 SplitterOrientation::Vertical => "vertical".to_string(),
             })),
             "ratio" => self.ratio.as_ref().map(|r| IntrospectValue::Float(f64::from(r.get()))),
-            "dragging" => Some(IntrospectValue::Bool(self.is_dragging.get())),
+            "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
             _ => None,
         }
     }

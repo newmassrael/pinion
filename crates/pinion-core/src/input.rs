@@ -37,6 +37,8 @@
 //! tracking so empty `Preedit` triggers `Cancel` and `Disabled`
 //! cancels an in-flight session.
 
+use core::cell::Cell;
+
 use crate::cell_value::CellKind;
 use crate::external::IntrospectValue;
 use crate::scene::Scene;
@@ -589,6 +591,130 @@ pub const KEYBOARD_ACTIVATE_EVENT: &str = "KeyboardActivate";
 #[must_use]
 pub fn is_activation_event(event_name: &str) -> bool {
     event_name == KEYBOARD_ACTIVATE_EVENT || event_name == PointerWireEvent::Up.as_wire_name()
+}
+
+/// The press-time snapshot a [`DragCalibration`] holds between the first
+/// captured move and the release: the per-consumer `payload` plus the cursor's
+/// `press_x_rel` anchor fraction across the basis rect.
+#[derive(Clone, Copy, Debug)]
+struct DragAnchor<T: Copy> {
+    payload: T,
+    press_x_rel: f64,
+}
+
+/// R914 §5.27 §5.35 — the capture-drag **calibration** substrate: the
+/// "first captured move calibrates, every later move yields travel" idiom
+/// shared by the standalone 1-D drag-calibration coordinators — the column
+/// resize ([`ColumnResizeExternal`](crate::widgets::column_widths), R786), the
+/// property-grid numeric scrub (R875), the data-grid cell scrub (R914), and the
+/// splitter ratio drag (`SplitterExternal` in `pinion-widget-paint`, R683).
+/// These all own the drag micro-lifecycle entirely in `pointer_move`
+/// (calibrate → apply) + a `PointerUp` teardown.
+///
+/// Two adjacent isomorphic families are deliberately *not* routed here, for
+/// shape reasons rather than effort:
+/// * the **scroll bar** ([`ScrollBarExternal`](crate::widgets::scrollbar), R660)
+///   is 1-D isomorphic, but its calibration snapshot is gated by + embedded in
+///   its `{Idle, Hover, Dragging, Disabled}` SCXML gesture statechart (the
+///   `Dragging` state owns the snapshot's lifecycle; `scroll_max` is pinned at
+///   press for mid-drag re-measure stability), so routing it would couple a
+///   separate primitive's lifetime to the statechart transitions — its
+///   `DragStart` stays statechart-local;
+/// * the **dock tear-off** (`dock.rs` in `pinion-widget-paint`) and the
+///   **node-graph node drag** (hello-node-editor) are *2-D* (they snapshot
+///   an `(x, y)` grab offset and apply a 2-D delta), a genuinely different
+///   shape than this 1-D primitive — a future `DragCalibration2D` (two
+///   consumers exist, so its own justified lift, not forced into this one).
+///
+/// A capture-lock pointer drag
+/// ([`wants_pointer_capture`](crate::external::External::wants_pointer_capture))
+/// delivers a stream of
+/// [`pointer_move(x_rel, _)`](crate::external::External::pointer_move) where
+/// `x_rel` is the cursor's fraction across a *stable-width* basis rect
+/// ([`capture_normalize`](crate::external::External::capture_normalize)). The
+/// drag is anchored on the **press**, not on the first move, so:
+///
+/// * the **first** move after a press is *calibration only* — it snapshots the
+///   payload (the dragged thing's value at press) and the cursor's anchor
+///   fraction, and mutates nothing (the user has not dragged yet, exactly the
+///   column-resize first-move rule);
+/// * every **later** move yields the cursor's fraction delta since the press
+///   (`x_rel − press_x_rel`); the caller scales it by its basis width to recover
+///   true pixel travel and applies it on top of the snapshotted base, so an
+///   intermediate clamp un-clamps cleanly when the cursor returns.
+///
+/// `T` is the per-consumer payload that genuinely diverges — a column's
+/// `width_at_press: u32` for the resize, a `(source, kind, base)` triple for a
+/// scrub — and the basis width and the value application stay with the caller
+/// (a const grid width here, a measured viewport there; whole int units vs a
+/// continuous float). What is *invariant*, and so lifted here so it cannot
+/// drift between the three, is the press-anchored calibration and the "did a
+/// drag actually run?" teardown signal that lets a release suppress the
+/// trailing click.
+///
+/// `Copy` payload so the snapshot lives in a [`Cell`] (the `ResizeDragStart` /
+/// `ScrubDrag` idiom this generalises).
+pub struct DragCalibration<T: Copy> {
+    anchor: Cell<Option<DragAnchor<T>>>,
+}
+
+impl<T: Copy> DragCalibration<T> {
+    /// An idle calibration — no drag in flight.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { anchor: Cell::new(None) }
+    }
+
+    /// Drive one captured `pointer_move` at cursor fraction `x_rel`.
+    ///
+    /// On the **first** move the calibration is empty: `seed()` snapshots the
+    /// payload (returning [`None`] *declines* the drag — a press that did not
+    /// land on a draggable target, e.g. a non-numeric scrub row), and the move
+    /// returns [`None`] (calibration only, no mutation). Every **later** move
+    /// returns `Some((payload, delta))` where `delta = x_rel − press_x_rel`;
+    /// multiply `delta` by the basis width for the cursor's pixel travel since
+    /// the press.
+    pub fn drive(&self, x_rel: f64, seed: impl FnOnce() -> Option<T>) -> Option<(T, f64)> {
+        match self.anchor.get() {
+            None => {
+                if let Some(payload) = seed() {
+                    self.anchor.set(Some(DragAnchor { payload, press_x_rel: x_rel }));
+                }
+                None
+            }
+            Some(anchor) => Some((anchor.payload, x_rel - anchor.press_x_rel)),
+        }
+    }
+
+    /// Tear the drag down at release (`PointerUp` / `PointerCancel`). Returns
+    /// whether a drag had calibrated — a real drag ran — so the caller can
+    /// suppress the trailing click (a scrub must not also open the inline editor
+    /// or move the cursor as a plain click would). A press that never moved
+    /// returns `false`: it was a click, not a drag.
+    pub fn end(&self) -> bool {
+        self.anchor.take().is_some()
+    }
+
+    /// Whether a drag is live (calibrated and not yet released) — the AI-first
+    /// `dragging` / `scrubbing` query slot and a future drag-highlight surface.
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.anchor.get().is_some()
+    }
+}
+
+impl<T: Copy> Default for DragCalibration<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: Copy> core::fmt::Debug for DragCalibration<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DragCalibration")
+            .field("is_active", &self.is_active())
+            .finish_non_exhaustive()
+    }
 }
 
 /// R764.1 §5.38 §5.22 — forward a W3C `KeyboardEvent.key` to the
@@ -1200,5 +1326,67 @@ mod edit_field_keymap_tests {
             );
             assert!(!handled, "{key} forwards; a missing field reports unhandled");
         }
+    }
+}
+
+#[cfg(test)]
+mod drag_calibration_tests {
+    use super::DragCalibration;
+
+    /// The first move snapshots the base and the anchor fraction but yields no
+    /// travel (calibration only) — the press-anchored, non-mutating first frame
+    /// the column resize and the scrub both depend on.
+    #[test]
+    fn first_move_calibrates_and_yields_nothing() {
+        let cal = DragCalibration::<f64>::new();
+        assert!(!cal.is_active(), "idle before the first move");
+        let first = cal.drive(0.5, || Some(10.0));
+        assert_eq!(first, None, "the calibration frame yields no travel");
+        assert!(cal.is_active(), "the snapshot is now armed");
+    }
+
+    /// Every later move reports the payload and the cursor's fraction delta
+    /// since the press — the caller scales `delta` by its basis width.
+    #[test]
+    fn later_moves_yield_payload_and_fraction_delta() {
+        /// The payload rides through untouched; the delta is float arithmetic,
+        /// so compare it against an epsilon rather than for bit-equality.
+        fn assert_drag(got: Option<(f64, f64)>, base: f64, delta: f64) {
+            let (p, d) = got.expect("a later move yields travel");
+            assert!((p - base).abs() < f64::EPSILON, "payload {p} != base {base}");
+            assert!((d - delta).abs() < 1e-9, "delta {d} != expected {delta}");
+        }
+        let cal = DragCalibration::<f64>::new();
+        cal.drive(0.5, || Some(10.0)); // calibrate at fraction 0.5, base 10.0
+        assert_drag(cal.drive(0.7, || unreachable!("seed runs once")), 10.0, 0.2);
+        // Delta is always measured from the PRESS, not the previous move — so a
+        // clamp that floored an intermediate value un-clamps cleanly on return.
+        assert_drag(cal.drive(0.4, || unreachable!("seed runs once")), 10.0, -0.1);
+        assert_drag(cal.drive(0.5, || unreachable!("seed runs once")), 10.0, 0.0);
+    }
+
+    /// A `seed` that returns `None` declines the drag — the snapshot stays
+    /// empty (a press on a non-draggable target, e.g. a non-numeric scrub row).
+    #[test]
+    fn declined_seed_does_not_arm() {
+        let cal = DragCalibration::<u32>::new();
+        assert_eq!(cal.drive(0.3, || None), None);
+        assert!(!cal.is_active(), "a declined seed never arms the drag");
+        // A later move with a live seed still calibrates (the arm is per-press).
+        assert_eq!(cal.drive(0.3, || Some(7)), None);
+        assert!(cal.is_active());
+    }
+
+    /// `end` reports whether a drag had calibrated, so a release can suppress
+    /// the trailing click only when a real drag ran.
+    #[test]
+    fn end_reports_whether_a_drag_ran() {
+        let cal = DragCalibration::<u32>::new();
+        assert!(!cal.end(), "a press that never moved is a click, not a drag");
+
+        cal.drive(0.5, || Some(7));
+        assert!(cal.end(), "a calibrated drag is reported on teardown");
+        assert!(!cal.is_active(), "teardown clears the snapshot");
+        assert!(!cal.end(), "a second teardown reports no drag (idempotent)");
     }
 }
