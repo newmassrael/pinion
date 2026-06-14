@@ -16,7 +16,11 @@
 //! ## Architecture (unidirectional, Effect-driven prefetch)
 //!
 //! - A per-page `Resource` cache (`HashMap<page, Rc<Resource<Vec<AssetRow>>>>`
-//!   in `Owner::cache`) — only fetched pages are ever resident.
+//!   in `Owner::cache`) — a page is materialised only when it first scrolls
+//!   into view (vs all `N` rows up front). Fetched pages are then **retained**
+//!   for the app lifetime: bounded here (100 pages), but a truly unbounded
+//!   source would add LRU eviction of far-away pages (a deliberate follow-up,
+//!   not wired this slice).
 //! - An [`Effect`] subscribed to the **scroll offset** [`Signal`] computes the
 //!   visible page range (`compute_visible_range`) and kicks off a
 //!   [`Resource::fetch_with`] for every page not yet in the cache, through the
@@ -240,8 +244,11 @@ fn resolve_visible_pages(window: &VisibleWindow, cache: &PageCache) -> PageState
 /// The `role=status` band line — the SSOT for the visible-band text + the live
 /// region's accessible name.
 fn status_line(window: &VisibleWindow, page_states: &PageStates) -> String {
-    let first_page = window.first / PAGE_SIZE;
-    let loading = !matches!(page_states.get(&first_page), Some(ResourceState::Ready(_)));
+    // "Loading" if ANY visible page is not yet `Ready` — the window can
+    // straddle two pages, and a skeleton anywhere in the band means the band
+    // is still loading (not just the top page).
+    let loading = visible_pages(window)
+        .any(|p| !matches!(page_states.get(&p), Some(ResourceState::Ready(_))));
     let last = window.first + window.count.saturating_sub(1);
     if loading {
         format!("Loading rows {}\u{2013}{}\u{2026}", window.first + 1, last + 1)
@@ -633,6 +640,25 @@ mod tests {
             assert_eq!(item.role, AriaRole::ListItem);
             assert_eq!(item.size_of_set, Some(u32::try_from(N).unwrap()));
         }
+    }
+
+    #[test]
+    fn r924_status_loads_when_any_visible_page_unresolved() {
+        // R924.1 (review fix): a window straddling two pages reports "Loading"
+        // if EITHER visible page is unresolved — not just the top page.
+        let mut states = PageStates::new();
+        states.insert(0, ResourceState::Ready(page_rows(0)));
+        states.insert(1, ResourceState::Loading);
+        let window = VisibleWindow { first: 96, count: 8 }; // rows 96..103 → pages 0+1
+        assert!(
+            status_line(&window, &states).starts_with("Loading rows"),
+            "page 1 still Loading → band is loading",
+        );
+        states.insert(1, ResourceState::Ready(page_rows(1)));
+        assert!(
+            status_line(&window, &states).starts_with("Rows "),
+            "both visible pages Ready → band is loaded",
+        );
     }
 
     #[test]

@@ -1809,15 +1809,21 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
         }
         // R924 §5.22 — keep the event loop awake while the owner-scoped
         // `LocalTaskPump` has async work in flight (a `Resource` fetch
-        // spawned by a reactive `Effect` — e.g. lazy page loading driven
-        // by a scroll). `compute_paint_scene_internal` polls the pump and
-        // re-arms `redraw_requested` while pending, but that self-sustaining
-        // loop needs a frame to *start* it: a `HandlerKind::Read` RPC
-        // (`scene/scroll`) mutates reactive state without the intent-tail
-        // redraw arming a `Mutate` handler gets, so the pump would otherwise
-        // stall until the next unrelated input. This is the "stay awake while
-        // active" contract the `LocalTaskPump` doc names (sibling of the
-        // `any_animation_active` redraw arming in the substrate).
+        // spawned by a reactive `Effect` — e.g. lazy page loading driven by
+        // a scroll). `compute_paint_scene_internal` polls the pump and
+        // re-arms `redraw_requested` while pending, so the loop self-sustains
+        // *once a frame renders*; this requests the frame that bootstraps it.
+        // It is needed because some RPCs mutate reactive state — and so spawn
+        // pump work — without arming a redraw (e.g. `scene/scroll`, whose
+        // offset write fires the prefetch `Effect`): absent this, the loop
+        // would sleep at `ControlFlow::Wait` (the deadline above is computed
+        // only from animations + immediate-mode subtrees, not the pump) and
+        // the fetch would stall. This is the "stay awake while active"
+        // contract the `LocalTaskPump` doc names. NOTE the cost: while a task
+        // is pending the scene re-renders every frame (the v1 `Waker::noop`
+        // poll model — see `LocalTaskPump` docs); a wake-channel waker that
+        // re-renders only on task progress is the documented forward
+        // refinement (R761.1 carry) for genuinely long-running fetches.
         if self.core.root_owner().local_task_pump().has_pending() {
             self.core.request_redraw();
             earliest_deadline = Some(earliest_deadline.map_or(now, |d| d.min(now)));

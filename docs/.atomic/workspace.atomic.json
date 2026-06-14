@@ -40025,6 +40025,60 @@
         "about_to_wait keep-alive is winit-loop code (integration-tested by the r924 live demo, not unit-testable in isolation)"
       ]
     },
+    "R924.1": {
+      "decision_summary": "Session-review adversarial clearance of R924: 3 reviewers (correctness/SSOT/doc-honesty), all findings re-verified by my own grep+read. REAL fixes: the about_to_wait keep-alive comment misattributed the gap to HandlerKind::Read (which is OCC-revision only, not redraw); stale dangling doc names PendingFor/Defer (pre-lift working names); status_line checked only the top page of a straddling window; the in-file out-of-memory framing lacked the no-eviction (retention) caveat. Over-reach rejected + real follow-ups deferred with reasons.",
+      "changes_bullets": [
+        "comment fix (app.rs about_to_wait): drop the false claim that a Mutate handler's intent-tail arms redraw",
+        "HandlerKind is OCC SceneRevision-bump only (dispatch.rs), NOT redraw; state the real reason + disclose v1 busy-poll cost",
+        "stale doc names: hello-async-data referenced [`PendingFor`] (renamed DeferredReady in the R923 lift) + the deleted Defer struct",
+        "status_line straddle (hello-lazy-list): a window over 2 pages reported only the top page's load state",
+        "now \"Loading\" if ANY visible page is unresolved (+ regression test r924_status_loads_when_any_visible_page_unresolved)",
+        "in-file honesty: hello-lazy-list doc now notes fetched pages are RETAINED (bounded 100-page; LRU eviction = follow-up)"
+      ],
+      "verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "hello-lazy-list 8 unit tests (+1 straddle regression) green; hello-async-data tests green",
+        "r924_lazy_list.py + r923_async_data.py PASS (status_line behavioral change; ZERO-FLAKE preserved)",
+        "3-reviewer findings (correctness/SSOT/doc-honesty) all re-verified by my own grep+read before fix-or-reject"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "REJECT Effect-marker lift (5 consumers Refetch/Loader/FilenameSync/2x PersistenceBoot) = net-zero wrapper; R666 nested-cache guard keeps real logic (dep pre-resolution + Signal subs) per-caller; watch if 6th lands",
+        "REJECT DeferredReady-pub-as-test-leak: consistent with ScriptedFileDialog / InMemory* deterministic-driver philosophy (AI-first headless = drivers are 1st-class prod surface)",
+        "REJECT page_rows/AssetRow shared-lift: example-local divergent demo scaffolding (no examples/common crate; ~10 example-local row_label variants = convention)",
+        "DEFER wake-channel Waker (R761.1 carry): re-renders only on task progress vs v1 Waker::noop per-frame busy-poll; for long-running real fetches (deterministic DeferredReady mocks are poll-driven by design)",
+        "DEFER scene/scroll HandlerKind=Read vs set_scroll_offset=Mutate: pre-existing OCC-revision classification inconsistency, orthogonal to the pump fix, not introduced by R924"
+      ],
+      "publishable_decision_summary": "Session-review adversarial clearance of R924: 3 reviewers (correctness/SSOT/doc-honesty), all findings re-verified by my own grep+read. REAL fixes: the about_to_wait keep-alive comment misattributed the gap to HandlerKind::Read (which is OCC-revision only, not redraw); stale dangling doc names PendingFor/Defer (pre-lift working names); status_line checked only the top page of a straddling window; the in-file out-of-memory framing lacked the no-eviction (retention) caveat. Over-reach rejected + real follow-ups deferred with reasons.",
+      "publishable_changes_bullets": [
+        "comment fix (app.rs about_to_wait): drop the false claim that a Mutate handler's intent-tail arms redraw",
+        "HandlerKind is OCC SceneRevision-bump only (dispatch.rs), NOT redraw; state the real reason + disclose v1 busy-poll cost",
+        "stale doc names: hello-async-data referenced [`PendingFor`] (renamed DeferredReady in the R923 lift) + the deleted Defer struct",
+        "status_line straddle (hello-lazy-list): a window over 2 pages reported only the top page's load state",
+        "now \"Loading\" if ANY visible page is unresolved (+ regression test r924_status_loads_when_any_visible_page_unresolved)",
+        "in-file honesty: hello-lazy-list doc now notes fetched pages are RETAINED (bounded 100-page; LRU eviction = follow-up)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "hello-lazy-list 8 unit tests (+1 straddle regression) green; hello-async-data tests green",
+        "r924_lazy_list.py + r923_async_data.py PASS (status_line behavioral change; ZERO-FLAKE preserved)",
+        "3-reviewer findings (correctness/SSOT/doc-honesty) all re-verified by my own grep+read before fix-or-reject"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "REJECT Effect-marker lift (5 consumers Refetch/Loader/FilenameSync/2x PersistenceBoot) = net-zero wrapper; R666 nested-cache guard keeps real logic (dep pre-resolution + Signal subs) per-caller; watch if 6th lands",
+        "REJECT DeferredReady-pub-as-test-leak: consistent with ScriptedFileDialog / InMemory* deterministic-driver philosophy (AI-first headless = drivers are 1st-class prod surface)",
+        "REJECT page_rows/AssetRow shared-lift: example-local divergent demo scaffolding (no examples/common crate; ~10 example-local row_label variants = convention)",
+        "DEFER wake-channel Waker (R761.1 carry): re-renders only on task progress vs v1 Waker::noop per-frame busy-poll; for long-running real fetches (deterministic DeferredReady mocks are poll-driven by design)",
+        "DEFER scene/scroll HandlerKind=Read vs set_scroll_offset=Mutate: pre-existing OCC-revision classification inconsistency, orthogonal to the pump fix, not introduced by R924"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

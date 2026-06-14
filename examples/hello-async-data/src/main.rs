@@ -45,12 +45,12 @@
 //!
 //! ## Latency model (ZERO-FLAKE)
 //!
-//! Fetch latency is a deterministic [`PendingFor`] future — `Pending`
+//! Fetch latency is a deterministic [`DeferredReady`] future — `Pending`
 //! `FETCH_LATENCY_POLLS` times, then `Ready` — never a wall-clock `sleep`.
 //! The `Loading` arm therefore stays observable for a fixed, generous poll
 //! window, so `wait_query`/`wait_until` reliably catches `Loading` before the
-//! terminal `Ready`/`Error` (the [`pinion_core::reactive::resource`] `Defer`
-//! test shape; same discipline as the R761.1 deferred file-dialog future).
+//! terminal `Ready`/`Error` (the same deterministic deferred-future SSOT the
+//! scripted file dialog uses; same discipline as the R761.1 deferred dialog).
 //!
 //! ## Verification
 //!
