@@ -77,7 +77,7 @@ def painted(tf, tag: str) -> bool:
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) boot — the tree structure ───────────────────────────
-        assert_eq(tq(tf, "row_count"), 23, "5 categories + 2 structs + 16 leaves, all expanded")
+        assert_eq(tq(tf, "row_count"), 28, "6 categories + 2 structs + 1 array + 19 leaves, all expanded")
         assert_eq(tq(tf, "id_at.0"), IDENTITY, "the first row is the Identity category")
         assert_eq(tq(tf, "level_at.0"), 1, "a category is aria-level 1")
         assert_eq(tq(tf, "expanded_at.0"), True, "categories boot expanded")
@@ -116,7 +116,7 @@ def body() -> None:
         assert_eq(gq(tf, "expanded.struct.Position"), True, "the struct boots expanded")
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", POS), False, "toggle_branch collapses it")
         assert_eq(gq(tf, "expanded.struct.Position"), False, "the struct is now collapsed")
-        assert_eq(tq(tf, "row_count"), 20, "collapsing Position hides its 3 fields (23 - 3)")
+        assert_eq(tq(tf, "row_count"), 25, "collapsing Position hides its 3 fields (28 - 3)")
         wait_until(lambda: not painted(tf, f"{GRID}#{POS_X}"), timeout=4.0, interval=0.03,
                    desc="the Position X field is hidden when its struct collapses")
         assert painted(tf, f"{GRID}#{POS}"), "the struct header stays painted when collapsed"
@@ -130,11 +130,11 @@ def body() -> None:
         # ── (F) collapse a category hides its leaves ────────────────
         tf.intervene(f"/{GRID}/external/expanded.{IDENTITY}", False)
         assert_eq(gq(tf, f"expanded.{IDENTITY}"), False, "intervene collapsed the Identity category")
-        assert_eq(tq(tf, "row_count"), 20, "collapsing Identity hides its 3 leaves (23 - 3)")
+        assert_eq(tq(tf, "row_count"), 25, "collapsing Identity hides its 3 leaves (28 - 3)")
         wait_until(lambda: not painted(tf, f"{GRID}#0"), timeout=4.0, interval=0.03,
                    desc="the Name leaf is hidden when Identity collapses")
         tf.intervene(f"/{GRID}/external/expanded.{IDENTITY}", True)
-        assert_eq(tq(tf, "row_count"), 23, "re-expanding restores the full tree")
+        assert_eq(tq(tf, "row_count"), 28, "re-expanding restores the full tree")
 
         # ── (G) the cursor is an id-keyed read/write (a pure move) ───
         # (The (E) header click already moved the cursor onto the struct — a

@@ -19,7 +19,7 @@ Two cooperating wires:
   property_grid        (coordinator) -> /external/toggle_branch (collapse a branch)
 
 Verified (>= 30 assertions):
-  (A) boot — search box painted, empty query, the full 23-row tree
+  (A) boot — search box painted, empty query, the full 28-row tree
   (B) name filter — "pos" reveals Transform > Position > X/Y/Z (5 rows)
   (C) clear via Backspace restores every row
   (D) deep prune — "name" leaves only Identity > Name
@@ -88,7 +88,7 @@ def body() -> None:
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid present"
         assert find_by_tag(snap, SEARCH) is not None, "search box painted in the title band"
-        assert_eq(_rows(tf), 23, "boot: 5 categories + 2 structs + 16 leaves")
+        assert_eq(_rows(tf), 28, "boot: 6 categories + 2 structs + 1 array + 19 leaves")
         assert_eq(_id(tf, 0), "cat.Identity", "the first row is the Identity category")
 
         # ── (B) name filter: "pos" -> Transform > Position > X/Y/Z ───
@@ -108,7 +108,7 @@ def body() -> None:
 
         # ── (C) clear restores every row ─────────────────────────────
         _clear(tf, 3)
-        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03,
+        wait_until(lambda: _rows(tf) == 28, timeout=4.0, interval=0.03,
                    desc="clearing the query restores all rows")
 
         # ── (D) deep prune: "name" -> Identity > Name only ───────────
@@ -118,7 +118,7 @@ def body() -> None:
         assert_eq(_id(tf, 0), "cat.Identity", "surviving category is Identity")
         assert_eq(_id(tf, 1), "0", "Name (value 0)")
         _clear(tf, 4)
-        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03, desc="cleared again")
+        wait_until(lambda: _rows(tf) == 28, timeout=4.0, interval=0.03, desc="cleared again")
 
         # ── (E) no-match query -> empty flatten ──────────────────────
         tf.text("zzz", path=SEARCH)
@@ -126,13 +126,13 @@ def body() -> None:
                    desc="no-match query empties the flatten")
         assert_eq(_id(tf, 0), None, "no row at position 0 when empty")
         _clear(tf, 3)
-        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03, desc="restored after no-match")
+        wait_until(lambda: _rows(tf) == 28, timeout=4.0, interval=0.03, desc="restored after no-match")
 
         # ── (F) collapse (no filter) hides a subtree; a filter reveals it ─
         # With no filter, collapsing Transform hides its 2 structs + 6 fields.
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", TRANSFORM), False, "Transform collapses")
-        wait_until(lambda: _rows(tf) == 15, timeout=4.0, interval=0.03,
-                   desc="collapsing Transform hides its 8-row subtree (23 - 8)")
+        wait_until(lambda: _rows(tf) == 20, timeout=4.0, interval=0.03,
+                   desc="collapsing Transform hides its 8-row subtree (28 - 8)")
         # The recursive filter auto-reveals matches regardless of collapse state.
         _focus_search(tf)
         tf.text("pos", path=SEARCH)
@@ -141,13 +141,13 @@ def body() -> None:
         _clear(tf, 3)
         # Re-expand Transform so the tree is whole again.
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", TRANSFORM), True, "Transform re-expands")
-        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03, desc="full tree restored")
+        wait_until(lambda: _rows(tf) == 28, timeout=4.0, interval=0.03, desc="full tree restored")
 
         # ── (G) Escape clears the filter + returns focus to the grid ──
         tf.text("pos", path=SEARCH)
         wait_until(lambda: _rows(tf) == 5, timeout=4.0, interval=0.03, desc="filtered before Escape")
         tf.key(path=SEARCH, name="Escape")
-        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03,
+        wait_until(lambda: _rows(tf) == 28, timeout=4.0, interval=0.03,
                    desc="Escape clears the filter")
         wait_until(lambda: tf.request("focus/get").result.get("focused") == GRID,
                    timeout=4.0, interval=0.03, desc="Escape returns focus to the grid")

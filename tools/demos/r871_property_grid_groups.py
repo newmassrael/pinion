@@ -19,7 +19,7 @@ Two externals cooperate:
     /external/row_count / id_at.<pos> / label_at.<pos> / cursor_index
 
 Verified (>= 30 assertions):
-  (A) boot taxonomy — 5 categories in the 23-row tree, their labels
+  (A) boot taxonomy — 6 categories in the 28-row tree, their labels
   (B) RPC collapse/expand — toggle_branch + expanded.<id> read/intervene
   (C) keyboard collapse — ArrowLeft/Right/Enter on a focused category branch
   (D) pointer — clicking a category header toggles its collapse
@@ -74,7 +74,7 @@ def body() -> None:
         # ── (A) boot category taxonomy ───────────────────────────────
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid present"
-        assert_eq(_rows(tf), 23, "5 categories + 2 structs + 16 leaves")
+        assert_eq(_rows(tf), 28, "6 categories + 2 structs + 1 array + 19 leaves")
         # Categories lead the flatten (each with its leaves), before the structs.
         assert_eq(tf.query(f"/{TREE}/external/label_at.0"), "Identity", "category 0 = Identity")
         assert_eq(tf.query(f"/{TREE}/external/id_at.0"), IDENTITY, "row 0 id")
@@ -92,17 +92,17 @@ def body() -> None:
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", IDENTITY), False, "collapse Identity")
         assert_eq(_expanded(tf, IDENTITY), False, "Identity collapsed")
         assert_eq(_expanded(tf, APPEARANCE), True, "Appearance still expanded")
-        wait_until(lambda: _rows(tf) == 20, timeout=4.0, interval=0.03,
-                   desc="collapsing Identity hides its 3 leaves (23 - 3)")
+        wait_until(lambda: _rows(tf) == 25, timeout=4.0, interval=0.03,
+                   desc="collapsing Identity hides its 3 leaves (28 - 3)")
         # Row 1 is now the Appearance category (the Identity leaves are gone).
         assert_eq(tf.query(f"/{TREE}/external/id_at.1"), APPEARANCE, "collapsed: row 1 now Appearance")
         assert_eq(tf.invoke(f"/{GRID}/external/toggle_branch", IDENTITY), True, "re-expand Identity")
-        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03, desc="re-expanded -> 23")
+        wait_until(lambda: _rows(tf) == 28, timeout=4.0, interval=0.03, desc="re-expanded -> 28")
         # Admin intervene of a collapse flag (the restore path).
         tf.intervene(f"/{GRID}/external/expanded.{PHYSICS}", False)
         assert_eq(_expanded(tf, PHYSICS), False, "intervene collapses Physics")
         tf.intervene(f"/{GRID}/external/expanded.{PHYSICS}", True)
-        wait_until(lambda: _rows(tf) == 23, timeout=4.0, interval=0.03, desc="all expanded again")
+        wait_until(lambda: _rows(tf) == 28, timeout=4.0, interval=0.03, desc="all expanded again")
 
         # ── (C) keyboard collapse / expand on a category branch ──────
         _focus_grid(tf)
@@ -110,7 +110,7 @@ def body() -> None:
         tf.key(path=GRID, name="ArrowLeft")  # collapse the focused branch
         wait_until(lambda: _expanded(tf, IDENTITY) is False, timeout=4.0,
                    interval=0.03, desc="ArrowLeft collapses the focused category")
-        wait_until(lambda: _rows(tf) == 20, timeout=4.0, interval=0.03, desc="Identity rows hidden")
+        wait_until(lambda: _rows(tf) == 25, timeout=4.0, interval=0.03, desc="Identity rows hidden")
         tf.key(path=GRID, name="ArrowRight")  # expand it again
         wait_until(lambda: _expanded(tf, IDENTITY) is True, timeout=4.0,
                    interval=0.03, desc="ArrowRight expands the focused category")
@@ -153,7 +153,7 @@ def body() -> None:
         _focus_grid(tf)
         tf.intervene("/external/cursor", "1")  # Tag (value 1)
         tf.key(path=GRID, name="Enter")
-        wait_until(lambda: tf.query("/external/editing") == 1, timeout=4.0,
+        wait_until(lambda: tf.query("/external/editing") == "1", timeout=4.0,
                    interval=0.03, desc="Enter edits the Tag row inside Identity")
         wait_until(lambda: tf.request("focus/get").result.get("focused") == EDIT,
                    timeout=4.0, interval=0.03, desc="focus moved into the inline field")

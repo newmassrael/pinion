@@ -128,8 +128,8 @@ use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::widgets::tree_nav::{
-    flat_visible, flat_visible_filtered, resolve_tree_key, set_expanded_in, toggle_expanded,
-    tree_view_introspection_extra, TreeKey, TreeNode, VisibleRow,
+    find_node_mut, flat_visible, flat_visible_filtered, resolve_tree_key, set_expanded_in,
+    toggle_expanded, tree_view_introspection_extra, TreeKey, TreeNode, VisibleRow,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
@@ -180,6 +180,11 @@ const INDENT_STEP: u32 = 16;
 const DISCLOSURE_COLLAPSED: &str = "\u{25B8}";
 /// U+25BE BLACK DOWN-POINTING SMALL TRIANGLE — an expanded branch's disclosure.
 const DISCLOSURE_EXPANDED: &str = "\u{25BE}";
+/// R931 — the array branch's "add element" glyph (ASCII plus).
+const ADD_GLYPH: &str = "+";
+/// R931 — U+2212 MINUS SIGN — an array element's "remove" glyph
+/// ([[non-ascii-literal-named-const-escape]]).
+const REMOVE_GLYPH: &str = "\u{2212}";
 
 // ─── numeric scrub (R875) ─────────────────────────────────────────
 
@@ -250,6 +255,14 @@ const CHOICE_OPT_PREFIX: &str = "opt";
 /// (`{GRID_TAG}#reset{source}`), routing its click to the coordinator's `reset`.
 /// A distinct prefix so `dispatch_send` never reads it as a numeric cell index.
 const RESET_PREFIX: &str = "reset";
+/// R931 — composite sub-tag for the array branch's "add element" button
+/// (`{GRID_TAG}#addelem`), routing its click to [`PropertyGridExternal::add_elem`].
+const ADD_ELEM_TAG: &str = "addelem";
+/// R931 — composite sub-tag prefix for one element's "remove" button
+/// (`{GRID_TAG}#rmelem{k}`), routing its click to
+/// [`PropertyGridExternal::remove_elem`]. A distinct prefix so `dispatch_send`
+/// never reads it as a numeric cell index or an `elem.<k>` leaf.
+const RM_ELEM_PREFIX: &str = "rmelem";
 
 // ─── colour-cell popup (R869) ─────────────────────────────────────
 
@@ -384,6 +397,27 @@ fn default_properties() -> Vec<CellValue> {
 const CAT_PREFIX: &str = "cat.";
 /// Branch-node id prefix for a struct property (`struct.Position`).
 const STRUCT_PREFIX: &str = "struct.";
+/// R931 — branch-node id prefix for an **array** property (`arr.weights`). An
+/// array is a collapsible branch like a struct, but its children are *dynamic*
+/// (the editor grows / shrinks the element list) and live in a **separate**
+/// `Signal<Vec<CellValue>>` sub-model, not the flat value model — so add /
+/// remove / reorder never displace a scalar leaf's stable `value_index`.
+const ARR_PREFIX: &str = "arr.";
+/// R931 — leaf-node id prefix for one array **element** (`elem.2`). The suffix
+/// is the element's position in the array sub-model; unlike a scalar leaf id
+/// (a bare decimal addressing the flat model), an element leaf's value lives in
+/// the array sub-model at that position ([`ValueRef::Elem`]).
+const ELEM_PREFIX: &str = "elem.";
+/// R931 — the one demo array property: a `TArray<f32>` (the Unreal Details
+/// "growable list of floats" — spawn weights / LOD distances). One array proves
+/// the dynamic-collection path; multi-array is the same pattern repeated.
+const ARR_BRANCH_ID: &str = "arr.weights";
+/// R931 — the array property's display label (the branch row name).
+const ARRAY_LABEL: &str = "Spawn Weights";
+/// R931 — the homogeneous element kind of the demo array. `Float`, so an
+/// element row reuses the scalar `Float` scrub + inline-edit path unchanged
+/// (the whole point of the unified [`ValueRef`] value address).
+const ARRAY_ELEM_KIND: CellKind = CellKind::Float;
 
 /// One node of the Inspector property tree: a collapsible **branch** (a category
 /// section or a struct property, `value_index = None`, `children` non-empty) or
@@ -425,6 +459,20 @@ impl PropertyNode {
     fn branch(id: String, label: &str, children: Vec<PropertyNode>) -> Self {
         Self { id, label: label.to_owned(), expanded: true, value_index: None, children }
     }
+
+    /// R931 — an **array element** leaf at array position `k`. Its `value_index`
+    /// is `None` (the value lives in the array sub-model, not the flat model,
+    /// addressed by [`ValueRef::Elem`]); its id (`elem.<k>`) is what marks it an
+    /// editable leaf to [`row_ref`]. The label is the Unreal-style `[k]` index.
+    fn elem_leaf(k: usize) -> Self {
+        Self {
+            id: format!("{ELEM_PREFIX}{k}"),
+            label: format!("[{k}]"),
+            expanded: false,
+            value_index: None,
+            children: Vec::new(),
+        }
+    }
 }
 
 impl TreeNode for PropertyNode {
@@ -454,6 +502,48 @@ impl TreeNode for PropertyNode {
 /// router, the keyboard activation and the a11y builder.
 fn row_value_index(id: &str) -> Option<usize> {
     id.parse::<usize>().ok()
+}
+
+/// R931 — a unified **value address**: where the editable value behind a leaf
+/// row lives. A `Scalar` leaf addresses the flat value model (`model[i]`, every
+/// R836 scalar property + R921 struct field); an `Elem` leaf addresses the
+/// array sub-model (`array[k]`, an R931 array element). Generalising the edit
+/// latch / scrub arm / read+write funnel over this enum (rather than a bare
+/// `usize`) is what lets an array element reuse the *same* inline editor and
+/// scrub path as a scalar — no parallel edit machinery, just a two-armed value
+/// accessor ([`PropertyGridExternal::value_at`] / [`set_value_at`]).
+///
+/// [`set_value_at`]: PropertyGridExternal::set_value_at
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum ValueRef {
+    /// A flat value-model slot (`model[i]`) — every scalar / struct-field leaf.
+    Scalar(usize),
+    /// An array sub-model element (`array[k]`) — an R931 array element leaf.
+    Elem(usize),
+}
+
+/// R931 — the value address a tree-row id points at, or `None` for a branch id
+/// (a `cat.` / `struct.` / `arr.` prefix). The unified peer of
+/// [`row_value_index`]: a bare decimal is a [`ValueRef::Scalar`]; an `elem.<k>`
+/// id is a [`ValueRef::Elem`]. The one place "is this row an editable leaf, and
+/// where does its value live?" is decided, shared by the click router, the
+/// keyboard activation, the view and the a11y builder.
+fn row_ref(id: &str) -> Option<ValueRef> {
+    if let Some(k) = id.strip_prefix(ELEM_PREFIX) {
+        return k.parse::<usize>().ok().map(ValueRef::Elem);
+    }
+    id.parse::<usize>().ok().map(ValueRef::Scalar)
+}
+
+/// R931 — the tree-row node id that addresses `value_ref` (the inverse of
+/// [`row_ref`]). A `Scalar(i)` is the bare decimal "6"; an `Elem(k)` is
+/// `elem.<k>`. Used to map the edit latch / cursor back to a visible row id for
+/// the visibility gate ([`PropertyGridExternal::editing_if_visible`]).
+fn ref_node_id(value_ref: ValueRef) -> String {
+    match value_ref {
+        ValueRef::Scalar(i) => i.to_string(),
+        ValueRef::Elem(k) => format!("{ELEM_PREFIX}{k}"),
+    }
 }
 
 /// Depth-first find of the node carrying `id` in a `PropertyNode` tree — the
@@ -518,7 +608,11 @@ fn leaf_modified(model: &[CellValue], defaults: &[CellValue], value_index: usize
 /// `(count)` detail a category header shows ("Identity (3)", "Transform (6)").
 fn leaf_descendant_count(tree: &[PropertyNode], id: &str) -> usize {
     fn count(node: &PropertyNode) -> usize {
-        if node.value_index.is_some() {
+        // R931 — a leaf is any node whose id is a value address (a scalar slot
+        // OR an array element), not just `value_index.is_some()`: an array
+        // element leaf has `value_index = None` (its value lives in the array
+        // sub-model) yet is still an editable property the category count.
+        if row_ref(&node.id).is_some() {
             1
         } else {
             node.children.iter().map(count).sum()
@@ -532,6 +626,49 @@ fn leaf_descendant_count(tree: &[PropertyNode], id: &str) -> usize {
 /// struct branches (each expanding to X / Y / Z field leaves). The structure +
 /// labels SSOT — `default_tree` builds the structure, the value model holds the
 /// editable values keyed by the leaf ids' value indices.
+/// R931 — first-paint array elements (the `TArray<f32>` sub-model). Three
+/// floats, so the array boots non-empty (the editor can scrub / remove from a
+/// populated list, then grow it). The elements live here, **not** in the flat
+/// [`default_properties`] model, so add / remove never shifts a scalar leaf's
+/// `value_index`.
+fn default_array() -> Vec<CellValue> {
+    vec![CellValue::Float(1.0), CellValue::Float(0.5), CellValue::Float(0.25)]
+}
+
+/// R931 — the value a freshly-added array element starts at: the zero of the
+/// array's homogeneous element kind ([`ARRAY_ELEM_KIND`], the SSOT). A new
+/// element seeds editable like any other (the data-grid R930 `default_row`
+/// peer).
+fn default_element() -> CellValue {
+    match ARRAY_ELEM_KIND {
+        CellKind::Int => CellValue::Int(0),
+        CellKind::Text => CellValue::Text(String::new()),
+        CellKind::Bool => CellValue::Bool(false),
+        // Float (this demo's array) + the popup kinds fall back to a 0.0 float.
+        _ => CellValue::Float(0.0),
+    }
+}
+
+/// R931 — parse a `"from,to"` reorder payload (the `move_elem` invoke argument)
+/// into a pair of element indices, or `None` if it is malformed.
+fn parse_move_pair(s: &str) -> Option<(usize, usize)> {
+    let (from, to) = s.split_once(',')?;
+    Some((from.trim().parse().ok()?, to.trim().parse().ok()?))
+}
+
+/// R931 — the synthesized element leaves of the array branch: one `elem.<k>`
+/// leaf per element of an array of length `len`. The array sub-model is the
+/// SSOT for the count; this is a pure function of `len`, regenerated (never
+/// incrementally patched) by every mutator ([`PropertyGridExternal::add_elem`]
+/// / [`remove_elem`] / [`move_elem`]) so the tree's element rows can never
+/// drift from the sub-model.
+///
+/// [`remove_elem`]: PropertyGridExternal::remove_elem
+/// [`move_elem`]: PropertyGridExternal::move_elem
+fn array_children(len: usize) -> Vec<PropertyNode> {
+    (0..len).map(PropertyNode::elem_leaf).collect()
+}
+
 fn default_tree() -> Vec<PropertyNode> {
     let cat = |label: &str, children: Vec<PropertyNode>| {
         PropertyNode::branch(format!("{CAT_PREFIX}{label}"), label, children)
@@ -558,6 +695,14 @@ fn default_tree() -> Vec<PropertyNode> {
         cat("Physics", vec![PropertyNode::leaf(3, "Locked"), PropertyNode::leaf(10, "Body")]),
         cat("Stats", vec![PropertyNode::leaf(5, "Health")]),
         cat("Transform", vec![vec3("Position", 6, 7, 12), vec3("Scale", 13, 14, 15)]),
+        // R931 — the Gameplay category holds the demo **array** property: a
+        // collapsible `arr.weights` branch whose element leaves are synthesized
+        // from the array sub-model length (`default_array().len()` at boot).
+        cat("Gameplay", vec![PropertyNode::branch(
+            ARR_BRANCH_ID.to_owned(),
+            ARRAY_LABEL,
+            array_children(default_array().len()),
+        )]),
     ]
 }
 
@@ -582,6 +727,20 @@ fn use_property_model() -> Rc<Signal<Vec<CellValue>>> {
 fn use_property_defaults() -> Rc<Vec<CellValue>> {
     let owner = Owner::current().expect("use_property_defaults requires an active Owner scope");
     owner.cache("property_grid.defaults", default_properties)
+}
+
+/// R931 — the **array sub-model** SSOT: the `TArray<f32>` elements, a
+/// `Signal<Vec<CellValue>>` orthogonal to the flat [`use_property_model`]. Held
+/// separately so growing / shrinking / reordering the element list (the dynamic
+/// collection) never displaces a scalar leaf's stable `value_index` — an array
+/// element is addressed by its position here ([`ValueRef::Elem`]), not by a
+/// flat-model index. Shared by the coordinator (mutates it), the view (reads an
+/// element value), the a11y and the RPC; reading it inside the view subscribes,
+/// so an element edit / add / remove repaints.
+#[must_use]
+fn use_array_model() -> Rc<Signal<Vec<CellValue>>> {
+    let owner = Owner::current().expect("use_array_model requires an active Owner scope");
+    owner.cache("property_grid.array", || Signal::new(default_array()))
 }
 
 /// R919 / R920 — whether `value` differs from its class default `baseline`. Uses
@@ -651,10 +810,12 @@ fn visible_property_rows(tree: &[PropertyNode], query: &str) -> Vec<VisibleRow> 
     }
 }
 
-/// Edit-mode latch — `Some(row)` while that row's value is being text-edited
-/// (the todomvc `editing_id`, keyed by row index). `None` = navigating.
+/// Edit-mode latch — `Some(value_ref)` while that leaf's value is being
+/// text-edited (the todomvc `editing_id`). `None` = navigating. R931 — keyed by
+/// [`ValueRef`], not a bare index, so the *one* shared inline editor + popup
+/// machinery serves a scalar leaf and an array element identically.
 #[must_use]
-fn use_editing_row() -> Rc<Signal<Option<usize>>> {
+fn use_editing_row() -> Rc<Signal<Option<ValueRef>>> {
     let owner = Owner::current().expect("use_editing_row requires an active Owner scope");
     owner.cache("property_grid.editing_row", || Signal::new(None))
 }
@@ -720,7 +881,7 @@ fn set_color_swatch(model: &Signal<Vec<CellValue>>, row: usize, i: usize) -> boo
 /// Tear down the open choice popup — clear the edit latch, the keyboard
 /// cursor, and the pointer hover in one place.
 fn clear_popup(
-    editing: &Signal<Option<usize>>,
+    editing: &Signal<Option<ValueRef>>,
     cursor: &Signal<Option<usize>>,
     hover: &Signal<Option<usize>>,
 ) {
@@ -745,13 +906,20 @@ fn clear_popup(
 /// `Cell`.
 #[derive(Clone, Copy)]
 struct ScrubDrag {
-    source: usize,
+    /// R931 — the numeric leaf being scrubbed (a scalar `Int`/`Float` slot or a
+    /// `Float` array element), addressed uniformly by [`ValueRef`].
+    source: ValueRef,
     kind: CellKind,
     base: f64,
 }
 
 struct PropertyGridExternal {
     model: Rc<Signal<Vec<CellValue>>>,
+    /// R931 — the array sub-model ([`use_array_model`]): the `TArray<f32>`
+    /// elements, orthogonal to the flat `model`. An [`ValueRef::Elem`] addresses
+    /// a position here; add / remove / reorder mutate this `Signal`, never the
+    /// flat model, so a scalar leaf's `value_index` is permanent.
+    array: Rc<Signal<Vec<CellValue>>>,
     /// R919 — the class-default baseline ([`use_property_defaults`]). A property
     /// is modified when `model[i]` differs from `defaults[i]`; `reset` writes the
     /// baseline back through the [`set_value`](Self::set_value) funnel.
@@ -769,14 +937,15 @@ struct PropertyGridExternal {
     /// collapsed/filtered edit must report as not-editing (R901.1 introspection
     /// must match paint), `.text()` reads the `Rc` with no Owner scope.
     search: Rc<TextEditState>,
-    editing_row: Rc<Signal<Option<usize>>>,
+    editing_row: Rc<Signal<Option<ValueRef>>>,
     editor: Rc<TextEditState>,
     popup_cursor: Rc<Signal<Option<usize>>>,
     popup_hover: Rc<Signal<Option<usize>>>,
-    /// R875 — the numeric source armed by a `PointerDown` over a numeric row,
-    /// before the first `pointer_move` calibrates the drag. `None` for a press
-    /// on a non-numeric row (which never scrubs).
-    scrub_armed: Cell<Option<usize>>,
+    /// R875 / R931 — the numeric leaf armed by a `PointerDown` over a numeric
+    /// row, before the first `pointer_move` calibrates the drag. `None` for a
+    /// press on a non-numeric row (which never scrubs). A [`ValueRef`] so a
+    /// `Float` array element scrubs through the same path as a scalar `Float`.
+    scrub_armed: Cell<Option<ValueRef>>,
     /// R875 / R914 — the live scrub calibration ([`DragCalibration`]) once
     /// dragging begins; active between the first `pointer_move` and the release.
     /// Its activity at `PointerUp` distinguishes a scrub (commit, suppress the
@@ -789,13 +958,16 @@ impl PropertyGridExternal {
         model: Rc<Signal<Vec<CellValue>>>,
         tree: Rc<Signal<Vec<PropertyNode>>>,
         cursor: Rc<Signal<Option<String>>>,
-        editing_row: Rc<Signal<Option<usize>>>,
+        editing_row: Rc<Signal<Option<ValueRef>>>,
         editor: Rc<TextEditState>,
         popup_cursor: Rc<Signal<Option<usize>>>,
         popup_hover: Rc<Signal<Option<usize>>>,
     ) -> Self {
         Self {
             model,
+            // R931 — resolved via its hook (like `defaults` / `search`), the same
+            // cached array sub-model the view reads (Owner::cache dedup).
+            array: use_array_model(),
             defaults: use_property_defaults(),
             tree,
             cursor,
@@ -822,10 +994,10 @@ impl PropertyGridExternal {
     /// not-editing, so the RPC introspection matches what the screen shows
     /// (R901.1 — `editing` must point at a painted row). Reads the captured tree
     /// + search `Rc`s, so it is sound on the RPC thread (no Owner scope).
-    fn editing_if_visible(&self) -> Option<usize> {
+    fn editing_if_visible(&self) -> Option<ValueRef> {
         let row = self.editing_row.get()?;
         let query = self.search.text().trim().to_lowercase();
-        let id = row.to_string();
+        let id = ref_node_id(row);
         visible_property_rows(&self.tree.get(), &query)
             .iter()
             .any(|r| r.id == id)
@@ -938,18 +1110,173 @@ impl PropertyGridExternal {
         });
     }
 
+    /// R931 — the array sub-model length (the element count). The SSOT for the
+    /// number of `elem.<k>` rows; the tree's array children are a pure function
+    /// of it ([`array_children`]).
+    fn array_len(&self) -> usize {
+        self.array.get().len()
+    }
+
+    /// R931 — cancel any in-flight inline edit / popup at the signal level (no
+    /// Owner / focus restore), for a destructive mutation that runs on the RPC
+    /// thread ([`remove_elem`](Self::remove_elem)). Clears the latch, wipes the
+    /// shared editor, and clears the popup cursor / hover — the captured `Rc`
+    /// peer of the Owner-scoped [`end_edit_mode`].
+    fn cancel_active_edit(&self) {
+        self.editor.set_text(String::new());
+        clear_popup(&self.editing_row, &self.popup_cursor, &self.popup_hover);
+    }
+
+    /// R931 — read the value behind a [`ValueRef`], branching on which model it
+    /// addresses. The unified read peer of [`set_value_at`](Self::set_value_at):
+    /// a scalar leaf reads the flat model, an array element reads the array
+    /// sub-model. `None` for an out-of-range address.
+    fn value_at(&self, value_ref: ValueRef) -> Option<CellValue> {
+        match value_ref {
+            ValueRef::Scalar(i) => self.model.get().get(i).cloned(),
+            ValueRef::Elem(k) => self.array.get().get(k).cloned(),
+        }
+    }
+
+    /// R931 — write a value behind a [`ValueRef`]. A `Scalar` routes through the
+    /// existing flat-model [`set_value`](Self::set_value) funnel (unchanged); an
+    /// `Elem` writes the array sub-model slot. The one write the scrub commit and
+    /// the inline-editor commit (`commit_edit`) both call, so a scalar and an
+    /// array element commit through identical machinery.
+    fn set_value_at(&self, value_ref: ValueRef, value: CellValue) {
+        match value_ref {
+            ValueRef::Scalar(i) => self.set_value(i, value),
+            ValueRef::Elem(k) => self.array.set_with(|prev| {
+                let mut next = prev.clone();
+                if let Some(slot) = next.get_mut(k) {
+                    *slot = value;
+                }
+                next
+            }),
+        }
+    }
+
+    /// R931 — regenerate the array branch's element leaves to match the current
+    /// sub-model length (the data-grid R930 "tree children are a pure function of
+    /// the model" discipline): one writer, so the tree's `elem.<k>` rows can
+    /// never drift from the array sub-model. Called after every element add /
+    /// remove / reorder.
+    fn sync_array_children(&self) {
+        let len = self.array_len();
+        self.tree.set_with(|prev| {
+            let mut next = prev.clone();
+            if let Some(branch) = find_node_mut(&mut next, ARR_BRANCH_ID) {
+                branch.children = array_children(len);
+            }
+            next
+        });
+    }
+
+    /// R931 — append a new element (`0.0`) to the array, regenerate the element
+    /// leaves, and return the new element's index. Mirrors the data-grid R930
+    /// `add_row`: the sub-model is the SSOT, a push grows it, and the next paint
+    /// re-derives the rows. Moves the cursor onto the new element so the AI / a
+    /// keyboard user lands on what they just created.
+    fn add_elem(&self) -> usize {
+        let index = self.array_len();
+        self.array.set_with(|prev| {
+            let mut next = prev.clone();
+            next.push(default_element());
+            next
+        });
+        self.sync_array_children();
+        self.move_cursor(&format!("{ELEM_PREFIX}{index}"));
+        index
+    }
+
+    /// R931 — remove the element at `index`, returning whether it existed. The
+    /// R930.1 destructive-mutation discipline: a structural removal **must**
+    /// invalidate any latch / cursor that addressed the gone (or now-shifted)
+    /// element. (1) If an in-flight edit was on *this* array (a removed or
+    /// re-indexed element), cancel it — committing would write a stale slot
+    /// (the R930.1 reachable-panic class). (2) Re-anchor the roving cursor onto
+    /// the element now occupying the freed slot (or the new last element), Excel
+    /// / Qt list behaviour, so the cursor never strands on a vanished `elem.<k>`.
+    fn remove_elem(&self, index: usize) -> bool {
+        if index >= self.array_len() {
+            return false;
+        }
+        // (1) Any edit on an array element is invalidated: every element at or
+        // after `index` shifts, so even an edit on a *survivor* now points at the
+        // wrong value. Cancel rather than silently retarget.
+        if matches!(self.editing_row.get(), Some(ValueRef::Elem(_))) {
+            self.cancel_active_edit();
+        }
+        self.array.set_with(|prev| {
+            let mut next = prev.clone();
+            next.remove(index);
+            next
+        });
+        self.sync_array_children();
+        self.reanchor_array_cursor(index);
+        true
+    }
+
+    /// R931 — move the element at `from` to position `to` (a Vec remove+insert,
+    /// the array's canonical reorder — the AI-first / keyboard primary path; a
+    /// live drag-to-reorder *gesture* is honest carry, R929 precedent). Returns
+    /// whether it moved. Follows the moved element with the cursor. Both indices
+    /// are clamped into range; `from == to` is a no-op.
+    fn move_elem(&self, from: usize, to: usize) -> bool {
+        let len = self.array_len();
+        if from >= len || to >= len || from == to {
+            return false;
+        }
+        self.array.set_with(|prev| {
+            let mut next = prev.clone();
+            let item = next.remove(from);
+            next.insert(to, item);
+            next
+        });
+        self.sync_array_children();
+        self.move_cursor(&format!("{ELEM_PREFIX}{to}"));
+        true
+    }
+
+    /// R931 — re-anchor the roving cursor after an element at `removed` was
+    /// dropped (the R930.1 `reanchor` peer for the array). If the cursor was on
+    /// an array element that no longer exists (or was past the freed slot), land
+    /// it on the element now at `removed` (clamped to the new last element); if
+    /// the array emptied, fall onto the array branch row. A cursor elsewhere
+    /// (a scalar leaf, another branch) is untouched.
+    fn reanchor_array_cursor(&self, removed: usize) {
+        let Some(cursor_id) = self.cursor.get() else { return };
+        let Some(ValueRef::Elem(k)) = row_ref(&cursor_id) else { return };
+        // The cursor's element survives unmoved only if it was strictly before
+        // the removed slot; at-or-after it either vanished (`k == removed`) or
+        // shifted down one (`k > removed`).
+        if k < removed {
+            return;
+        }
+        let len = self.array_len();
+        if len == 0 {
+            self.move_cursor(ARR_BRANCH_ID);
+            return;
+        }
+        // Follow the element: a cursor *after* the removal lands on its shifted
+        // position (`k - 1`); a cursor *on* the removed element lands on the
+        // element that took its slot. Clamp to the new last element.
+        let target = if k > removed { k - 1 } else { removed };
+        self.move_cursor(&format!("{ELEM_PREFIX}{}", target.min(len - 1)));
+    }
+
     /// R875 — arm a numeric scrub: a `PointerDown` over a numeric (`Int` /
     /// `Float`) row records the source so the first capture `pointer_move` can
     /// calibrate. A press on a non-numeric row leaves the arm clear (it never
     /// scrubs — bool toggles, choice / colour open popups, text edits).
-    fn arm_scrub(&self, source: usize) {
+    fn arm_scrub(&self, source: ValueRef) {
         // R917 — a fresh press starts a fresh calibration (self-contained scrub;
         // never inherits a stale base from a drag whose release was missed — the
         // R51.34 capture lock makes that unreachable, but the arm should not
         // depend on it).
         self.scrub_cal.end();
         let numeric = matches!(
-            self.model.get().get(source).map(CellValue::kind),
+            self.value_at(source).map(|v| v.kind()),
             Some(CellKind::Int | CellKind::Float)
         );
         self.scrub_armed.set(numeric.then_some(source));
@@ -974,10 +1301,9 @@ impl PropertyGridExternal {
     fn scrub_to(&self, x_rel: f64) {
         let Some((drag, delta)) = self.scrub_cal.drive(x_rel, || {
             let source = self.scrub_armed.get()?;
-            let model = self.model.get();
-            match model.get(source) {
-                Some(CellValue::Int(i)) => Some(ScrubDrag { source, kind: CellKind::Int, base: *i as f64 }),
-                Some(CellValue::Float(f)) => Some(ScrubDrag { source, kind: CellKind::Float, base: *f }),
+            match self.value_at(source) {
+                Some(CellValue::Int(i)) => Some(ScrubDrag { source, kind: CellKind::Int, base: i as f64 }),
+                Some(CellValue::Float(f)) => Some(ScrubDrag { source, kind: CellKind::Float, base: f }),
                 // Nothing armed, or the armed source is no longer numeric.
                 _ => None,
             }
@@ -999,7 +1325,7 @@ impl PropertyGridExternal {
             }
             _ => CellValue::Float(drag.base + travel_px * SCRUB_FLOAT_PER_PX),
         };
-        self.set_value(drag.source, next);
+        self.set_value_at(drag.source, next);
     }
 
     /// R875 / R915 — tear down the scrub at release. Returns whether a real
@@ -1028,16 +1354,24 @@ impl PropertyGridExternal {
     /// choice row opens its popup instead (`open_choice`, focus stays on the
     /// grid). Returns `false` for a bool row (bools toggle) or an
     /// out-of-range index.
-    fn begin_edit(&self, row: usize) -> bool {
-        let model = self.model.get();
-        let Some(value) = model.get(row) else {
+    fn begin_edit(&self, row: ValueRef) -> bool {
+        let Some(value) = self.value_at(row) else {
             return false;
         };
+        // Choice / Colour are scalar-only (an array element is a `Float`); their
+        // popup path addresses the flat model by index, so they only fire on a
+        // `Scalar` leaf.
         if matches!(value, CellValue::Choice { .. }) {
-            return self.open_choice(row);
+            return match row {
+                ValueRef::Scalar(i) => self.open_choice(i),
+                ValueRef::Elem(_) => false,
+            };
         }
         if matches!(value, CellValue::Color(_)) {
-            return self.open_color(row);
+            return match row {
+                ValueRef::Scalar(i) => self.open_color(i),
+                ValueRef::Elem(_) => false,
+            };
         }
         if !value.kind().is_text_editable() {
             return false;
@@ -1059,7 +1393,7 @@ impl PropertyGridExternal {
         let Some(CellValue::Choice { selected, .. }) = model.get(row) else {
             return false;
         };
-        self.editing_row.set(Some(row));
+        self.editing_row.set(Some(ValueRef::Scalar(row)));
         self.popup_cursor.set(Some(*selected));
         self.popup_hover.set(None);
         true
@@ -1069,7 +1403,7 @@ impl PropertyGridExternal {
     /// pointer (option click) + RPC (`choose`) commit path; returns whether
     /// a choice was committed.
     fn commit_choice_index(&self, i: usize) -> bool {
-        let Some(row) = self.editing_row.get() else {
+        let Some(ValueRef::Scalar(row)) = self.editing_row.get() else {
             return false;
         };
         let committed = set_choice_selected(&self.model, row, i);
@@ -1097,7 +1431,7 @@ impl PropertyGridExternal {
             return false;
         };
         let cursor = COLOR_SWATCHES.iter().position(|(sw, _)| sw == c).unwrap_or(0);
-        self.editing_row.set(Some(row));
+        self.editing_row.set(Some(ValueRef::Scalar(row)));
         self.popup_cursor.set(Some(cursor));
         self.popup_hover.set(None);
         self.editor.seed(c.to_hex());
@@ -1108,7 +1442,7 @@ impl PropertyGridExternal {
     /// swatch click + RPC `pick_color` + keyboard path); `false` if out of
     /// range or not a colour row.
     fn commit_color_swatch(&self, i: usize) -> bool {
-        let Some(row) = self.editing_row.get() else {
+        let Some(ValueRef::Scalar(row)) = self.editing_row.get() else {
             return false;
         };
         let committed = set_color_swatch(&self.model, row, i);
@@ -1179,57 +1513,102 @@ impl PropertyGridExternal {
             }
             return Ok(IntrospectValue::Null);
         }
-        // R921 — a click on a branch row (category / struct) toggles its
-        // collapse on the activation edge and moves the cursor onto it.
-        if key.starts_with(CAT_PREFIX) || key.starts_with(STRUCT_PREFIX) {
+        // R921 / R931 — a click on a branch row (category / struct / array)
+        // toggles its collapse on the activation edge and moves the cursor onto
+        // it.
+        if key.starts_with(CAT_PREFIX) || key.starts_with(STRUCT_PREFIX) || key.starts_with(ARR_PREFIX) {
             if event_name == "PointerUp" {
                 self.toggle_branch(key);
                 self.move_cursor(key);
             }
             return Ok(IntrospectValue::Null);
         }
-        let idx: usize = key.parse().map_err(|_| InvokeError::Rejected)?;
-        if idx >= self.count() {
+        // R931 — the array branch's "add element" button appends a new element
+        // and returns its index. A non-`PointerUp` event is ignored (no hover).
+        if key == ADD_ELEM_TAG {
+            if event_name == "PointerUp" {
+                let index = self.add_elem();
+                return Ok(IntrospectValue::Int(
+                    i64::try_from(index).expect("element index fits in i64"),
+                ));
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        // R931 — an element's "remove" button (`rmelem{k}`) drops that element
+        // (with the R930.1 latch / cursor invalidation in `remove_elem`).
+        if let Some(suffix) = key.strip_prefix(RM_ELEM_PREFIX) {
+            if event_name == "PointerUp" {
+                if let Ok(k) = suffix.parse::<usize>() {
+                    self.remove_elem(k);
+                }
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        // A scalar leaf (a bare decimal addressing the flat model) or an array
+        // element leaf (`elem.<k>`): both scrub / edit through the unified
+        // `ValueRef` path, so an element row behaves exactly like a numeric
+        // scalar row (R931).
+        let value_ref = row_ref(key).ok_or(InvokeError::Rejected)?;
+        if self.value_at(value_ref).is_none() {
             return Err(InvokeError::Rejected);
         }
+        Ok(self.dispatch_leaf(key, event_name, value_ref))
+    }
+
+    /// R875 / R931 — the pointer handling for a leaf row (a scalar slot or an
+    /// array element), split out of [`dispatch_send`](Self::dispatch_send): a
+    /// `PointerDown` arms the numeric scrub, a `PointerUp` commits the click
+    /// (suppressed if a scrub ran) — bool toggle / popup open being scalar-only
+    /// affordances — and a `DoubleClick` enters edit mode. Both leaf kinds share
+    /// this one path via [`ValueRef`]. Always succeeds (an unknown event is a
+    /// no-op `Null`), so it returns the value directly.
+    fn dispatch_leaf(&mut self, key: &str, event_name: &str, value_ref: ValueRef) -> IntrospectValue {
+        let slot = match value_ref {
+            ValueRef::Scalar(i) | ValueRef::Elem(i) => i,
+        };
         match event_name {
             // R875 — arm a numeric scrub; the first capture `pointer_move`
             // calibrates it. A non-numeric press leaves the arm clear.
             "PointerDown" => {
-                self.arm_scrub(idx);
-                Ok(IntrospectValue::Null)
+                self.arm_scrub(value_ref);
+                IntrospectValue::Null
             }
             "PointerUp" => {
                 // R875 — a scrub committed its value live during the drag; its
                 // release must NOT also fire the click action (open editor /
                 // toggle / move cursor). `end_scrub` reports whether a drag ran.
                 if self.end_scrub() {
-                    return Ok(IntrospectValue::Null);
+                    return IntrospectValue::Null;
                 }
                 self.move_cursor(key);
-                match self.model.get().get(idx) {
-                    Some(CellValue::Bool(_)) => {
-                        self.toggle(idx);
+                // Bool toggle / popup open are scalar-only affordances; an array
+                // element is a `Float`, so a single click only moves the cursor
+                // onto it (a double-click edits, a scrub drags its value).
+                if let ValueRef::Scalar(idx) = value_ref {
+                    match self.model.get().get(idx) {
+                        Some(CellValue::Bool(_)) => {
+                            self.toggle(idx);
+                        }
+                        Some(CellValue::Choice { .. }) => {
+                            self.open_choice(idx);
+                        }
+                        Some(CellValue::Color(_)) => {
+                            self.open_color(idx);
+                        }
+                        _ => {}
                     }
-                    Some(CellValue::Choice { .. }) => {
-                        self.open_choice(idx);
-                    }
-                    Some(CellValue::Color(_)) => {
-                        self.open_color(idx);
-                    }
-                    _ => {}
                 }
-                Ok(IntrospectValue::Int(i64::try_from(idx).expect("row index fits in i64")))
+                IntrospectValue::Int(i64::try_from(slot).expect("row index fits in i64"))
             }
             // R875 — the capture lock lets the cursor stray off the row; a
             // release there arrives as PointerLeave / PointerCancel. Tear the
             // scrub down (the value is already committed) with no click.
             "PointerLeave" | "PointerCancel" => {
                 self.end_scrub();
-                Ok(IntrospectValue::Null)
+                IntrospectValue::Null
             }
-            "DoubleClick" => Ok(IntrospectValue::Bool(self.begin_edit(idx))),
-            _ => Ok(IntrospectValue::Null),
+            "DoubleClick" => IntrospectValue::Bool(self.begin_edit(value_ref)),
+            _ => IntrospectValue::Null,
         }
     }
 }
@@ -1306,6 +1685,14 @@ impl ExternalIntrospect for PropertyGridExternal {
             ("any_modified", "bool"),
             ("reset", "int"),
             ("reset_all", "json"),
+            // R931 — the dynamic array: element count + the add / remove /
+            // reorder verbs. Element values read / write through the same
+            // `value.elem.<k>` / `kind.elem.<k>` / `name.elem.<k>` paths as a
+            // scalar (the unified `ValueRef` wire address).
+            ("elem_count", "int"),
+            ("add_elem", "int"),
+            ("remove_elem", "int"),
+            ("move_elem", "string"),
             // R921 — per-branch collapse (read + intervene + toggle) and the
             // struct aggregate (summary tuple + modified roll-up + reset-all).
             ("expanded.<branch_id>", "bool"),
@@ -1339,9 +1726,10 @@ impl ExternalIntrospect for PropertyGridExternal {
             // collapsed / filtered out of the flatten reports Null (it paints
             // nowhere, so advertising it would be an R901.1 introspection lie).
             "editing" => Some(IntrospectValue::Json(match self.editing_if_visible() {
-                Some(row) => serde_json::Value::from(
-                    i64::try_from(row).expect("row index fits in i64"),
-                ),
+                // R931 — the editing leaf's **node id** (a scalar "6" or an
+                // `elem.2`), the same addressing vocabulary `cursor` uses, so a
+                // scalar and an array element are reported uniformly.
+                Some(value_ref) => serde_json::Value::from(ref_node_id(value_ref)),
                 None => serde_json::Value::Null,
             })),
             // R921.1 — Null unless the open popup's row is visible (same gate):
@@ -1358,9 +1746,14 @@ impl ExternalIntrospect for PropertyGridExternal {
             "cursor" => Some(self.cursor.get().map_or(IntrospectValue::Null, IntrospectValue::Text)),
             // R919 — any property modified from its default (the dirty read).
             "any_modified" => Some(IntrospectValue::Bool(self.any_modified())),
+            // R931 — the array element count (the dynamic-collection length).
+            "elem_count" => Some(IntrospectValue::Int(
+                i64::try_from(self.array_len()).expect("element count fits in i64"),
+            )),
             _ => {
                 // R919 — is property `<index>` modified from its class default?
                 // (out-of-range -> `None`, like the other `<index>` reads).
+                // Scalar-only: an array element has no per-element class default.
                 if let Some(idx_str) = path.strip_prefix("modified.") {
                     let idx: usize = idx_str.parse().ok()?;
                     if idx >= self.count() {
@@ -1368,22 +1761,26 @@ impl ExternalIntrospect for PropertyGridExternal {
                     }
                     return Some(IntrospectValue::Bool(self.is_modified(idx)));
                 }
-                if let Some(idx_str) = path.strip_prefix("name.") {
-                    let idx: usize = idx_str.parse().ok()?;
-                    return PROPERTY_NAMES
-                        .get(idx)
-                        .map(|name| IntrospectValue::Text((*name).to_owned()));
+                // R931 — `name.<addr>` / `kind.<addr>` / `value.<addr>` address
+                // either a scalar leaf (a bare decimal) or an array element
+                // (`elem.<k>`), the same `ValueRef` vocabulary the wire uses
+                // throughout: the read shape is identical for both.
+                if let Some(addr) = path.strip_prefix("name.") {
+                    return match row_ref(addr)? {
+                        ValueRef::Scalar(i) => {
+                            PROPERTY_NAMES.get(i).map(|name| IntrospectValue::Text((*name).to_owned()))
+                        }
+                        ValueRef::Elem(k) => {
+                            (k < self.array_len()).then(|| IntrospectValue::Text(format!("{ARRAY_LABEL} [{k}]")))
+                        }
+                    };
                 }
-                if let Some(idx_str) = path.strip_prefix("kind.") {
-                    let idx: usize = idx_str.parse().ok()?;
-                    let model = self.model.get();
-                    let value = model.get(idx)?;
+                if let Some(addr) = path.strip_prefix("kind.") {
+                    let value = self.value_at(row_ref(addr)?)?;
                     return Some(IntrospectValue::Text(value.kind().name().to_owned()));
                 }
-                if let Some(idx_str) = path.strip_prefix("value.") {
-                    let idx: usize = idx_str.parse().ok()?;
-                    let model = self.model.get();
-                    let value = model.get(idx)?;
+                if let Some(addr) = path.strip_prefix("value.") {
+                    let value = self.value_at(row_ref(addr)?)?;
                     return Some(value.to_introspect());
                 }
                 // R921 — a branch's collapse flag, by node id (`expanded.cat:…`
@@ -1448,21 +1845,22 @@ impl ExternalIntrospect for PropertyGridExternal {
                         _ => Err(InterveneError::TypeMismatch),
                     };
                 }
-                let Some(idx_str) = path.strip_prefix("value.") else {
+                // R931 — `value.<addr>` writes a scalar leaf (a bare decimal) or
+                // an array element (`elem.<k>`), the unified `ValueRef` address.
+                let Some(addr) = path.strip_prefix("value.") else {
                     return Err(InterveneError::UnknownPath);
                 };
-                let idx: usize = idx_str.parse().map_err(|_| InterveneError::UnknownPath)?;
-                if idx >= self.count() {
+                let Some(value_ref) = row_ref(addr) else {
                     return Err(InterveneError::UnknownPath);
-                }
+                };
+                let Some(current) = self.value_at(value_ref) else {
+                    return Err(InterveneError::UnknownPath);
+                };
                 // `with_intervene` (not `kind().coerce`) so a choice cell sets
-                // its option by index while preserving its option list.
-                let new_value = self.model.get()[idx].with_intervene(value)?;
-                self.model.set_with(move |prev| {
-                    let mut next = prev.clone();
-                    next[idx] = new_value.clone();
-                    next
-                });
+                // its option by index while preserving its option list; an array
+                // element (`Float`) coerces a numeric write through the same path.
+                let new_value = current.with_intervene(value)?;
+                self.set_value_at(value_ref, new_value);
                 Ok(())
             }
         }
@@ -1502,6 +1900,32 @@ impl ExternalIntrospect for PropertyGridExternal {
             "reset_all" => Ok(IntrospectValue::Int(
                 i64::try_from(self.reset_all()).expect("reset count fits in i64"),
             )),
+            // R931 — append a new array element; returns its index (the RPC twin
+            // of clicking the array branch's "+" button).
+            "add_elem" => Ok(IntrospectValue::Int(
+                i64::try_from(self.add_elem()).expect("element index fits in i64"),
+            )),
+            // R931 — remove the array element at the given index; returns whether
+            // it existed (the RPC twin of an element's "−" button, with the
+            // R930.1 latch / cursor invalidation).
+            "remove_elem" => match args {
+                IntrospectValue::Int(i) => {
+                    let k = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.remove_elem(k)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R931 — reorder: move the element at `from` to position `to`,
+            // passed as a `"from,to"` payload (the AI-first / keyboard reorder
+            // primary path; a live drag-to-reorder gesture is deferred). Returns
+            // whether it moved.
+            "move_elem" => match args {
+                IntrospectValue::Text(ref s) => {
+                    let (from, to) = parse_move_pair(s).ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.move_elem(from, to)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
             // R921 — toggle a branch's (category / struct) collapse by node id
             // (the RPC twin of clicking the disclosure / the keyboard
             // ArrowLeft/Right). Returns the resulting expanded flag; a leaf /
@@ -1532,7 +1956,14 @@ impl ExternalIntrospect for PropertyGridExternal {
                     if row >= self.count() {
                         return Err(InvokeError::Rejected);
                     }
-                    Ok(IntrospectValue::Bool(self.begin_edit(row)))
+                    Ok(IntrospectValue::Bool(self.begin_edit(ValueRef::Scalar(row))))
+                }
+                // R931 — a node-id payload begins editing any leaf (a scalar "6"
+                // or an array element "elem.2"), the unified `ValueRef` address
+                // the keyboard element-edit path uses.
+                IntrospectValue::Text(ref id) => {
+                    let value_ref = row_ref(id).ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.begin_edit(value_ref)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -1571,23 +2002,49 @@ impl ExternalIntrospect for PropertyGridExternal {
 /// kind and write it back to the model. A malformed numeric commit keeps the
 /// prior value (no data loss). Mirrors `todomvc::commit_edit`.
 fn commit_edit(restore_focus: bool) {
-    let editing_row = use_editing_row();
-    let Some(row) = editing_row.get() else {
+    let Some(row) = use_editing_row().get() else {
         return;
     };
-    let model = use_property_model();
     let text = use_text_edit_state(EDIT_TF_TAG).text();
-    let current = model.get();
-    if let Some(value) = current.get(row) {
+    // R931 — parse by the editing leaf's kind (scalar flat model OR array
+    // sub-model) and write through the model that backs it. A malformed numeric
+    // commit keeps the prior value (no data loss).
+    if let Some(value) = ref_value(row) {
         if let Some(parsed) = value.kind().parse(&text) {
-            model.set_with(move |prev| {
-                let mut next = prev.clone();
-                next[row] = parsed.clone();
-                next
-            });
+            set_ref_value(row, parsed);
         }
     }
     end_edit_mode(restore_focus);
+}
+
+/// R931 — the value behind a [`ValueRef`], read from whichever model backs it
+/// (the Owner-scoped peer of [`PropertyGridExternal::value_at`], for the
+/// keyboard-side free fns). A `Scalar` reads the flat value model; an `Elem`
+/// reads the array sub-model.
+fn ref_value(row: ValueRef) -> Option<CellValue> {
+    match row {
+        ValueRef::Scalar(i) => use_property_model().get().get(i).cloned(),
+        ValueRef::Elem(k) => use_array_model().get().get(k).cloned(),
+    }
+}
+
+/// R931 — write the value behind a [`ValueRef`] into its backing model (the
+/// Owner-scoped peer of [`PropertyGridExternal::set_value_at`]).
+fn set_ref_value(row: ValueRef, value: CellValue) {
+    let signal = match row {
+        ValueRef::Scalar(_) => use_property_model(),
+        ValueRef::Elem(_) => use_array_model(),
+    };
+    let slot = match row {
+        ValueRef::Scalar(i) | ValueRef::Elem(i) => i,
+    };
+    signal.set_with(move |prev| {
+        let mut next = prev.clone();
+        if let Some(cell) = next.get_mut(slot) {
+            *cell = value.clone();
+        }
+        next
+    });
 }
 
 /// Cancel the in-flight edit — leave the value untouched, restore focus.
@@ -1610,8 +2067,7 @@ fn end_edit_mode(restore_focus: bool) {
 /// The kind of the row currently being edited (`None` when not editing) —
 /// drives the int / float keystroke gate.
 fn editing_kind() -> Option<CellKind> {
-    let row = use_editing_row().get()?;
-    use_property_model().get().get(row).map(CellValue::kind)
+    ref_value(use_editing_row().get()?).map(|v| v.kind())
 }
 
 // ─── keyboard ─────────────────────────────────────────────────────
@@ -1743,14 +2199,23 @@ fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
     let cursor_id = cursor.get();
     // In-cell activation when the cursor rests on a leaf (editable) row. A
     // branch cursor falls through to the tree policy (Space / Enter toggle it).
-    if let Some(vi) = cursor_id.as_deref().and_then(row_value_index) {
-        match key {
-            "Space" => return activate_source(scene, vi, false),
-            "Enter" | "F2" => return activate_source(scene, vi, true),
-            // R920 — Delete resets the cursor leaf to its class default (the
-            // keyboard path to the reset arrow, which is not itself a tab stop).
-            "Delete" => return reset_source(scene, vi),
-            _ => {}
+    // R931 — a scalar leaf and an array element leaf activate differently: a
+    // scalar's Delete resets to default; an element's Delete *removes* it (the
+    // keyboard grow/shrink twin of the +/− buttons, which are not tab stops).
+    if let Some(id) = cursor_id.as_deref() {
+        match row_ref(id) {
+            Some(ValueRef::Scalar(vi)) => match key {
+                "Space" => return activate_source(scene, vi, false),
+                "Enter" | "F2" => return activate_source(scene, vi, true),
+                "Delete" => return reset_source(scene, vi),
+                _ => {}
+            },
+            Some(ValueRef::Elem(k)) => match key {
+                "Enter" | "F2" => return begin_edit_id(scene, id),
+                "Delete" => return remove_elem_kbd(scene, k),
+                _ => {}
+            },
+            None => {}
         }
     }
     // The WAI-ARIA Tree keyboard policy over the visible flatten (clamp, not
@@ -1818,6 +2283,35 @@ fn reset_source(scene: &mut Scene, row: usize) -> bool {
         return false;
     };
     let _ = intro.invoke("reset", IntrospectValue::Int(i64::try_from(row).expect("row fits in i64")));
+    true
+}
+
+/// R931 — begin editing the leaf with node `id` (a scalar "6" or an element
+/// "elem.2") via the coordinator's `begin` invoke (the keyboard `Enter` / `F2`
+/// path for an array element, which routes through the same wire the scalar
+/// path does — one funnel). Consumes the key.
+fn begin_edit_id(scene: &mut Scene, id: &str) -> bool {
+    let Some(node) = scene.find_external_with_tag_mut(GRID_TAG) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    let _ = intro.invoke("begin", IntrospectValue::Text(id.to_owned()));
+    true
+}
+
+/// R931 — remove the array element at `k` via the coordinator's `remove_elem`
+/// invoke (the keyboard `Delete`-on-an-element twin of the "−" button, which is
+/// not a tab stop). Consumes the key on any element row.
+fn remove_elem_kbd(scene: &mut Scene, k: usize) -> bool {
+    let Some(node) = scene.find_external_with_tag_mut(GRID_TAG) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    let _ = intro.invoke("remove_elem", IntrospectValue::Int(i64::try_from(k).expect("k fits in i64")));
     true
 }
 
@@ -1893,7 +2387,7 @@ fn view_row(
     value: &CellValue,
     is_focused: bool,
     edit_active: bool,
-    modified: bool,
+    trailing: Option<Scene>,
     theme: &Theme,
     edit_field: (TextFieldState, u32),
 ) -> Scene {
@@ -1956,15 +2450,15 @@ fn view_row(
         ),
     );
 
-    // R919 — a modified row paints its reset arrow at the trailing edge: a
-    // clickable accent mark (`{GRID_TAG}#reset<index>`) whose presence IS the
-    // modified indicator (the Unreal / Qt "reset to default" arrow appears only
-    // on a changed property). Absolutely positioned, so it overlays the row's
-    // trailing padding without shifting the Property / Value column layout, and
-    // last in paint order so its click wins over the row beneath it.
+    // R919 / R931 — an optional trailing affordance at the row's trailing edge:
+    // a scalar's reset arrow (`{GRID_TAG}#reset<index>`, whose presence IS the
+    // modified indicator) or an array element's remove button. Absolutely
+    // positioned, so it overlays the row's trailing padding without shifting the
+    // Property / Value column layout, and last in paint order so its click wins
+    // over the row beneath it.
     let mut children = vec![name_cell, value_cell];
-    if modified {
-        children.push(reset_arrow(&row.id, theme));
+    if let Some(affordance) = trailing {
+        children.push(affordance);
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -1997,6 +2491,114 @@ fn reset_arrow(suffix: &str, theme: &Theme) -> Scene {
                         ROW_H.saturating_sub(RESET_DOT) / 2,
                     )
                     .with_size(Size::px(RESET_DOT, RESET_DOT)),
+            ),
+    )
+}
+
+/// R931 — an array element's "remove" button at its trailing edge, a clickable
+/// minus glyph tagged `{GRID_TAG}#rmelem<k>` so a click routes to the
+/// coordinator's [`remove_elem`](PropertyGridExternal::remove_elem). Absolutely
+/// positioned in the trailing padding (the element row's reset-arrow slot is
+/// free — an element has no reset), last in paint order so its click wins.
+fn remove_button(k: usize, theme: &Theme) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            REMOVE_GLYPH,
+            Rect::default(),
+            TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))])
+        .with_tag(format!("{GRID_TAG}#{RM_ELEM_PREFIX}{k}"))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center)
+                .with_absolute_position(
+                    (NAME_COL_W + VALUE_COL_W).saturating_sub(RESET_DOT_X),
+                    ROW_H.saturating_sub(RESET_DOT) / 2,
+                )
+                .with_size(Size::px(RESET_DOT, RESET_DOT)),
+        ),
+    )
+}
+
+/// R931 — the array branch's "add element" button at its trailing edge, a
+/// clickable plus glyph tagged `{GRID_TAG}#addelem` routing to
+/// [`add_elem`](PropertyGridExternal::add_elem). Same trailing-edge geometry as
+/// the element [`remove_button`].
+fn add_button(theme: &Theme) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            ADD_GLYPH,
+            Rect::default(),
+            TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::Accent)),
+        ))])
+        .with_tag(format!("{GRID_TAG}#{ADD_ELEM_TAG}"))
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center)
+                .with_absolute_position(
+                    (NAME_COL_W + VALUE_COL_W).saturating_sub(RESET_DOT_X),
+                    ROW_H.saturating_sub(RESET_DOT) / 2,
+                )
+                .with_size(Size::px(RESET_DOT, RESET_DOT)),
+        ),
+    )
+}
+
+/// R931 — the **array** branch header row: `[ ⟨disclosure⟩ Spawn Weights |
+/// N elements (+) ]`, tagged `{GRID_TAG}#arr.weights` so a click toggles its
+/// collapse, with the element-count summary in the value column and a trailing
+/// "add element" button. The dynamic-collection peer of [`struct_header_row`].
+fn array_header_row(row: &VisibleRow, count: usize, is_focused: bool, theme: &Theme) -> Scene {
+    let label = row.label.as_str();
+    let glyph = if row.expanded { DISCLOSURE_EXPANDED } else { DISCLOSURE_COLLAPSED };
+    let mut name_children: Vec<Scene> = Vec::new();
+    let indent_px = row.depth * INDENT_STEP;
+    if indent_px > 0 {
+        name_children.push(Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_layout(LayoutStyle::new().with_size(Size::px(indent_px, ROW_H))),
+        ));
+    }
+    name_children.push(Scene::Text(TextNode::styled(
+        format!("{glyph}  {label}"),
+        Rect::default(),
+        TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+    )));
+    let name_cell = Scene::Container(ContainerNode::new(name_children).with_layout(
+        LayoutStyle::new()
+            .flex(FlexDirection::Row)
+            .with_align_items(AlignItems::Center)
+            .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
+            .with_size(Size::px(NAME_COL_W, ROW_H)),
+    ));
+    let summary = if count == 1 { "1 element".to_owned() } else { format!("{count} elements") };
+    let value_cell = Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            summary,
+            Rect::default(),
+            TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))])
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
+                .with_size(Size::px(VALUE_COL_W, ROW_H)),
+        ),
+    );
+    Scene::Container(
+        ContainerNode::new(vec![name_cell, value_cell, add_button(theme)])
+            .with_tag(format!("{GRID_TAG}#{}", row.id))
+            .with_style(BoxStyle::filled(row_fill(theme, is_focused)))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_size(Size::px(NAME_COL_W + VALUE_COL_W, ROW_H)),
             ),
     )
 }
@@ -2325,8 +2927,14 @@ fn view_header(theme: &Theme) -> Scene {
 /// a popup whose row is hidden is neither painted nor announced — the paint
 /// scene and the AT `aria-activedescendant` cannot diverge (the bug an
 /// RPC-driven filter on an open popup would otherwise expose).
-fn popup_view_pos(editing: Option<usize>) -> Option<(usize, usize)> {
-    let row = editing?;
+fn popup_view_pos(editing: Option<ValueRef>) -> Option<(usize, usize)> {
+    // R931 — a popup is a Choice / Colour editor, which only opens on a scalar
+    // leaf; an `Elem` edit is an inline text field with no popup, so it resolves
+    // to `None` here (no panel painted / announced). The first tuple element is
+    // the scalar flat-model index every popup consumer indexes by.
+    let ValueRef::Scalar(row) = editing? else {
+        return None;
+    };
     let id = row.to_string();
     let tree = use_property_tree();
     let rows = visible_property_rows(&tree.get(), &current_search_query());
@@ -2385,7 +2993,7 @@ fn popup_listbox_nodes(model: &[CellValue]) -> Vec<AccessNode> {
 }
 
 fn view_popup_overlay(
-    editing: Option<usize>,
+    editing: Option<ValueRef>,
     model: &[CellValue],
     edit_field: (TextFieldState, u32),
     theme: &Theme,
@@ -2454,6 +3062,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // `Signal` (collapse), the cursor `Signal` and the search text inside the
     // view-fn subscribes, so a collapse / cursor move / filter change repaints.
     let tree_nodes = use_property_tree().get();
+    // R931 — the array sub-model snapshot, for the element rows.
+    let array = use_array_model().get();
     let visible = visible_property_rows(&tree_nodes, &current_search_query());
     let cursor_id = use_property_cursor().get();
     let editing = use_editing_row().get();
@@ -2465,16 +3075,30 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     for vr in &visible {
         let is_focused = cursor_id.as_deref() == Some(vr.id.as_str());
         if let Some(vi) = row_value_index(&vr.id) {
-            // A leaf (editable) row.
+            // A scalar leaf (editable) row — trailing reset arrow iff modified.
             let value = &model[vi];
-            let edit_active = editing == Some(vi) && value.kind().is_text_editable();
-            let modified = leaf_modified(&model, &defaults, vi);
-            rows.push(view_row(vr, value, is_focused, edit_active, modified, &theme, (edit_state, edit_caret)));
+            let edit_active = editing == Some(ValueRef::Scalar(vi)) && value.kind().is_text_editable();
+            let trailing = leaf_modified(&model, &defaults, vi).then(|| reset_arrow(&vr.id, &theme));
+            rows.push(view_row(vr, value, is_focused, edit_active, trailing, &theme, (edit_state, edit_caret)));
+        } else if let Some(ValueRef::Elem(k)) = row_ref(&vr.id) {
+            // R931 — an array element leaf: render the element value (from the
+            // array sub-model) through the *same* `view_row` as a scalar `Float`,
+            // with a trailing remove button. No modified arrow (an element has no
+            // per-element class default — the array's modified axis is its length
+            // / content, an honest deferred follow-up).
+            let value = array.get(k).cloned().unwrap_or(CellValue::Float(0.0));
+            let edit_active = editing == Some(ValueRef::Elem(k)) && value.kind().is_text_editable();
+            let trailing = Some(remove_button(k, &theme));
+            rows.push(view_row(vr, &value, is_focused, edit_active, trailing, &theme, (edit_state, edit_caret)));
         } else if vr.id.starts_with(STRUCT_PREFIX) {
             // A struct branch row: disclosure + name + the collapsed-value tuple.
             let summary = struct_value_summary(&model, &tree_nodes, &vr.id);
             let modified = struct_is_modified(&model, &defaults, &tree_nodes, &vr.id);
             rows.push(struct_header_row(vr, &summary, modified, is_focused, &theme));
+        } else if vr.id.starts_with(ARR_PREFIX) {
+            // R931 — the array branch row: disclosure + name + element count, with
+            // a trailing "add element" button (the dynamic-collection grow verb).
+            rows.push(array_header_row(vr, array.len(), is_focused, &theme));
         } else {
             // A category branch row: the full-width section header (`collapsed`
             // is the inverse of `expanded`; a filter auto-expands branches).
@@ -2696,12 +3320,28 @@ impl WidgetCore for PropertyGridView {
 /// `gridcell`: a leaf → `"Position X: 12.5"` (the qualified [`PROPERTY_NAMES`]
 /// entry, since a struct field's in-tree label is the short "X"), a struct →
 /// `"Position (12.5, -4, 0)"`, a category → `"Identity (3)"`.
-fn row_access_name(row: &VisibleRow, model: &[CellValue], tree: &[PropertyNode]) -> String {
+fn row_access_name(
+    row: &VisibleRow,
+    model: &[CellValue],
+    array: &[CellValue],
+    tree: &[PropertyNode],
+) -> String {
     if let Some(vi) = row_value_index(&row.id) {
         let name = PROPERTY_NAMES.get(vi).copied().unwrap_or(row.label.as_str());
         model.get(vi).map_or_else(|| name.to_owned(), |v| format!("{name}: {}", v.display()))
+    } else if let Some(ValueRef::Elem(k)) = row_ref(&row.id) {
+        // R931 — an array element: the qualified "Spawn Weights [k]" name folds
+        // in the element value (the same single-column-tree convention as a
+        // scalar leaf).
+        let name = format!("{ARRAY_LABEL} [{k}]");
+        array.get(k).map_or(name.clone(), |v| format!("{name}: {}", v.display()))
     } else if row.id.starts_with(STRUCT_PREFIX) {
         format!("{} {}", row.label, struct_value_summary(model, tree, &row.id))
+    } else if row.id.starts_with(ARR_PREFIX) {
+        // R931 — the array branch announces its element count.
+        let n = array.len();
+        let unit = if n == 1 { "element" } else { "elements" };
+        format!("{} ({n} {unit})", row.label)
     } else {
         format!("{} ({})", row.label, leaf_descendant_count(tree, &row.id))
     }
@@ -2724,6 +3364,7 @@ impl WidgetA11y for PropertyGridView {
     /// option / swatch.
     fn access_node(state: &RootState, focused: Option<&str>) -> Vec<AccessNode> {
         let model = use_property_model().get();
+        let array = use_array_model().get();
         let defaults = use_property_defaults();
         let tree_nodes = use_property_tree().get();
         let rows = visible_property_rows(&tree_nodes, &current_search_query());
@@ -2732,7 +3373,7 @@ impl WidgetA11y for PropertyGridView {
         // row tags (`{GRID_TAG}#{id}`) match the painted rows, so bounds resolve.
         let labelled: Vec<VisibleRow> = rows
             .iter()
-            .map(|r| VisibleRow { label: row_access_name(r, &model, &tree_nodes), ..r.clone() })
+            .map(|r| VisibleRow { label: row_access_name(r, &model, &array, &tree_nodes), ..r.clone() })
             .collect();
         let mut nodes = tree_access_nodes(
             GRID_TAG,
@@ -2771,6 +3412,33 @@ impl WidgetA11y for PropertyGridView {
                     .with_name(format!("Reset {name} to default")),
             );
         }
+        // R931 — the dynamic-collection affordances as `button` children: each
+        // array element row gains a "Remove" button, and the array branch row
+        // gains an "Add" button (always present, unlike the modified-gated
+        // reset, so an AT user can grow / shrink the list). Tags match the
+        // painted buttons, so a click routes identically.
+        for r in &rows {
+            let row_tag = tree_row_tag(GRID_TAG, &r.id);
+            if let Some(ValueRef::Elem(k)) = row_ref(&r.id) {
+                let rm_tag = format!("{GRID_TAG}#{RM_ELEM_PREFIX}{k}");
+                if let Some(node) = nodes.iter_mut().find(|n| n.tag == row_tag) {
+                    node.children.push(rm_tag.clone());
+                }
+                nodes.push(
+                    AccessNode::new(rm_tag, AriaRole::Button)
+                        .with_name(format!("Remove {ARRAY_LABEL} [{k}]")),
+                );
+            } else if r.id.starts_with(ARR_PREFIX) {
+                let add_tag = format!("{GRID_TAG}#{ADD_ELEM_TAG}");
+                if let Some(node) = nodes.iter_mut().find(|n| n.tag == row_tag) {
+                    node.children.push(add_tag.clone());
+                }
+                nodes.push(
+                    AccessNode::new(add_tag, AriaRole::Button)
+                        .with_name(format!("Add {ARRAY_LABEL} element")),
+                );
+            }
+        }
         // R873 — the live search box is a Tab stop; emit its textbox node (the
         // lifted `text_field_a11y_node` SSOT) so an AT user who tabs into it
         // hears a named `textbox` with the current query, not a silent node.
@@ -2787,7 +3455,9 @@ impl WidgetA11y for PropertyGridView {
         // R873 — a polite live region reporting the filtered leaf-row count, so
         // the filter narrowing / emptying the set is announced (the search/
         // filter APG pattern). Recomputed from the live flatten.
-        let data_count = rows.iter().filter(|r| row_value_index(&r.id).is_some()).count();
+        // R931 — count both scalar leaves and array element leaves (a `ValueRef`
+        // address), so the dynamic elements are part of the announced total.
+        let data_count = rows.iter().filter(|r| row_ref(&r.id).is_some()).count();
         nodes.push(
             AccessNode::new("pg_search_status", AriaRole::Status)
                 .with_name(format!("{data_count} properties")),
@@ -3107,9 +3777,10 @@ mod tests {
                 // header); row 16 = its first field (Position X).
                 (int("row_count"), text("id_at.0"), int("level_at.0"), expanded0, text("id_at.15"), int("level_at.16"))
             };
-            // 5 categories + 2 structs + 16 leaves = 23 visible rows (all open).
+            // 6 categories + 2 structs + 1 array branch + 19 leaves (16 scalar +
+            // 3 R931 array elements) = 28 visible rows (all open).
             let (rows, id0, level0, exp0, id15, level16) = tree_intro(&scene);
-            assert_eq!(rows, 23, "5 categories + 2 structs + 16 leaves");
+            assert_eq!(rows, 28, "6 categories + 2 structs + 1 array + 19 leaves");
             assert_eq!(id0, "cat.Identity");
             assert_eq!(level0, 1, "a category is aria-level 1");
             assert!(exp0, "categories boot expanded");
@@ -3134,7 +3805,7 @@ mod tests {
                 "toggle_branch returns the resulting expanded flag",
             );
             assert_eq!(grid_intro(&scene).query("expanded.cat.Identity"), Some(IntrospectValue::Bool(false)));
-            assert_eq!(tree_intro(&scene).0, 20, "23 − 3 Identity leaves");
+            assert_eq!(tree_intro(&scene).0, 25, "28 − 3 Identity leaves");
             // Editing a struct field marks the struct modified; reset_struct clears it.
             with_grid_mut(&mut scene, |i| i.intervene("value.6", IntrospectValue::Float(99.0)).unwrap());
             assert_eq!(grid_intro(&scene).query("struct_modified.struct.Position"), Some(IntrospectValue::Bool(true)));
@@ -3180,7 +3851,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from(9))),
+                Some(IntrospectValue::Json(serde_json::Value::from("9"))),
                 "while visible the open popup is advertised",
             );
             assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(0)));
@@ -3206,7 +3877,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from(9))),
+                Some(IntrospectValue::Json(serde_json::Value::from("9"))),
                 "re-expanding restores the advertisement",
             );
         });
@@ -3342,7 +4013,7 @@ mod tests {
             let n = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
             let intro = n.handle.introspect_mut().expect("introspectable");
             assert_eq!(intro.invoke("begin", IntrospectValue::Int(4)), Ok(IntrospectValue::Bool(true)));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from(4))));
+            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("4"))));
             assert_eq!(use_text_edit_state(EDIT_TF_TAG).text(), "3", "seeded with Layer value");
             // Type a new value + commit.
             use_text_edit_state(EDIT_TF_TAG).set_text("12".to_owned());
@@ -3454,11 +4125,11 @@ mod tests {
             // ArrowLeft on an expanded branch collapses it; its 3 leaves vanish.
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowLeft", Modifiers::empty()));
             assert!(collapsed(), "ArrowLeft collapses the focused category");
-            assert_eq!(visible().len(), 20, "23 − 3 Identity leaves");
+            assert_eq!(visible().len(), 25, "28 − 3 Identity leaves");
             // ArrowRight re-expands.
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowRight", Modifiers::empty()));
             assert!(!collapsed());
-            assert_eq!(visible().len(), 23);
+            assert_eq!(visible().len(), 28);
             // Enter on a branch toggles it too.
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
             assert!(collapsed(), "Enter on a branch toggles collapse");
@@ -3478,7 +4149,7 @@ mod tests {
             assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from(0))),
+                Some(IntrospectValue::Json(serde_json::Value::from("0"))),
             );
         });
     }
@@ -3625,7 +4296,7 @@ mod tests {
             let mut scene = boot_scene();
             open_choice(&mut scene, BLEND_ROW);
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from(9))));
+            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("9"))));
             assert_eq!(
                 intro.query("popup_cursor"),
                 Some(IntrospectValue::Int(0)),
@@ -3683,7 +4354,7 @@ mod tests {
             // Single-click the Blend row opens the popup; clicking option 2
             // (Multiply) commits + closes.
             let _ = intro.invoke("send", IntrospectValue::Text("9:PointerUp".to_owned()));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from(9))));
+            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("9"))));
             let _ = intro.invoke("send", IntrospectValue::Text("opt2:PointerUp".to_owned()));
             assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::Null)));
             let Some(IntrospectValue::Json(v)) = intro.query("value.9") else { panic!("json") };
@@ -3785,7 +4456,7 @@ mod tests {
             let mut scene = boot_scene();
             open_choice(&mut scene, TINT_ROW); // shared open helper (invoke begin)
             let intro = grid_intro(&scene);
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from(11))));
+            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("11"))));
             assert_eq!(
                 intro.query("popup_cursor"),
                 Some(IntrospectValue::Int(4)),
@@ -3819,7 +4490,7 @@ mod tests {
             let intro = n.handle.introspect_mut().expect("introspectable");
             // Single-click the Tint row opens; clicking swatch 2 (Red) commits.
             let _ = intro.invoke("send", IntrospectValue::Text("11:PointerUp".to_owned()));
-            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from(11))));
+            assert_eq!(intro.query("editing"), Some(IntrospectValue::Json(serde_json::Value::from("11"))));
             let _ = intro.invoke("send", IntrospectValue::Text("sw2:PointerUp".to_owned()));
             let Some(IntrospectValue::Json(v)) = intro.query("value.11") else { panic!("json") };
             assert_eq!(v["hex"], serde_json::json!("#e53935"), "clicked Red");
@@ -3973,7 +4644,7 @@ mod tests {
             let _ = boot_scene();
             let before = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(!before.contains_tag(EDIT_TF_TAG), "no inline field when not editing");
-            use_editing_row().set(Some(0));
+            use_editing_row().set(Some(ValueRef::Scalar(0)));
             let during = view(((TextFieldState::Idle, 0), (TextFieldState::Idle, 0)), &Frame::new());
             assert!(during.contains_tag(EDIT_TF_TAG), "inline field painted in the editing row");
         });
@@ -3993,7 +4664,7 @@ mod tests {
     fn r872_search_filters_rows_and_clears() {
         Owner::new().run(|| {
             let _scene = boot_scene();
-            assert_eq!(visible().len(), 23, "5 cats + 2 structs + 16 leaves with empty query");
+            assert_eq!(visible().len(), 28, "6 cats + 2 structs + 1 array + 19 leaves, empty query");
             // "pos" matches the qualified Position X/Y/Z field names; the
             // recursive filter reveals the Transform > Position path.
             use_text_edit_state(SEARCH_TF_TAG).set_text("pos".to_owned());
@@ -4005,7 +4676,7 @@ mod tests {
             assert_eq!(visible_leaf_indices(), vec![6, 7, 12], "only the Position fields match");
             // Clearing restores every row (the filter recomputes reactively).
             use_text_edit_state(SEARCH_TF_TAG).set_text(String::new());
-            assert_eq!(visible().len(), 23, "cleared query restores every row");
+            assert_eq!(visible().len(), 28, "cleared query restores every row");
         });
     }
 
@@ -4076,7 +4747,7 @@ mod tests {
             };
             let (role, name) = status_count();
             assert_eq!(role, AriaRole::Status, "filter result = aria-live Status");
-            assert_eq!(name.as_deref(), Some("16 properties"), "all 16 leaves with no filter");
+            assert_eq!(name.as_deref(), Some("19 properties"), "16 scalar + 3 array element leaves, no filter");
             // Narrowing the filter updates the announced count.
             use_text_edit_state(SEARCH_TF_TAG).set_text("pos".to_owned());
             assert_eq!(status_count().1.as_deref(), Some("3 properties"), "filtered to Position X/Y/Z");
@@ -4119,6 +4790,237 @@ mod tests {
             assert!(
                 !f.active_descendant.as_deref().unwrap_or("").contains(CHOICE_OPT_PREFIX),
                 "active descendant no longer points at the unpainted popup",
+            );
+        });
+    }
+
+    // ─── R931 array / Vec property editing ────────────────────────────
+
+    /// R931 — the array branch + its element leaves appear in the visible
+    /// flatten, addressed by `elem.<k>` ids; `elem_count` reports the sub-model
+    /// length.
+    #[test]
+    fn r931_array_branch_and_elements_in_flatten() {
+        Owner::new().run(|| {
+            let scene = boot_scene();
+            let ids = visible_ids();
+            assert!(ids.iter().any(|id| id == ARR_BRANCH_ID), "array branch row present");
+            assert!(ids.iter().any(|id| id == "elem.0"), "element 0 leaf present");
+            assert!(ids.iter().any(|id| id == "elem.2"), "element 2 leaf present");
+            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(3)));
+        });
+    }
+
+    /// R931 — an element value reads / writes through the same `value.<addr>`
+    /// wire as a scalar, with the `elem.<k>` address (read/write symmetry).
+    #[test]
+    fn r931_element_value_read_write_via_rpc() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert_eq!(grid_intro(&scene).query("value.elem.1"), Some(IntrospectValue::Float(0.5)));
+            with_grid_mut(&mut scene, |i| i.intervene("value.elem.1", IntrospectValue::Float(2.0)))
+                .expect("set element value");
+            assert_eq!(grid_intro(&scene).query("value.elem.1"), Some(IntrospectValue::Float(2.0)));
+            // An out-of-range element address reads None (like a scalar OOB).
+            assert_eq!(grid_intro(&scene).query("value.elem.9"), None);
+        });
+    }
+
+    /// R931 — `name.<addr>` / `kind.<addr>` answer for an element too: the
+    /// qualified "Spawn Weights [k]" name and the homogeneous `float` kind.
+    #[test]
+    fn r931_element_name_and_kind_rpc() {
+        Owner::new().run(|| {
+            let scene = boot_scene();
+            assert_eq!(
+                grid_intro(&scene).query("name.elem.0"),
+                Some(IntrospectValue::Text("Spawn Weights [0]".to_owned()))
+            );
+            assert_eq!(
+                grid_intro(&scene).query("kind.elem.0"),
+                Some(IntrospectValue::Text("float".to_owned()))
+            );
+        });
+    }
+
+    /// R931 — `add_elem` appends a `0.0` element and returns its index; the count
+    /// grows. `remove_elem` shrinks it and shifts later elements down (array
+    /// semantics). An out-of-range remove is a no-op `false`.
+    #[test]
+    fn r931_add_and_remove_elements() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let idx = with_grid_mut(&mut scene, |i| i.invoke("add_elem", IntrospectValue::Null)).unwrap();
+            assert_eq!(idx, IntrospectValue::Int(3), "new element index");
+            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(4)));
+            assert_eq!(
+                grid_intro(&scene).query("value.elem.3"),
+                Some(IntrospectValue::Float(0.0)),
+                "a new element seeds 0.0"
+            );
+            let ok = with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(0))).unwrap();
+            assert_eq!(ok, IntrospectValue::Bool(true));
+            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(3)));
+            assert_eq!(
+                grid_intro(&scene).query("value.elem.0"),
+                Some(IntrospectValue::Float(0.5)),
+                "elements shift down on remove"
+            );
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(9))).unwrap(),
+                IntrospectValue::Bool(false),
+                "out-of-range remove is a no-op"
+            );
+        });
+    }
+
+    /// R931 — `move_elem "from,to"` reorders the sub-model (a Vec remove+insert);
+    /// `from == to` is a no-op and a malformed payload is rejected.
+    #[test]
+    fn r931_move_element_reorders() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // [1.0, 0.5, 0.25] — move 0 → 2 — [0.5, 0.25, 1.0].
+            let ok = with_grid_mut(&mut scene, |i| i.invoke("move_elem", IntrospectValue::Text("0,2".to_owned()))).unwrap();
+            assert_eq!(ok, IntrospectValue::Bool(true));
+            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(0.5)));
+            assert_eq!(grid_intro(&scene).query("value.elem.2"), Some(IntrospectValue::Float(1.0)));
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("move_elem", IntrospectValue::Text("1,1".to_owned()))).unwrap(),
+                IntrospectValue::Bool(false),
+                "from == to is a no-op"
+            );
+            assert!(
+                with_grid_mut(&mut scene, |i| i.invoke("move_elem", IntrospectValue::Text("oops".to_owned()))).is_err(),
+                "malformed payload rejected"
+            );
+        });
+    }
+
+    /// R931 / R930.1 — removing an element cancels an in-flight edit on the array
+    /// (every element at / after the removal shifts, so even a survivor edit is
+    /// stale): the latch clears, so `editing` reports Null.
+    #[test]
+    fn r931_remove_cancels_inflight_element_edit() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            with_grid_mut(&mut scene, |i| i.invoke("begin", IntrospectValue::Text("elem.1".to_owned()))).unwrap();
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from("elem.1"))),
+                "editing the element"
+            );
+            with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(0))).unwrap();
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::Null)),
+                "the in-flight element edit is cancelled on remove"
+            );
+        });
+    }
+
+    /// R931 / R930.1 — removing the element under the cursor re-anchors it onto
+    /// the element that took its slot (it never strands on a vanished id). A
+    /// cursor on `elem.2` after removing `elem.0` follows the element to `elem.1`.
+    #[test]
+    fn r931_remove_reanchors_cursor() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            use_property_cursor().set(Some("elem.2".to_owned()));
+            with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(0))).unwrap();
+            assert_eq!(
+                use_property_cursor().get().as_deref(),
+                Some("elem.1"),
+                "cursor re-anchored onto the surviving element"
+            );
+        });
+    }
+
+    /// R931 — a scalar leaf's `value.<i>` address is permanent across array add /
+    /// remove (the whole point of the separate array sub-model), and the flat
+    /// model length never changes.
+    #[test]
+    fn r931_scalar_addresses_stable_across_array_ops() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let before = grid_intro(&scene).query("value.6");
+            with_grid_mut(&mut scene, |i| i.invoke("add_elem", IntrospectValue::Null)).unwrap();
+            with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(0))).unwrap();
+            assert_eq!(grid_intro(&scene).query("value.6"), before, "value.6 unchanged by array mutation");
+            assert_eq!(
+                grid_intro(&scene).query("row_count"),
+                Some(IntrospectValue::Int(16)),
+                "the flat model length is permanent"
+            );
+        });
+    }
+
+    /// R931 — the view paints each element row, its remove button, and the array
+    /// branch's add button.
+    #[test]
+    fn r931_view_paints_element_rows_and_buttons() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let scene = view(idle_state(), &Frame::new());
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#elem.0")), "element row painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#{ADD_ELEM_TAG}")), "add button painted");
+            assert!(scene.contains_tag(&format!("{GRID_TAG}#{RM_ELEM_PREFIX}0")), "remove button painted");
+        });
+    }
+
+    /// R931 — a11y: the array branch gains an "Add" button child, each element
+    /// row a "Remove" button child, and an element treeitem folds its value into
+    /// its accessible name.
+    #[test]
+    fn r931_a11y_add_remove_buttons() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let nodes = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
+            let add = nodes
+                .iter()
+                .find(|n| n.tag == format!("{GRID_TAG}#{ADD_ELEM_TAG}"))
+                .expect("add button node");
+            assert_eq!(add.role, AriaRole::Button);
+            assert_eq!(add.name.as_deref(), Some("Add Spawn Weights element"));
+            let rm = nodes
+                .iter()
+                .find(|n| n.tag == format!("{GRID_TAG}#{RM_ELEM_PREFIX}0"))
+                .expect("remove button node");
+            assert_eq!(rm.name.as_deref(), Some("Remove Spawn Weights [0]"));
+            let elem = nodes
+                .iter()
+                .find(|n| n.tag == tree_row_tag(GRID_TAG, "elem.0"))
+                .expect("element treeitem");
+            assert!(
+                elem.name.as_deref().unwrap_or("").contains("Spawn Weights [0]: 1"),
+                "the element name folds in its value"
+            );
+        });
+    }
+
+    /// R931 — keyboard: Enter on an element cursor begins its edit; Delete on an
+    /// element cursor removes it (the grow / shrink twin of the +/− buttons,
+    /// which are not tab stops).
+    #[test]
+    fn r931_keyboard_edit_and_delete_element() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            use_property_cursor().set(Some("elem.0".to_owned()));
+            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Enter", Modifiers::empty()));
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
+                "Enter begins the element edit"
+            );
+            // Reset the latch, then Delete on the element cursor removes it.
+            use_editing_row().set(None);
+            use_text_edit_state(EDIT_TF_TAG).set_text(String::new());
+            use_property_cursor().set(Some("elem.0".to_owned()));
+            assert!(PropertyGridView::apply_key(&mut scene, Some(GRID_TAG), "Delete", Modifiers::empty()));
+            assert_eq!(
+                grid_intro(&scene).query("elem_count"),
+                Some(IntrospectValue::Int(2)),
+                "Delete removed the element"
             );
         });
     }

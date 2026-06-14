@@ -138,7 +138,7 @@ def body() -> None:
         _focus_grid(tf)
         tf.intervene("/external/cursor", str(0))  # Name (text)
         tf.key(path=GRID, name="Enter")  # enter edit mode
-        wait_until(lambda: tf.query("/external/editing") == 0, timeout=4.0,
+        wait_until(lambda: tf.query("/external/editing") == "0", timeout=4.0,
                    interval=0.03, desc="Enter starts editing row 0")
         wait_until(lambda: _row_painted(tf, 0) and find_by_tag(
             tf.snapshot(source="paint", viewport=VIEWPORT), EDIT) is not None,
@@ -158,7 +158,7 @@ def body() -> None:
         _focus_grid(tf)
         tf.intervene("/external/cursor", str(4))  # Layer (int) = 3
         tf.key(path=GRID, name="Enter")
-        wait_until(lambda: tf.query("/external/editing") == 4, timeout=4.0,
+        wait_until(lambda: tf.query("/external/editing") == "4", timeout=4.0,
                    interval=0.03, desc="Enter starts editing the int row")
         wait_until(lambda: tf.request("focus/get").result.get("focused") == EDIT,
                    timeout=4.0, interval=0.03, desc="focus into the int field")
@@ -174,7 +174,7 @@ def body() -> None:
         _focus_grid(tf)
         tf.intervene("/external/cursor", str(1))  # Tag (text) = "hero"
         tf.key(path=GRID, name="Enter")
-        wait_until(lambda: tf.query("/external/editing") == 1, timeout=4.0,
+        wait_until(lambda: tf.query("/external/editing") == "1", timeout=4.0,
                    interval=0.03, desc="editing the Tag row")
         tf.text("ZZZ", path=EDIT)
         tf.key(path=EDIT, name="Escape")
@@ -192,7 +192,7 @@ def body() -> None:
 
         # ── (H) double-click enters edit mode on an editable row ─────
         tf.double_click(path=f"{GRID}#0")
-        wait_until(lambda: tf.query("/external/editing") == 0, timeout=4.0,
+        wait_until(lambda: tf.query("/external/editing") == "0", timeout=4.0,
                    interval=0.03, desc="double-click starts editing")
         tf.key(path=EDIT, name="Escape")
         wait_until(lambda: tf.query("/external/editing") is None, timeout=4.0,

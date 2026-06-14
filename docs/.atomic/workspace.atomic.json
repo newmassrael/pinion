@@ -40575,6 +40575,66 @@
         "Choice/Color arms (total+harmless, no Choice/Color column exists) -- both kept as-is after re-verification"
       ]
     },
+    "R931": {
+      "decision_summary": "R931: property-grid array/Vec property editing via a dedicated sub-model + unified ValueRef address (the edit-path fork resolved)",
+      "changes_bullets": [
+        "§5.38 property-grid edits a dynamic TArray<f32>: an element list grows/shrinks/reorders",
+        "§5.38 elements in a separate Signal<Vec<CellValue>> sub-model, not the flat value model",
+        "§5.38 unified ValueRef{Scalar|Elem} keys the edit latch + scrub + read/write funnel (no fork)",
+        "§5.38 scalar value.<i> addresses stay permanent across array add/remove/reorder",
+        "§5.38 add_elem/remove_elem/move_elem RPC + the +/- buttons; remove = R930.1 invalidation",
+        "§5.38 value.elem.<k>/name/kind mirror the scalar wire; editing now reports a node id",
+        "§5.40 element rows = treeitem leaves + a Remove button; the array branch gets an Add button",
+        "§5.38 element leaves synthesized from sub-model length via tree_nav find_node_mut"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 6614 ok; 63 property-grid (52 existing + 11 new R931)",
+        "cargo clippy --workspace --all-targets -D pedantic: clean",
+        "r931_property_grid_array demo: 43 assertions PASS (ZERO-FLAKE wait-gates)",
+        "regression r836/r867/r869/r871/r872/r875/r919/r921/r922 PASS (wire + count updates)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "live drag-to-reorder gesture deferred; AI-first move_elem is the primary path (R929)",
+        "elements not yet in modified/reset machinery (array modified axis = length/content)",
+        "one demo array property; multi-array is the same pattern repeated (honest scope)",
+        "node/grid/array dynamic-collection consumers diverge in shape -> no forced substrate",
+        "self-grep caught a find_node_mut substrate duplicate -> used tree_nav, removed local"
+      ],
+      "publishable_decision_summary": "R931: property-grid array/Vec property editing via a dedicated sub-model + unified ValueRef address (the edit-path fork resolved)",
+      "publishable_changes_bullets": [
+        "§5.38 property-grid edits a dynamic TArray<f32>: an element list grows/shrinks/reorders",
+        "§5.38 elements in a separate Signal<Vec<CellValue>> sub-model, not the flat value model",
+        "§5.38 unified ValueRef{Scalar|Elem} keys the edit latch + scrub + read/write funnel (no fork)",
+        "§5.38 scalar value.<i> addresses stay permanent across array add/remove/reorder",
+        "§5.38 add_elem/remove_elem/move_elem RPC + the +/- buttons; remove = R930.1 invalidation",
+        "§5.38 value.elem.<k>/name/kind mirror the scalar wire; editing now reports a node id",
+        "§5.40 element rows = treeitem leaves + a Remove button; the array branch gets an Add button",
+        "§5.38 element leaves synthesized from sub-model length via tree_nav find_node_mut"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 6614 ok; 63 property-grid (52 existing + 11 new R931)",
+        "cargo clippy --workspace --all-targets -D pedantic: clean",
+        "r931_property_grid_array demo: 43 assertions PASS (ZERO-FLAKE wait-gates)",
+        "regression r836/r867/r869/r871/r872/r875/r919/r921/r922 PASS (wire + count updates)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live drag-to-reorder gesture deferred; AI-first move_elem is the primary path (R929)",
+        "elements not yet in modified/reset machinery (array modified axis = length/content)",
+        "one demo array property; multi-array is the same pattern repeated (honest scope)",
+        "node/grid/array dynamic-collection consumers diverge in shape -> no forced substrate",
+        "self-grep caught a find_node_mut substrate duplicate -> used tree_nav, removed local"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

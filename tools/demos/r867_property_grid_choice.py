@@ -75,7 +75,11 @@ def _label(tf, row: int) -> str:
 
 
 def _editing(tf):
-    return tf.query("/external/editing")
+    # R931 — `editing` now reports the editing leaf's node id (a string, the same
+    # vocabulary `cursor` uses). This demo's rows are scalar leaves, so map a
+    # numeric id back to its int value index for comparison with the constants.
+    e = tf.query("/external/editing")
+    return int(e) if isinstance(e, str) and e.isdigit() else e
 
 
 def body() -> None:

@@ -157,7 +157,7 @@ def body() -> None:
         # ── (I) double-click still opens the inline editor ──────────
         tf.double_click(path=f"{GRID}#5")
         wait_until(
-            lambda: gq(tf, "editing") == 5,
+            lambda: gq(tf, "editing") == "5",
             desc="double-click opens the editor on Health (the edit path is intact)",
         )
 
