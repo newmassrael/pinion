@@ -40195,6 +40195,60 @@
         "3rd box-emit consumer (Rule-of-Three; 2 is premature, the divergence is a real visual role)"
       ]
     },
+    "R926.1": {
+      "decision_summary": "R926.1 session-review clearance — adversarial 3-reviewer audit (correctness/SSOT/doc-honesty), every finding re-verified by grep. REAL fix: R925 jank profiler was blind on immediate-mode windows because jank_budget_us_for_window hardcoded has_immediate=false while claiming 'every window that paints today is retained-tree' — false (hello-immediate-mode-canvas paints a Scene::ImmediateModeNode today, paced at the default 60fps). Moved has_immediate_mode_subtree from the AppShell slot to ShellCore (one home with target_fps); render_window publishes it, about_to_wait pacing and the jank budget both read it through one frame_budget_for_window call, so the jank budget equals the pacing budget for every window. Also corrected the R926 bracket_match query doc (RPC is focus-independent; the paint outline is focus-gated).",
+      "changes_bullets": [
+        "R925 fix: jank_budget threads the REAL per-window immediate flag (was hardcoded false)",
+        "has_immediate_mode_subtree moved from the AppShell slot to ShellCore (one home with target_fps)",
+        "render_window publishes it; about_to_wait pacing + jank budget both read that one signal",
+        "jank budget now equals the render-loop pacing budget for EVERY window, incl immediate-mode",
+        "R926 fix: bracket_match query doc corrected — RPC focus-independent, paint outline focus-gated"
+      ],
+      "verification_bullets": [
+        "2 regression tests: immediate window gets the 60fps default budget; override wins over it",
+        "end-to-end: hello-immediate-mode-canvas reports budget_us=16666, over_budget=10 of 82",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "adversarial 3-reviewer session-review (correctness/SSOT/doc-honesty); findings re-verified by grep"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.7",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "review confirmed SSOT-clean on introduced code (paint + RPC read one matching_bracket derivation)",
+        "honest 2-consumer defers: hit_rate dup (pre-existing); push_band vs push_bracket_outline",
+        "-> lift push_field_box at a 3rd box-emit consumer",
+        "northern-star: R925 escalates (perf); R926 bracket was LOW-leverage (smallest slice, axis #6)",
+        "R927 must escalate: DCC widget crate-lift (#1) or Model/View at scale (#2)"
+      ],
+      "publishable_decision_summary": "R926.1 session-review clearance — adversarial 3-reviewer audit (correctness/SSOT/doc-honesty), every finding re-verified by grep. REAL fix: R925 jank profiler was blind on immediate-mode windows because jank_budget_us_for_window hardcoded has_immediate=false while claiming 'every window that paints today is retained-tree' — false (hello-immediate-mode-canvas paints a Scene::ImmediateModeNode today, paced at the default 60fps). Moved has_immediate_mode_subtree from the AppShell slot to ShellCore (one home with target_fps); render_window publishes it, about_to_wait pacing and the jank budget both read it through one frame_budget_for_window call, so the jank budget equals the pacing budget for every window. Also corrected the R926 bracket_match query doc (RPC is focus-independent; the paint outline is focus-gated).",
+      "publishable_changes_bullets": [
+        "R925 fix: jank_budget threads the REAL per-window immediate flag (was hardcoded false)",
+        "has_immediate_mode_subtree moved from the AppShell slot to ShellCore (one home with target_fps)",
+        "render_window publishes it; about_to_wait pacing + jank budget both read that one signal",
+        "jank budget now equals the render-loop pacing budget for EVERY window, incl immediate-mode",
+        "R926 fix: bracket_match query doc corrected — RPC focus-independent, paint outline focus-gated"
+      ],
+      "publishable_verification_bullets": [
+        "2 regression tests: immediate window gets the 60fps default budget; override wins over it",
+        "end-to-end: hello-immediate-mode-canvas reports budget_us=16666, over_budget=10 of 82",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "adversarial 3-reviewer session-review (correctness/SSOT/doc-honesty); findings re-verified by grep"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.7",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "review confirmed SSOT-clean on introduced code (paint + RPC read one matching_bracket derivation)",
+        "honest 2-consumer defers: hit_rate dup (pre-existing); push_band vs push_bracket_outline",
+        "-> lift push_field_box at a 3rd box-emit consumer",
+        "northern-star: R925 escalates (perf); R926 bracket was LOW-leverage (smallest slice, axis #6)",
+        "R927 must escalate: DCC widget crate-lift (#1) or Model/View at scale (#2)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -53336,5 +53390,6 @@
   "entities": {},
   "predicates": {},
   "narrative_facts": {},
-  "schema_version": 21
+  "disclosure_plans": {},
+  "schema_version": 22
 }

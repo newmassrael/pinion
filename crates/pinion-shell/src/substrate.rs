@@ -330,8 +330,19 @@ pub struct ShellCore<V: WidgetView> {
     ///
     /// Absent entry → use
     /// [`pinion_runtime::frame_pacing::default_window_frame_policy`]
-    /// derived from the slot's `has_immediate_mode_subtree` signal.
+    /// derived from [`Self::immediate_subtree_for_window`].
     target_fps_per_window: HashMap<String, u32>,
+    /// R681 §2 #4 §5.16 — per-window "did the last painted scene carry a
+    /// [`pinion_core::scene::Scene::ImmediateModeNode`]?" flag, the
+    /// single home for the pacing input both the render loop's
+    /// `about_to_wait` and the §5.16 jank profiler
+    /// ([`Self::frame_timings_for_window`]) read. `AppShell::render_window`
+    /// publishes it every paint via [`Self::set_immediate_subtree_for_window`]
+    /// — the peer of [`Self::target_fps_per_window`] (a pacing input that
+    /// also lives here, not on the slot), so the two pacing inputs share
+    /// one lookup and pacing vs observability cannot derive different
+    /// budgets. Absent entry → `false` (retained-tree default).
+    immediate_subtree_per_window: HashMap<String, bool>,
     /// R829 §2 #4 §5.28 — per-window pending injected immediate-mode `dt`
     /// (seconds). A `scene/tick` ([`pinion_rpc::DeferredInput::Tick`])
     /// accumulates its delta here; the next per-window paint
@@ -519,6 +530,7 @@ impl<V: WidgetView> ShellCore<V> {
             redraw_requested_per_window: HashMap::new(),
             last_paint_instants: HashMap::new(),
             target_fps_per_window: HashMap::new(),
+            immediate_subtree_per_window: HashMap::new(),
             pending_immediate_dt_per_window: HashMap::new(),
             sim_accumulator_per_window: HashMap::new(),
             fragment_cache_stats_per_window: HashMap::new(),
@@ -882,6 +894,31 @@ impl<V: WidgetView> ShellCore<V> {
         self.target_fps_per_window.get(window_id).copied()
     }
 
+    /// R681 §2 #4 §5.16 — publish whether `window_id`'s most recently
+    /// painted scene carried an immediate-mode subtree. Called by
+    /// `AppShell::render_window` every paint cycle (the sticky signal
+    /// the next `about_to_wait` pacing decision + the jank profiler both
+    /// read), keeping the immediate-mode flag in the same home as the
+    /// `target_fps` override so the two pacing inputs never drift.
+    pub fn set_immediate_subtree_for_window(&mut self, window_id: &str, has_immediate: bool) {
+        self.immediate_subtree_per_window
+            .insert(window_id.to_owned(), has_immediate);
+    }
+
+    /// R681 §2 #4 §5.16 — whether `window_id`'s last painted scene
+    /// carried an immediate-mode subtree. `false` for an unknown or
+    /// never-painted window (the retained-tree default). The pacing
+    /// input both `about_to_wait` and the jank budget
+    /// ([`Self::frame_timings_for_window`]) consult through
+    /// [`pinion_runtime::frame_pacing::frame_budget_for_window`].
+    #[must_use]
+    pub fn immediate_subtree_for_window(&self, window_id: &str) -> bool {
+        self.immediate_subtree_per_window
+            .get(window_id)
+            .copied()
+            .unwrap_or(false)
+    }
+
     /// R682 §5.16 atomic 3 — publish a [`FragmentCacheStats`]
     /// snapshot for the given window. Surface-side
     /// `AppShell::render_window` calls this after each paint cycle so
@@ -1030,24 +1067,28 @@ impl<V: WidgetView> ShellCore<V> {
     /// for an unpaced window (no declared frame target → no deadline →
     /// jank undefined).
     ///
-    /// The budget *is* the window's pacing budget: a `target_fps`
-    /// override opts even a retained-tree window into polled `1/fps`
-    /// pacing ([`frame_budget_for_window`](pinion_runtime::frame_pacing::frame_budget_for_window),
-    /// R681), so the jank profiler reports frames against the very
-    /// deadline the render loop schedules to — not an independent
-    /// number that could drift from it. `has_immediate_mode_subtree`
-    /// is passed `false` because every window that paints today is
-    /// retained-tree (`ImmediateModeNode` is Phase C); an
-    /// immediate-mode window's implicit-60fps default budget is a
-    /// Phase-C integration that lands with the immediate-mode loop.
+    /// The budget *is* the window's pacing budget — it is computed from
+    /// the SAME two inputs, through the SAME
+    /// [`frame_budget_for_window`](pinion_runtime::frame_pacing::frame_budget_for_window)
+    /// (R681) helper, that the render loop's `about_to_wait` uses to
+    /// schedule the window's deadline: the per-window
+    /// [`immediate_subtree`](Self::immediate_subtree_for_window) flag
+    /// (an immediate-mode window paces at the default 60fps) and the
+    /// optional [`target_fps`](Self::target_fps_for_window) override
+    /// (which opts even a retained-tree window into polled `1/fps`).
+    /// So the jank profiler reports frames against the very deadline the
+    /// render loop schedules to, for every window — retained idle (no
+    /// budget, jank undefined), retained-with-override, AND immediate-mode
+    /// (R681/R827–R831, which paint today: `hello-immediate-mode-canvas`).
     ///
     /// A sub-microsecond budget (an absurdly high `target_fps` whose
     /// `1/fps` truncates below 1µs) maps to `None` rather than
     /// `Some(0)`: a zero budget would vacuously mark every non-instant
     /// frame janky.
     fn jank_budget_us_for_window(&self, window_id: &str) -> Option<u64> {
+        let has_immediate = self.immediate_subtree_for_window(window_id);
         let override_fps = self.target_fps_for_window(window_id);
-        pinion_runtime::frame_pacing::frame_budget_for_window(false, override_fps)
+        pinion_runtime::frame_pacing::frame_budget_for_window(has_immediate, override_fps)
             .map(|d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
             .filter(|&us| us > 0)
     }

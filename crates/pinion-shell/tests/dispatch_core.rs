@@ -3537,6 +3537,54 @@ mod r907_frame_timing_substrate {
         assert_eq!(snap.budget_us, None);
         assert_eq!(snap.over_budget_frames, 0);
     }
+
+    // ── R926.1 — the jank budget equals the render-loop pacing budget
+    // for an IMMEDIATE-MODE window too (R925 regression: the budget was
+    // hardcoded has_immediate=false, so immediate windows that pace at
+    // the default 60fps reported budget_us=null / zero jank forever). ──
+
+    #[test]
+    fn r926_1_immediate_mode_window_gets_default_60fps_jank_budget() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.record_frame_timing("game", FrameTiming::new(8_000, 4_000, 2_000, 20_000));
+        // No target_fps override, but the painted scene carried an
+        // immediate-mode subtree -> the render loop paces it at the
+        // default 60fps, and the jank profiler must judge against that
+        // same 16_666µs budget (not report it as unpaced).
+        core.set_immediate_subtree_for_window("game", true);
+        let snap = core.frame_timings_for_window("game").unwrap();
+        assert_eq!(
+            snap.budget_us,
+            Some(16_666),
+            "an immediate-mode window paces at the default 60fps",
+        );
+        assert_eq!(
+            snap.over_budget_frames, 1,
+            "the 20_000µs frame missed the 16_666µs budget",
+        );
+        assert_eq!(snap.worst_overrun_us, 20_000 - 16_666);
+    }
+
+    #[test]
+    fn r926_1_immediate_flag_defaults_false_and_override_wins() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        // Default (no flag published): retained-tree -> no budget.
+        core.record_frame_timing("w", FrameTiming::new(100, 50, 30, 9_999));
+        assert!(!core.immediate_subtree_for_window("w"));
+        assert_eq!(core.frame_timings_for_window("w").unwrap().budget_us, None);
+        // An explicit target_fps override wins over the immediate-mode
+        // 60fps default (frame_budget_for_window: override takes
+        // precedence) — exactly as the pacing loop resolves it.
+        core.set_immediate_subtree_for_window("w", true);
+        core.set_target_fps_for_window("w", 30);
+        assert_eq!(
+            core.frame_timings_for_window("w").unwrap().budget_us,
+            Some(33_333),
+            "30fps override wins over the 60fps immediate default",
+        );
+    }
 }
 
 // ─────────────────────────────────────────────────────────────

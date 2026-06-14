@@ -125,18 +125,6 @@ struct WindowSlot<R: VelloRenderer> {
     /// downstream `spec_id: &str` parameter sites stay unchanged —
     /// Cow's `Deref<Target = str>` covers the read API.
     spec_id: Cow<'static, str>,
-    /// R681 §2 #4 atomic 2 — sticky flag set whenever the most recent
-    /// per-window paint scene contained at least one
-    /// [`pinion_core::Scene::ImmediateModeNode`]. The
-    /// [`ApplicationHandler::about_to_wait`] override consults this
-    /// flag to pick between [`ControlFlow::Wait`] (input-driven, idle
-    /// power) and [`ControlFlow::WaitUntil`] (per-window paint clock
-    /// at ~60 fps) — the §2 #4 game-loop contract for the
-    /// immediate-mode subtree opt-in. Cleared automatically each
-    /// paint cycle: if the view fn stops emitting an immediate-mode
-    /// subtree, the flag falls back to `false` on the next paint and
-    /// the slot returns to input-driven pacing.
-    has_immediate_mode_subtree: bool,
     /// R682 §5.16 atomic 1 — per-window paint-fragment cache. Lives
     /// per `WindowSlot` because the cached `vello::Scene` fragments
     /// reference the same backend coordinate space as
@@ -188,7 +176,6 @@ impl<R: VelloRenderer> WindowSlot<R> {
             last_ime_cursor_area: None,
             pending_intrinsic_resize,
             spec_id,
-            has_immediate_mode_subtree: false,
             fragment_cache: paint_adapter::FragmentCache::new(),
             image_cache: image_cache::ImageCache::new(),
         }
@@ -759,19 +746,12 @@ impl<V: WidgetView> AppShell<V> {
             .windows
             .get(&window_id)
             .map(|slot| slot.fragment_cache.stats());
-        if let Some(slot) = self.windows.get_mut(&window_id) {
-            // R681 §2 #4 atomic 2 — sticky per-window flag for the
-            // immediate-mode game-loop pacing. The next
-            // `about_to_wait` reads this to choose between
-            // [`ControlFlow::Wait`] and
-            // [`ControlFlow::WaitUntil(deadline)`]. The substrate
-            // tick walker already armed the per-window redraw flag
-            // inside `compute_paint_scene_internal`; the sticky
-            // signal here lets the pacing decision survive the
-            // single-shot redraw-flag drain.
-            slot.has_immediate_mode_subtree =
-                paint_scene.has_immediate_mode_subtree();
-        }
+        // R681 §2 #4 atomic 2 — capture the immediate-mode pacing flag
+        // before `paint_scene` is moved into `finalize_frame_for_window`
+        // below. Published to the substrate after finalize (keyed by the
+        // finalize target window, like `record_frame_timing`), so pacing
+        // and the §5.16 jank profiler read it from one home.
+        let has_immediate_subtree = paint_scene.has_immediate_mode_subtree();
         // R682 §5.16 atomic 3 — publish the snapshot into the
         // GUI-agnostic substrate so RPC + tests can introspect cache
         // observability without depending on the
@@ -813,6 +793,14 @@ impl<V: WidgetView> AppShell<V> {
             target_window,
             pinion_runtime::FrameTiming::new(build_us, encode_us, render_us, total_us),
         );
+        // R681 §2 #4 atomic 2 — publish the sticky immediate-mode flag
+        // into the substrate (one home with `target_fps`). The next
+        // `about_to_wait` reads it to choose `ControlFlow::Wait` vs
+        // `WaitUntil(deadline)`, and the §5.16 jank profiler derives the
+        // same frame budget from it — pacing and observability cannot
+        // disagree because they read this one signal.
+        self.core
+            .set_immediate_subtree_for_window(target_window, has_immediate_subtree);
     }
 
     /// R670.B §5.16 — per-window IME candidate publish helper.
@@ -1729,8 +1717,9 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
     /// for more input. This is the canonical hook to configure the
     /// next [`ControlFlow`]:
     ///
-    /// - Any active window slot with `has_immediate_mode_subtree =
-    ///   true` arms the §2 #4 game-loop branch: compute that slot's
+    /// - Any active window slot whose published
+    ///   [`ShellCore::immediate_subtree_for_window`] is `true` arms the
+    ///   §2 #4 game-loop branch: compute that slot's
     ///   next-paint deadline as
     ///   `slot.last_paint_instant + frame_budget`
     ///   (`frame_budget` = 1/60s; per-window override lands in
@@ -1771,16 +1760,18 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             if !matches!(slot.render, RenderState::Active { .. }) {
                 continue;
             }
-            // R681 atomic 3 — derive the per-window frame budget
-            // from the substrate signals: the slot's sticky
-            // `has_immediate_mode_subtree` flag + the binding's
-            // optional `set_target_fps_for_window` override. `None`
-            // budget means "this slot does not contribute a
-            // deadline" (idle policy, the default for retained-tree
-            // windows).
+            // R681 atomic 3 — derive the per-window frame budget from
+            // the substrate signals (both homed on `ShellCore`): the
+            // sticky `immediate_subtree` flag `render_window` publishes
+            // + the binding's optional `set_target_fps_for_window`
+            // override. `None` budget means "this slot does not
+            // contribute a deadline" (idle policy, the default for
+            // retained-tree windows). The §5.16 jank profiler reads the
+            // same two signals through the same helper, so its budget
+            // equals this pacing budget for every window.
             let override_fps = self.core.target_fps_for_window(&slot.spec_id);
             let budget = pinion_runtime::frame_pacing::frame_budget_for_window(
-                slot.has_immediate_mode_subtree,
+                self.core.immediate_subtree_for_window(&slot.spec_id),
                 override_fps,
             );
             let Some(budget) = budget else { continue };
