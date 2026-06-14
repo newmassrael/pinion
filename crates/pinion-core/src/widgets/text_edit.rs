@@ -618,6 +618,103 @@ fn find_matches_in(
     out
 }
 
+/// R926 §5.22 — the three structural bracket pairs the matcher
+/// recognizes, as `(open, close)` ASCII bytes. Angle brackets `<>` are
+/// intentionally excluded: without a tokenizer they are ambiguous with
+/// the comparison / shift operators, so highlighting them would fire on
+/// `a < b` (the same reason VS Code matches them only under a language
+/// configuration). All six bytes are ASCII, so a raw byte scan is
+/// UTF-8-safe — an ASCII byte never occurs inside a multi-byte char.
+const BRACKET_PAIRS: [(u8, u8); 3] = [(b'(', b')'), (b'[', b']'), (b'{', b'}')];
+
+/// Classify a byte as a bracket: `Some((is_open, mate))` where `mate`
+/// is the opposite-side byte of the same pair, or `None` for a
+/// non-bracket byte.
+fn bracket_role(b: u8) -> Option<(bool, u8)> {
+    for &(open, close) in &BRACKET_PAIRS {
+        if b == open {
+            return Some((true, close));
+        }
+        if b == close {
+            return Some((false, open));
+        }
+    }
+    None
+}
+
+/// R926 §5.22 — the matching bracket of the bracket the caret sits
+/// adjacent to, as `(open_byte, close_byte)` with `open_byte <
+/// close_byte`, or `None` when the caret is not next to a bracket or
+/// the bracket is unbalanced.
+///
+/// **Active bracket** (the VS Code rule): the bracket immediately
+/// *before* the caret takes precedence (you just typed / stepped past
+/// it), else the bracket immediately *at* the caret. So a caret between
+/// `(` and `)` resolves to the opener it follows.
+///
+/// **Same-type depth scan**: from an opener, scan forward counting
+/// nesting of *that pair only* until depth returns to zero; from a
+/// closer, scan backward symmetrically. Counting one pair at a time is
+/// correct for well-formed code (inner pairs of other types are
+/// balanced, so they cannot shadow the match) and best-effort while
+/// code is mid-edit and unbalanced — the baseline every editor ships
+/// before language services. **Deferred refinements** (a separate
+/// axis): a full multi-type bracket *stack* for strict interleave
+/// detection (`([)]`), and skipping brackets inside string / comment
+/// tokens — both need the tokenizer the §5.22 syntax layer owns.
+///
+/// Byte offsets, not char offsets: brackets are single ASCII bytes, and
+/// `caret_byte` is a char-boundary byte offset, so the scan compares
+/// raw bytes safely (ASCII bracket bytes cannot appear inside a
+/// multi-byte UTF-8 sequence).
+fn matching_bracket_in(text: &str, caret_byte: usize) -> Option<(usize, usize)> {
+    let bytes = text.as_bytes();
+    // Active bracket: the one just before the caret wins, else the one
+    // at the caret. `caret_byte` is clamped to the buffer by the caller
+    // (it is a live caret position); the bounds checks defend a stale
+    // or out-of-range argument rather than panicking.
+    let pos = if caret_byte > 0
+        && caret_byte <= bytes.len()
+        && bracket_role(bytes[caret_byte - 1]).is_some()
+    {
+        caret_byte - 1
+    } else if caret_byte < bytes.len() && bracket_role(bytes[caret_byte]).is_some() {
+        caret_byte
+    } else {
+        return None;
+    };
+    let (is_open, mate) = bracket_role(bytes[pos])?;
+    let this = bytes[pos];
+    let mut depth: u32 = 0;
+    if is_open {
+        for (i, &b) in bytes.iter().enumerate().skip(pos) {
+            if b == this {
+                depth += 1;
+            } else if b == mate {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((pos, i));
+                }
+            }
+        }
+    } else {
+        let mut i = pos + 1;
+        while i > 0 {
+            i -= 1;
+            let b = bytes[i];
+            if b == this {
+                depth += 1;
+            } else if b == mate {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((i, pos));
+                }
+            }
+        }
+    }
+    None
+}
+
 impl TextEditState {
     /// Construct a fresh `TextEditState` with empty text and caret
     /// at `0`. Most application code reaches `TextEditState`
@@ -1129,6 +1226,23 @@ impl TextEditState {
         let cs = self.find_case_sensitive.get();
         let ww = self.find_whole_word.get();
         find_matches_in(&text, &query, cs, ww)
+    }
+
+    /// R926 §5.22 — the bracket pair the caret currently sits adjacent
+    /// to, as `(open_byte, close_byte)`, or `None` when the caret is not
+    /// next to a bracket (or the bracket is unbalanced). A derive-on-read
+    /// accessor in the [`find_matches`](Self::find_matches) /
+    /// [`style_runs`](Self::style_runs) lineage: it subscribes to the
+    /// `text` + `caret` Signals and re-derives from the live buffer, so
+    /// the paint highlight bands, the caret geometry, and the
+    /// `scene/<tag>/external/bracket_match` RPC all read the one
+    /// derivation and never disagree. Re-derives on every caret move
+    /// (the scan is `O(distance to the mate)`, paid only on read).
+    #[must_use]
+    pub fn matching_bracket(&self) -> Option<(usize, usize)> {
+        let text = self.text.get();
+        let caret = self.caret_pos.get();
+        matching_bracket_in(&text, caret)
     }
 
     /// R903 §5.22 — number of current matches (reactive read).
@@ -2137,8 +2251,8 @@ mod tests {
     //! hook integration.
 
     use super::{
-        clamp_to_char_boundary, find_matches_in, next_char_boundary, prev_char_boundary,
-        use_text_edit_state, TextEditState,
+        clamp_to_char_boundary, find_matches_in, matching_bracket_in, next_char_boundary,
+        prev_char_boundary, use_text_edit_state, TextEditState,
     };
     use crate::reactive::{Effect, Owner};
     use crate::scene::StyleRun;
@@ -3853,6 +3967,97 @@ mod tests {
         // on the source's own byte boundaries.
         let s = "\u{00e9}cole cole"; // "école cole" — 'é' is 2 bytes
         assert_eq!(find_matches_in(s, "cole", true, false), vec![(2, 6), (7, 11)]);
+    }
+
+    // ── R926 §5.22 — matching-bracket derivation ─────────────────────
+
+    #[test]
+    fn r926_matching_bracket_from_opener_scans_forward() {
+        // Caret immediately after the opener (the just-passed position)
+        // and caret AT the opener both match the closer.
+        assert_eq!(matching_bracket_in("(a)", 1), Some((0, 2)));
+        assert_eq!(matching_bracket_in("(a)", 0), Some((0, 2)));
+    }
+
+    #[test]
+    fn r926_matching_bracket_from_closer_scans_backward() {
+        // Caret after the closer (the just-typed `)`) and caret AT the
+        // closer both match back to the opener.
+        assert_eq!(matching_bracket_in("(a)", 3), Some((0, 2)));
+        assert_eq!(matching_bracket_in("(a)", 2), Some((0, 2)));
+    }
+
+    #[test]
+    fn r926_matching_bracket_nesting_same_type() {
+        let s = "((()))";
+        // After the outer opener -> outer closer.
+        assert_eq!(matching_bracket_in(s, 1), Some((0, 5)));
+        // After the innermost opener -> innermost closer.
+        assert_eq!(matching_bracket_in(s, 3), Some((2, 3)));
+    }
+
+    #[test]
+    fn r926_matching_bracket_before_caret_takes_precedence() {
+        // "(){}", caret at 2 sits between `)` (before) and `{` (at). The
+        // closer just before the caret wins, matching back to `(`.
+        assert_eq!(matching_bracket_in("(){}", 2), Some((0, 1)));
+    }
+
+    #[test]
+    fn r926_matching_bracket_all_three_pair_types() {
+        assert_eq!(matching_bracket_in("[x]", 1), Some((0, 2)));
+        assert_eq!(matching_bracket_in("{x}", 1), Some((0, 2)));
+        assert_eq!(matching_bracket_in("(x)", 1), Some((0, 2)));
+    }
+
+    #[test]
+    fn r926_matching_bracket_mixed_types_count_per_pair() {
+        // "{[()]}" — same-type counting reaches the right mate through
+        // balanced inner pairs of other types.
+        let s = "{[()]}";
+        assert_eq!(matching_bracket_in(s, 1), Some((0, 5)));
+        assert_eq!(matching_bracket_in(s, 2), Some((1, 4)));
+        assert_eq!(matching_bracket_in(s, 3), Some((2, 3)));
+    }
+
+    #[test]
+    fn r926_matching_bracket_none_when_not_adjacent() {
+        assert_eq!(matching_bracket_in("a b c", 2), None);
+        assert_eq!(matching_bracket_in("", 0), None);
+        // Inside "(abc)" but not next to a bracket.
+        assert_eq!(matching_bracket_in("(abc)", 2), None);
+    }
+
+    #[test]
+    fn r926_matching_bracket_none_when_unbalanced() {
+        assert_eq!(matching_bracket_in("(a", 1), None, "lone opener");
+        assert_eq!(matching_bracket_in("a)", 2), None, "lone closer");
+    }
+
+    #[test]
+    fn r926_matching_bracket_multibyte_offsets_exact() {
+        // "(é)" — '(' at byte 0, 'é' at bytes 1..3, ')' at byte 3. The
+        // multi-byte char's bytes are all >= 0x80, never an ASCII
+        // bracket, so the byte scan is exact.
+        let s = "(\u{00e9})";
+        assert_eq!(matching_bracket_in(s, 1), Some((0, 3)));
+        assert_eq!(matching_bracket_in(s, 4), Some((0, 3)));
+    }
+
+    #[test]
+    fn r926_matching_bracket_accessor_reads_buffer_and_caret() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("f(x)".to_string());
+            // Caret at end (after ')') -> matches '(' at 1.
+            st.set_caret(4);
+            assert_eq!(st.matching_bracket(), Some((1, 3)));
+            // Caret away from any bracket -> None.
+            st.set_caret(0);
+            assert_eq!(st.matching_bracket(), None);
+            // Caret just after '(' -> matches ')'.
+            st.set_caret(2);
+            assert_eq!(st.matching_bracket(), Some((1, 3)));
+        });
     }
 
     #[test]

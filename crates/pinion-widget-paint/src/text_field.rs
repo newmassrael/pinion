@@ -56,7 +56,8 @@ use pinion_core::external::IntrospectValue;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode, StyleRun};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
+    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
+    TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::caret_blink::use_caret_blink;
@@ -476,6 +477,41 @@ fn push_band(children: &mut Vec<Scene>, x: u32, y: u32, w: u32, h: u32, inner_pa
     ));
 }
 
+/// R926 §5.22 — outline stroke width (px) for the matching-bracket box.
+const BRACKET_MATCH_OUTLINE_PX: u32 = 1;
+
+/// R926 §5.22 — frame one matched-bracket glyph with an outline box (the
+/// canonical matching-brace affordance: a box *around* the bracket, not
+/// a fill, so it reads distinctly from the find / selection tint bands
+/// even though all three share `ColorRole::Accent`). Painted *after* the
+/// text so the box frames the glyph; absolute-positioned at `inner_pad +
+/// (x, y)`, the same anchor rule as [`push_band`]. A zero-width band is
+/// skipped.
+fn push_bracket_outline(
+    children: &mut Vec<Scene>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    inner_pad: u32,
+    color: Color,
+) {
+    if w == 0 {
+        return;
+    }
+    children.push(Scene::Box(
+        BoxNode::new(
+            Rect::default(),
+            BoxStyle::default().with_border(Border::new(color, BRACKET_MATCH_OUTLINE_PX)),
+        )
+        .with_layout(
+            LayoutStyle::new()
+                .with_size(Size::px(w, h))
+                .with_absolute_position(inner_pad.saturating_add(x), inner_pad.saturating_add(y)),
+        ),
+    ));
+}
+
 /// R765 §5.22 §5.45 — canonical **scroll-into-view**: the minimal new
 /// vertical scroll offset that keeps the caret visible given the
 /// *previous* offset. The caret window is `[prev, prev + viewport_h]`
@@ -587,7 +623,28 @@ pub fn view_field(
     // when no search is active; when idle, `effective_text == text` so these
     // offsets index the shaped layout exactly like `selection_range` does.
     let find_match_ranges = text_state.find_matches();
-    let (caret_pixel_rect, selection_pixel, find_pixel, preedit_pixel, content_h) = {
+    // R926 §5.22 — the matching bracket pair `(open, close)` the caret
+    // sits adjacent to (same `find_matches` derive-on-read lineage).
+    // Painted only in the focused / editing posture, where the caret is
+    // live — matching-brace highlighting is a caret affordance (the VS
+    // Code rule), so an unfocused field shows no bracket box even though
+    // its buffer still has a "current" caret position. Also gated to the
+    // non-composing posture: during IME the painted `effective_text`
+    // carries the inserted preedit, so buffer byte offsets would index
+    // the shaped layout at shifted positions (the same `effective_text
+    // == text` assumption the find bands rely on). The
+    // `scene/<tag>/external/bracket_match` RPC reads the buffer directly
+    // and stays exact regardless of focus or composition.
+    let caret_active = matches!(
+        interaction,
+        TextFieldState::Focused | TextFieldState::Editing,
+    );
+    let bracket_pair = if caret_active && preedit_byte_range.is_none() {
+        text_state.matching_bracket()
+    } else {
+        None
+    };
+    let (caret_pixel_rect, selection_pixel, find_pixel, bracket_pixel, preedit_pixel, content_h) = {
         let mut cache = layout_cache.borrow_mut();
         let layout = cache.layout_with_runs(effective_text.as_str(), &text_style, &runs, max_width);
         #[allow(
@@ -629,6 +686,22 @@ pub fn view_field(
                     .map(|r| rect_to_band(r, style.font_size_px))
             })
             .collect();
+        // R926 §5.22 — one outline band per bracket of the matched pair.
+        // Each bracket is a single ASCII byte, so the char range is
+        // `(pos, pos + 1)`; `selection_rects_for_range` yields its glyph
+        // rect exactly as it does for a one-char selection.
+        let bracket: Vec<(u32, u32, u32, u32)> = bracket_pair
+            .map(|(open, close)| {
+                [open, close]
+                    .into_iter()
+                    .flat_map(|pos| {
+                        selection_rects_for_range(layout, pos, pos + 1)
+                            .into_iter()
+                            .map(|r| rect_to_band(r, style.font_size_px))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let preedit_p = preedit_byte_range.map(|(start, end)| {
             let start_rect = caret_rect_for_byte_offset(layout, start, cw);
             let end_rect = caret_rect_for_byte_offset(layout, end, cw);
@@ -642,6 +715,7 @@ pub fn view_field(
             caret,
             selection,
             find,
+            bracket,
             preedit_p,
             saturating_f32_to_u32(layout.height()),
         )
@@ -767,6 +841,26 @@ pub fn view_field(
     }
 
     field_children.push(text_node);
+
+    // R926 §5.22 — matching-bracket outline boxes paint AFTER the text
+    // node so the box frames the bracket glyph (the VS Code
+    // matching-brace look). Shares the Accent hue with the caret /
+    // selection / find affordances; the outline form (not a fill) is
+    // what distinguishes it. `bracket_pixel` is empty when the caret is
+    // not next to a balanced bracket, so nothing paints in the common
+    // case.
+    let bracket_outline_color = theme.resolve(ColorRole::Accent);
+    for &(bx, by, bw, bh) in &bracket_pixel {
+        push_bracket_outline(
+            &mut field_children,
+            bx,
+            by,
+            bw,
+            bh,
+            inner_pad,
+            bracket_outline_color,
+        );
+    }
 
     // R56.1.g.3 §5.22 — preedit underline paints AFTER the text
     // node so the line sits over the descender region.
@@ -1379,6 +1473,87 @@ mod tests {
                 }
                 _ => panic!("view_field must return a Container"),
             }
+        });
+    }
+
+    /// R926 §5.22 — count the matched-bracket outline boxes in a painted
+    /// field. The field container fills (no border) and every other
+    /// overlay (find / selection / preedit / caret) is a *filled* box, so
+    /// a bordered `Scene::Box` is unambiguously a bracket outline.
+    fn count_bordered_boxes(scene: &Scene) -> usize {
+        match scene {
+            Scene::Box(b) => usize::from(b.style.border.is_some()),
+            Scene::Container(c) => c.children.iter().map(count_bordered_boxes).sum(),
+            Scene::Scroll(s) => count_bordered_boxes(&s.content),
+            _ => 0,
+        }
+    }
+
+    #[test]
+    fn r926_view_field_outlines_matching_brackets_when_focused() {
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "tf_bracket";
+            let st = use_text_edit_state(tag);
+            st.insert("f(x)"); // caret lands at 4, just after ')'
+            let scene = view_field(
+                tag,
+                TextFieldState::Focused,
+                4,
+                &theme,
+                &TextFieldStyle::default(),
+                "code",
+            );
+            assert_eq!(
+                count_bordered_boxes(&scene),
+                2,
+                "the matched ( and ) each get an outline box",
+            );
+        });
+    }
+
+    #[test]
+    fn r926_view_field_no_outline_when_caret_not_adjacent() {
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "tf_bracket_none";
+            let st = use_text_edit_state(tag);
+            st.insert("f(x)");
+            st.set_caret(0); // on 'f' — not next to a bracket
+            let scene = view_field(
+                tag,
+                TextFieldState::Focused,
+                0,
+                &theme,
+                &TextFieldStyle::default(),
+                "code",
+            );
+            assert_eq!(count_bordered_boxes(&scene), 0);
+        });
+    }
+
+    #[test]
+    fn r926_view_field_no_outline_when_unfocused() {
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "tf_bracket_idle";
+            let st = use_text_edit_state(tag);
+            st.insert("f(x)"); // caret at 4, adjacent to ')'
+            // Idle posture: matching-brace highlighting is a caret
+            // affordance, so an unfocused field shows no box.
+            let scene = view_field(
+                tag,
+                TextFieldState::Idle,
+                4,
+                &theme,
+                &TextFieldStyle::default(),
+                "code",
+            );
+            assert_eq!(
+                count_bordered_boxes(&scene),
+                0,
+                "unfocused field shows no bracket box",
+            );
         });
     }
 

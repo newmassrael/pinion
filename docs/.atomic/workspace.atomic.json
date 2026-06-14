@@ -40139,6 +40139,62 @@
         "pre-existing 2-site hit_rate duplication (paint_cache_stats + paint_adapter) noted, out of scope"
       ]
     },
+    "R926": {
+      "decision_summary": "R926 adds matching-bracket support to the text editor as the third derive-on-read consumer (after find_matches R903 / style_runs R904): TextEditState::matching_bracket() re-derives the (open, close) pair the caret sits adjacent to from the live buffer + caret, read by both the paint outline and the scene/<tag>/external/bracket_match RPC slot so they cannot disagree on the pair. Same-type depth scan over (), [], {} with before-caret adjacency precedence; a baseline matcher (strict cross-type interleave + string/comment skipping deferred to the syntax tokenizer).",
+      "changes_bullets": [
+        "TextEditState::matching_bracket() — derive-on-read accessor (find_matches/style_runs lineage)",
+        "matching_bracket_in: same-type depth scan over (), [], {}; before-caret adjacency precedence",
+        "byte scan is UTF-8-safe (ASCII bracket bytes never occur inside a multi-byte char)",
+        "scene/<tag>/external/bracket_match RPC slot: {open, close} byte pair, or null when no match",
+        "view_field frames each matched bracket with an Accent outline box (focus-gated, post-text)",
+        "existing hello-syntax-highlight reused as the consumer; new r926_bracket_match.py demo"
+      ],
+      "verification_bullets": [
+        "pinion-core: 10 matcher unit tests + 2 bracket_match query tests + schema rename to 21 slots",
+        "pinion-widget-paint: 3 paint tests (focused match = 2 outlines, not-adjacent = 0, unfocused = 0)",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "r926_bracket_match.py PASS: forward/backward, nesting, precedence, all 3 pairs, unbalanced,",
+        "multibyte offsets, and a focused-caret paint delta of exactly two outline boxes",
+        "r903 find-replace + r904 syntax-highlight regression PASS (bracket matching additive, focus-gated)"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "same-type depth scan is the baseline; strict cross-type interleave (([)]) detection + skipping",
+        "brackets inside string / comment tokens are deferred (need a bracket stack / the tokenizer)",
+        "angle brackets <> excluded: ambiguous with comparison / shift operators without language services",
+        "push_bracket_outline vs push_band = 2 box-emit helpers (border vs fill); lift push_field_box at a",
+        "3rd box-emit consumer (Rule-of-Three; 2 is premature, the divergence is a real visual role)"
+      ],
+      "publishable_decision_summary": "R926 adds matching-bracket support to the text editor as the third derive-on-read consumer (after find_matches R903 / style_runs R904): TextEditState::matching_bracket() re-derives the (open, close) pair the caret sits adjacent to from the live buffer + caret, read by both the paint outline and the scene/<tag>/external/bracket_match RPC slot so they cannot disagree on the pair. Same-type depth scan over (), [], {} with before-caret adjacency precedence; a baseline matcher (strict cross-type interleave + string/comment skipping deferred to the syntax tokenizer).",
+      "publishable_changes_bullets": [
+        "TextEditState::matching_bracket() — derive-on-read accessor (find_matches/style_runs lineage)",
+        "matching_bracket_in: same-type depth scan over (), [], {}; before-caret adjacency precedence",
+        "byte scan is UTF-8-safe (ASCII bracket bytes never occur inside a multi-byte char)",
+        "scene/<tag>/external/bracket_match RPC slot: {open, close} byte pair, or null when no match",
+        "view_field frames each matched bracket with an Accent outline box (focus-gated, post-text)",
+        "existing hello-syntax-highlight reused as the consumer; new r926_bracket_match.py demo"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core: 10 matcher unit tests + 2 bracket_match query tests + schema rename to 21 slots",
+        "pinion-widget-paint: 3 paint tests (focused match = 2 outlines, not-adjacent = 0, unfocused = 0)",
+        "cargo test --workspace -j2 green; clippy --all-targets -D pedantic clean",
+        "r926_bracket_match.py PASS: forward/backward, nesting, precedence, all 3 pairs, unbalanced,",
+        "multibyte offsets, and a focused-caret paint delta of exactly two outline boxes",
+        "r903 find-replace + r904 syntax-highlight regression PASS (bracket matching additive, focus-gated)"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "same-type depth scan is the baseline; strict cross-type interleave (([)]) detection + skipping",
+        "brackets inside string / comment tokens are deferred (need a bracket stack / the tokenizer)",
+        "angle brackets <> excluded: ambiguous with comparison / shift operators without language services",
+        "push_bracket_outline vs push_band = 2 box-emit helpers (border vs fill); lift push_field_box at a",
+        "3rd box-emit consumer (Rule-of-Three; 2 is premature, the divergence is a real visual role)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

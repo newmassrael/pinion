@@ -1160,6 +1160,13 @@ impl ExternalIntrospect for TextFieldExternal {
             ("find-prev", "object"),
             ("replace", "boolean"),
             ("replace-all", "number"),
+            // R926 §5.22 — matching-bracket read. Derived from the live
+            // buffer + caret: `{"open": int, "close": int}` when the
+            // caret sits adjacent to a balanced bracket, `Null`
+            // otherwise. The AI-first peer of the editor's
+            // matching-brace highlight — an agent reasoning about code
+            // structure reads where a brace closes without re-scanning.
+            ("bracket_match", "object"),
         ])
     }
 
@@ -1245,6 +1252,25 @@ impl ExternalIntrospect for TextFieldExternal {
                     "current": s.find_current_index(),
                     "ranges": ranges,
                 }))
+            }),
+            // R926 §5.22 — matching-bracket read. `{open, close}` byte
+            // offsets when the caret is adjacent to a balanced bracket,
+            // `Null` otherwise (caret not next to a bracket, or
+            // unbalanced). Reads the SAME `matching_bracket` derivation
+            // the paint highlight reads, so the wire and the bands can
+            // never report a *different* pair. The wire is, however,
+            // focus-independent (it reports the buffer's current pair
+            // even on an unfocused field), whereas the paint outline is
+            // a caret affordance painted only in the focused posture —
+            // so an unfocused field can answer a pair here while showing
+            // no box. The buffer truth is the introspection contract;
+            // the paint gate is presentation.
+            "bracket_match" => self.text_state().map(|s| match s.matching_bracket() {
+                Some((open, close)) => IntrospectValue::Json(serde_json::json!({
+                    "open": open,
+                    "close": close,
+                })),
+                None => IntrospectValue::Null,
             }),
             _ => None,
         }
@@ -2288,7 +2314,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_twenty_slots() {
+    fn external_schema_declares_twenty_one_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
@@ -2306,6 +2332,8 @@ mod tests {
         // find_whole_word / find_matches (find session read+write +
         // derived match read) + find-next / find-prev / replace /
         // replace-all (navigation + mutation actions).
+        // R926 grew the surface: + bracket_match (derived matching-bracket
+        // read — `{open, close}` byte pair or Null).
         // The schema shape is stable across bare and wired-up
         // TextFields — text/caret/selection/preedit queries return
         // None / intervene returns ReadOnly when no TextEditState is
@@ -2337,6 +2365,7 @@ mod tests {
                 ("find-prev", "object"),
                 ("replace", "boolean"),
                 ("replace-all", "number"),
+                ("bracket_match", "object"),
             ],
         );
     }
@@ -5698,6 +5727,38 @@ mod r903_find_replace_tests {
             panic!("json");
         };
         assert_eq!(j2["current"], serde_json::json!(0));
+    }
+
+    #[test]
+    fn r926_query_bracket_match_reports_pair_or_null() {
+        let (state, tfx) = wired("f(x)");
+        // Caret not next to a bracket → Null (the path is known but no
+        // pair, distinct from a bare field returning None).
+        state.set_caret(0);
+        assert_eq!(tfx.query("bracket_match").unwrap(), IntrospectValue::Null);
+        // Caret after ')' → {open: 1, close: 3}.
+        state.set_caret(4);
+        let IntrospectValue::Json(j) = tfx.query("bracket_match").unwrap() else {
+            panic!("bracket_match must be Json when matched");
+        };
+        assert_eq!(j["open"], serde_json::json!(1));
+        assert_eq!(j["close"], serde_json::json!(3));
+        // Caret just after '(' → same pair from the other side.
+        state.set_caret(2);
+        let IntrospectValue::Json(j2) = tfx.query("bracket_match").unwrap() else {
+            panic!("json");
+        };
+        assert_eq!(j2["open"], serde_json::json!(1));
+        assert_eq!(j2["close"], serde_json::json!(3));
+    }
+
+    #[test]
+    fn r926_query_bracket_match_none_on_bare_text_field() {
+        // A bare TextField (no attached TextEditState) does not know the
+        // path — the AI client reads None ("not bound"), not Null ("no
+        // pair"), the same bare/wired distinction text / caret draw.
+        let tfx = TextFieldExternal::new();
+        assert!(tfx.query("bracket_match").is_none());
     }
 
     #[test]
