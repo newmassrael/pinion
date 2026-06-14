@@ -28,8 +28,13 @@
 //!   Owns the flat `Signal<Vec<CellValue>>` cell model (`row * NCOLS + col`),
 //!   the 2-D roving cursor (`focused_row` / `focused_col` Signals), and the
 //!   edit latch (`Signal<Option<(row, col)>>`). Each column carries a fixed
-//!   [`CellKind`] ([`COL_KINDS`]). Exposes the whole grid for AI-first
-//!   introspection: `query value.<r>.<c>` / `col_name.<c>` / `col_kind.<c>` /
+//!   [`CellKind`] ([`COL_KINDS`]). R930 — the grid is **dynamic-length**: the
+//!   row count is `model.len() / NCOLS` ([`nrows`], not a const), so
+//!   `invoke "add_row"` / `"remove_row"` grow / shrink the table at runtime
+//!   and the very next paint re-derives the sort / filter / group order over
+//!   the longer-or-shorter model (the model is the one SSOT — no separate
+//!   row-count to keep in sync; a grid keeps >= 1 row). Exposes the whole grid
+//!   for AI-first introspection: `query value.<r>.<c>` / `col_name.<c>` / `col_kind.<c>` /
 //!   `focused_row` / `focused_col` / `editing_row` / `editing_col`,
 //!   `intervene value.<r>.<c>` (the deterministic typed-set path), `invoke
 //!   toggle` / `begin` / `send`.
@@ -373,7 +378,7 @@ fn current_order(
     filter: Option<&GridFilter>,
 ) -> Vec<usize> {
     grid_order_by(
-        NROWS,
+        nrows(model),
         sort,
         |col, a, b| model[idx(a, col)].sort_cmp(&model[idx(b, col)]),
         |row| {
@@ -382,6 +387,37 @@ fn current_order(
             })
         },
     )
+}
+
+/// R930 — the live row count, derived from the flat model (the SSOT) rather
+/// than the [`NROWS`] const: `model.len() / NCOLS`. The grid is now
+/// *dynamic-length* (rows add / remove at runtime), so every former `NROWS`
+/// read routes through this so the sort / filter / group order, the paint
+/// loop, bounds checks, and the a11y row tree all track the live model
+/// ([[constraint-change-grep-all-layers]]). `NROWS` survives only as the boot
+/// seed length (`default_cells`).
+fn nrows(model: &[CellValue]) -> usize {
+    model.len() / NCOLS
+}
+
+/// R930 — a fresh row's default cells, one per column keyed by [`COL_KINDS`]
+/// (the typed empty value the "add row" affordance appends). The typed peer of
+/// [`default_cells`]'s seed, so an added row edits exactly like a seeded one.
+fn default_row() -> Vec<CellValue> {
+    COL_KINDS
+        .iter()
+        .map(|k| match k {
+            CellKind::Text => CellValue::Text(String::new()),
+            CellKind::Int => CellValue::Int(0),
+            CellKind::Float => CellValue::Float(0.0),
+            CellKind::Bool => CellValue::Bool(false),
+            // COL_KINDS is statically Text/Int/Float/Bool (no Choice/Color
+            // column in this grid); these arms keep the match total and would
+            // seed a sensible empty if a column of that kind were ever added.
+            CellKind::Choice => CellValue::Choice { selected: 0, options: Vec::new() },
+            CellKind::Color => CellValue::Color(Color::rgb(0, 0, 0)),
+        })
+        .collect()
 }
 
 /// First-paint cell values (row-major). Each column's values match
@@ -404,7 +440,14 @@ fn default_cells() -> Vec<CellValue> {
 #[must_use]
 fn use_data_model() -> Rc<Signal<Vec<CellValue>>> {
     let owner = Owner::current().expect("use_data_model requires an active Owner scope");
-    owner.cache("data_grid.model", || Signal::new(default_cells()))
+    owner.cache("data_grid.model", || {
+        let seed = default_cells();
+        // R930 — the grid is now dynamic-length ([`nrows`] derives the count
+        // from this model), so `NROWS` survives only as the declared boot-seed
+        // row count: assert the seed matches it (one-time, at model creation).
+        assert_eq!(seed.len(), NROWS * NCOLS, "the boot seed is exactly NROWS rows");
+        Signal::new(seed)
+    })
 }
 
 #[must_use]
@@ -483,7 +526,7 @@ fn use_collapsed() -> Rc<Signal<BTreeSet<String>>> {
 /// header's display name; [`group_of`] maps a source row to its id.
 fn group_table(model: &[CellValue], col: usize) -> Vec<String> {
     let mut labels: Vec<String> = Vec::new();
-    for row in 0..NROWS {
+    for row in 0..nrows(model) {
         if let Some(key) = model.get(idx(row, col)).map(CellValue::display) {
             if !labels.contains(&key) {
                 labels.push(key);
@@ -805,6 +848,51 @@ impl DataGridExternal {
         toggled
     }
 
+    /// R930 — the live row count (the [`nrows`] free fn over this grid's model
+    /// Signal). The dynamic-length bound every former `NROWS` read in the
+    /// coordinator now consults, so add / remove track the same SSOT the paint
+    /// and order derive from.
+    fn nrows(&self) -> usize {
+        nrows(&self.model.get())
+    }
+
+    /// R930 — append one default row (`NCOLS` typed empty cells) at the end and
+    /// move the cursor onto it. Returns the new row's source index. The cell
+    /// model IS the SSOT, so the very next paint re-derives the order / filter /
+    /// group over the longer model — no separate row-count field to keep in
+    /// sync.
+    fn add_row(&self) -> usize {
+        let new_row = self.nrows();
+        self.model.set_with(|prev| {
+            let mut next = prev.clone();
+            next.extend(default_row());
+            next
+        });
+        self.focused_row.set(new_row);
+        new_row
+    }
+
+    /// R930 — drop source row `row` (its whole `NCOLS`-cell span) and clamp the
+    /// cursor into the shrunk model. A no-op `false` for an out-of-range row or
+    /// when removing the last row (a grid keeps at least one row so the cursor
+    /// and the column header layout always have somewhere to land). Source
+    /// indices above `row` shift down by one — the model is the order SSOT, so
+    /// the next paint re-derives every view position.
+    fn remove_row(&self, row: usize) -> bool {
+        if row >= self.nrows() || self.nrows() <= 1 {
+            return false;
+        }
+        self.model.set_with(|prev| {
+            let mut next = prev.clone();
+            next.drain(idx(row, 0)..idx(row, 0) + NCOLS);
+            next
+        });
+        // Clamp the cursor into the shrunk source range (a removal shrinks the
+        // row space; the next paint re-derives the visible order over it).
+        self.set_focused_row_clamped(self.focused_row.get());
+        true
+    }
+
     /// R894 / R914 — write a typed value into cell `(row, col)`, clamped to the
     /// column's [`ColRange`] and re-anchoring the cursor. The one funnel the AI
     /// `value.<row>.<col>` intervene write and the live numeric scrub both
@@ -812,7 +900,7 @@ impl DataGridExternal {
     /// cannot (the R894 keyboard / RPC symmetry, now extended to the scrub). A
     /// no-op for an out-of-range cell.
     fn set_cell(&self, row: usize, col: usize, value: CellValue) {
-        if row >= NROWS || col >= NCOLS {
+        if row >= self.nrows() || col >= NCOLS {
             return;
         }
         let new_value = clamp_for_col(value, col);
@@ -840,7 +928,7 @@ impl DataGridExternal {
         // scrub should not depend on that contract holding).
         self.scrub_cal.end();
         let numeric = col < NCOLS && matches!(COL_KINDS[col], CellKind::Int | CellKind::Float);
-        self.scrub_armed.set((numeric && row < NROWS).then_some((row, col)));
+        self.scrub_armed.set((numeric && row < self.nrows()).then_some((row, col)));
     }
 
     /// R914 — drive the live cell scrub from the captured cursor's horizontal
@@ -928,7 +1016,7 @@ impl DataGridExternal {
         col: usize,
         event_name: &str,
     ) -> Result<IntrospectValue, InvokeError> {
-        if row >= NROWS || col >= NCOLS {
+        if row >= self.nrows() || col >= NCOLS {
             return Err(InvokeError::Rejected);
         }
         match event_name {
@@ -964,7 +1052,7 @@ impl DataGridExternal {
     /// and request focus into the field. Returns `false` for a bool column
     /// (bools toggle) or an out-of-range cell.
     fn begin_edit(&self, row: usize, col: usize) -> bool {
-        if row >= NROWS || col >= NCOLS || !COL_KINDS[col].is_text_editable() {
+        if row >= self.nrows() || col >= NCOLS || !COL_KINDS[col].is_text_editable() {
             return false;
         }
         let model = self.model.get();
@@ -979,7 +1067,7 @@ impl DataGridExternal {
     }
 
     fn set_focused_row_clamped(&self, row: usize) {
-        self.focused_row.set(row.min(NROWS - 1));
+        self.focused_row.set(row.min(self.nrows().saturating_sub(1)));
     }
 
     fn set_focused_col_clamped(&self, col: usize) {
@@ -1078,12 +1166,14 @@ impl ExternalIntrospect for DataGridExternal {
             ("toggle_group", "int"),
             ("collapse_all", "json"),
             ("expand_all", "json"),
+            ("add_row", "json"),
+            ("remove_row", "int"),
         ])
     }
 
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         match path {
-            "row_count" => Some(IntrospectValue::Int(int_of(NROWS))),
+            "row_count" => Some(IntrospectValue::Int(int_of(self.nrows()))),
             "col_count" => Some(IntrospectValue::Int(int_of(NCOLS))),
             "focused_row" => Some(IntrospectValue::Int(int_of(self.focused_row.get()))),
             "focused_col" => Some(IntrospectValue::Int(int_of(self.focused_col.get()))),
@@ -1299,7 +1389,7 @@ impl ExternalIntrospect for DataGridExternal {
                     rest.split_once('.').ok_or(InterveneError::UnknownPath)?;
                 let row: usize = row_str.parse().map_err(|_| InterveneError::UnknownPath)?;
                 let col: usize = col_str.parse().map_err(|_| InterveneError::UnknownPath)?;
-                if row >= NROWS || col >= NCOLS {
+                if row >= self.nrows() || col >= NCOLS {
                     return Err(InterveneError::UnknownPath);
                 }
                 // R894 / R914 — coerce the wire value to the column's kind and
@@ -1426,6 +1516,18 @@ impl ExternalIntrospect for DataGridExternal {
                 self.set_all_collapsed(false);
                 Ok(IntrospectValue::Null)
             }
+            // R930 — append a default row; returns its new source index (the
+            // AI-first "add row" the GUI "+" affordance shares).
+            "add_row" => Ok(IntrospectValue::Int(int_of(self.add_row()))),
+            // R930 — drop source row `i` (Int); `false` out-of-range or when it
+            // is the last remaining row (a grid keeps >= 1 row).
+            "remove_row" => match args {
+                IntrospectValue::Int(i) => {
+                    let row = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+                    Ok(IntrospectValue::Bool(self.remove_row(row)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1518,14 +1620,15 @@ fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
         "ArrowDown" | "ArrowUp" => {
             // R892 — walk the visible DATA rows (collapsed-group members
             // excluded), so ArrowDown/Up skip group headers and hidden rows.
+            let model = use_data_model().get();
             let order = visible_data_order(
-                &use_data_model().get(),
+                &model,
                 use_sort().get(),
                 use_filter().get().as_ref(),
                 use_group_col().get(),
                 &use_collapsed().get(),
             );
-            let row = row_sig.get().min(NROWS - 1);
+            let row = row_sig.get().min(nrows(&model).saturating_sub(1));
             let Some(vis) = order.iter().position(|&s| s == row) else {
                 return false;
             };
@@ -1853,10 +1956,13 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         Some(col) => format!(" \u{00B7} grouped by {}", COL_NAMES[col]),
         None => String::new(),
     };
+    // R930 — the "of N" total is the live row count (boot N == NROWS == 4, so
+    // the R891 ungrouped status assertions stand; add / remove move it).
+    let total = nrows(&model);
     let status = Scene::Text(
         TextNode::styled(
             format!(
-                "filter {} \u{00B7} showing {view_len} of {NROWS}{group_suffix}",
+                "filter {} \u{00B7} showing {view_len} of {total}{group_suffix}",
                 grid_filter_str(filter.as_ref()),
             ),
             Rect::default(),
@@ -3163,6 +3269,96 @@ mod tests {
             );
             assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(2)),
                 "the non-numeric click focuses its cell");
+        });
+    }
+
+    // R930 — dynamic rows: add / remove track the model SSOT.
+
+    #[test]
+    fn r930_add_row_appends_a_default_row_and_moves_the_cursor() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(4)), "boot is 4 rows");
+            // add_row returns the new source index and grows the count.
+            assert_eq!(intro.invoke("add_row", IntrospectValue::Null), Ok(IntrospectValue::Int(4)));
+            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(5)), "one row added");
+            // the new row carries typed defaults, one per column kind.
+            assert_eq!(intro.query("value.4.0"), Some(IntrospectValue::Text(String::new())));
+            assert_eq!(intro.query("value.4.2"), Some(IntrospectValue::Int(0)));
+            assert_eq!(intro.query("value.4.3"), Some(IntrospectValue::Float(0.0)));
+            assert_eq!(intro.query("value.4.4"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(4)), "cursor on the new row");
+            // the appended row edits exactly like a seeded one (no parallel machinery).
+            assert!(intro.intervene("value.4.0", IntrospectValue::Text("New".to_owned())).is_ok());
+            assert_eq!(intro.query("value.4.0"), Some(IntrospectValue::Text("New".to_owned())));
+        });
+    }
+
+    #[test]
+    fn r930_remove_row_drops_and_shifts_indices_down() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Boot source rows: 0 Hero, 1 Tree, 2 Coin, 3 Boss.
+            assert_eq!(intro.query("value.1.0"), Some(IntrospectValue::Text("Tree".to_owned())));
+            assert_eq!(
+                intro.invoke("remove_row", IntrospectValue::Int(1)),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(3)), "one row removed");
+            // rows above the removed shift down: old row 2 (Coin) is now index 1.
+            assert_eq!(intro.query("value.1.0"), Some(IntrospectValue::Text("Coin".to_owned())));
+            assert_eq!(intro.query("value.2.0"), Some(IntrospectValue::Text("Boss".to_owned())));
+            assert_eq!(intro.query("value.3.0"), None, "the source space shrank");
+        });
+    }
+
+    #[test]
+    fn r930_remove_row_rejects_out_of_range_and_keeps_at_least_one() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert_eq!(
+                intro.invoke("remove_row", IntrospectValue::Int(99)),
+                Ok(IntrospectValue::Bool(false)),
+                "out-of-range row rejected",
+            );
+            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(4)));
+            // Drain to a single row, then refuse to remove the last one.
+            for _ in 0..3 {
+                assert_eq!(
+                    intro.invoke("remove_row", IntrospectValue::Int(0)),
+                    Ok(IntrospectValue::Bool(true)),
+                );
+            }
+            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(1)), "down to one row");
+            assert_eq!(
+                intro.invoke("remove_row", IntrospectValue::Int(0)),
+                Ok(IntrospectValue::Bool(false)),
+                "a grid keeps >= 1 row",
+            );
+            assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(1)), "still one row");
+        });
+    }
+
+    #[test]
+    fn r930_added_rows_participate_in_sort() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Add a row and set its Count (col 2) below every seed value (1, 24, 99, 1).
+            assert_eq!(intro.invoke("add_row", IntrospectValue::Null), Ok(IntrospectValue::Int(4)));
+            assert!(intro.intervene("value.4.2", IntrospectValue::Int(-5)).is_ok());
+            // Sort ascending by Count: the new row (-5) must lead the visible order.
+            assert!(intro.invoke("cycle_sort", IntrospectValue::Int(2)).is_ok());
+            assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(5)), "all 5 rows visible");
+            assert_eq!(intro.query("source_at.0"), Some(IntrospectValue::Int(4)),
+                "the added row sorts to the front (smallest Count)");
         });
     }
 }

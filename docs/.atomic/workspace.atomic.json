@@ -40471,6 +40471,58 @@
         "integration tension (orphan slots vs id re-key) -> deferred to a full clean round"
       ]
     },
+    "R930": {
+      "decision_summary": "R930: data-grid dynamic rows — NROWS const to model-derived count; invoke add_row/remove_row grow/shrink the table at runtime, the model SSOT re-derives sort/filter/group order; a grid keeps >=1 row",
+      "changes_bullets": [
+        "NROWS const -> nrows(model)=model.len()/NCOLS derived count; ~11 runtime sites converted",
+        "add_row appends a typed-empty default row + moves cursor; remove_row drops a source row, keeps >=1",
+        "RPC invoke add_row (returns new index) + remove_row (Int->bool) + schema; appended rows edit/sort as seeded",
+        "no undo (consistent with this direct-edit table; model is the order SSOT, next paint re-derives sort/filter/group)",
+        "NROWS kept as boot-seed count, validated once in use_data_model (assert seed == NROWS rows)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (6600 passed; +4 dynamic-row unit tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r930_data_grid_rows.py PASS 1.67s (33 assert); add/remove/shift/sort-participation/reject-last over RPC",
+        "regression PASS: r837/r886/r891/r892/r894/r896/r914/r915 grid demos (constraint-change, no regression)"
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "no undo for rows = consistent with the data-grid's direct-edit model (cell edits also un-journaled);",
+        "comprehensive grid undo is a separate axis",
+        "add_row/remove_row (grid) and add_node/delete_node (node-editor) = 2 dynamic-collection consumers of",
+        "different shape (flat-index vs stable-id+undo) -> no lift; a 3rd (array-property editing) might motivate one",
+        "insert-at-position deferred (append + remove = the core dynamic capability)",
+        "array/Vec property editing remains the #1 DCC gap (edit-path fork vs flat value-model) for a future round"
+      ],
+      "publishable_decision_summary": "R930: data-grid dynamic rows — NROWS const to model-derived count; invoke add_row/remove_row grow/shrink the table at runtime, the model SSOT re-derives sort/filter/group order; a grid keeps >=1 row",
+      "publishable_changes_bullets": [
+        "NROWS const -> nrows(model)=model.len()/NCOLS derived count; ~11 runtime sites converted",
+        "add_row appends a typed-empty default row + moves cursor; remove_row drops a source row, keeps >=1",
+        "RPC invoke add_row (returns new index) + remove_row (Int->bool) + schema; appended rows edit/sort as seeded",
+        "no undo (consistent with this direct-edit table; model is the order SSOT, next paint re-derives sort/filter/group)",
+        "NROWS kept as boot-seed count, validated once in use_data_model (assert seed == NROWS rows)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (6600 passed; +4 dynamic-row unit tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r930_data_grid_rows.py PASS 1.67s (33 assert); add/remove/shift/sort-participation/reject-last over RPC",
+        "regression PASS: r837/r886/r891/r892/r894/r896/r914/r915 grid demos (constraint-change, no regression)"
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "no undo for rows = consistent with the data-grid's direct-edit model (cell edits also un-journaled);",
+        "comprehensive grid undo is a separate axis",
+        "add_row/remove_row (grid) and add_node/delete_node (node-editor) = 2 dynamic-collection consumers of",
+        "different shape (flat-index vs stable-id+undo) -> no lift; a 3rd (array-property editing) might motivate one",
+        "insert-at-position deferred (append + remove = the core dynamic capability)",
+        "array/Vec property editing remains the #1 DCC gap (edit-path fork vs flat value-model) for a future round"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
