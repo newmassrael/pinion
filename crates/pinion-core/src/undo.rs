@@ -568,10 +568,13 @@ pub fn use_undo_stack(key: &'static str) -> Rc<UndoStack> {
 /// (`introspect.invoke(verb, …)`), while one holding an [`UndoStack`] directly
 /// matches on it (`"redo" => stack.redo()`).
 ///
-/// Lifted at the 3rd byte-identical consumer (the node-graph / data-grid /
-/// tree-grid keymaps): the key → verb decision is the same everywhere because a
-/// divergence would be an inconsistent editor keybinding — a bug — so it is one
-/// SSOT, not a per-widget copy.
+/// Lifted across the node-graph / data-grid / tree-grid / text-field undo
+/// keymaps: the key → verb decision is the same everywhere because a divergence
+/// would be an inconsistent editor keybinding — a bug — so it is one SSOT, not a
+/// per-widget copy. (The hand-rolled text-field copy had already diverged: it
+/// matched a lowercase `"z"` literally and so missed the platform's uppercase
+/// `"Z"` on `Shift`, silently dropping `Ctrl+Shift+Z` redo — the exact
+/// inconsistency the single source removes.)
 #[must_use]
 pub fn undo_redo_verb(key: &str, modifiers: Modifiers) -> Option<&'static str> {
     if !modifiers.command_key() {

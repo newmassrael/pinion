@@ -40737,6 +40737,58 @@
         "data-grid cell editor is transient (no text-field undo attach); a commit is the undo unit"
       ]
     },
+    "R932.1": {
+      "decision_summary": "R932.1 adversarial session-review clearance: undo/redo now uphold the R930.1 cursor-reanchor + edit-latch invariants (shared GridUndoCtx); text_field undo chord migrated to the undo_redo_verb SSOT (fixes latent Ctrl+Shift+Z redo); false 2nd-consumer framing dropped",
+      "changes_bullets": [
+        "adversarial 3-reviewer session-review (correctness/SSOT/doc-honesty); findings re-verified by me",
+        "REAL: undo/redo re-anchor cursor + cancel edit-latch via shared GridUndoCtx (R930.1 invariants)",
+        "REAL: text_field undo chord -> undo_redo_verb SSOT; fixes latent Ctrl+Shift+Z redo (uppercase Z)",
+        "REAL: drop false \"2nd consumer\" framing - UndoStack already has many example + crate consumers",
+        "rejected over-reach (re-verified): invoke_undo 2-copy / inline RowEdit / example-local commands",
+        "+3 regression tests: cursor-not-stranded / structural-undo cancels latch / Ctrl+Shift+Z redo"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; pinion-core +1, hello-data-grid +2 R932.1 regression tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r932 demo 61 assertions PASS 3x deterministic after the GridUndoCtx refactor",
+        "node-editor (128) + tree-grid (32) + text widgets green after the text_field undo-chord migration"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "northern-star: R930-R932 = 3-round data-grid run on highest-completion axis; R933 MUST diversify",
+        "invoke_undo stays 2-copy (tag-param, no shared decision) - lift only at a genuine 3rd consumer",
+        "concurrent RPC mid-scrub unreachable (single-threaded: scene/drag is one synchronous call)"
+      ],
+      "publishable_decision_summary": "R932.1 adversarial session-review clearance: undo/redo now uphold the R930.1 cursor-reanchor + edit-latch invariants (shared GridUndoCtx); text_field undo chord migrated to the undo_redo_verb SSOT (fixes latent Ctrl+Shift+Z redo); false 2nd-consumer framing dropped",
+      "publishable_changes_bullets": [
+        "adversarial 3-reviewer session-review (correctness/SSOT/doc-honesty); findings re-verified by me",
+        "REAL: undo/redo re-anchor cursor + cancel edit-latch via shared GridUndoCtx (R930.1 invariants)",
+        "REAL: text_field undo chord -> undo_redo_verb SSOT; fixes latent Ctrl+Shift+Z redo (uppercase Z)",
+        "REAL: drop false \"2nd consumer\" framing - UndoStack already has many example + crate consumers",
+        "rejected over-reach (re-verified): invoke_undo 2-copy / inline RowEdit / example-local commands",
+        "+3 regression tests: cursor-not-stranded / structural-undo cancels latch / Ctrl+Shift+Z redo"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; pinion-core +1, hello-data-grid +2 R932.1 regression tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r932 demo 61 assertions PASS 3x deterministic after the GridUndoCtx refactor",
+        "node-editor (128) + tree-grid (32) + text widgets green after the text_field undo-chord migration"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "northern-star: R930-R932 = 3-round data-grid run on highest-completion axis; R933 MUST diversify",
+        "invoke_undo stays 2-copy (tag-param, no shared decision) - lift only at a genuine 3rd consumer",
+        "concurrent RPC mid-scrub unreachable (single-threaded: scene/drag is one synchronous call)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

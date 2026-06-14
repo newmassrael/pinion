@@ -648,15 +648,80 @@ fn reanchor_cursor(visible: &[usize], cursor: &Signal<usize>, prior_vis: usize) 
 
 // ─── undo commands (R932 §5.52) ───────────────────────────────────
 
-/// R932 §5.52 — a reversible single-cell value edit (the `QUndoCommand` peer at
-/// the data-grid's cell granularity). Captures the model cell's before / after
-/// value AND the cursor's before / after source row, so undo / redo restore both
-/// verbatim — the node editor's `GraphEdit` `sel_before` / `sel_after` pattern:
-/// the cell value is the document, the cursor follows it (an edit that filtered
-/// the row out moved the cursor; undo brings the row — and the cursor — back).
-struct SetCellEdit {
+/// R932.1 — the reactive holders an undo command needs to uphold the SAME
+/// post-mutation discipline EVERY coordinator mutator follows (`set_cell` /
+/// `toggle` / `add_row` / `remove_row` / `commit_edit`): after the model write
+/// it must (1) cancel any in-flight edit latch — a structural splice shifts the
+/// source indices, so a stale source-keyed `(row, col)` latch would commit into
+/// the wrong row (the R930.1 stale-latch class) — and (2) re-anchor the cursor
+/// into the visible set, so an undo whose restored row the *current* filter /
+/// group / collapse hides never strands the cursor on a non-rendered row (the
+/// R930.1 re-anchor invariant). Bundled so a command holds one `Rc`, and shared
+/// (the SSOT both the External's commands and the free-fn `commit_edit` build
+/// from the same reactive holders).
+struct GridUndoCtx {
     model: Rc<Signal<Vec<CellValue>>>,
-    cursor: Rc<Signal<usize>>,
+    focused_row: Rc<Signal<usize>>,
+    editing_cell: Rc<Signal<Option<(usize, usize)>>>,
+    sort: Rc<Signal<Option<(usize, bool)>>>,
+    filter: Rc<Signal<Option<GridFilter>>>,
+    group_col: Rc<Signal<Option<usize>>>,
+    collapsed: Rc<Signal<BTreeSet<String>>>,
+}
+
+impl GridUndoCtx {
+    /// Bundle the shared reactive holders (owner-scoped — every accessor is a
+    /// cached hook returning the SAME `Rc` the coordinator + view hold).
+    fn from_hooks() -> Self {
+        Self {
+            model: use_data_model(),
+            focused_row: use_focused_row(),
+            editing_cell: use_editing_cell(),
+            sort: use_sort(),
+            filter: use_filter(),
+            group_col: use_group_col(),
+            collapsed: use_collapsed(),
+        }
+    }
+
+    /// Apply `mutate` to the model, restore the cursor to `cursor`, then run the
+    /// shared post-mutation discipline: cancel the in-flight edit latch (the
+    /// document changed under the inline editor, and a structural splice would
+    /// leave a stale source-keyed latch) and re-anchor the cursor so it never
+    /// lands on a row the current view hides. This is the undo/redo peer of
+    /// `set_cell` / `remove_row`'s own re-anchor — the one funnel that keeps
+    /// undo from being the lone mutator that breaks the R930.1 invariants.
+    fn restore(&self, cursor: usize, mutate: impl FnOnce(&mut Vec<CellValue>)) {
+        self.editing_cell.set(None);
+        self.model.set_with(|prev| {
+            let mut next = prev.clone();
+            mutate(&mut next);
+            next
+        });
+        self.focused_row.set(cursor);
+        let visible = visible_data_order(
+            &self.model.get(),
+            self.sort.get(),
+            self.filter.get().as_ref(),
+            self.group_col.get(),
+            &self.collapsed.get(),
+        );
+        // Keep the restored cursor when its row is visible; otherwise re-anchor
+        // to the slot it would occupy (the view changed since the edit was
+        // recorded, so the captured row may now be filtered out).
+        let prior_vis = cursor_visual_pos(&visible, cursor);
+        reanchor_cursor(&visible, &self.focused_row, prior_vis);
+    }
+}
+
+/// R932 §5.52 — a reversible single-cell value edit (the `QUndoCommand` peer at
+/// the data-grid's cell granularity). Captures the cell's before / after value
+/// and the cursor's before / after source row; undo / redo restore the value and
+/// cursor, then re-anchor through [`GridUndoCtx::restore`] (so unlike a node
+/// editor's always-valid selection set, the single source-row cursor can never
+/// be left on a now-hidden row).
+struct SetCellEdit {
+    ctx: Rc<GridUndoCtx>,
     index: usize,
     before: CellValue,
     after: CellValue,
@@ -666,17 +731,15 @@ struct SetCellEdit {
 }
 
 impl SetCellEdit {
-    /// Restore the cell to `value` and the cursor to `cursor` in one step.
+    /// Restore the cell to `value` and the cursor to `cursor` in one step,
+    /// through the shared re-anchor / latch-cancel discipline.
     fn write(&self, value: &CellValue, cursor: usize) {
         let (index, value) = (self.index, value.clone());
-        self.model.set_with(move |prev| {
-            let mut next = prev.clone();
+        self.ctx.restore(cursor, move |next| {
             if let Some(cell) = next.get_mut(index) {
                 *cell = value;
             }
-            next
         });
-        self.cursor.set(cursor);
     }
 }
 
@@ -699,13 +762,12 @@ impl UndoCommand for SetCellEdit {
 /// ([`idx(row, 0)`](idx)); `redo` replaces the `removed` cells with `inserted`,
 /// `undo` the inverse — so an append is (removed empty, inserted = one
 /// [`default_row`]) and a delete is (removed = the row's `NCOLS` cells, inserted
-/// empty). The cursor's before / after source row rides along (an append moves
-/// the cursor to the new row, a delete re-anchors it), restored verbatim like
-/// [`SetCellEdit`]. A whole-row snapshot, never a whole-model one (granular
-/// undo, not snapshot).
+/// empty). The cursor's before / after source row rides along through
+/// [`GridUndoCtx::restore`] (which cancels the edit latch the structural splice
+/// would strand, R930.1). A whole-row snapshot, never a whole-model one
+/// (granular undo, not snapshot).
 struct RowEdit {
-    model: Rc<Signal<Vec<CellValue>>>,
-    cursor: Rc<Signal<usize>>,
+    ctx: Rc<GridUndoCtx>,
     at: usize,
     removed: Vec<CellValue>,
     inserted: Vec<CellValue>,
@@ -715,15 +777,13 @@ struct RowEdit {
 }
 
 impl RowEdit {
-    /// Replace the `take.len()` cells at `at` with `put`, then move the cursor.
+    /// Replace the `take.len()` cells at `at` with `put`, then re-anchor — the
+    /// model splice + latch-cancel + cursor re-anchor in one funnel.
     fn splice(&self, take: &[CellValue], put: &[CellValue], cursor: usize) {
         let (at, end, put) = (self.at, self.at + take.len(), put.to_vec());
-        self.model.set_with(move |prev| {
-            let mut next = prev.clone();
+        self.ctx.restore(cursor, move |next| {
             next.splice(at..end, put);
-            next
         });
-        self.cursor.set(cursor);
     }
 }
 
@@ -755,8 +815,7 @@ impl UndoCommand for RowEdit {
 )]
 fn push_cell_edit(
     stack: &UndoStack,
-    model: &Rc<Signal<Vec<CellValue>>>,
-    cursor: &Rc<Signal<usize>>,
+    ctx: &Rc<GridUndoCtx>,
     index: usize,
     before: CellValue,
     after: CellValue,
@@ -768,8 +827,7 @@ fn push_cell_edit(
         return;
     }
     stack.push_applied(SetCellEdit {
-        model: Rc::clone(model),
-        cursor: Rc::clone(cursor),
+        ctx: Rc::clone(ctx),
         index,
         before,
         after,
@@ -814,6 +872,10 @@ struct DataGridExternal {
     /// [`UndoStackExternal`] extra wraps the **same** `Rc` so RPC + keyboard
     /// undo drive one timeline.
     undo: Rc<UndoStack>,
+    /// R932.1 — the reactive holders a recorded command replays through
+    /// ([`GridUndoCtx`]), so an undo / redo re-anchors the cursor + cancels the
+    /// edit latch exactly like every direct mutator (shared with `commit_edit`).
+    undo_ctx: Rc<GridUndoCtx>,
     /// R932 — the cell + cursor snapshot captured at `arm_scrub` (before any
     /// dead-zone move mutates), so `end_scrub` can journal a whole drag as ONE
     /// [`SetCellEdit`] step (the node editor's "one move per gesture at release"
@@ -848,6 +910,7 @@ impl DataGridExternal {
         group_col: Rc<Signal<Option<usize>>>,
         collapsed: Rc<Signal<BTreeSet<String>>>,
         undo: Rc<UndoStack>,
+        undo_ctx: Rc<GridUndoCtx>,
     ) -> Self {
         Self {
             model,
@@ -862,6 +925,7 @@ impl DataGridExternal {
             scrub_armed: Cell::new(None),
             scrub_cal: DragCalibration::new(),
             undo,
+            undo_ctx,
             scrub_origin: RefCell::new(None),
         }
     }
@@ -1038,8 +1102,7 @@ impl DataGridExternal {
         let after = self.model.get()[index].clone();
         push_cell_edit(
             &self.undo,
-            &self.model,
-            &self.focused_row,
+            &self.undo_ctx,
             index,
             before,
             after,
@@ -1086,8 +1149,7 @@ impl DataGridExternal {
         // R932 — journal the append as one RowEdit (already applied): redo
         // re-inserts the seed cells, undo drains them; the cursor rides along.
         self.undo.push_applied(RowEdit {
-            model: Rc::clone(&self.model),
-            cursor: Rc::clone(&self.focused_row),
+            ctx: Rc::clone(&self.undo_ctx),
             at,
             removed: Vec::new(),
             inserted: cells,
@@ -1133,8 +1195,7 @@ impl DataGridExternal {
         // R932 — journal the delete as one RowEdit (already applied): redo
         // drains the row again, undo re-inserts the captured cells.
         self.undo.push_applied(RowEdit {
-            model: Rc::clone(&self.model),
-            cursor: Rc::clone(&self.focused_row),
+            ctx: Rc::clone(&self.undo_ctx),
             at,
             removed,
             inserted: Vec::new(),
@@ -1264,8 +1325,7 @@ impl DataGridExternal {
                 let after = self.model.get()[index].clone();
                 push_cell_edit(
                     &self.undo,
-                    &self.model,
-                    &self.focused_row,
+                    &self.undo_ctx,
                     index,
                     before,
                     after,
@@ -1877,12 +1937,13 @@ fn commit_edit(restore_focus: bool) {
     // cursor (no-op when the row stays visible).
     reanchor_cursor(&visible(), &cursor, prior_vis);
     // R932 — record the committed edit (a no-op / malformed commit left `edit`
-    // None; an unchanged value is filtered inside `push_cell_edit`).
+    // None; an unchanged value is filtered inside `push_cell_edit`). The same
+    // `GridUndoCtx` shape the External holds (built from the same cached hooks),
+    // so the keyboard commit reverses through the identical re-anchor funnel.
     if let Some((index, before, after)) = edit {
         push_cell_edit(
             &use_undo(),
-            &model,
-            &cursor,
+            &Rc::new(GridUndoCtx::from_hooks()),
             index,
             before,
             after,
@@ -2370,6 +2431,7 @@ impl WidgetCore for DataGridView {
         Box::new(DataGridExternal::new(
             model, focused_row, focused_col, editing, editor, sort, filter, group_col, collapsed,
             use_undo(),
+            Rc::new(GridUndoCtx::from_hooks()),
         ))
     }
 
@@ -3784,7 +3846,7 @@ mod tests {
         });
     }
 
-    // ─── R932 undo / redo (UndoStack 2nd-widget consumer) ─────────────
+    // ─── R932 undo / redo (adopts the shared UndoStack substrate) ─────
 
     /// R932 — invoke a verb (`undo` / `redo`) on the [`UNDO_TAG`] external (the
     /// AI-first surface the keyboard + RPC both drive). Returns whether a step
@@ -3806,13 +3868,22 @@ mod tests {
     #[test]
     fn r932_undo_external_is_wired_to_the_shared_stack() {
         Owner::new().run(|| {
-            let scene = boot_scene();
-            // Boot history is empty; the UNDO external observes the same stack
-            // `use_undo()` hands the coordinator (one SSOT).
+            let mut scene = boot_scene();
+            // Boot history is empty.
             assert_eq!(undo_query(&scene, "can_undo"), Some(IntrospectValue::Bool(false)));
-            assert_eq!(undo_query(&scene, "can_redo"), Some(IntrospectValue::Bool(false)));
             assert_eq!(undo_query(&scene, "count"), Some(IntrospectValue::Int(0)));
             assert_eq!(undo_query(&scene, "undo_label"), Some(IntrospectValue::Null));
+            // Prove it is the SAME stack the coordinator records onto (not a
+            // separate empty one): a mutation through the GRID external must be
+            // observable through the UNDO external.
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                assert!(intro.intervene("value.0.2", IntrospectValue::Int(5)).is_ok());
+            }
+            assert_eq!(undo_query(&scene, "count"), Some(IntrospectValue::Int(1)),
+                "the GRID edit is visible on the UNDO external — one shared stack");
+            assert_eq!(undo_query(&scene, "can_undo"), Some(IntrospectValue::Bool(true)));
         });
     }
 
@@ -3977,7 +4048,7 @@ mod tests {
     fn r932_view_state_changes_are_not_journaled() {
         // Honest scope: undo journals DATA edits (cells + row structure), not
         // VIEW state (sort / filter / group / collapse) — the Qt / Unreal
-        // convention. A header-sort cycle adds no undo step.
+        // convention. Each of the four view ops adds no undo step.
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
@@ -3985,9 +4056,11 @@ mod tests {
                 let intro = node.handle.introspect_mut().expect("introspectable");
                 assert!(intro.invoke("cycle_sort", IntrospectValue::Int(2)).is_ok());
                 assert!(intro.invoke("set_filter", IntrospectValue::Text("4=true".to_owned())).is_ok());
+                assert!(intro.invoke("set_group", IntrospectValue::Text("1".to_owned())).is_ok());
+                assert!(intro.invoke("collapse_all", IntrospectValue::Null).is_ok());
             }
             assert_eq!(undo_query(&scene, "count"), Some(IntrospectValue::Int(0)),
-                "sort / filter are view state, not undoable edits");
+                "sort / filter / group / collapse are view state, not undoable edits");
         });
     }
 
@@ -4011,6 +4084,63 @@ mod tests {
             assert_eq!(undo_redo_verb("y", ctrl), Some("redo"));
             assert_eq!(undo_redo_verb("z", ctrl), Some("undo"));
             assert_eq!(undo_redo_verb("z", Modifiers::empty()), None, "a bare z is navigation, not undo");
+        });
+    }
+
+    // R932.1 — session-review fixes: the undo path must uphold the SAME
+    // R930.1 invariants every direct mutator does — re-anchor the cursor and
+    // cancel the in-flight edit latch — not restore raw state verbatim.
+
+    #[test]
+    fn r932_1_undo_under_filter_does_not_strand_the_cursor() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                // Edit Hero's Count (row 0) 1 -> 24 (matching Tree's 24), cursor on Hero.
+                intro.intervene("focused_row", IntrospectValue::Int(0)).expect("cursor on Hero");
+                assert!(intro.intervene("value.0.2", IntrospectValue::Int(24)).is_ok());
+                // Filter Count==24: Hero(0) + Tree(1) visible; cursor stays on Hero.
+                assert_eq!(intro.invoke("set_filter", IntrospectValue::Text("2=24".to_owned())),
+                           Ok(IntrospectValue::Int(2)));
+            }
+            // Undo the edit: Hero's Count reverts to 1, so Hero leaves the
+            // Count==24 view. The cursor was recorded as Hero (row 0); restoring
+            // it verbatim would strand it on a now-filtered-out row (dead
+            // arrow-nav, the R930.1 bug). The undo must re-anchor onto the
+            // still-visible Tree (row 1).
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(grid_intro(&scene).query("value.0.2"), Some(IntrospectValue::Int(1)),
+                "undo restored Hero's Count");
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(1)),
+                "cursor re-anchored onto the still-visible Tree, not stranded on hidden Hero");
+        });
+    }
+
+    #[test]
+    fn r932_1_undo_of_a_structural_change_cancels_the_edit_latch() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                // Remove source row 0 (Hero): Tree/Coin/Boss shift to 0/1/2.
+                assert_eq!(intro.invoke("remove_row", IntrospectValue::Int(0)), Ok(IntrospectValue::Bool(true)));
+                // Begin editing the source-keyed cell (2, 0) — now Boss.
+                intro.intervene("focused_row", IntrospectValue::Int(2)).expect("focus a row");
+                intro.intervene("focused_col", IntrospectValue::Int(0)).expect("focus col 0");
+                assert!(intro.invoke("begin", IntrospectValue::Null).is_ok(), "begin editing");
+                assert_eq!(intro.query("editing_row"), Some(IntrospectValue::Int(2)), "row 2 editing");
+            }
+            // Undo the remove: Hero is re-inserted at 0, shifting every source
+            // index up. The latch (2, 0) would now point at a DIFFERENT row, so a
+            // later commit would write the wrong cell (the R930.1 stale-latch
+            // class). The undo must cancel the latch, exactly as `remove_row` does.
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(grid_intro(&scene).query("row_count"), Some(IntrospectValue::Int(4)), "row restored");
+            assert_eq!(grid_intro(&scene).query("editing_row"), Some(IntrospectValue::Null),
+                "the structural undo cancelled the in-flight edit latch");
         });
     }
 }

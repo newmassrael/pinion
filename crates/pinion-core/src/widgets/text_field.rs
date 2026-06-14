@@ -351,16 +351,25 @@ pub fn apply_key(
             // handler can claim it. Consumed (returns `true`) even at a stack
             // boundary, so an attached field's Ctrl+Z never bubbles to a
             // global undo.
+            // R932.1 — the chord → verb decision via the shared
+            // [`undo_redo_verb`](crate::undo::undo_redo_verb) SSOT (lifted to
+            // pinion-core), so the text field shares one editor keybinding with
+            // the node-graph / data-grid / tree-grid keymaps. The `!alt_key`
+            // gate stays local (AltGr + key is character composition in a text
+            // field, not a chord). This also fixes a latent bug the hand-rolled
+            // `other == "z"` match had: the platform delivers uppercase `"Z"`
+            // when Shift is held, so `Ctrl+Shift+Z` redo silently did nothing;
+            // `undo_redo_verb` case-folds the key.
             if modifiers.command_key()
                 && !modifiers.alt_key()
                 && state.undo_stack().is_some()
             {
-                if other == "z" && !modifiers.shift_key() {
-                    state.undo();
-                    return true;
-                }
-                if other == "y" || (other == "z" && modifiers.shift_key()) {
-                    state.redo();
+                if let Some(verb) = crate::undo::undo_redo_verb(other, modifiers) {
+                    if verb == "redo" {
+                        state.redo();
+                    } else {
+                        state.undo();
+                    }
                     return true;
                 }
             }
@@ -3639,6 +3648,31 @@ mod r56_1_f_tests {
         let _ = apply_key(&state, "a", ctrl_alt);
         // No selection set by the apply_key path.
         assert_eq!(state.selection_anchor(), None);
+    }
+
+    #[test]
+    fn r932_1_ctrl_shift_z_redo_handles_uppercase_z() {
+        // R932.1 — the undo chord routes through the shared `undo_redo_verb`
+        // SSOT, which case-folds the key. The platform delivers uppercase "Z"
+        // when Shift is held (TUI `Char(c)`, winit `Key::Character` both keep
+        // case), so the prior hand-rolled `other == "z"` match silently dropped
+        // Ctrl+Shift+Z redo. This guards the fix + the lower-case chords.
+        let state = TextEditState::with_initial(String::new());
+        state.attach_undo(std::rc::Rc::new(crate::undo::UndoStack::new()));
+        assert!(apply_key(&state, "x", Modifiers::empty()), "type 'x'");
+        assert_eq!(state.text(), "x");
+        assert!(state.undo(), "undo the insert");
+        assert_eq!(state.text(), "", "undone");
+        // Ctrl+Shift+Z arrives as uppercase "Z" — must still redo.
+        let ctrl_shift = Modifiers { ctrl: true, shift: true, ..Modifiers::empty() };
+        assert!(apply_key(&state, "Z", ctrl_shift), "Ctrl+Shift+Z is consumed");
+        assert_eq!(state.text(), "x", "Ctrl+Shift+Z redid the insert (uppercase Z case-folded)");
+        // Lower-case chords still work: Ctrl+Z undoes, Ctrl+Y redoes.
+        let ctrl = Modifiers { ctrl: true, ..Modifiers::empty() };
+        assert!(apply_key(&state, "z", ctrl), "Ctrl+Z consumed");
+        assert_eq!(state.text(), "", "Ctrl+Z undid");
+        assert!(apply_key(&state, "y", ctrl), "Ctrl+Y consumed");
+        assert_eq!(state.text(), "x", "Ctrl+Y redid");
     }
 
     // ─────────────────────────────────────────────────────────────
