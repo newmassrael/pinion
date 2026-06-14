@@ -40635,6 +40635,52 @@
         "self-grep caught a find_node_mut substrate duplicate -> used tree_nav, removed local"
       ]
     },
+    "R931.1": {
+      "decision_summary": "R931.1: adversarial session-review clearance of R931 (precise edit-cancel + element search + ValueRef::slot DRY + doc-honesty; over-reach rejected)",
+      "changes_bullets": [
+        "§5.38 remove_elem cancels an element edit only when k>=index (was unconditional) = reanchor-consistent",
+        "§5.38 array element searchable by array label in node_matches_query (no scalar-vs-element asymmetry)",
+        "§5.38 add ValueRef::slot() + set_ref_value single-match (DRY the Scalar|Elem=>i projection)",
+        "doc-honesty: tree-leaf-cover test comment notes element leaves excluded (array sub-model, not flat)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: 6616 ok (65 property-grid; +2 regression tests)",
+        "clippy --workspace --all-targets -D pedantic: clean; r931 demo 43 assert PASS",
+        "new tests: remove-later-keeps-earlier-edit / search-reveals-elements-by-array-label"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "rejected over-reach: 4-site ValueRef routing = method(captured-Rc) vs Owner-free-fn idiom, not removable",
+        "rejected: PointerUp Int echo = pre-existing click contract; scrub/paint race = whole-External threading",
+        "rejected: default_element kind-arms = data-grid default_row pattern (multi-array ready, keeps const live)",
+        "data-grid remove still cancels edits unconditionally (less precise than array now) — future refinement"
+      ],
+      "publishable_decision_summary": "R931.1: adversarial session-review clearance of R931 (precise edit-cancel + element search + ValueRef::slot DRY + doc-honesty; over-reach rejected)",
+      "publishable_changes_bullets": [
+        "§5.38 remove_elem cancels an element edit only when k>=index (was unconditional) = reanchor-consistent",
+        "§5.38 array element searchable by array label in node_matches_query (no scalar-vs-element asymmetry)",
+        "§5.38 add ValueRef::slot() + set_ref_value single-match (DRY the Scalar|Elem=>i projection)",
+        "doc-honesty: tree-leaf-cover test comment notes element leaves excluded (array sub-model, not flat)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: 6616 ok (65 property-grid; +2 regression tests)",
+        "clippy --workspace --all-targets -D pedantic: clean; r931 demo 43 assert PASS",
+        "new tests: remove-later-keeps-earlier-edit / search-reveals-elements-by-array-label"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "rejected over-reach: 4-site ValueRef routing = method(captured-Rc) vs Owner-free-fn idiom, not removable",
+        "rejected: PointerUp Int echo = pre-existing click contract; scrub/paint race = whole-External threading",
+        "rejected: default_element kind-arms = data-grid default_row pattern (multi-array ready, keeps const live)",
+        "data-grid remove still cancels edits unconditionally (less precise than array now) — future refinement"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

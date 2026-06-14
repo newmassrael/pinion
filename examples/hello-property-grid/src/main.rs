@@ -522,6 +522,17 @@ enum ValueRef {
     Elem(usize),
 }
 
+impl ValueRef {
+    /// The index within this address's backing store (the flat-model slot for a
+    /// `Scalar`, the array position for an `Elem`) — the one place the
+    /// `Scalar(i) | Elem(i) => i` projection is written.
+    fn slot(self) -> usize {
+        match self {
+            ValueRef::Scalar(i) | ValueRef::Elem(i) => i,
+        }
+    }
+}
+
 /// R931 — the value address a tree-row id points at, or `None` for a branch id
 /// (a `cat.` / `struct.` / `arr.` prefix). The unified peer of
 /// [`row_value_index`]: a bare decimal is a [`ValueRef::Scalar`]; an `elem.<k>`
@@ -790,8 +801,13 @@ fn current_search_query() -> String {
 /// category / struct label. [`flat_visible_filtered`] then keeps any node on a
 /// path to a match (Qt recursive-filter semantics).
 fn node_matches_query(node: &PropertyNode, query: &str) -> bool {
+    // R931 — an array element leaf (`value_index = None`, id `elem.<k>`) has no
+    // per-element name, so it matches on its array's label ([`ARRAY_LABEL`]) —
+    // so "weights" surfaces every element under the array, the same way a struct
+    // field is searchable by its qualified name (no scalar-vs-element asymmetry).
     let name = match node.value_index {
         Some(i) => PROPERTY_NAMES.get(i).copied().unwrap_or(node.label.as_str()),
+        None if node.id.starts_with(ELEM_PREFIX) => ARRAY_LABEL,
         None => node.label.as_str(),
     };
     name.to_lowercase().contains(query)
@@ -1201,10 +1217,14 @@ impl PropertyGridExternal {
         if index >= self.array_len() {
             return false;
         }
-        // (1) Any edit on an array element is invalidated: every element at or
-        // after `index` shifts, so even an edit on a *survivor* now points at the
-        // wrong value. Cancel rather than silently retarget.
-        if matches!(self.editing_row.get(), Some(ValueRef::Elem(_))) {
+        // (1) Cancel an in-flight element edit only when the removal actually
+        // disturbs it — an edit on `elem.k` is stale iff `k >= index` (that
+        // element vanished or shifted down one); an edit on an *earlier* element
+        // (`k < index`) is untouched, so it must NOT be cancelled. This mirrors
+        // the precise `reanchor_array_cursor` gate below — the latch and the
+        // cursor stay consistent (cancel rather than silently retarget a shifted
+        // slot, the R930.1 reachable-stale-index class).
+        if matches!(self.editing_row.get(), Some(ValueRef::Elem(k)) if k >= index) {
             self.cancel_active_edit();
         }
         self.array.set_with(|prev| {
@@ -1563,9 +1583,6 @@ impl PropertyGridExternal {
     /// this one path via [`ValueRef`]. Always succeeds (an unknown event is a
     /// no-op `Null`), so it returns the value directly.
     fn dispatch_leaf(&mut self, key: &str, event_name: &str, value_ref: ValueRef) -> IntrospectValue {
-        let slot = match value_ref {
-            ValueRef::Scalar(i) | ValueRef::Elem(i) => i,
-        };
         match event_name {
             // R875 — arm a numeric scrub; the first capture `pointer_move`
             // calibrates it. A non-numeric press leaves the arm clear.
@@ -1598,7 +1615,7 @@ impl PropertyGridExternal {
                         _ => {}
                     }
                 }
-                IntrospectValue::Int(i64::try_from(slot).expect("row index fits in i64"))
+                IntrospectValue::Int(i64::try_from(value_ref.slot()).expect("row index fits in i64"))
             }
             // R875 — the capture lock lets the cursor stray off the row; a
             // release there arrives as PointerLeave / PointerCancel. Tear the
@@ -2031,12 +2048,9 @@ fn ref_value(row: ValueRef) -> Option<CellValue> {
 /// R931 — write the value behind a [`ValueRef`] into its backing model (the
 /// Owner-scoped peer of [`PropertyGridExternal::set_value_at`]).
 fn set_ref_value(row: ValueRef, value: CellValue) {
-    let signal = match row {
-        ValueRef::Scalar(_) => use_property_model(),
-        ValueRef::Elem(_) => use_array_model(),
-    };
-    let slot = match row {
-        ValueRef::Scalar(i) | ValueRef::Elem(i) => i,
+    let (signal, slot) = match row {
+        ValueRef::Scalar(i) => (use_property_model(), i),
+        ValueRef::Elem(k) => (use_array_model(), k),
     };
     signal.set_with(move |prev| {
         let mut next = prev.clone();
@@ -3540,8 +3554,11 @@ mod tests {
 
     #[test]
     fn r921_tree_leaves_cover_every_value_slot_once() {
-        // Every leaf id in the tree indexes the value model, and every value
-        // slot is reached by exactly one leaf (no orphan / no duplicate).
+        // Every *flat-model* leaf (a scalar / struct field, `value_index = Some`)
+        // indexes the value model, and every value slot is reached by exactly one
+        // such leaf (no orphan / no duplicate). R931 array element leaves
+        // (`value_index = None`, backed by the separate array sub-model) are
+        // intentionally excluded — they address the array, not the flat model.
         fn collect(nodes: &[PropertyNode], out: &mut Vec<usize>) {
             for n in nodes {
                 if let Some(i) = n.value_index {
@@ -5022,6 +5039,44 @@ mod tests {
                 Some(IntrospectValue::Int(2)),
                 "Delete removed the element"
             );
+        });
+    }
+
+    /// R931 (session-review fix) — removing an element BEFORE the one being
+    /// edited must NOT cancel the edit: `elem.0`'s edit survives a removal of
+    /// `elem.2` (only `k >= index` is disturbed, matching the cursor reanchor).
+    #[test]
+    fn r931_remove_later_element_keeps_earlier_edit() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            with_grid_mut(&mut scene, |i| i.invoke("begin", IntrospectValue::Text("elem.0".to_owned()))).unwrap();
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
+                "editing elem.0"
+            );
+            // Remove a LATER element (elem.2) — elem.0 is unaffected, so the edit
+            // continues (over-cancelling an earlier edit would be a real smell).
+            with_grid_mut(&mut scene, |i| i.invoke("remove_elem", IntrospectValue::Int(2))).unwrap();
+            assert_eq!(
+                grid_intro(&scene).query("editing"),
+                Some(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
+                "an edit before the removal survives"
+            );
+        });
+    }
+
+    /// R931 (session-review fix) — an array element is discoverable by the
+    /// array's name in the search filter (no scalar-field-vs-element asymmetry):
+    /// "weights" reveals the element rows, not just the array branch.
+    #[test]
+    fn r931_search_reveals_elements_by_array_label() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            use_text_edit_state(SEARCH_TF_TAG).set_text("weights".to_owned());
+            let ids = visible_ids();
+            assert!(ids.iter().any(|id| id == ARR_BRANCH_ID), "the array branch matches 'weights'");
+            assert!(ids.iter().any(|id| id == "elem.0"), "each element matches the array label 'weights'");
         });
     }
 }
