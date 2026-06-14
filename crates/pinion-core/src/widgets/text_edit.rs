@@ -81,6 +81,7 @@
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use crate::reactive::{batch, Owner, Signal};
@@ -287,6 +288,29 @@ pub struct TextEditState {
     /// attachment is wiring, not observable content — the reactive dependency
     /// is the *text* the closure reads through [`style_runs`](Self::style_runs).
     highlighter: RefCell<Option<Highlighter>>,
+    /// R933 §5.36 — **code-folding** state: the set of *collapsed* fold
+    /// regions, each keyed by its opening-bracket byte offset (the
+    /// [`FoldRegion::open_byte`] anchor). Empty (the default) is "nothing
+    /// folded". The foldable regions themselves are **derived on read**
+    /// from the live buffer ([`fold_regions`](Self::fold_regions), the
+    /// [`matching_bracket`](Self::matching_bracket) /
+    /// [`find_matches`](Self::find_matches) re-derive lineage); only the
+    /// collapsed *anchors* are stored, so the set survives edits the way a
+    /// styled run tracks its text — an anchor whose `{` an edit deleted
+    /// simply stops matching a derived region and is pruned on the next
+    /// [`fold_regions`](Self::fold_regions) read.
+    ///
+    /// A reactive [`Signal`] — a content peer of [`style_runs`](Self::style_runs)
+    /// / [`find_query`](Self::find_query): paint reads it to hide the
+    /// collapsed lines and the `scene/<tag>/external/fold_regions` RPC
+    /// exposes it, so a toggle must re-run the field paint. Reactive does
+    /// **not** mean journalled: like the find session and the sort / filter
+    /// / group view-state of the data widgets, folding is *view* config,
+    /// not document content, so it is deliberately **outside** the
+    /// [`undo`](Self::undo) journal (the Qt / Unreal convention — Ctrl+Z
+    /// reverses edits, never a fold toggle). The journalled content is
+    /// exactly `{text, caret, anchor, runs}` ([`TextEditCommand`]).
+    folds: Signal<BTreeSet<usize>>,
 }
 
 /// R904 §5.36 — a syntax-highlighter closure: derives the displayed
@@ -787,35 +811,147 @@ fn matching_bracket_in(text: &str, caret_byte: usize) -> Option<(usize, usize)> 
         return None;
     };
     let (is_open, mate) = bracket_role(bytes[pos])?;
+    if is_open {
+        // Forward same-type depth scan — shared with fold-region
+        // enumeration via [`match_forward`] so the active-bracket
+        // highlight and a block's fold extent never disagree on where the
+        // block ends.
+        return match_forward(bytes, pos).map(|close| (pos, close));
+    }
+    // Closer: backward same-type depth scan. The active-bracket resolve is
+    // its only consumer (fold enumeration only walks openers), so it stays
+    // inline rather than lifting a `match_backward` peer with no second
+    // caller.
     let this = bytes[pos];
     let mut depth: u32 = 0;
-    if is_open {
-        for (i, &b) in bytes.iter().enumerate().skip(pos) {
-            if b == this {
-                depth += 1;
-            } else if b == mate {
-                depth -= 1;
-                if depth == 0 {
-                    return Some((pos, i));
-                }
-            }
-        }
-    } else {
-        let mut i = pos + 1;
-        while i > 0 {
-            i -= 1;
-            let b = bytes[i];
-            if b == this {
-                depth += 1;
-            } else if b == mate {
-                depth -= 1;
-                if depth == 0 {
-                    return Some((i, pos));
-                }
+    let mut i = pos + 1;
+    while i > 0 {
+        i -= 1;
+        let b = bytes[i];
+        if b == this {
+            depth += 1;
+        } else if b == mate {
+            depth -= 1;
+            if depth == 0 {
+                return Some((i, pos));
             }
         }
     }
     None
+}
+
+/// R933 §5.36 — from an opening bracket byte at `pos` (`{` / `[` / `(`),
+/// the byte offset of its matching closer, or `None` when `pos` is not an
+/// opener or the block is unbalanced. The forward half of the R926
+/// matcher, lifted so [`matching_bracket_in`] (active-bracket highlight)
+/// and [`fold_regions_in`] (block enumeration) run the **one** scan — a
+/// divergence between "where the highlight says the block ends" and
+/// "where the fold collapses to" would be a bug. Same-type depth scan
+/// (counting this pair only) is correct for well-formed code and
+/// best-effort mid-edit, exactly as the matcher documents. Byte offsets
+/// are UTF-8-safe (bracket bytes are ASCII).
+fn match_forward(bytes: &[u8], pos: usize) -> Option<usize> {
+    let (is_open, mate) = bracket_role(*bytes.get(pos)?)?;
+    if !is_open {
+        return None;
+    }
+    let this = bytes[pos];
+    let mut depth: u32 = 0;
+    for (i, &b) in bytes.iter().enumerate().skip(pos) {
+        if b == this {
+            depth += 1;
+        } else if b == mate {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// R933 §5.36 — byte offsets at which each **logical** (newline-delimited)
+/// line begins: `0`, then the offset just past every `'\n'`. The textbook
+/// byte→line index — `line_of(&starts, byte)` is then `O(log lines)`.
+/// Logical, not parley *visual*, lines: code folding and the gutter number
+/// the source's own lines independent of soft wrap, and the brackets that
+/// bound a fold live at fixed byte offsets, so a pure newline scan (no
+/// shaped [`Layout`]) is both sufficient and the correct unit.
+fn line_starts(text: &str) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    starts.extend(
+        text.bytes()
+            .enumerate()
+            .filter(|&(_, b)| b == b'\n')
+            .map(|(i, _)| i + 1),
+    );
+    starts
+}
+
+/// R933 §5.36 — zero-based logical line containing `byte`, given the
+/// [`line_starts`] index. `partition_point` finds the first start strictly
+/// past `byte`; the line is the one before it.
+fn line_of(starts: &[usize], byte: usize) -> usize {
+    starts.partition_point(|&s| s <= byte).saturating_sub(1)
+}
+
+/// R933 §5.36 — a **foldable region**: one bracket-delimited block
+/// (`{ }`, `[ ]`, or `( )`) whose opener and closer sit on *different*
+/// logical lines (a same-line `{}` is not foldable). When collapsed, the
+/// opener line stays visible (a `…` placeholder) and the interior lines
+/// `start_line + 1 ..= end_line` hide — the VS Code / Sublime default.
+/// Derived on read from the buffer by [`TextEditState::fold_regions`]; the
+/// stored fold set keys only on [`open_byte`](Self::open_byte).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FoldRegion {
+    /// Byte offset of the opening bracket — the stable fold anchor the
+    /// collapsed set keys on.
+    pub open_byte: usize,
+    /// Byte offset of the matching closing bracket.
+    pub close_byte: usize,
+    /// Zero-based logical line of the opener (stays visible when folded).
+    pub start_line: usize,
+    /// Zero-based logical line of the closer (the last hidden line when
+    /// folded).
+    pub end_line: usize,
+    /// Whether this region is currently collapsed (filled by
+    /// [`TextEditState::fold_regions`] from the live fold set;
+    /// [`fold_regions_in`] leaves it `false`).
+    pub collapsed: bool,
+}
+
+/// R933 §5.36 — every foldable region in `text`, in opener (byte) order:
+/// each bracket block spanning ≥ 2 logical lines. Reuses [`match_forward`]
+/// for the extent and the single-pass [`line_starts`] index for the line
+/// mapping. `collapsed` is left `false` — [`TextEditState::fold_regions`]
+/// fills it from the live set. Cost is `O(text · openers)` like the
+/// [`find_matches`](TextEditState::find_matches) / matching-bracket
+/// derive-on-read lineage it shares (paid on read, fragment-cached by an
+/// unchanged buffer).
+fn fold_regions_in(text: &str) -> Vec<FoldRegion> {
+    let bytes = text.as_bytes();
+    let starts = line_starts(text);
+    let mut out = Vec::new();
+    for (pos, &b) in bytes.iter().enumerate() {
+        if !matches!(bracket_role(b), Some((true, _))) {
+            continue;
+        }
+        let Some(close) = match_forward(bytes, pos) else {
+            continue;
+        };
+        let start_line = line_of(&starts, pos);
+        let end_line = line_of(&starts, close);
+        if end_line > start_line {
+            out.push(FoldRegion {
+                open_byte: pos,
+                close_byte: close,
+                start_line,
+                end_line,
+                collapsed: false,
+            });
+        }
+    }
+    out
 }
 
 impl TextEditState {
@@ -839,6 +975,7 @@ impl TextEditState {
             find_case_sensitive: Signal::new(false),
             find_whole_word: Signal::new(false),
             highlighter: RefCell::new(None),
+            folds: Signal::new(BTreeSet::new()),
         }
     }
 
@@ -881,6 +1018,7 @@ impl TextEditState {
             find_case_sensitive: Signal::new(false),
             find_whole_word: Signal::new(false),
             highlighter: RefCell::new(None),
+            folds: Signal::new(BTreeSet::new()),
         }
     }
 
@@ -1417,6 +1555,116 @@ impl TextEditState {
         matching_bracket_in(&text, caret)
     }
 
+    /// R933 §5.36 — every foldable region in the live buffer (each bracket
+    /// block spanning ≥ 2 logical lines), opener-ordered, each carrying its
+    /// current `collapsed` flag from the fold set. A derive-on-read accessor
+    /// in the [`matching_bracket`](Self::matching_bracket) /
+    /// [`find_matches`](Self::find_matches) lineage: it subscribes to `text`
+    /// (region geometry) and `folds` (collapsed flags) so the field paint,
+    /// the gutter chevrons, and the `scene/<tag>/external/fold_regions` RPC
+    /// all read **one** derivation and never disagree. Pruning of stale
+    /// anchors (a `{` an edit deleted) is implicit — a collapsed anchor with
+    /// no matching derived region simply contributes no `FoldRegion`.
+    #[must_use]
+    pub fn fold_regions(&self) -> Vec<FoldRegion> {
+        let text = self.text.get();
+        let set = self.folds.get();
+        let mut regions = fold_regions_in(&text);
+        for r in &mut regions {
+            r.collapsed = set.contains(&r.open_byte);
+        }
+        regions
+    }
+
+    /// R933 §5.36 — whether logical `line` is hidden by a collapsed region,
+    /// i.e. it lies in some collapsed region's interior
+    /// `start_line + 1 ..= end_line`. The opener line is never hidden (it
+    /// carries the `…` placeholder); an outer collapse hides an inner
+    /// region's opener too. Derived, so it always matches
+    /// [`fold_regions`](Self::fold_regions); paint skips hidden lines.
+    #[must_use]
+    pub fn is_line_hidden(&self, line: usize) -> bool {
+        self.fold_regions()
+            .iter()
+            .any(|r| r.collapsed && line > r.start_line && line <= r.end_line)
+    }
+
+    /// R933 §5.36 — toggle the fold of the region that *opens* on logical
+    /// `line` (the gutter-chevron gesture). When several brackets open on
+    /// the same line the outermost (widest) block toggles — the block the
+    /// gutter chevron represents. No region opens there ⇒ no-op returning
+    /// `false`. **Collapsing reanchors the caret** out of the now-hidden
+    /// interior (see [`reanchor_caret_out_of_folds`](Self::reanchor_caret_out_of_folds)):
+    /// a fold must never strand the caret on an invisible line — the same
+    /// view-state reanchor discipline the data widgets apply to sort /
+    /// filter / group changes. Returns `true` when a region toggled.
+    pub fn toggle_fold(&self, line: usize) -> bool {
+        let Some(region) = self
+            .fold_regions()
+            .into_iter()
+            .filter(|r| r.start_line == line)
+            .max_by_key(|r| r.end_line)
+        else {
+            return false;
+        };
+        let mut set = self.folds.get();
+        // `insert` returns `true` when the anchor was absent → we just
+        // collapsed it; `false` when it was present → expand by removing.
+        let now_collapsed = set.insert(region.open_byte);
+        if !now_collapsed {
+            set.remove(&region.open_byte);
+        }
+        self.folds.set(set);
+        if now_collapsed {
+            self.reanchor_caret_out_of_folds();
+        }
+        true
+    }
+
+    /// R933 §5.36 — collapse every foldable region (the VS Code "Fold All"
+    /// gesture). Reanchors the caret out of any interior it hides.
+    pub fn fold_all(&self) {
+        let text = self.text.get();
+        let anchors: BTreeSet<usize> =
+            fold_regions_in(&text).into_iter().map(|r| r.open_byte).collect();
+        self.folds.set(anchors);
+        self.reanchor_caret_out_of_folds();
+    }
+
+    /// R933 §5.36 — expand every region ("Unfold All"). No caret reanchor:
+    /// unfolding only reveals lines, it never hides the caret.
+    pub fn unfold_all(&self) {
+        self.folds.set(BTreeSet::new());
+    }
+
+    /// R933 §5.36 — pull the caret to a visible line when a collapse has
+    /// hidden the line it sits on. Lands it at the end of the *outermost*
+    /// hiding region's opener line (the visible row the fold collapses to).
+    /// Reads the already-written fold set, so callers set `folds` first.
+    /// Mirrors the data-widget cursor-reanchor invariant — a view-state
+    /// change must never leave the cursor on an invisible row.
+    fn reanchor_caret_out_of_folds(&self) {
+        let text = self.text.get();
+        let starts = line_starts(&text);
+        let caret_line = line_of(&starts, self.caret_pos.get());
+        let set = self.folds.get();
+        // Opener order ⇒ the first match is the outermost hiding region,
+        // whose opener line is the visible row the fold summarises to.
+        let hiding = fold_regions_in(&text).into_iter().find(|r| {
+            set.contains(&r.open_byte) && caret_line > r.start_line && caret_line <= r.end_line
+        });
+        if let Some(r) = hiding {
+            let opener_end = if r.start_line + 1 < starts.len() {
+                // End of the opener's logical line: the byte just before
+                // its trailing newline (a char boundary — `\n` is ASCII).
+                starts[r.start_line + 1] - 1
+            } else {
+                text.len()
+            };
+            self.set_caret(opener_end);
+        }
+    }
+
     /// R903 §5.22 — number of current matches (reactive read).
     #[must_use]
     pub fn find_match_count(&self) -> usize {
@@ -1603,6 +1851,14 @@ impl TextEditState {
             // offset the runs referenced; clear them (the caller re-seeds
             // via set_style_runs if the new text is styled).
             self.style_runs.set(Vec::new());
+            // R933 §5.36 — the same wholesale-replace invalidation applies
+            // to the fold set: its collapsed anchors are byte offsets into
+            // the *old* buffer, meaningless against new content (a mirror of
+            // the style-run clear above). Incremental edits keep their folds
+            // via the derive-on-read prune; only a full `set_text` resets —
+            // otherwise replacing a buffer with different code whose braces
+            // land on the old anchor bytes would silently re-collapse them.
+            self.folds.set(BTreeSet::new());
         });
     }
 
@@ -2423,8 +2679,9 @@ mod tests {
     //! hook integration.
 
     use super::{
-        clamp_to_char_boundary, find_matches_in, matching_bracket_in, next_char_boundary,
-        prev_char_boundary, style_runs_diff, use_text_edit_state, TextEditState,
+        clamp_to_char_boundary, find_matches_in, fold_regions_in, line_of, line_starts,
+        matching_bracket_in, next_char_boundary, prev_char_boundary, style_runs_diff,
+        use_text_edit_state, TextEditState,
     };
     use crate::reactive::{Effect, Owner};
     use crate::scene::StyleRun;
@@ -4386,6 +4643,145 @@ mod tests {
             // Caret just after '(' -> matches ')'.
             st.set_caret(2);
             assert_eq!(st.matching_bracket(), Some((1, 3)));
+        });
+    }
+
+    #[test]
+    fn r933_line_index_maps_bytes_to_logical_lines() {
+        // "ab\ncd\n\nef": newlines at 2, 5, 6 → line starts [0, 3, 6, 7].
+        let s = "ab\ncd\n\nef";
+        let starts = line_starts(s);
+        assert_eq!(starts, vec![0, 3, 6, 7]);
+        assert_eq!(line_of(&starts, 0), 0);
+        assert_eq!(line_of(&starts, 2), 0, "the trailing '\\n' belongs to its line");
+        assert_eq!(line_of(&starts, 3), 1);
+        assert_eq!(line_of(&starts, 6), 2, "an empty line still indexes");
+        assert_eq!(line_of(&starts, 8), 3);
+    }
+
+    #[test]
+    fn r933_fold_regions_enumerates_multiline_blocks_only() {
+        // The `()` on line 0 is same-line → not foldable; the `{}` spans
+        // line 0 (opener) to line 3 (closer) → the one foldable region.
+        let src = "fn main() {\n    let x = 1;\n    let y = 2;\n}\n";
+        let regions = fold_regions_in(src);
+        assert_eq!(regions.len(), 1, "only the multi-line brace block folds");
+        let r = regions[0];
+        assert_eq!(r.start_line, 0);
+        assert_eq!(r.end_line, 3);
+        assert!(!r.collapsed);
+        assert_eq!(src.as_bytes()[r.open_byte], b'{');
+        assert_eq!(src.as_bytes()[r.close_byte], b'}');
+    }
+
+    #[test]
+    fn r933_fold_regions_nested_both_enumerated_outer_first() {
+        let src = "a {\n  b {\n    c\n  }\n}\n";
+        let regions = fold_regions_in(src);
+        assert_eq!(regions.len(), 2, "outer and inner brace blocks");
+        assert_eq!((regions[0].start_line, regions[0].end_line), (0, 4), "outer first");
+        assert_eq!((regions[1].start_line, regions[1].end_line), (1, 3), "inner second");
+    }
+
+    #[test]
+    fn r933_fold_extent_agrees_with_matching_bracket() {
+        // A fold region's [open, close] is exactly what the active-bracket
+        // matcher resolves from the opener — they share `match_forward`, so
+        // the gutter fold and the highlight can never disagree.
+        let src = "{\n  a\n}\n";
+        let regions = fold_regions_in(src);
+        assert_eq!(regions.len(), 1);
+        let r = regions[0];
+        assert_eq!(
+            matching_bracket_in(src, r.open_byte + 1),
+            Some((r.open_byte, r.close_byte)),
+            "fold extent == active-bracket resolve",
+        );
+    }
+
+    #[test]
+    fn r933_collapse_hides_interior_keeps_opener_visible() {
+        Owner::new().run(|| {
+            let src = "fn main() {\n    let x = 1;\n    let y = 2;\n}\n".to_string();
+            let st = TextEditState::with_initial(src);
+            assert!(st.toggle_fold(0), "a region opens on line 0");
+            assert!(!st.is_line_hidden(0), "opener stays visible");
+            assert!(st.is_line_hidden(1), "interior hides");
+            assert!(st.is_line_hidden(2), "interior hides");
+            assert!(st.is_line_hidden(3), "closer line joins the folded summary");
+            assert!(st.fold_regions()[0].collapsed);
+        });
+    }
+
+    #[test]
+    fn r933_toggle_fold_round_trips() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("x {\n y\n}\n".to_string());
+            assert!(st.toggle_fold(0));
+            assert!(st.fold_regions()[0].collapsed);
+            assert!(st.toggle_fold(0), "toggling again expands");
+            assert!(!st.fold_regions()[0].collapsed);
+            assert!(!st.is_line_hidden(1), "interior revealed");
+        });
+    }
+
+    #[test]
+    fn r933_collapse_reanchors_caret_out_of_hidden_interior() {
+        Owner::new().run(|| {
+            // "fn f() {\n" — '{' at 7, first '\n' at 8 (opener line end).
+            // Line 1 "    body" starts at 9; the caret at 13 sits on "body".
+            let src = "fn f() {\n    body\n}\n".to_string();
+            let st = TextEditState::with_initial(src);
+            st.set_caret(13);
+            assert!(st.toggle_fold(0));
+            assert_eq!(st.caret(), 8, "caret reanchored to opener line end");
+            let starts = line_starts(&st.text());
+            assert!(
+                !st.is_line_hidden(line_of(&starts, st.caret())),
+                "reanchored caret is on a visible line",
+            );
+        });
+    }
+
+    #[test]
+    fn r933_fold_all_then_unfold_all() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a {\n b {\n  c\n }\n}\n".to_string());
+            st.fold_all();
+            assert!(st.fold_regions().iter().all(|r| r.collapsed), "all collapsed");
+            st.unfold_all();
+            assert!(st.fold_regions().iter().all(|r| !r.collapsed), "all expanded");
+            assert!(!st.is_line_hidden(2));
+        });
+    }
+
+    #[test]
+    fn r933_stale_fold_anchor_pruned_when_brace_edited_away() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("x {\n y\n}\n".to_string());
+            assert!(st.toggle_fold(0));
+            assert_eq!(st.fold_regions().len(), 1);
+            // Clearing the buffer removes every brace, so the collapsed
+            // anchor matches no derived region — pruned, not panicking.
+            st.set_text(String::new());
+            assert!(st.fold_regions().is_empty(), "stale anchor yields no region");
+            assert!(!st.is_line_hidden(0));
+        });
+    }
+
+    #[test]
+    fn r933_set_text_clears_fold_set() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a {\n b\n}\n".to_string());
+            assert!(st.toggle_fold(0));
+            assert!(st.fold_regions()[0].collapsed);
+            // A wholesale replace whose braces land on the SAME byte offsets
+            // must not inherit the old collapse — `set_text` resets the set
+            // (mirror of its style-run clear), else identical-shape content
+            // would silently re-collapse.
+            st.set_text("a {\n b\n}\n".to_string());
+            assert!(!st.fold_regions()[0].collapsed, "set_text reset the fold set");
+            assert!(!st.is_line_hidden(1), "nothing hidden after the reset");
         });
     }
 

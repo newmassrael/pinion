@@ -1176,6 +1176,18 @@ impl ExternalIntrospect for TextFieldExternal {
             // matching-brace highlight — an agent reasoning about code
             // structure reads where a brace closes without re-scanning.
             ("bracket_match", "object"),
+            // R933 §5.36 — code-folding surface. `fold_regions` is a
+            // derived read: a JSON array of `{open, close, start_line,
+            // end_line, collapsed}`, one per foldable bracket block (≥ 2
+            // logical lines), opener-ordered. The three actions are the
+            // AI-first peers of the gutter chevron: `toggle-fold` (arg =
+            // the opener's line `Int`) returns `Bool` (did a region
+            // toggle?), `fold-all` / `unfold-all` (arg `Null`) return the
+            // resulting collapsed-region `Int` count.
+            ("fold_regions", "json"),
+            ("toggle-fold", "boolean"),
+            ("fold-all", "number"),
+            ("unfold-all", "number"),
         ])
     }
 
@@ -1280,6 +1292,29 @@ impl ExternalIntrospect for TextFieldExternal {
                     "close": close,
                 })),
                 None => IntrospectValue::Null,
+            }),
+            // R933 §5.36 — foldable regions as a JSON array
+            // `[{open, close, start_line, end_line, collapsed}]`, the read
+            // peer of the gutter chevrons + the `toggle-fold` action. Reads
+            // the SAME `fold_regions` derivation the paint gutter reads, so
+            // the wire and the painted chevrons can never report a different
+            // fold set. `[]` for an unfoldable buffer; `None` (path unknown)
+            // for a bare field with no attached state.
+            "fold_regions" => self.text_state().map(|s| {
+                let regions: Vec<serde_json::Value> = s
+                    .fold_regions()
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "open": r.open_byte,
+                            "close": r.close_byte,
+                            "start_line": r.start_line,
+                            "end_line": r.end_line,
+                            "collapsed": r.collapsed,
+                        })
+                    })
+                    .collect();
+                IntrospectValue::Json(serde_json::Value::Array(regions))
             }),
             _ => None,
         }
@@ -1613,6 +1648,9 @@ impl ExternalIntrospect for TextFieldExternal {
             "find-next" | "find-prev" | "replace" | "replace-all" => {
                 self.invoke_find_replace(path, &args)
             }
+            // R933 §5.36 — code-folding actions (split out like find/replace
+            // to keep this dispatch under the line ceiling).
+            "toggle-fold" | "fold-all" | "unfold-all" => self.invoke_fold(path, &args),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1670,6 +1708,52 @@ impl TextFieldExternal {
                 _ => Err(InvokeError::TypeMismatch),
             },
             // Unreachable: the caller only routes the four paths above here.
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+
+    /// R933 §5.36 — the code-folding `invoke` actions, split out of
+    /// [`invoke`](ExternalIntrospect::invoke) for SRP (mirror of
+    /// [`invoke_find_replace`](Self::invoke_find_replace)). `toggle-fold`
+    /// takes the opener's logical line as an `Int` and returns `Bool`
+    /// (whether a region toggled); `fold-all` / `unfold-all` take `Null`
+    /// and return the resulting collapsed-region count as an `Int` — the
+    /// setter-returns-read-outcome contract (the wire reflects the
+    /// substrate state *after* the action). A bare field (no state) is
+    /// inert: `Bool(false)` / `Int(0)`, never `UnknownPath`.
+    fn invoke_fold(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            // Arg = the opener's logical line. A negative line cannot name a
+            // row → `Rejected` (the `usize::try_from` failure path), mirror
+            // of the `caret` intervene's range guard.
+            "toggle-fold" => match args {
+                IntrospectValue::Int(line) => {
+                    let l = usize::try_from(*line).map_err(|_| InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(
+                        self.text_state().is_some_and(|s| s.toggle_fold(l)),
+                    ))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // `Null` arg (mirror of `paste-primary`); returns the collapsed
+            // count after the bulk fold / unfold.
+            "fold-all" | "unfold-all" => match args {
+                IntrospectValue::Null => Ok(IntrospectValue::Int(self.text_state().map_or(0, |s| {
+                    if path == "fold-all" {
+                        s.fold_all();
+                    } else {
+                        s.unfold_all();
+                    }
+                    i64::try_from(s.fold_regions().iter().filter(|r| r.collapsed).count())
+                        .unwrap_or(i64::MAX)
+                }))),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // Unreachable: the caller only routes the three paths above.
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -2323,7 +2407,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_twenty_one_slots() {
+    fn external_schema_declares_twenty_five_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
@@ -2343,6 +2427,9 @@ mod tests {
         // replace-all (navigation + mutation actions).
         // R926 grew the surface: + bracket_match (derived matching-bracket
         // read — `{open, close}` byte pair or Null).
+        // R933 grew the surface: + fold_regions (derived foldable-block read,
+        // a JSON array) + toggle-fold / fold-all / unfold-all (code-folding
+        // actions, the AI-first peers of the gutter chevron).
         // The schema shape is stable across bare and wired-up
         // TextFields — text/caret/selection/preedit queries return
         // None / intervene returns ReadOnly when no TextEditState is
@@ -2375,6 +2462,10 @@ mod tests {
                 ("replace", "boolean"),
                 ("replace-all", "number"),
                 ("bracket_match", "object"),
+                ("fold_regions", "json"),
+                ("toggle-fold", "boolean"),
+                ("fold-all", "number"),
+                ("unfold-all", "number"),
             ],
         );
     }
@@ -5899,3 +5990,112 @@ mod r903_find_replace_tests {
     }
 }
 
+
+#[cfg(test)]
+mod r933_fold_tests {
+    //! R933 §5.36 — code-folding RPC surface on [`TextFieldExternal`]:
+    //! the `fold_regions` derived read and the `toggle-fold` / `fold-all`
+    //! / `unfold-all` actions (the AI-first peer of the gutter chevron).
+
+    use super::TextFieldExternal;
+    use crate::external::{ExternalIntrospect, IntrospectValue, InvokeError};
+    use crate::widgets::text_edit::TextEditState;
+    use std::rc::Rc;
+
+    fn wired(text: &str) -> (Rc<TextEditState>, TextFieldExternal) {
+        let state = Rc::new(TextEditState::with_initial(text.to_string()));
+        let tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        (state, tfx)
+    }
+
+    fn regions(tfx: &TextFieldExternal) -> Vec<serde_json::Value> {
+        let IntrospectValue::Json(serde_json::Value::Array(rs)) =
+            tfx.query("fold_regions").unwrap()
+        else {
+            panic!("fold_regions must be a Json array");
+        };
+        rs
+    }
+
+    #[test]
+    fn r933_query_fold_regions_lists_blocks_and_collapse_flag() {
+        let (state, mut tfx) = wired("a {\n b\n}\n");
+        let rs = regions(&tfx);
+        assert_eq!(rs.len(), 1, "one foldable brace block");
+        assert_eq!(rs[0]["start_line"], serde_json::json!(0));
+        assert_eq!(rs[0]["end_line"], serde_json::json!(2));
+        assert_eq!(rs[0]["collapsed"], serde_json::json!(false));
+        // Collapse via the action; the read reflects it (one derivation,
+        // wire and gutter never disagree).
+        assert_eq!(
+            tfx.invoke("toggle-fold", IntrospectValue::Int(0)).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(true));
+        assert!(state.is_line_hidden(1), "substrate agrees the interior hid");
+    }
+
+    #[test]
+    fn r933_invoke_toggle_fold_round_trips_and_no_opener_is_false() {
+        let (_state, mut tfx) = wired("x {\n y\n}\n");
+        assert_eq!(
+            tfx.invoke("toggle-fold", IntrospectValue::Int(0)).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(true));
+        assert_eq!(
+            tfx.invoke("toggle-fold", IntrospectValue::Int(0)).unwrap(),
+            IntrospectValue::Bool(true),
+            "toggling again still reports a region toggled (now expanded)",
+        );
+        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(false));
+        // A line with no opening bracket toggles nothing.
+        assert_eq!(
+            tfx.invoke("toggle-fold", IntrospectValue::Int(1)).unwrap(),
+            IntrospectValue::Bool(false),
+        );
+    }
+
+    #[test]
+    fn r933_invoke_fold_all_unfold_all_return_collapsed_counts() {
+        let (_state, mut tfx) = wired("a {\n b {\n  c\n }\n}\n");
+        assert_eq!(
+            tfx.invoke("fold-all", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Int(2),
+            "both nested blocks collapse",
+        );
+        assert_eq!(
+            tfx.invoke("unfold-all", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Int(0),
+            "all expanded",
+        );
+    }
+
+    #[test]
+    fn r933_query_fold_regions_none_on_bare_field() {
+        // A bare TextField (no attached state) does not know the path —
+        // None ("not bound"), the same bare/wired distinction text draws.
+        let tfx = TextFieldExternal::new();
+        assert!(tfx.query("fold_regions").is_none());
+    }
+
+    #[test]
+    fn r933_invoke_fold_rejects_bad_args() {
+        let (_state, mut tfx) = wired("x {\n y\n}\n");
+        assert!(
+            matches!(
+                tfx.invoke("toggle-fold", IntrospectValue::Int(-1)),
+                Err(InvokeError::Rejected),
+            ),
+            "a negative line cannot name a row",
+        );
+        assert!(matches!(
+            tfx.invoke("toggle-fold", IntrospectValue::Null),
+            Err(InvokeError::TypeMismatch),
+        ));
+        assert!(matches!(
+            tfx.invoke("fold-all", IntrospectValue::Int(3)),
+            Err(InvokeError::TypeMismatch),
+        ));
+    }
+}

@@ -63,6 +63,7 @@ members = [
     "examples/hello-textarea",
     "examples/hello-find-replace",
     "examples/hello-syntax-highlight",
+    "examples/hello-code-fold",
     "examples/hello-frame-profiler",
     "examples/hello-pdf-export",
     "examples/hello-inspector",

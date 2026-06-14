@@ -1,0 +1,47 @@
+[package]
+name = "hello-code-fold"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R933 §5.36 code-folding consumer — a code editor whose brace blocks fold; foldable regions are DERIVED from the buffer (reusing the R926 bracket scan), collapse hides interior lines + shows a … placeholder, all introspectable + drivable over the fold_regions / toggle-fold RPC surface"
+publish = false
+
+[[bin]]
+name = "hello-code-fold"
+path = "src/main.rs"
+
+[dependencies]
+# §5.38 Tier-1 TextField widget + its `External` adapter; R933 added the
+# fold surface (`fold_regions` query + `toggle-fold` / `fold-all` /
+# `unfold-all` actions) to `TextFieldExternal`, so this binding exposes
+# folding over RPC by attaching its seeded `TextEditState`.
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R51.64 §5.40 — AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R51.30 paint-side AppShell. Pulls pinion-runtime (vello feature) +
+# pinion-rpc + pinion-text + winit + pollster transitively.
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R657 §5.16 §5.38 — backend-agnostic TextField paint substrate; this
+# binding reuses `read_text_field_state` (state-scene introspect read) +
+# `text_field_a11y_node` (the textbox ARIA node SSOT). The folded code
+# panel itself is rendered binding-local (the fold view is not the
+# generic single-field `view_field`).
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# R46.5 §5.16: the `HelloCodeFoldRenderer` struct emitted by `build.rs`
+# references `::vello::*` directly (R46.3.3 fully-qualified codegen path);
+# the `vello_renderer_impl!` macro expansion also names `::vello::Scene`.
+vello = { workspace = true }
+
+[dev-dependencies]
+# R55.G.22 §5.49 — view-fn tag regression helper.
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+# R46.5 §5.16: build-time codegen for the `HelloCodeFoldRenderer` Vello
+# wrapper. Identical pattern to hello-syntax-highlight.
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true
