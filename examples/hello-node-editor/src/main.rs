@@ -196,7 +196,7 @@ use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
-use pinion_core::undo::{use_undo_stack, UndoCommand, UndoStack, UndoStackExternal};
+use pinion_core::undo::{undo_redo_verb, use_undo_stack, UndoCommand, UndoStack, UndoStackExternal};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, PathStyle, Size,
@@ -3495,21 +3495,6 @@ fn nudge_ok(intro: &mut dyn ExternalIntrospect, dx: i32, dy: i32) -> bool {
         intro.invoke("nudge", IntrospectValue::Text(format!("{dx},{dy}"))),
         Ok(IntrospectValue::Bool(true))
     )
-}
-
-/// R851 — map a held-`Ctrl` keystroke to an undo-stack verb: `Ctrl+Z` undoes,
-/// `Ctrl+Shift+Z` / `Ctrl+Y` redo (the canonical editor pairing). `None` for any
-/// other combination, so the plain-key handling below still runs.
-fn undo_redo_verb(key: &str, modifiers: Modifiers) -> Option<&'static str> {
-    if !modifiers.command_key() {
-        return None;
-    }
-    match key.to_ascii_lowercase().as_str() {
-        "z" if modifiers.shift_key() => Some("redo"),
-        "z" => Some("undo"),
-        "y" => Some("redo"),
-        _ => None,
-    }
 }
 
 /// R852 — map a held-`Ctrl` keystroke to a persistence verb on the graph

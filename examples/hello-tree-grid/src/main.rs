@@ -94,7 +94,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::composite_tag::{split_send_payload, GridTag};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
-use pinion_core::undo::{use_undo_stack, UndoCommand, UndoStack};
+use pinion_core::undo::{undo_redo_verb, use_undo_stack, UndoCommand, UndoStack};
 use pinion_core::widgets::tree_nav::{
     find_node_mut, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
     VisibleRow,
@@ -940,18 +940,19 @@ impl ExternalIntrospect for TreeSelectExternal {
 /// a plain move, matching `nav_select_key`.)
 fn apply_key_impl(key: &str, modifiers: Modifiers) -> bool {
     let state = use_tree_state();
-    // R906 — structural-edit keys (the R905 batch ops over the keyboard, the
-    // node-editor's `Delete` + the text field's undo chords applied to the
-    // outliner): `Delete` / `Backspace` remove the selection, `Ctrl`/`Cmd`+`Z`
-    // undoes, `Ctrl`/`Cmd`+`Shift`+`Z` or `Ctrl`/`Cmd`+`Y` redoes — each one
-    // undo step (R905). Plain `z` / `y` (no command modifier) fall through to
-    // type-ahead. The keys reach the methods the RPC ops already drive, so
-    // keyboard and `scene/invoke` are one funnel.
+    // R906 / R932 — structural-edit keys (the R905 batch ops over the keyboard).
+    // The `Ctrl`/`Cmd`+`Z` / `Ctrl`/`Cmd`+`Shift`+`Z` / `Ctrl`/`Cmd`+`Y` undo
+    // chord goes through the shared `undo_redo_verb` SSOT (one editor keybinding
+    // across graph / grid / tree); `Delete` / `Backspace` remove the selection.
+    // Each is one undo step (R905), and the keys reach the methods the RPC ops
+    // already drive, so keyboard and `scene/invoke` are one funnel. Plain `z` /
+    // `y` (no command modifier) fall through to type-ahead.
+    if let Some(verb) = undo_redo_verb(key, modifiers) {
+        return if verb == "redo" { state.redo() } else { state.undo() };
+    }
     let cmd = modifiers.ctrl || modifiers.meta;
     match key {
         "Delete" | "Backspace" if !cmd => return state.delete_selected() > 0,
-        "z" | "Z" if cmd => return if modifiers.shift { state.redo() } else { state.undo() },
-        "y" | "Y" if cmd => return state.redo(),
         _ => {}
     }
     // R902.1 — the non-navigation multi-select chords (Ctrl+A / Ctrl+Space) via

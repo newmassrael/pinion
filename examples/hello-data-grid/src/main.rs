@@ -156,7 +156,8 @@
 //!   fit the window, so there is no horizontal scroll to pin against) —
 //!   deferred until a wide editable grid needs it.
 
-use std::cell::Cell;
+use std::borrow::Cow;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use std::collections::BTreeSet;
@@ -179,6 +180,7 @@ use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
+use pinion_core::undo::{undo_redo_verb, use_undo_stack, UndoCommand, UndoStack, UndoStackExternal};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
@@ -227,6 +229,14 @@ const ROW_GAP: u32 = 1;
 const GRID_TAG: &str = "data_grid";
 /// Extra External — the one shared inline cell editor.
 const EDIT_TF_TAG: &str = "data_grid_edit";
+/// R932 — Extra External tag of the AI-first undo-history surface
+/// ([`UndoStackExternal`]); `scene/{query,invoke}` at `/data_grid_undo/external/…`
+/// observe + drive the same [`UndoStack`] the coordinator records onto.
+const UNDO_TAG: &str = "data_grid_undo";
+/// R932 — the [`use_undo_stack`] cache key the coordinator (which records cell /
+/// row edits), the keyboard `Ctrl+Z` path, the status-line label read, and the
+/// [`UndoStackExternal`] all share — one history source of truth.
+const UNDO_KEY: &str = "hello_data_grid::undo";
 /// R896 — the horizontal `ScrollState` cache key shared by the header + rows:
 /// `scene/set_scroll_offset` on this tag slides the columns sideways once
 /// their total width outgrows the grid viewport (the R784 single-axis scroll,
@@ -526,6 +536,16 @@ fn use_collapsed() -> Rc<Signal<BTreeSet<String>>> {
     owner.cache("data_grid.collapsed", || Signal::new(BTreeSet::new()))
 }
 
+/// R932 — the shared edit history. The coordinator (which records cell / row
+/// edits in its mutation methods), the free-fn `commit_edit` (the inline
+/// editor's keyboard commit), the keyboard `Ctrl+Z` path, the status-line
+/// `undo_label` read, and the [`UndoStackExternal`] all reach the same `Rc`
+/// (the [`use_undo_stack`] sharing) — one undo source of truth.
+#[must_use]
+fn use_undo() -> Rc<UndoStack> {
+    use_undo_stack(UNDO_KEY)
+}
+
 // ─── column grouping (R892 — the editable fold of the group axis) ──
 
 /// R892 — the group-by label table: the distinct display values of column
@@ -626,6 +646,139 @@ fn reanchor_cursor(visible: &[usize], cursor: &Signal<usize>, prior_vis: usize) 
     }
 }
 
+// ─── undo commands (R932 §5.52) ───────────────────────────────────
+
+/// R932 §5.52 — a reversible single-cell value edit (the `QUndoCommand` peer at
+/// the data-grid's cell granularity). Captures the model cell's before / after
+/// value AND the cursor's before / after source row, so undo / redo restore both
+/// verbatim — the node editor's `GraphEdit` `sel_before` / `sel_after` pattern:
+/// the cell value is the document, the cursor follows it (an edit that filtered
+/// the row out moved the cursor; undo brings the row — and the cursor — back).
+struct SetCellEdit {
+    model: Rc<Signal<Vec<CellValue>>>,
+    cursor: Rc<Signal<usize>>,
+    index: usize,
+    before: CellValue,
+    after: CellValue,
+    before_cursor: usize,
+    after_cursor: usize,
+    label: Cow<'static, str>,
+}
+
+impl SetCellEdit {
+    /// Restore the cell to `value` and the cursor to `cursor` in one step.
+    fn write(&self, value: &CellValue, cursor: usize) {
+        let (index, value) = (self.index, value.clone());
+        self.model.set_with(move |prev| {
+            let mut next = prev.clone();
+            if let Some(cell) = next.get_mut(index) {
+                *cell = value;
+            }
+            next
+        });
+        self.cursor.set(cursor);
+    }
+}
+
+impl UndoCommand for SetCellEdit {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        self.write(&self.after, self.after_cursor);
+    }
+
+    fn undo(&self) {
+        self.write(&self.before, self.before_cursor);
+    }
+}
+
+/// R932 §5.52 — a reversible row splice: `add_row` and `remove_row` as one
+/// granular command. `at` is the affected row's flat model offset
+/// ([`idx(row, 0)`](idx)); `redo` replaces the `removed` cells with `inserted`,
+/// `undo` the inverse — so an append is (removed empty, inserted = one
+/// [`default_row`]) and a delete is (removed = the row's `NCOLS` cells, inserted
+/// empty). The cursor's before / after source row rides along (an append moves
+/// the cursor to the new row, a delete re-anchors it), restored verbatim like
+/// [`SetCellEdit`]. A whole-row snapshot, never a whole-model one (granular
+/// undo, not snapshot).
+struct RowEdit {
+    model: Rc<Signal<Vec<CellValue>>>,
+    cursor: Rc<Signal<usize>>,
+    at: usize,
+    removed: Vec<CellValue>,
+    inserted: Vec<CellValue>,
+    before_cursor: usize,
+    after_cursor: usize,
+    label: Cow<'static, str>,
+}
+
+impl RowEdit {
+    /// Replace the `take.len()` cells at `at` with `put`, then move the cursor.
+    fn splice(&self, take: &[CellValue], put: &[CellValue], cursor: usize) {
+        let (at, end, put) = (self.at, self.at + take.len(), put.to_vec());
+        self.model.set_with(move |prev| {
+            let mut next = prev.clone();
+            next.splice(at..end, put);
+            next
+        });
+        self.cursor.set(cursor);
+    }
+}
+
+impl UndoCommand for RowEdit {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        self.splice(&self.removed, &self.inserted, self.after_cursor);
+    }
+
+    fn undo(&self) {
+        self.splice(&self.inserted, &self.removed, self.before_cursor);
+    }
+}
+
+/// R932 — record one already-applied cell edit on `stack`: the [`SetCellEdit`]
+/// constructor SSOT both the coordinator's [`DataGridExternal::edit_cell`] and
+/// the free-fn [`commit_edit`] push through, so the two pre-existing cell-write
+/// paths (the RPC / scrub funnel and the keyboard inline editor) journal
+/// identically. A net no-op write (value and cursor both unchanged) records
+/// nothing — a malformed numeric commit or a same-value set leaves no history.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the SetCellEdit fields, captured around an already-applied write \
+              by two distinct call sites; bundling them would just move the \
+              argument list into a one-use struct"
+)]
+fn push_cell_edit(
+    stack: &UndoStack,
+    model: &Rc<Signal<Vec<CellValue>>>,
+    cursor: &Rc<Signal<usize>>,
+    index: usize,
+    before: CellValue,
+    after: CellValue,
+    before_cursor: usize,
+    after_cursor: usize,
+    label: Cow<'static, str>,
+) {
+    if before == after && before_cursor == after_cursor {
+        return;
+    }
+    stack.push_applied(SetCellEdit {
+        model: Rc::clone(model),
+        cursor: Rc::clone(cursor),
+        index,
+        before,
+        after,
+        before_cursor,
+        after_cursor,
+        label,
+    });
+}
+
 // ─── grid coordinator External ────────────────────────────────────
 
 /// The data-grid coordinator. Holds `Rc` clones of the reactive holders
@@ -656,6 +809,17 @@ struct DataGridExternal {
     /// `PointerUp` distinguishes a scrub (commit live, suppress the click) from
     /// a click.
     scrub_cal: DragCalibration<ScrubCell>,
+    /// R932 — the shared edit history ([`use_undo`]). The mutation methods
+    /// record a granular [`SetCellEdit`] / [`RowEdit`] onto it, and the
+    /// [`UndoStackExternal`] extra wraps the **same** `Rc` so RPC + keyboard
+    /// undo drive one timeline.
+    undo: Rc<UndoStack>,
+    /// R932 — the cell + cursor snapshot captured at `arm_scrub` (before any
+    /// dead-zone move mutates), so `end_scrub` can journal a whole drag as ONE
+    /// [`SetCellEdit`] step (the node editor's "one move per gesture at release"
+    /// rule): `(row, col, before value, before cursor row)`. The live scrub
+    /// itself writes through the no-journal [`set_cell`](Self::set_cell) funnel.
+    scrub_origin: RefCell<Option<(usize, usize, CellValue, usize)>>,
 }
 
 /// R914 — the per-drag payload the cell scrub's [`DragCalibration`] snapshots on
@@ -683,6 +847,7 @@ impl DataGridExternal {
         filter: Rc<Signal<Option<GridFilter>>>,
         group_col: Rc<Signal<Option<usize>>>,
         collapsed: Rc<Signal<BTreeSet<String>>>,
+        undo: Rc<UndoStack>,
     ) -> Self {
         Self {
             model,
@@ -696,6 +861,8 @@ impl DataGridExternal {
             collapsed,
             scrub_armed: Cell::new(None),
             scrub_cal: DragCalibration::new(),
+            undo,
+            scrub_origin: RefCell::new(None),
         }
     }
 
@@ -842,18 +1009,44 @@ impl DataGridExternal {
         if col >= NCOLS || COL_KINDS[col] != CellKind::Bool {
             return false;
         }
-        let prior_vis = self.cursor_prior_vis();
-        let mut toggled = false;
-        self.model.set_with(|prev| {
-            let mut next = prev.clone();
-            if let Some(CellValue::Bool(b)) = next.get_mut(idx(row, col)) {
-                *b = !*b;
-                toggled = true;
-            }
-            next
-        });
-        self.reanchor(prior_vis);
-        toggled
+        let Some(CellValue::Bool(b)) = self.model.get().get(idx(row, col)).cloned() else {
+            return false;
+        };
+        // R932 — a toggle is a discrete committed edit, so it journals through
+        // the shared `edit_cell` funnel (one undo step), re-anchoring the cursor
+        // exactly as before.
+        self.edit_cell(row, col, CellValue::Bool(!b), Cow::Borrowed("Toggle cell"));
+        true
+    }
+
+    /// R932 — the JOURNALED discrete cell write: snapshot the cell + cursor,
+    /// apply through the clamped [`set_cell`](Self::set_cell) funnel (which
+    /// re-anchors), then push one [`SetCellEdit`]. The RPC `value.<row>.<col>`
+    /// intervene and the keyboard bool [`toggle`](Self::toggle) commit through
+    /// here, so every discrete edit is undoable and the AI write and the GUI
+    /// write reverse identically. The live numeric scrub uses the raw funnel
+    /// and journals once at [`end_scrub`](Self::end_scrub) — one drag is one
+    /// undo step.
+    fn edit_cell(&self, row: usize, col: usize, value: CellValue, label: Cow<'static, str>) {
+        if row >= self.nrows() || col >= NCOLS {
+            return;
+        }
+        let index = idx(row, col);
+        let before = self.model.get()[index].clone();
+        let before_cursor = self.focused_row.get();
+        self.set_cell(row, col, value);
+        let after = self.model.get()[index].clone();
+        push_cell_edit(
+            &self.undo,
+            &self.model,
+            &self.focused_row,
+            index,
+            before,
+            after,
+            before_cursor,
+            self.focused_row.get(),
+            label,
+        );
     }
 
     /// R930 — the live row count (the [`nrows`] free fn over this grid's model
@@ -871,10 +1064,16 @@ impl DataGridExternal {
     /// sync.
     fn add_row(&self) -> usize {
         let new_row = self.nrows();
-        self.model.set_with(|prev| {
-            let mut next = prev.clone();
-            next.extend(default_row());
-            next
+        let at = idx(new_row, 0);
+        let before_cursor = self.focused_row.get();
+        let cells = default_row();
+        self.model.set_with({
+            let cells = cells.clone();
+            move |prev| {
+                let mut next = prev.clone();
+                next.extend(cells);
+                next
+            }
         });
         // R930.1 — move the cursor onto the new row ONLY if the active
         // sort/filter/group shows it; otherwise leave the (still-visible)
@@ -884,6 +1083,18 @@ impl DataGridExternal {
         if self.cur_visible().contains(&new_row) {
             self.focused_row.set(new_row);
         }
+        // R932 — journal the append as one RowEdit (already applied): redo
+        // re-inserts the seed cells, undo drains them; the cursor rides along.
+        self.undo.push_applied(RowEdit {
+            model: Rc::clone(&self.model),
+            cursor: Rc::clone(&self.focused_row),
+            at,
+            removed: Vec::new(),
+            inserted: cells,
+            before_cursor,
+            after_cursor: self.focused_row.get(),
+            label: Cow::Borrowed("Add row"),
+        });
         new_row
     }
 
@@ -902,18 +1113,35 @@ impl DataGridExternal {
         // shift down), so cancel any in-flight edit — otherwise a later
         // `commit_edit` would write a stale, now-out-of-range index.
         self.editing_cell.set(None);
+        let at = idx(row, 0);
+        let before_cursor = self.focused_row.get();
+        // R932 — snapshot the dropped row's cells BEFORE the drain so undo can
+        // re-insert them verbatim (granular row capture, not a model snapshot).
+        let removed: Vec<CellValue> = self.model.get()[at..at + NCOLS].to_vec();
         // R930.1 — capture the cursor's visible slot BEFORE the drain, then
         // re-anchor after, exactly like every other mutator (set_cell /
         // set_filter / …). A bare clamp left the cursor on a filtered-out row
         // (dead arrow-nav); `reanchor` keeps it on the visible row now at its
         // prior screen slot.
         let prior_vis = self.cursor_prior_vis();
-        self.model.set_with(|prev| {
+        self.model.set_with(move |prev| {
             let mut next = prev.clone();
-            next.drain(idx(row, 0)..idx(row, 0) + NCOLS);
+            next.drain(at..at + NCOLS);
             next
         });
         self.reanchor(prior_vis);
+        // R932 — journal the delete as one RowEdit (already applied): redo
+        // drains the row again, undo re-inserts the captured cells.
+        self.undo.push_applied(RowEdit {
+            model: Rc::clone(&self.model),
+            cursor: Rc::clone(&self.focused_row),
+            at,
+            removed,
+            inserted: Vec::new(),
+            before_cursor,
+            after_cursor: self.focused_row.get(),
+            label: Cow::Borrowed("Remove row"),
+        });
         true
     }
 
@@ -952,7 +1180,15 @@ impl DataGridExternal {
         // scrub should not depend on that contract holding).
         self.scrub_cal.end();
         let numeric = col < NCOLS && matches!(COL_KINDS[col], CellKind::Int | CellKind::Float);
-        self.scrub_armed.set((numeric && row < self.nrows()).then_some((row, col)));
+        let armed = (numeric && row < self.nrows()).then_some((row, col));
+        self.scrub_armed.set(armed);
+        // R932 — snapshot the armed cell's value + cursor at press, BEFORE any
+        // dead-zone move mutates, so `end_scrub` can journal the whole drag as
+        // ONE undo step (the cell value at press IS the `before`, since the
+        // dead-zone moves write nothing). Cleared when the press is not on a
+        // scrubbable cell.
+        *self.scrub_origin.borrow_mut() =
+            armed.map(|(r, c)| (r, c, self.model.get()[idx(r, c)].clone(), self.focused_row.get()));
     }
 
     /// R914 — drive the live cell scrub from the captured cursor's horizontal
@@ -1016,6 +1252,29 @@ impl DataGridExternal {
         self.scrub_armed.set(None);
         let was_scrub = self.is_scrubbing();
         self.scrub_cal.end();
+        // R932 — journal the whole drag as ONE SetCellEdit (the node editor's
+        // "one move per gesture at release" rule): the live scrub wrote through
+        // the no-journal funnel, so here we record the press→release delta.
+        // `before` is the press snapshot, `after` the current value; a sub-
+        // threshold press (a click, `was_scrub` false) journals nothing, and a
+        // net-zero drag (dragged back to base) is filtered by `push_cell_edit`.
+        if let Some((row, col, before, before_cursor)) = self.scrub_origin.borrow_mut().take() {
+            if was_scrub {
+                let index = idx(row, col);
+                let after = self.model.get()[index].clone();
+                push_cell_edit(
+                    &self.undo,
+                    &self.model,
+                    &self.focused_row,
+                    index,
+                    before,
+                    after,
+                    before_cursor,
+                    self.focused_row.get(),
+                    Cow::Borrowed("Scrub cell"),
+                );
+            }
+        }
         was_scrub
     }
 
@@ -1417,11 +1676,12 @@ impl ExternalIntrospect for DataGridExternal {
                     return Err(InterveneError::UnknownPath);
                 }
                 // R894 / R914 — coerce the wire value to the column's kind and
-                // commit through the shared clamped [`set_cell`] funnel, the
-                // same path the live scrub commits through (an AI write cannot
+                // commit through the shared clamped funnel (an AI write cannot
                 // exceed the bounds a keyboard edit / a drag cannot, and the
-                // cursor re-anchors identically).
-                self.set_cell(row, col, COL_KINDS[col].coerce(value)?);
+                // cursor re-anchors identically). R932 — via the JOURNALED
+                // `edit_cell`, so an AI `value.<row>.<col>` write is one undo
+                // step, byte-identical reversal to the keyboard / scrub edit.
+                self.edit_cell(row, col, COL_KINDS[col].coerce(value)?, Cow::Borrowed("Edit cell"));
                 Ok(())
             }
         }
@@ -1587,6 +1847,12 @@ fn commit_edit(restore_focus: bool) {
     // re-anchors the cursor to the row that takes its screen position (the
     // cursor IS the edited row — editing never moves the grid cursor).
     let prior_vis = cursor_visual_pos(&visible(), cursor.get());
+    let before_cursor = cursor.get();
+    // R932 — capture the cell's before / after so the keyboard inline-editor
+    // commit journals one [`SetCellEdit`] (the second pre-existing cell-write
+    // path, alongside the External's `edit_cell`). Pushed AFTER the re-anchor,
+    // so the recorded `after` cursor is the post-commit slot.
+    let mut edit: Option<(usize, CellValue, CellValue)> = None;
     // R930.1 — guard the row too (not just col): a row removed while this edit
     // was in flight shrinks the model, so a stale latched `row` would index
     // past the end. `remove_row` cancels the latch, so this is belt-and-
@@ -1597,9 +1863,11 @@ fn commit_edit(restore_focus: bool) {
             // R894 — clamp the committed value to the column's range (the
             // bounded-spinbox contract; an out-of-range edit lands on the bound).
             let parsed = clamp_for_col(parsed, col);
+            let index = idx(row, col);
+            edit = Some((index, model.get()[index].clone(), parsed.clone()));
             model.set_with(move |prev| {
                 let mut next = prev.clone();
-                next[idx(row, col)] = parsed.clone();
+                next[index] = parsed;
                 next
             });
         }
@@ -1608,6 +1876,21 @@ fn commit_edit(restore_focus: bool) {
     // R891/R892 — if the committed value hid the row, re-anchor the now-hidden
     // cursor (no-op when the row stays visible).
     reanchor_cursor(&visible(), &cursor, prior_vis);
+    // R932 — record the committed edit (a no-op / malformed commit left `edit`
+    // None; an unchanged value is filtered inside `push_cell_edit`).
+    if let Some((index, before, after)) = edit {
+        push_cell_edit(
+            &use_undo(),
+            &model,
+            &cursor,
+            index,
+            before,
+            after,
+            before_cursor,
+            cursor.get(),
+            Cow::Borrowed("Edit cell"),
+        );
+    }
 }
 
 fn cancel_edit() {
@@ -1631,8 +1914,30 @@ fn editing_col_kind() -> Option<CellKind> {
 
 // ─── keyboard ─────────────────────────────────────────────────────
 
-/// Grid-focused keymap: 2-D roving navigation + activate.
-fn apply_key_grid(scene: &mut Scene, key: &str) -> bool {
+/// R932 — drive `verb` (`undo` / `redo`) on the [`UndoStackExternal`] at
+/// [`UNDO_TAG`] — the SAME SSOT the RPC path drives, so the keyboard adds no
+/// hand-rolled undo logic to the coordinator (the hello-node-editor `invoke_undo`
+/// shape). Returns `true` (the grid consumes Ctrl+Z even at a history boundary,
+/// where the verb is a harmless no-op) once the undo external is found.
+fn invoke_undo(scene: &mut Scene, verb: &str) -> bool {
+    let Some(node) = scene.find_external_with_tag_mut(UNDO_TAG) else {
+        return false;
+    };
+    let Some(intro) = node.handle.introspect_mut() else {
+        return false;
+    };
+    let _ = intro.invoke(verb, IntrospectValue::Null);
+    true
+}
+
+/// Grid-focused keymap: undo / redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z), then 2-D
+/// roving navigation + activate.
+fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
+    // R932 — a held-Ctrl Z / Y drives the shared undo history before the plain
+    // navigation keys (so Ctrl+Z is not read as a bare key).
+    if let Some(verb) = undo_redo_verb(key, modifiers) {
+        return invoke_undo(scene, verb);
+    }
     let row_sig = use_focused_row();
     let col_sig = use_focused_col();
     let col = col_sig.get().min(NCOLS - 1);
@@ -1884,6 +2189,27 @@ fn view_data_row(
     )
 }
 
+/// R932 — the scene-as-data undo readout: the labels of the steps `Ctrl+Z` /
+/// `Ctrl+Y` would replay ("none" at a branch boundary). The reactive
+/// `undo_label` reads subscribe the caller's paint, so it repaints on every
+/// edit / undo / redo. The AI-first peer is the [`UNDO_TAG`] external's
+/// `undo_label` / `redo_label` / `can_undo` query.
+fn view_undo_status(theme: &Theme) -> Scene {
+    let undo = use_undo();
+    let undo_label = undo.undo_label().map_or_else(|| "none".to_owned(), Cow::into_owned);
+    let redo_label = undo.redo_label().map_or_else(|| "none".to_owned(), Cow::into_owned);
+    Scene::Text(
+        TextNode::styled(
+            format!("undo: {undo_label} \u{00B7} redo: {redo_label}"),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(HEADER_PX)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        )
+        .with_tag("dg_undo"),
+    )
+}
+
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
     let (edit_state, edit_caret) = state;
@@ -2003,8 +2329,10 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         .with_tag("dg_status"),
     );
 
+    let undo_status = view_undo_status(&theme);
+
     Scene::Container(
-        ContainerNode::new(vec![title, status, grid])
+        ContainerNode::new(vec![title, status, undo_status, grid])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
@@ -2041,6 +2369,7 @@ impl WidgetCore for DataGridView {
         let collapsed = use_collapsed();
         Box::new(DataGridExternal::new(
             model, focused_row, focused_col, editing, editor, sort, filter, group_col, collapsed,
+            use_undo(),
         ))
     }
 
@@ -2051,15 +2380,23 @@ impl WidgetCore for DataGridView {
     fn create_extra_externals() -> Vec<ExtraExternal> {
         let editor_state = use_text_edit_state(EDIT_TF_TAG);
         let blink = use_caret_blink(EDIT_TF_TAG);
-        vec![ExtraExternal::new(
-            EDIT_TF_TAG,
-            Box::new(
-                TextFieldExternal::new()
-                    .attach_state(editor_state)
-                    .attach_blink(blink)
-                    .with_blur_intent(),
+        vec![
+            // R932 — the AI-first undo-history surface wraps the same shared
+            // [`UndoStack`] the coordinator records onto (via [`use_undo`]), so
+            // `query`/`invoke` at `/data_grid_undo/external/…` observe + drive
+            // the identical history the cell / row mutators + keyboard use.
+            // A coordinator-only extra: it paints nothing, not a focus stop.
+            ExtraExternal::new(UNDO_TAG, Box::new(UndoStackExternal::new(use_undo()))),
+            ExtraExternal::new(
+                EDIT_TF_TAG,
+                Box::new(
+                    TextFieldExternal::new()
+                        .attach_state(editor_state)
+                        .attach_blink(blink)
+                        .with_blur_intent(),
+                ),
             ),
-        )]
+        ]
     }
 
     fn read_state(scene: &Scene) -> RootState {
@@ -2103,7 +2440,7 @@ impl WidgetCore for DataGridView {
         modifiers: Modifiers,
     ) -> bool {
         match focused {
-            Some(GRID_TAG) => apply_key_grid(scene, key),
+            Some(GRID_TAG) => apply_key_grid(scene, key, modifiers),
             Some(EDIT_TF_TAG) => apply_key_edit(scene, key, modifiers),
             _ => false,
         }
@@ -3444,6 +3781,236 @@ mod tests {
                 Some(IntrospectValue::Int(1)),
                 "cursor re-anchored onto the still-visible Coin, not stranded on a filtered-out row",
             );
+        });
+    }
+
+    // ─── R932 undo / redo (UndoStack 2nd-widget consumer) ─────────────
+
+    /// R932 — invoke a verb (`undo` / `redo`) on the [`UNDO_TAG`] external (the
+    /// AI-first surface the keyboard + RPC both drive). Returns whether a step
+    /// actually happened.
+    fn undo_invoke(scene: &mut Scene, verb: &str) -> bool {
+        let node = scene.find_external_with_tag_mut(UNDO_TAG).expect("undo external present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        matches!(intro.invoke(verb, IntrospectValue::Null), Ok(IntrospectValue::Bool(true)))
+    }
+
+    /// R932 — query a slot on the [`UNDO_TAG`] external.
+    fn undo_query(scene: &Scene, slot: &str) -> Option<IntrospectValue> {
+        scene
+            .find_external_with_tag(UNDO_TAG)
+            .and_then(|n| n.handle.introspect())
+            .and_then(|i| i.query(slot))
+    }
+
+    #[test]
+    fn r932_undo_external_is_wired_to_the_shared_stack() {
+        Owner::new().run(|| {
+            let scene = boot_scene();
+            // Boot history is empty; the UNDO external observes the same stack
+            // `use_undo()` hands the coordinator (one SSOT).
+            assert_eq!(undo_query(&scene, "can_undo"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(undo_query(&scene, "can_redo"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(undo_query(&scene, "count"), Some(IntrospectValue::Int(0)));
+            assert_eq!(undo_query(&scene, "undo_label"), Some(IntrospectValue::Null));
+        });
+    }
+
+    #[test]
+    fn r932_cell_edit_undo_restores_value_and_redo_reapplies() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // An AI `value.1.2` write (Tree's Count: 24 -> 7) is one undo step.
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                assert!(intro.intervene("value.1.2", IntrospectValue::Int(7)).is_ok());
+            }
+            assert_eq!(grid_intro(&scene).query("value.1.2"), Some(IntrospectValue::Int(7)));
+            assert_eq!(undo_query(&scene, "can_undo"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(undo_query(&scene, "count"), Some(IntrospectValue::Int(1)));
+            assert_eq!(undo_query(&scene, "undo_label"), Some(IntrospectValue::Text("Edit cell".to_owned())));
+            // Undo restores the original value; redo re-applies it (verbatim
+            // before / after snapshots).
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(grid_intro(&scene).query("value.1.2"), Some(IntrospectValue::Int(24)), "undo restores 24");
+            assert_eq!(undo_query(&scene, "can_undo"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(undo_query(&scene, "can_redo"), Some(IntrospectValue::Bool(true)));
+            assert!(undo_invoke(&mut scene, "redo"));
+            assert_eq!(grid_intro(&scene).query("value.1.2"), Some(IntrospectValue::Int(7)), "redo re-applies 7");
+        });
+    }
+
+    #[test]
+    fn r932_keyboard_inline_commit_is_undoable() {
+        // The second pre-existing cell-write path: the inline editor's keyboard
+        // commit (`commit_edit`), distinct from the External's `edit_cell`. It
+        // must journal identically.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                intro.intervene("focused_row", IntrospectValue::Int(0)).expect("focus row 0");
+                intro.intervene("focused_col", IntrospectValue::Int(0)).expect("focus col 0");
+                assert!(intro.invoke("begin", IntrospectValue::Null).is_ok(), "edit Hero's name");
+            }
+            // Type a new value into the shared inline field, then commit.
+            use_text_edit_state(EDIT_TF_TAG).set_text("Renamed".to_owned());
+            commit_edit(true);
+            assert_eq!(grid_intro(&scene).query("value.0.0"), Some(IntrospectValue::Text("Renamed".to_owned())));
+            assert_eq!(undo_query(&scene, "count"), Some(IntrospectValue::Int(1)), "one history step");
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(
+                grid_intro(&scene).query("value.0.0"),
+                Some(IntrospectValue::Text("Hero".to_owned())),
+                "undo restores the original name",
+            );
+        });
+    }
+
+    #[test]
+    fn r932_malformed_commit_records_nothing() {
+        // A malformed numeric commit keeps the prior value (no data loss) AND
+        // journals nothing — `push_cell_edit`'s no-op guard.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                intro.intervene("focused_row", IntrospectValue::Int(0)).expect("focus row 0");
+                intro.intervene("focused_col", IntrospectValue::Int(2)).expect("focus Count (int)");
+                assert!(intro.invoke("begin", IntrospectValue::Null).is_ok());
+            }
+            use_text_edit_state(EDIT_TF_TAG).set_text("not-a-number".to_owned());
+            commit_edit(true);
+            assert_eq!(grid_intro(&scene).query("value.0.2"), Some(IntrospectValue::Int(1)), "value unchanged");
+            assert_eq!(undo_query(&scene, "count"), Some(IntrospectValue::Int(0)), "no history for a no-op");
+        });
+    }
+
+    #[test]
+    fn r932_toggle_is_one_undo_step() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Solid (col 4, bool) of row 0 boots true; toggle it via RPC.
+            assert_eq!(grid_intro(&scene).query("value.0.4"), Some(IntrospectValue::Bool(true)));
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                intro.intervene("focused_row", IntrospectValue::Int(0)).expect("focus row 0");
+                intro.intervene("focused_col", IntrospectValue::Int(4)).expect("focus the bool col");
+                assert_eq!(intro.invoke("toggle", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+            }
+            assert_eq!(grid_intro(&scene).query("value.0.4"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(undo_query(&scene, "undo_label"), Some(IntrospectValue::Text("Toggle cell".to_owned())));
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(grid_intro(&scene).query("value.0.4"), Some(IntrospectValue::Bool(true)), "toggle reversed");
+        });
+    }
+
+    #[test]
+    fn r932_add_row_undo_removes_then_redo_readds() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                assert_eq!(intro.invoke("add_row", IntrospectValue::Null), Ok(IntrospectValue::Int(4)));
+            }
+            assert_eq!(grid_intro(&scene).query("row_count"), Some(IntrospectValue::Int(5)));
+            assert_eq!(undo_query(&scene, "undo_label"), Some(IntrospectValue::Text("Add row".to_owned())));
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(grid_intro(&scene).query("row_count"), Some(IntrospectValue::Int(4)), "undo drops the row");
+            assert!(undo_invoke(&mut scene, "redo"));
+            assert_eq!(grid_intro(&scene).query("row_count"), Some(IntrospectValue::Int(5)), "redo re-adds it");
+        });
+    }
+
+    #[test]
+    fn r932_remove_row_undo_restores_cells_and_cursor() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                intro.intervene("focused_row", IntrospectValue::Int(1)).expect("cursor on Tree");
+                // Remove source row 1 (Tree, Count 24).
+                assert_eq!(intro.invoke("remove_row", IntrospectValue::Int(1)), Ok(IntrospectValue::Bool(true)));
+            }
+            assert_eq!(grid_intro(&scene).query("row_count"), Some(IntrospectValue::Int(3)));
+            assert_eq!(grid_intro(&scene).query("value.1.0"), Some(IntrospectValue::Text("Coin".to_owned())),
+                "Coin shifted into the freed slot");
+            // Undo re-inserts the whole row verbatim at its index, cursor back.
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(grid_intro(&scene).query("row_count"), Some(IntrospectValue::Int(4)), "row restored");
+            assert_eq!(grid_intro(&scene).query("value.1.0"), Some(IntrospectValue::Text("Tree".to_owned())),
+                "Tree's name re-inserted");
+            assert_eq!(grid_intro(&scene).query("value.1.2"), Some(IntrospectValue::Int(24)),
+                "Tree's Count re-inserted (whole-row capture, not just the name)");
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(1)),
+                "cursor restored to the re-inserted row");
+        });
+    }
+
+    #[test]
+    fn r932_scrub_is_one_undo_step() {
+        // A continuous numeric scrub commits live during the drag but journals
+        // exactly ONE step at release (the node editor's "one move per gesture"
+        // rule) — undo restores the press value, not each intermediate frame.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let base = cell_float(&scene, "value.0.3"); // Scale boots at 1.0
+            grid_send(&mut scene, "0_3:PointerDown");
+            grid_pointer_move(&mut scene, 0.5); // calibrate (dead zone, no mutation)
+            grid_pointer_move(&mut scene, 0.8); // drag past the threshold
+            assert!(cell_float(&scene, "value.0.3") > base, "the live scrub moved the value");
+            grid_send(&mut scene, "0_3:PointerUp");
+            assert_eq!(undo_query(&scene, "count"), Some(IntrospectValue::Int(1)), "one step for the whole drag");
+            assert_eq!(undo_query(&scene, "undo_label"), Some(IntrospectValue::Text("Scrub cell".to_owned())));
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert!((cell_float(&scene, "value.0.3") - base).abs() < f64::EPSILON, "undo restores the press value");
+        });
+    }
+
+    #[test]
+    fn r932_view_state_changes_are_not_journaled() {
+        // Honest scope: undo journals DATA edits (cells + row structure), not
+        // VIEW state (sort / filter / group / collapse) — the Qt / Unreal
+        // convention. A header-sort cycle adds no undo step.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                assert!(intro.invoke("cycle_sort", IntrospectValue::Int(2)).is_ok());
+                assert!(intro.invoke("set_filter", IntrospectValue::Text("4=true".to_owned())).is_ok());
+            }
+            assert_eq!(undo_query(&scene, "count"), Some(IntrospectValue::Int(0)),
+                "sort / filter are view state, not undoable edits");
+        });
+    }
+
+    #[test]
+    fn r932_keyboard_ctrl_z_drives_undo() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                assert!(intro.intervene("value.0.2", IntrospectValue::Int(50)).is_ok());
+            }
+            let ctrl = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+            let ctrl_shift = Modifiers { shift: true, ctrl: true, alt: false, meta: false };
+            // Ctrl+Z (grid-focused) drives undo through the same UNDO external.
+            assert!(apply_key_grid(&mut scene, "z", ctrl), "Ctrl+Z is consumed");
+            assert_eq!(grid_intro(&scene).query("value.0.2"), Some(IntrospectValue::Int(1)), "undone to the boot value");
+            // Ctrl+Shift+Z redoes; Ctrl+Y is the same verb.
+            assert!(apply_key_grid(&mut scene, "z", ctrl_shift), "Ctrl+Shift+Z is consumed");
+            assert_eq!(grid_intro(&scene).query("value.0.2"), Some(IntrospectValue::Int(50)), "redone");
+            assert_eq!(undo_redo_verb("y", ctrl), Some("redo"));
+            assert_eq!(undo_redo_verb("z", ctrl), Some("undo"));
+            assert_eq!(undo_redo_verb("z", Modifiers::empty()), None, "a bare z is navigation, not undo");
         });
     }
 }

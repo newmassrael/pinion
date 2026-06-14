@@ -67,6 +67,7 @@ use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, ThreadOwnership,
 };
+use crate::input::Modifiers;
 use crate::reactive::{Owner, Signal};
 
 /// A single reversible edit — the object-safe `QUndoCommand` peer.
@@ -556,6 +557,32 @@ pub fn use_undo_stack(key: &'static str) -> Rc<UndoStack> {
     Owner::current()
         .expect("use_undo_stack requires an active Owner scope")
         .cache(key, || UndoStack::with_tag(key))
+}
+
+/// R932 §5.52 — map a keystroke to an undo-stack verb (`"undo"` / `"redo"`), the
+/// canonical editor pairing every undo-driving widget shares: `Ctrl`/`Cmd` + `Z`
+/// undoes, `Ctrl`/`Cmd` + `Shift` + `Z` or `Ctrl`/`Cmd` + `Y` redoes; any other
+/// combination is `None` (a non-undo key, so the caller's plain-key handling
+/// runs). The verb is the [`UndoStackExternal`] invoke path, so a consumer
+/// driving the AI-first surface forwards it verbatim
+/// (`introspect.invoke(verb, …)`), while one holding an [`UndoStack`] directly
+/// matches on it (`"redo" => stack.redo()`).
+///
+/// Lifted at the 3rd byte-identical consumer (the node-graph / data-grid /
+/// tree-grid keymaps): the key → verb decision is the same everywhere because a
+/// divergence would be an inconsistent editor keybinding — a bug — so it is one
+/// SSOT, not a per-widget copy.
+#[must_use]
+pub fn undo_redo_verb(key: &str, modifiers: Modifiers) -> Option<&'static str> {
+    if !modifiers.command_key() {
+        return None;
+    }
+    match key.to_ascii_lowercase().as_str() {
+        "z" if modifiers.shift_key() => Some("redo"),
+        "z" => Some("undo"),
+        "y" => Some("redo"),
+        _ => None,
+    }
 }
 
 /// R748 §5.52 §5.12 — the undo-history **coordinator** External: a thin
@@ -1063,5 +1090,19 @@ mod tests {
             assert_eq!(stack.len(), 1, "the prior command was truncated, not merged into");
             assert!(!stack.can_redo(), "no dangling redo branch");
         });
+    }
+
+    #[test]
+    fn undo_redo_verb_maps_the_canonical_editor_chords() {
+        let ctrl = Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+        let ctrl_shift = Modifiers { shift: true, ctrl: true, alt: false, meta: false };
+        let cmd = Modifiers { shift: false, ctrl: false, alt: false, meta: true };
+        assert_eq!(undo_redo_verb("z", ctrl), Some("undo"));
+        assert_eq!(undo_redo_verb("Z", ctrl), Some("undo"), "case-insensitive");
+        assert_eq!(undo_redo_verb("z", ctrl_shift), Some("redo"), "Ctrl+Shift+Z redoes");
+        assert_eq!(undo_redo_verb("y", ctrl), Some("redo"), "Ctrl+Y redoes");
+        assert_eq!(undo_redo_verb("z", cmd), Some("undo"), "Cmd (meta) is command_key too");
+        assert_eq!(undo_redo_verb("z", Modifiers::empty()), None, "a bare z is not undo");
+        assert_eq!(undo_redo_verb("a", ctrl), None, "Ctrl+A is not an undo chord");
     }
 }
