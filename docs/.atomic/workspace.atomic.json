@@ -6844,7 +6844,7 @@
       ]
     },
     "5.53": {
-      "title": "Menu render strategy — own-renderer 1st-class all-platform; native OS menu optional (Phase B)",
+      "title": "Own-renderer surface strategy — menu/tray 1st-class all-platform; native bridge optional per-OS (Linux=D-Bus not gtk)",
       "parent_doc": "docs/GENERATED.md",
       "parent_section": "5",
       "decision_status": "active",
@@ -6881,7 +6881,17 @@
         "dry_run (inv #3) stays valid: it operates on the model, never on the OS menu surface",
         "NOT a §3 escape-hatch widening: model stays closed-form; no WebEngine/codec embed",
         "R771.1 reframes R771's native-first view; earlier native-first caveats above are superseded by this",
-        "R771.1: own-renderer canonical on ALL platforms (not Linux-only fallback); native = optional add-on"
+        "R771.1: own-renderer canonical on ALL platforms (not Linux-only fallback); native = optional add-on",
+        "R932.2: native-surface strategy widened menu->menu+tray; doc=docs/cross-platform-native-strategy.md",
+        "Linux native bridge = pure D-Bus (ksni SNI / dbusmenu), NOT gtk: composes with winit, no gtk loop",
+        "gtk path (muda/tray-icon Linux) REJECTED: needs gtk loop pumped each frame = event-loop asymmetry",
+        "tao swap (gtk-integrated winit fork) REJECTED: drags gtk into the whole shell vs lean own-render",
+        "Tray = same axis: TrayBackend trait + InMemory fallback + pinion-platform-tray (R665/R833 pattern)",
+        "Capability-honest: trait = intersection + flags; an absent feature is declared, not a silent no-op",
+        "Threading absorbed by platform crate: Linux SNI bg task, Win/Mac main-thread; core sees one channel",
+        "D-Bus tray/menu is control-plane (register once, event on click) = off render hot-path; no perf cost",
+        "Embedded = framebuffer backend (no_std core + SW raster); platform-surface traits absent by flag",
+        "Verifiable headless: a D-Bus test-watcher asserts SNI register + dbusmenu export (no panel needed)"
       ],
       "alternatives_rejected": [
         {
@@ -40787,6 +40797,60 @@
         "northern-star: R930-R932 = 3-round data-grid run on highest-completion axis; R933 MUST diversify",
         "invoke_undo stays 2-copy (tag-param, no shared decision) - lift only at a genuine 3rd consumer",
         "concurrent RPC mid-scrub unreachable (single-threaded: scene/drag is one synchronous call)"
+      ]
+    },
+    "R932.2": {
+      "decision_summary": "R932.2: cross-platform native-surface strategy decided (own-render canonical + per-OS native bridge, Linux=D-Bus not gtk; tray axis; capability-honest; embedded=framebuffer backend); §5.53 extended",
+      "changes_bullets": [
+        "§5.53 widened menu->menu+tray own-render surface; native bridge optional per-OS",
+        "Linux native bridge = pure D-Bus (ksni SNI / dbusmenu), NOT gtk; gtk-pump + tao-swap rejected",
+        "tray = TrayBackend trait + InMemory fallback + pinion-platform-tray (R665/R833 seam)",
+        "capability-honest trait (intersection + flags); threading absorbed by platform crate",
+        "embedded = no_std core + framebuffer backend; platform-surface traits absent by flag",
+        "new design doc docs/cross-platform-native-strategy.md (full reasoning + staged path)"
+      ],
+      "verification_bullets": [
+        "validate-workspace clean (T1=0, T3 reject=0) after §5.53 title + 10 caveats",
+        "grounded in verified code: Backend enum / platform seams / pinion-pdf / winit / no no_std",
+        "no code change: a decision/design-record round (own-render menu §5.53 = R771 precedent)"
+      ],
+      "impact_refs": [
+        "5.53",
+        "5.15",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "nothing implemented yet: tray / dbusmenu / embedded are forward axes (consumer + verifiable env)",
+        "exact TrayBackend surface + no_std boundary pinned at the impl round",
+        "KDE global menu earns-its-keep TBD (GNOME already gets own-rendered in-window menu)",
+        "Win/Mac native menu+tray via muda/tray-icon behind same traits, verified on those OS CI",
+        "renumbered from R931.2: R932/R932.1 (data-grid undo) landed in parallel before this record"
+      ],
+      "publishable_decision_summary": "R932.2: cross-platform native-surface strategy decided (own-render canonical + per-OS native bridge, Linux=D-Bus not gtk; tray axis; capability-honest; embedded=framebuffer backend); §5.53 extended",
+      "publishable_changes_bullets": [
+        "§5.53 widened menu->menu+tray own-render surface; native bridge optional per-OS",
+        "Linux native bridge = pure D-Bus (ksni SNI / dbusmenu), NOT gtk; gtk-pump + tao-swap rejected",
+        "tray = TrayBackend trait + InMemory fallback + pinion-platform-tray (R665/R833 seam)",
+        "capability-honest trait (intersection + flags); threading absorbed by platform crate",
+        "embedded = no_std core + framebuffer backend; platform-surface traits absent by flag",
+        "new design doc docs/cross-platform-native-strategy.md (full reasoning + staged path)"
+      ],
+      "publishable_verification_bullets": [
+        "validate-workspace clean (T1=0, T3 reject=0) after §5.53 title + 10 caveats",
+        "grounded in verified code: Backend enum / platform seams / pinion-pdf / winit / no no_std",
+        "no code change: a decision/design-record round (own-render menu §5.53 = R771 precedent)"
+      ],
+      "publishable_impact_refs": [
+        "5.53",
+        "5.15",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "nothing implemented yet: tray / dbusmenu / embedded are forward axes (consumer + verifiable env)",
+        "exact TrayBackend surface + no_std boundary pinned at the impl round",
+        "KDE global menu earns-its-keep TBD (GNOME already gets own-rendered in-window menu)",
+        "Win/Mac native menu+tray via muda/tray-icon behind same traits, verified on those OS CI",
+        "renumbered from R931.2: R932/R932.1 (data-grid undo) landed in parallel before this record"
       ]
     },
     "Round 1": {
