@@ -40357,6 +40357,68 @@
         "carried from R927: ResourceCache retention-only (no LRU eviction) and the size-sort server-side materialize remain deliberate follow-ups"
       ]
     },
+    "R928": {
+      "decision_summary": "R928: styled-run formatting is now an undoable edit; apply/clear/merge journal a granular StyleRunCommand via record_style_edit, closing the funnel-bypass where Ctrl+Z never reversed a Bold or recolour",
+      "changes_bullets": [
+        "StyleRunCommand (pinion-core): granular run-delta undo command (prefix+removed+inserted)",
+        "the run-vector peer of TextEditCommand's text splice; non-coalescable, caret-neutral",
+        "record_style_edit funnel: diffs style_runs before/after, guards no-op, pushes one command",
+        "apply_style_run / clear_style_runs / merge_style_run split into wrapper + _inner; all journal",
+        "style_runs_diff: minimal contiguous run splice (common prefix/suffix trim), never a snapshot",
+        "formatting is a discrete undo step; never folds into surrounding typing (distinct cmd types)",
+        "GUI toolbar and scene/invoke apply-style/clear-style both undoable (same wrapped mutators)",
+        "hello-textarea doc updated; set_style_runs stays un-journaled (boot seed below the undo floor)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (6593 passed); +8 format-undo unit tests in pinion-core",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r928_textarea_format_undo.py PASS 1.64s: apply/clear/merge undo+redo over RPC, format!=typing",
+        "regression PASS: r768 apply-style, r769 toggle, r798 undo, r799 toolbar (additive, no regression)"
+      ],
+      "impact_refs": [
+        "5.52",
+        "5.36",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "defer: text_diff interleaves UTF-8 char-boundary snapping style_runs_diff lacks; legit divergence",
+        "a shared affix-counter could not reproduce text_diff; defer to a 3rd PartialEq-slice-diff consumer",
+        "StyleRunCommand non-coalescable v1: each format = its own step; coalescing toggles = consumer-0",
+        "caret-neutral: undo does not re-select the formatted range (UX nicety deferred)",
+        "R928 diversified off async Model/View (R923/R924/R927) per SEED; perf (b) deferred as speculative",
+        "audit: no genuine large painted scene (all data-heavy examples virtualized) so jank opt was premature"
+      ],
+      "publishable_decision_summary": "R928: styled-run formatting is now an undoable edit; apply/clear/merge journal a granular StyleRunCommand via record_style_edit, closing the funnel-bypass where Ctrl+Z never reversed a Bold or recolour",
+      "publishable_changes_bullets": [
+        "StyleRunCommand (pinion-core): granular run-delta undo command (prefix+removed+inserted)",
+        "the run-vector peer of TextEditCommand's text splice; non-coalescable, caret-neutral",
+        "record_style_edit funnel: diffs style_runs before/after, guards no-op, pushes one command",
+        "apply_style_run / clear_style_runs / merge_style_run split into wrapper + _inner; all journal",
+        "style_runs_diff: minimal contiguous run splice (common prefix/suffix trim), never a snapshot",
+        "formatting is a discrete undo step; never folds into surrounding typing (distinct cmd types)",
+        "GUI toolbar and scene/invoke apply-style/clear-style both undoable (same wrapped mutators)",
+        "hello-textarea doc updated; set_style_runs stays un-journaled (boot seed below the undo floor)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (6593 passed); +8 format-undo unit tests in pinion-core",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r928_textarea_format_undo.py PASS 1.64s: apply/clear/merge undo+redo over RPC, format!=typing",
+        "regression PASS: r768 apply-style, r769 toggle, r798 undo, r799 toolbar (additive, no regression)"
+      ],
+      "publishable_impact_refs": [
+        "5.52",
+        "5.36",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "defer: text_diff interleaves UTF-8 char-boundary snapping style_runs_diff lacks; legit divergence",
+        "a shared affix-counter could not reproduce text_diff; defer to a 3rd PartialEq-slice-diff consumer",
+        "StyleRunCommand non-coalescable v1: each format = its own step; coalescing toggles = consumer-0",
+        "caret-neutral: undo does not re-select the formatted range (UX nicety deferred)",
+        "R928 diversified off async Model/View (R923/R924/R927) per SEED; perf (b) deferred as speculative",
+        "audit: no genuine large painted scene (all data-heavy examples virtualized) so jank opt was premature"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

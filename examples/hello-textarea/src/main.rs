@@ -105,6 +105,16 @@
 //! read from the selection's `style_at`, so the toolbar mirrors the
 //! document rather than owning a toggle bit.
 //!
+//! R928 makes **formatting itself undoable**. R798's undo covered typing
+//! and run-reversal-on-delete, but the toolbar's `apply_style_run` /
+//! `clear_style_runs` / `merge_style_run` wrote the run list directly,
+//! bypassing the [`UndoStack`](pinion_core::undo::UndoStack) — Bold was the
+//! one editable mutation `Ctrl+Z` never reversed. The three mutators now
+//! journal a granular `StyleRunCommand` (the run-delta peer of the text
+//! splice), so toggling Bold or recolouring a word is a discrete `Ctrl+Z`
+//! step — distinct from the surrounding typing — through the GUI toolbar and
+//! the `scene/invoke` formatting funnel alike (both call the same mutators).
+//!
 //! ## Try it
 //!
 //! ```text
@@ -118,8 +128,9 @@
 //! band. Select a word and click **B** / **I** to bold / italicise it
 //! (keeping its colour), or a colour swatch to recolour it; the bordered
 //! swatch clears formatting. `Ctrl+Z` undoes the last edit (a typing run
-//! reverts as one word), `Ctrl+Shift+Z` / `Ctrl+Y` redoes; deleting a
-//! coloured word and undoing brings its colour back with it.
+//! reverts as one word, or — R928 — a Bold / recolour reverts as one
+//! discrete step), `Ctrl+Shift+Z` / `Ctrl+Y` redoes; deleting a coloured
+//! word and undoing brings its colour back with it.
 
 use pinion_a11y::{toolbar_button_nodes, AccessNode, ToolbarControl, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};

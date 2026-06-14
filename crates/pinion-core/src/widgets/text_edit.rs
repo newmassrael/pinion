@@ -474,6 +474,92 @@ impl UndoCommand for TextEditCommand {
     }
 }
 
+/// R928 §5.52 §5.36 — a reversible **formatting** edit: one contiguous splice
+/// of the styled-run list, the rich-text peer of [`TextEditCommand`]'s text
+/// splice. [`TextEditState::apply_style_run`] / [`clear_style_runs`] /
+/// [`merge_style_run`] journal one of these so `Ctrl+Z` reverses a Bold / a
+/// colour exactly as it reverses typing — closing the funnel-bypass where
+/// formatting was the one editable mutation the [`UndoStack`] never saw.
+///
+/// [`clear_style_runs`]: TextEditState::clear_style_runs
+/// [`merge_style_run`]: TextEditState::merge_style_run
+///
+/// Granular, never a whole-document snapshot ([[granular-undo-not-snapshot]]):
+/// a range format touches a single contiguous index span of the sorted run
+/// list, so the command stores only the changed middle — the runs `before`
+/// the op (`removed`) and `after` it (`inserted`) over `[prefix, prefix + …)`,
+/// recovered by [`style_runs_diff`]. The text buffer + caret are untouched (a
+/// format moves neither), so unlike [`TextEditCommand`] this carries no
+/// text / caret / anchor fields. Non-coalescable: each format is its own undo
+/// step (the inherited [`UndoCommand::merge`] default returns `false`), and a
+/// text edit never folds into a format (or vice-versa) because the two
+/// concrete types never downcast into each other.
+pub(crate) struct StyleRunCommand {
+    runs: Signal<Vec<StyleRun>>,
+    /// Count of leading runs the format left untouched (the common prefix).
+    prefix: usize,
+    /// Runs occupying `[prefix, prefix + removed.len())` *before* the format
+    /// (restored on undo).
+    removed: Vec<StyleRun>,
+    /// Runs occupying `[prefix, prefix + inserted.len())` *after* the format
+    /// (re-applied on redo).
+    inserted: Vec<StyleRun>,
+    label: Cow<'static, str>,
+}
+
+impl UndoCommand for StyleRunCommand {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        let mut runs = self.runs.get();
+        runs.splice(
+            self.prefix..self.prefix + self.removed.len(),
+            self.inserted.iter().cloned(),
+        );
+        self.runs.set(runs);
+    }
+
+    fn undo(&self) {
+        let mut runs = self.runs.get();
+        runs.splice(
+            self.prefix..self.prefix + self.inserted.len(),
+            self.removed.iter().cloned(),
+        );
+        self.runs.set(runs);
+    }
+}
+
+/// R928 §5.52 §5.36 — the minimal single contiguous splice between two run
+/// lists: strip the common prefix + suffix and return `(prefix, removed,
+/// inserted)`. A range format (`apply` / `clear` / `merge`) carves and
+/// coalesces a single contiguous index span of the sorted run list, so this
+/// recovers exactly that span for [`StyleRunCommand`] — the run-vector twin of
+/// [`text_diff`]'s byte splice (a peer, not a merge: byte string vs run
+/// vector are distinct shapes with no shared comparison). The caller guards
+/// `before == after` first, so the returned delta is never empty.
+fn style_runs_diff(
+    before: &[StyleRun],
+    after: &[StyleRun],
+) -> (usize, Vec<StyleRun>, Vec<StyleRun>) {
+    let max_p = before.len().min(after.len());
+    let mut p = 0;
+    while p < max_p && before[p] == after[p] {
+        p += 1;
+    }
+    let mut s = 0;
+    let smax = (before.len() - p).min(after.len() - p);
+    while s < smax && before[before.len() - 1 - s] == after[after.len() - 1 - s] {
+        s += 1;
+    }
+    (
+        p,
+        before[p..before.len() - s].to_vec(),
+        after[p..after.len() - s].to_vec(),
+    )
+}
+
 /// R796.1 §5.52 — the style-run fragments overlapping `[start, end)`, clamped
 /// to that range (absolute byte positions). Captures the formatting a delete
 /// destroys so [`TextEditCommand::undo`] can restore it.
@@ -856,6 +942,37 @@ impl TextEditState {
         });
     }
 
+    /// R928 §5.52 §5.36 — the formatting peer of [`record_edit`](Self::record_edit):
+    /// run a styled-run mutation `f` (an `apply` / `clear` / `merge`) and
+    /// journal the run delta onto the attached [`UndoStack`] as one
+    /// [`StyleRunCommand`], so `Ctrl+Z` reverses formatting just like it
+    /// reverses typing. No stack attached → `f` runs plain (unchanged
+    /// behaviour for fields with no history). A format that leaves the runs
+    /// untouched (empty / inverted / no-effect range) records nothing — the
+    /// `before == after` guard, mirroring `record_edit`'s `before_text ==
+    /// after_text`. The diff (and thus the snapshot) covers only the changed
+    /// contiguous span ([`style_runs_diff`]), never the whole list.
+    fn record_style_edit(&self, label: &'static str, f: impl FnOnce()) {
+        let Some(stack) = self.undo.borrow().clone() else {
+            f();
+            return;
+        };
+        let before = self.style_runs.get();
+        f();
+        let after = self.style_runs.get();
+        if before == after {
+            return;
+        }
+        let (prefix, removed, inserted) = style_runs_diff(&before, &after);
+        stack.push_applied(StyleRunCommand {
+            runs: self.style_runs.clone(),
+            prefix,
+            removed,
+            inserted,
+            label: Cow::Borrowed(label),
+        });
+    }
+
     /// R796 §5.52 — step the attached history back one command, restoring the
     /// prior content. `false` (no-op) when no stack is attached or it is
     /// already at the bottom. The restore is a batched whole-content write,
@@ -1069,7 +1186,17 @@ impl TextEditState {
     /// field paint) re-runs, so a formatting change with **no** text edit
     /// still repaints — the runs-only mutation path the
     /// [`style_runs`](Self::style_runs) field doc anticipated.
+    ///
+    /// R928 §5.52 — journals onto the attached [`UndoStack`] as one
+    /// [`StyleRunCommand`], so a `Ctrl+Z` reverses the formatting (a discrete
+    /// step from any surrounding typing); no-op ranges record nothing.
     pub fn apply_style_run(&self, start: usize, end: usize, style: TextStyle) {
+        self.record_style_edit("Apply formatting", || {
+            self.apply_style_run_inner(start, end, style);
+        });
+    }
+
+    fn apply_style_run_inner(&self, start: usize, end: usize, style: TextStyle) {
         let buf = self.text.get();
         let a = clamp_to_char_boundary(&buf, start);
         let b = clamp_to_char_boundary(&buf, end);
@@ -1094,7 +1221,17 @@ impl TextEditState {
     /// split; runs fully inside are dropped. The text is untouched (this
     /// is **not** a deletion — no offset shifts). `start` / `end` are
     /// clamped + `char`-snapped; an empty / inverted range is a no-op.
+    ///
+    /// R928 §5.52 — undoable via [`StyleRunCommand`] (the
+    /// [`record_style_edit`](Self::record_style_edit) funnel), so clearing
+    /// formatting is one reversible step.
     pub fn clear_style_runs(&self, start: usize, end: usize) {
+        self.record_style_edit("Clear formatting", || {
+            self.clear_style_runs_inner(start, end);
+        });
+    }
+
+    fn clear_style_runs_inner(&self, start: usize, end: usize) {
         let buf = self.text.get();
         let a = clamp_to_char_boundary(&buf, start);
         let b = clamp_to_char_boundary(&buf, end);
@@ -1125,7 +1262,25 @@ impl TextEditState {
     /// R768 [`Self::apply_style_run`] is the wholesale `setCharFormat`
     /// peer (replaces every field); this preserves untouched ones.
     /// `start` / `end` are clamped + `char`-snapped; empty range no-op.
+    ///
+    /// R928 §5.52 — undoable via [`StyleRunCommand`]: toggling **bold** over a
+    /// selection is one `Ctrl+Z` step, the same as the wholesale
+    /// [`apply_style_run`](Self::apply_style_run) and `clear`. The `mutate`
+    /// transform is applied inside the [`record_style_edit`](Self::record_style_edit)
+    /// span; the recorded delta is the net run change, whatever fields it set.
     pub fn merge_style_run(
+        &self,
+        start: usize,
+        end: usize,
+        base: &TextStyle,
+        mutate: impl Fn(&mut TextStyle),
+    ) {
+        self.record_style_edit("Format", || {
+            self.merge_style_run_inner(start, end, base, mutate);
+        });
+    }
+
+    fn merge_style_run_inner(
         &self,
         start: usize,
         end: usize,
@@ -2252,7 +2407,7 @@ mod tests {
 
     use super::{
         clamp_to_char_boundary, find_matches_in, matching_bracket_in, next_char_boundary,
-        prev_char_boundary, use_text_edit_state, TextEditState,
+        prev_char_boundary, style_runs_diff, use_text_edit_state, TextEditState,
     };
     use crate::reactive::{Effect, Owner};
     use crate::scene::StyleRun;
@@ -3920,6 +4075,132 @@ mod tests {
             assert_eq!(st.text(), "word", "two backspaces undo as one coalesced step");
             assert!(st.undo());
             assert_eq!(st.text(), "", "the typing run is the prior step");
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R928 §5.52 §5.36 — formatting is an undoable edit. Closes the
+    // funnel-bypass where apply / clear / merge wrote `style_runs`
+    // directly, the one editable mutation `Ctrl+Z` never saw.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r928_style_runs_diff_is_the_minimal_contiguous_splice() {
+        // [A, B, C] → [A, B', C]: prefix skips the unchanged A, suffix skips
+        // the unchanged C, so the delta is just the middle run — granular,
+        // never the whole list ([[granular-undo-not-snapshot]]).
+        let before = vec![crun(0, 2, RED), crun(2, 4, RED), crun(4, 6, RED)];
+        let after = vec![crun(0, 2, RED), crun(2, 4, BLUE), crun(4, 6, RED)];
+        let (prefix, removed, inserted) = style_runs_diff(&before, &after);
+        assert_eq!(prefix, 1, "the leading equal run is outside the splice");
+        assert_eq!(removed, vec![crun(2, 4, RED)], "only the changed run is removed");
+        assert_eq!(inserted, vec![crun(2, 4, BLUE)], "only the changed run is inserted");
+    }
+
+    #[test]
+    fn r928_apply_then_undo_reverts_formatting() {
+        Owner::new().run(|| {
+            let st = styled("hello", vec![]);
+            st.apply_style_run(0, 3, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+            assert_eq!(run_spans(&st), vec![(0, 3)], "the format applied");
+            assert!(st.undo(), "Ctrl+Z reverses the format");
+            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "formatting undone");
+            assert_eq!(st.text(), "hello", "the text was never touched");
+            assert!(st.redo(), "redo re-applies the format");
+            assert_eq!(run_spans(&st), vec![(0, 3)], "the run is back");
+        });
+    }
+
+    #[test]
+    fn r928_clear_then_undo_restores_the_run() {
+        Owner::new().run(|| {
+            let st = styled("hello", vec![red(0, 5)]);
+            st.clear_style_runs(0, 5);
+            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "the run was cleared");
+            assert!(st.undo());
+            assert_eq!(st.style_runs(), vec![red(0, 5)], "undo restores the cleared run exactly");
+            assert!(st.redo());
+            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "redo re-clears");
+        });
+    }
+
+    #[test]
+    fn r928_merge_bold_then_undo() {
+        Owner::new().run(|| {
+            let st = styled("hello", vec![]);
+            let base = TextStyle::new();
+            st.merge_style_run(0, 5, &base, |s| s.font_weight = crate::style::FontWeight::BOLD);
+            let runs = st.style_runs();
+            assert_eq!(runs.len(), 1, "the bold toggle laid one run");
+            assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "selection is bold");
+            assert!(st.undo(), "Ctrl+Z un-bolds");
+            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "the bold run is gone");
+            assert!(st.redo());
+            assert_eq!(
+                st.style_runs()[0].style.font_weight,
+                crate::style::FontWeight::BOLD,
+                "redo re-bolds",
+            );
+        });
+    }
+
+    #[test]
+    fn r928_format_is_a_discrete_step_from_typing() {
+        // Typing then formatting are TWO undo steps — a format never folds
+        // into the surrounding typing run (the concrete command types never
+        // downcast into each other). One Ctrl+Z drops the format and leaves
+        // the text; a second drops the text.
+        Owner::new().run(|| {
+            let st = undoable();
+            st.insert("ab");
+            st.apply_style_run(0, 1, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+            assert_eq!(run_spans(&st), vec![(0, 1)], "the format is on");
+            assert!(st.undo(), "first undo");
+            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "the format alone reverted");
+            assert_eq!(st.text(), "ab", "the typing still stands — a separate step");
+            assert!(st.undo(), "second undo");
+            assert_eq!(st.text(), "", "now the typing reverts");
+        });
+    }
+
+    #[test]
+    fn r928_consecutive_formats_are_separate_steps() {
+        Owner::new().run(|| {
+            let st = styled("hello world", vec![]);
+            st.apply_style_run(0, 5, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+            st.apply_style_run(6, 11, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
+            assert_eq!(run_spans(&st), vec![(0, 5), (6, 11)], "two formats applied");
+            assert!(st.undo());
+            assert_eq!(run_spans(&st), vec![(0, 5)], "one undo drops only the last format");
+            assert!(st.undo());
+            assert_eq!(run_spans(&st), Vec::<(u32, u32)>::new(), "the first format is the prior step");
+        });
+    }
+
+    #[test]
+    fn r928_noop_format_records_nothing() {
+        // An empty / inverted range changes no runs, so it must not push a
+        // phantom undo step — otherwise the first Ctrl+Z would be wasted.
+        Owner::new().run(|| {
+            let st = undoable();
+            st.insert("ab");
+            st.apply_style_run(2, 2, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+            assert!(st.undo(), "the only journalled step is the typing");
+            assert_eq!(st.text(), "", "the no-op format pushed nothing; one undo cleared the text");
+        });
+    }
+
+    #[test]
+    fn r928_unattached_format_still_applies() {
+        // No undo stack → the format still happens (graceful, like an
+        // unattached text edit); there is simply nothing to reverse.
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("hello".to_owned());
+            assert!(st.undo_stack().is_none());
+            st.apply_style_run(0, 3, TextStyle::new().with_fg(Color::rgb(RED.0, RED.1, RED.2)));
+            assert_eq!(run_spans(&st), vec![(0, 3)], "the format applied with no stack");
+            assert!(!st.undo(), "no stack -> undo is a no-op");
+            assert_eq!(run_spans(&st), vec![(0, 3)], "the format stands; nothing was journalled");
         });
     }
 
