@@ -225,6 +225,26 @@ pub fn compute_visible_range(
     }
 }
 
+/// R927 §5.27 — the 0-based **page indices** a row [`VisibleWindow`] spans,
+/// for a list paged into fixed `page_size` chunks. The windowing companion to
+/// [`compute_visible_range`]: that maps a scroll offset to the visible row
+/// window; this maps that row window to the pages a lazy/async source must
+/// have fetched to fill it. Returns an empty iterator for an empty window (a
+/// zero / not-yet-known item count fetches no pages) or a zero `page_size`.
+///
+/// Every paged-virtualized consumer needs this exact arithmetic — the page
+/// containing the window's first row through the page containing its last —
+/// so it lives once here, lifted R927 from the byte-identical copies in
+/// `hello-lazy-list` (page-indexed) and `hello-asset-browser` (query-keyed):
+/// an off-by-one in either would be a fetch bug (divergence-is-a-bug).
+pub fn pages_in_window(window: &VisibleWindow, page_size: usize) -> impl Iterator<Item = usize> {
+    let span = match window.last() {
+        Some(last) if page_size > 0 => Some((window.first / page_size)..=(last / page_size)),
+        _ => None,
+    };
+    span.into_iter().flatten()
+}
+
 /// R776 §5.27 — the minimal scroll offset that brings item `index`'s slot
 /// fully into a `viewport_h`-tall window, given the current `offset_y` and
 /// a uniform `row_pitch`.
@@ -611,6 +631,41 @@ mod tests {
     fn window_indices_iterates_the_span() {
         let w = compute_visible_range(400, VP, N, PITCH, 0);
         assert_eq!(w.indices().collect::<Vec<_>>(), vec![10, 11, 12, 13, 14]);
+    }
+
+    // ── R927 pages_in_window (row window → paged source pages) ───────
+
+    #[test]
+    fn pages_in_window_spans_first_through_last_page() {
+        // Rows 250..=370 (count 121) at page_size 100 → pages 2 and 3.
+        let w = VisibleWindow { first: 250, count: 121 };
+        assert_eq!(w.last(), Some(370));
+        assert_eq!(pages_in_window(&w, 100).collect::<Vec<_>>(), vec![2, 3]);
+    }
+
+    #[test]
+    fn pages_in_window_single_page_when_window_fits() {
+        // Rows 10..=29 are all on page 0.
+        let w = VisibleWindow { first: 10, count: 20 };
+        assert_eq!(pages_in_window(&w, 100).collect::<Vec<_>>(), vec![0]);
+    }
+
+    #[test]
+    fn pages_in_window_partial_last_page_still_spans_it() {
+        // Rows 1600..=1666 (a partial last page under a filtered count) → page 16.
+        let w = VisibleWindow { first: 1600, count: 67 };
+        assert_eq!(pages_in_window(&w, 100).collect::<Vec<_>>(), vec![16]);
+    }
+
+    #[test]
+    fn pages_in_window_empty_window_is_no_pages() {
+        assert_eq!(pages_in_window(&VisibleWindow::EMPTY, 100).count(), 0);
+    }
+
+    #[test]
+    fn pages_in_window_zero_page_size_is_no_pages() {
+        let w = VisibleWindow { first: 0, count: 5 };
+        assert_eq!(pages_in_window(&w, 0).count(), 0);
     }
 
     #[test]

@@ -63,7 +63,7 @@ use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::virtual_list::{compute_visible_range, VisibleWindow};
+use pinion_core::widgets::virtual_list::{compute_visible_range, pages_in_window, VisibleWindow};
 use pinion_core::{use_local_task_pump, Frame, LocalTaskPump, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
@@ -176,19 +176,12 @@ fn page_cache() -> Rc<PageCache> {
         .cache(PAGE_CACHE_KEY, PageCache::new)
 }
 
-/// The 0-based page span the window touches (inclusive).
-fn visible_pages(window: &VisibleWindow) -> std::ops::RangeInclusive<usize> {
-    let first = window.first / PAGE_SIZE;
-    let last = (window.first + window.count.saturating_sub(1)) / PAGE_SIZE;
-    first..=last
-}
-
 /// Ensure every page the window touches has a `Resource` in flight: create +
 /// `fetch_with` the missing ones. Owner-scoped side effect, run only from the
 /// prefetch [`Effect`] (never the view).
 fn ensure_pages_loaded(offset_y: i32, cache: &PageCache, pump: &LocalTaskPump) {
     let window = compute_visible_range(offset_y, VIEWPORT_H, N, ROW_PITCH, OVERSCAN);
-    for page in visible_pages(&window) {
+    for page in pages_in_window(&window, PAGE_SIZE) {
         cache.ensure(page, pump, || fetch_page(page));
     }
 }
@@ -228,7 +221,7 @@ fn install_loader() -> Rc<LoaderMarker> {
 type PageStates = HashMap<usize, ResourceState<Vec<AssetRow>, String>>;
 
 fn resolve_visible_pages(window: &VisibleWindow, cache: &PageCache) -> PageStates {
-    cache.snapshot(visible_pages(window))
+    cache.snapshot(pages_in_window(window, PAGE_SIZE))
 }
 
 /// The `role=status` band line — the SSOT for the visible-band text + the live
@@ -237,7 +230,7 @@ fn status_line(window: &VisibleWindow, page_states: &PageStates) -> String {
     // "Loading" if ANY visible page is not yet `Ready` — the window can
     // straddle two pages, and a skeleton anywhere in the band means the band
     // is still loading (not just the top page).
-    let loading = visible_pages(window)
+    let loading = pages_in_window(window, PAGE_SIZE)
         .any(|p| !matches!(page_states.get(&p), Some(ResourceState::Ready(_))));
     let last = window.first + window.count.saturating_sub(1);
     if loading {

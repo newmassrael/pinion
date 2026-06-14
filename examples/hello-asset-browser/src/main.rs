@@ -78,7 +78,7 @@ use pinion_core::widgets::aria::apply_aria_activate;
 use pinion_core::widgets::button::{ButtonExternal, ButtonState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
-use pinion_core::widgets::virtual_list::{compute_visible_range, VisibleWindow};
+use pinion_core::widgets::virtual_list::{compute_visible_range, pages_in_window, VisibleWindow};
 use pinion_core::{use_local_task_pump, Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::button::{
@@ -99,7 +99,9 @@ const WIN_H: u32 = 560;
 const THEME_TAG: &str = "app";
 
 /// Total source size — large, while the client only ever holds the visible
-/// pages and never materialises the whole set.
+/// pages. The source stand-in (the fetch) enumerates the matched set to order
+/// it — a real source would answer from an index — but the *client* never
+/// holds the whole set, only one page at a time.
 const N_TOTAL: usize = 10_000;
 /// Rows fetched per async page.
 const PAGE_SIZE: usize = 100;
@@ -225,24 +227,13 @@ fn row_at(i: usize) -> AssetRow {
     }
 }
 
-/// How many source rows match `filter` — the *count query* a real source
-/// answers from an index without materialising the set. Closed-form (the kinds
-/// rotate every `KINDS.len()` rows), so the client never scans the source.
-fn matching_count(filter: FilterKey) -> usize {
-    match filter {
-        None => N_TOTAL,
-        Some(k) => {
-            let base = N_TOTAL / KINDS.len();
-            let rem = N_TOTAL % KINDS.len();
-            base + usize::from(usize::from(k) < rem)
-        }
-    }
-}
-
-/// All source indices matching `filter`, in source order. The size sort needs
-/// the whole matching set to order it — this stands in for the source's own
-/// indexed `WHERE kind = ?` scan; the client never sees it (only the page slice
-/// the fetch returns).
+/// All source indices matching `filter`, in source order — the **single SSOT**
+/// for "which rows match". Both the count query and every page slice derive
+/// from this one enumeration, so they can never disagree. It stands in for the
+/// source's own indexed `WHERE kind = ?` scan; the client never sees it, only
+/// the page slice the fetch returns. (A closed-form count / page-index would be
+/// a second encoding of the kind rotation that could silently drift — for a
+/// synthetic source the one enumeration is the textbook source of truth.)
 fn matching_indices(filter: FilterKey) -> Vec<usize> {
     match filter {
         None => (0..N_TOTAL).collect(),
@@ -250,54 +241,47 @@ fn matching_indices(filter: FilterKey) -> Vec<usize> {
     }
 }
 
-/// The source index at visual position `pos` under a `Natural` ordering and
-/// `filter` — closed-form (no scan): unfiltered it is `pos`; filtered to kind
-/// `k` the matching rows are `k, k+6, k+12, …`, so the `pos`-th is
-/// `k + pos·KINDS.len()`.
-fn natural_index(filter: FilterKey, pos: usize) -> usize {
-    match filter {
-        None => pos,
-        Some(k) => usize::from(k) + pos * KINDS.len(),
-    }
+/// How many source rows match `filter` — the *count query*, derived from the
+/// single match SSOT [`matching_indices`] so the count and the page slices can
+/// never disagree (the source enumerates; the client only ever holds a page).
+fn matching_count(filter: FilterKey) -> usize {
+    matching_indices(filter).len()
 }
 
 /// The source indices occupying visual positions `start..end` under
-/// `(sort, filter)`. `Natural` is closed-form; the size modes materialise the
-/// filtered set (the source's work), sort it, and slice — so a page reflects a
-/// *global* order, not a per-page sort.
+/// `(sort, filter)`. Starts from the single match SSOT [`matching_indices`]
+/// (source order = `Natural`), orders it by the sort mode, then slices the page
+/// window — so a page reflects a *global* order, not a per-page sort. `end` is
+/// clamped to the matched count, so the last (partial) page yields exactly its
+/// remaining rows.
 fn ordered_indices_slice(sort: SortMode, filter: FilterKey, start: usize, end: usize) -> Vec<usize> {
-    match sort {
-        SortMode::Natural => (start..end).map(|pos| natural_index(filter, pos)).collect(),
-        SortMode::SizeAsc | SortMode::SizeDesc => {
-            let mut all = matching_indices(filter);
-            let desc = matches!(sort, SortMode::SizeDesc);
-            all.sort_by(|&a, &b| {
-                let by_size = size_kb_of(a).cmp(&size_kb_of(b));
-                let by_size = if desc { by_size.reverse() } else { by_size };
-                // Stable tiebreak on source index (ascending) for a total order.
-                by_size.then(a.cmp(&b))
-            });
-            let end = end.min(all.len());
-            if start >= end {
-                Vec::new()
-            } else {
-                all[start..end].to_vec()
-            }
-        }
+    let mut all = matching_indices(filter);
+    // `Natural` keeps the source order; the size modes order the whole matched
+    // set (a global order the page slice then windows).
+    if matches!(sort, SortMode::SizeAsc | SortMode::SizeDesc) {
+        let desc = matches!(sort, SortMode::SizeDesc);
+        all.sort_by(|&a, &b| {
+            let by_size = size_kb_of(a).cmp(&size_kb_of(b));
+            let by_size = if desc { by_size.reverse() } else { by_size };
+            // Stable tiebreak on source index (ascending) for a total order.
+            by_size.then(a.cmp(&b))
+        });
+    }
+    let end = end.min(all.len());
+    if start >= end {
+        Vec::new()
+    } else {
+        all[start..end].to_vec()
     }
 }
 
 /// The rows on page `page` of the `(sort, filter)` view — the source's
 /// `LIMIT PAGE_SIZE OFFSET page·PAGE_SIZE` answer. Only this slice is ever
-/// materialised on the client.
+/// materialised on the client; [`ordered_indices_slice`] clamps to the matched
+/// count, so the last (partial) page yields exactly its remaining rows.
 fn page_rows(sort: SortMode, filter: FilterKey, page: usize) -> Vec<AssetRow> {
-    let count = matching_count(filter);
     let start = page * PAGE_SIZE;
-    if start >= count {
-        return Vec::new();
-    }
-    let end = (start + PAGE_SIZE).min(count);
-    ordered_indices_slice(sort, filter, start, end)
+    ordered_indices_slice(sort, filter, start, start + PAGE_SIZE)
         .into_iter()
         .map(row_at)
         .collect()
@@ -363,19 +347,6 @@ fn next_filter(filter: FilterKey) -> FilterKey {
     }
 }
 
-/// The 0-based page indices the window touches, or an empty iterator when
-/// nothing is visible (so a `Loading`/zero count fetches no pages).
-fn visible_pages(window: &VisibleWindow) -> impl Iterator<Item = usize> {
-    let span = if window.is_empty() {
-        None
-    } else {
-        let first = window.first / PAGE_SIZE;
-        let last = (window.first + window.count - 1) / PAGE_SIZE;
-        Some(first..=last)
-    };
-    span.into_iter().flatten()
-}
-
 /// Lifetime marker holding the count-query [`Effect`] (R665 retention).
 struct CountLoaderMarker {
     _effect: Effect,
@@ -437,7 +408,7 @@ fn install_page_loader() -> Rc<PageLoaderMarker> {
             // Subscribe to the count; the extent is unknown until it resolves.
             if let ResourceState::Ready(n) = count_e.state() {
                 let window = compute_visible_range(offset, VIEWPORT_H, n, ROW_PITCH, OVERSCAN);
-                for page in visible_pages(&window) {
+                for page in pages_in_window(&window, PAGE_SIZE) {
                     cache_e.ensure((sort, filter, page), &*pump_e, || {
                         fetch_page(sort, filter, page)
                     });
@@ -460,6 +431,17 @@ fn count_line(filter: FilterKey, count_state: &ResourceState<usize, String>) -> 
             Some(k) => format!("{n} {} assets", KINDS[usize::from(k)].0),
         },
         ResourceState::Error(err) => format!("count error: {err}"),
+    }
+}
+
+/// The virtual list's item count: the **filtered** count once known, else 0
+/// while it loads. The single derivation both the view and the a11y tree read,
+/// so the painted window and `aria-setsize` can never disagree (R886.1).
+fn known_item_count(count_state: &ResourceState<usize, String>) -> usize {
+    if let ResourceState::Ready(n) = count_state {
+        *n
+    } else {
+        0
     }
 }
 
@@ -495,10 +477,23 @@ fn row_text(
     theme: &Theme,
 ) -> Scene {
     let (content, role) = match page_state {
-        Some(ResourceState::Ready(rows)) => match rows.get(off) {
-            Some(row) => (row_label(row), ColorRole::OnSurface),
-            None => ("Loading\u{2026}".to_owned(), ColorRole::OnSurfaceMuted),
-        },
+        Some(ResourceState::Ready(rows)) => {
+            if let Some(row) = rows.get(off) {
+                (row_label(row), ColorRole::OnSurface)
+            } else {
+                // Unreachable: the window is bounded by the same matched count
+                // the page slice derives from (one SSOT, `matching_indices`), so
+                // a Ready page always contains every in-window offset. Reaching
+                // here means the count and the page length disagree — a source
+                // bug. Fail loud in debug and render it visibly (not a skeleton
+                // that would mask the bug as a stuck fetch). R922.1.
+                debug_assert!(
+                    false,
+                    "Ready page missing offset {off} — count/page length disagree",
+                );
+                ("Unavailable".to_owned(), ColorRole::Error)
+            }
+        }
         Some(ResourceState::Error(_)) => ("Unavailable".to_owned(), ColorRole::Error),
         // Loading, or not-yet-requested (None) → skeleton placeholder.
         _ => ("Loading\u{2026}".to_owned(), ColorRole::OnSurfaceMuted),
@@ -545,7 +540,7 @@ fn resolve_visible_pages(
     window: &VisibleWindow,
     cache: &PageCache,
 ) -> PageStates {
-    cache.snapshot(visible_pages(window).map(|page| (sort, filter, page)))
+    cache.snapshot(pages_in_window(window, PAGE_SIZE).map(|page| (sort, filter, page)))
 }
 
 /// Render one toolbar button through the `pinion_widget_paint::button` SSOT.
@@ -588,7 +583,7 @@ fn view(state: AssetBrowserState, _frame: &Frame) -> Scene {
     let sort = sort_signal().get();
     let filter = filter_signal().get();
     let count_state = count_resource().state();
-    let item_count = if let ResourceState::Ready(n) = &count_state { *n } else { 0 };
+    let item_count = known_item_count(&count_state);
 
     // Snapshot the visible pages' states once — subscribes the view to each.
     let window = compute_visible_range(scroll.offset_y(), VIEWPORT_H, item_count, ROW_PITCH, OVERSCAN);
@@ -794,7 +789,7 @@ impl WidgetA11y for AssetBrowserView {
         let scroll = use_scroll_state(SCROLL_KEY);
         let filter = filter_signal().get();
         let count_state = count_resource().state();
-        let item_count = if let ResourceState::Ready(n) = &count_state { *n } else { 0 };
+        let item_count = known_item_count(&count_state);
         let window =
             compute_visible_range(scroll.offset_y(), VIEWPORT_H, item_count, ROW_PITCH, OVERSCAN);
 
@@ -894,41 +889,38 @@ mod tests {
     // ── pure source-query functions ────────────────────────────────────────
 
     #[test]
-    fn r927_matching_count_agrees_with_indices_len() {
-        // The closed-form count query must equal the materialised set's length
-        // (the SSOT for "how many rows match"), for every filter.
+    fn r927_filtered_count_derives_from_the_match_ssot() {
+        // The count query is the length of the single match SSOT
+        // (`matching_indices`), so they cannot disagree. Assert the values and
+        // that each kind's set is pure and the kinds partition the dataset.
         assert_eq!(matching_count(None), N_TOTAL);
         assert_eq!(matching_count(None), matching_indices(None).len());
-        for k in 0..u8::try_from(KINDS.len()).unwrap() {
-            assert_eq!(
-                matching_count(Some(k)),
-                matching_indices(Some(k)).len(),
-                "count query disagrees with the set for kind {k}",
-            );
-        }
-        // Kinds 0..3 get the remainder row (10000 % 6 == 4), 4..5 do not.
+        // 10000 % 6 == 4 → kinds 0..3 get the remainder row, 4..5 do not.
         assert_eq!(matching_count(Some(0)), 1667);
         assert_eq!(matching_count(Some(4)), 1666);
+        let mut total = 0;
+        for k in 0..u8::try_from(KINDS.len()).unwrap() {
+            let idx = matching_indices(Some(k));
+            assert_eq!(matching_count(Some(k)), idx.len());
+            assert!(idx.iter().all(|&i| kind_of(i) == k), "kind {k} set is pure");
+            total += idx.len();
+        }
+        assert_eq!(total, N_TOTAL, "the kind sets partition the dataset");
     }
 
     #[test]
-    fn r927_natural_index_addresses_the_filtered_source() {
-        assert_eq!(natural_index(None, 0), 0);
-        assert_eq!(natural_index(None, 5), 5);
-        // Filter to kind 1 (Mesh): matching rows are 1, 7, 13, …
-        assert_eq!(natural_index(Some(1), 0), 1);
-        assert_eq!(natural_index(Some(1), 1), 7);
-        assert_eq!(natural_index(Some(1), 2), 13);
-    }
-
-    #[test]
-    fn r927_page_under_filter_is_all_that_kind() {
-        // Filter to Mesh (kind 1), Natural order: page 0 row 0 is asset_00001,
-        // and every row in the page is a Mesh.
+    fn r927_natural_page_addresses_the_filtered_source() {
+        // Filter to Mesh (kind 1), Natural order: positions map to source rows
+        // 1, 7, 13, … (the matched set in source order), and the page is all
+        // Mesh. The last page is partial (1667 % 100 = 67 rows).
         let rows = page_rows(SortMode::Natural, Some(1), 0);
         assert_eq!(rows.len(), PAGE_SIZE);
         assert_eq!(rows[0].name, "asset_00001.obj");
+        assert_eq!(rows[1].name, "asset_00007.obj");
+        assert_eq!(rows[2].name, "asset_00013.obj");
         assert!(rows.iter().all(|r| r.kind == "Mesh"), "filtered page is all Mesh");
+        let last = page_rows(SortMode::Natural, Some(1), 16);
+        assert_eq!(last.len(), matching_count(Some(1)) - 16 * PAGE_SIZE, "partial last page");
     }
 
     #[test]
@@ -993,6 +985,33 @@ mod tests {
             assert_eq!(page_cache().len(), 1, "only the visible page fetched");
             assert!(page_cache().contains(&(SortMode::Natural, None, 0)));
             assert!(!page_cache().contains(&(SortMode::Natural, None, 50)), "far pages not fetched");
+        });
+    }
+
+    #[test]
+    fn r927_count_error_blocks_page_fetch() {
+        // A real source can be unreachable. If the count query errors, the page
+        // loader (gated on count Ready) fetches nothing, the status surfaces the
+        // error, and the list renders no rows — no stuck skeletons, no panic.
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            count_resource().fetch_with(
+                &*use_local_task_pump(),
+                DeferredReady::new(0, Err::<usize, String>("source unreachable".to_owned())),
+            );
+            drain_pump();
+            assert!(
+                matches!(count_resource().state(), ResourceState::Error(_)),
+                "count resolved to Error",
+            );
+            assert_eq!(page_cache().len(), 0, "no pages fetched while the count errored");
+            let scene = view(idle(), &Frame::default());
+            assert_eq!(
+                count_text(&scene).as_deref(),
+                Some("count error: source unreachable"),
+            );
+            assert!(row_text_of(&scene, 0).is_none(), "no rows under a count error");
         });
     }
 

@@ -40305,6 +40305,58 @@
         "A unified Model trait remains premature (view_order.rs:63); ResourceCache is the async carrier cache, not a data-model layer"
       ]
     },
+    "R927.1": {
+      "decision_summary": "Session-review clearance of R927: 3 adversarial reviewers (correctness/SSOT/doc-honesty) re-verified by grep+read into REAL/over-reach/defer. REAL fixes: collapse matching_count+natural_index into one matching_indices SSOT; extract known_item_count for the paint/a11y one-gate; lift pages_in_window to virtual_list (2nd-consumer windowing helper my round-close self-grep missed); fail-loud on a Ready page missing an offset (R922.1, reachable via the partial last page); add the count-Error cascade test; tighten the out-of-memory doc",
+      "changes_bullets": [
+        "SSOT: matching_count + natural_index collapsed into one matching_indices enumeration; the closed forms were two extra encodings of the kind rotation (drift risk), and size-sort materializes anyway so they bought nothing",
+        "R886.1 one-gate: known_item_count helper — the view and the a11y tree now read one count-to-extent derivation (was duplicated in both, paint/a11y drift risk)",
+        "Lift pages_in_window(window, page_size) to pinion-core virtual_list; lazy-list + asset-browser both consume it (my R927 round-close self-grep missed this windowing helper, only grepped the cache pattern)",
+        "R922.1: row_text Ready-but-missing-offset now debug_asserts + renders Unavailable, not a skeleton that would silently mask a count/page-length disagreement (reachable only via a partial last page, which R924 does not have)",
+        "New test: a count-query Error blocks page fetch, surfaces the error line, renders no rows (was an untested cascade path)",
+        "Doc: clarified the source stand-in enumerates the matched set to order it; only the CLIENT never holds the whole set"
+      ],
+      "verification_bullets": [
+        "3 adversarial reviewers (correctness / SSOT / doc-honesty) re-verified by my own grep+read into REAL / over-reach / defer; subagent over-reach rejected",
+        "cargo test --workspace -j2 green (162 ok result lines; +5 pages_in_window unit tests, +1 count-error test); clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r927_asset_browser.py PASS 3.72s + r924_lazy_list.py PASS 2.36s — no behaviour regression from the SSOT collapse or the windowing-helper migration"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "over-reach rejected: northern-star \"3rd consecutive async Model/View round\" is valid but already corrected in the R928 plan (diversify); R927 itself was directive-sanctioned and added a real substrate lift, not undone",
+        "honest defer: a11y aria-busy for \"count unknown while loading\" is an a11y-substrate follow-up; today setsize=0 + the role=status \"Counting…\" live region is the accurate conservative representation (not a lie)",
+        "R924 row_text Ready-but-None arm left as-is: unreachable by construction (N % PAGE_SIZE == 0 so every page is full); R927's partial last page is what made the fail-loud meaningful",
+        "carried from R927: ResourceCache retention-only (no LRU eviction) and the size-sort server-side materialize remain deliberate follow-ups"
+      ],
+      "publishable_decision_summary": "Session-review clearance of R927: 3 adversarial reviewers (correctness/SSOT/doc-honesty) re-verified by grep+read into REAL/over-reach/defer. REAL fixes: collapse matching_count+natural_index into one matching_indices SSOT; extract known_item_count for the paint/a11y one-gate; lift pages_in_window to virtual_list (2nd-consumer windowing helper my round-close self-grep missed); fail-loud on a Ready page missing an offset (R922.1, reachable via the partial last page); add the count-Error cascade test; tighten the out-of-memory doc",
+      "publishable_changes_bullets": [
+        "SSOT: matching_count + natural_index collapsed into one matching_indices enumeration; the closed forms were two extra encodings of the kind rotation (drift risk), and size-sort materializes anyway so they bought nothing",
+        "R886.1 one-gate: known_item_count helper — the view and the a11y tree now read one count-to-extent derivation (was duplicated in both, paint/a11y drift risk)",
+        "Lift pages_in_window(window, page_size) to pinion-core virtual_list; lazy-list + asset-browser both consume it (my R927 round-close self-grep missed this windowing helper, only grepped the cache pattern)",
+        "R922.1: row_text Ready-but-missing-offset now debug_asserts + renders Unavailable, not a skeleton that would silently mask a count/page-length disagreement (reachable only via a partial last page, which R924 does not have)",
+        "New test: a count-query Error blocks page fetch, surfaces the error line, renders no rows (was an untested cascade path)",
+        "Doc: clarified the source stand-in enumerates the matched set to order it; only the CLIENT never holds the whole set"
+      ],
+      "publishable_verification_bullets": [
+        "3 adversarial reviewers (correctness / SSOT / doc-honesty) re-verified by my own grep+read into REAL / over-reach / defer; subagent over-reach rejected",
+        "cargo test --workspace -j2 green (162 ok result lines; +5 pages_in_window unit tests, +1 count-error test); clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r927_asset_browser.py PASS 3.72s + r924_lazy_list.py PASS 2.36s — no behaviour regression from the SSOT collapse or the windowing-helper migration"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "over-reach rejected: northern-star \"3rd consecutive async Model/View round\" is valid but already corrected in the R928 plan (diversify); R927 itself was directive-sanctioned and added a real substrate lift, not undone",
+        "honest defer: a11y aria-busy for \"count unknown while loading\" is an a11y-substrate follow-up; today setsize=0 + the role=status \"Counting…\" live region is the accurate conservative representation (not a lie)",
+        "R924 row_text Ready-but-None arm left as-is: unreachable by construction (N % PAGE_SIZE == 0 so every page is full); R927's partial last page is what made the fail-loud meaningful",
+        "carried from R927: ResourceCache retention-only (no LRU eviction) and the size-sort server-side materialize remain deliberate follow-ups"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
