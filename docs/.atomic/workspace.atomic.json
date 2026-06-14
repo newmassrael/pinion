@@ -40419,6 +40419,58 @@
         "audit: no genuine large painted scene (all data-heavy examples virtualized) so jank opt was premature"
       ]
     },
+    "R929": {
+      "decision_summary": "R929: node-graph edge reconnection — invoke reconnect_edge re-wires an edge target as one atomic undo step, validated through a factored validate_connection SSOT shared with add_edge; live drag gesture deferred",
+      "changes_bullets": [
+        "reconnect_edge(edge,to_node,to_port): atomic GraphDelta {rm old, add new same-source}, one undo step",
+        "validate_connection factored from add_edge as the shared SSOT (self-loop/typed-port/dup/single-wire)",
+        "RPC: invoke reconnect_edge \"edge,to_node,to_port\" + schema entry (AI-first peer of the drag gesture)",
+        "reconnect mints a fresh edge id (remove+add model); same-target = no-op; undo restores displaced wires too",
+        "3 unit tests (move-target/keep-source/one-undo, reject self-loop/type/unknown, displacement) + demo r929"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (6596 passed; +3 reconnect unit tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r929_node_reconnect.py PASS 1.63s (38 asserts; reconnect+undo+redo, rejects, displacement over RPC)",
+        "regression PASS: r838 node editor, r851 node undo, r853 move undo (additive, no regression)"
+      ],
+      "impact_refs": [
+        "5.52",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "live drag-to-reconnect gesture deferred (parse_iport_sub + PendingPress::ReconnectInput + begin_drag payload)",
+        "additive follow-up; the §2 AI-first reconnect_edge verb is the primary path and is complete",
+        "reconnect mints a fresh edge id; identity-preserving reconnect needs a new GraphDelta retarget variant (defer)",
+        "audit: array/Vec property editing is the #1 structural DCC gap (Unreal TArray) but has a value-model",
+        "integration tension (orphan slots vs id re-key) -> deferred to a full clean round"
+      ],
+      "publishable_decision_summary": "R929: node-graph edge reconnection — invoke reconnect_edge re-wires an edge target as one atomic undo step, validated through a factored validate_connection SSOT shared with add_edge; live drag gesture deferred",
+      "publishable_changes_bullets": [
+        "reconnect_edge(edge,to_node,to_port): atomic GraphDelta {rm old, add new same-source}, one undo step",
+        "validate_connection factored from add_edge as the shared SSOT (self-loop/typed-port/dup/single-wire)",
+        "RPC: invoke reconnect_edge \"edge,to_node,to_port\" + schema entry (AI-first peer of the drag gesture)",
+        "reconnect mints a fresh edge id (remove+add model); same-target = no-op; undo restores displaced wires too",
+        "3 unit tests (move-target/keep-source/one-undo, reject self-loop/type/unknown, displacement) + demo r929"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (6596 passed; +3 reconnect unit tests)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r929_node_reconnect.py PASS 1.63s (38 asserts; reconnect+undo+redo, rejects, displacement over RPC)",
+        "regression PASS: r838 node editor, r851 node undo, r853 move undo (additive, no regression)"
+      ],
+      "publishable_impact_refs": [
+        "5.52",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live drag-to-reconnect gesture deferred (parse_iport_sub + PendingPress::ReconnectInput + begin_drag payload)",
+        "additive follow-up; the §2 AI-first reconnect_edge verb is the primary path and is complete",
+        "reconnect mints a fresh edge id; identity-preserving reconnect needs a new GraphDelta retarget variant (defer)",
+        "audit: array/Vec property editing is the #1 structural DCC gap (Unreal TArray) but has a value-model",
+        "integration tension (orphan slots vs id re-key) -> deferred to a full clean round"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

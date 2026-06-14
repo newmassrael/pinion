@@ -50,7 +50,18 @@
 //! `intervene node.<id>.x` / `node.<id>.y` / `node.<id>.title` /
 //! `node.<id>.input_default.<port>` / `selected` / `selected_ids` /
 //! `selected_edge`; `invoke add_edge` / `remove_edge` /
-//! `delete_node` / `delete_selected` / `nudge` / the pointer `send` wire.
+//! `reconnect_edge` / `delete_node` / `delete_selected` / `nudge` / the
+//! pointer `send` wire.
+//!
+//! R929 — **`invoke reconnect_edge "edge,to_node,to_port"`** re-wires an
+//! existing edge's *target* input (keeping its source output): the canonical
+//! "grab a wired input and drop it elsewhere" graph edit, as one atomic
+//! [`UndoStack`] step (remove old + add new in a single `Ctrl+Z`), validated
+//! through the same [`NodeGraphExternal::validate_connection`] SSOT as
+//! `add_edge` (self-loop / typed-port / single-wire-into-input). The live
+//! drag-to-reconnect *gesture* is the GUI peer of this verb and is a deferred
+//! additive follow-up — the §2 AI-first path (the verb) is the primary
+//! interface and is complete here.
 //!
 //! ## Keyboard (single Tab stop, the graph)
 //!
@@ -1125,6 +1136,21 @@ fn parse_quad(csv: &str) -> Option<(NodeId, usize, NodeId, usize)> {
     ))
 }
 
+/// R929 — parse the `reconnect_edge` arg `"edge,to_node,to_port"`: the edge to
+/// re-wire and its new target input. The source output is read from the edge
+/// itself, so only three fields cross the wire (vs [`parse_quad`]'s four).
+fn parse_reconnect(csv: &str) -> Option<(EdgeId, NodeId, usize)> {
+    let parts: Vec<&str> = csv.split(',').collect();
+    let [edge, tnode, tport] = parts.as_slice() else {
+        return None;
+    };
+    Some((
+        EdgeId(edge.trim().parse().ok()?),
+        NodeId(tnode.trim().parse().ok()?),
+        tport.trim().parse().ok()?,
+    ))
+}
+
 // ─── internal drag latches (Cell — not read by the view) ───────────
 
 /// Snapshot taken on the first capture move of a node drag.
@@ -2074,44 +2100,65 @@ impl NodeGraphExternal {
     /// a duplicate; an input port takes a single wire, so an existing
     /// connection into the target input is replaced (the canonical node-editor
     /// rule). The new edge mints a fresh stable [`EdgeId`].
-    fn add_edge(&self, from_node: NodeId, from_port: usize, to_node: NodeId, to_port: usize) -> bool {
+    /// R929 — validate a prospective wire `(from_node,from_port) ->
+    /// (to_node,to_port)` and, on success, return the existing edges it would
+    /// **displace** (the single-wire-into-one-input rule). `None` rejects:
+    /// self-loop / out-of-range or mistyped port / an exact duplicate wire.
+    /// `ignore` excludes one edge id from the duplicate + displacement scans —
+    /// the edge being reconnected, so re-dropping it on its own input never
+    /// reads as a self-duplicate or self-displacement. The SSOT both
+    /// [`add_edge`](Self::add_edge) and [`reconnect_edge`](Self::reconnect_edge)
+    /// validate through, so a wire valid one way is valid the other (a
+    /// divergence here would be a bug).
+    fn validate_connection(
+        &self,
+        from_node: NodeId,
+        from_port: usize,
+        to_node: NodeId,
+        to_port: usize,
+        ignore: Option<EdgeId>,
+    ) -> Option<Vec<Edge>> {
         if from_node == to_node {
-            return false;
+            return None;
         }
         let nodes = self.nodes.get();
-        let Some(src) = nodes.iter().find(|n| n.id == from_node) else {
-            return false;
-        };
-        let Some(dst) = nodes.iter().find(|n| n.id == to_node) else {
-            return false;
-        };
-        let (Some(from_ty), Some(to_ty)) = (src.output_type(from_port), dst.input_type(to_port))
-        else {
-            // Out-of-range port (the pre-R898 arity reject, now expressed as a
-            // missing typed socket).
-            return false;
-        };
+        let src = nodes.iter().find(|n| n.id == from_node)?;
+        let dst = nodes.iter().find(|n| n.id == to_node)?;
+        // Out-of-range port = a missing typed socket (the pre-R898 arity reject).
+        let (from_ty, to_ty) = (src.output_type(from_port)?, dst.input_type(to_port)?);
         // R898 — typed-port validation: the output's type must be assignable to
         // the destination input's type (exact, or a `Float`->`Vector` scalar
-        // broadcast). A material / blueprint graph rejects an ill-typed wire;
-        // arity alone (the pre-R898 gate) let a `Float` reach any input.
+        // broadcast). A material / blueprint graph rejects an ill-typed wire.
         if !from_ty.is_assignable_to(to_ty) {
-            return false;
+            return None;
         }
         let edges = self.edges.get();
         let dup = edges.iter().any(|e| {
-            e.from_node == from_node
+            Some(e.id) != ignore
+                && e.from_node == from_node
                 && e.from_port == from_port
                 && e.to_node == to_node
                 && e.to_port == to_port
         });
         if dup {
-            return false;
+            return None;
         }
         // Input single-wire rule: the new wire displaces any existing wire into
         // the same target input — captured as a removed delta so undo restores it.
-        let replaced: Vec<Edge> =
-            edges.iter().copied().filter(|e| e.to_node == to_node && e.to_port == to_port).collect();
+        Some(
+            edges
+                .iter()
+                .copied()
+                .filter(|e| Some(e.id) != ignore && e.to_node == to_node && e.to_port == to_port)
+                .collect(),
+        )
+    }
+
+    fn add_edge(&self, from_node: NodeId, from_port: usize, to_node: NodeId, to_port: usize) -> bool {
+        let Some(replaced) = self.validate_connection(from_node, from_port, to_node, to_port, None)
+        else {
+            return false;
+        };
         let id = EdgeId(self.next_edge_id.get());
         self.next_edge_id.set(id.raw() + 1);
         let new_edge = Edge { id, from_node, from_port, to_node, to_port };
@@ -2122,6 +2169,56 @@ impl NodeGraphExternal {
         self.record_edit(
             "Connect",
             GraphDelta { added_edges: vec![new_edge], removed_edges: replaced, ..GraphDelta::default() },
+            sel_before,
+            sel_after,
+        );
+        true
+    }
+
+    /// R929 — move an existing edge's **target** to a new input port, keeping
+    /// its source output: the canonical node-editor "reconnect" (grab a wired
+    /// input and drop it elsewhere). One atomic [`GraphEdit`] — the old edge
+    /// is removed and a fresh edge `(same source -> new input)` added in a
+    /// single undo step (so one `Ctrl+Z` restores the original wiring), plus
+    /// any wire it displaces at the new input (the single-wire rule, via
+    /// [`validate_connection`](Self::validate_connection)). Re-dropping on the
+    /// same input is a no-op `true`; an invalid target (self-loop / mistyped /
+    /// missing port / exact duplicate) is a no-op `false`, leaving the edge as
+    /// it was. The reconnected wire mints a fresh [`EdgeId`] — a reconnect is a
+    /// new connection, consistent with the remove+add [`GraphDelta`] model.
+    fn reconnect_edge(&self, edge_id: EdgeId, new_to_node: NodeId, new_to_port: usize) -> bool {
+        let Some(old) = self.edges.get().iter().copied().find(|e| e.id == edge_id) else {
+            return false;
+        };
+        if old.to_node == new_to_node && old.to_port == new_to_port {
+            return true; // dropped back on its own input — nothing changed.
+        }
+        let Some(replaced) = self.validate_connection(
+            old.from_node,
+            old.from_port,
+            new_to_node,
+            new_to_port,
+            Some(edge_id),
+        ) else {
+            return false;
+        };
+        let id = EdgeId(self.next_edge_id.get());
+        self.next_edge_id.set(id.raw() + 1);
+        let new_edge = Edge {
+            id,
+            from_node: old.from_node,
+            from_port: old.from_port,
+            to_node: new_to_node,
+            to_port: new_to_port,
+        };
+        let mut removed = vec![old];
+        removed.extend(replaced);
+        let sel_before = self.selection.get();
+        let removed_ids: Vec<EdgeId> = removed.iter().map(|e| e.id).collect();
+        let sel_after = validate_after(sel_before.clone(), &[], &removed_ids);
+        self.record_edit(
+            "Reconnect",
+            GraphDelta { added_edges: vec![new_edge], removed_edges: removed, ..GraphDelta::default() },
             sel_before,
             sel_after,
         );
@@ -3002,6 +3099,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("frame_all", "json"),
             ("add_edge", "string"),
             ("remove_edge", "int"),
+            ("reconnect_edge", "string"),
             ("delete_node", "int"),
             ("delete_selected", "json"),
             ("select_all", "json"),
@@ -3284,6 +3382,16 @@ impl ExternalIntrospect for NodeGraphExternal {
                 IntrospectValue::Int(i) => {
                     let id = u32::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
                     Ok(IntrospectValue::Bool(self.remove_edge(EdgeId(id))))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R929 — re-wire an existing edge's target input (the AI-first peer
+            // of the live drag-to-reconnect gesture); both funnel to
+            // `reconnect_edge`. Arg `"edge,to_node,to_port"`.
+            "reconnect_edge" => match args {
+                IntrospectValue::Text(s) => {
+                    let (edge, tnode, tport) = parse_reconnect(&s).ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.reconnect_edge(edge, tnode, tport)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -6322,6 +6430,92 @@ mod tests {
                 Some(IntrospectValue::Text("0:0->2:0".to_owned())),
                 "the displaced wire is restored",
             );
+        });
+    }
+
+    #[test]
+    fn r929_reconnect_moves_target_keeps_source_one_undo_step() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let scalar = coord.add_node(5).expect("Scalar (Float source)");
+            let lerp = coord.add_node(6).expect("Lerp ([Vector, Vector, Float] in)");
+            // Wire scalar.0 (Float) -> lerp.2 (Float factor).
+            assert!(coord.add_edge(scalar, 0, lerp, 2), "seed the wire to reconnect");
+            let edge = coord.edges.get().iter().copied().find(|e| e.from_node == scalar).unwrap();
+            let count = coord.edges.get().len();
+            // Reconnect its target to lerp.0 (Vector; Float broadcasts -> valid).
+            assert!(coord.reconnect_edge(edge.id, lerp, 0), "reconnect to a valid input");
+            assert_eq!(coord.edges.get().len(), count, "a rewire keeps the edge count");
+            let now = coord.edges.get().iter().copied().find(|e| e.from_node == scalar).unwrap();
+            assert_eq!((now.from_node, now.from_port), (scalar, 0), "the source output is preserved");
+            assert_eq!((now.to_node, now.to_port), (lerp, 0), "the target moved to the new input");
+            assert_ne!(now.id, edge.id, "a reconnect mints a fresh edge id (remove+add model)");
+            assert_eq!(stack.undo_label().as_deref(), Some("Reconnect"), "one Reconnect undo step");
+            // One Ctrl+Z restores the original wiring verbatim (old id + old target).
+            assert!(stack.undo(), "undo the reconnect");
+            let back = coord.edges.get().iter().copied().find(|e| e.from_node == scalar).unwrap();
+            assert_eq!(
+                (back.id, back.to_node, back.to_port),
+                (edge.id, lerp, 2),
+                "the original wire is restored in one step",
+            );
+            assert!(stack.redo(), "redo re-wires it");
+            assert_eq!(
+                coord.edges.get().iter().find(|e| e.from_node == scalar).unwrap().to_port,
+                0,
+            );
+        });
+    }
+
+    #[test]
+    fn r929_reconnect_rejects_self_loop_and_type_mismatch_and_noops_on_same() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let lerp = coord.add_node(6).expect("Lerp (input 2 is Float)");
+            // Boot edge 0 = 0:0 -> 2:0; node 0 (Texture) outputs a Vector.
+            let edge0 = "0:0->2:0";
+            assert_eq!(coord.query("edge.0"), Some(IntrospectValue::Text(edge0.to_owned())));
+            // Vector source -> lerp.2 (Float): narrowing, rejected; edge unchanged.
+            assert!(!coord.reconnect_edge(EdgeId(0), lerp, 2), "Vector -> Float reconnect rejected");
+            assert_eq!(coord.query("edge.0"), Some(IntrospectValue::Text(edge0.to_owned())));
+            // Self-loop: reconnect onto an input of the edge's own source node.
+            assert!(!coord.reconnect_edge(EdgeId(0), NodeId(0), 0), "self-loop reconnect rejected");
+            assert_eq!(coord.query("edge.0"), Some(IntrospectValue::Text(edge0.to_owned())));
+            // Re-dropping on its own input is a no-op success (no graph change).
+            assert!(coord.reconnect_edge(EdgeId(0), NodeId(2), 0), "same target is a no-op true");
+            assert_eq!(coord.query("edge.0"), Some(IntrospectValue::Text(edge0.to_owned())), "still the same wire");
+            // An unknown edge id is a no-op false.
+            assert!(!coord.reconnect_edge(EdgeId(999), NodeId(2), 1), "unknown edge id rejected");
+        });
+    }
+
+    #[test]
+    fn r929_reconnect_displacing_a_wire_undo_restores_both() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            let s1 = coord.add_node(5).expect("Scalar 1");
+            let s2 = coord.add_node(5).expect("Scalar 2");
+            let lerp = coord.add_node(6).expect("Lerp");
+            assert!(coord.add_edge(s1, 0, lerp, 0), "s1 -> lerp.0 (broadcast)");
+            assert!(coord.add_edge(s2, 0, lerp, 2), "s2 -> lerp.2 (exact)");
+            let e2 = coord.edges.get().iter().copied().find(|e| e.from_node == s2).unwrap();
+            let count = coord.edges.get().len();
+            // Reconnect e2 onto lerp.0 (occupied by s1's wire) -> displaces it.
+            assert!(coord.reconnect_edge(e2.id, lerp, 0), "reconnect onto an occupied input");
+            assert_eq!(coord.edges.get().len(), count - 1, "old e2 + displaced s1 wire removed, one added");
+            assert!(!coord.edges.get().iter().any(|e| e.from_node == s1), "s1's wire was displaced");
+            // One undo restores BOTH the reconnected wire's old target and the displaced wire.
+            assert!(stack.undo(), "one undo reverses the whole reconnect");
+            assert_eq!(coord.edges.get().len(), count);
+            let s1e = coord.edges.get().iter().copied().find(|e| e.from_node == s1).unwrap();
+            assert_eq!((s1e.to_node, s1e.to_port), (lerp, 0), "displaced wire restored");
+            let s2e = coord.edges.get().iter().copied().find(|e| e.from_node == s2).unwrap();
+            assert_eq!((s2e.to_node, s2e.to_port), (lerp, 2), "reconnected wire restored to its original input");
         });
     }
 
