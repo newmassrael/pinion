@@ -40523,6 +40523,58 @@
         "array/Vec property editing remains the #1 DCC gap (edit-path fork vs flat value-model) for a future round"
       ]
     },
+    "R930.1": {
+      "decision_summary": "R930.1: adversarial session-review clearance of R928-R930 (3 reviewers, all re-verified by grep+read). REAL fixes: data-grid edit-latch-cancel + cursor reanchor, R929 commit_new_edge SSOT lift, R928 common-affix scan lift; doc overclaims corrected",
+      "changes_bullets": [
+        "R930 correctness: remove_row cancels the in-flight edit latch + reanchors the cursor (was bare clamp)",
+        "R930 correctness: add_row moves cursor to the new row only if visible; commit_edit guards row<nrows; nrows debug_assert",
+        "R929 SSOT: commit_new_edge lifted — add_edge+reconnect_edge shared mint/build-Edge/sel_after/record tail (self-grep had missed it)",
+        "R928 SSOT: common_prefix_len/common_suffix_len<T> lifted (style_runs_diff+text_diff shared scan); \"no shared comparison\" doc corrected",
+        "doc-honesty: R930 non-existent \"GUI + affordance\" + no-undo gap reworded; R929 \"verb complete\" reworded (gesture = deferred human half)"
+      ],
+      "verification_bullets": [
+        "3 adversarial reviewers (correctness/SSOT/doc-honesty) -> all re-verified by my own grep+read into REAL/over-reach/defer",
+        "cargo test --workspace -j2 green (6603 passed; +3 regression: interleaved format-undo, remove cancels edit, remove reanchors)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r928/r929/r930 demos PASS + r798/r838/r851/r837/r891/r892 regressions PASS (no behaviour regression from lifts/fixes)"
+      ],
+      "impact_refs": [
+        "5.52",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "north-star (FAIR critique): R928-R930 deferred the #1 array/Vec property-editing gap 3 rounds; R931 plan commits to",
+        "genuinely attempting it (perpetual-defer avoidance) -- the named blocker is a design decision, not unknown territory",
+        "data-grid comprehensive undo = separate axis (R931 candidate); destructive remove_row honestly marked a gap",
+        "over-reach rejected: selection-follows-reconnect (consistent documented fresh-id behavior, MINOR) + default_row",
+        "Choice/Color arms (total+harmless, no Choice/Color column exists) -- both kept as-is after re-verification"
+      ],
+      "publishable_decision_summary": "R930.1: adversarial session-review clearance of R928-R930 (3 reviewers, all re-verified by grep+read). REAL fixes: data-grid edit-latch-cancel + cursor reanchor, R929 commit_new_edge SSOT lift, R928 common-affix scan lift; doc overclaims corrected",
+      "publishable_changes_bullets": [
+        "R930 correctness: remove_row cancels the in-flight edit latch + reanchors the cursor (was bare clamp)",
+        "R930 correctness: add_row moves cursor to the new row only if visible; commit_edit guards row<nrows; nrows debug_assert",
+        "R929 SSOT: commit_new_edge lifted — add_edge+reconnect_edge shared mint/build-Edge/sel_after/record tail (self-grep had missed it)",
+        "R928 SSOT: common_prefix_len/common_suffix_len<T> lifted (style_runs_diff+text_diff shared scan); \"no shared comparison\" doc corrected",
+        "doc-honesty: R930 non-existent \"GUI + affordance\" + no-undo gap reworded; R929 \"verb complete\" reworded (gesture = deferred human half)"
+      ],
+      "publishable_verification_bullets": [
+        "3 adversarial reviewers (correctness/SSOT/doc-honesty) -> all re-verified by my own grep+read into REAL/over-reach/defer",
+        "cargo test --workspace -j2 green (6603 passed; +3 regression: interleaved format-undo, remove cancels edit, remove reanchors)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r928/r929/r930 demos PASS + r798/r838/r851/r837/r891/r892 regressions PASS (no behaviour regression from lifts/fixes)"
+      ],
+      "publishable_impact_refs": [
+        "5.52",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "north-star (FAIR critique): R928-R930 deferred the #1 array/Vec property-editing gap 3 rounds; R931 plan commits to",
+        "genuinely attempting it (perpetual-defer avoidance) -- the named blocker is a design decision, not unknown territory",
+        "data-grid comprehensive undo = separate axis (R931 candidate); destructive remove_row honestly marked a gap",
+        "over-reach rejected: selection-follows-reconnect (consistent documented fresh-id behavior, MINOR) + default_row",
+        "Choice/Color arms (total+harmless, no Choice/Color column exists) -- both kept as-is after re-verification"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

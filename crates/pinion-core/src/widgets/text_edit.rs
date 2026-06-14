@@ -536,28 +536,49 @@ impl UndoCommand for StyleRunCommand {
 /// inserted)`. A range format (`apply` / `clear` / `merge`) carves and
 /// coalesces a single contiguous index span of the sorted run list, so this
 /// recovers exactly that span for [`StyleRunCommand`] — the run-vector twin of
-/// [`text_diff`]'s byte splice (a peer, not a merge: byte string vs run
-/// vector are distinct shapes with no shared comparison). The caller guards
-/// `before == after` first, so the returned delta is never empty.
+/// [`text_diff`]'s byte splice. R930.1 — both share the element-generic
+/// prefix / suffix scan ([`common_prefix_len`] / [`common_suffix_len`]); only
+/// `text_diff`'s `char`-boundary backtracking is text-specific (runs need
+/// none). The caller guards `before == after` first, so the delta is never
+/// empty.
 fn style_runs_diff(
     before: &[StyleRun],
     after: &[StyleRun],
 ) -> (usize, Vec<StyleRun>, Vec<StyleRun>) {
-    let max_p = before.len().min(after.len());
-    let mut p = 0;
-    while p < max_p && before[p] == after[p] {
-        p += 1;
-    }
-    let mut s = 0;
-    let smax = (before.len() - p).min(after.len() - p);
-    while s < smax && before[before.len() - 1 - s] == after[after.len() - 1 - s] {
-        s += 1;
-    }
+    let p = common_prefix_len(before, after);
+    let s = common_suffix_len(before, after, (before.len() - p).min(after.len() - p));
     (
         p,
         before[p..before.len() - s].to_vec(),
         after[p..after.len() - s].to_vec(),
     )
+}
+
+/// R930.1 §5.52 — count of leading elements `before` and `after` share: the
+/// element-generic prefix scan both [`text_diff`] (over bytes) and
+/// [`style_runs_diff`] (over runs) compute. A divergence between the two would
+/// corrupt the granular splice, so the scan is one SSOT and each caller layers
+/// its own type-specific framing (char-boundary snapping / run slicing) on top.
+fn common_prefix_len<T: PartialEq>(before: &[T], after: &[T]) -> usize {
+    let max = before.len().min(after.len());
+    let mut p = 0;
+    while p < max && before[p] == after[p] {
+        p += 1;
+    }
+    p
+}
+
+/// R930.1 §5.52 — count of trailing shared elements, scanned within the `max`
+/// elements left after the prefix (so the suffix never overlaps the prefix
+/// region). The peer of [`common_prefix_len`]; `text_diff` passes a `max`
+/// bounded by its already-`char`-snapped prefix so the two scans stay
+/// consistent.
+fn common_suffix_len<T: PartialEq>(before: &[T], after: &[T], max: usize) -> usize {
+    let mut s = 0;
+    while s < max && before[before.len() - 1 - s] == after[after.len() - 1 - s] {
+        s += 1;
+    }
+    s
 }
 
 /// R796.1 §5.52 — the style-run fragments overlapping `[start, end)`, clamped
@@ -600,19 +621,15 @@ fn normalize_runs(runs: &mut Vec<StyleRun>) {
 /// contiguous edit, so this recovers exactly that edit for granular undo.
 fn text_diff(before: &str, after: &str) -> (usize, String, String) {
     let (bb, ab) = (before.as_bytes(), after.as_bytes());
-    let max_p = bb.len().min(ab.len());
-    let mut p = 0;
-    while p < max_p && bb[p] == ab[p] {
-        p += 1;
-    }
+    // R930.1 — shared byte scan ([`common_prefix_len`]), then the text-specific
+    // `char`-boundary backtracking (runs need none). The suffix scan is bounded
+    // by the *snapped* prefix so a multi-byte char is never split across the
+    // splice.
+    let mut p = common_prefix_len(bb, ab);
     while p > 0 && !before.is_char_boundary(p) {
         p -= 1;
     }
-    let mut s = 0;
-    let smax = (bb.len() - p).min(ab.len() - p);
-    while s < smax && bb[bb.len() - 1 - s] == ab[ab.len() - 1 - s] {
-        s += 1;
-    }
+    let mut s = common_suffix_len(bb, ab, (bb.len() - p).min(ab.len() - p));
     while s > 0
         && (!before.is_char_boundary(bb.len() - s) || !after.is_char_boundary(ab.len() - s))
     {
@@ -4201,6 +4218,37 @@ mod tests {
             assert_eq!(run_spans(&st), vec![(0, 3)], "the format applied with no stack");
             assert!(!st.undo(), "no stack -> undo is a no-op");
             assert_eq!(run_spans(&st), vec![(0, 3)], "the format stands; nothing was journalled");
+        });
+    }
+
+    #[test]
+    fn r930_1_format_undo_survives_an_interleaved_text_edit() {
+        // R930.1 — the StyleRunCommand splice indexes the runs vector by an
+        // absolute prefix; an interleaved TEXT edit shifts the runs between a
+        // format and its undo. Prove the round-trip stays byte-exact (the
+        // splice never indexes a stale position) — the SUSPECT a session review
+        // flagged, turned into a guard.
+        Owner::new().run(|| {
+            let st = styled("hello world", vec![red(0, 5)]); // "hello" is red
+            st.set_caret(0);
+            // (1) text edit shifts the run right by the insert.
+            st.insert("XY");
+            assert_eq!(st.style_runs(), vec![red(2, 7)], "the run shifted right by the insert");
+            // (2) a format edit over the *shifted* text.
+            st.apply_style_run(0, 2, TextStyle::new().with_fg(Color::rgb(BLUE.0, BLUE.1, BLUE.2)));
+            assert_eq!(run_spans(&st), vec![(0, 2), (2, 7)], "blue prefix + shifted red");
+            // (3) undo the format: blue gone, the shifted red intact, text untouched.
+            assert!(st.undo());
+            assert_eq!(st.style_runs(), vec![red(2, 7)], "format undone against the shifted runs");
+            assert_eq!(st.text(), "XYhello world", "the text edit still stands (separate step)");
+            // (4) undo the text edit: text + runs back to the seed exactly.
+            assert!(st.undo());
+            assert_eq!(st.text(), "hello world");
+            assert_eq!(st.style_runs(), vec![red(0, 5)], "runs restored to the seed");
+            // (5) redo both, in order.
+            assert!(st.redo());
+            assert!(st.redo());
+            assert_eq!(run_spans(&st), vec![(0, 2), (2, 7)], "both edits re-applied");
         });
     }
 

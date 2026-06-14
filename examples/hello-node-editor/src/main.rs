@@ -58,10 +58,15 @@
 //! "grab a wired input and drop it elsewhere" graph edit, as one atomic
 //! [`UndoStack`] step (remove old + add new in a single `Ctrl+Z`), validated
 //! through the same [`NodeGraphExternal::validate_connection`] SSOT as
-//! `add_edge` (self-loop / typed-port / single-wire-into-input). The live
-//! drag-to-reconnect *gesture* is the GUI peer of this verb and is a deferred
-//! additive follow-up — the §2 AI-first path (the verb) is the primary
-//! interface and is complete here.
+//! `add_edge` (self-loop / typed-port / single-wire-into-input). Only the §2
+//! AI-first **verb** (the automation / introspection path) ships this round.
+//! The live drag-to-reconnect **gesture** — the human-editor half, which this
+//! widget pairs with the verb for every other edit (node move + edge connect
+//! are each "a live drag *and* the AI path are one source of truth", above) —
+//! is **deferred, not done**: it is a small extension of the existing R742
+//! drag substrate (an input-port `PendingPress` branch reusing `begin_drag` /
+//! `drag_release`), and reconnect is the first graph edit to ship verb-first
+//! without its gesture. Honest gap, not a completed feature.
 //!
 //! ## Keyboard (single Tab stop, the graph)
 //!
@@ -2154,24 +2159,44 @@ impl NodeGraphExternal {
         )
     }
 
+    /// R930.1 — mint a fresh edge `(from -> to)` and record it as one
+    /// [`GraphEdit`] that removes `removed` and adds the new wire, pruning an
+    /// edge selection the removal strands. The shared commit tail of
+    /// [`add_edge`](Self::add_edge) and [`reconnect_edge`](Self::reconnect_edge):
+    /// both must build the identical `GraphDelta` shape + `sel_after` prune (a
+    /// divergence would split undo / selection between the two paths), so it is
+    /// one SSOT. Each caller's `validate_connection` gate and its `removed` set
+    /// are the only differences (R929 factored the validation but left this
+    /// commit tail duplicated — the missing half of that lift).
+    fn commit_new_edge(
+        &self,
+        label: &'static str,
+        from_node: NodeId,
+        from_port: usize,
+        to_node: NodeId,
+        to_port: usize,
+        removed: Vec<Edge>,
+    ) {
+        let id = EdgeId(self.next_edge_id.get());
+        self.next_edge_id.set(id.raw() + 1);
+        let new_edge = Edge { id, from_node, from_port, to_node, to_port };
+        let sel_before = self.selection.get();
+        let removed_ids: Vec<EdgeId> = removed.iter().map(|e| e.id).collect();
+        let sel_after = validate_after(sel_before.clone(), &[], &removed_ids);
+        self.record_edit(
+            label,
+            GraphDelta { added_edges: vec![new_edge], removed_edges: removed, ..GraphDelta::default() },
+            sel_before,
+            sel_after,
+        );
+    }
+
     fn add_edge(&self, from_node: NodeId, from_port: usize, to_node: NodeId, to_port: usize) -> bool {
         let Some(replaced) = self.validate_connection(from_node, from_port, to_node, to_port, None)
         else {
             return false;
         };
-        let id = EdgeId(self.next_edge_id.get());
-        self.next_edge_id.set(id.raw() + 1);
-        let new_edge = Edge { id, from_node, from_port, to_node, to_port };
-        let sel_before = self.selection.get();
-        // Displacing a wire may strand a selected edge — prune it post-edit.
-        let removed_ids: Vec<EdgeId> = replaced.iter().map(|e| e.id).collect();
-        let sel_after = validate_after(sel_before.clone(), &[], &removed_ids);
-        self.record_edit(
-            "Connect",
-            GraphDelta { added_edges: vec![new_edge], removed_edges: replaced, ..GraphDelta::default() },
-            sel_before,
-            sel_after,
-        );
+        self.commit_new_edge("Connect", from_node, from_port, to_node, to_port, replaced);
         true
     }
 
@@ -2202,25 +2227,15 @@ impl NodeGraphExternal {
         ) else {
             return false;
         };
-        let id = EdgeId(self.next_edge_id.get());
-        self.next_edge_id.set(id.raw() + 1);
-        let new_edge = Edge {
-            id,
-            from_node: old.from_node,
-            from_port: old.from_port,
-            to_node: new_to_node,
-            to_port: new_to_port,
-        };
         let mut removed = vec![old];
         removed.extend(replaced);
-        let sel_before = self.selection.get();
-        let removed_ids: Vec<EdgeId> = removed.iter().map(|e| e.id).collect();
-        let sel_after = validate_after(sel_before.clone(), &[], &removed_ids);
-        self.record_edit(
+        self.commit_new_edge(
             "Reconnect",
-            GraphDelta { added_edges: vec![new_edge], removed_edges: removed, ..GraphDelta::default() },
-            sel_before,
-            sel_after,
+            old.from_node,
+            old.from_port,
+            new_to_node,
+            new_to_port,
+            removed,
         );
         true
     }

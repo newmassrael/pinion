@@ -33,7 +33,11 @@
 //!   `invoke "add_row"` / `"remove_row"` grow / shrink the table at runtime
 //!   and the very next paint re-derives the sort / filter / group order over
 //!   the longer-or-shorter model (the model is the one SSOT — no separate
-//!   row-count to keep in sync; a grid keeps >= 1 row). Exposes the whole grid
+//!   row-count to keep in sync; a grid keeps >= 1 row). **Not undoable yet** —
+//!   this grid has no undo stack (cell edits are direct too), so `remove_row`
+//!   is a genuine destructive gap, unlike the node-graph's journaled
+//!   add/remove; grid-wide undo is a separate axis, deliberately deferred.
+//!   Exposes the whole grid
 //!   for AI-first introspection: `query value.<r>.<c>` / `col_name.<c>` / `col_kind.<c>` /
 //!   `focused_row` / `focused_col` / `editing_row` / `editing_col`,
 //!   `intervene value.<r>.<c>` (the deterministic typed-set path), `invoke
@@ -397,11 +401,15 @@ fn current_order(
 /// ([[constraint-change-grep-all-layers]]). `NROWS` survives only as the boot
 /// seed length (`default_cells`).
 fn nrows(model: &[CellValue]) -> usize {
+    // R930.1 — fail loud on a corrupt model rather than let the integer
+    // division silently truncate a partial row (add/remove always move whole
+    // NCOLS-wide rows, so a non-multiple length is a bug, not a valid state).
+    debug_assert!(model.len() % NCOLS == 0, "the cell model is a whole number of rows");
     model.len() / NCOLS
 }
 
 /// R930 — a fresh row's default cells, one per column keyed by [`COL_KINDS`]
-/// (the typed empty value the "add row" affordance appends). The typed peer of
+/// (the typed empty value `add_row` appends). The typed peer of
 /// [`default_cells`]'s seed, so an added row edits exactly like a seeded one.
 fn default_row() -> Vec<CellValue> {
     COL_KINDS
@@ -868,7 +876,14 @@ impl DataGridExternal {
             next.extend(default_row());
             next
         });
-        self.focused_row.set(new_row);
+        // R930.1 — move the cursor onto the new row ONLY if the active
+        // sort/filter/group shows it; otherwise leave the (still-visible)
+        // cursor where it was — never strand it on a hidden row, the re-anchor
+        // invariant every other mutator upholds. An append never hides an
+        // existing row, so the prior cursor stays visible.
+        if self.cur_visible().contains(&new_row) {
+            self.focused_row.set(new_row);
+        }
         new_row
     }
 
@@ -882,14 +897,23 @@ impl DataGridExternal {
         if row >= self.nrows() || self.nrows() <= 1 {
             return false;
         }
+        // R930.1 — a structural row change invalidates the source-keyed
+        // `(row, col)` edit latch (the removed row is gone; rows above it
+        // shift down), so cancel any in-flight edit — otherwise a later
+        // `commit_edit` would write a stale, now-out-of-range index.
+        self.editing_cell.set(None);
+        // R930.1 — capture the cursor's visible slot BEFORE the drain, then
+        // re-anchor after, exactly like every other mutator (set_cell /
+        // set_filter / …). A bare clamp left the cursor on a filtered-out row
+        // (dead arrow-nav); `reanchor` keeps it on the visible row now at its
+        // prior screen slot.
+        let prior_vis = self.cursor_prior_vis();
         self.model.set_with(|prev| {
             let mut next = prev.clone();
             next.drain(idx(row, 0)..idx(row, 0) + NCOLS);
             next
         });
-        // Clamp the cursor into the shrunk source range (a removal shrinks the
-        // row space; the next paint re-derives the visible order over it).
-        self.set_focused_row_clamped(self.focused_row.get());
+        self.reanchor(prior_vis);
         true
     }
 
@@ -1516,8 +1540,9 @@ impl ExternalIntrospect for DataGridExternal {
                 self.set_all_collapsed(false);
                 Ok(IntrospectValue::Null)
             }
-            // R930 — append a default row; returns its new source index (the
-            // AI-first "add row" the GUI "+" affordance shares).
+            // R930 — append a default row; returns its new source index. The
+            // AI-first `add_row` verb (a GUI "+" button would funnel here when
+            // one is added — there is no "+" affordance in the scene today).
             "add_row" => Ok(IntrospectValue::Int(int_of(self.add_row()))),
             // R930 — drop source row `i` (Int); `false` out-of-range or when it
             // is the last remaining row (a grid keeps >= 1 row).
@@ -1562,7 +1587,12 @@ fn commit_edit(restore_focus: bool) {
     // re-anchors the cursor to the row that takes its screen position (the
     // cursor IS the edited row — editing never moves the grid cursor).
     let prior_vis = cursor_visual_pos(&visible(), cursor.get());
-    if col < NCOLS {
+    // R930.1 — guard the row too (not just col): a row removed while this edit
+    // was in flight shrinks the model, so a stale latched `row` would index
+    // past the end. `remove_row` cancels the latch, so this is belt-and-
+    // suspenders — but it mirrors `set_cell`'s `row >= nrows` guard so the two
+    // write paths never diverge.
+    if col < NCOLS && row < nrows(&model.get()) {
         if let Some(parsed) = COL_KINDS[col].parse(&text) {
             // R894 — clamp the committed value to the column's range (the
             // bounded-spinbox contract; an out-of-range edit lands on the bound).
@@ -3359,6 +3389,61 @@ mod tests {
             assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(5)), "all 5 rows visible");
             assert_eq!(intro.query("source_at.0"), Some(IntrospectValue::Int(4)),
                 "the added row sorts to the front (smallest Count)");
+        });
+    }
+
+    // R930.1 — session-review fixes: a structural row change must not leave a
+    // stale edit latch (panic on commit) or strand the cursor on a hidden row.
+
+    #[test]
+    fn r930_1_remove_row_cancels_an_in_flight_edit() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            intro.intervene("focused_row", IntrospectValue::Int(3)).expect("focus the last row");
+            assert!(intro.invoke("begin", IntrospectValue::Null).is_ok(), "begin editing the focused cell");
+            assert_eq!(intro.query("editing_row"), Some(IntrospectValue::Int(3)), "row 3 is editing");
+            // Removing a row invalidates the source-keyed (3, col) latch; it must
+            // be canceled, else a later commit writes next[idx(3, col)] past the
+            // shrunk model (the R930.1 reachable panic).
+            assert_eq!(
+                intro.invoke("remove_row", IntrospectValue::Int(0)),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(
+                intro.query("editing_row"),
+                Some(IntrospectValue::Null),
+                "remove canceled the in-flight edit (no stale latch to panic on)",
+            );
+        });
+    }
+
+    #[test]
+    fn r930_1_remove_row_reanchors_the_cursor_to_a_visible_row() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Filter Count(col 2)==99 → only Coin (source row 2) is visible.
+            assert_eq!(
+                intro.invoke("set_filter", IntrospectValue::Text("2=99".to_owned())),
+                Ok(IntrospectValue::Int(1)),
+                "one row passes the Count==99 filter",
+            );
+            intro.intervene("focused_row", IntrospectValue::Int(2)).expect("cursor on the visible Coin");
+            // Remove the HIDDEN source row 0 (Hero): Coin shifts to source 1, still
+            // Count 99 (visible). A bare clamp would strand the cursor on source 2
+            // (Boss, Count 1, filtered out); the re-anchor keeps it on Coin.
+            assert_eq!(
+                intro.invoke("remove_row", IntrospectValue::Int(0)),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(
+                intro.query("focused_row"),
+                Some(IntrospectValue::Int(1)),
+                "cursor re-anchored onto the still-visible Coin, not stranded on a filtered-out row",
+            );
         });
     }
 }
