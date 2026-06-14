@@ -1019,9 +1019,37 @@ impl<V: WidgetView> ShellCore<V> {
     /// read — never on the paint path ([[r890]] read-time projection).
     #[must_use]
     pub fn frame_timings_for_window(&self, window_id: &str) -> Option<FrameTimingsSnapshot> {
+        let budget_us = self.jank_budget_us_for_window(window_id);
         self.frame_timings_per_window
             .get(window_id)
-            .and_then(FrameTimingStats::snapshot)
+            .and_then(|stats| stats.snapshot(budget_us))
+    }
+
+    /// R925 §5.16 §5.7 — the per-frame budget (µs) the window's frame
+    /// timings are judged against for jank classification, or `None`
+    /// for an unpaced window (no declared frame target → no deadline →
+    /// jank undefined).
+    ///
+    /// The budget *is* the window's pacing budget: a `target_fps`
+    /// override opts even a retained-tree window into polled `1/fps`
+    /// pacing ([`frame_budget_for_window`](pinion_runtime::frame_pacing::frame_budget_for_window),
+    /// R681), so the jank profiler reports frames against the very
+    /// deadline the render loop schedules to — not an independent
+    /// number that could drift from it. `has_immediate_mode_subtree`
+    /// is passed `false` because every window that paints today is
+    /// retained-tree (`ImmediateModeNode` is Phase C); an
+    /// immediate-mode window's implicit-60fps default budget is a
+    /// Phase-C integration that lands with the immediate-mode loop.
+    ///
+    /// A sub-microsecond budget (an absurdly high `target_fps` whose
+    /// `1/fps` truncates below 1µs) maps to `None` rather than
+    /// `Some(0)`: a zero budget would vacuously mark every non-instant
+    /// frame janky.
+    fn jank_budget_us_for_window(&self, window_id: &str) -> Option<u64> {
+        let override_fps = self.target_fps_for_window(window_id);
+        pinion_runtime::frame_pacing::frame_budget_for_window(false, override_fps)
+            .map(|d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
+            .filter(|&us| us > 0)
     }
 
     /// R682 §5.16 atomic 3 — iterator over every window key that has

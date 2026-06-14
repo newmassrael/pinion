@@ -189,12 +189,26 @@ impl FrameTimingStats {
     /// `FrameTimingsUnavailable` at the RPC layer (distinct from an
     /// all-zero snapshot the way `scene/cache_stats` distinguishes
     /// "no data yet" from "all zeros").
+    ///
+    /// `budget_us` is the per-frame budget the window's `total_us` is
+    /// judged against — supplied by the embedder at the AI-paced RPC
+    /// read (the R890 "store the source, project on read" rule: the
+    /// accumulator stays budget-agnostic; the budget is a read-time
+    /// input, so changing the window's target frame rate needs no
+    /// re-recording). `None` leaves every budget-relative field neutral
+    /// (`0`); `Some(b)` classifies each sample as over/under `b` in the
+    /// same single fold that computes min/mean/max. A `Some(0)` budget
+    /// is taken literally (every non-instant frame is over a zero
+    /// budget) — the embedder maps sub-microsecond budgets to `None`
+    /// rather than `Some(0)` so the vacuous case never reaches here.
     #[must_use]
-    pub fn snapshot(&self) -> Option<FrameTimingsSnapshot> {
+    pub fn snapshot(&self, budget_us: Option<u64>) -> Option<FrameTimingsSnapshot> {
         let last = *self.samples.back()?;
         let len = self.samples.len() as u64; // >= 1 past the `?`
         let (mut min_total, mut max_total) = (u64::MAX, 0u64);
         let (mut sum_total, mut sum_build, mut sum_encode, mut sum_render) = (0u64, 0u64, 0u64, 0u64);
+        let mut over_budget_frames: u32 = 0;
+        let mut worst_overrun_us: u64 = 0;
         for s in &self.samples {
             min_total = min_total.min(s.total_us);
             max_total = max_total.max(s.total_us);
@@ -202,8 +216,19 @@ impl FrameTimingStats {
             sum_build = sum_build.saturating_add(s.build_us);
             sum_encode = sum_encode.saturating_add(s.encode_us);
             sum_render = sum_render.saturating_add(s.render_us);
+            if let Some(budget) = budget_us {
+                if s.total_us > budget {
+                    over_budget_frames = over_budget_frames.saturating_add(1);
+                    worst_overrun_us = worst_overrun_us.max(s.total_us - budget);
+                }
+            }
         }
         let mean_total = sum_total / len;
+        let jank_ratio = if budget_us.is_some() {
+            jank_ratio_of(over_budget_frames, len)
+        } else {
+            0.0
+        };
         Some(FrameTimingsSnapshot {
             frame_count: self.frame_count,
             window_len: u32::try_from(self.samples.len()).unwrap_or(u32::MAX),
@@ -215,7 +240,25 @@ impl FrameTimingStats {
             mean_encode_us: sum_encode / len,
             mean_render_us: sum_render / len,
             mean_fps: fps_from_mean_total_us(mean_total),
+            budget_us,
+            over_budget_frames,
+            worst_overrun_us,
+            jank_ratio,
         })
+    }
+}
+
+/// `over_budget_frames / window_len` as an `f32` fraction in
+/// `[0.0, 1.0]`. `window_len >= 1` at every call site (past the
+/// `samples.back()?` guard), so the ratio never divides by zero.
+#[must_use]
+fn jank_ratio_of(over_budget_frames: u32, window_len: u64) -> f32 {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "telemetry ratio; no numeric pipeline consumes the f32"
+    )]
+    {
+        over_budget_frames as f32 / window_len as f32
     }
 }
 
@@ -267,6 +310,28 @@ pub struct FrameTimingsSnapshot {
     pub mean_render_us: u64,
     /// `1e6 / mean_total_us`, `0.0` for a zero mean.
     pub mean_fps: f32,
+    /// Per-frame budget the window's `total_us` is judged against, in
+    /// microseconds. `None` for an unpaced window (no declared frame
+    /// target — an idle retained window has no deadline, so "missed
+    /// budget" is meaningless); `Some(1e6 / target_fps)` once a target
+    /// is declared. The budget-relative fields below are all neutral
+    /// (`0`) when this is `None`.
+    pub budget_us: Option<u64>,
+    /// Window samples whose `total_us` exceeded [`Self::budget_us`] —
+    /// the "dropped frame" / jank count a pro-tool HUD reports (Unreal
+    /// `stat unit` hitches, Chrome janky frames). `0` when no budget is
+    /// set. Window-scoped, like the min/mean/max (not the cumulative
+    /// [`Self::frame_count`]).
+    pub over_budget_frames: u32,
+    /// Largest single-frame overrun in the window — `max` over samples
+    /// of `total_us.saturating_sub(budget_us)`. The worst hitch's
+    /// magnitude, in microseconds. `0` when no budget is set or every
+    /// frame stayed within budget.
+    pub worst_overrun_us: u64,
+    /// `over_budget_frames / window_len` — the fraction of the window
+    /// that missed budget, in `[0.0, 1.0]`. `0.0` when no budget is
+    /// set. Echoed so a client need not re-derive the ratio.
+    pub jank_ratio: f32,
 }
 
 #[cfg(test)]
@@ -279,14 +344,14 @@ mod tests {
         assert!(stats.is_empty());
         assert_eq!(stats.frame_count(), 0);
         assert_eq!(stats.window_len(), 0);
-        assert!(stats.snapshot().is_none());
+        assert!(stats.snapshot(None).is_none());
     }
 
     #[test]
     fn r907_single_frame_aggregates_to_itself() {
         let mut stats = FrameTimingStats::new();
         stats.record(FrameTiming::new(300, 100, 80, 540));
-        let snap = stats.snapshot().expect("one sample yields a snapshot");
+        let snap = stats.snapshot(None).expect("one sample yields a snapshot");
         assert_eq!(snap.frame_count, 1);
         assert_eq!(snap.window_len, 1);
         assert_eq!(snap.last, FrameTiming::new(300, 100, 80, 540));
@@ -297,6 +362,11 @@ mod tests {
         assert_eq!(snap.mean_build_us, 300);
         assert_eq!(snap.mean_encode_us, 100);
         assert_eq!(snap.mean_render_us, 80);
+        // No budget supplied: every budget-relative field is neutral.
+        assert_eq!(snap.budget_us, None);
+        assert_eq!(snap.over_budget_frames, 0);
+        assert_eq!(snap.worst_overrun_us, 0);
+        assert!(snap.jank_ratio.abs() < f32::EPSILON);
     }
 
     #[test]
@@ -317,7 +387,7 @@ mod tests {
         stats.record(FrameTiming::new(200, 100, 50, 400));
         stats.record(FrameTiming::new(300, 150, 70, 600));
         stats.record(FrameTiming::new(500, 200, 120, 980));
-        let snap = stats.snapshot().unwrap();
+        let snap = stats.snapshot(None).unwrap();
         assert_eq!(snap.window_len, 3);
         assert_eq!(snap.frame_count, 3);
         assert_eq!(snap.min_total_us, 400);
@@ -347,7 +417,7 @@ mod tests {
         stats.record(FrameTiming::new(900, 50, 50, 2000));
         assert_eq!(stats.window_len(), FRAME_TIMING_WINDOW);
         assert_eq!(stats.frame_count(), FRAME_TIMING_WINDOW as u64 + 1);
-        let snap = stats.snapshot().unwrap();
+        let snap = stats.snapshot(None).unwrap();
         // The freshest frame is `last`; the max reflects it; the min is
         // still a retained cheap frame.
         assert_eq!(snap.last.total_us, 2000);
@@ -366,7 +436,7 @@ mod tests {
         for _ in 0..FRAME_TIMING_WINDOW {
             stats.record(FrameTiming::new(20, 20, 20, 300));
         }
-        let snap = stats.snapshot().unwrap();
+        let snap = stats.snapshot(None).unwrap();
         assert_eq!(snap.window_len, u32::try_from(FRAME_TIMING_WINDOW).unwrap());
         assert_eq!(snap.frame_count, 2 * FRAME_TIMING_WINDOW as u64);
         // Window is now uniformly the second value.
@@ -380,7 +450,7 @@ mod tests {
         let mut stats = FrameTimingStats::new();
         // mean_total = 16_666 µs -> ~60 fps.
         stats.record(FrameTiming::new(10_000, 4_000, 2_000, 16_666));
-        let snap = stats.snapshot().unwrap();
+        let snap = stats.snapshot(None).unwrap();
         let expected = 1_000_000.0_f32 / 16_666.0_f32;
         assert!(
             (snap.mean_fps - expected).abs() < 1e-3,
@@ -398,11 +468,109 @@ mod tests {
     fn r907_zero_total_yields_zero_fps_not_infinity() {
         let mut stats = FrameTimingStats::new();
         stats.record(FrameTiming::new(0, 0, 0, 0));
-        let snap = stats.snapshot().unwrap();
+        let snap = stats.snapshot(None).unwrap();
         assert_eq!(snap.mean_total_us, 0);
         assert!(
             snap.mean_fps.abs() < f32::EPSILON,
             "zero mean total must not divide to infinity",
         );
+    }
+
+    // ── R925 §5.16 §5.7 — frame-budget compliance / jank ─────────────
+
+    #[test]
+    fn r925_no_budget_leaves_jank_fields_neutral() {
+        // A window with no declared frame target: budget-relative
+        // fields stay neutral regardless of how the frames timed.
+        let mut stats = FrameTimingStats::new();
+        stats.record(FrameTiming::new(200, 100, 50, 9_999));
+        let snap = stats.snapshot(None).unwrap();
+        assert_eq!(snap.budget_us, None);
+        assert_eq!(snap.over_budget_frames, 0);
+        assert_eq!(snap.worst_overrun_us, 0);
+        assert!(snap.jank_ratio.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r925_budget_classifies_over_and_under() {
+        // budget 500µs; totals 400 / 600 / 980. Two of three exceed it.
+        let mut stats = FrameTimingStats::new();
+        stats.record(FrameTiming::new(200, 100, 50, 400));
+        stats.record(FrameTiming::new(300, 150, 70, 600));
+        stats.record(FrameTiming::new(500, 200, 120, 980));
+        let snap = stats.snapshot(Some(500)).unwrap();
+        assert_eq!(snap.budget_us, Some(500));
+        assert_eq!(snap.over_budget_frames, 2, "600 and 980 exceed 500");
+        // Worst overrun is the largest single excess: 980 - 500 = 480.
+        assert_eq!(snap.worst_overrun_us, 480);
+        // jank_ratio == over / window_len == 2/3.
+        assert!((snap.jank_ratio - 2.0 / 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn r925_all_within_budget_is_zero_jank() {
+        // Every frame under a generous budget: zero jank, zero overrun,
+        // but the budget itself is still reported (distinct from "no
+        // budget" — a client can tell "on budget" from "untracked").
+        let mut stats = FrameTimingStats::new();
+        stats.record(FrameTiming::new(200, 100, 50, 400));
+        stats.record(FrameTiming::new(300, 150, 70, 600));
+        let snap = stats.snapshot(Some(1_000_000)).unwrap();
+        assert_eq!(snap.budget_us, Some(1_000_000));
+        assert_eq!(snap.over_budget_frames, 0);
+        assert_eq!(snap.worst_overrun_us, 0);
+        assert!(snap.jank_ratio.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r925_frame_exactly_at_budget_is_not_over() {
+        // The boundary is strict-greater: a frame whose total equals the
+        // budget met it (a 60fps target is hit by a 16_666µs frame, not
+        // missed). Only total > budget counts as a dropped frame.
+        let mut stats = FrameTimingStats::new();
+        stats.record(FrameTiming::new(8_000, 4_000, 2_000, 16_666));
+        let snap = stats.snapshot(Some(16_666)).unwrap();
+        assert_eq!(snap.over_budget_frames, 0, "== budget is on-budget");
+        assert_eq!(snap.worst_overrun_us, 0);
+        // One µs over the budget flips it to a dropped frame.
+        let snap_over = stats.snapshot(Some(16_665)).unwrap();
+        assert_eq!(snap_over.over_budget_frames, 1);
+        assert_eq!(snap_over.worst_overrun_us, 1);
+    }
+
+    #[test]
+    fn r925_all_frames_over_budget_saturate_to_full_jank() {
+        // A budget tighter than every frame: jank_ratio == 1.0.
+        let mut stats = FrameTimingStats::new();
+        for _ in 0..4 {
+            stats.record(FrameTiming::new(100, 50, 30, 300));
+        }
+        let snap = stats.snapshot(Some(100)).unwrap();
+        assert_eq!(snap.over_budget_frames, 4);
+        assert_eq!(snap.window_len, 4);
+        assert_eq!(snap.worst_overrun_us, 200, "300 - 100");
+        assert!((snap.jank_ratio - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r925_jank_is_window_scoped_not_cumulative() {
+        // over_budget_frames counts the rolling window, not all time —
+        // an evicted over-budget frame stops contributing, exactly like
+        // min/mean/max. Fill the window with over-budget frames, then
+        // overflow it with under-budget ones: the count drains to 0
+        // while frame_count keeps climbing.
+        let mut stats = FrameTimingStats::new();
+        for _ in 0..FRAME_TIMING_WINDOW {
+            stats.record(FrameTiming::new(10, 10, 10, 900));
+        }
+        let busy = stats.snapshot(Some(500)).unwrap();
+        assert_eq!(busy.over_budget_frames, u32::try_from(FRAME_TIMING_WINDOW).unwrap());
+        for _ in 0..FRAME_TIMING_WINDOW {
+            stats.record(FrameTiming::new(10, 10, 10, 100));
+        }
+        let calm = stats.snapshot(Some(500)).unwrap();
+        assert_eq!(calm.over_budget_frames, 0, "over-budget frames evicted");
+        assert_eq!(calm.worst_overrun_us, 0);
+        assert_eq!(calm.frame_count, 2 * FRAME_TIMING_WINDOW as u64);
     }
 }

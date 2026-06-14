@@ -3475,6 +3475,68 @@ mod r907_frame_timing_substrate {
         assert!(core.remove_window("inspector"));
         assert!(core.frame_timings_for_window("inspector").is_none());
     }
+
+    // ── R925 §5.16 §5.7 — embedder derives the jank budget from the
+    // window's target_fps and feeds it into the projection. ───────────
+
+    #[test]
+    fn r925_no_target_fps_yields_no_budget() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.record_frame_timing("main", FrameTiming::new(300, 100, 80, 540));
+        let snap = core.frame_timings_for_window("main").unwrap();
+        // No declared frame target → unpaced window → no jank concept.
+        assert_eq!(snap.budget_us, None);
+        assert_eq!(snap.over_budget_frames, 0);
+        assert!(snap.jank_ratio.abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn r925_target_fps_budget_classifies_recorded_frames() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        // 60fps budget = ⌊1e6 / 60⌋ = 16_666µs. One frame under it, one
+        // well over it: the over-budget frame is the dropped frame.
+        core.set_target_fps_for_window("main", 60);
+        core.record_frame_timing("main", FrameTiming::new(8_000, 4_000, 2_000, 14_000));
+        core.record_frame_timing("main", FrameTiming::new(12_000, 5_000, 3_000, 20_000));
+        let snap = core.frame_timings_for_window("main").unwrap();
+        assert_eq!(snap.budget_us, Some(16_666), "⌊1e6/60⌋ µs budget");
+        assert_eq!(snap.over_budget_frames, 1, "only the 20_000µs frame is over");
+        assert_eq!(snap.worst_overrun_us, 20_000 - 16_666);
+        assert!((snap.jank_ratio - 0.5).abs() < 1e-6, "1 of 2 frames janked");
+    }
+
+    #[test]
+    fn r925_budget_is_the_pacing_budget_higher_fps_is_tighter() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.record_frame_timing("main", FrameTiming::new(5_000, 3_000, 1_000, 12_000));
+        // The reported budget IS 1/fps — the very deadline the render
+        // loop paces to. A higher target gives a tighter budget, so a
+        // frame that met the 60fps budget can miss the 120fps one.
+        core.set_target_fps_for_window("main", 60);
+        let at_60 = core.frame_timings_for_window("main").unwrap();
+        assert_eq!(at_60.budget_us, Some(16_666));
+        assert_eq!(at_60.over_budget_frames, 0, "12_000µs is within 16_666µs");
+        core.set_target_fps_for_window("main", 120);
+        let at_120 = core.frame_timings_for_window("main").unwrap();
+        assert_eq!(at_120.budget_us, Some(8_333), "⌊1e6/120⌋");
+        assert_eq!(at_120.over_budget_frames, 1, "12_000µs misses the 8_333µs budget");
+    }
+
+    #[test]
+    fn r925_paused_window_fps_zero_has_no_budget() {
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.record_frame_timing("main", FrameTiming::new(300, 100, 80, 9_999));
+        // fps = 0 is the paused sentinel: no deadline, hence no budget —
+        // jank is undefined while the window is frame-stepped.
+        core.set_target_fps_for_window("main", 0);
+        let snap = core.frame_timings_for_window("main").unwrap();
+        assert_eq!(snap.budget_us, None);
+        assert_eq!(snap.over_budget_frames, 0);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────

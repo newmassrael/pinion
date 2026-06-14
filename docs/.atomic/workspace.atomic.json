@@ -40079,6 +40079,66 @@
         "DEFER scene/scroll HandlerKind=Read vs set_scroll_offset=Mutate: pre-existing OCC-revision classification inconsistency, orthogonal to the pump fix, not introduced by R924"
       ]
     },
+    "R925": {
+      "decision_summary": "R925 wires the existing per-window frame budget (frame_pacing, R681) into the frame-timing profiler: scene/frame_timings now classifies window frames over/under the declared scene/set_fps target, reporting budget_us + over_budget_frames + worst_overrun_us + jank_ratio. The dropped-frame/jank signal a measure-first frame-budget tuning round reads before optimizing. Budget is a read-time projection input (the ring stays budget-agnostic); the reported budget IS the render loop pacing deadline for every retained window.",
+      "changes_bullets": [
+        "FrameTimingsSnapshot gains budget_us(Option) + over_budget_frames + worst_overrun_us + jank_ratio",
+        "snapshot(budget_us) classifies each window sample over/under budget in the existing single fold",
+        "scene/frame_timings projects the four fields; budget_us omitted(null) on an unpaced window",
+        "embedder derives budget via frame_budget_for_window(false, target_fps) = R681 pacing-budget SSOT",
+        "jank = frames missing the declared scene/set_fps target; no-target window reports no budget",
+        "ring stays budget-agnostic; budget is a read-time projection input(R890 project-on-read)",
+        "reuses hello-frame-profiler; new tools/demos/r925_frame_budget.py(>=30 assertions)"
+      ],
+      "verification_bullets": [
+        "pinion-runtime: 6 unit tests (classify over/under, strict-greater boundary, full-jank, evicts)",
+        "pinion-rpc: 4 wire tests (omit budget_us unpaced, project field-for-field, serialize, re-derive)",
+        "pinion-shell: 4 integration tests (no-target, classify, budget==pacing 60->120, paused fps=0)",
+        "cargo test --workspace -j2 = 6542 passed/0 failed; clippy --all-targets -D pedantic clean",
+        "r925_frame_budget.py PASS(1.84s): unpaced->none, 1fps->zero-jank, 120fps invariants, clear, reject",
+        "worst_overrun_us tied to reported window max_total_us = deterministic invariant on wall-clock data"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.7"
+      ],
+      "carry_forward_bullets": [
+        "Phase-C: jank budget passes has_immediate=false (every painting window retained today); an",
+        "immediate-mode window's implicit-60fps default budget lands with the immediate-mode loop",
+        "measure-first follow-on: optimizing a hot-path needs a reproducible large-scene jank case +",
+        "this measurement landed first; a speculative optimization now defers (honest, not scope-avoidance)",
+        "pre-existing 2-site hit_rate duplication (paint_cache_stats + paint_adapter) noted, out of scope"
+      ],
+      "publishable_decision_summary": "R925 wires the existing per-window frame budget (frame_pacing, R681) into the frame-timing profiler: scene/frame_timings now classifies window frames over/under the declared scene/set_fps target, reporting budget_us + over_budget_frames + worst_overrun_us + jank_ratio. The dropped-frame/jank signal a measure-first frame-budget tuning round reads before optimizing. Budget is a read-time projection input (the ring stays budget-agnostic); the reported budget IS the render loop pacing deadline for every retained window.",
+      "publishable_changes_bullets": [
+        "FrameTimingsSnapshot gains budget_us(Option) + over_budget_frames + worst_overrun_us + jank_ratio",
+        "snapshot(budget_us) classifies each window sample over/under budget in the existing single fold",
+        "scene/frame_timings projects the four fields; budget_us omitted(null) on an unpaced window",
+        "embedder derives budget via frame_budget_for_window(false, target_fps) = R681 pacing-budget SSOT",
+        "jank = frames missing the declared scene/set_fps target; no-target window reports no budget",
+        "ring stays budget-agnostic; budget is a read-time projection input(R890 project-on-read)",
+        "reuses hello-frame-profiler; new tools/demos/r925_frame_budget.py(>=30 assertions)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-runtime: 6 unit tests (classify over/under, strict-greater boundary, full-jank, evicts)",
+        "pinion-rpc: 4 wire tests (omit budget_us unpaced, project field-for-field, serialize, re-derive)",
+        "pinion-shell: 4 integration tests (no-target, classify, budget==pacing 60->120, paused fps=0)",
+        "cargo test --workspace -j2 = 6542 passed/0 failed; clippy --all-targets -D pedantic clean",
+        "r925_frame_budget.py PASS(1.84s): unpaced->none, 1fps->zero-jank, 120fps invariants, clear, reject",
+        "worst_overrun_us tied to reported window max_total_us = deterministic invariant on wall-clock data"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.7"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Phase-C: jank budget passes has_immediate=false (every painting window retained today); an",
+        "immediate-mode window's implicit-60fps default budget lands with the immediate-mode loop",
+        "measure-first follow-on: optimizing a hot-path needs a reproducible large-scene jank case +",
+        "this measurement landed first; a speculative optimization now defers (honest, not scope-avoidance)",
+        "pre-existing 2-site hit_rate duplication (paint_cache_stats + paint_adapter) noted, out of scope"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
