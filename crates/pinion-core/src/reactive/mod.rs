@@ -9,6 +9,7 @@ pub mod effect;
 pub mod introspect;
 pub mod owner;
 pub mod resource;
+pub mod resource_cache;
 pub mod signal;
 pub mod simulation;
 
@@ -20,5 +21,6 @@ pub use resource::{
     use_local_task_pump, DeferredReady, FetchToken, LocalSpawner, LocalTaskPump, Resource,
     ResourceState,
 };
+pub use resource_cache::ResourceCache;
 pub use signal::Signal;
 pub use simulation::{is_simulating, SimulationGuard};

@@ -1,0 +1,31 @@
+[package]
+name = "hello-asset-browser"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R927 §5.22 §5.23 §5.27 async source-side sort/filter over a virtualized 10,000-row out-of-memory source: sort and filter are query parameters pushed down to the source (not client-side proxies over a materialized Vec), so changing them re-queries the source — a count Resource (keyed by filter) sizes the virtual list, and a per-(sort,filter,page) ResourceCache lazy-fetches only the visible pages. The Model/View-at-scale backbone the self-hosted editor's Content Browser needs when the data never fits in memory."
+publish = false
+
+[[bin]]
+name = "hello-asset-browser"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R744 §5.27 — `view_virtual_list` windowed-list assembly + the
+# `view_vertical_scrollbar` peer; R923 button paint for the sort/filter toolbar.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+# R927 — the page `Resource<Vec<AssetRow>, String>` and count `Resource<usize,
+# String>` payloads must be (de)serializable; `AssetRow` + `SortMode` derive serde.
+serde = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

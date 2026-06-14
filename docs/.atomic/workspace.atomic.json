@@ -40249,6 +40249,62 @@
         "R927 must escalate: DCC widget crate-lift (#1) or Model/View at scale (#2)"
       ]
     },
+    "R927": {
+      "decision_summary": "Lift ResourceCache keyed-async-carrier substrate (2nd consumer: lazy-list + asset-browser) and add async source-side sort/filter over a virtualized 10k out-of-memory source: sort/filter are query params pushed to the source, the filtered count is a queried Resource, and re-query resets scroll",
+      "changes_bullets": [
+        "Lift ResourceCache<K,V,E> to pinion-core: keyed map of async Resources with idempotent get-or-fetch + reactive state snapshot",
+        "Migrate hello-lazy-list page cache to ResourceCache (1st consumer); behaviour + 8 tests + demo unchanged",
+        "New hello-asset-browser: async source-side sort/filter over a virtualized 10k out-of-memory source",
+        "Sort and filter are query params pushed to the source (composite page key sort,filter,page), not client proxies over a materialized Vec",
+        "Filtered count is a queried Resource (keyed by filter) that sizes the virtual list; a re-query resets the scroll to the top",
+        "Two reactive Effects: count loader (filter dep) and page loader (sort/filter/scroll/count deps, gated on count Ready)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (162 ok results; pinion-core ResourceCache 9, hello-asset-browser 12, hello-lazy-list 8)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic",
+        "r927_asset_browser.py PASS 3.72s (>=30 assertions, ZERO-FLAKE wait_snap gates); r924_lazy_list.py PASS 2.39s after migration",
+        "3b self-grep: zero hand-rolled Resource caches remain in examples; the get-or-fetch dedup lives only in ResourceCache"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "ResourceCache is retention-only; LRU eviction of far keys for a truly unbounded source is a deliberate follow-up (continues the R924 page-cache carry)",
+        "The size sort materialises the matching set inside the fetch (the source's indexed work); the client never holds the whole set, only the page slice",
+        "The Effect-refetch installers across async-data/lazy-list/asset-browser are distinct-closure idiom, not a net-zero-wrapper lift (R924.1 confirmed)",
+        "AssetRow/KINDS/row_label stay example-local by the R924.1 decision (no examples/common crate); count vs page are two query kinds, not one cache",
+        "A unified Model trait remains premature (view_order.rs:63); ResourceCache is the async carrier cache, not a data-model layer"
+      ],
+      "publishable_decision_summary": "Lift ResourceCache keyed-async-carrier substrate (2nd consumer: lazy-list + asset-browser) and add async source-side sort/filter over a virtualized 10k out-of-memory source: sort/filter are query params pushed to the source, the filtered count is a queried Resource, and re-query resets scroll",
+      "publishable_changes_bullets": [
+        "Lift ResourceCache<K,V,E> to pinion-core: keyed map of async Resources with idempotent get-or-fetch + reactive state snapshot",
+        "Migrate hello-lazy-list page cache to ResourceCache (1st consumer); behaviour + 8 tests + demo unchanged",
+        "New hello-asset-browser: async source-side sort/filter over a virtualized 10k out-of-memory source",
+        "Sort and filter are query params pushed to the source (composite page key sort,filter,page), not client proxies over a materialized Vec",
+        "Filtered count is a queried Resource (keyed by filter) that sizes the virtual list; a re-query resets the scroll to the top",
+        "Two reactive Effects: count loader (filter dep) and page loader (sort/filter/scroll/count deps, gated on count Ready)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (162 ok results; pinion-core ResourceCache 9, hello-asset-browser 12, hello-lazy-list 8)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello clean under -D pedantic",
+        "r927_asset_browser.py PASS 3.72s (>=30 assertions, ZERO-FLAKE wait_snap gates); r924_lazy_list.py PASS 2.39s after migration",
+        "3b self-grep: zero hand-rolled Resource caches remain in examples; the get-or-fetch dedup lives only in ResourceCache"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "ResourceCache is retention-only; LRU eviction of far keys for a truly unbounded source is a deliberate follow-up (continues the R924 page-cache carry)",
+        "The size sort materialises the matching set inside the fetch (the source's indexed work); the client never holds the whole set, only the page slice",
+        "The Effect-refetch installers across async-data/lazy-list/asset-browser are distinct-closure idiom, not a net-zero-wrapper lift (R924.1 confirmed)",
+        "AssetRow/KINDS/row_label stay example-local by the R924.1 decision (no examples/common crate); count vs page are two query kinds, not one cache",
+        "A unified Model trait remains premature (view_order.rs:63); ResourceCache is the async carrier cache, not a data-model layer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

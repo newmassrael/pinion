@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R927 §5.22 §5.23 §5.27 async source-side sort/filter: pinion-forge renderer
+  manifest for hello-asset-browser. Emits `HelloAssetBrowserRenderer`
+  (Vello-backed). Same single-source-of-truth template as the other hello-*
+  renderers; only the struct name diverges — the scene structure lives entirely
+  in the binding's view fn.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloAssetBrowserRenderer"
+        backend="vello"/>

@@ -15,12 +15,14 @@
 //!
 //! ## Architecture (unidirectional, Effect-driven prefetch)
 //!
-//! - A per-page `Resource` cache (`HashMap<page, Rc<Resource<Vec<AssetRow>>>>`
-//!   in `Owner::cache`) — a page is materialised only when it first scrolls
-//!   into view (vs all `N` rows up front). Fetched pages are then **retained**
-//!   for the app lifetime: bounded here (100 pages), but a truly unbounded
-//!   source would add LRU eviction of far-away pages (a deliberate follow-up,
-//!   not wired this slice).
+//! - A per-page `Resource` cache — the [`ResourceCache`](pinion_core::ResourceCache)
+//!   keyed-async-carrier substrate (keyed by page index here; R927's asset
+//!   browser is the second consumer, keyed by the full sort/filter/page query)
+//!   in `Owner::cache`. A page is materialised only when it first scrolls into
+//!   view (vs all `N` rows up front). Fetched pages are then **retained** for
+//!   the app lifetime: bounded here (100 pages), but a truly unbounded source
+//!   would add LRU eviction of far-away pages (a deliberate follow-up, not
+//!   wired this slice).
 //! - An [`Effect`] subscribed to the **scroll offset** [`Signal`] computes the
 //!   visible page range (`compute_visible_range`) and kicks off a
 //!   [`Resource::fetch_with`] for every page not yet in the cache, through the
@@ -52,7 +54,7 @@
 
 use pinion_a11y::{windowed_list_nodes, AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
-use pinion_core::reactive::{DeferredReady, Effect, Owner, Resource, ResourceState};
+use pinion_core::reactive::{DeferredReady, Effect, Owner, ResourceCache, ResourceState};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
@@ -67,7 +69,6 @@ use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::virtual_list::view_virtual_list;
 use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -163,15 +164,16 @@ fn page_rows(page: usize) -> Vec<AssetRow> {
 // ─── per-page Resource cache + scroll-driven prefetch Effect ───────────────
 
 /// Per-page async carrier cache. Keyed by page index; only fetched pages are
-/// resident. A `RefCell<HashMap>` (not a `Signal`): the *structure* need not be
-/// reactive — each page's `Resource` carries its own reactive state, and the
-/// view subscribes to the visible ones.
-type PageCache = RefCell<HashMap<usize, Rc<Resource<Vec<AssetRow>, String>>>>;
+/// resident. The keyed-async-carrier substrate (`pinion_core::ResourceCache`,
+/// R927 2nd-consumer lift) owns the idempotent get-or-fetch + state snapshot;
+/// each page's `Resource` carries its own reactive state, and the view
+/// subscribes to the visible ones.
+type PageCache = ResourceCache<usize, Vec<AssetRow>, String>;
 
 fn page_cache() -> Rc<PageCache> {
     Owner::current()
         .expect("page_cache() requires an active Owner scope")
-        .cache(PAGE_CACHE_KEY, || RefCell::new(HashMap::new()))
+        .cache(PAGE_CACHE_KEY, PageCache::new)
 }
 
 /// The 0-based page span the window touches (inclusive).
@@ -187,12 +189,7 @@ fn visible_pages(window: &VisibleWindow) -> std::ops::RangeInclusive<usize> {
 fn ensure_pages_loaded(offset_y: i32, cache: &PageCache, pump: &LocalTaskPump) {
     let window = compute_visible_range(offset_y, VIEWPORT_H, N, ROW_PITCH, OVERSCAN);
     for page in visible_pages(&window) {
-        let missing = !cache.borrow().contains_key(&page);
-        if missing {
-            let res = Rc::new(Resource::loading());
-            cache.borrow_mut().insert(page, Rc::clone(&res));
-            res.fetch_with(pump, fetch_page(page));
-        }
+        cache.ensure(page, pump, || fetch_page(page));
     }
 }
 
@@ -231,14 +228,7 @@ fn install_loader() -> Rc<LoaderMarker> {
 type PageStates = HashMap<usize, ResourceState<Vec<AssetRow>, String>>;
 
 fn resolve_visible_pages(window: &VisibleWindow, cache: &PageCache) -> PageStates {
-    let mut out = PageStates::new();
-    let c = cache.borrow();
-    for page in visible_pages(window) {
-        if let Some(res) = c.get(&page) {
-            out.insert(page, res.state());
-        }
-    }
-    out
+    cache.snapshot(visible_pages(window))
 }
 
 /// The `role=status` band line — the SSOT for the visible-band text + the live
@@ -554,9 +544,9 @@ mod tests {
             boot();
             drain_pump();
             // Boot window touches page 0 only (rows 0..15) → exactly 1 resident.
-            assert_eq!(page_cache().borrow().len(), 1, "only the visible page fetched");
-            assert!(page_cache().borrow().contains_key(&0));
-            assert!(!page_cache().borrow().contains_key(&50), "far pages not fetched");
+            assert_eq!(page_cache().len(), 1, "only the visible page fetched");
+            assert!(page_cache().contains(&0));
+            assert!(!page_cache().contains(&50), "far pages not fetched");
         });
     }
 
@@ -575,7 +565,7 @@ mod tests {
             // the scroll offset) fetches the newly-visible page.
             scroll.scroll_to(0, 5000 * i32::try_from(ROW_PITCH).unwrap());
             // Mid-flight: the new page is Loading.
-            assert!(page_cache().borrow().contains_key(&50), "page 50 requested on scroll");
+            assert!(page_cache().contains(&50), "page 50 requested on scroll");
             let loading_scene = view((), &Frame::default());
             assert_eq!(row_text_of(&loading_scene, 5000).as_deref(), Some("Loading\u{2026}"));
             drain_pump();
@@ -596,12 +586,9 @@ mod tests {
         let owner = Owner::new();
         owner.run(|| {
             let cache = page_cache();
-            let res: Rc<Resource<Vec<AssetRow>, String>> = Rc::new(Resource::loading());
-            res.fetch_with(
-                &*use_local_task_pump(),
-                DeferredReady::new(0, Err::<Vec<AssetRow>, String>("boom".to_owned())),
-            );
-            cache.borrow_mut().insert(0, res);
+            cache.ensure(0, &*use_local_task_pump(), || {
+                DeferredReady::new(0, Err::<Vec<AssetRow>, String>("boom".to_owned()))
+            });
             drain_pump();
             let states = resolve_visible_pages(
                 &VisibleWindow { first: 0, count: 4 },
