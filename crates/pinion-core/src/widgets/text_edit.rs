@@ -5234,9 +5234,15 @@ mod tests {
             st.set_selection(0, 5);
             assert!(st.indent_selection(INDENT_UNIT));
             assert_eq!(st.text(), "    a\n    b\n    c");
+            assert_eq!(st.selection_range(), Some((0, 17)), "the block re-covers after indent");
             assert_eq!(stack.len(), 1, "three line inserts fold into one undo step");
             assert!(st.undo(), "one undo reverses the whole block indent");
             assert_eq!(st.text(), "a\nb\nc");
+            // R938.1 — undo restores the ORIGINAL selection: the first-applied
+            // child (bottom line) carries the pre-indent caret/anchor and
+            // undoes last (MacroCommand reverses children), so the macro's undo
+            // — not the post-macro set_selection — fixes the final state.
+            assert_eq!(st.selection_range(), Some((0, 5)), "undo restores the original selection");
             assert!(st.redo());
             assert_eq!(st.text(), "    a\n    b\n    c", "one redo re-applies it");
         });

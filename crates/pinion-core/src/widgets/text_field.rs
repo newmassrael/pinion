@@ -327,6 +327,28 @@ pub fn apply_key(
             state.insert(" ");
             true
         }
+        // R938 §5.22 — Tab / Shift+Tab indent / dedent for a multi-line code
+        // editor that opted in via `set_tab_indents`. Lives here in the keymap
+        // SSOT (a TextEditState-only key, like the arrows / Backspace / Ctrl+Z
+        // above), NOT in `dispatch_key` (which pre-empts only keys needing the
+        // External's clipboard). A field that did not opt in returns `false`,
+        // so the shell's focus-traversal default still advances focus (the
+        // `app.rs` Tab arm). The key is "handled" whenever the editor opted in
+        // — even when a dedent finds no leading whitespace (a no-op) — the W3C
+        // `defaultPrevented` discipline every arm here follows; the caller's
+        // handled-key bookkeeping (caret-blink reset, PRIMARY publish) then
+        // runs once via `dispatch_key`'s post-`apply_key` path.
+        "Tab" => {
+            if !state.tab_indents() {
+                return false;
+            }
+            if modifiers.shift_key() {
+                state.dedent_selection(crate::widgets::text_edit::INDENT_WIDTH);
+            } else {
+                state.indent_selection(crate::widgets::text_edit::INDENT_UNIT);
+            }
+            true
+        }
         other => {
             // R56.1.f.2 §5.22 — Ctrl+A / Cmd+A select-all. The W3C
             // `KeyboardEvent.key` value for the lowercase letter
@@ -1856,32 +1878,6 @@ impl TextFieldExternal {
                     _ => {}
                 }
             }
-        }
-        // R938 §5.22 — Tab / Shift+Tab indent / dedent for an opted-in
-        // multi-line code editor (`tab_indents`). A single-line field leaves
-        // the flag off → returns `false` so the shell's focus-traversal
-        // default (the `app.rs` Tab arm) still advances focus. The key is
-        // "handled" whenever the editor opted in, even when a dedent finds no
-        // leading whitespace to strip (a no-op) — the W3C `defaultPrevented`
-        // discipline the clipboard chords above also follow (Ctrl+C with no
-        // selection is still consumed).
-        if key_str == "Tab" {
-            let Some(state) = self.text_state() else {
-                return false;
-            };
-            if !state.tab_indents() {
-                return false;
-            }
-            if modifiers.shift_key() {
-                state.dedent_selection(crate::widgets::text_edit::INDENT_WIDTH);
-            } else {
-                state.indent_selection(crate::widgets::text_edit::INDENT_UNIT);
-            }
-            if let Some(blink) = self.em.inner.blink() {
-                blink.reset();
-            }
-            self.publish_primary_selection_if_any();
-            return true;
         }
         let handled = match self.text_state() {
             Some(state) => apply_key(state.as_ref(), key_str, modifiers),

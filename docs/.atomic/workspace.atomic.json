@@ -41403,6 +41403,54 @@
         "redo of a block indent lands the caret at the first line (loses the block selection), as replace-all does"
       ]
     },
+    "R938.1": {
+      "decision_summary": "R938.1 session-review clearance: moved Tab/Shift+Tab indent from dispatch_key to apply_key (keymap SSOT, drops duplicated bookkeeping); refuted the undo-selection bug-claim with a regression test",
+      "changes_bullets": [
+        "session-review (correctness + SSOT panels); every finding re-verified by my own grep+read",
+        "MED keymap-layering fix: Tab/Shift+Tab indent moved from dispatch_key into apply_key (keymap SSOT)",
+        "removes the duplicated handled-key bookkeeping (blink-reset + PRIMARY publish) the dispatch_key block had",
+        "refuted 'undo drops selection': MacroCommand reverses children so first-applied undoes last = original restored",
+        "added a regression assertion (indent then undo restores the original selection range)",
+        "re-verified clean: line_starts_in_range on line_starts/line_of SSOT; INDENT consts unique; tab_indents home"
+      ],
+      "verification_bullets": [
+        "pinion-core test: 2276 ok / 0 failed (incl. the new undo-restores-selection assertion)",
+        "clippy -p pinion-core --all-targets: 0; full-workspace clippy enforced by the pre-commit hook",
+        "demo r938_indent_dedent.py PASS (rebuilt release binary) — behaviour identical after the layer move",
+        "grep: no widget other than the opted-in editor handles \"Tab\" (others assert unhandled) -> traversal preserved"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "comment-toggle (Ctrl+/) = the next line_starts_in_range consumer (per-language comment markers)",
+        "shell offer-key-first-then-default = 2 consumers (Escape, Tab); divergent fallbacks -> lift at the 3rd",
+        "indent width fixed 4-space (INDENT_UNIT); per-editor tab/width config deferred (consumer 0)"
+      ],
+      "publishable_decision_summary": "R938.1 session-review clearance: moved Tab/Shift+Tab indent from dispatch_key to apply_key (keymap SSOT, drops duplicated bookkeeping); refuted the undo-selection bug-claim with a regression test",
+      "publishable_changes_bullets": [
+        "session-review (correctness + SSOT panels); every finding re-verified by my own grep+read",
+        "MED keymap-layering fix: Tab/Shift+Tab indent moved from dispatch_key into apply_key (keymap SSOT)",
+        "removes the duplicated handled-key bookkeeping (blink-reset + PRIMARY publish) the dispatch_key block had",
+        "refuted 'undo drops selection': MacroCommand reverses children so first-applied undoes last = original restored",
+        "added a regression assertion (indent then undo restores the original selection range)",
+        "re-verified clean: line_starts_in_range on line_starts/line_of SSOT; INDENT consts unique; tab_indents home"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core test: 2276 ok / 0 failed (incl. the new undo-restores-selection assertion)",
+        "clippy -p pinion-core --all-targets: 0; full-workspace clippy enforced by the pre-commit hook",
+        "demo r938_indent_dedent.py PASS (rebuilt release binary) — behaviour identical after the layer move",
+        "grep: no widget other than the opted-in editor handles \"Tab\" (others assert unhandled) -> traversal preserved"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "comment-toggle (Ctrl+/) = the next line_starts_in_range consumer (per-language comment markers)",
+        "shell offer-key-first-then-default = 2 consumers (Escape, Tab); divergent fallbacks -> lift at the 3rd",
+        "indent width fixed 4-space (INDENT_UNIT); per-editor tab/width config deferred (consumer 0)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
