@@ -41089,6 +41089,54 @@
         "onto-drop appends as last child (no drop-as-first-child affordance); fine-grained intra-children index via drag deferred"
       ]
     },
+    "R935.1": {
+      "decision_summary": "R935.1 session-review clearance (user-requested adversarial audit): fixed 2 real smells my R935 self-grep missed. (1) hello-tree-reparent hand-rolled tree a11y instead of the pinion_a11y::tree_access_nodes builder hello-tree-view uses (use-substrate violation) -> migrated + adopted the tree_row_tag SSOT. (2) immutable find_node was duplicated in hello-property-grid and the new hello-tree-reparent (peer of the already-lifted find_node_mut) -> lifted find_node<N:TreeNode> to tree_nav, both consumers migrated. Repeat of the R927.1/R930.1 'self-grep missed the 2nd helper' class. Verified: structural lift is repo-wide complete; is_descendant/locate/reparent correctly stay example-local (1 consumer).",
+      "changes_bullets": [
+        "find_node (immutable, generic over TreeNode) lifted to tree_nav as the peer of find_node_mut",
+        "2nd consumer (hello-tree-reparent) made the lift due; hello-property-grid migrated off its local copy",
+        "hello-tree-reparent a11y migrated to pinion_a11y::tree_access_nodes (was hand-rolled TreeItem nodes)",
+        "row composite tags now use the shared pinion_a11y::tree_row_tag SSOT (paint + a11y + DropPoint one scheme)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core tree_nav: 37 pass (+1 find_node test)",
+        "cargo test -p hello-tree-reparent: 11 pass / hello-property-grid: 65 pass (both migrated, green)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: EXIT=0 (-D pedantic)",
+        "tools/demos/r935_tree_reparent.py: PASS (unchanged paint tags; a11y builder swap behind the scene)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "is_descendant / locate / parent_of / reparent-zone-move stay example-local (1 consumer); lift at a 2nd reparent consumer",
+        "TreeNode impl boilerplate now hand-written in 6 examples (FileNode/OutlinerNode x2/PropertyNode/etc.) — a #[derive(TreeNode)] proc-macro (pinion-derive, like #[widget]) is the eventual SSOT; deferred (pre-existing, divergent field shapes)",
+        "hello-tree-reparent is a standalone capability demo; the editor's real outliner (columns + select + undo + reparent) is a later convergence of hello-tree-grid + this"
+      ],
+      "publishable_decision_summary": "R935.1 session-review clearance (user-requested adversarial audit): fixed 2 real smells my R935 self-grep missed. (1) hello-tree-reparent hand-rolled tree a11y instead of the pinion_a11y::tree_access_nodes builder hello-tree-view uses (use-substrate violation) -> migrated + adopted the tree_row_tag SSOT. (2) immutable find_node was duplicated in hello-property-grid and the new hello-tree-reparent (peer of the already-lifted find_node_mut) -> lifted find_node<N:TreeNode> to tree_nav, both consumers migrated. Repeat of the R927.1/R930.1 'self-grep missed the 2nd helper' class. Verified: structural lift is repo-wide complete; is_descendant/locate/reparent correctly stay example-local (1 consumer).",
+      "publishable_changes_bullets": [
+        "find_node (immutable, generic over TreeNode) lifted to tree_nav as the peer of find_node_mut",
+        "2nd consumer (hello-tree-reparent) made the lift due; hello-property-grid migrated off its local copy",
+        "hello-tree-reparent a11y migrated to pinion_a11y::tree_access_nodes (was hand-rolled TreeItem nodes)",
+        "row composite tags now use the shared pinion_a11y::tree_row_tag SSOT (paint + a11y + DropPoint one scheme)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core tree_nav: 37 pass (+1 find_node test)",
+        "cargo test -p hello-tree-reparent: 11 pass / hello-property-grid: 65 pass (both migrated, green)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: EXIT=0 (-D pedantic)",
+        "tools/demos/r935_tree_reparent.py: PASS (unchanged paint tags; a11y builder swap behind the scene)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "is_descendant / locate / parent_of / reparent-zone-move stay example-local (1 consumer); lift at a 2nd reparent consumer",
+        "TreeNode impl boilerplate now hand-written in 6 examples (FileNode/OutlinerNode x2/PropertyNode/etc.) — a #[derive(TreeNode)] proc-macro (pinion-derive, like #[widget]) is the eventual SSOT; deferred (pre-existing, divergent field shapes)",
+        "hello-tree-reparent is a standalone capability demo; the editor's real outliner (columns + select + undo + reparent) is a later convergence of hello-tree-grid + this"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

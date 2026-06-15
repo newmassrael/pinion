@@ -128,8 +128,8 @@ use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::widgets::tree_nav::{
-    find_node_mut, flat_visible, flat_visible_filtered, resolve_tree_key, set_expanded_in,
-    toggle_expanded, tree_view_introspection_extra, TreeKey, TreeNode, VisibleRow,
+    find_node, find_node_mut, flat_visible, flat_visible_filtered, resolve_tree_key,
+    set_expanded_in, toggle_expanded, tree_view_introspection_extra, TreeKey, TreeNode, VisibleRow,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
@@ -557,20 +557,9 @@ fn ref_node_id(value_ref: ValueRef) -> String {
     }
 }
 
-/// Depth-first find of the node carrying `id` in a `PropertyNode` tree — the
-/// shared lookup behind the struct aggregate (field indices) and the by-id
-/// collapse read. `None` for an unknown id.
-fn find_node<'a>(nodes: &'a [PropertyNode], id: &str) -> Option<&'a PropertyNode> {
-    for n in nodes {
-        if n.id == id {
-            return Some(n);
-        }
-        if let Some(found) = find_node(&n.children, id) {
-            return Some(found);
-        }
-    }
-    None
-}
+// R935.1 — the immutable `find_node` is the lifted `tree_nav::find_node`
+// (generic over `TreeNode`), shared with `hello-tree-reparent`; the local copy
+// was removed when that 2nd consumer landed.
 
 /// The value indices of a struct branch's field leaves (in order), or empty for
 /// a non-struct / unknown id — the SSOT for a struct's aggregate summary, its

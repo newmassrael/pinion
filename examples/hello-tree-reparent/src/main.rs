@@ -59,7 +59,9 @@
 
 use std::borrow::Cow;
 
-use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    tree_access_nodes, tree_row_tag, AccessAction, AccessFocus, AccessNode, WidgetA11y,
+};
 use pinion_core::composite_tag::{parse_send_payload, split_subindex};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
@@ -73,8 +75,8 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::tree_nav::{
-    apply_tree_key, find_node_mut, flat_visible, insert_subtree, remove_subtree, MutableTreeNode,
-    TreeNode, VisibleRow,
+    apply_tree_key, find_node, find_node_mut, flat_visible, insert_subtree, remove_subtree,
+    MutableTreeNode, TreeNode, VisibleRow,
 };
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -227,20 +229,6 @@ fn initial_nodes() -> Vec<OutlinerNode> {
 
 // ─── example-local tree queries (1-consumer; not lifted) ────────────────────
 
-/// Find a node by id (immutable). The read peer of `tree_nav::find_node_mut`
-/// — example-local because no second consumer needs it yet.
-fn find_node<'a>(nodes: &'a [OutlinerNode], id: &str) -> Option<&'a OutlinerNode> {
-    for n in nodes {
-        if n.id == id {
-            return Some(n);
-        }
-        if let Some(found) = find_node(&n.children, id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
 /// Whether `candidate` lies strictly inside `ancestor`'s subtree (a proper
 /// descendant) — the cycle guard a reparent consults.
 fn is_descendant(nodes: &[OutlinerNode], ancestor: &str, candidate: &str) -> bool {
@@ -337,10 +325,9 @@ fn use_outliner() -> Rc<Outliner> {
         })
 }
 
-/// The composite paint tag for the row of node `id` (`"outliner#world"` …).
-fn row_tag(id: &str) -> String {
-    format!("{TAG}#{id}")
-}
+// Row composite tags use the shared `pinion_a11y::tree_row_tag(TAG, id)` SSOT
+// (`"outliner#<id>"`) so the painted row tag, the a11y treeitem tag, and the
+// `DropPoint` the router reports back all derive from one scheme.
 
 // ─── drag-hook External ─────────────────────────────────────────────────────
 
@@ -575,7 +562,7 @@ fn row_node(
     }
     Scene::Container(
         ContainerNode::new(vec![label])
-            .with_tag(row_tag(&row.id))
+            .with_tag(tree_row_tag(TAG, &row.id))
             .with_style(style)
             .with_layout(
                 LayoutStyle::new()
@@ -727,42 +714,19 @@ impl WidgetCore for TreeReparentView {
 }
 
 impl WidgetA11y for TreeReparentView {
-    /// WAI-ARIA tree: a [`AriaRole::Tree`] parent over one
-    /// [`AriaRole::TreeItem`] per visible row, each carrying `aria-level`
-    /// (`depth + 1`), `aria-posinset` / `aria-setsize`, and `aria-expanded`
-    /// for branches. The cursor row is `focused` when the tree holds focus.
+    /// WAI-ARIA tree via the shared
+    /// [`tree_access_nodes`](pinion_a11y::tree_access_nodes) builder (the same
+    /// SSOT `hello-tree-view` feeds): a `tree` root over one `treeitem` per
+    /// visible row, each with `aria-level` / `aria-posinset` / `aria-setsize`
+    /// and `aria-expanded` on branches. No selection model (`selected_id =
+    /// None`); the keyboard cursor is the `aria-activedescendant` when the tree
+    /// holds focus.
     fn access_node(_state: &(), focused: Option<&str>) -> Vec<AccessNode> {
         let st = use_outliner();
-        let nodes = st.nodes.get();
-        let rows = flat_visible(&nodes);
+        let rows = flat_visible(&st.nodes.get());
         let cursor = st.focused.get();
-        let tree_focused = focused == Some(TAG);
-
-        let mut tree = AccessNode::new(TAG, AriaRole::Tree).with_name("Scene outliner");
-        for r in &rows {
-            tree = tree.with_child(row_tag(&r.id));
-        }
-        let mut out = vec![tree];
-        for r in &rows {
-            let is_cursor = tree_focused && cursor.as_deref() == Some(r.id.as_str());
-            let mut node = AccessNode::new(row_tag(&r.id), AriaRole::TreeItem)
-                .with_name(r.label.clone())
-                .with_level(r.depth + 1)
-                .with_position_in_set(r.position_in_set)
-                .with_size_of_set(r.size_of_set)
-                .with_state(AccessState {
-                    focused: is_cursor,
-                    disabled: false,
-                    hovered: false,
-                    pressed: false,
-                    checked: None,
-                });
-            if r.has_children {
-                node = node.with_expanded(r.expanded);
-            }
-            out.push(node);
-        }
-        out
+        let focused_id = if focused == Some(TAG) { cursor.as_deref() } else { None };
+        tree_access_nodes(TAG, TAG, Some("Scene outliner"), &rows, None, focused_id)
     }
 
     /// Composite focus: when the tree holds focus, the cursor row is the
@@ -773,7 +737,7 @@ impl WidgetA11y for TreeReparentView {
             let cursor = st.focused.get().unwrap_or_else(|| {
                 flat_visible(&st.nodes.get()).first().map(|r| r.id.clone()).unwrap_or_default()
             });
-            Some(AccessFocus::composite(TAG, row_tag(&cursor)))
+            Some(AccessFocus::composite(TAG, tree_row_tag(TAG, &cursor)))
         } else {
             focused.map(AccessFocus::atomic)
         }
@@ -897,7 +861,7 @@ mod tests {
     // ── External drag-hook integration (the scene/drag path) ──────────────
 
     fn drop_point(id: &str, y_rel: f32) -> DropPoint {
-        DropPoint { tag: row_tag(id), x_rel: 0.5, y_rel }
+        DropPoint { tag: tree_row_tag(TAG, id), x_rel: 0.5, y_rel }
     }
 
     #[test]

@@ -426,6 +426,25 @@ pub fn find_node_mut<'a, N: TreeNode>(nodes: &'a mut [N], id: &str) -> Option<&'
     None
 }
 
+/// R935.1 §5.27 — the **immutable peer** of [`find_node_mut`]: depth-first
+/// find of the node carrying `id`, returning a shared reference (`None` for an
+/// unknown id). Lifted from `hello-property-grid` when `hello-tree-reparent`
+/// became the second consumer of this exact recursive lookup — a find that
+/// descends the wrong child is a correctness bug, so the two must share one
+/// copy (the immutable half of the structural-edit family below).
+#[must_use]
+pub fn find_node<'a, N: TreeNode>(nodes: &'a [N], id: &str) -> Option<&'a N> {
+    for node in nodes {
+        if node.id() == id {
+            return Some(node);
+        }
+        if let Some(found) = find_node(node.children(), id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 /// R820 §5.27 §5.50 — set branch `id`'s expanded flag to `expanded` in a
 /// reactive `Signal<Vec<N>>` flag store. A leaf or a redundant set is a
 /// no-op (no `Signal::set`, so no repaint). Wrapped in [`batch`] so the
@@ -687,9 +706,9 @@ mod tests {
     //! its `FileNode` [`TreeNode`] glue.
 
     use super::{
-        apply_tree_key, find_node_mut, flat_visible, flat_visible_filtered, insert_subtree,
-        parent_row, remove_subtree, resolve_tree_key, set_expanded_in, toggle_expanded,
-        MutableTreeNode, TreeKey, TreeNode, VisibleRow,
+        apply_tree_key, find_node, find_node_mut, flat_visible, flat_visible_filtered,
+        insert_subtree, parent_row, remove_subtree, resolve_tree_key, set_expanded_in,
+        toggle_expanded, MutableTreeNode, TreeKey, TreeNode, VisibleRow,
     };
     use crate::reactive::Owner;
     use crate::Signal;
@@ -1193,6 +1212,14 @@ mod tests {
         let mut out = Vec::new();
         walk(nodes, &mut out);
         out
+    }
+
+    #[test]
+    fn find_node_locates_at_any_depth_immutably() {
+        let tree = sample();
+        assert_eq!(find_node(&tree, "src").map(TreeNode::id), Some("src"));
+        assert_eq!(find_node(&tree, "src/widgets/mod.rs").map(TreeNode::id), Some("src/widgets/mod.rs"));
+        assert!(find_node(&tree, "no-such-id").is_none());
     }
 
     #[test]
