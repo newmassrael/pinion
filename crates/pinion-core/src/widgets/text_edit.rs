@@ -749,6 +749,15 @@ fn line_starts_in_range(text: &str, start: usize, end: usize) -> Vec<usize> {
     starts[first..=last].to_vec()
 }
 
+/// R945 §5.22 — byte index one past the line starting at `ls`, **including** its
+/// trailing `\n` when the line has one (else the buffer end). The whole-line
+/// extent the line-manipulation ops ([`TextEditState::move_lines`] /
+/// [`TextEditState::duplicate_lines`]) cut on — a line "owns" its newline, so a
+/// move / duplicate carries the line break with the text.
+fn line_extent_end(text: &str, ls: usize) -> usize {
+    text[ls..].find('\n').map_or(text.len(), |n| ls + n + 1)
+}
+
 /// R938 §5.22 — how many leading bytes a dedent strips from the line at `ls`:
 /// one byte for a leading `\t` (a tab is one indent level), else the count of
 /// leading spaces up to `width`. `0` (no removal) for a line that starts with
@@ -2180,6 +2189,126 @@ impl TextEditState {
         } else {
             self.set_caret(new_end);
         }
+        true
+    }
+
+    /// R945 §5.22 — the byte extent `[start, end)` of the whole-line block the
+    /// current selection (or collapsed caret) touches: from the first touched
+    /// line's start to the last touched line's end, INCLUDING that line's
+    /// trailing `\n` ([`line_extent_end`] — a line owns its newline). The shared
+    /// preamble of [`move_lines`](Self::move_lines) /
+    /// [`duplicate_lines`](Self::duplicate_lines): both cut on this block.
+    fn line_block_extent(&self, text: &str) -> (usize, usize) {
+        let (start, end) = self.selection_range().unwrap_or_else(|| {
+            let c = self.caret_pos.get().min(text.len());
+            (c, c)
+        });
+        let touched = line_starts_in_range(text, start, end);
+        let block_start = touched[0];
+        let block_end = line_extent_end(text, *touched.last().unwrap_or(&block_start));
+        (block_start, block_end)
+    }
+
+    /// R945 §5.22 — move the current line (or selected line block) one line up
+    /// (`down == false`) or down (`down == true`) — the editor "move line"
+    /// command (VS Code `Alt+Up` / `Alt+Down`), the AI-first peer of those
+    /// chords. A boundary move (the first line up, the last line down) is a
+    /// `false` no-op.
+    ///
+    /// The touched lines are the [`line_starts_in_range`] block; the line
+    /// swapped past is the adjacent one, taken with its newline
+    /// ([`line_extent_end`] — a line owns its trailing `\n`). The reorder is one
+    /// [`replace_range`](Self::replace_range) over the two-line region with the
+    /// lines re-sequenced, so the buffer's newline structure stays exact even
+    /// when the move crosses the final, newline-less line (the swapped pair
+    /// trade which one ends the buffer). The caret / selection rides the moved
+    /// block. Derived syntax runs re-scan; a *manual* run or fold inside a
+    /// reordered line is not carried across the move (the R933.1 per-line-splice
+    /// preservation is for in-place edits — indent / dedent / comment — not a
+    /// reorder). Returns whether the buffer changed.
+    pub fn move_lines(&self, down: bool) -> bool {
+        let text = self.text.get();
+        let (block_start, block_end) = self.line_block_extent(&text);
+        let had_selection = self.selection_anchor.get().is_some();
+        let caret = self.caret_pos.get().min(text.len());
+
+        // Re-sequence the block + the adjacent line over [region_start,
+        // region_end); `block_len_after` is the moved block's byte length once
+        // it lands (it loses or gains a `\n` only when it crosses the final
+        // line), and `new_block_start` is where it lands.
+        let (region_start, region_end, reordered, new_block_start, block_len_after) = if down {
+            if block_end >= text.len() {
+                return false; // no line below
+            }
+            let next_end = line_extent_end(&text, block_end);
+            let block = &text[block_start..block_end]; // ends with `\n` (a line follows)
+            let next = &text[block_end..next_end];
+            let (seq, block_len) = if next.ends_with('\n') {
+                (format!("{next}{block}"), block.len())
+            } else {
+                // `next` is the last line (no `\n`): it becomes a middle line
+                // (gains `\n`); the block becomes the last line (drops its `\n`).
+                let block_nl = block.strip_suffix('\n').unwrap_or(block);
+                (format!("{next}\n{block_nl}"), block_nl.len())
+            };
+            let new_start = block_start + (seq.len() - block_len);
+            (block_start, next_end, seq, new_start, block_len)
+        } else {
+            if block_start == 0 {
+                return false; // no line above
+            }
+            let starts = line_starts(&text);
+            let bi = line_of(&starts, block_start); // block_start is a line start
+            let prev_start = starts[bi - 1];
+            let block = &text[block_start..block_end]; // may or may not end with `\n`
+            let prev = &text[prev_start..block_start]; // ends with `\n`
+            let (seq, block_len) = if block.ends_with('\n') {
+                (format!("{block}{prev}"), block.len())
+            } else {
+                // The block is the last line (no `\n`): it becomes a middle line
+                // (gains `\n`); `prev` becomes the last line (drops its `\n`).
+                let prev_nl = prev.strip_suffix('\n').unwrap_or(prev);
+                (format!("{block}\n{prev_nl}"), block.len() + 1)
+            };
+            (prev_start, block_end, seq, prev_start, block_len)
+        };
+
+        let rel = caret.saturating_sub(block_start).min(block_len_after);
+        self.replace_range(region_start, region_end, &reordered);
+        if had_selection {
+            self.set_selection(new_block_start, new_block_start + block_len_after);
+        } else {
+            self.set_caret(new_block_start + rel);
+        }
+        true
+    }
+
+    /// R945 §5.22 — duplicate the current line (or selected line block),
+    /// inserting a copy directly below. `down` chooses where the caret lands —
+    /// on the lower copy (`true`) or the upper (`false`) — the VS Code
+    /// `Shift+Alt+Down` / `Shift+Alt+Up` "copy line" split, the AI-first peer of
+    /// those chords. One undo step (a single insertion). A block that ends in
+    /// `\n` is already newline-separated; the last-line block (no trailing `\n`)
+    /// gets a separator `\n` before its copy. Always inserts a copy, so returns
+    /// `true`.
+    pub fn duplicate_lines(&self, down: bool) -> bool {
+        let text = self.text.get();
+        let (block_start, block_end) = self.line_block_extent(&text);
+        let block = text[block_start..block_end].to_owned();
+        let rel = self
+            .caret_pos
+            .get()
+            .min(text.len())
+            .saturating_sub(block_start)
+            .min(block.len());
+        let (insert_text, copy_start) = if block.ends_with('\n') {
+            (block.clone(), block_end)
+        } else {
+            (format!("\n{block}"), block_end + 1)
+        };
+        self.replace_range(block_end, block_end, &insert_text);
+        let new_caret = if down { copy_start + rel } else { block_start + rel };
+        self.set_caret(new_caret);
         true
     }
 
@@ -5959,5 +6088,145 @@ mod tests {
         assert_eq!(st.go_to_line(3), 3);
         assert_eq!(st.caret(), 5, "caret at line 3 start");
         assert!(!st.has_selection(), "go_to_line collapses the selection (a caret move)");
+    }
+
+    // ─── R945 §5.22 — move-line / duplicate-line ────────────────────────────
+
+    #[test]
+    fn r945_move_line_down_swaps_with_next() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb\nc".to_string());
+            st.set_caret(0); // caret on line "a"
+            assert!(st.move_lines(true), "moved");
+            assert_eq!(st.text(), "b\na\nc", "line a swaps below line b");
+            assert_eq!(st.caret(), 2, "caret rides the moved line to its new start");
+        });
+    }
+
+    #[test]
+    fn r945_move_line_up_swaps_with_prev() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb\nc".to_string());
+            st.set_caret(2); // caret on line "b"
+            assert!(st.move_lines(false), "moved");
+            assert_eq!(st.text(), "b\na\nc", "line b swaps above line a");
+            assert_eq!(st.caret(), 0, "caret rides the moved line up");
+        });
+    }
+
+    #[test]
+    fn r945_move_line_is_a_noop_at_the_boundaries() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb".to_string());
+            st.set_caret(0);
+            assert!(!st.move_lines(false), "first line cannot move up");
+            st.set_caret(2);
+            assert!(!st.move_lines(true), "last line cannot move down");
+            assert_eq!(st.text(), "a\nb", "no boundary move changed the buffer");
+        });
+    }
+
+    #[test]
+    fn r945_move_line_down_across_the_final_newlineless_line() {
+        // The Case-B newline juggle: moving the second-to-last line down past the
+        // last (newline-less) line. The lone `\n` relocates so the buffer keeps
+        // exactly one line break and no trailing newline.
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb".to_string()); // "b" has no trailing \n
+            st.set_caret(0); // caret on "a" (second-to-last)
+            assert!(st.move_lines(true));
+            assert_eq!(st.text(), "b\na", "newline relocates; no trailing newline added");
+            assert_eq!(st.caret(), 2, "caret rides the now-last line");
+        });
+    }
+
+    #[test]
+    fn r945_move_line_up_of_the_final_newlineless_line() {
+        // The mirror Case-B: moving the last (newline-less) line up. It gains a
+        // `\n` (now a middle line) and the previous line loses its `\n` (now last).
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb".to_string());
+            st.set_caret(2); // caret on the last line "b"
+            assert!(st.move_lines(false));
+            assert_eq!(st.text(), "b\na", "the pair swap which line ends the buffer");
+            assert_eq!(st.caret(), 0, "caret rides 'b' to the top");
+        });
+    }
+
+    #[test]
+    fn r945_move_line_multiline_selection_moves_the_block() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb\nc\nd".to_string());
+            st.set_selection(0, 3); // lines "a" and "b"
+            assert!(st.move_lines(true), "block moves down past 'c'");
+            assert_eq!(st.text(), "c\na\nb\nd", "the two-line block swaps past 'c'");
+            // The re-cover spans the whole moved block "a\nb\n" = [2, 6); the
+            // trailing newline is included (the natural "these two lines" extent,
+            // and `line_starts_in_range` trims it on a repeated move).
+            assert_eq!(st.selection_range(), Some((2, 6)), "the selection re-covers the moved block");
+        });
+    }
+
+    #[test]
+    fn r945_move_line_is_one_undo_step() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb\nc".to_string());
+            let stack = Rc::new(crate::undo::UndoStack::new());
+            st.attach_undo(Rc::clone(&stack));
+            st.set_caret(0);
+            assert!(st.move_lines(true));
+            assert_eq!(st.text(), "b\na\nc");
+            assert_eq!(stack.len(), 1, "the reorder is one undo step");
+            assert!(st.undo(), "one undo restores the order");
+            assert_eq!(st.text(), "a\nb\nc");
+        });
+    }
+
+    #[test]
+    fn r945_duplicate_line_down_copies_below_caret_on_copy() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb".to_string());
+            st.set_caret(0); // line "a"
+            assert!(st.duplicate_lines(true));
+            assert_eq!(st.text(), "a\na\nb", "a copy of 'a' is inserted below");
+            assert_eq!(st.caret(), 2, "caret lands on the lower copy");
+        });
+    }
+
+    #[test]
+    fn r945_duplicate_line_up_copies_below_caret_on_original() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb".to_string());
+            st.set_caret(0);
+            assert!(st.duplicate_lines(false));
+            assert_eq!(st.text(), "a\na\nb", "the buffer gains an identical adjacent copy");
+            assert_eq!(st.caret(), 0, "caret stays on the upper instance");
+        });
+    }
+
+    #[test]
+    fn r945_duplicate_final_newlineless_line_adds_a_separator() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb".to_string()); // "b" has no trailing \n
+            st.set_caret(2); // line "b"
+            assert!(st.duplicate_lines(true));
+            assert_eq!(st.text(), "a\nb\nb", "a separator newline precedes the copy");
+            assert_eq!(st.caret(), 4, "caret lands on the lower copy");
+        });
+    }
+
+    #[test]
+    fn r945_duplicate_line_is_one_undo_step() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb\nc".to_string());
+            let stack = Rc::new(crate::undo::UndoStack::new());
+            st.attach_undo(Rc::clone(&stack));
+            st.set_caret(0);
+            assert!(st.duplicate_lines(true));
+            assert_eq!(st.text(), "a\na\nb\nc");
+            assert_eq!(stack.len(), 1, "the insertion is one undo step");
+            assert!(st.undo());
+            assert_eq!(st.text(), "a\nb\nc", "one undo removes the copy");
+        });
     }
 }

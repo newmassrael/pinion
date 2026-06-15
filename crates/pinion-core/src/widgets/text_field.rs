@@ -1237,6 +1237,14 @@ impl ExternalIntrospect for TextFieldExternal {
             // caret to that line's start and returns the resolved (clamped) line.
             ("line_count", "number"),
             ("go-to-line", "number"),
+            // R945 §5.22 — line manipulation (the Alt+Up / Alt+Down move +
+            // Shift+Alt copy twins). `Null` arg; each returns `Bool` (did the
+            // buffer change? a boundary move — first line up, last line down —
+            // is `false`).
+            ("move-line-up", "boolean"),
+            ("move-line-down", "boolean"),
+            ("duplicate-line-up", "boolean"),
+            ("duplicate-line-down", "boolean"),
         ])
     }
 
@@ -1712,6 +1720,11 @@ impl ExternalIntrospect for TextFieldExternal {
             // R939 §5.22 — toggle line comments (the AI-first twin of Ctrl+/).
             "toggle-comment" => self.invoke_comment(&args),
             "go-to-line" => self.invoke_go_to_line(&args),
+            // R945 §5.22 — move / duplicate the current line block (the AI-first
+            // twins of Alt+Up / Alt+Down + Shift+Alt copy).
+            "move-line-up" | "move-line-down" | "duplicate-line-up" | "duplicate-line-down" => {
+                self.invoke_line_move(path, &args)
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1881,6 +1894,35 @@ impl TextFieldExternal {
                 let resolved = self.text_state().map_or(0, |s| s.go_to_line(l));
                 Ok(IntrospectValue::Int(i64::try_from(resolved).unwrap_or(i64::MAX)))
             }
+            _ => Err(InvokeError::TypeMismatch),
+        }
+    }
+
+    /// R945 §5.22 — the line-manipulation `invoke` actions, the AI-first twins
+    /// of the editor's move-line (`Alt+Up` / `Alt+Down`) and copy-line
+    /// (`Shift+Alt+Up` / `Shift+Alt+Down`) chords (split out like
+    /// [`invoke_indent`](Self::invoke_indent) for SRP). All take `Null` and
+    /// return `Bool` — whether the buffer changed (a boundary move — the first
+    /// line up or the last line down — is a `Bool(false)` no-op, the
+    /// setter-returns-read-outcome contract; a duplicate always inserts, so it
+    /// is `Bool(true)`). A bare field (no state) is inert — `Bool(false)`,
+    /// never `UnknownPath`.
+    fn invoke_line_move(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match args {
+            IntrospectValue::Null => Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
+                match path {
+                    "move-line-up" => s.move_lines(false),
+                    "move-line-down" => s.move_lines(true),
+                    "duplicate-line-up" => s.duplicate_lines(false),
+                    "duplicate-line-down" => s.duplicate_lines(true),
+                    // Unreachable: the caller routes only the four paths above.
+                    _ => false,
+                }
+            }))),
             _ => Err(InvokeError::TypeMismatch),
         }
     }
@@ -2534,7 +2576,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_twenty_five_slots() {
+    fn external_schema_declares_thirty_four_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
@@ -2557,6 +2599,11 @@ mod tests {
         // R933 grew the surface: + fold_regions (derived foldable-block read,
         // a JSON array) + toggle-fold / fold-all / unfold-all (code-folding
         // actions, the AI-first peers of the gutter chevron).
+        // R938 / R939 / R941 grew the surface: + indent / dedent /
+        // toggle-comment / line_count / go-to-line.
+        // R945 grew the surface: + move-line-up / move-line-down /
+        // duplicate-line-up / duplicate-line-down (line manipulation actions,
+        // the AI-first peers of Alt+Up / Alt+Down + Shift+Alt copy).
         // The schema shape is stable across bare and wired-up
         // TextFields — text/caret/selection/preedit queries return
         // None / intervene returns ReadOnly when no TextEditState is
@@ -2598,6 +2645,10 @@ mod tests {
                 ("toggle-comment", "boolean"),
                 ("line_count", "number"),
                 ("go-to-line", "number"),
+                ("move-line-up", "boolean"),
+                ("move-line-down", "boolean"),
+                ("duplicate-line-up", "boolean"),
+                ("duplicate-line-down", "boolean"),
             ],
         );
     }
@@ -6400,5 +6451,71 @@ mod r933_fold_tests {
             IntrospectValue::Int(0),
         );
         assert!(bare.query("line_count").is_none());
+    }
+
+    // ─── R945 §5.22 — move-line / duplicate-line invoke verbs ───────────────
+
+    #[test]
+    fn r945_invoke_move_line_down_and_up() {
+        let (state, mut tfx) = wired("a\nb\nc");
+        state.set_caret(0); // line "a"
+        assert_eq!(
+            tfx.invoke("move-line-down", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(true),
+            "move-line-down reports the buffer changed",
+        );
+        assert_eq!(state.text(), "b\na\nc");
+        assert_eq!(
+            tfx.invoke("move-line-up", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(state.text(), "a\nb\nc", "move up restores the original order");
+    }
+
+    #[test]
+    fn r945_invoke_move_line_boundary_is_a_false_noop() {
+        let (state, mut tfx) = wired("a\nb");
+        state.set_caret(0); // first line
+        assert_eq!(
+            tfx.invoke("move-line-up", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(false),
+            "the first line cannot move up (no-op reports false)",
+        );
+        assert_eq!(state.text(), "a\nb", "no change");
+    }
+
+    #[test]
+    fn r945_invoke_duplicate_line_down_and_up() {
+        let (state, mut tfx) = wired("a\nb");
+        state.set_caret(0);
+        assert_eq!(
+            tfx.invoke("duplicate-line-down", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(state.text(), "a\na\nb");
+        assert_eq!(state.caret(), 2, "down lands the caret on the lower copy");
+
+        let (state, mut tfx) = wired("a\nb");
+        state.set_caret(0);
+        tfx.invoke("duplicate-line-up", IntrospectValue::Null).unwrap();
+        assert_eq!(state.text(), "a\na\nb");
+        assert_eq!(state.caret(), 0, "up keeps the caret on the upper instance");
+    }
+
+    #[test]
+    fn r945_invoke_line_move_bare_inert_and_type_checked() {
+        let mut bare = TextFieldExternal::new();
+        for verb in ["move-line-up", "move-line-down", "duplicate-line-up", "duplicate-line-down"] {
+            assert_eq!(
+                bare.invoke(verb, IntrospectValue::Null).unwrap(),
+                IntrospectValue::Bool(false),
+                "a bare field is inert ({verb}), never UnknownPath",
+            );
+        }
+        let (_state, mut tfx) = wired("a\nb");
+        assert!(matches!(
+            tfx.invoke("move-line-down", IntrospectValue::Int(1)),
+            Err(InvokeError::TypeMismatch),
+        ), "a non-Null arg is a type mismatch");
     }
 }

@@ -42009,6 +42009,92 @@
         "reveal_row_cursor SSOT lands when a virtualized lazy tree consumer appears — R942/R934 combine axis)"
       ]
     },
+    "R945": {
+      "decision_summary": "Editor line manipulation: TextEditState::move_lines + duplicate_lines (VS Code Alt+Up/Down move + Shift+Alt copy), N-th consumer of the R938/R939 line-op substrate + a newline-inclusive line_extent_end helper. RPC-primary invoke verbs move-line-up/down + duplicate-line-up/down (keyboard chords deferred — Alt+Arrow overlaps vertical nav). One undo step each; the lone newline relocates exactly when a move crosses the final newline-less line.",
+      "changes_bullets": [
+        "TextEditState gains move_lines(down) + duplicate_lines(down): the move-line (VS Code Alt+Up/Down) and",
+        "copy-line (Shift+Alt+Up/Down) commands every code editor has, reusable by every multi-line field",
+        "move_lines swaps the current line (or selected block) with the adjacent line as ONE replace_range over",
+        "the two-line region, re-sequenced; the lone newline relocates so the buffer keeps exact line structure",
+        "even when the move crosses the final, newline-less line (the swapped pair trade which one ends the buffer)",
+        "duplicate_lines inserts a copy directly below (one undo step); down chooses caret on the lower copy vs",
+        "the upper instance; a last-line block (no trailing newline) gets a separator newline before its copy",
+        "caret/selection rides the moved block; a multi-line selection re-covers the moved block",
+        "N-th consumer of the R938/R939 line-op substrate (line_starts_in_range) + new line_extent_end helper",
+        "(newline-inclusive line end; distinct from syntax.rs line_comment_end which excludes the newline)",
+        "line_block_extent lifted as the shared block-finding preamble of move/duplicate (self-grep: byte-",
+        "identical 2-consumer mechanical duplicate)",
+        "RPC invoke verbs move-line-up/down + duplicate-line-up/down (Null arg -> Bool changed; boundary move",
+        "is false; bare field inert) + schema slots; AI-first twins of the chords (RPC-primary, R941 precedent)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; 15 new R945 tests (11 substrate edge cases: down/up swap, boundary",
+        "no-op, both Case-B newline juggles, multi-line block, one-undo x2, duplicate down/up/last-line; 4 RPC:",
+        "verb round-trip, boundary false, duplicate caret-landing, bare-inert + type-mismatch)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "r945_line_manipulation.py demo (~40 assertions) ZERO-FLAKE 3/3 over hello-syntax-highlight: move",
+        "round-trip, boundary no-ops, final-line newline juggle, duplicate down/up, last-line separator, one-undo,",
+        "multi-line block re-cover, taller-buffer reads — all observed as DATA via text/caret/selection queries",
+        "sibling line-op demos r938_indent_dedent / r939_comment_toggle / r941_go_to_line re-run green (regression)",
+        "self-grep: line_extent_end distinct from line_comment_end (incl vs excl newline); line_block_extent",
+        "lifted (2-consumer mechanical); move/duplicate keymap chords deferred (Alt+Arrow overlaps vertical nav)",
+        "validate-workspace T1 reject=0 / new orphan +0"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "keyboard chords (Alt+Up/Down move, Shift+Alt+Up/Down duplicate) deferred: Alt+Arrow overlaps the",
+        "field's vertical caret nav, so the chord arm waits on that keymap location; RPC-primary per R941",
+        "move_lines reorders via one region replace_range, so derived syntax runs re-scan but a MANUAL run or",
+        "fold inside a reordered line is not carried across (the R933.1 per-line-splice preservation is for",
+        "in-place edits — indent/dedent/comment — not a reorder); honest scope, no manual-run consumer yet",
+        "multi-line-selection re-cover spans the moved block including its trailing newline (the natural",
+        "whole-lines extent; line_starts_in_range trims the trailing line-start on a repeated move)"
+      ],
+      "publishable_decision_summary": "Editor line manipulation: TextEditState::move_lines + duplicate_lines (VS Code Alt+Up/Down move + Shift+Alt copy), N-th consumer of the R938/R939 line-op substrate + a newline-inclusive line_extent_end helper. RPC-primary invoke verbs move-line-up/down + duplicate-line-up/down (keyboard chords deferred — Alt+Arrow overlaps vertical nav). One undo step each; the lone newline relocates exactly when a move crosses the final newline-less line.",
+      "publishable_changes_bullets": [
+        "TextEditState gains move_lines(down) + duplicate_lines(down): the move-line (VS Code Alt+Up/Down) and",
+        "copy-line (Shift+Alt+Up/Down) commands every code editor has, reusable by every multi-line field",
+        "move_lines swaps the current line (or selected block) with the adjacent line as ONE replace_range over",
+        "the two-line region, re-sequenced; the lone newline relocates so the buffer keeps exact line structure",
+        "even when the move crosses the final, newline-less line (the swapped pair trade which one ends the buffer)",
+        "duplicate_lines inserts a copy directly below (one undo step); down chooses caret on the lower copy vs",
+        "the upper instance; a last-line block (no trailing newline) gets a separator newline before its copy",
+        "caret/selection rides the moved block; a multi-line selection re-covers the moved block",
+        "N-th consumer of the R938/R939 line-op substrate (line_starts_in_range) + new line_extent_end helper",
+        "(newline-inclusive line end; distinct from syntax.rs line_comment_end which excludes the newline)",
+        "line_block_extent lifted as the shared block-finding preamble of move/duplicate (self-grep: byte-",
+        "identical 2-consumer mechanical duplicate)",
+        "RPC invoke verbs move-line-up/down + duplicate-line-up/down (Null arg -> Bool changed; boundary move",
+        "is false; bare field inert) + schema slots; AI-first twins of the chords (RPC-primary, R941 precedent)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; 15 new R945 tests (11 substrate edge cases: down/up swap, boundary",
+        "no-op, both Case-B newline juggles, multi-line block, one-undo x2, duplicate down/up/last-line; 4 RPC:",
+        "verb round-trip, boundary false, duplicate caret-landing, bare-inert + type-mismatch)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "r945_line_manipulation.py demo (~40 assertions) ZERO-FLAKE 3/3 over hello-syntax-highlight: move",
+        "round-trip, boundary no-ops, final-line newline juggle, duplicate down/up, last-line separator, one-undo,",
+        "multi-line block re-cover, taller-buffer reads — all observed as DATA via text/caret/selection queries",
+        "sibling line-op demos r938_indent_dedent / r939_comment_toggle / r941_go_to_line re-run green (regression)",
+        "self-grep: line_extent_end distinct from line_comment_end (incl vs excl newline); line_block_extent",
+        "lifted (2-consumer mechanical); move/duplicate keymap chords deferred (Alt+Arrow overlaps vertical nav)",
+        "validate-workspace T1 reject=0 / new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "keyboard chords (Alt+Up/Down move, Shift+Alt+Up/Down duplicate) deferred: Alt+Arrow overlaps the",
+        "field's vertical caret nav, so the chord arm waits on that keymap location; RPC-primary per R941",
+        "move_lines reorders via one region replace_range, so derived syntax runs re-scan but a MANUAL run or",
+        "fold inside a reordered line is not carried across (the R933.1 per-line-splice preservation is for",
+        "in-place edits — indent/dedent/comment — not a reorder); honest scope, no manual-run consumer yet",
+        "multi-line-selection re-cover spans the moved block including its trailing newline (the natural",
+        "whole-lines extent; line_starts_in_range trims the trailing line-start on a repeated move)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
