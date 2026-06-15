@@ -1,0 +1,31 @@
+[package]
+name = "hello-million-row"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R934 §5.22 §5.23 §5.27 unbounded million-row virtualized lazy-load: a 1,000,000-row list over a truly out-of-memory paged source. Virtualizes the visible window (view_virtual_list) AND lazy-fetches each page on scroll, but backs the page cache with an LRU-bounded ResourceCache::with_capacity so memory stays flat no matter how deep you scroll — far pages are evicted and re-fetched on scroll-back. The unbounded Model/View-at-scale backbone (asset browser / scene outliner over a million-asset store)."
+publish = false
+
+[[bin]]
+name = "hello-million-row"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R744 §5.27 — `view_virtual_list` windowed-list assembly + the
+# `view_vertical_scrollbar` peer.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+# R934 — `Resource<Vec<AssetRow>, String>` per page requires the payload
+# type to be (de)serializable; `AssetRow` derives serde.
+serde = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

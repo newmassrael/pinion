@@ -40973,6 +40973,64 @@
         "gutter pointer-click + editable folded code (caret display<->model map) = follow-up"
       ]
     },
+    "R934": {
+      "decision_summary": "R934: ResourceCache::with_capacity adds LRU eviction (lru crate, 2nd consumer after pinion-text LayoutCache) so a virtualized view over a truly unbounded paged source keeps memory flat - far pages evicted, the per-frame-touched visible window stays resident; new() stays unbounded for bounded key spaces. Clears the self-declared resource_cache retention-not-eviction debt. New hello-million-row example (1M rows, 4-page cache) proves the bound + eviction witness via scene/snapshot.",
+      "changes_bullets": [
+        "ResourceCache::with_capacity(NonZeroUsize) — LRU-bounded async slice cache for truly unbounded sources",
+        "backed by lru::LruCache (2nd crate consumer after pinion-text LayoutCache); new() stays unbounded (zero behaviour change)",
+        "reads promote (ensure-on-hit, state, snapshot) so the per-frame-touched visible window stays resident; contains() is non-promoting",
+        "evicting an in-flight fetch is safe: driver future owns Signal+generation clones, completes onto detached storage (no panic, no map write-back)",
+        "capacity() introspection; 7 new unit tests (eviction order, promote-survives, in-flight-evict-safe, refetch-after-evict)",
+        "new example hello-million-row: 1,000,000-row source, 4-page LRU cache; million_cacheinfo line surfaces resident pages as queryable data",
+        "eviction witness: scroll far then back to top, evicted page 0 re-appears as skeleton then re-fetches (R924 stayed cached)"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core resource_cache: 17 pass (10 existing + 7 new LRU)",
+        "cargo test -p hello-million-row: 9 pass (bounded residency, far-scroll eviction, scroll-back refetch, a11y setsize=N)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo test --workspace -j2: green",
+        "tools/demos/r934_million_row.py: PASS (35+ gated assertions, ZERO-FLAKE wait_snap)"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "page prefetch (ahead-of-scroll warm of adjacent pages) deferred: visible-window ensure suffices, no flicker observed",
+        "unified Model trait still premature (no homogeneous row source; R780/R821 4th-consumer gate) — cache owns only keyed-async carriers",
+        "resident-count line is a non-reactive probe (re-read each view run = each scroll); exact reactive cache-size Signal deferred (no consumer)",
+        "LRU cap is fixed at construction; runtime resize / memory-pressure-driven cap deferred (no consumer)"
+      ],
+      "publishable_decision_summary": "R934: ResourceCache::with_capacity adds LRU eviction (lru crate, 2nd consumer after pinion-text LayoutCache) so a virtualized view over a truly unbounded paged source keeps memory flat - far pages evicted, the per-frame-touched visible window stays resident; new() stays unbounded for bounded key spaces. Clears the self-declared resource_cache retention-not-eviction debt. New hello-million-row example (1M rows, 4-page cache) proves the bound + eviction witness via scene/snapshot.",
+      "publishable_changes_bullets": [
+        "ResourceCache::with_capacity(NonZeroUsize) — LRU-bounded async slice cache for truly unbounded sources",
+        "backed by lru::LruCache (2nd crate consumer after pinion-text LayoutCache); new() stays unbounded (zero behaviour change)",
+        "reads promote (ensure-on-hit, state, snapshot) so the per-frame-touched visible window stays resident; contains() is non-promoting",
+        "evicting an in-flight fetch is safe: driver future owns Signal+generation clones, completes onto detached storage (no panic, no map write-back)",
+        "capacity() introspection; 7 new unit tests (eviction order, promote-survives, in-flight-evict-safe, refetch-after-evict)",
+        "new example hello-million-row: 1,000,000-row source, 4-page LRU cache; million_cacheinfo line surfaces resident pages as queryable data",
+        "eviction witness: scroll far then back to top, evicted page 0 re-appears as skeleton then re-fetches (R924 stayed cached)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core resource_cache: 17 pass (10 existing + 7 new LRU)",
+        "cargo test -p hello-million-row: 9 pass (bounded residency, far-scroll eviction, scroll-back refetch, a11y setsize=N)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: clean (-D pedantic)",
+        "cargo test --workspace -j2: green",
+        "tools/demos/r934_million_row.py: PASS (35+ gated assertions, ZERO-FLAKE wait_snap)"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "page prefetch (ahead-of-scroll warm of adjacent pages) deferred: visible-window ensure suffices, no flicker observed",
+        "unified Model trait still premature (no homogeneous row source; R780/R821 4th-consumer gate) — cache owns only keyed-async carriers",
+        "resident-count line is a non-reactive probe (re-read each view run = each scroll); exact reactive cache-size Signal deferred (no consumer)",
+        "LRU cap is fixed at construction; runtime resize / memory-pressure-driven cap deferred (no consumer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -2373,6 +2373,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-million-row"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde",
+ "vello",
+]
+
+[[package]]
 name = "hello-multi-select"
 version = "0.0.1"
 dependencies = [
@@ -4262,6 +4275,7 @@ name = "pinion-core"
 version = "0.0.1"
 dependencies = [
  "criterion",
+ "lru 0.18.0",
  "sce-build",
  "sce-rust-runtime",
  "serde",
