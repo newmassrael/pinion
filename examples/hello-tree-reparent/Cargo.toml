@@ -1,0 +1,31 @@
+[package]
+name = "hello-tree-reparent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R935 §5.51 scene-outliner drag-to-reparent: a tree whose nodes can be dragged onto another node (become its child) or between siblings (reorder), with cycle prevention (you cannot drop a node into its own subtree). Third consumer of the R742 drag-session External hooks (after hello-dnd / hello-tab-reorder) and second consumer of the lifted tree_nav structural-mutation ops (remove_subtree / insert_subtree). Driven by the existing scene/drag RPC; the reparent is observable as scene-as-data."
+publish = false
+
+[[bin]]
+name = "hello-tree-reparent"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+vello = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[dev-dependencies]
+# R55-G20 paint-root-tag fixture (assert_widget_view_carries_tag).
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[lints]
+workspace = true

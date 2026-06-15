@@ -31,6 +31,7 @@ members = [
     "examples/hello-lazy-list",
     "examples/hello-million-row",
     "examples/hello-asset-browser",
+    "examples/hello-tree-reparent",
     "examples/hello-flex-virtual-list",
     "examples/hello-virtual-table",
     "examples/hello-grid-nav",

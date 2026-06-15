@@ -96,8 +96,8 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::undo::{undo_redo_verb, use_undo_stack, UndoCommand, UndoStack};
 use pinion_core::widgets::tree_nav::{
-    find_node_mut, flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
-    VisibleRow,
+    find_node_mut, flat_visible, insert_subtree, remove_subtree, toggle_expanded,
+    tree_view_introspection_extra, MutableTreeNode, TreeNode, VisibleRow,
 };
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Modifiers, Owner, Scene, SelectionChord, Signal, WidgetCore};
@@ -227,6 +227,12 @@ impl TreeNode for OutlinerNode {
     }
     fn set_expanded(&mut self, expanded: bool) {
         self.expanded = expanded;
+    }
+}
+
+impl MutableTreeNode for OutlinerNode {
+    fn children_vec_mut(&mut self) -> &mut Vec<Self> {
+        &mut self.children
     }
 }
 
@@ -392,48 +398,11 @@ fn find_location(
     None
 }
 
-/// R905 — remove the subtree rooted at `id` (depth-first), returning it. The
-/// redo half of a delete.
-fn remove_subtree(nodes: &mut Vec<OutlinerNode>, id: &str) -> Option<OutlinerNode> {
-    if let Some(pos) = nodes.iter().position(|n| n.id == id) {
-        return Some(nodes.remove(pos));
-    }
-    for n in nodes.iter_mut() {
-        if let Some(found) = remove_subtree(&mut n.children, id) {
-            return Some(found);
-        }
-    }
-    None
-}
-
-/// R905 — re-insert `node` under `parent` (`None` = root) at `index` (clamped).
-/// The undo half of a delete; the parent of a top-level-selected node is never
-/// itself deleted, so it always exists at undo time.
-fn insert_subtree(nodes: &mut Vec<OutlinerNode>, parent: Option<&str>, index: usize, node: OutlinerNode) {
-    match parent {
-        None => {
-            let i = index.min(nodes.len());
-            nodes.insert(i, node);
-        }
-        Some(pid) => {
-            if let Some(p) = find_node_mut(nodes, pid) {
-                let i = index.min(p.children.len());
-                p.children.insert(i, node);
-            } else {
-                // Unreachable: a top-level-selected node's parent is never itself
-                // deleted (it is not selected, by `collect_top_level`), so it
-                // exists at undo time. Fail LOUD in dev rather than silently
-                // mis-parenting to root (R889 — a silent fallback masks a broken
-                // invariant); in release, keep the node so nothing is lost.
-                debug_assert!(
-                    false,
-                    "insert_subtree: parent '{pid}' vanished — undo invariant broken",
-                );
-                nodes.push(node);
-            }
-        }
-    }
-}
+// R935 §5.51 — `remove_subtree` / `insert_subtree` lifted to
+// `pinion_core::widgets::tree_nav` when `hello-tree-reparent` became the second
+// consumer of these correctness-critical structural edits (a `Vec::remove` /
+// `insert` at the wrong depth silently corrupts the tree). This example now
+// imports them and supplies `MutableTreeNode::children_vec_mut` above.
 
 /// R905 — expand a rename template against a 1-based counter: `{n}` is replaced
 /// by the counter (`"Layer {n}"` → `Layer 1`, `Layer 2`, …); a template without

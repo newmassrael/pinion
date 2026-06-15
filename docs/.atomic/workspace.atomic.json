@@ -41031,6 +41031,64 @@
         "LRU cap is fixed at construction; runtime resize / memory-pressure-driven cap deferred (no consumer)"
       ]
     },
+    "R935": {
+      "decision_summary": "R935: scene-outliner drag-to-reparent. New hello-tree-reparent example drags a tree node onto another (reparent to child) or between rows (reorder siblings), with cycle prevention (drop into own subtree rejected); 3rd consumer of the R742 drag-session External hooks, scene/drag-driven. Lifts remove_subtree/insert_subtree to tree_nav via a new MutableTreeNode trait at their 2nd consumer (hello-tree-grid migrated). Audit finding: the property-grid/data-grid/node-editor edit-machinery crate-lift is premature (edit_field_keymap/UndoStack/CellValue already lifted; the rest is divergent domain logic).",
+      "changes_bullets": [
+        "tree_nav: MutableTreeNode trait + remove_subtree/insert_subtree lifted from hello-tree-grid (2nd consumer = hello-tree-reparent)",
+        "structural tree edits need &mut Vec<Self> (not TreeNode's slice children_mut), so a retained-only peer trait; derived trees opt out",
+        "migrated hello-tree-grid to the lifted ops (deleted its local copies; both consumers thin)",
+        "new example hello-tree-reparent: scene outliner, drag a node onto another (reparent) or between rows (reorder)",
+        "3-zone drop classification (before/onto/after via y_rel thirds); onto auto-expands the target; insertion line / reparent ring",
+        "cycle prevention: a drop into the dragged node's own subtree is rejected (is_descendant guard), tree unchanged",
+        "3rd consumer of the R742 drag-session External hooks (begin_drag/drag_to/drag_release); scene/drag RPC, no new method",
+        "AI-first: parent_of/id_at/depth_at/row_count/preview introspection; reparent observable as a parent change not a pixel diff"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core tree_nav: 36 pass (33 existing + 3 new structural-mutation)",
+        "cargo test -p hello-tree-grid: 32 pass (delete/undo now use the lifted ops)",
+        "cargo test -p hello-tree-reparent: 11 pass (reparent/reorder/promote/cycle-reject + External drag-hook integration)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: EXIT=0 (-D pedantic)",
+        "tools/demos/r935_tree_reparent.py: PASS (~35 gated assertions, scene/drag + wait_query)"
+      ],
+      "impact_refs": [
+        "5.51",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "keyboard reparent (cut/paste or move-to-parent) deferred: pointer/scene-drag is the v1 reparent; keyboard does nav only",
+        "reparent zone-move composition + is_descendant/locate kept example-local (1 consumer); lift to tree_nav at a 2nd reparent consumer",
+        "DCC crate-lift (property-grid/data-grid/node-editor edit machinery) audited premature: edit_field_keymap/UndoStack/CellValue already lifted; apply_key_edit is a net-zero wrapper, invoke_undo still 2-consumer (defer to 3rd) — remaining inline code is divergent domain logic, not missed abstraction",
+        "onto-drop appends as last child (no drop-as-first-child affordance); fine-grained intra-children index via drag deferred"
+      ],
+      "publishable_decision_summary": "R935: scene-outliner drag-to-reparent. New hello-tree-reparent example drags a tree node onto another (reparent to child) or between rows (reorder siblings), with cycle prevention (drop into own subtree rejected); 3rd consumer of the R742 drag-session External hooks, scene/drag-driven. Lifts remove_subtree/insert_subtree to tree_nav via a new MutableTreeNode trait at their 2nd consumer (hello-tree-grid migrated). Audit finding: the property-grid/data-grid/node-editor edit-machinery crate-lift is premature (edit_field_keymap/UndoStack/CellValue already lifted; the rest is divergent domain logic).",
+      "publishable_changes_bullets": [
+        "tree_nav: MutableTreeNode trait + remove_subtree/insert_subtree lifted from hello-tree-grid (2nd consumer = hello-tree-reparent)",
+        "structural tree edits need &mut Vec<Self> (not TreeNode's slice children_mut), so a retained-only peer trait; derived trees opt out",
+        "migrated hello-tree-grid to the lifted ops (deleted its local copies; both consumers thin)",
+        "new example hello-tree-reparent: scene outliner, drag a node onto another (reparent) or between rows (reorder)",
+        "3-zone drop classification (before/onto/after via y_rel thirds); onto auto-expands the target; insertion line / reparent ring",
+        "cycle prevention: a drop into the dragged node's own subtree is rejected (is_descendant guard), tree unchanged",
+        "3rd consumer of the R742 drag-session External hooks (begin_drag/drag_to/drag_release); scene/drag RPC, no new method",
+        "AI-first: parent_of/id_at/depth_at/row_count/preview introspection; reparent observable as a parent change not a pixel diff"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core tree_nav: 36 pass (33 existing + 3 new structural-mutation)",
+        "cargo test -p hello-tree-grid: 32 pass (delete/undo now use the lifted ops)",
+        "cargo test -p hello-tree-reparent: 11 pass (reparent/reorder/promote/cycle-reject + External drag-hook integration)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: EXIT=0 (-D pedantic)",
+        "tools/demos/r935_tree_reparent.py: PASS (~35 gated assertions, scene/drag + wait_query)"
+      ],
+      "publishable_impact_refs": [
+        "5.51",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "keyboard reparent (cut/paste or move-to-parent) deferred: pointer/scene-drag is the v1 reparent; keyboard does nav only",
+        "reparent zone-move composition + is_descendant/locate kept example-local (1 consumer); lift to tree_nav at a 2nd reparent consumer",
+        "DCC crate-lift (property-grid/data-grid/node-editor edit machinery) audited premature: edit_field_keymap/UndoStack/CellValue already lifted; apply_key_edit is a net-zero wrapper, invoke_undo still 2-consumer (defer to 3rd) — remaining inline code is divergent domain logic, not missed abstraction",
+        "onto-drop appends as last child (no drop-as-first-child affordance); fine-grained intra-children index via drag deferred"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

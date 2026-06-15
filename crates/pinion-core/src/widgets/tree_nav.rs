@@ -75,6 +75,66 @@ pub trait TreeNode {
     fn set_expanded(&mut self, expanded: bool);
 }
 
+/// R935 §5.51 — the **structural-mutation** peer of [`TreeNode`]. Where
+/// [`TreeNode`] exposes children as slices (read + flag mutation — which every
+/// tree, including a *derived* one the inspector rebuilds each frame, can
+/// provide), this exposes the child list as an owned `&mut Vec<Self>` so the
+/// subtree editors below ([`remove_subtree`] / [`insert_subtree`]) can
+/// add and remove nodes. Only a **retained**, `Vec`-backed tree implements it;
+/// a derived projection does not (and never reparents).
+pub trait MutableTreeNode: TreeNode + Sized {
+    /// The owned child list, for structural insert / remove.
+    fn children_vec_mut(&mut self) -> &mut Vec<Self>;
+}
+
+/// R935 §5.51 — remove the subtree rooted at `id` (depth-first), returning it
+/// (`None` when `id` is absent). The structural inverse of [`insert_subtree`];
+/// together they are the move/delete/undo backbone every retained tree shares
+/// (lifted from `hello-tree-grid` when the `hello-tree-reparent` drag editor
+/// became the second consumer — a `Vec::remove`/`insert` at the wrong depth
+/// silently corrupts the tree, so it is a divergence-is-a-bug duplication).
+pub fn remove_subtree<N: MutableTreeNode>(nodes: &mut Vec<N>, id: &str) -> Option<N> {
+    if let Some(pos) = nodes.iter().position(|n| n.id() == id) {
+        return Some(nodes.remove(pos));
+    }
+    for n in nodes.iter_mut() {
+        if let Some(found) = remove_subtree(n.children_vec_mut(), id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// R935 §5.51 — insert `node` under `parent` (`None` = root) at `index`
+/// (clamped to the sibling count). The structural inverse of
+/// [`remove_subtree`]. A `parent` id that is absent is a broken caller
+/// invariant (the caller resolved it from the live tree): it fires a
+/// `debug_assert` and falls back to appending at root in release so nothing is
+/// lost.
+pub fn insert_subtree<N: MutableTreeNode>(
+    nodes: &mut Vec<N>,
+    parent: Option<&str>,
+    index: usize,
+    node: N,
+) {
+    match parent {
+        None => {
+            let i = index.min(nodes.len());
+            nodes.insert(i, node);
+        }
+        Some(pid) => {
+            if let Some(p) = find_node_mut(nodes, pid) {
+                let children = p.children_vec_mut();
+                let i = index.min(children.len());
+                children.insert(i, node);
+            } else {
+                debug_assert!(false, "insert_subtree: parent '{pid}' not found in the tree");
+                nodes.push(node);
+            }
+        }
+    }
+}
+
 /// One row of the depth-first flattening of the *visible* tree: the
 /// canonical representation tree keyboard navigation works against.
 /// Carries every field its consumers need — `id` (nav cursor +
@@ -627,8 +687,9 @@ mod tests {
     //! its `FileNode` [`TreeNode`] glue.
 
     use super::{
-        apply_tree_key, find_node_mut, flat_visible, flat_visible_filtered, parent_row,
-        resolve_tree_key, set_expanded_in, toggle_expanded, TreeKey, TreeNode, VisibleRow,
+        apply_tree_key, find_node_mut, flat_visible, flat_visible_filtered, insert_subtree,
+        parent_row, remove_subtree, resolve_tree_key, set_expanded_in, toggle_expanded,
+        MutableTreeNode, TreeKey, TreeNode, VisibleRow,
     };
     use crate::reactive::Owner;
     use crate::Signal;
@@ -690,6 +751,12 @@ mod tests {
         }
         fn set_expanded(&mut self, expanded: bool) {
             self.expanded = expanded;
+        }
+    }
+
+    impl MutableTreeNode for TestNode {
+        fn children_vec_mut(&mut self) -> &mut Vec<Self> {
+            &mut self.children
         }
     }
 
@@ -1110,5 +1177,62 @@ mod tests {
         assert_eq!(scroll.offset_y(), 0, "no cursor -> no scroll");
         reveal_row_cursor(&rows, Some("nonexistent"), &scroll, 24);
         assert_eq!(scroll.offset_y(), 0, "unknown cursor -> no scroll");
+    }
+
+    // ── R935 structural mutation: remove_subtree / insert_subtree ──────────
+
+    /// The id sequence of the whole (not just visible) tree, depth-first —
+    /// expand everything so structure is fully observable.
+    fn all_ids(nodes: &[TestNode]) -> Vec<String> {
+        fn walk(nodes: &[TestNode], out: &mut Vec<String>) {
+            for n in nodes {
+                out.push(n.id.clone());
+                walk(&n.children, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(nodes, &mut out);
+        out
+    }
+
+    #[test]
+    fn remove_subtree_takes_a_nested_branch_with_its_children() {
+        let mut tree = sample();
+        let taken = remove_subtree(&mut tree, "src/widgets").expect("widgets removed");
+        assert_eq!(taken.id, "src/widgets");
+        assert_eq!(taken.children.len(), 1, "the subtree's child travels with it");
+        assert!(!all_ids(&tree).contains(&"src/widgets".to_owned()), "gone from the tree");
+        assert!(!all_ids(&tree).contains(&"src/widgets/mod.rs".to_owned()), "and its descendant");
+        assert!(remove_subtree(&mut tree, "no-such-id").is_none(), "absent id → None");
+    }
+
+    #[test]
+    fn insert_subtree_places_under_parent_at_clamped_index() {
+        let mut tree = sample();
+        let node = TestNode::leaf("src/new.rs", "new.rs");
+        insert_subtree(&mut tree, Some("src"), 1, node);
+        let src = find_node_mut(&mut tree, "src").expect("src present");
+        assert_eq!(src.children[1].id, "src/new.rs", "inserted at index 1 under src");
+        // An over-range index clamps to the end rather than panicking.
+        insert_subtree(&mut tree, Some("src"), 999, TestNode::leaf("src/end.rs", "end.rs"));
+        let src = find_node_mut(&mut tree, "src").expect("src present");
+        assert_eq!(src.children.last().unwrap().id, "src/end.rs", "over-range index clamps to end");
+        // parent = None inserts at root.
+        insert_subtree(&mut tree, None, 0, TestNode::leaf("root.rs", "root.rs"));
+        assert_eq!(tree[0].id, "root.rs", "None parent inserts at root");
+    }
+
+    #[test]
+    fn remove_then_insert_round_trips_a_subtree_to_a_new_parent() {
+        // The reparent backbone: lift a subtree out and graft it elsewhere.
+        let mut tree = sample();
+        let moved = remove_subtree(&mut tree, "src/widgets").expect("removed");
+        insert_subtree(&mut tree, Some("docs"), 0, moved);
+        let docs = find_node_mut(&mut tree, "docs").expect("docs present");
+        assert_eq!(docs.children[0].id, "src/widgets", "subtree reparented under docs");
+        assert_eq!(docs.children[0].children[0].id, "src/widgets/mod.rs", "with its child");
+        // src no longer holds it.
+        let src = find_node_mut(&mut tree, "src").expect("src present");
+        assert!(src.children.iter().all(|c| c.id != "src/widgets"), "removed from old parent");
     }
 }

@@ -2916,6 +2916,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-tree-reparent"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-shell",
+ "serde",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-tree-view"
 version = "0.0.1"
 dependencies = [

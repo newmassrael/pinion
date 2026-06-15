@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R935 §5.51 scene-outliner drag-to-reparent: pinion-forge renderer manifest
+  for hello-tree-reparent. Emits `HelloTreeReparentRenderer` (Vello-backed).
+  Same single-source-of-truth template as the other hello-* renderers; only
+  the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloTreeReparentRenderer"
+        backend="vello"/>
