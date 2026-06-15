@@ -41567,6 +41567,68 @@
         "atomic R939 + SEED said \"involution-safe\" -> corrected to \"round-trip-clean for toggle\""
       ]
     },
+    "R940": {
+      "decision_summary": "R940 — data-grid Choice column: Type col becomes an enum edited via a grid-local scroll-aware dropdown popup; 2nd consumer of the property-grid popup-delegate pattern, value layer reused",
+      "changes_bullets": [
+        "Convert hello-data-grid Type col (1) Text -> CellKind::Choice (asset enum); NCOLS stays 5",
+        "TYPE_OPTIONS + choice_options(col) SSOT; default_row column-aware; seed via choice_cell",
+        "intervene value: kind coerce -> value-level with_intervene (Choice takes Int option index)",
+        "use_popup_cursor/use_popup_hover + clear_popup SSOT; editing_cell latch doubles as popup-open",
+        "Coordinator open_choice/commit_choice/close_popup/set_popup_hover; commit journals via edit_cell",
+        "Click + DoubleClick on a Choice cell open the dropdown; dispatch_send routes opt<i> + dismiss",
+        "RPC open_choice/choose/close_popup verbs + popup_open/popup_cursor read-only queries",
+        "Grid-local popup_pos/popup_anchor (scroll-aware, flip-above, visible-gated) + view_choice_overlay",
+        "apply_key_choice keymap (rove/Enter/Escape) intercepted in apply_key_grid when popup visible",
+        "a11y: popup_listbox_nodes gated + access_focus_target rings cursor option; cell focus suppressed"
+      ],
+      "verification_bullets": [
+        "workspace cargo test -j2: 165 ok result lines, 0 FAILED (hello-data-grid 89 = 73 prior + 16 new)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic: 0 errors",
+        "demo r940_data_grid_choice.py: 46 assertions, PASS, 3/3 deterministic runs (ZERO-FLAKE)",
+        "migrated 3 prior col-1-as-Text tests to Choice Int; filter/group/sort survive via label degrade",
+        "validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "apply_key_choice popup-delegate = 2nd consumer (property-grid+data-grid); defer roving lift to 3rd",
+        "combobox roves via ListBoxExternal substrate (standalone widget) = different form, not a 3rd",
+        "Color cell column deferred (CellValue::Color complete; swatch popup a documented GUI follow-up)",
+        "keymap intercept gates on flatten presence (collapse/filter); a scroll-out only hides the paint"
+      ],
+      "publishable_decision_summary": "R940 — data-grid Choice column: Type col becomes an enum edited via a grid-local scroll-aware dropdown popup; 2nd consumer of the property-grid popup-delegate pattern, value layer reused",
+      "publishable_changes_bullets": [
+        "Convert hello-data-grid Type col (1) Text -> CellKind::Choice (asset enum); NCOLS stays 5",
+        "TYPE_OPTIONS + choice_options(col) SSOT; default_row column-aware; seed via choice_cell",
+        "intervene value: kind coerce -> value-level with_intervene (Choice takes Int option index)",
+        "use_popup_cursor/use_popup_hover + clear_popup SSOT; editing_cell latch doubles as popup-open",
+        "Coordinator open_choice/commit_choice/close_popup/set_popup_hover; commit journals via edit_cell",
+        "Click + DoubleClick on a Choice cell open the dropdown; dispatch_send routes opt<i> + dismiss",
+        "RPC open_choice/choose/close_popup verbs + popup_open/popup_cursor read-only queries",
+        "Grid-local popup_pos/popup_anchor (scroll-aware, flip-above, visible-gated) + view_choice_overlay",
+        "apply_key_choice keymap (rove/Enter/Escape) intercepted in apply_key_grid when popup visible",
+        "a11y: popup_listbox_nodes gated + access_focus_target rings cursor option; cell focus suppressed"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test -j2: 165 ok result lines, 0 FAILED (hello-data-grid 89 = 73 prior + 16 new)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic: 0 errors",
+        "demo r940_data_grid_choice.py: 46 assertions, PASS, 3/3 deterministic runs (ZERO-FLAKE)",
+        "migrated 3 prior col-1-as-Text tests to Choice Int; filter/group/sort survive via label degrade",
+        "validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "apply_key_choice popup-delegate = 2nd consumer (property-grid+data-grid); defer roving lift to 3rd",
+        "combobox roves via ListBoxExternal substrate (standalone widget) = different form, not a 3rd",
+        "Color cell column deferred (CellValue::Color complete; swatch popup a documented GUI follow-up)",
+        "keymap intercept gates on flatten presence (collapse/filter); a scroll-out only hides the paint"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

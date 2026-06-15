@@ -163,8 +163,9 @@ use std::rc::Rc;
 use std::collections::BTreeSet;
 
 use pinion_a11y::{
-    grid_table_nodes, grouped_grid_access_nodes, AccessAction, AccessNode, GridCell, GridColumn,
-    GridRow, GroupedGridSelection, GroupedGridSpec, SortDirection, WidgetA11y,
+    grid_table_nodes, grouped_grid_access_nodes, listbox_option_nodes, AccessAction, AccessFocus,
+    AccessNode, GridCell, GridColumn, GridRow, GroupedGridSelection, GroupedGridSpec,
+    ListOption, SortDirection, WidgetA11y,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::{split_subindex, GridSendKey};
@@ -189,6 +190,7 @@ use pinion_core::widgets::grid_sort::{
     GridFilter,
 };
 use pinion_core::widgets::group_order::{group_rows, GroupRow};
+use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::table::{cycle_col_sort, grid_order_by};
 use pinion_core::widgets::virtual_list::{compute_visible_range, content_height, VisibleWindow};
@@ -197,8 +199,11 @@ use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::{Color, Command, Frame, Modifiers, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
+use pinion_widget_paint::barrier::dismiss_barrier;
 use pinion_widget_paint::checkbox::{view_checkbox_box, CheckboxStyle};
 use pinion_widget_paint::group_header::group_header_row;
+use pinion_widget_paint::listbox::{view_option, OptionRow};
+use pinion_widget_paint::popup::popup_surface;
 use pinion_widget_paint::table::{view_virtual_grid_body, GridScroll};
 use pinion_widget_paint::text_field as tf_paint;
 
@@ -268,6 +273,29 @@ const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("data_grid_edit",
 /// `hello-dnd` `"dnd-row"` peer): names what a drag session over this grid carries.
 const REORDER_KIND: &str = "data-grid-row";
 
+// ─── choice-popup tags + dimensions (R940) ────────────────────────
+// The floating dropdown a `Choice` cell opens (the property-grid popup pattern,
+// data-grid's 2nd consumer). The panel is anchored in GRID-LOCAL coordinates
+// (a sibling of the scroll viewport inside the grid container), scroll-aware so
+// it tracks the cell as the body scrolls (the Qt combobox-delegate behaviour).
+
+/// The open dropdown's container tag (a standalone overlay tag, like the
+/// inline editor's; not a composite send target).
+const CHOICE_POPUP_TAG: &str = "data_grid_choice";
+/// The light-dismiss barrier — a composite tag routing back to the grid
+/// coordinator (`{GRID_TAG}#dismiss`), so a click outside the panel closes the
+/// popup through the same `send` funnel the cells use (the property-grid shape).
+const POPUP_DISMISS_TAG: &str = "data_grid#dismiss";
+/// Each option's composite sub-key prefix (`{GRID_TAG}#opt<i>`): a click commits
+/// option `i`, a `PointerEnter` / `PointerLeave` sets / clears the hover.
+const CHOICE_OPT_PREFIX: &str = "opt";
+/// The dropdown panel width — the `Type` column's width, so the panel aligns
+/// under the cell it edits.
+const POPUP_W: u32 = COL_W[TYPE_COL];
+/// One option row's height + the panel's inner padding (the property-grid feel).
+const POPUP_OPT_H: u32 = 30;
+const POPUP_PAD: u32 = 6;
+
 
 // ─── grid shape (an editable asset table) ─────────────────────────
 
@@ -279,14 +307,29 @@ const COL_NAMES: [&str; NCOLS] = ["Asset", "Type", "Count", "Scale", "Active"];
 
 /// The per-column [`CellKind`] — every cell in a column shares its column's
 /// kind (the editor dispatch, parse, keystroke gate, and intervene coercion
-/// all read from here).
+/// all read from here). R940 — the `Type` column (col 1) is a [`CellKind::Choice`]
+/// enum (asset kinds are a closed set, not free text), edited through a floating
+/// dropdown popup; the rest stay scalar.
 const COL_KINDS: [CellKind; NCOLS] = [
     CellKind::Text,
-    CellKind::Text,
+    CellKind::Choice,
     CellKind::Int,
     CellKind::Float,
     CellKind::Bool,
 ];
+
+/// R940 — the `Type` column index (the one [`CellKind::Choice`] column). The
+/// SSOT the seed, [`default_row`], the popup paint / a11y, and the column-kind
+/// dispatch all read so the choice column is named in exactly one place.
+const TYPE_COL: usize = 1;
+
+/// R940 — the `Type` column's closed enum (asset kinds). Index 0 = `sprite`,
+/// 1 = `mesh` (the seed values, so the filter / group / sort tests read the
+/// same display labels); the rest broaden the dropdown so a `Choice` edit
+/// picks among real alternatives. A `Choice` cell stores its own option list
+/// (the value-level options the property grid's cells carry), so this is the
+/// per-column source those cells clone from.
+const TYPE_OPTIONS: [&str; 5] = ["sprite", "mesh", "material", "audio", "script"];
 
 /// Per-column paint width (logical px). Text columns are wider. R896 — the
 /// columns are deliberately wider than the grid viewport ([`GRID_VIEWPORT_W`])
@@ -463,37 +506,62 @@ fn plain_view(
     sort.is_none() && filter.is_none() && group_col.is_none()
 }
 
+/// R940 — the [`CellKind::Choice`] option labels for column `col` (the `Type`
+/// column's [`TYPE_OPTIONS`]; empty for a non-choice column). The per-column
+/// option SSOT the seed + [`default_row`] clone into each `Choice` cell (the
+/// option list lives on the value, the property-grid cell shape).
+fn choice_options(col: usize) -> Vec<String> {
+    match col {
+        TYPE_COL => TYPE_OPTIONS.iter().map(|s| (*s).to_owned()).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// R940 — a `Choice` cell for column `col` at option `selected` (clamped into
+/// range, falling back to 0). The one constructor the seed + [`default_row`]
+/// build choice cells through, so a seeded and an added choice cell carry the
+/// same option list.
+fn choice_cell(col: usize, selected: usize) -> CellValue {
+    let options = choice_options(col);
+    let selected = if selected < options.len() { selected } else { 0 };
+    CellValue::Choice { selected, options }
+}
+
 /// R930 — a fresh row's default cells, one per column keyed by [`COL_KINDS`]
 /// (the typed empty value `add_row` appends). The typed peer of
 /// [`default_cells`]'s seed, so an added row edits exactly like a seeded one.
+/// R940 — column-aware: a choice column seeds its [`choice_cell`] (option 0)
+/// so an added `Type` row carries the full dropdown, not an empty list.
 fn default_row() -> Vec<CellValue> {
     COL_KINDS
         .iter()
-        .map(|k| match k {
+        .enumerate()
+        .map(|(col, k)| match k {
             CellKind::Text => CellValue::Text(String::new()),
             CellKind::Int => CellValue::Int(0),
             CellKind::Float => CellValue::Float(0.0),
             CellKind::Bool => CellValue::Bool(false),
-            // COL_KINDS is statically Text/Int/Float/Bool (no Choice/Color
-            // column in this grid); these arms keep the match total and would
-            // seed a sensible empty if a column of that kind were ever added.
-            CellKind::Choice => CellValue::Choice { selected: 0, options: Vec::new() },
+            CellKind::Choice => choice_cell(col, 0),
+            // No colour column in this grid; the arm keeps the match total.
             CellKind::Color => CellValue::Color(Color::rgb(0, 0, 0)),
         })
         .collect()
 }
 
 /// First-paint cell values (row-major). Each column's values match
-/// [`COL_KINDS`].
+/// [`COL_KINDS`]. R940 — the `Type` cells (col 1) are [`CellKind::Choice`]
+/// values: `sprite` (option 0) / `mesh` (option 1), the same display labels
+/// the prior `Text` cells showed (so the filter / group / sort assertions,
+/// which read `display()`, stand unchanged).
 fn default_cells() -> Vec<CellValue> {
     vec![
-        CellValue::Text("Hero".to_owned()), CellValue::Text("sprite".to_owned()),
+        CellValue::Text("Hero".to_owned()), choice_cell(TYPE_COL, 0),
         CellValue::Int(1), CellValue::Float(1.0), CellValue::Bool(true),
-        CellValue::Text("Tree".to_owned()), CellValue::Text("mesh".to_owned()),
+        CellValue::Text("Tree".to_owned()), choice_cell(TYPE_COL, 1),
         CellValue::Int(24), CellValue::Float(2.5), CellValue::Bool(true),
-        CellValue::Text("Coin".to_owned()), CellValue::Text("sprite".to_owned()),
+        CellValue::Text("Coin".to_owned()), choice_cell(TYPE_COL, 0),
         CellValue::Int(99), CellValue::Float(0.5), CellValue::Bool(false),
-        CellValue::Text("Boss".to_owned()), CellValue::Text("mesh".to_owned()),
+        CellValue::Text("Boss".to_owned()), choice_cell(TYPE_COL, 1),
         CellValue::Int(1), CellValue::Float(4.0), CellValue::Bool(true),
     ]
 }
@@ -525,12 +593,47 @@ fn use_focused_col() -> Rc<Signal<usize>> {
     owner.cache("data_grid.focused_col", || Signal::new(0_usize))
 }
 
-/// Edit-mode latch — `Some((row, col))` while that cell is being text-edited
-/// (the todomvc `editing_id`, keyed by a 2-D cell). `None` = navigating.
+/// Edit-mode latch — `Some((row, col))` while that cell is being edited (the
+/// todomvc `editing_id`, keyed by a 2-D cell). `None` = navigating. R940 — a
+/// text / int / float cell editing here renders the shared inline field; a
+/// `Choice` cell editing here is the OPEN DROPDOWN (no inline field, since a
+/// choice is not [`CellKind::is_text_editable`]) — the one latch serves both.
 #[must_use]
 fn use_editing_cell() -> Rc<Signal<Option<(usize, usize)>>> {
     let owner = Owner::current().expect("use_editing_cell requires an active Owner scope");
     owner.cache("data_grid.editing_cell", || Signal::new(None))
+}
+
+/// R940 — the open choice dropdown's roving active descendant (the keyboard
+/// cursor within the option list). `Some(i)` while a popup is open; `None` when
+/// closed. The property-grid popup-cursor pattern (data-grid's 2nd consumer).
+#[must_use]
+fn use_popup_cursor() -> Rc<Signal<Option<usize>>> {
+    let owner = Owner::current().expect("use_popup_cursor requires an active Owner scope");
+    owner.cache("data_grid.popup_cursor", || Signal::new(None))
+}
+
+/// R940 — the open dropdown's pointer-hovered option (the mouse highlight), or
+/// `None`. Set by `PointerEnter` / `PointerLeave` on the option rows.
+#[must_use]
+fn use_popup_hover() -> Rc<Signal<Option<usize>>> {
+    let owner = Owner::current().expect("use_popup_hover requires an active Owner scope");
+    owner.cache("data_grid.popup_hover", || Signal::new(None))
+}
+
+/// R940 — tear down the open choice dropdown: clear the edit latch, the keyboard
+/// cursor, and the pointer hover in one place (the property-grid `clear_popup`
+/// SSOT). Takes the three Signals by ref so the coordinator's pointer / RPC path
+/// (its `Rc` fields) and the keyboard free-fn path (the `use_*` hooks — the same
+/// Owner-cached instances) share one teardown.
+fn clear_popup(
+    editing: &Signal<Option<(usize, usize)>>,
+    cursor: &Signal<Option<usize>>,
+    hover: &Signal<Option<usize>>,
+) {
+    editing.set(None);
+    cursor.set(None);
+    hover.set(None);
 }
 
 /// R937 — the live row-reorder drop gap (`0..=nrows`), `None` when no drag is in
@@ -1007,6 +1110,12 @@ struct DataGridExternal {
     /// AND a `scene/snapshot` after a `scene/drag` move observes it (the AI-first
     /// witness of the drag); `drag_release` consumes + clears it.
     drag_preview: Rc<Signal<Option<usize>>>,
+    /// R940 — the open choice dropdown's roving active descendant + pointer
+    /// hover ([`use_popup_cursor`] / [`use_popup_hover`]). `Rc` clones of the
+    /// view-shared Signals (the property-grid popup shape), so the coordinator's
+    /// pointer / RPC path and the keyboard free-fn path drive one popup.
+    popup_cursor: Rc<Signal<Option<usize>>>,
+    popup_hover: Rc<Signal<Option<usize>>>,
 }
 
 /// R914 — the per-drag payload the cell scrub's [`DragCalibration`] snapshots on
@@ -1054,6 +1163,8 @@ impl DataGridExternal {
             scrub_origin: RefCell::new(None),
             reorder_arm: Cell::new(None),
             drag_preview: use_drag_preview(),
+            popup_cursor: use_popup_cursor(),
+            popup_hover: use_popup_hover(),
         }
     }
 
@@ -1581,6 +1692,24 @@ impl DataGridExternal {
         // third segment (a hand-rolled split read "PointerUp:c" as the event name).
         let (key, event_name, _mods) =
             pinion_core::composite_tag::split_send_payload(s).ok_or(InvokeError::Rejected)?;
+        // R940 — the choice dropdown's light-dismiss barrier + option targets,
+        // routed back through this one `send` funnel (the property-grid popup
+        // shape): `dismiss` closes the popup, `opt<i>` commits / hovers option i.
+        if key == "dismiss" {
+            if event_name == "PointerUp" {
+                self.close_popup();
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        if let Some(opt) = key.strip_prefix(CHOICE_OPT_PREFIX) {
+            let i: usize = opt.parse().map_err(|_| InvokeError::Rejected)?;
+            if event_name == "PointerUp" {
+                self.commit_choice(i);
+            } else {
+                self.set_popup_hover(event_name, i);
+            }
+            return Ok(IntrospectValue::Null);
+        }
         if let Some(row) = parse_handle_sub(key) {
             if event_name == "PointerDown" && row < self.nrows() {
                 self.arm_reorder(row);
@@ -1637,7 +1766,15 @@ impl DataGridExternal {
                 }
                 self.focused_row.set(row);
                 self.focused_col.set(col);
-                self.toggle(row, col);
+                // R940 — a click on a choice cell opens its dropdown (the bool
+                // cell's single-click-toggle peer: both activate the cell's
+                // primary action). `toggle` no-ops on a non-bool, so a text /
+                // numeric cell click just focuses (the prior behaviour).
+                if COL_KINDS[col] == CellKind::Choice {
+                    self.open_choice(row, col);
+                } else {
+                    self.toggle(row, col);
+                }
                 Ok(IntrospectValue::Null)
             }
             // R914 — the capture lock lets the cursor stray off the cell; a
@@ -1647,7 +1784,13 @@ impl DataGridExternal {
                 self.end_scrub();
                 Ok(IntrospectValue::Null)
             }
-            "DoubleClick" => Ok(IntrospectValue::Bool(self.begin_edit(row, col))),
+            // R940 — a choice cell opens its dropdown (it is not text-editable,
+            // so `begin_edit` would reject it); other kinds enter inline edit.
+            "DoubleClick" => Ok(IntrospectValue::Bool(if COL_KINDS[col] == CellKind::Choice {
+                self.open_choice(row, col)
+            } else {
+                self.begin_edit(row, col)
+            })),
             _ => Ok(IntrospectValue::Null),
         }
     }
@@ -1669,6 +1812,90 @@ impl DataGridExternal {
         self.editor.seed(value.edit_text());
         pinion_core::focus_request::request(EDIT_TF_TAG);
         true
+    }
+
+    /// R940 — open the choice dropdown on `(row, col)`: focus the cell, latch
+    /// it (the [`use_editing_cell`] latch — a choice cell editing means the
+    /// dropdown is open, no inline field), and seed the keyboard cursor at the
+    /// committed option (so arrows start from the current value). Focus stays on
+    /// the grid: the popup is the grid's roving active descendant, not a
+    /// separate Tab stop (unlike the inline text field). Returns `false` for a
+    /// non-choice column or an out-of-range / non-choice cell.
+    fn open_choice(&self, row: usize, col: usize) -> bool {
+        if row >= self.nrows() || col >= NCOLS || COL_KINDS[col] != CellKind::Choice {
+            return false;
+        }
+        let model = self.model.get();
+        let Some(CellValue::Choice { selected, .. }) = model.get(idx(row, col)) else {
+            return false;
+        };
+        self.focused_row.set(row);
+        self.focused_col.set(col);
+        self.editing_cell.set(Some((row, col)));
+        self.popup_cursor.set(Some(*selected));
+        self.popup_hover.set(None);
+        true
+    }
+
+    /// R940 — commit option `i` into the open choice cell, then close the popup.
+    /// The pointer (option click), keyboard (`Enter` / `Space`), and RPC
+    /// (`choose`) commit path. Writes through the JOURNALED [`edit_cell`] (the
+    /// VALUE-level [`CellValue::with_intervene`] — one undo step, byte-identical
+    /// to the RPC `intervene value` path), so a dropdown pick re-anchors + undoes
+    /// like every other cell edit. `false` when no popup is open, the editing
+    /// cell is not a choice, or `i` is out of the option range.
+    fn commit_choice(&self, i: usize) -> bool {
+        let Some((row, col)) = self.editing_cell.get() else {
+            return false;
+        };
+        if col >= NCOLS || COL_KINDS[col] != CellKind::Choice {
+            return false;
+        }
+        let Some(current) = self.model.get().get(idx(row, col)).cloned() else {
+            return false;
+        };
+        let Ok(next) = current.with_intervene(IntrospectValue::Int(int_of(i))) else {
+            // An out-of-range index commits nothing; close to avoid a stuck
+            // popup (the keyboard cursor is always in range, so this is the
+            // defensive RPC `choose <bad>` path).
+            self.close_popup();
+            return false;
+        };
+        self.edit_cell(row, col, next, Cow::Borrowed("Edit cell"));
+        self.close_popup();
+        true
+    }
+
+    /// R940 — close the choice dropdown without committing (the dismiss-barrier
+    /// click, the keyboard `Escape`, and the RPC `close_popup` path). The one
+    /// teardown the [`clear_popup`] SSOT performs over the coordinator's `Rc`
+    /// holders.
+    fn close_popup(&self) {
+        clear_popup(&self.editing_cell, &self.popup_cursor, &self.popup_hover);
+    }
+
+    /// R940 — set / clear the dropdown's pointer hover (the `PointerEnter` /
+    /// `PointerLeave` handler for the option rows).
+    fn set_popup_hover(&self, event_name: &str, i: usize) {
+        match event_name {
+            "PointerEnter" => self.popup_hover.set(Some(i)),
+            "PointerLeave" => {
+                if self.popup_hover.get() == Some(i) {
+                    self.popup_hover.set(None);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// R940 — whether a choice dropdown is open: the edit latch is on a cell
+    /// whose column is a [`CellKind::Choice`] (a text / numeric edit latch is the
+    /// inline field, not a popup). The one predicate the `popup_open` query, the
+    /// keyboard-keymap intercept, and the popup paint / a11y gate share.
+    fn popup_open(&self) -> bool {
+        self.editing_cell
+            .get()
+            .is_some_and(|(_, col)| col < NCOLS && COL_KINDS[col] == CellKind::Choice)
     }
 
     fn set_focused_row_clamped(&self, row: usize) {
@@ -1829,6 +2056,14 @@ impl ExternalIntrospect for DataGridExternal {
             ("reorder_enabled", "bool"),
             ("drag_preview", "int"),
             ("move_row", "string"),
+            // R940 — choice dropdown: whether a popup is open + its keyboard
+            // cursor (read side), and the open / commit / close verbs (the
+            // AI-first peer of a pointer click on the cell + an option).
+            ("popup_open", "bool"),
+            ("popup_cursor", "int"),
+            ("open_choice", "json"),
+            ("choose", "int"),
+            ("close_popup", "json"),
         ])
     }
 
@@ -1844,6 +2079,13 @@ impl ExternalIntrospect for DataGridExternal {
             }),
             "editing_col" => Some(match self.editing_cell.get() {
                 Some((_, col)) => IntrospectValue::Int(int_of(col)),
+                None => IntrospectValue::Null,
+            }),
+            // R940 — whether a choice dropdown is open (the edit latch is on a
+            // choice cell), and its roving keyboard cursor (`Null` when closed).
+            "popup_open" => Some(IntrospectValue::Bool(self.popup_open())),
+            "popup_cursor" => Some(match self.popup_cursor.get() {
+                Some(i) => IntrospectValue::Int(int_of(i)),
                 None => IntrospectValue::Null,
             }),
             // R886 — the wire form is the cross-grid `grid_sort_str`
@@ -1964,9 +2206,8 @@ impl ExternalIntrospect for DataGridExternal {
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "row_count" | "col_count" | "editing_row" | "editing_col" | "view_len"
-            | "group_count" | "visible_len" | "reorder_enabled" | "drag_preview" => {
-                Err(InterveneError::ReadOnly)
-            }
+            | "group_count" | "visible_len" | "reorder_enabled" | "drag_preview"
+            | "popup_open" | "popup_cursor" => Err(InterveneError::ReadOnly),
             "focused_row" => match value {
                 IntrospectValue::Int(i) => {
                     let row = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
@@ -2064,13 +2305,18 @@ impl ExternalIntrospect for DataGridExternal {
                 if row >= self.nrows() || col >= NCOLS {
                     return Err(InterveneError::UnknownPath);
                 }
-                // R894 / R914 — coerce the wire value to the column's kind and
-                // commit through the shared clamped funnel (an AI write cannot
-                // exceed the bounds a keyboard edit / a drag cannot, and the
-                // cursor re-anchors identically). R932 — via the JOURNALED
-                // `edit_cell`, so an AI `value.<row>.<col>` write is one undo
-                // step, byte-identical reversal to the keyboard / scrub edit.
-                self.edit_cell(row, col, COL_KINDS[col].coerce(value)?, Cow::Borrowed("Edit cell"));
+                // R894 / R914 — coerce the wire value and commit through the
+                // shared clamped funnel (an AI write cannot exceed the bounds a
+                // keyboard edit / a drag cannot, and the cursor re-anchors
+                // identically). R932 — via the JOURNALED `edit_cell`, so an AI
+                // `value.<row>.<col>` write is one undo step, byte-identical
+                // reversal to the keyboard / scrub edit. R940 — through the
+                // VALUE-level [`CellValue::with_intervene`] (the property-grid's
+                // path), not the kind-level `coerce`, so a `Choice` cell takes an
+                // option `Int` index (its options live on the value); scalar
+                // kinds delegate to `coerce`, so their behaviour is unchanged.
+                let next = self.model.get()[idx(row, col)].with_intervene(value)?;
+                self.edit_cell(row, col, next, Cow::Borrowed("Edit cell"));
                 Ok(())
             }
         }
@@ -2092,9 +2338,38 @@ impl ExternalIntrospect for DataGridExternal {
                 Ok(IntrospectValue::Bool(toggled))
             }
             // Enter edit mode on the focused cell (the `Enter` / `F2` path).
+            // R940 — a choice cell opens its dropdown instead of an inline field
+            // (the keyboard `Enter` / `F2` peer of the click open).
             "begin" => {
-                let started = self.begin_edit(self.focused_row.get(), self.focused_col.get());
+                let (row, col) = (self.focused_row.get(), self.focused_col.get());
+                let started = if col < NCOLS && COL_KINDS[col] == CellKind::Choice {
+                    self.open_choice(row, col)
+                } else {
+                    self.begin_edit(row, col)
+                };
                 Ok(IntrospectValue::Bool(started))
+            }
+            // R940 — open the choice dropdown on the focused cell (the AI-first
+            // peer of a click; `false` when the focused cell is not a choice).
+            "open_choice" => {
+                let started = self.open_choice(self.focused_row.get(), self.focused_col.get());
+                Ok(IntrospectValue::Bool(started))
+            }
+            // R940 — commit option `i` into the open dropdown, then close it (the
+            // AI-first peer of an option click / keyboard `Enter`). `false` when
+            // no popup is open or `i` is out of range.
+            "choose" => match args {
+                IntrospectValue::Int(i) => {
+                    let idx = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+                    Ok(IntrospectValue::Bool(self.commit_choice(idx)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R940 — close the open dropdown without committing (the dismiss /
+            // `Escape` peer).
+            "close_popup" => {
+                self.close_popup();
+                Ok(IntrospectValue::Null)
             }
             // R886 — the RPC shortcut for a header click: cycle `col`'s
             // sort. R886.1 — out-of-range `col` is a silent no-op
@@ -2320,9 +2595,65 @@ fn invoke_move_row(scene: &mut Scene, from: usize, to: usize) -> bool {
     true
 }
 
+/// R940 — commit option `i` through the coordinator's `choose` invoke funnel (so
+/// the keyboard `Enter` / `Space` journals ONE cell edit exactly like the option
+/// click / RPC — no hand-rolled keyboard mutation, the [`invoke_undo`] shape).
+fn invoke_choose(scene: &mut Scene, i: usize) -> bool {
+    let Some(intro) = external_mut(scene, GRID_TAG) else {
+        return false;
+    };
+    let _ = intro.invoke("choose", IntrospectValue::Int(int_of(i)));
+    true
+}
+
+/// R940 — the open choice dropdown's keymap (the grid is focused, the popup is
+/// its roving active descendant): arrows / Home / End rove the option cursor
+/// (clamped — the list has ends), `Enter` / `Space` commit the cursor through the
+/// journaled `choose` funnel, `Escape` dismisses. The property-grid
+/// `apply_key_choice` shape (data-grid's 2nd consumer of this 1-D roving keymap;
+/// at a 3rd consumer the pure `(len, cursor, key) -> action` core lifts — for now
+/// the divergence is the commit funnel (journaled here, direct Signal there), so
+/// a copy-adapt is correct, not a wrong-abstraction merge).
+fn apply_key_choice(scene: &mut Scene, key: &str) -> bool {
+    let model = use_data_model().get();
+    let Some((row, col)) = use_editing_cell().get() else {
+        return false;
+    };
+    let Some(CellValue::Choice { options, selected }) = model.get(idx(row, col)) else {
+        return false;
+    };
+    let len = options.len();
+    if len == 0 {
+        return false;
+    }
+    let cursor = use_popup_cursor().get().unwrap_or(*selected).min(len - 1);
+    let target = match key {
+        "ArrowDown" => (cursor + 1).min(len - 1),
+        "ArrowUp" => cursor.saturating_sub(1),
+        "Home" => 0,
+        "End" => len - 1,
+        "Enter" | "Space" => return invoke_choose(scene, cursor),
+        "Escape" => {
+            clear_popup(&use_editing_cell(), &use_popup_cursor(), &use_popup_hover());
+            return true;
+        }
+        _ => return false,
+    };
+    use_popup_cursor().set(Some(target));
+    true
+}
+
 /// Grid-focused keymap: undo / redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z), then 2-D
 /// roving navigation + activate.
 fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
+    // R940 — an open + visible choice dropdown owns the keymap (the grid keeps
+    // focus; the popup is its roving active descendant). Intercepted before undo
+    // + navigation. Gated on the popup being present in the flatten
+    // ([`popup_pos_live`]), so a collapsed / filtered-out editing row never traps
+    // the arrows (the property-grid `open_popup_kind` discipline).
+    if popup_pos_live().is_some() {
+        return apply_key_choice(scene, key);
+    }
     // R932 — a held-Ctrl Z / Y drives the shared undo history before the plain
     // navigation keys (so Ctrl+Z is not read as a bare key).
     if let Some(verb) = undo_redo_verb(key, modifiers) {
@@ -2708,7 +3039,190 @@ fn view_undo_status(theme: &Theme) -> Scene {
     )
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
+// ─── choice dropdown paint + anchor (R940) ────────────────────────
+
+/// R940 — the open dropdown's editing cell resolved to `(row, col, visual_pos)`,
+/// or `None` when nothing is editing, the editing cell is not a choice, or its
+/// row is filtered / collapsed out of the current flatten (so the row is hidden
+/// — no popup is painted, announced, or given the keymap, the property-grid
+/// `popup_view_pos` discipline). `visual_pos` is the row's index in the FULL
+/// flatten (group headers + data rows share the [`ROW_H`] pitch), the basis the
+/// anchor's y math uses. The SSOT the popup paint + a11y + keymap-intercept gate.
+fn popup_pos(editing: Option<(usize, usize)>, vis_rows: &[GroupRow]) -> Option<(usize, usize, usize)> {
+    let (row, col) = editing?;
+    if col >= NCOLS || COL_KINDS[col] != CellKind::Choice {
+        return None;
+    }
+    let pos = vis_rows
+        .iter()
+        .position(|r| matches!(r, GroupRow::Data { source } if *source == row))?;
+    Some((row, col, pos))
+}
+
+/// R940 — [`popup_pos`] over the live reactive state (the keymap intercept +
+/// a11y read it where the view's `vis_rows` is not in hand). Recomputes the
+/// flatten from the hooks (cheap — small N); the view passes its `vis_rows` to
+/// [`popup_pos`] directly to avoid the rebuild.
+fn popup_pos_live() -> Option<(usize, usize, usize)> {
+    let model = use_data_model().get();
+    let vis = visible_rows(
+        &model,
+        use_sort().get(),
+        use_filter().get().as_ref(),
+        use_group_col().get(),
+        &use_collapsed().get(),
+    );
+    popup_pos(use_editing_cell().get(), &vis)
+}
+
+/// R940 — the dropdown panel's height for `n` options ([`POPUP_OPT_H`] per row +
+/// the panel's top/bottom padding). The property-grid panel-height formula.
+fn choice_panel_h(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(0) * POPUP_OPT_H + 2 * POPUP_PAD
+}
+
+/// R940 — the open dropdown panel's GRID-LOCAL top-left, or `None` when the
+/// editing row is scrolled out of the body viewport (so no panel is painted —
+/// the property-grid hidden-row discipline, extended to the virtualized grid's
+/// vertical scroll). Anchored under the value cell — dropping below the row, or
+/// flipped above it when the panel would overflow the grid's bottom (the native
+/// dropdown edge behaviour). GRID-LOCAL because the panel is a sibling of the
+/// scroll viewport inside the grid container, so it subtracts both scroll
+/// offsets by hand (it is outside the scrolls that translate the cells): `col`'s
+/// x walks the column widths past the handle column; `visual_pos`'s y sits below
+/// the one-[`ROW_H`] pinned header.
+fn popup_anchor(visual_pos: usize, col: usize, panel_h: u32, v_off: i32, h_off: i32) -> Option<(u32, u32)> {
+    let row_h = i32::try_from(ROW_H).ok()?;
+    let pos = i32::try_from(visual_pos).ok()?;
+    let body_h = i32::try_from(GRID_VIEWPORT_H.saturating_sub(ROW_H)).ok()?;
+    let row_top_in_body = pos.checked_mul(row_h)?.checked_sub(v_off)?;
+    // Off-screen (scrolled clear of the body viewport) → no panel painted.
+    if row_top_in_body + row_h <= 0 || row_top_in_body >= body_h {
+        return None;
+    }
+    let grid_row_top = row_h + row_top_in_body; // below the pinned header
+    let ph = i32::try_from(panel_h).ok()?;
+    let win_h = i32::try_from(GRID_VIEWPORT_H).ok()?;
+    let below = grid_row_top + row_h;
+    let y = if below + ph <= win_h { below } else { (grid_row_top - ph).max(0) };
+    let col_left = i32::try_from(HANDLE_W + COL_W[..col].iter().sum::<u32>()).ok()?;
+    let x = (col_left - h_off).max(0);
+    Some((u32::try_from(x).ok()?, u32::try_from(y).ok()?))
+}
+
+/// R940 — the open dropdown panel: one [`view_option`] row per option (the R867
+/// listbox skin), absolutely positioned in GRID-LOCAL coordinates. Each option
+/// is tagged `{GRID_TAG}#opt<i>` so its click / hover routes to the coordinator.
+fn view_choice_popup(
+    x: u32,
+    y: u32,
+    options: &[String],
+    selected: usize,
+    cursor: usize,
+    hover: Option<usize>,
+    theme: &Theme,
+) -> Scene {
+    let rows: Vec<Scene> = options
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let state =
+                if hover == Some(i) { ListboxItemState::Hover } else { ListboxItemState::Idle };
+            view_option(
+                &OptionRow {
+                    tag: format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}"),
+                    label,
+                    state,
+                    active: cursor == i,
+                    selected: selected == i,
+                },
+                POPUP_W - 2 * POPUP_PAD,
+                POPUP_OPT_H,
+                theme,
+            )
+        })
+        .collect();
+    Scene::Container(
+        ContainerNode::new(rows)
+            .with_tag(CHOICE_POPUP_TAG)
+            .with_style(popup_surface(theme))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(x, y)
+                    .with_size(Size::px(POPUP_W, choice_panel_h(options.len())))
+                    .flex(FlexDirection::Column)
+                    .with_align_items(AlignItems::Stretch)
+                    .with_gap(2)
+                    .with_padding(Rect::new(POPUP_PAD, POPUP_PAD, POPUP_PAD, POPUP_PAD)),
+            ),
+    )
+}
+
+/// R940 — the popup overlay (a grid-covering light-dismiss barrier + the open
+/// dropdown panel) for the editing choice cell, both GRID-LOCAL siblings of the
+/// scroll viewport inside the grid container. Empty when nothing is editing, the
+/// editing cell is not a choice, or its row is filtered / collapsed / scrolled
+/// out (so no panel is shown). The barrier sorts first so the panel hit-tests on
+/// top; a click outside the panel routes `dismiss` to the coordinator.
+fn view_choice_overlay(
+    editing: Option<(usize, usize)>,
+    vis_rows: &[GroupRow],
+    model: &[CellValue],
+    v_off: i32,
+    h_off: i32,
+    theme: &Theme,
+) -> Vec<Scene> {
+    let Some((row, col, pos)) = popup_pos(editing, vis_rows) else {
+        return Vec::new();
+    };
+    let Some(CellValue::Choice { selected, options }) = model.get(idx(row, col)) else {
+        return Vec::new();
+    };
+    let Some((x, y)) = popup_anchor(pos, col, choice_panel_h(options.len()), v_off, h_off) else {
+        return Vec::new();
+    };
+    let cursor = use_popup_cursor().get().unwrap_or(*selected);
+    let hover = use_popup_hover().get();
+    vec![
+        dismiss_barrier(POPUP_DISMISS_TAG, (0, 0), (GRID_VIEWPORT_W, GRID_VIEWPORT_H)),
+        view_choice_popup(x, y, options, *selected, cursor, hover, theme),
+    ]
+}
+
+/// R940 — the open dropdown's `listbox` a11y nodes (one `option` per choice),
+/// or empty when no choice popup is open / visible. Gated on [`popup_pos`] (the
+/// SSOT the paint uses) so the AT `listbox` is never announced for a popup the
+/// screen does not show. The property-grid `popup_listbox_nodes` shape.
+fn popup_listbox_nodes(model: &[CellValue], vis_rows: &[GroupRow], editing: Option<(usize, usize)>) -> Vec<AccessNode> {
+    let Some((row, col, _)) = popup_pos(editing, vis_rows) else {
+        return Vec::new();
+    };
+    let Some(CellValue::Choice { selected, options }) = model.get(idx(row, col)) else {
+        return Vec::new();
+    };
+    let cursor = use_popup_cursor().get().unwrap_or(*selected);
+    let hover = use_popup_hover().get();
+    let tags: Vec<String> =
+        (0..options.len()).map(|i| format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}")).collect();
+    let opts: Vec<ListOption<'_>> = options
+        .iter()
+        .enumerate()
+        .map(|(i, label)| ListOption {
+            tag: &tags[i],
+            label: Some(label.as_str()),
+            state: if hover == Some(i) { ListboxItemState::Hover } else { ListboxItemState::Idle },
+            selected: *selected == i,
+            focused: cursor == i,
+        })
+        .collect();
+    let name = format!("{} options", COL_NAMES[col]);
+    listbox_option_nodes(CHOICE_POPUP_TAG, &name, false, &opts)
+}
+
+// R940 — the choice-dropdown overlay append pushed the paint fn past the
+// line budget; a monolithic view fn is inherent to a paint surface (the
+// hello-color-picker view carries the same allow pair).
+#[allow(clippy::trivially_copy_pass_by_ref, clippy::too_many_lines)]
 fn view(state: RootState, _frame: &Frame) -> Scene {
     let (edit_state, edit_caret) = state;
     let theme = use_theme(THEME_TAG).theme_animated();
@@ -2791,8 +3305,21 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             ),
         },
     );
+    // R940 — the choice dropdown overlay (barrier + panel) rides as a GRID-LOCAL
+    // sibling of the scroll viewport, so it floats over the rows (un-clipped by
+    // the inner scroll) and tracks the cell as the body scrolls. Empty unless a
+    // visible choice cell's popup is open.
+    let mut grid_children = vec![scrolled];
+    grid_children.extend(view_choice_overlay(
+        editing,
+        &vis_rows,
+        &model,
+        v_scroll.offset_y(),
+        h_scroll.offset_x(),
+        &theme,
+    ));
     let grid = Scene::Container(
-        ContainerNode::new(vec![scrolled])
+        ContainerNode::new(grid_children)
             .with_tag(GRID_TAG)
             .with_aria_label("Asset table")
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)).with_border(
@@ -2992,12 +3519,25 @@ impl WidgetA11y for DataGridView {
     /// R892 hand-roll). The columns (with `aria-sort`) are shared.
     fn access_node(_state: &RootState, _focused: Option<&str>) -> Vec<AccessNode> {
         let model = use_data_model().get();
-        let focused_row = use_focused_row().get();
-        let focused_col = use_focused_col().get();
+        // R940 — while a choice dropdown is open + visible, the active descendant
+        // is the popup OPTION (the option carries `focused`, and
+        // `access_focus_target` rings it), NOT a grid cell; suppress the cell
+        // focus so the AT has exactly ONE active descendant (the R873 paint + a11y
+        // one-gate discipline — `usize::MAX` matches no valid row / col).
+        let popup_active = popup_pos_live().is_some();
+        let (focused_row, focused_col) = if popup_active {
+            (usize::MAX, usize::MAX)
+        } else {
+            (use_focused_row().get(), use_focused_col().get())
+        };
         let sort = use_sort().get();
         let filter = use_filter().get();
         let group_col = use_group_col().get();
         let collapsed = use_collapsed().get();
+        // R940 — the open choice dropdown's `listbox` nodes are appended below
+        // (gated on visibility in [`popup_listbox_nodes`]), so the AT announces
+        // the dropdown options when one is open.
+        let editing = use_editing_cell().get();
         // R886.1 — the a11y columnheader tag IS the painted clickable header
         // tag, so `rect_for_tag` bounds attach and an AT activation routes to
         // the sort wire. The active column announces `aria-sort` (WAI-ARIA 1.2
@@ -3038,7 +3578,14 @@ impl WidgetA11y for DataGridView {
             // an Increment / Decrement action on the focused cell moves its row
             // down / up (the hello-dnd reorder-a11y pattern), so the AT path is
             // valid + actionable. Keyboard Alt+Arrow is the keystroke twin.
-            return grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
+            let mut nodes =
+                grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
+            // R940 — the flatten is the Data-only order ungrouped (the popup gate
+            // indexes the SAME visual sequence the rows paint in).
+            let vis: Vec<GroupRow> =
+                order.iter().map(|&source| GroupRow::Data { source }).collect();
+            nodes.extend(popup_listbox_nodes(&model, &vis, editing));
+            return nodes;
         };
 
         // R895 — grouped treegrid via the substrate SSOT. The editable grid is
@@ -3058,7 +3605,7 @@ impl WidgetA11y for DataGridView {
             focused_view_pos,
             focused_cell: Some(focused_col),
         };
-        grouped_grid_access_nodes(
+        let mut nodes = grouped_grid_access_nodes(
             &spec,
             &rows,
             VisibleWindow { first: 0, count: rows.len() },
@@ -3068,7 +3615,29 @@ impl WidgetA11y for DataGridView {
                 format!("{}: {}", COL_NAMES[col], model.get(idx(source, col)).map(CellValue::display).unwrap_or_default())
             },
             group_row_a11y_tag,
-        )
+        );
+        // R940 — the open dropdown's `listbox` nodes (gated on the editing row
+        // being present in this same grouped flatten — a collapsed group hides it).
+        nodes.extend(popup_listbox_nodes(&model, &rows, editing));
+        nodes
+    }
+
+    /// R940 — the `aria-activedescendant` target. When a visible choice dropdown
+    /// is open while the grid holds focus, the active descendant is the cursor
+    /// OPTION (the combobox a11y shape: the grid keeps focus, the popup is its
+    /// roving descendant), gated on the same [`popup_pos_live`] visibility the
+    /// paint and `access_node` use. Otherwise the default — ring `focused`
+    /// atomically (the focused gridcell's own `focused` flag in `access_node`
+    /// marks the cell active descendant, the pre-R940 behaviour).
+    fn access_focus_target(_state: &RootState, focused: Option<&str>) -> Option<AccessFocus> {
+        if focused == Some(GRID_TAG) && popup_pos_live().is_some() {
+            let cur = use_popup_cursor().get().unwrap_or(0);
+            return Some(AccessFocus::composite(
+                GRID_TAG,
+                format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{cur}"),
+            ));
+        }
+        focused.map(AccessFocus::atomic)
     }
 
     /// R937.1 — AT-driven row reorder: an `Increment` / `Decrement` action on a
@@ -3122,6 +3691,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // R940 — the popup-a11y test asserts the listbox role; AriaRole is test-only
+    // here (the production a11y path names roles through the substrate builders).
+    use pinion_a11y::AriaRole;
     use pinion_core::scene::ExternalNode;
 
     fn boot_scene() -> Scene {
@@ -3624,6 +4196,9 @@ mod tests {
         // editing Tree's Type to "sprite" drops Tree from the view on the same
         // commit, and the source-keyed cursor re-anchors to the row that takes
         // its screen slot (Boss) — Excel / Qt QSortFilterProxyModel behaviour.
+        // R940 — Type is now a Choice column, written by option index (sprite =
+        // 0) through the VALUE intervene (the AI-first typed write), not an inline
+        // text edit; the live filter / re-anchor behaviour is unchanged.
         Owner::new().run(|| {
             let mut scene = boot_scene();
             {
@@ -3631,17 +4206,10 @@ mod tests {
                 let intro = node.handle.introspect_mut().expect("introspectable");
                 let _ = intro.invoke("set_filter", IntrospectValue::Text("1=mesh".to_owned()));
                 let _ = intro.intervene("focused_row", IntrospectValue::Int(1)); // Tree
-                let _ = intro.intervene("focused_col", IntrospectValue::Int(1)); // Type
-                assert_eq!(intro.invoke("begin", IntrospectValue::Null), Ok(IntrospectValue::Bool(true)));
+                assert_eq!(intro.intervene("value.1.1", IntrospectValue::Int(0)), Ok(())); // -> sprite
             }
-            use_text_edit_state(EDIT_TF_TAG).set_text("sprite".to_owned());
-            commit_edit(true);
             let intro = grid_intro(&scene);
-            assert_eq!(
-                intro.query("value.1.1"),
-                Some(IntrospectValue::Text("sprite".to_owned())),
-                "source write landed",
-            );
+            assert_eq!(cell_choice(&scene, "value.1.1"), 0, "source write landed (Tree -> sprite)");
             assert_eq!(intro.query("view_len"), Some(IntrospectValue::Int(1)), "Tree dropped from view");
             assert_eq!(intro.query("source_at.0"), Some(IntrospectValue::Int(3)), "only Boss remains");
             assert_eq!(
@@ -3775,8 +4343,9 @@ mod tests {
             // Before: sprite group [0, 2] leads, mesh [1, 3] follows.
             assert_eq!(intro.query("source_at.1"), Some(IntrospectValue::Int(0)));
             assert_eq!(intro.query("source_at.2"), Some(IntrospectValue::Int(2)));
-            // Edit Hero's Type sprite -> mesh: it joins the mesh group live.
-            assert_eq!(intro.intervene("value.0.1", IntrospectValue::Text("mesh".to_owned())), Ok(()));
+            // Edit Hero's Type sprite -> mesh (R940 — Choice option 1): it joins
+            // the mesh group live.
+            assert_eq!(intro.intervene("value.0.1", IntrospectValue::Int(1)), Ok(()));
             assert_eq!(intro.query("group_count"), Some(IntrospectValue::Int(2)), "still two values");
             // Now mesh [0, 1, 3] leads (first appearance), sprite [2] follows:
             // visible = [H(mesh), D0, D1, D3, H(sprite), D2].
@@ -3902,9 +4471,10 @@ mod tests {
             let _ = intro.invoke("set_group", IntrospectValue::Text("1".to_owned()));
             assert_eq!(intro.invoke("toggle_group", IntrospectValue::Int(0)), Ok(IntrospectValue::Bool(true)));
             assert_eq!(intro.query("visible_len"), Some(IntrospectValue::Int(4)), "sprite collapsed");
-            // Both sprite rows (0, 2) -> mesh; "sprite" no longer exists.
-            let _ = intro.intervene("value.0.1", IntrospectValue::Text("mesh".to_owned()));
-            let _ = intro.intervene("value.2.1", IntrospectValue::Text("mesh".to_owned()));
+            // Both sprite rows (0, 2) -> mesh (R940 — Choice option 1); "sprite"
+            // no longer exists.
+            let _ = intro.intervene("value.0.1", IntrospectValue::Int(1));
+            let _ = intro.intervene("value.2.1", IntrospectValue::Int(1));
             assert_eq!(intro.query("group_count"), Some(IntrospectValue::Int(1)), "only mesh remains");
             assert_eq!(
                 intro.query("collapsed.0"),
@@ -4043,6 +4613,18 @@ mod tests {
         match grid_intro(scene).query(path) {
             Some(IntrospectValue::Int(i)) => i,
             other => panic!("expected int at {path}, got {other:?}"),
+        }
+    }
+
+    /// R940 — the selected option index of a `Choice` cell (its `to_introspect`
+    /// JSON `{selected, label, options}`); panics on a non-choice cell.
+    fn cell_choice(scene: &Scene, path: &str) -> usize {
+        match grid_intro(scene).query(path) {
+            Some(IntrospectValue::Json(v)) => usize::try_from(
+                v.get("selected").and_then(serde_json::Value::as_u64).expect("choice has selected"),
+            )
+            .expect("selected fits usize"),
+            other => panic!("expected a choice cell at {path}, got {other:?}"),
         }
     }
 
@@ -4816,6 +5398,279 @@ mod tests {
             assert_eq!(grid_intro(&scene).query("row_count"), Some(IntrospectValue::Int(4)), "row restored");
             assert_eq!(grid_intro(&scene).query("editing_row"), Some(IntrospectValue::Null),
                 "the structural undo cancelled the in-flight edit latch");
+        });
+    }
+
+    // ─── R940 choice column / dropdown ────────────────────────────
+
+    fn grid_invoke(scene: &mut Scene, verb: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+        node.handle.introspect_mut().expect("introspectable").invoke(verb, args)
+    }
+
+    fn grid_set(scene: &mut Scene, path: &str, v: IntrospectValue) -> Result<(), InterveneError> {
+        let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+        node.handle.introspect_mut().expect("introspectable").intervene(path, v)
+    }
+
+    fn grid_key(scene: &mut Scene, k: &str) -> bool {
+        DataGridView::apply_key(scene, Some(GRID_TAG), k, Modifiers::empty())
+    }
+
+    /// Focus `(row, col)` and open its choice dropdown via the RPC verb.
+    fn open_choice_at(scene: &mut Scene, row: usize, col: usize) -> bool {
+        let _ = grid_set(scene, "focused_row", IntrospectValue::Int(int_of(row)));
+        let _ = grid_set(scene, "focused_col", IntrospectValue::Int(int_of(col)));
+        grid_invoke(scene, "open_choice", IntrospectValue::Null) == Ok(IntrospectValue::Bool(true))
+    }
+
+    #[test]
+    fn r940_seed_type_column_is_choice() {
+        Owner::new().run(|| {
+            let scene = boot_scene();
+            let intro = grid_intro(&scene);
+            assert_eq!(intro.query("col_kind.1"), Some(IntrospectValue::Text("choice".to_owned())));
+            assert_eq!(cell_choice(&scene, "value.0.1"), 0, "Hero = sprite (option 0)");
+            assert_eq!(cell_choice(&scene, "value.1.1"), 1, "Tree = mesh (option 1)");
+            assert_eq!(cell_choice(&scene, "value.2.1"), 0, "Coin = sprite");
+            assert_eq!(cell_choice(&scene, "value.3.1"), 1, "Boss = mesh");
+            // The other columns keep their scalar kinds (no NCOLS ripple).
+            assert_eq!(intro.query("col_kind.0"), Some(IntrospectValue::Text("text".to_owned())));
+            assert_eq!(intro.query("col_kind.2"), Some(IntrospectValue::Text("int".to_owned())));
+            assert_eq!(intro.query("col_count"), Some(IntrospectValue::Int(5)));
+        });
+    }
+
+    #[test]
+    fn r940_added_row_choice_carries_full_options() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert_eq!(grid_invoke(&mut scene, "add_row", IntrospectValue::Null), Ok(IntrospectValue::Int(4)));
+            // The new row's Type cell is option 0 with the FULL option list
+            // (not an empty Vec — `default_row` is column-aware), so it edits
+            // exactly like a seeded choice cell.
+            assert_eq!(cell_choice(&scene, "value.4.1"), 0, "added Type defaults to option 0");
+            assert!(grid_set(&mut scene, "value.4.1", IntrospectValue::Int(2)).is_ok(), "an added row's choice takes option 2");
+            assert_eq!(cell_choice(&scene, "value.4.1"), 2);
+        });
+    }
+
+    #[test]
+    fn r940_click_and_doubleclick_open_dropdown() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // A single click on a choice cell opens its dropdown (the bool
+            // single-click-toggle peer), seeding the cursor at the committed option.
+            grid_send(&mut scene, "1_1:PointerUp");
+            let intro = grid_intro(&scene);
+            assert_eq!(intro.query("popup_open"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(intro.query("editing_row"), Some(IntrospectValue::Int(1)));
+            assert_eq!(intro.query("editing_col"), Some(IntrospectValue::Int(1)));
+            assert_eq!(intro.query("popup_cursor"), Some(IntrospectValue::Int(1)), "cursor seeded at mesh");
+            // A double-click on another choice cell re-opens there.
+            grid_send(&mut scene, "0_1:DoubleClick");
+            assert_eq!(grid_intro(&scene).query("editing_row"), Some(IntrospectValue::Int(0)));
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(0)));
+        });
+    }
+
+    #[test]
+    fn r940_open_choice_rejects_non_choice_cell() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // The focused cell is the Asset (text) column → open_choice is a no-op.
+            assert!(!open_choice_at(&mut scene, 0, 0), "text column has no dropdown");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+            // A bool column likewise (it toggles, no popup).
+            assert!(!open_choice_at(&mut scene, 0, 4), "bool column has no dropdown");
+        });
+    }
+
+    #[test]
+    fn r940_keyboard_roves_then_commits_one_step() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_choice_at(&mut scene, 0, 1), "Hero Type popup opens"); // cursor 0 (sprite)
+            assert!(grid_key(&mut scene, "ArrowDown"), "consumed by the open popup");
+            assert!(grid_key(&mut scene, "ArrowDown"));
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(2)), "roved to material");
+            assert!(grid_key(&mut scene, "End"));
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(4)), "End clamps to last");
+            assert!(grid_key(&mut scene, "Home"));
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(0)));
+            // Enter commits the cursor (option 0 = sprite, the seed) and closes.
+            assert!(grid_key(&mut scene, "ArrowDown")); // -> 1 (mesh)
+            assert!(grid_key(&mut scene, "Enter"));
+            assert_eq!(cell_choice(&scene, "value.0.1"), 1, "committed mesh");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)), "closed on commit");
+        });
+    }
+
+    #[test]
+    fn r940_escape_closes_without_committing() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_choice_at(&mut scene, 1, 1)); // Tree = mesh (1)
+            assert!(grid_key(&mut scene, "ArrowUp")); // cursor 1 -> 0, not committed
+            assert!(grid_key(&mut scene, "Escape"));
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(cell_choice(&scene, "value.1.1"), 1, "value unchanged on Escape");
+        });
+    }
+
+    #[test]
+    fn r940_option_click_commits_dismiss_does_not() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            grid_send(&mut scene, "1_1:PointerUp"); // open Tree Type
+            grid_send(&mut scene, "opt3:PointerUp"); // click "audio"
+            assert_eq!(cell_choice(&scene, "value.1.1"), 3, "option click committed audio");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+            // Re-open + click the dismiss barrier: closes, no commit.
+            grid_send(&mut scene, "1_1:PointerUp");
+            grid_send(&mut scene, "dismiss:PointerUp");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(cell_choice(&scene, "value.1.1"), 3, "dismiss kept the prior value");
+        });
+    }
+
+    #[test]
+    fn r940_choose_rpc_commits_out_of_range_rejected() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_choice_at(&mut scene, 0, 1));
+            assert_eq!(grid_invoke(&mut scene, "choose", IntrospectValue::Int(2)), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(cell_choice(&scene, "value.0.1"), 2, "choose committed material");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+            // An out-of-range choose commits nothing and closes any popup.
+            assert!(open_choice_at(&mut scene, 0, 1));
+            assert_eq!(grid_invoke(&mut scene, "choose", IntrospectValue::Int(99)), Ok(IntrospectValue::Bool(false)));
+            assert_eq!(cell_choice(&scene, "value.0.1"), 2, "unchanged on out-of-range choose");
+        });
+    }
+
+    #[test]
+    fn r940_choice_commit_is_one_undo_step() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_choice_at(&mut scene, 0, 1)); // sprite (0)
+            assert_eq!(grid_invoke(&mut scene, "choose", IntrospectValue::Int(3)), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(cell_choice(&scene, "value.0.1"), 3, "committed audio");
+            // The dropdown pick journals exactly like every other cell edit.
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(cell_choice(&scene, "value.0.1"), 0, "undo reverts to sprite");
+            assert!(undo_invoke(&mut scene, "redo"));
+            assert_eq!(cell_choice(&scene, "value.0.1"), 3, "redo re-applies audio");
+        });
+    }
+
+    #[test]
+    fn r940_value_intervene_choice_by_int_strict() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // The AI-first typed write: a choice cell takes an option Int index.
+            assert_eq!(grid_set(&mut scene, "value.0.1", IntrospectValue::Int(4)), Ok(()));
+            assert_eq!(cell_choice(&scene, "value.0.1"), 4, "set to script");
+            // Out-of-range index → OutOfRange; wrong payload type → TypeMismatch.
+            assert_eq!(grid_set(&mut scene, "value.0.1", IntrospectValue::Int(9)), Err(InterveneError::OutOfRange));
+            assert_eq!(grid_set(&mut scene, "value.0.1", IntrospectValue::Text("mesh".to_owned())), Err(InterveneError::TypeMismatch));
+            assert_eq!(cell_choice(&scene, "value.0.1"), 4, "rejected writes left the value");
+        });
+    }
+
+    #[test]
+    fn r940_scalar_intervene_unchanged_by_value_path() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // The value-level `with_intervene` delegates scalar kinds to `coerce`,
+            // so a numeric / bool write behaves exactly as before the choice change.
+            assert_eq!(grid_set(&mut scene, "value.0.2", IntrospectValue::Int(42)), Ok(()));
+            assert_eq!(cell_int(&scene, "value.0.2"), 42);
+            assert_eq!(grid_set(&mut scene, "value.0.2", IntrospectValue::Text("x".to_owned())), Err(InterveneError::TypeMismatch));
+        });
+    }
+
+    #[test]
+    fn r940_popup_anchor_geometry() {
+        // Below the cell at rest; flipped above near the bottom; gone when the
+        // editing row scrolls out of the body viewport; x tracks the h-scroll.
+        let ph = choice_panel_h(5); // 5 * 30 + 12 = 162
+        assert_eq!(ph, 162);
+        // Row at the top, no scroll: anchored under the cell, x past the handle
+        // column (HANDLE_W + COL_W[0] = 22 + 160 = 182), y below the row.
+        assert_eq!(popup_anchor(0, TYPE_COL, ph, 0, 0), Some((182, 72)));
+        // A row deep in the flatten flips the panel above (it would overflow the
+        // grid's bottom dropping down).
+        assert_eq!(popup_anchor(5, TYPE_COL, ph, 0, 0), Some((182, 54)));
+        // Scrolled clear of the body viewport → no panel.
+        assert_eq!(popup_anchor(0, TYPE_COL, ph, 100, 0), None);
+        // The horizontal scroll slides x left (the panel is outside the scroll).
+        assert_eq!(popup_anchor(0, TYPE_COL, ph, 0, 50), Some((132, 72)));
+    }
+
+    #[test]
+    fn r940_open_popup_a11y_is_a_listbox_with_one_active_descendant() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_choice_at(&mut scene, 0, 1)); // cursor 0 (sprite)
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            // The open dropdown is announced as a listbox with one option per kind.
+            let listbox = nodes.iter().find(|n| n.tag == CHOICE_POPUP_TAG).expect("listbox node");
+            assert_eq!(listbox.role, AriaRole::Listbox);
+            let opt0 = nodes.iter().find(|n| n.tag == format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}0")).expect("option 0");
+            assert!(opt0.state.focused, "the cursor option is the active descendant");
+            // The grid CELL focus is suppressed while the popup owns the descendant
+            // (exactly one active descendant — the R873 one-gate).
+            let cell = nodes.iter().find(|n| n.tag == cell_tag(0, 1)).expect("the Type cell");
+            assert!(!cell.state.focused, "no double active-descendant while the popup is open");
+            // The focus target rings the option within the grid (combobox shape).
+            let focus = DataGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG)).expect("focus");
+            assert_eq!(focus.focus_tag, GRID_TAG);
+            assert_eq!(focus.active_descendant.as_deref(), Some("data_grid#opt0"));
+        });
+    }
+
+    #[test]
+    fn r940_closed_popup_emits_no_listbox() {
+        Owner::new().run(|| {
+            let _scene = boot_scene();
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            assert!(nodes.iter().all(|n| n.tag != CHOICE_POPUP_TAG), "no listbox when no popup is open");
+            // The focused cell is the active descendant again (not suppressed).
+            let cell = nodes.iter().find(|n| n.tag == cell_tag(0, 0)).expect("the focused cell");
+            assert!(cell.state.focused);
+        });
+    }
+
+    #[test]
+    fn r940_keyboard_intercept_only_while_popup_open() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            // No popup → ArrowDown moves the grid cursor down a row.
+            assert!(grid_key(&mut scene, "ArrowDown"));
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(1)));
+            // Open a dropdown → ArrowDown now roves the OPTION cursor, the grid
+            // row cursor is frozen (the popup owns the keymap).
+            assert!(open_choice_at(&mut scene, 1, 1));
+            assert!(grid_key(&mut scene, "ArrowDown"));
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(1)), "grid cursor frozen");
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(2)), "option cursor moved");
+        });
+    }
+
+    #[test]
+    fn r940_choice_composes_with_filter_and_group() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // The choice column degrades to its selected label, so the existing
+            // filter / group proxies index it for free — set a row to a new value
+            // and watch the filter pick it up.
+            assert_eq!(grid_invoke(&mut scene, "set_filter", IntrospectValue::Text("1=material".to_owned())), Ok(IntrospectValue::Int(0)));
+            assert!(grid_set(&mut scene, "value.0.1", IntrospectValue::Int(2)).is_ok()); // Hero -> material
+            // Re-apply the filter (the edit landed under it); now Hero passes.
+            assert_eq!(grid_invoke(&mut scene, "set_filter", IntrospectValue::Text("1=material".to_owned())), Ok(IntrospectValue::Int(1)));
+            assert_eq!(grid_intro(&scene).query("source_at.0"), Some(IntrospectValue::Int(0)), "Hero (material) is the only match");
         });
     }
 }
