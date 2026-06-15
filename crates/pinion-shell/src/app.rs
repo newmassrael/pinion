@@ -909,7 +909,18 @@ impl<V: WidgetView> AppShell<V> {
                 }
             }
             Key::Named(NamedKey::Tab) => {
-                self.core.handle_focus_traverse(self.core.modifiers_shift_key());
+                // R938 §5.22 §5.39 — offer Tab to the focused widget first (a
+                // multi-line code editor with `tab_indents` on indents the
+                // selection; Shift+Tab dedents — the shell tracks the Shift
+                // bit in `self.core.modifiers`). Only fall back to focus
+                // traversal when no widget consumes it — the mirror of the
+                // Escape offer-first arm above (a focused Tooltip / Dialog
+                // gets first refusal before the shell default). Every
+                // non-editor widget reports Tab unhandled, so traversal is
+                // byte-unchanged for them.
+                if !self.core.try_apply_key("Tab") {
+                    self.core.handle_focus_traverse(self.core.modifiers_shift_key());
+                }
             }
             Key::Character(c) => self.core.handle_character_key(c),
             Key::Named(named) => {

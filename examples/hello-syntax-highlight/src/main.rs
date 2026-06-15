@@ -266,6 +266,12 @@ impl WidgetCore for SyntaxView {
         // Attached on the *state* (the single edit write path), so the view
         // fn's same `Rc<TextEditState>` observes the history too.
         text_state.attach_undo(use_undo_stack(TF_TAG));
+        // R938 §5.22 — this is a multi-line code editor, so Tab / Shift+Tab
+        // indent / dedent the selected lines (and the `indent` / `dedent` RPC
+        // verbs) instead of leaving Tab to the shell's focus traversal — the
+        // `<textarea>`-vs-`<input>` distinction. Opt-in: single-line fields
+        // keep Tab = next-field.
+        text_state.set_tab_indents(true);
         let blink = use_caret_blink(TF_TAG);
         // R56.1.e §5.22 — in-memory clipboard backing the demo's
         // Ctrl+C / Ctrl+X / Ctrl+V keystrokes. Shared via

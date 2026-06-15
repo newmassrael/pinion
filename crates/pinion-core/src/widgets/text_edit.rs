@@ -311,7 +311,35 @@ pub struct TextEditState {
     /// reverses edits, never a fold toggle). The journalled content is
     /// exactly `{text, caret, anchor, runs}` ([`TextEditCommand`]).
     folds: Signal<BTreeSet<usize>>,
+    /// R938 §5.22 — opt-in: `Tab` / `Shift+Tab` **indent / dedent** the
+    /// selected lines (the multi-line code-editor affordance) instead of
+    /// being left to the shell's focus-traversal default. `false` (the
+    /// default) keeps every existing single-line field byte-unchanged —
+    /// `Tab` advances focus as before, because the field reports the key
+    /// unhandled and the shell's traversal fallback runs ([`crate::input::forward_key_to_field`]
+    /// returns `false`). A multi-line editor calls [`set_tab_indents`](Self::set_tab_indents)`(true)`
+    /// to capture `Tab`. The HTML `<textarea>` vs `<input>` distinction:
+    /// only the multi-line surface treats `Tab` as text, not navigation.
+    ///
+    /// A non-reactive [`Cell`] (not a [`Signal`]): the flag is wiring, not
+    /// observable content — no view-fn renders "does Tab indent" — so it
+    /// shares the interior-mutability shape of [`undo`](Self::undo) /
+    /// [`highlighter`](Self::highlighter), not the reactive content shape.
+    tab_indents: Cell<bool>,
 }
+
+/// R938 §5.22 — the indentation unit a `Tab` inserts (and `Shift+Tab`
+/// removes) in a [`tab_indents`](TextEditState::tab_indents)-enabled editor:
+/// four spaces, the space-indent default the keyboard + RPC dispatch share
+/// so the two paths land on one width. A binding that wants tab characters
+/// passes its own string to [`indent_selection`](TextEditState::indent_selection).
+pub const INDENT_UNIT: &str = "    ";
+
+/// R938 §5.22 — the indentation width (in `space` bytes) `Shift+Tab` strips
+/// from a line start; the [`INDENT_UNIT`] peer for the dedent path (a single
+/// leading `\t` also counts as one level). `4`, matching [`INDENT_UNIT`]'s
+/// four spaces.
+pub const INDENT_WIDTH: usize = 4;
 
 /// R904 §5.36 — a syntax-highlighter closure: derives the displayed
 /// [`StyleRun`]s from buffer text. See
@@ -683,6 +711,68 @@ fn text_diff(before: &str, after: &str) -> (usize, String, String) {
     )
 }
 
+/// R938 §5.22 — the byte offset of every **line start** a `[start, end]`
+/// span touches (a line is delimited by `\n`). Always ≥ 1 entry: the first
+/// is the start of the line containing `start` (the byte after the previous
+/// `\n`, or `0`); a span ending exactly at a line start does **not** include
+/// that empty trailing line (the VS Code "select to column 0 of line N
+/// leaves line N untouched" rule), while a collapsed caret yields exactly its
+/// own line. The line-operation SSOT — [`TextEditState::indent_selection`] /
+/// [`dedent_selection`](TextEditState::dedent_selection) iterate it now; a
+/// comment-toggle would be its next consumer. Built on the [`line_starts`] /
+/// [`line_of`] line-index SSOT (no second `\n` scan) — the only range-specific
+/// logic is the end-boundary rule.
+fn line_starts_in_range(text: &str, start: usize, end: usize) -> Vec<usize> {
+    let len = text.len();
+    let start = start.min(len);
+    let end = end.min(len).max(start);
+    let starts = line_starts(text);
+    let first = line_of(&starts, start);
+    let mut last = line_of(&starts, end);
+    // A span ending exactly at a line start does not include that (empty
+    // trailing) line — unless it is also the first line (a collapsed caret at
+    // a line start dedents that one line).
+    if last > first && starts[last] == end {
+        last -= 1;
+    }
+    starts[first..=last].to_vec()
+}
+
+/// R938 §5.22 — how many leading bytes a dedent strips from the line at `ls`:
+/// one byte for a leading `\t` (a tab is one indent level), else the count of
+/// leading spaces up to `width`. `0` (no removal) for a line that starts with
+/// neither — so [`TextEditState::dedent_selection`] never deletes content.
+fn dedent_remove_len(text: &str, ls: usize, width: usize) -> usize {
+    let bytes = text.as_bytes();
+    if bytes.get(ls) == Some(&b'\t') {
+        return 1;
+    }
+    let mut n = 0;
+    while n < width && bytes.get(ls + n) == Some(&b' ') {
+        n += 1;
+    }
+    n
+}
+
+/// R938 §5.22 — re-anchor a caret / selection offset across a dedent's
+/// per-line removals (`(offset, removed_len)`, non-overlapping). A position
+/// after a removed run shifts left by its length; a position inside a removed
+/// run clamps to that run's start; a position before is unchanged. Each run
+/// contributes independently (they never overlap), so summation order does
+/// not matter — the dedent peer of the [`shift_runs_for_insert`] /
+/// [`clip_runs_for_delete`] byte maintenance, applied to a bare offset.
+fn shift_pos_for_removals(pos: usize, edits: &[(usize, usize)]) -> usize {
+    let mut new = pos;
+    for &(o, r) in edits {
+        if pos >= o + r {
+            new -= r;
+        } else if pos > o {
+            new -= pos - o;
+        }
+    }
+    new
+}
+
 /// R903 §5.22 — a *word* character for whole-word find matching: alphanumeric
 /// (Unicode-aware) or `_`, the canonical editor word class (`\w`).
 fn is_word_char(c: char) -> bool {
@@ -1000,6 +1090,7 @@ impl TextEditState {
             find_whole_word: Signal::new(false),
             highlighter: RefCell::new(None),
             folds: Signal::new(BTreeSet::new()),
+            tab_indents: Cell::new(false),
         }
     }
 
@@ -1043,6 +1134,7 @@ impl TextEditState {
             find_whole_word: Signal::new(false),
             highlighter: RefCell::new(None),
             folds: Signal::new(BTreeSet::new()),
+            tab_indents: Cell::new(false),
         }
     }
 
@@ -1070,6 +1162,23 @@ impl TextEditState {
     #[must_use]
     pub fn undo_stack(&self) -> Option<Rc<UndoStack>> {
         self.undo.borrow().clone()
+    }
+
+    /// R938 §5.22 — opt this field into the `Tab` / `Shift+Tab` indent /
+    /// dedent affordance ([`tab_indents`](Self::tab_indents)). Call once at
+    /// wiring time for a multi-line code editor; single-line fields leave it
+    /// off so `Tab` keeps advancing focus. The default is `false`, so every
+    /// pre-R938 caller is byte-unchanged.
+    pub fn set_tab_indents(&self, on: bool) {
+        self.tab_indents.set(on);
+    }
+
+    /// R938 §5.22 — whether `Tab` indents the selection here (vs. the shell's
+    /// focus-traversal default). The dispatch gate the `Tab` keystroke
+    /// consults before calling [`indent_selection`](Self::indent_selection).
+    #[must_use]
+    pub fn tab_indents(&self) -> bool {
+        self.tab_indents.get()
     }
 
     /// Run a content mutation `f`, journalling its **granular** delta onto
@@ -1801,6 +1910,111 @@ impl TextEditState {
         self.record_edit(CoalesceGroup::Boundary, false, "Replace", || {
             self.splice_inner(start, end, s);
         });
+    }
+
+    /// R938 §5.22 — **indent** the selected lines by one `indent` unit (the
+    /// `Tab` editor command). Two cases, the macOS / VS Code split:
+    ///
+    /// * A selection spanning **≥ 2 lines** → block indent: `indent` is
+    ///   inserted at the start of *every* touched line, the whole run grouped
+    ///   into **one** undo step via the [`UndoStack::begin_macro`] /
+    ///   [`end_macro`](UndoStack::end_macro) transaction (the 2nd consumer of
+    ///   that substrate after `replace_all`). Each per-line insert is a
+    ///   contiguous [`replace_range`](Self::replace_range) splice, so the
+    ///   style runs **and** the fold anchors shift line-by-line and survive
+    ///   the indent (the R933.1 byte-offset-state discipline — a single
+    ///   whole-block splice would instead clip every interior fold). The
+    ///   selection re-covers the indented block.
+    /// * Otherwise (collapsed caret, or a selection **within one line**) →
+    ///   `indent` is inserted at the caret, replacing any selection — `Tab`
+    ///   as text, the single-line behaviour ([`insert`](Self::insert)).
+    ///
+    /// Returns whether the buffer changed (`false` for an empty `indent`).
+    /// Lines are processed bottom-to-top so each insert leaves the earlier
+    /// (smaller) line-start offsets valid.
+    pub fn indent_selection(&self, indent: &str) -> bool {
+        if indent.is_empty() {
+            return false;
+        }
+        let text = self.text.get();
+        let (start, end) = self.selection_range().unwrap_or_else(|| {
+            let c = self.caret_pos.get().min(text.len());
+            (c, c)
+        });
+        // A within-line selection / collapsed caret inserts at the caret;
+        // only a multi-line span indents per line.
+        if !text.get(start..end).is_some_and(|s| s.contains('\n')) {
+            let before = self.text.get();
+            self.insert(indent);
+            return self.text.get() != before;
+        }
+        let line_starts = line_starts_in_range(&text, start, end);
+        if let Some(stack) = self.undo_stack() {
+            stack.begin_macro("Indent");
+        }
+        for &ls in line_starts.iter().rev() {
+            self.replace_range(ls, ls, indent);
+        }
+        if let Some(stack) = self.undo_stack() {
+            stack.end_macro();
+        }
+        // Re-cover the block: every insert sat at a line start strictly
+        // before `end`, so `end` shifted right by `count * indent.len()`; the
+        // first line start did not move (the insert lands at it).
+        let new_end = end + line_starts.len() * indent.len();
+        self.set_selection(line_starts[0], new_end);
+        true
+    }
+
+    /// R938 §5.22 — **dedent** the selected lines by up to one `width`-space
+    /// unit (the `Shift+Tab` editor command); the [`indent_selection`](Self::indent_selection)
+    /// inverse. Always line-based (a collapsed caret dedents its own line): a
+    /// leading `\t` strips as one level, otherwise up to `width` leading
+    /// spaces strip, and a line with no leading whitespace is left untouched
+    /// — a dedent never deletes content. The removals group into one undo step
+    /// (the macro transaction, labelled "Dedent"). Each
+    /// removal is a contiguous splice, so runs + fold anchors clip-and-shift
+    /// per line (R933.1). The caret / selection re-anchors against the
+    /// removed runs (a position inside a removed run clamps to the line
+    /// start). Returns whether the buffer changed (`false` when no line had
+    /// removable leading whitespace).
+    pub fn dedent_selection(&self, width: usize) -> bool {
+        if width == 0 {
+            return false;
+        }
+        let text = self.text.get();
+        let had_selection = self.selection_anchor.get().is_some();
+        let (start, end) = self.selection_range().unwrap_or_else(|| {
+            let c = self.caret_pos.get().min(text.len());
+            (c, c)
+        });
+        let line_starts = line_starts_in_range(&text, start, end);
+        let edits: Vec<(usize, usize)> = line_starts
+            .iter()
+            .filter_map(|&ls| {
+                let n = dedent_remove_len(&text, ls, width);
+                (n > 0).then_some((ls, n))
+            })
+            .collect();
+        if edits.is_empty() {
+            return false;
+        }
+        if let Some(stack) = self.undo_stack() {
+            stack.begin_macro("Dedent");
+        }
+        for &(ls, n) in edits.iter().rev() {
+            self.replace_range(ls, ls + n, "");
+        }
+        if let Some(stack) = self.undo_stack() {
+            stack.end_macro();
+        }
+        let new_end = shift_pos_for_removals(end, &edits);
+        if had_selection {
+            self.set_selection(line_starts[0], new_end);
+        } else {
+            self.set_caret(new_end);
+        }
+        true
     }
 
     /// R903 §5.22 — apply one `[start, end) -> s` splice to the buffer
@@ -2761,9 +2975,10 @@ mod tests {
     //! hook integration.
 
     use super::{
-        clamp_to_char_boundary, find_matches_in, fold_regions_in, line_of, line_starts,
-        matching_bracket_in, next_char_boundary, prev_char_boundary, style_runs_diff,
-        use_text_edit_state, TextEditState,
+        clamp_to_char_boundary, dedent_remove_len, find_matches_in, fold_regions_in, line_of,
+        line_starts, line_starts_in_range, matching_bracket_in, next_char_boundary,
+        prev_char_boundary, shift_pos_for_removals, style_runs_diff, use_text_edit_state,
+        TextEditState, INDENT_UNIT, INDENT_WIDTH,
     };
     use crate::reactive::{Effect, Owner};
     use crate::scene::StyleRun;
@@ -4933,6 +5148,194 @@ mod tests {
             assert!(st.undo(), "undo the insert");
             assert!(st.fold_regions()[0].collapsed, "fold still valid after undo");
             assert!(st.is_line_hidden(1));
+        });
+    }
+
+    // ───────────────────────────────────────────────────────────────
+    // R938 §5.22 — indent / dedent (Tab / Shift+Tab)
+    // ───────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r938_line_starts_in_range_covers_touched_lines() {
+        // "ab\ncd\nef": line starts at 0, 3, 6.
+        let t = "ab\ncd\nef";
+        // A multi-line span touches the first two lines.
+        assert_eq!(line_starts_in_range(t, 0, 4), vec![0, 3]);
+        // A span ending exactly at a line start does NOT include that line
+        // (the VS Code "select to column 0 of line N leaves N untouched" rule).
+        assert_eq!(line_starts_in_range(t, 0, 6), vec![0, 3]);
+        // One byte into the third line includes it.
+        assert_eq!(line_starts_in_range(t, 0, 7), vec![0, 3, 6]);
+        // A collapsed caret yields exactly its own line.
+        assert_eq!(line_starts_in_range(t, 4, 4), vec![3]);
+        assert_eq!(line_starts_in_range(t, 0, 0), vec![0]);
+    }
+
+    #[test]
+    fn r938_dedent_remove_len_and_pos_shift() {
+        assert_eq!(dedent_remove_len("    x", 0, 4), 4, "four leading spaces");
+        assert_eq!(dedent_remove_len("  x", 0, 4), 2, "fewer than width");
+        assert_eq!(dedent_remove_len("\tx", 0, 4), 1, "a leading tab is one level");
+        assert_eq!(dedent_remove_len("x", 0, 4), 0, "no leading whitespace");
+        // Re-anchor across removals: after a run shifts left; inside clamps to start.
+        let edits = [(0_usize, 4_usize), (7, 2)];
+        assert_eq!(shift_pos_for_removals(11, &edits), 5, "after both removals");
+        assert_eq!(shift_pos_for_removals(2, &edits), 0, "inside the first run clamps");
+        assert_eq!(shift_pos_for_removals(0, &edits), 0, "before everything");
+    }
+
+    #[test]
+    fn r938_tab_indents_flag_defaults_off() {
+        let st = TextEditState::new();
+        assert!(!st.tab_indents(), "off by default — single-line fields keep Tab=traverse");
+        st.set_tab_indents(true);
+        assert!(st.tab_indents());
+    }
+
+    #[test]
+    fn r938_indent_single_line_inserts_at_caret() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("abc".to_string());
+            st.set_caret(1);
+            assert!(st.indent_selection(INDENT_UNIT), "buffer changed");
+            assert_eq!(st.text(), "a    bc", "Tab inserts the unit at the caret");
+            assert_eq!(st.caret(), 5, "caret follows past the inserted unit");
+        });
+    }
+
+    #[test]
+    fn r938_indent_empty_unit_is_a_noop() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb".to_string());
+            st.set_selection(0, 3);
+            assert!(!st.indent_selection(""), "an empty unit changes nothing");
+            assert_eq!(st.text(), "a\nb");
+        });
+    }
+
+    #[test]
+    fn r938_indent_multiline_indents_each_touched_line() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("ab\ncd".to_string());
+            st.set_selection(0, 5);
+            assert!(st.indent_selection(INDENT_UNIT));
+            assert_eq!(st.text(), "    ab\n    cd", "every line gains one unit");
+            // The selection re-covers the block (first line start → shifted end).
+            assert_eq!(st.selection_range(), Some((0, 13)));
+        });
+    }
+
+    #[test]
+    fn r938_indent_is_one_undo_step() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb\nc".to_string());
+            let stack = Rc::new(crate::undo::UndoStack::new());
+            st.attach_undo(Rc::clone(&stack)); // attach AFTER seeding (no seed journal)
+            st.set_selection(0, 5);
+            assert!(st.indent_selection(INDENT_UNIT));
+            assert_eq!(st.text(), "    a\n    b\n    c");
+            assert_eq!(stack.len(), 1, "three line inserts fold into one undo step");
+            assert!(st.undo(), "one undo reverses the whole block indent");
+            assert_eq!(st.text(), "a\nb\nc");
+            assert!(st.redo());
+            assert_eq!(st.text(), "    a\n    b\n    c", "one redo re-applies it");
+        });
+    }
+
+    #[test]
+    fn r938_indent_preserves_interior_fold() {
+        // The R933.1 discipline: indenting a block that contains a collapsed
+        // fold must SHIFT the fold anchor line-by-line, never clip it. A naive
+        // whole-block splice would delete the interior fold; the per-line
+        // macro keeps it.
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("fn a() {\n  x\n}\nz".to_string());
+            st.attach_undo(Rc::new(crate::undo::UndoStack::new()));
+            assert!(st.toggle_fold(0), "collapse the function body");
+            assert!(st.is_line_hidden(1), "interior hidden");
+            st.set_selection(0, st.text().len());
+            assert!(st.indent_selection(INDENT_UNIT));
+            assert_eq!(st.text(), "    fn a() {\n      x\n    }\n    z");
+            assert!(st.fold_regions()[0].collapsed, "fold survives the indent");
+            assert!(st.is_line_hidden(1), "interior still hidden");
+            // And one undo restores both the text and the fold.
+            assert!(st.undo());
+            assert_eq!(st.text(), "fn a() {\n  x\n}\nz");
+            assert!(st.fold_regions()[0].collapsed, "fold still valid after undo");
+        });
+    }
+
+    #[test]
+    fn r938_indent_shifts_style_runs() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("ab\ncd".to_string());
+            st.set_style_runs(vec![crun(0, 2, RED)]); // "ab" red
+            st.set_selection(0, 5);
+            assert!(st.indent_selection(INDENT_UNIT));
+            // The run shifts with its text ("ab" is now at bytes [4, 6)),
+            // never destroyed by the block edit.
+            assert_eq!(st.style_runs(), vec![crun(4, 6, RED)]);
+        });
+    }
+
+    #[test]
+    fn r938_dedent_removes_leading_whitespace_per_line() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("    ab\n  cd".to_string());
+            st.set_selection(0, st.text().len());
+            assert!(st.dedent_selection(INDENT_WIDTH));
+            assert_eq!(st.text(), "ab\ncd", "each line loses up to one unit");
+            assert_eq!(st.selection_range(), Some((0, 5)));
+        });
+    }
+
+    #[test]
+    fn r938_dedent_is_a_noop_with_no_leading_whitespace() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("ab\ncd".to_string());
+            let stack = Rc::new(crate::undo::UndoStack::new());
+            st.attach_undo(Rc::clone(&stack));
+            st.set_selection(0, 5);
+            assert!(!st.dedent_selection(INDENT_WIDTH), "nothing to strip");
+            assert_eq!(st.text(), "ab\ncd");
+            assert_eq!(stack.len(), 0, "a no-op dedent journals nothing");
+        });
+    }
+
+    #[test]
+    fn r938_dedent_strips_a_leading_tab_as_one_level() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("\tab".to_string());
+            st.set_caret(0);
+            assert!(st.dedent_selection(INDENT_WIDTH));
+            assert_eq!(st.text(), "ab", "a leading tab strips as one level");
+        });
+    }
+
+    #[test]
+    fn r938_dedent_collapsed_caret_dedents_its_own_line() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("x\n    yz".to_string());
+            st.set_caret(st.text().len()); // caret at end, on the second line
+            assert!(st.dedent_selection(INDENT_WIDTH));
+            assert_eq!(st.text(), "x\nyz");
+            assert_eq!(st.caret(), 4, "caret shifts left by the removed unit");
+            assert!(!st.has_selection(), "a collapsed dedent stays collapsed");
+        });
+    }
+
+    #[test]
+    fn r938_dedent_is_one_undo_step() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("    a\n    b".to_string());
+            let stack = Rc::new(crate::undo::UndoStack::new());
+            st.attach_undo(Rc::clone(&stack));
+            st.set_selection(0, st.text().len());
+            assert!(st.dedent_selection(INDENT_WIDTH));
+            assert_eq!(st.text(), "a\nb");
+            assert_eq!(stack.len(), 1, "two line removals fold into one undo step");
+            assert!(st.undo());
+            assert_eq!(st.text(), "    a\n    b", "one undo restores both lines");
         });
     }
 

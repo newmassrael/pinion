@@ -41335,6 +41335,74 @@
         "the painted grip stays pointer-only; Increment/Decrement is the actionable AT path"
       ]
     },
+    "R938": {
+      "decision_summary": "R938 §5.22 multi-line indent/dedent (Tab/Shift+Tab + indent/dedent RPC verbs) as the UndoStack macro 2nd consumer; per-line splices preserve interior folds/runs (R933.1)",
+      "changes_bullets": [
+        "TextEditState::indent_selection / dedent_selection: per-line leading-whitespace edits, one undo step",
+        "multi-line indent groups its per-line replace_range splices via begin_macro/end_macro (2nd macro consumer)",
+        "each per-line splice shifts style runs + fold anchors (R933.1): an interior collapsed fold survives an indent",
+        "new tab_indents opt-in flag (default off): single-line fields keep Tab = focus-traversal (non-breaking)",
+        "line_starts_in_range helper composed on the existing line_starts / line_of SSOT (no 2nd newline scan)",
+        "dispatch_key gates Tab / Shift+Tab on tab_indents -> indent/dedent; AI-first indent / dedent invoke verbs",
+        "shell app.rs Tab arm offers the key to the focused widget first, then focus-traversal (Escape arm mirror)",
+        "hello-syntax-highlight opts in via set_tab_indents(true)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: all suites ok / 0 FAILED (16 new R938 unit tests in pinion-core)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (-D pedantic)",
+        "r938_indent_dedent.py demo PASS: ~39 ZERO-FLAKE wait_until/assert gates (>= 30 mandate)",
+        "unit r938_indent_preserves_interior_fold: indent over a collapsed fold keeps it collapsed (R933.1)",
+        "unit r938_indent_is_one_undo_step / r938_dedent_is_one_undo_step: macro folds N line edits into one Ctrl+Z",
+        "unit r938_indent_shifts_style_runs: a styled run shifts with its text, not destroyed by the block edit",
+        "unit dedent no-op / leading-tab / collapsed-caret / line_starts_in_range / pos-shift helper edge cases",
+        "demo (F): toggle-fold + indent over RPC keeps the fold collapsed; one undo restores text + fold",
+        "validate-workspace: T1 reject=0, no new orphans (baseline preserved)"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.52",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "comment-toggle (Ctrl+/) = the next line_starts_in_range consumer (needs per-language comment markers)",
+        "indent width is a fixed 4-space default (INDENT_UNIT); per-editor tab/width config deferred (consumer 0)",
+        "shell offer-key-first-then-default is now 2 consumers (Escape, Tab) -> lift the pattern at the 3rd",
+        "redo of a block indent lands the caret at the first line (loses the block selection), as replace-all does"
+      ],
+      "publishable_decision_summary": "R938 §5.22 multi-line indent/dedent (Tab/Shift+Tab + indent/dedent RPC verbs) as the UndoStack macro 2nd consumer; per-line splices preserve interior folds/runs (R933.1)",
+      "publishable_changes_bullets": [
+        "TextEditState::indent_selection / dedent_selection: per-line leading-whitespace edits, one undo step",
+        "multi-line indent groups its per-line replace_range splices via begin_macro/end_macro (2nd macro consumer)",
+        "each per-line splice shifts style runs + fold anchors (R933.1): an interior collapsed fold survives an indent",
+        "new tab_indents opt-in flag (default off): single-line fields keep Tab = focus-traversal (non-breaking)",
+        "line_starts_in_range helper composed on the existing line_starts / line_of SSOT (no 2nd newline scan)",
+        "dispatch_key gates Tab / Shift+Tab on tab_indents -> indent/dedent; AI-first indent / dedent invoke verbs",
+        "shell app.rs Tab arm offers the key to the focused widget first, then focus-traversal (Escape arm mirror)",
+        "hello-syntax-highlight opts in via set_tab_indents(true)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: all suites ok / 0 FAILED (16 new R938 unit tests in pinion-core)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 warnings (-D pedantic)",
+        "r938_indent_dedent.py demo PASS: ~39 ZERO-FLAKE wait_until/assert gates (>= 30 mandate)",
+        "unit r938_indent_preserves_interior_fold: indent over a collapsed fold keeps it collapsed (R933.1)",
+        "unit r938_indent_is_one_undo_step / r938_dedent_is_one_undo_step: macro folds N line edits into one Ctrl+Z",
+        "unit r938_indent_shifts_style_runs: a styled run shifts with its text, not destroyed by the block edit",
+        "unit dedent no-op / leading-tab / collapsed-caret / line_starts_in_range / pos-shift helper edge cases",
+        "demo (F): toggle-fold + indent over RPC keeps the fold collapsed; one undo restores text + fold",
+        "validate-workspace: T1 reject=0, no new orphans (baseline preserved)"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.52",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "comment-toggle (Ctrl+/) = the next line_starts_in_range consumer (needs per-language comment markers)",
+        "indent width is a fixed 4-space default (INDENT_UNIT); per-editor tab/width config deferred (consumer 0)",
+        "shell offer-key-first-then-default is now 2 consumers (Escape, Tab) -> lift the pattern at the 3rd",
+        "redo of a block indent lands the caret at the first line (loses the block selection), as replace-all does"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
@@ -54477,5 +54545,5 @@
   "predicates": {},
   "narrative_facts": {},
   "disclosure_plans": {},
-  "schema_version": 22
+  "schema_version": 23
 }

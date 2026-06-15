@@ -1651,6 +1651,9 @@ impl ExternalIntrospect for TextFieldExternal {
             // R933 §5.36 — code-folding actions (split out like find/replace
             // to keep this dispatch under the line ceiling).
             "toggle-fold" | "fold-all" | "unfold-all" => self.invoke_fold(path, &args),
+            // R938 §5.22 — indent / dedent the selection (the AI-first twin of
+            // the Tab / Shift+Tab keyboard path; split out for SRP).
+            "indent" | "dedent" => self.invoke_indent(path, &args),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1758,6 +1761,33 @@ impl TextFieldExternal {
         }
     }
 
+    /// R938 §5.22 — the indent / dedent `invoke` actions, the AI-first twin of
+    /// the `Tab` / `Shift+Tab` keyboard path (split out like
+    /// [`invoke_fold`](Self::invoke_fold) for SRP). Both take `Null` and
+    /// return `Bool` — whether the buffer changed (a dedent on lines with no
+    /// leading whitespace is a `Bool(false)` no-op, the setter-returns-read-
+    /// outcome contract). The width is the shared
+    /// [`INDENT_UNIT`](crate::widgets::text_edit::INDENT_UNIT) default the
+    /// keyboard path also uses, so an AI-driven indent and a `Tab` press land
+    /// the same edit. A bare field (no state) is inert — `Bool(false)`, never
+    /// `UnknownPath`.
+    fn invoke_indent(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match args {
+            IntrospectValue::Null => Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
+                if path == "indent" {
+                    s.indent_selection(crate::widgets::text_edit::INDENT_UNIT)
+                } else {
+                    s.dedent_selection(crate::widgets::text_edit::INDENT_WIDTH)
+                }
+            }))),
+            _ => Err(InvokeError::TypeMismatch),
+        }
+    }
+
     /// R56.1.f.0 §5.13 — single dispatch site shared by the
     /// `IntrospectValue::Text` (no-modifier) and `IntrospectValue::Json`
     /// (modifier-aware) arms of `invoke("key", ...)`. Forwards into
@@ -1826,6 +1856,32 @@ impl TextFieldExternal {
                     _ => {}
                 }
             }
+        }
+        // R938 §5.22 — Tab / Shift+Tab indent / dedent for an opted-in
+        // multi-line code editor (`tab_indents`). A single-line field leaves
+        // the flag off → returns `false` so the shell's focus-traversal
+        // default (the `app.rs` Tab arm) still advances focus. The key is
+        // "handled" whenever the editor opted in, even when a dedent finds no
+        // leading whitespace to strip (a no-op) — the W3C `defaultPrevented`
+        // discipline the clipboard chords above also follow (Ctrl+C with no
+        // selection is still consumed).
+        if key_str == "Tab" {
+            let Some(state) = self.text_state() else {
+                return false;
+            };
+            if !state.tab_indents() {
+                return false;
+            }
+            if modifiers.shift_key() {
+                state.dedent_selection(crate::widgets::text_edit::INDENT_WIDTH);
+            } else {
+                state.indent_selection(crate::widgets::text_edit::INDENT_UNIT);
+            }
+            if let Some(blink) = self.em.inner.blink() {
+                blink.reset();
+            }
+            self.publish_primary_selection_if_any();
+            return true;
         }
         let handled = match self.text_state() {
             Some(state) => apply_key(state.as_ref(), key_str, modifiers),
@@ -6097,5 +6153,46 @@ mod r933_fold_tests {
             tfx.invoke("fold-all", IntrospectValue::Int(3)),
             Err(InvokeError::TypeMismatch),
         ));
+    }
+
+    #[test]
+    fn r938_invoke_indent_then_dedent_round_trips() {
+        // The AI-first verb twin of Tab / Shift+Tab: indent a multi-line
+        // selection, then dedent it back, each reporting whether it changed
+        // the buffer (the setter-returns-read-outcome contract).
+        let (state, mut tfx) = wired("a\nb");
+        state.set_selection(0, 3);
+        assert_eq!(
+            tfx.invoke("indent", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(state.text(), "    a\n    b");
+        state.set_selection(0, state.text().len());
+        assert_eq!(
+            tfx.invoke("dedent", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(state.text(), "a\nb");
+        // A dedent with nothing to strip is a Bool(false) no-op.
+        state.set_selection(0, state.text().len());
+        assert_eq!(
+            tfx.invoke("dedent", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(false),
+        );
+    }
+
+    #[test]
+    fn r938_invoke_indent_rejects_non_null_and_bare_field_is_inert() {
+        let (_state, mut tfx) = wired("a\nb");
+        assert!(matches!(
+            tfx.invoke("indent", IntrospectValue::Int(2)),
+            Err(InvokeError::TypeMismatch),
+        ));
+        // A bare field (no state) is inert — Bool(false), never UnknownPath.
+        let mut bare = TextFieldExternal::new();
+        assert_eq!(
+            bare.invoke("indent", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(false),
+        );
     }
 }
