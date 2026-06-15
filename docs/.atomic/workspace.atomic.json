@@ -41271,6 +41271,70 @@
         "candidate (b) cell delegates / (c) pro-tool perf still open; R938 = diversify (non-gesture)"
       ]
     },
+    "R937.1": {
+      "decision_summary": "R937 session-review clearance: the AT reorder was an invalid+inert row-child button -> access_child_invoke Increment/Decrement (hello-dnd pattern); plain_view one-gate; drag_cancel hook for OS-revoked drags",
+      "changes_bullets": [
+        "a11y: removed the row-child reorder `button` — invalid (not a valid grid-row child) + inert",
+        "(the painted grip only arms a *drag*; an AT activation never moved a row) — review caught it",
+        "access_child_invoke Increment/Decrement on a cell moves its ROW (hello-dnd, valid+actionable)",
+        "plain_view free-fn: the reorder-enabled predicate was triplicated inline (method + view + a11y)",
+        "-> one `plain_view(sort,filter,group)` gate (the R886.1 one-gate the R936 work itself applies)",
+        "drag_cancel External hook (default no-op) + pointer_cancel teardown: an OS gesture revoke now",
+        "ABORTS an in-flight drag (discard, no commit), not leak a ghost drop line + stale arm",
+        "data-grid drag_cancel clears preview + arm without moving; +5 review tests"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 WSTEST_EXIT=0 (165 ok-blocks, 0 FAILED) — +1 runtime + 4 data-grid",
+        "cargo clippy --workspace --all-targets vello (-D pedantic) EXIT=0, 0 warnings",
+        "hello-data-grid 73 tests / pinion-runtime 355 tests; r936 + r937 demos PASS (release)",
+        "all 3 adversarial reviewers' HIGH/MED findings re-verified by my own grep+read, then fixed",
+        "over-reach rejected on re-verify: gap_to_index defer correct (fixed list-mechanics off-by-one)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "F2 (valid, deferred): external_mut could be a pinion-core Scene helper — the find+introspect_mut",
+        "glue is in 5+ example prod paths; a PRE-EXISTING repo-wide pattern, so the migration is its own",
+        "round, not an R937 defect (the within-file 3-site lift is correct)",
+        "F3 (honesty): parse_pair local-keep stands; honest reason is trivial+low-leverage, not \"no home\"",
+        "V1 (honesty): leaf_modified \"merge\" was MY in-session draft caught by self-grep before commit —",
+        "not a pre-existing dup; the one-gate end-state is correct",
+        "the painted grip stays pointer-only; Increment/Decrement is the actionable AT path"
+      ],
+      "publishable_decision_summary": "R937 session-review clearance: the AT reorder was an invalid+inert row-child button -> access_child_invoke Increment/Decrement (hello-dnd pattern); plain_view one-gate; drag_cancel hook for OS-revoked drags",
+      "publishable_changes_bullets": [
+        "a11y: removed the row-child reorder `button` — invalid (not a valid grid-row child) + inert",
+        "(the painted grip only arms a *drag*; an AT activation never moved a row) — review caught it",
+        "access_child_invoke Increment/Decrement on a cell moves its ROW (hello-dnd, valid+actionable)",
+        "plain_view free-fn: the reorder-enabled predicate was triplicated inline (method + view + a11y)",
+        "-> one `plain_view(sort,filter,group)` gate (the R886.1 one-gate the R936 work itself applies)",
+        "drag_cancel External hook (default no-op) + pointer_cancel teardown: an OS gesture revoke now",
+        "ABORTS an in-flight drag (discard, no commit), not leak a ghost drop line + stale arm",
+        "data-grid drag_cancel clears preview + arm without moving; +5 review tests"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 WSTEST_EXIT=0 (165 ok-blocks, 0 FAILED) — +1 runtime + 4 data-grid",
+        "cargo clippy --workspace --all-targets vello (-D pedantic) EXIT=0, 0 warnings",
+        "hello-data-grid 73 tests / pinion-runtime 355 tests; r936 + r937 demos PASS (release)",
+        "all 3 adversarial reviewers' HIGH/MED findings re-verified by my own grep+read, then fixed",
+        "over-reach rejected on re-verify: gap_to_index defer correct (fixed list-mechanics off-by-one)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "F2 (valid, deferred): external_mut could be a pinion-core Scene helper — the find+introspect_mut",
+        "glue is in 5+ example prod paths; a PRE-EXISTING repo-wide pattern, so the migration is its own",
+        "round, not an R937 defect (the within-file 3-site lift is correct)",
+        "F3 (honesty): parse_pair local-keep stands; honest reason is trivial+low-leverage, not \"no home\"",
+        "V1 (honesty): leaf_modified \"merge\" was MY in-session draft caught by self-grep before commit —",
+        "not a pre-existing dup; the one-gate end-state is correct",
+        "the painted grip stays pointer-only; Increment/Decrement is the actionable AT path"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

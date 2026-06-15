@@ -1604,6 +1604,21 @@ impl InputRouter {
         if let Some(tag) = target {
             dispatch_send(state_scene, &tag, PointerWireEvent::Cancel.as_wire_name());
         }
+        // R937.1 §5.51 — a cancelled gesture revokes an in-flight drag this
+        // pointer started: remove the session (so the next `cursor_moved` can
+        // never route to a dead `update_drag` — `cursor_moved` checks
+        // `drag_sessions` first) and tell the source to DISCARD it via
+        // `drag_cancel` (clear its preview / arm WITHOUT applying the move — a
+        // cancel is "the drag never happened", unlike the `pointer_up` drop which
+        // commits). The session-review caught this: pre-R937.1 the session +
+        // the source's reactive drop-preview both leaked, leaving a ghost
+        // insertion line and a stale arm after an OS gesture revoke.
+        if let Some(session) = self.drag_sessions.remove(&id) {
+            let (primary, _) = split_subindex(&session.source_tag);
+            if let Some(external) = find_external_by_tag(state_scene, primary) {
+                external.handle.drag_cancel(&session.payload);
+            }
+        }
         // R881 §5.35 — revoke any in-flight middle gesture: a cancelled
         // press is "never happened", so the trailing OS `Released` (if
         // one still arrives) resolves to `PanRelease::NoPress` and
@@ -5281,6 +5296,12 @@ mod tests {
                 .expect("poisoned")
                 .push(format!("drop:{}:{dst}", payload.value.as_i64().unwrap_or(-1)));
         }
+        fn drag_cancel(&mut self, payload: &DragPayload) {
+            self.log
+                .lock()
+                .expect("poisoned")
+                .push(format!("cancel:{}", payload.value.as_i64().unwrap_or(-1)));
+        }
     }
 
     impl ExternalIntrospect for DragExternal {
@@ -5405,6 +5426,27 @@ mod tests {
             None,
             "drag release must clear the vestigial capture lock"
         );
+    }
+
+    #[test]
+    fn r937_1_pointer_cancel_aborts_drag_session_without_committing() {
+        // R937.1 (session-review) — an OS gesture revoke (TouchPhase::Cancelled)
+        // during an in-flight drag must ABORT it: tell the source to discard
+        // (`drag_cancel`), NOT commit a drop, and remove the session so a later
+        // move never routes to a dead `update_drag`.
+        let mut router = InputRouter::new();
+        let (mut state, log) = state_with_dnd();
+        router.update_paint_scene(paint_with_two_rows(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 20.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.pointer_cancel(PointerId::MOUSE, &mut state);
+        let snap = read(&log);
+        assert!(snap.contains(&"begin:0".to_string()), "the drag armed at press: {snap:?}");
+        assert!(snap.contains(&"cancel:0".to_string()), "cancel aborts via drag_cancel: {snap:?}");
+        assert!(!snap.iter().any(|s| s.starts_with("drop:")), "a cancel must NOT commit a drop: {snap:?}");
+        // The session is gone: a subsequent move does not route to `drag_to`.
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
+        assert!(!read(&log).iter().any(|s| s.starts_with("to:")), "no update_drag after a cancelled session");
     }
 
     #[test]

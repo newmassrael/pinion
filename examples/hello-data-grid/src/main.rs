@@ -163,7 +163,7 @@ use std::rc::Rc;
 use std::collections::BTreeSet;
 
 use pinion_a11y::{
-    grid_table_nodes, grouped_grid_access_nodes, AccessNode, AriaRole, GridCell, GridColumn,
+    grid_table_nodes, grouped_grid_access_nodes, AccessAction, AccessNode, GridCell, GridColumn,
     GridRow, GroupedGridSelection, GroupedGridSpec, SortDirection, WidgetA11y,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
@@ -446,6 +446,21 @@ fn nrows(model: &[CellValue]) -> usize {
     // NCOLS-wide rows, so a non-multiple length is a bug, not a valid state).
     debug_assert!(model.len() % NCOLS == 0, "the cell model is a whole number of rows");
     model.len() / NCOLS
+}
+
+/// R937.1 — whether the grid is in the PLAIN source view (no sort / filter /
+/// group), where the visual order IS the source order, so a manual row reorder is
+/// 1:1 meaningful (Qt / Excel disable reorder under a sort proxy). The ONE
+/// predicate the coordinator's [`DataGridExternal::reorder_enabled`], the view
+/// (grip + drop line), and the a11y reorder actions all share, so the three can
+/// never disagree on when reorder is enabled — the R886.1 one-gate discipline
+/// (the R937 session-review caught this triplicated inline).
+fn plain_view(
+    sort: Option<(usize, bool)>,
+    filter: Option<&GridFilter>,
+    group_col: Option<usize>,
+) -> bool {
+    sort.is_none() && filter.is_none() && group_col.is_none()
 }
 
 /// R930 — a fresh row's default cells, one per column keyed by [`COL_KINDS`]
@@ -979,8 +994,12 @@ struct DataGridExternal {
     /// `None` for any other press. [`External::begin_drag`] returns a reorder
     /// payload only when this is `Some` AND the view is plain (reorder-enabled);
     /// a numeric-cell press arms [`scrub_armed`](Self::scrub_armed) instead, and
-    /// the two arms are mutually exclusive (each press clears the other), so the
-    /// router's drag-session-vs-capture-lock disambiguation never sees both.
+    /// the two arms are mutually exclusive (each press clears the other) so only
+    /// one of `begin_drag` / the scrub thinks itself active. The
+    /// capture-lock-vs-drag-session conflict itself is resolved by the RUNTIME,
+    /// not this arm: `wants_pointer_capture()` is unconditionally `true`, so a
+    /// handle press arms the capture lock too, and the router's drag-session >
+    /// capture-lock precedence (input.rs) is what makes the reorder win.
     reorder_arm: Cell<Option<usize>>,
     /// R937 — the live drop **gap** (`0..=nrows`, "insert before visual row g")
     /// the in-flight reorder drag is hovering, `None` when no drag is active. A
@@ -1046,7 +1065,7 @@ impl DataGridExternal {
     /// sort proxy) — the handle is then painted blank + `begin_drag` returns
     /// `None`. Reads the three view-transform signals (subscribes in the view).
     fn reorder_enabled(&self) -> bool {
-        self.sort.get().is_none() && self.filter.get().is_none() && self.group_col.get().is_none()
+        plain_view(self.sort.get(), self.filter.get().as_ref(), self.group_col.get())
     }
 
     /// R891 — rows passing the active filter (`NROWS` when unfiltered), the
@@ -1748,6 +1767,15 @@ impl External for DataGridExternal {
                 self.move_row_to_gap(from, gap);
             }
         }
+        self.drag_preview.set(None);
+        self.reorder_arm.set(None);
+    }
+
+    /// R937.1 — drag ABORT (an OS gesture revoked the in-flight reorder): discard
+    /// it — clear the live preview + the arm WITHOUT moving any row (unlike
+    /// [`drag_release`](Self::drag_release), a cancel commits nothing, so the ghost
+    /// insertion line the session-review found can no longer survive a revoke).
+    fn drag_cancel(&mut self, _payload: &DragPayload) {
         self.drag_preview.set(None);
         self.reorder_arm.set(None);
     }
@@ -2487,7 +2515,7 @@ fn content_w() -> u32 {
 
 /// R937 — which edge of a data row the live drop line sits on (the insertion
 /// point a release would land at), or `None` when this row is not the drop target.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DropEdge {
     /// Insert BEFORE this row (the drop gap is this row's visual position).
     Top,
@@ -2700,8 +2728,8 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // R937 — reorder is enabled only in the plain source view (no transform), so
     // the grip paints + the drag arms only then; the live drop gap drives the
     // insertion line (reading both subscribes, so a drag move / a sort repaints).
-    let reorder_enabled =
-        sort.is_none() && filter.is_none() && group_col.is_none();
+    // The ONE `plain_view` gate the coordinator + a11y also use (R937.1 one-gate).
+    let reorder_enabled = plain_view(sort, filter.as_ref(), group_col);
     let drag_gap = use_drag_preview().get();
     let last_row = nrows(&model).saturating_sub(1);
     let vis_rows = visible_rows(&model, sort, filter.as_ref(), group_col, &collapsed);
@@ -2970,9 +2998,6 @@ impl WidgetA11y for DataGridView {
         let filter = use_filter().get();
         let group_col = use_group_col().get();
         let collapsed = use_collapsed().get();
-        // R937 — reorder is enabled (the grip + drag arm) only in the plain view,
-        // so the per-row reorder `button` is advertised only then.
-        let reorder_enabled = sort.is_none() && filter.is_none() && group_col.is_none();
         // R886.1 — the a11y columnheader tag IS the painted clickable header
         // tag, so `rect_for_tag` bounds attach and an AT activation routes to
         // the sort wire. The active column announces `aria-sort` (WAI-ARIA 1.2
@@ -3006,27 +3031,14 @@ impl WidgetA11y for DataGridView {
                         .collect(),
                 })
                 .collect();
-            let mut nodes =
-                grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
-            // R937 — in the plain view, advertise each row's reorder handle as a
-            // `button` child of its row (named for the row's Asset cell), so an AT
-            // user knows the row is draggable; the keyboard Alt+Arrow path is the
-            // AT-accessible way to actually move it. Gated on the SAME
-            // `reorder_enabled` the painted grip + the drag arm use (one gate, so
-            // the AT tree advertises reorder exactly when it works).
-            if reorder_enabled {
-                for &row in &order {
-                    let h_tag = handle_tag(row);
-                    let asset = model[idx(row, 0)].display();
-                    if let Some(node) = nodes.iter_mut().find(|n| n.tag == data_row_tag(row)) {
-                        node.children.push(h_tag.clone());
-                    }
-                    nodes.push(
-                        AccessNode::new(h_tag, AriaRole::Button).with_name(format!("Reorder {asset}")),
-                    );
-                }
-            }
-            return nodes;
+            // R937.1 — the reorder is exposed to AT NOT as a row-child button (a
+            // `button` is not a valid child of a grid `row`, and the painted grip
+            // only arms a *drag* — an AT activation of it would never move a row),
+            // but through [`access_child_invoke`](WidgetA11y::access_child_invoke):
+            // an Increment / Decrement action on the focused cell moves its row
+            // down / up (the hello-dnd reorder-a11y pattern), so the AT path is
+            // valid + actionable. Keyboard Alt+Arrow is the keystroke twin.
+            return grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
         };
 
         // R895 — grouped treegrid via the substrate SSOT. The editable grid is
@@ -3056,6 +3068,41 @@ impl WidgetA11y for DataGridView {
                 format!("{}: {}", COL_NAMES[col], model.get(idx(source, col)).map(CellValue::display).unwrap_or_default())
             },
             group_row_a11y_tag,
+        )
+    }
+
+    /// R937.1 — AT-driven row reorder: an `Increment` / `Decrement` action on a
+    /// cell (the activedescendant rides the focused gridcell) moves that cell's
+    /// ROW down / up through the SAME `move_row` funnel the keyboard / RPC / drag
+    /// use — the hello-dnd reorder-a11y pattern. This is the VALID + ACTIONABLE
+    /// AT reorder path (a `button` is not a valid child of a grid `row`, and the
+    /// painted grip only arms a *drag* — an AT activation of it never moves a row;
+    /// the R937 session-review caught that). `move_row` rejects under a sort /
+    /// filter / group, so reorder is gated identically for AT, keyboard and RPC.
+    /// Other actions return `false` → the shell's focus chain handles them.
+    fn access_child_invoke(
+        scene: &mut Scene,
+        _parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
+        let delta: isize = match action {
+            AccessAction::Increment => 1,
+            AccessAction::Decrement => -1,
+            _ => return false,
+        };
+        let Some(row) = GridSendKey::parse(sub_tag).and_then(GridSendKey::row) else {
+            return false;
+        };
+        let Some(to) = row.checked_add_signed(delta) else {
+            return false;
+        };
+        let Some(intro) = external_mut(scene, GRID_TAG) else {
+            return false;
+        };
+        matches!(
+            intro.invoke("move_row", IntrospectValue::Text(format!("{row},{to}"))),
+            Ok(IntrospectValue::Bool(true))
         )
     }
 }
@@ -3283,9 +3330,11 @@ mod tests {
             use_focused_row().set(2);
             use_focused_col().set(2);
             let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
-            // grid + header row + 5 columnheaders + 4 rows + 20 cells + R937: 4
-            // per-row reorder handle buttons (the boot is the plain reorder view).
-            assert_eq!(nodes.len(), 1 + 1 + NCOLS + NROWS + NROWS * NCOLS + NROWS);
+            // grid + header row + 5 columnheaders + 4 rows + 20 cells. R937.1 — NO
+            // per-row reorder button (invalid as a `row` child + inert); the AT
+            // reorder is an Increment/Decrement action via `access_child_invoke`,
+            // which adds no nodes, so the grid skeleton is exactly the R837 shape.
+            assert_eq!(nodes.len(), 1 + 1 + NCOLS + NROWS + NROWS * NCOLS);
             assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Grid);
             let active = nodes
                 .iter()
@@ -3293,10 +3342,12 @@ mod tests {
                 .expect("focused cell present");
             assert!(active.state.focused, "the focused cell is the active descendant");
             assert_eq!(active.name.as_deref(), Some("Count: 99"));
-            // R937 — the reorder handle button for row 0, a child of its row node.
-            let handle = nodes.iter().find(|n| n.tag == handle_tag(0)).expect("row 0 handle button");
-            assert_eq!(handle.role, pinion_a11y::AriaRole::Button);
-            assert!(handle.name.as_deref().unwrap_or("").starts_with("Reorder "));
+            // R937.1 — no `Button`-role node hangs off a row (the invalid-nesting
+            // bug the session-review caught).
+            assert!(
+                nodes.iter().all(|n| n.role != pinion_a11y::AriaRole::Button),
+                "no reorder button is attached to a grid row",
+            );
         });
     }
 
@@ -4297,6 +4348,75 @@ mod tests {
             assert_eq!(grid_intro(&scene).query("value.0.0"), Some(IntrospectValue::Text("Tree".to_owned())));
             assert_eq!(grid_intro(&scene).query("value.1.0"), Some(IntrospectValue::Text("Hero".to_owned())), "Alt+Down moved Hero down one");
             assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(1)), "the cursor follows");
+        });
+    }
+
+    /// R937.1 (session-review) — the drop-line classifier: a gap puts a Top line on
+    /// its row, a past-the-end gap a Bottom line on the last row, nothing else.
+    #[test]
+    fn r937_1_drop_edge_classification() {
+        assert_eq!(drop_edge_at(Some(2), 2, 3), Some(DropEdge::Top), "gap inserts before its row");
+        assert_eq!(drop_edge_at(Some(4), 3, 3), Some(DropEdge::Bottom), "gap past the end = last row bottom");
+        assert_eq!(drop_edge_at(Some(2), 1, 3), None, "a non-target row gets no line");
+        assert_eq!(drop_edge_at(None, 2, 3), None, "no drag = no line");
+    }
+
+    /// R937.1 (session-review) — the drag HOOKS directly (`scene/drag` is atomic,
+    /// so this is the only path that witnesses the mid-drag `drag_preview` the demo
+    /// cannot): a handle press arms a reorder, `drag_to` sets the live drop gap
+    /// (AI-observable), and `drag_release` commits the move + clears the preview.
+    #[test]
+    fn r937_1_drag_hooks_set_preview_then_commit() {
+        Owner::new().run(|| {
+            let mut ext = DataGridView::create_external();
+            // Arm row 0's handle (the press the router dispatches before begin_drag).
+            let _ = ext.introspect_mut().unwrap().invoke("send", IntrospectValue::Text("d0:PointerDown".to_owned()));
+            let payload = ext.begin_drag().expect("a handle press in the plain view arms a reorder drag");
+            // Drag over row 2's bottom half → drop gap 3; the preview is observable.
+            let drop = DropPoint { tag: cell_tag(2, 0), x_rel: 0.5, y_rel: 0.8 };
+            ext.drag_to(&payload, Some(drop.clone()));
+            assert_eq!(use_drag_preview().get(), Some(3), "drag_to publishes the live drop gap");
+            ext.drag_release(&payload, Some(drop));
+            assert_eq!(use_drag_preview().get(), None, "release clears the preview");
+            assert_eq!(use_data_model().get()[idx(2, 0)], CellValue::Text("Hero".to_owned()), "Hero moved to index 2");
+        });
+    }
+
+    /// R937.1 (session-review) — `drag_cancel` (an OS gesture revoke) DISCARDS the
+    /// in-flight reorder: the preview clears and NO row moves (the ghost-line +
+    /// stale-arm leak the review found).
+    #[test]
+    fn r937_1_drag_cancel_discards_without_moving() {
+        Owner::new().run(|| {
+            let mut ext = DataGridView::create_external();
+            let _ = ext.introspect_mut().unwrap().invoke("send", IntrospectValue::Text("d0:PointerDown".to_owned()));
+            let payload = ext.begin_drag().expect("armed reorder");
+            ext.drag_to(&payload, Some(DropPoint { tag: cell_tag(2, 0), x_rel: 0.5, y_rel: 0.8 }));
+            assert_eq!(use_drag_preview().get(), Some(3), "preview set mid-drag");
+            ext.drag_cancel(&payload);
+            assert_eq!(use_drag_preview().get(), None, "cancel clears the preview");
+            assert_eq!(use_data_model().get()[idx(0, 0)], CellValue::Text("Hero".to_owned()), "cancel moved nothing");
+        });
+    }
+
+    /// R937.1 (session-review) — the a11y reorder path: an `Increment` / `Decrement`
+    /// action on a cell moves its ROW down / up (the hello-dnd pattern, replacing
+    /// the invalid + inert row-child button). Clamped at the ends; non-reorder
+    /// actions fall through (`false`).
+    #[test]
+    fn r937_1_access_child_invoke_reorders_the_row() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Increment on row 0's cell: [Hero,Tree,Coin,Boss] -> [Tree,Hero,Coin,Boss].
+            assert!(DataGridView::access_child_invoke(&mut scene, GRID_TAG, "0_0", AccessAction::Increment));
+            assert_eq!(grid_intro(&scene).query("value.1.0"), Some(IntrospectValue::Text("Hero".to_owned())), "Increment moved Hero down");
+            // Decrement on row 0 cannot go up — no wrap, not handled.
+            assert!(!DataGridView::access_child_invoke(&mut scene, GRID_TAG, "0_0", AccessAction::Decrement), "no wrap above the first row");
+            // A non-reorder action falls through to the shell focus chain.
+            assert!(!DataGridView::access_child_invoke(&mut scene, GRID_TAG, "0_0", AccessAction::Click), "Click is not a reorder action");
+            // Under a sort, reorder is disabled — the action is rejected.
+            use_sort().set(Some((0, true)));
+            assert!(!DataGridView::access_child_invoke(&mut scene, GRID_TAG, "1_0", AccessAction::Increment), "no AT reorder under a sort");
         });
     }
 

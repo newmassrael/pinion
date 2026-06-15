@@ -670,6 +670,20 @@ pub trait External: core::fmt::Debug {
     /// reaches the statechart as a click. Default no-op.
     fn drag_release(&mut self, _payload: &DragPayload, _over: Option<DropPoint>) {}
 
+    /// R937.1 §5.51 — drag ABORT. Called once when the OS revokes an
+    /// in-flight drag this widget started (winit `TouchPhase::Cancelled` —
+    /// a system gesture, phone call, app-switcher, edge-swipe), the
+    /// drag-session counterpart of [`pointer_cancel`]. Unlike
+    /// [`drag_release`](Self::drag_release), the widget must **discard** the
+    /// gesture (NO move / reorder applied) and clear its drop-preview state —
+    /// a cancel is "the drag never happened", so committing the last preview
+    /// would be wrong. Default no-op (a widget with no preview / arm state to
+    /// clear needs nothing). The router clears the drag session regardless,
+    /// so even a no-op impl can no longer leave a dangling session.
+    ///
+    /// [`pointer_cancel`]: ../../pinion_runtime/input/struct.InputRouter.html#method.pointer_cancel
+    fn drag_cancel(&mut self, _payload: &DragPayload) {}
+
     // --- 6. DPI / resize notification ---
 
     fn on_dpi_change(&mut self, _scale: f32) {}
