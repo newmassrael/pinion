@@ -331,8 +331,8 @@ pub struct TextEditState {
     /// default) so `Ctrl+/` falls through to the application — the marker is a
     /// per-*language* fact the substrate cannot know, so the binding supplies
     /// it via [`set_line_comment`](Self::set_line_comment), the way it supplies
-    /// the highlighter grammar. `&'static str` because a comment token is a
-    /// compile-time language constant, never user data. The opt-in peer of
+    /// the highlighter grammar. `&'static str` because a comment token is, in
+    /// practice, a compile-time language constant rather than runtime input. The opt-in peer of
     /// [`tab_indents`](Self::tab_indents): both gate a code-editor keystroke an
     /// `<input>`-style field must not capture, and both are non-reactive
     /// wiring (no view-fn renders "does Ctrl+/ comment").
@@ -767,18 +767,22 @@ fn dedent_remove_len(text: &str, ls: usize, width: usize) -> usize {
 
 /// R939 §5.22 — the byte offset of the first non-whitespace byte on the line
 /// starting at `ls` (scanning to its `\n` or EOF), or `None` for a **blank**
-/// line (only spaces / tabs). The comment-toggle insert / detect column: a
-/// blank line takes no marker and is excluded from the "is every line already
-/// commented?" verdict, so a toggle never comments an empty line. The returned
-/// offset is a `char` boundary — the scan only steps over single-byte ASCII
-/// whitespace, so it stops at the first lead byte of any multi-byte char.
+/// line (only spaces / tabs / `\r`, so a bare `\r\n` line reads as blank too).
+/// The comment-toggle insert / detect column: a blank line takes no marker and
+/// is excluded from the "is every line already commented?" verdict, so a toggle
+/// never comments an empty line. The returned offset is a `char` boundary — the
+/// scan only steps over single-byte ASCII whitespace, so it stops at the first
+/// lead byte of any multi-byte char.
 fn line_first_non_ws(text: &str, ls: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     let mut i = ls;
     while let Some(&b) = bytes.get(i) {
         match b {
             b'\n' => return None,
-            b' ' | b'\t' => i += 1,
+            // `\r` counts as leading whitespace so a CRLF-only line (`\r\n`)
+            // reads as blank — the toggle never comments an empty CRLF line
+            // (the editor is otherwise LF-oriented, treating `\r` as content).
+            b' ' | b'\t' | b'\r' => i += 1,
             _ => return Some(i),
         }
     }
@@ -796,8 +800,8 @@ fn line_first_non_ws(text: &str, ls: usize) -> Option<usize> {
 /// `removed_len == 0`, a pure delete is `inserted_len == 0`.
 ///
 /// Computed with `usize` arithmetic (no signed casts): the inserted and
-/// removed lengths *strictly before* `pos` are summed separately, and a
-/// net-left shift never underflows because those removed runs all end at or
+/// removed lengths of edits ending *at or before* `pos` are summed separately,
+/// and a net-left shift never underflows because those removed runs all end at or
 /// before `pos`, so their total is `<= pos` (and `<= o` for the straddled run,
 /// which they precede without overlap). At most one run straddles `pos`; the
 /// result then clamps into that run's replacement.
@@ -2095,12 +2099,12 @@ impl TextEditState {
     /// the AI-first `toggle-comment` RPC verb's shared core. The VS Code
     /// "Toggle Line Comment" rule:
     ///
-    /// * The touched lines are [`line_starts_in_range`] — the **2nd consumer**
-    ///   of that line-op SSOT after [`indent_selection`](Self::indent_selection)
-    ///   / [`dedent_selection`](Self::dedent_selection) (a collapsed caret
-    ///   toggles its own line). Blank lines (whitespace only) take no marker
-    ///   and are excluded from the verdict, so a toggle never comments an empty
-    ///   line.
+    /// * The touched lines are [`line_starts_in_range`] — the line-op SSOT that
+    ///   [`indent_selection`](Self::indent_selection) /
+    ///   [`dedent_selection`](Self::dedent_selection) also iterate (a collapsed
+    ///   caret toggles its own line). Blank lines (whitespace only, including a
+    ///   bare `\r\n`) take no marker and are excluded from the verdict, so a
+    ///   toggle never comments an empty line.
     /// * **Verdict**: if *every* non-blank line already begins (after its
     ///   indent) with `marker`, the toggle **removes** it (and one following
     ///   space, the inverse of the inserted `"{marker} "`); otherwise it
@@ -2109,10 +2113,10 @@ impl TextEditState {
     /// * Each per-line edit is a contiguous [`replace_range`](Self::replace_range)
     ///   splice grouped into **one** undo step via the
     ///   [`UndoStack::begin_macro`] / [`end_macro`](UndoStack::end_macro)
-    ///   transaction (the 3rd consumer of that substrate after `replace_all`
-    ///   and indent / dedent), so the style runs **and** fold anchors shift
-    ///   line-by-line and survive the toggle (R933.1). Lines are spliced
-    ///   bottom-to-top so the earlier offsets stay valid.
+    ///   transaction (reused from `replace_all` / indent / dedent — no new
+    ///   primitive), so the style runs **and** fold anchors shift line-by-line
+    ///   and survive the toggle (R933.1). Lines are spliced bottom-to-top so
+    ///   the earlier offsets stay valid.
     ///
     /// Returns whether the buffer changed (`false` for an empty `marker`, or a
     /// selection of only blank lines). The prefix match is literal — `marker`
@@ -5547,7 +5551,8 @@ mod tests {
             assert!(st.toggle_line_comment("//"), "comments the caret's line");
             assert_eq!(st.text(), "ab\n// cd", "marker + space at the column");
             assert!(!st.has_selection(), "a collapsed toggle stays collapsed");
-            // Toggling again removes it — an involution on the line.
+            // Toggling again removes the marker this toggle just added (a
+            // round-trip on toggle-produced text, not a general involution).
             st.set_caret(st.text().len());
             assert!(st.toggle_line_comment("//"));
             assert_eq!(st.text(), "ab\ncd", "second toggle uncomments");
@@ -5567,7 +5572,12 @@ mod tests {
     }
 
     #[test]
-    fn r939_comment_is_an_involution_over_mixed_indents() {
+    fn r939_comment_round_trips_over_mixed_indents() {
+        // Comment-then-uncomment restores the original — a round-trip on clean
+        // (un-commented) input. NOT a general involution: a line already
+        // commented with no space (`"//x"`) does not survive two toggles (see
+        // r939_comment_remove_strips_only_one_following_space) — the toggle is
+        // a round-trip only for text its own add-path produced.
         Owner::new().run(|| {
             let original = "x\n  y\n    z".to_string();
             let st = TextEditState::with_initial(original.clone());
@@ -5577,6 +5587,19 @@ mod tests {
             st.set_selection(0, st.text().len());
             assert!(st.toggle_line_comment("//"), "uncomment all");
             assert_eq!(st.text(), original, "round-trips to the original");
+        });
+    }
+
+    #[test]
+    fn r939_comment_skips_a_blank_crlf_line() {
+        // R939.1 — a CRLF-only line (`\r\n`) is blank: `\r` counts as leading
+        // whitespace, so the toggle never inserts a marker before it (the
+        // "never comments an empty line" contract holds for CRLF too).
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\r\n\r\nb".to_string());
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"));
+            assert_eq!(st.text(), "// a\r\n\r\n// b", "the bare CRLF line takes no marker");
         });
     }
 

@@ -41511,6 +41511,62 @@
         "column-aligned add variant + runtime marker reconfig (consumer 0) = follow-ups"
       ]
     },
+    "R939.1": {
+      "decision_summary": "R939.1 audit-clearance: adversarial 3-lens session-review of R939 (correctness/SSOT/doc-honesty), every finding re-verified by my own grep+read. REAL: (1) 'involution' overclaim -> 'round-trips' (toggle round-trips only on its own add-path output, not f(f(x))==x); test renamed + comment fixed; (2) CRLF blank-line (LOW): line_first_non_ws now treats \\r as leading ws so a bare \\r\\n line is blank (the 'never comments an empty line' contract holds for CRLF); regression test added; (3) doc precision: dropped disputable 2nd/3rd-consumer ordinal, 'strictly before'->'at or before', softened '&static never user data'. REJECTED over-reach: parameterize highlight_code with the comment marker ('//' is grammar-intrinsic alongside string/number rules; the Language trait stays deferred).",
+      "changes_bullets": [
+        "doc-honesty: \"involution\" overclaim -> \"round-trips\" (true only on toggle's own add-path output)",
+        "test renamed r939_comment_round_trips_over_mixed_indents + collapsed-caret comment corrected",
+        "correctness(LOW): line_first_non_ws treats \\r as ws -> bare CRLF line stays blank (no marker)",
+        "regression test r939_comment_skips_a_blank_crlf_line",
+        "doc: drop disputable \"2nd/3rd consumer\" ordinal -> state line_starts_in_range/macro reuse plainly",
+        "doc: shift_pos_for_edits \"strictly before\" -> \"at or before\" pos; soften \"&static never user data\""
+      ],
+      "verification_bullets": [
+        "adversarial 3-lens session-review (correctness/SSOT/doc-honesty), findings re-verified by grep",
+        "pinion-core tests ok incl renamed round-trip + new CRLF regression; full workspace green",
+        "clippy 0 (-D pedantic, full workspace)",
+        "audit-clearance = demo-exempt (no example/demo change; CRLF path unused by LF-only demo)"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "REJECTED over-reach: parameterize highlight_code w/ comment marker. \"//\" is grammar-intrinsic",
+        "(alongside hardcoded string/number/ident rules); threading only the comment token = half-measure",
+        "real unifier = a Language trait (keywords+comment+strings), deferred to 2nd language; the",
+        "example's set_line_comment(\"//\") matching its C-family highlighter = documented coupling",
+        "CONFIRMED CLEAN: shift_pos_for_edits underflow+dedent byte-identity / char-boundary / one-undo /",
+        "fold+style-run survival / keymap single-sited / invoke peer / line_first_non_ws no prior-art",
+        "atomic R939 + SEED said \"involution-safe\" -> corrected to \"round-trip-clean for toggle\""
+      ],
+      "publishable_decision_summary": "R939.1 audit-clearance: adversarial 3-lens session-review of R939 (correctness/SSOT/doc-honesty), every finding re-verified by my own grep+read. REAL: (1) 'involution' overclaim -> 'round-trips' (toggle round-trips only on its own add-path output, not f(f(x))==x); test renamed + comment fixed; (2) CRLF blank-line (LOW): line_first_non_ws now treats \\r as leading ws so a bare \\r\\n line is blank (the 'never comments an empty line' contract holds for CRLF); regression test added; (3) doc precision: dropped disputable 2nd/3rd-consumer ordinal, 'strictly before'->'at or before', softened '&static never user data'. REJECTED over-reach: parameterize highlight_code with the comment marker ('//' is grammar-intrinsic alongside string/number rules; the Language trait stays deferred).",
+      "publishable_changes_bullets": [
+        "doc-honesty: \"involution\" overclaim -> \"round-trips\" (true only on toggle's own add-path output)",
+        "test renamed r939_comment_round_trips_over_mixed_indents + collapsed-caret comment corrected",
+        "correctness(LOW): line_first_non_ws treats \\r as ws -> bare CRLF line stays blank (no marker)",
+        "regression test r939_comment_skips_a_blank_crlf_line",
+        "doc: drop disputable \"2nd/3rd consumer\" ordinal -> state line_starts_in_range/macro reuse plainly",
+        "doc: shift_pos_for_edits \"strictly before\" -> \"at or before\" pos; soften \"&static never user data\""
+      ],
+      "publishable_verification_bullets": [
+        "adversarial 3-lens session-review (correctness/SSOT/doc-honesty), findings re-verified by grep",
+        "pinion-core tests ok incl renamed round-trip + new CRLF regression; full workspace green",
+        "clippy 0 (-D pedantic, full workspace)",
+        "audit-clearance = demo-exempt (no example/demo change; CRLF path unused by LF-only demo)"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "REJECTED over-reach: parameterize highlight_code w/ comment marker. \"//\" is grammar-intrinsic",
+        "(alongside hardcoded string/number/ident rules); threading only the comment token = half-measure",
+        "real unifier = a Language trait (keywords+comment+strings), deferred to 2nd language; the",
+        "example's set_line_comment(\"//\") matching its C-family highlighter = documented coupling",
+        "CONFIRMED CLEAN: shift_pos_for_edits underflow+dedent byte-identity / char-boundary / one-undo /",
+        "fold+style-run survival / keymap single-sited / invoke peer / line_first_non_ws no prior-art",
+        "atomic R939 + SEED said \"involution-safe\" -> corrected to \"round-trip-clean for toggle\""
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
