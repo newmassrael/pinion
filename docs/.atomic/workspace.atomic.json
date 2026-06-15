@@ -41205,6 +41205,72 @@
         "R937 should diversify away from the property-grid / inspector axis"
       ]
     },
+    "R937": {
+      "decision_summary": "data-grid row drag-to-reorder: 3rd consumer of the R742 drag-session hooks; handle column + MoveRowEdit undo + move_row RPC + Alt+Arrow keyboard, gated to the plain source view",
+      "changes_bullets": [
+        "leading drag-handle column (grip glyph, plain view only) arms a row drag-to-reorder",
+        "local data_grid#d<row> tag kept OUT of shared GridSendKey (R773 producer+consumer)",
+        "disambiguation via router drag-session > capture precedence (no wants_pointer_capture change)",
+        "begin_drag/drag_to/drag_release = 3rd consumer of the R742 hooks (hello-dnd / tab-reorder)",
+        "MoveRowEdit (from/to physical indices, redo/undo swap symmetric) via GridUndoCtx::restore (R930.1)",
+        "move_block: flat-Vec NCOLS block move, the ReorderModel::apply_move block peer",
+        "move_row \"from,to\" RPC primary + Alt+Arrow keyboard, gated reorder_enabled (no transform)",
+        "drag_preview Signal drives the dg_drop_line insertion line + AI-first observability",
+        "a11y per-row reorder button (plain view); reorder_enabled + drag_preview queries",
+        "self-grep: external_mut lifted (3rd find+introspect_mut glue site); dispatch_send extracted"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 WSTEST_EXIT=0 (165 ok-blocks, 0 FAILED, 0 panics)",
+        "cargo clippy --workspace --all-targets vello (-D pedantic) EXIT=0, 0 warnings",
+        "hello-data-grid 69 tests ok (63 pre-existing + 6 new R937)",
+        "demo r937_data_grid_reorder.py PASS (30 assert + 5 wait_query gates), scene/drag + move_row RPC",
+        "self-grep: external_mut REAL lift; gap_to_index / parse_pair considered + kept local (documented)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "gap_to_index (removal-shift) kept local: 2-consumer w/ apply_move:338 but a trivial FIXED",
+        "off-by-one (list-mechanics fact, won't evolve; apply_move embeds it) -> documented peer",
+        "parse_pair \"from,to\": 3 example sites (usize x2, node-editor i32) = generic CSV idiom, no",
+        "pinion-core substrate home (not tag/payload grammar) -> kept local per R803 trivial-idiom",
+        "a11y handle button on the row node (pinion pattern); Alt+Arrow is the primary AT reorder path",
+        "candidate (b) cell delegates / (c) pro-tool perf still open; R938 = diversify (non-gesture)"
+      ],
+      "publishable_decision_summary": "data-grid row drag-to-reorder: 3rd consumer of the R742 drag-session hooks; handle column + MoveRowEdit undo + move_row RPC + Alt+Arrow keyboard, gated to the plain source view",
+      "publishable_changes_bullets": [
+        "leading drag-handle column (grip glyph, plain view only) arms a row drag-to-reorder",
+        "local data_grid#d<row> tag kept OUT of shared GridSendKey (R773 producer+consumer)",
+        "disambiguation via router drag-session > capture precedence (no wants_pointer_capture change)",
+        "begin_drag/drag_to/drag_release = 3rd consumer of the R742 hooks (hello-dnd / tab-reorder)",
+        "MoveRowEdit (from/to physical indices, redo/undo swap symmetric) via GridUndoCtx::restore (R930.1)",
+        "move_block: flat-Vec NCOLS block move, the ReorderModel::apply_move block peer",
+        "move_row \"from,to\" RPC primary + Alt+Arrow keyboard, gated reorder_enabled (no transform)",
+        "drag_preview Signal drives the dg_drop_line insertion line + AI-first observability",
+        "a11y per-row reorder button (plain view); reorder_enabled + drag_preview queries",
+        "self-grep: external_mut lifted (3rd find+introspect_mut glue site); dispatch_send extracted"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 WSTEST_EXIT=0 (165 ok-blocks, 0 FAILED, 0 panics)",
+        "cargo clippy --workspace --all-targets vello (-D pedantic) EXIT=0, 0 warnings",
+        "hello-data-grid 69 tests ok (63 pre-existing + 6 new R937)",
+        "demo r937_data_grid_reorder.py PASS (30 assert + 5 wait_query gates), scene/drag + move_row RPC",
+        "self-grep: external_mut REAL lift; gap_to_index / parse_pair considered + kept local (documented)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "gap_to_index (removal-shift) kept local: 2-consumer w/ apply_move:338 but a trivial FIXED",
+        "off-by-one (list-mechanics fact, won't evolve; apply_move embeds it) -> documented peer",
+        "parse_pair \"from,to\": 3 example sites (usize x2, node-editor i32) = generic CSV idiom, no",
+        "pinion-core substrate home (not tag/payload grammar) -> kept local per R803 trivial-idiom",
+        "a11y handle button on the row node (pinion pattern); Alt+Arrow is the primary AT reorder path",
+        "candidate (b) cell delegates / (c) pro-tool perf still open; R938 = diversify (non-gesture)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

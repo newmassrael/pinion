@@ -163,21 +163,21 @@ use std::rc::Rc;
 use std::collections::BTreeSet;
 
 use pinion_a11y::{
-    grid_table_nodes, grouped_grid_access_nodes, AccessNode, GridCell, GridColumn, GridRow,
-    GroupedGridSelection, GroupedGridSpec, SortDirection, WidgetA11y,
+    grid_table_nodes, grouped_grid_access_nodes, AccessNode, AriaRole, GridCell, GridColumn,
+    GridRow, GroupedGridSelection, GroupedGridSpec, SortDirection, WidgetA11y,
 };
 use pinion_core::cell_value::{CellKind, CellValue};
-use pinion_core::composite_tag::GridSendKey;
+use pinion_core::composite_tag::{split_subindex, GridSendKey};
 use pinion_core::external::{
-    int_of, Backend, BackendFallback, BackendSupport, CaptureNormalize, External,
-    ExternalIntrospect, IntrospectSchema, IntrospectValue, InterveneError, InvokeError,
+    int_of, Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint,
+    External, ExternalIntrospect, IntrospectSchema, IntrospectValue, InterveneError, InvokeError,
     RepaintOwner, ThreadOwnership,
 };
 use pinion_core::input::{DragCalibration, DRAG_CLICK_THRESHOLD_PX};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::undo::{undo_redo_verb, use_undo_stack, UndoCommand, UndoStack, UndoStackExternal};
@@ -222,6 +222,16 @@ const CELL_PAD: u32 = 8;
 const CHECKBOX_SIZE: u32 = 18;
 const PANEL_PAD: u32 = 20;
 const ROW_GAP: u32 = 1;
+/// R937 — the leading drag-handle column width (px). A narrow grip column that
+/// arms a row drag-to-reorder; painted (with the grip glyph) only when reorder
+/// is enabled (the plain source view), but its width is always reserved so the
+/// data columns do not shift when a sort / filter / group engages.
+const HANDLE_W: u32 = 22;
+/// R937 — U+283F BRAILLE PATTERN DOTS-123456, the drag-handle grip glyph (the
+/// six-dot "grip" convention; a named const per the non-ASCII-literal rule).
+const GRIP_GLYPH: &str = "\u{283F}";
+/// R937 — the drop insertion-line thickness (px).
+const DROP_LINE_H: u32 = 2;
 
 // ─── tags + intents ───────────────────────────────────────────────
 
@@ -254,6 +264,9 @@ const V_SCROLL_KEY: &str = "data_grid_vscroll";
 const OVERSCAN: usize = 4;
 /// Commit-on-blur intent the inline field raises on a click-away (R793).
 const EDIT_TF_BLUR_INTENT_TAG: &str = pinion_core::intent_tag!("data_grid_edit", "blur");
+/// R937 — the [`DragPayload::kind`] discriminator for a row drag-to-reorder (the
+/// `hello-dnd` `"dnd-row"` peer): names what a drag session over this grid carries.
+const REORDER_KIND: &str = "data-grid-row";
 
 
 // ─── grid shape (an editable asset table) ─────────────────────────
@@ -365,6 +378,23 @@ fn group_header_tag(group: usize) -> String {
 /// Data-row container tag — `dg_row<source>` (the AT row-bounds anchor).
 fn data_row_tag(source: usize) -> String {
     format!("dg_row{source}")
+}
+
+/// R937 — a row's drag-handle target — `data_grid#d<source>`. A LOCAL scheme
+/// (the `'d'` prefix), kept OUT of the shared [`GridSendKey`] grammar: the handle
+/// is a data-grid-reorder concept produced + consumed only here, where
+/// [`GridSendKey`] is shared with the read-only grids + a11y (R773 — home a wire
+/// vocabulary by who produces + consumes it). `GridSendKey::parse` returns `None`
+/// for a `d<n>` key (no `'_'`, not `'h'`/`'g'`), so the send dispatch checks this
+/// prefix BEFORE falling through to `GridSendKey::parse` with no collision.
+fn handle_tag(source: usize) -> String {
+    format!("{GRID_TAG}#d{source}")
+}
+
+/// R937 — the `'d'`-prefixed sub-key of a [`handle_tag`] decoded back to its
+/// source row (the producer's inverse, the one place the handle grammar is read).
+fn parse_handle_sub(sub: &str) -> Option<usize> {
+    sub.strip_prefix('d').and_then(|n| n.parse::<usize>().ok())
 }
 
 // ─── column sort (R886 — the editable fold of the sort axis) ──────
@@ -486,6 +516,15 @@ fn use_focused_col() -> Rc<Signal<usize>> {
 fn use_editing_cell() -> Rc<Signal<Option<(usize, usize)>>> {
     let owner = Owner::current().expect("use_editing_cell requires an active Owner scope");
     owner.cache("data_grid.editing_cell", || Signal::new(None))
+}
+
+/// R937 — the live row-reorder drop gap (`0..=nrows`), `None` when no drag is in
+/// flight. Shared by the coordinator (a `drag_to` writes it) and the view (reads
+/// it to paint the insertion line — reading subscribes, so a drag move repaints).
+#[must_use]
+fn use_drag_preview() -> Rc<Signal<Option<usize>>> {
+    let owner = Owner::current().expect("use_drag_preview requires an active Owner scope");
+    owner.cache("data_grid.drag_preview", || Signal::new(None))
 }
 
 /// R886 — active column sort `(col, ascending)`, `None` = source order.
@@ -801,6 +840,60 @@ impl UndoCommand for RowEdit {
     }
 }
 
+/// R937 — move the `NCOLS`-cell block at row `from` to rest at row `to` (both
+/// PHYSICAL row indices in the post-removal `Vec`, so a redo and its undo are
+/// perfectly symmetric — just swap `from` / `to`). A no-op when `from == to`.
+/// The flat-model peer of [`ReorderModel::apply_move`], block-wide because a grid
+/// row is `NCOLS` contiguous cells (the array's single-element move would lose
+/// the column grouping).
+fn move_block(cells: &mut Vec<CellValue>, from: usize, to: usize) {
+    if from == to {
+        return;
+    }
+    let row: Vec<CellValue> = cells.splice(from * NCOLS..from * NCOLS + NCOLS, []).collect();
+    let at = to * NCOLS;
+    cells.splice(at..at, row);
+}
+
+/// R937 §5.52 — a reversible row move: the dragged row's source index `from` and
+/// its resting index `to` (both physical, where `to` is already removal-shifted),
+/// so `redo` is [`move_block`]`(from -> to)` and `undo` the exact inverse
+/// `move_block(to -> from)` — a granular two-index command, never a whole-model
+/// snapshot ([[granular-undo-not-snapshot]]). The cursor's before / after source
+/// row rides along through [`GridUndoCtx::restore`] (latch-cancel + re-anchor),
+/// so an undo whose row the *current* view hides never strands the cursor — the
+/// same R930.1 discipline every other mutator follows.
+struct MoveRowEdit {
+    ctx: Rc<GridUndoCtx>,
+    from: usize,
+    to: usize,
+    before_cursor: usize,
+    after_cursor: usize,
+    label: Cow<'static, str>,
+}
+
+impl MoveRowEdit {
+    /// Move the block from `src` to `dst` and restore the cursor — the model
+    /// move + latch-cancel + cursor re-anchor in one funnel.
+    fn shift(&self, src: usize, dst: usize, cursor: usize) {
+        self.ctx.restore(cursor, move |next| move_block(next, src, dst));
+    }
+}
+
+impl UndoCommand for MoveRowEdit {
+    fn label(&self) -> Cow<'static, str> {
+        self.label.clone()
+    }
+
+    fn redo(&self) {
+        self.shift(self.from, self.to, self.after_cursor);
+    }
+
+    fn undo(&self) {
+        self.shift(self.to, self.from, self.before_cursor);
+    }
+}
+
 /// R932 — record one already-applied cell edit on `stack`: the [`SetCellEdit`]
 /// constructor SSOT both the coordinator's [`DataGridExternal::edit_cell`] and
 /// the free-fn [`commit_edit`] push through, so the two pre-existing cell-write
@@ -882,6 +975,19 @@ struct DataGridExternal {
     /// rule): `(row, col, before value, before cursor row)`. The live scrub
     /// itself writes through the no-journal [`set_cell`](Self::set_cell) funnel.
     scrub_origin: RefCell<Option<(usize, usize, CellValue, usize)>>,
+    /// R937 — the SOURCE row a handle `PointerDown` armed for a drag-to-reorder,
+    /// `None` for any other press. [`External::begin_drag`] returns a reorder
+    /// payload only when this is `Some` AND the view is plain (reorder-enabled);
+    /// a numeric-cell press arms [`scrub_armed`](Self::scrub_armed) instead, and
+    /// the two arms are mutually exclusive (each press clears the other), so the
+    /// router's drag-session-vs-capture-lock disambiguation never sees both.
+    reorder_arm: Cell<Option<usize>>,
+    /// R937 — the live drop **gap** (`0..=nrows`, "insert before visual row g")
+    /// the in-flight reorder drag is hovering, `None` when no drag is active. A
+    /// reactive `Signal` (not a `Cell`) so the view repaints the insertion line
+    /// AND a `scene/snapshot` after a `scene/drag` move observes it (the AI-first
+    /// witness of the drag); `drag_release` consumes + clears it.
+    drag_preview: Rc<Signal<Option<usize>>>,
 }
 
 /// R914 — the per-drag payload the cell scrub's [`DragCalibration`] snapshots on
@@ -927,7 +1033,20 @@ impl DataGridExternal {
             undo,
             undo_ctx,
             scrub_origin: RefCell::new(None),
+            reorder_arm: Cell::new(None),
+            drag_preview: use_drag_preview(),
         }
+    }
+
+    /// R937 — whether a manual row drag-to-reorder is meaningful right now: only
+    /// in the **plain source view** (no sort / filter / group), where the visual
+    /// order IS the source order, so moving a row visually moves it in the source
+    /// `Vec` 1:1. A sort / filter / group derives the visual order from the data,
+    /// so a manual position would be ambiguous (Qt / Excel disable reorder under a
+    /// sort proxy) — the handle is then painted blank + `begin_drag` returns
+    /// `None`. Reads the three view-transform signals (subscribes in the view).
+    fn reorder_enabled(&self) -> bool {
+        self.sort.get().is_none() && self.filter.get().is_none() && self.group_col.get().is_none()
     }
 
     /// R891 — rows passing the active filter (`NROWS` when unfiltered), the
@@ -1206,6 +1325,81 @@ impl DataGridExternal {
         true
     }
 
+    /// R937 — the removal-shift: a drop GAP `g` (`0..=nrows`, "insert before
+    /// visual row g") becomes the moved row's resting index once `from` is
+    /// removed — `g - 1` when the gap is past `from` (removal shifted everything
+    /// after it down one), else `g`. The flat-model peer of the off-by-one in
+    /// [`ReorderModel::apply_move`] (gap → resting index).
+    fn gap_to_index(from: usize, gap: usize) -> usize {
+        if gap > from { gap - 1 } else { gap }
+    }
+
+    /// R937 — apply + journal a row move from source row `from` to resting index
+    /// `to` (both validated), recording ONE [`MoveRowEdit`]. A no-op `false` when
+    /// `from == to` or either is out of range. The ONE funnel the drag release,
+    /// the `move_row` RPC, and the keyboard Alt+Arrow all push through — a reorder
+    /// is the same journaled mutation regardless of input (cf. [`push_cell_edit`]).
+    /// The moved row follows the cursor to `to` (the grabbed row stays focused —
+    /// Excel / Qt drag keeps the dragged row selected); since reorder is enabled
+    /// only in the plain view, `to` is always visible, and undo restores the prior
+    /// cursor through [`GridUndoCtx::restore`].
+    fn move_row(&self, from: usize, to: usize) -> bool {
+        let n = self.nrows();
+        if from >= n || to >= n || from == to {
+            return false;
+        }
+        // R930.1 — a structural move shifts source indices, so cancel any
+        // in-flight edit latch (a stale `(row, col)` would commit into the
+        // wrong row), exactly like `remove_row`.
+        self.editing_cell.set(None);
+        let before_cursor = self.focused_row.get();
+        self.model.set_with(move |prev| {
+            let mut next = prev.clone();
+            move_block(&mut next, from, to);
+            next
+        });
+        self.focused_row.set(to);
+        self.undo.push_applied(MoveRowEdit {
+            ctx: Rc::clone(&self.undo_ctx),
+            from,
+            to,
+            before_cursor,
+            after_cursor: to,
+            label: Cow::Borrowed("Move row"),
+        });
+        true
+    }
+
+    /// R937 — move source row `from` to drop GAP `gap`, the drag-release funnel
+    /// (the gesture reports a gap; [`move_row`](Self::move_row) takes a resting
+    /// index, so [`gap_to_index`](Self::gap_to_index) removal-shifts between them).
+    fn move_row_to_gap(&self, from: usize, gap: usize) -> bool {
+        self.move_row(from, Self::gap_to_index(from, gap))
+    }
+
+    /// R937 — decode the drop GAP from a [`DropPoint`]: the target row (from the
+    /// hovered handle `d<r>` or cell `<r>_<c>` sub-tag) plus its top / bottom half
+    /// (`y_rel`) → insert before (`row`) or after (`row + 1`). `None` when the
+    /// hovered tag is not a row (e.g. the header or off the rows) — the caller
+    /// then holds the last preview (the `hello-dnd` no-snap-over-gaps behaviour).
+    fn drop_gap(&self, over: Option<&DropPoint>) -> Option<usize> {
+        let p = over?;
+        let sub = split_subindex(&p.tag).1?;
+        let row = parse_handle_sub(sub).or_else(|| GridSendKey::parse(sub).and_then(GridSendKey::row))?;
+        (row < self.nrows()).then(|| row + usize::from(p.y_rel >= 0.5))
+    }
+
+    /// R937 — arm a row drag-to-reorder from a handle `PointerDown`: record the
+    /// source row, clear any cell-scrub arm (the two are mutually exclusive), and
+    /// focus the grabbed row so a subsequent move keeps it selected. The router
+    /// then asks [`begin_drag`](Self::begin_drag), which honours this arm only in
+    /// the plain (reorder-enabled) view.
+    fn arm_reorder(&self, row: usize) {
+        self.scrub_armed.set(None);
+        self.reorder_arm.set(Some(row));
+        self.focused_row.set(row.min(self.nrows().saturating_sub(1)));
+    }
+
     /// R894 / R914 — write a typed value into cell `(row, col)`, clamped to the
     /// column's [`ColRange`] and re-anchoring the cursor. The one funnel the AI
     /// `value.<row>.<col>` intervene write and the live numeric scrub both
@@ -1240,6 +1434,10 @@ impl DataGridExternal {
         // one release per press, so this is unreachable today — but arming a new
         // scrub should not depend on that contract holding).
         self.scrub_cal.end();
+        // R937 — a cell press and a handle press arm mutually-exclusive gestures
+        // (cell scrub vs row reorder); clear the reorder arm so a stale handle
+        // press cannot turn this cell press into a drag.
+        self.reorder_arm.set(None);
         let numeric = col < NCOLS && matches!(COL_KINDS[col], CellKind::Int | CellKind::Float);
         let armed = (numeric && row < self.nrows()).then_some((row, col));
         self.scrub_armed.set(armed);
@@ -1353,6 +1551,51 @@ impl DataGridExternal {
     /// drag ran, focuses the cell (and toggles a bool); `PointerLeave` /
     /// `PointerCancel` tear a strayed-off scrub down; `DoubleClick` edits an
     /// editable cell.
+    /// Route a `send` composite payload (`"<sub>:<Event>[:<mods>]"`) to its
+    /// target. R937 — a handle sub-key (`d<row>`) arms a row drag-to-reorder
+    /// before the shared [`GridSendKey`] grammar (header / cell / group); the
+    /// handle is data-grid-local, so it is decoded here, not in the shared SSOT
+    /// (R773). Split out of [`invoke`](ExternalIntrospect::invoke) so that arm
+    /// stays under the line budget.
+    fn dispatch_send(&mut self, s: &str) -> Result<IntrospectValue, InvokeError> {
+        // R880.1 — the `split_send_payload` `:` grammar SSOT strips a held-modifier
+        // third segment (a hand-rolled split read "PointerUp:c" as the event name).
+        let (key, event_name, _mods) =
+            pinion_core::composite_tag::split_send_payload(s).ok_or(InvokeError::Rejected)?;
+        if let Some(row) = parse_handle_sub(key) {
+            if event_name == "PointerDown" && row < self.nrows() {
+                self.arm_reorder(row);
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        match GridSendKey::parse(key).ok_or(InvokeError::Rejected)? {
+            // R886 — a clicked column header cycles that column's sort through the
+            // `cycle_col_sort` SSOT (unsorted → asc → desc → unsorted; a different
+            // column jumps to it ascending), exactly the read-only grids' behaviour.
+            GridSendKey::Header { col } => {
+                if col >= NCOLS {
+                    return Err(InvokeError::Rejected);
+                }
+                if event_name == "PointerUp" {
+                    self.sort.set(cycle_col_sort(self.sort.get(), col, NCOLS));
+                }
+                Ok(IntrospectValue::Null)
+            }
+            GridSendKey::Cell { row, col } => self.handle_cell_send(row, col, event_name),
+            // R892 — a clicked group header toggles that group's collapse (the
+            // `GridSendKey::Group` wire, parallel to the column-header sort cycle).
+            GridSendKey::Group { group } => {
+                if group >= self.group_count() {
+                    return Err(InvokeError::Rejected);
+                }
+                if event_name == "PointerUp" {
+                    self.toggle_group(group);
+                }
+                Ok(IntrospectValue::Null)
+            }
+        }
+    }
+
     fn handle_cell_send(
         &self,
         row: usize,
@@ -1467,6 +1710,48 @@ impl External for DataGridExternal {
         self.scrub_to(f64::from(x_rel));
     }
 
+    /// R937 — arm a row drag-to-reorder. Returns a payload (so the router opens a
+    /// drag session that drives `drag_to` / `drag_release`) ONLY when a handle
+    /// press armed [`reorder_arm`](Self::reorder_arm) AND the view is plain
+    /// (reorder-enabled); a cell press leaves the arm clear, so `begin_drag`
+    /// returns `None` and the capture-lock scrub path runs unchanged. The router
+    /// drives the drag session in preference to the capture lock (input.rs), so
+    /// the two gestures never both fire for one press.
+    fn begin_drag(&self) -> Option<DragPayload> {
+        if !self.reorder_enabled() {
+            return None;
+        }
+        let from = self.reorder_arm.get()?;
+        Some(DragPayload {
+            kind: Cow::Borrowed(REORDER_KIND),
+            value: IntrospectValue::Int(i64::try_from(from).ok()?),
+        })
+    }
+
+    /// R937 — refresh the live drop-gap preview as the drag rides over rows. Over
+    /// a row, snap to its before / after gap; over no row (the header, off the
+    /// rows), hold the last preview (no snapping over inter-row gaps — the
+    /// `hello-dnd` / `hello-tree-reparent` hold-last behaviour).
+    fn drag_to(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
+        if let Some(gap) = self.drop_gap(over.as_ref()) {
+            self.drag_preview.set(Some(gap));
+        }
+    }
+
+    /// R937 — commit the row move at release: the dragged source row (the armed
+    /// row) moves to the resolved drop gap (or the last preview if the cursor left
+    /// the rows), journaling ONE [`MoveRowEdit`]. Always clears the preview + the
+    /// arm so a stray release cannot leave a ghost line or a stale arm.
+    fn drag_release(&mut self, _payload: &DragPayload, over: Option<DropPoint>) {
+        if let Some(from) = self.reorder_arm.get() {
+            if let Some(gap) = self.drop_gap(over.as_ref()).or_else(|| self.drag_preview.get()) {
+                self.move_row_to_gap(from, gap);
+            }
+        }
+        self.drag_preview.set(None);
+        self.reorder_arm.set(None);
+    }
+
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
         Some(self)
     }
@@ -1511,6 +1796,11 @@ impl ExternalIntrospect for DataGridExternal {
             ("expand_all", "json"),
             ("add_row", "json"),
             ("remove_row", "int"),
+            // R937 — row drag-to-reorder: whether reorder is enabled now (the
+            // plain view), the live drop gap a drag is hovering, and the move verb.
+            ("reorder_enabled", "bool"),
+            ("drag_preview", "int"),
+            ("move_row", "string"),
         ])
     }
 
@@ -1554,6 +1844,15 @@ impl ExternalIntrospect for DataGridExternal {
             // R914 — whether a live numeric cell scrub is in flight (the
             // AI-first read peer of the capture-drag scrub gesture).
             "scrubbing" => Some(IntrospectValue::Bool(self.is_scrubbing())),
+            // R937 — whether a manual row reorder is meaningful now (the plain
+            // view); the grip + drag arm only when true.
+            "reorder_enabled" => Some(IntrospectValue::Bool(self.reorder_enabled())),
+            // R937 — the live drop gap (`0..=nrows`) an in-flight reorder drag is
+            // hovering, Null when no drag is active (the AI-first witness of where
+            // a release would land, the `dg_drop_line` paint peer).
+            "drag_preview" => Some(
+                self.drag_preview.get().map_or(IntrospectValue::Null, |g| IntrospectValue::Int(int_of(g))),
+            ),
             _ => {
                 // R886 — `source_at.<pos>`: the source row painted at
                 // visual position `pos` under the active sort (identity
@@ -1637,7 +1936,9 @@ impl ExternalIntrospect for DataGridExternal {
     fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
         match path {
             "row_count" | "col_count" | "editing_row" | "editing_col" | "view_len"
-            | "group_count" | "visible_len" => Err(InterveneError::ReadOnly),
+            | "group_count" | "visible_len" | "reorder_enabled" | "drag_preview" => {
+                Err(InterveneError::ReadOnly)
+            }
             "focused_row" => match value {
                 IntrospectValue::Int(i) => {
                     let row = usize::try_from(i).map_err(|_| InterveneError::TypeMismatch)?;
@@ -1754,44 +2055,7 @@ impl ExternalIntrospect for DataGridExternal {
             // decodes). PointerUp focuses the cell (and toggles a bool);
             // DoubleClick enters edit mode on an editable cell.
             "send" => match args {
-                IntrospectValue::Text(ref s) => {
-                    // R880.1 — the `split_send_payload` `:` grammar SSOT
-                    // strips a held-modifier third segment (the hand-rolled
-                    // split_once read "PointerUp:c" as the event name and a
-                    // Ctrl+click on a cell was silently rejected).
-                    let (key, event_name, _mods) =
-                        pinion_core::composite_tag::split_send_payload(s)
-                            .ok_or(InvokeError::Rejected)?;
-                    match GridSendKey::parse(key).ok_or(InvokeError::Rejected)? {
-                        // R886 — a clicked column header cycles that
-                        // column's sort through the `cycle_col_sort` SSOT
-                        // (unsorted → asc → desc → unsorted; a different
-                        // column jumps to it ascending), exactly the
-                        // read-only grids' header behaviour.
-                        GridSendKey::Header { col } => {
-                            if col >= NCOLS {
-                                return Err(InvokeError::Rejected);
-                            }
-                            if event_name == "PointerUp" {
-                                self.sort.set(cycle_col_sort(self.sort.get(), col, NCOLS));
-                            }
-                            Ok(IntrospectValue::Null)
-                        }
-                        GridSendKey::Cell { row, col } => self.handle_cell_send(row, col, event_name),
-                        // R892 — a clicked group header toggles that group's
-                        // collapse (the `GridSendKey::Group` wire, parallel to
-                        // the column-header sort cycle).
-                        GridSendKey::Group { group } => {
-                            if group >= self.group_count() {
-                                return Err(InvokeError::Rejected);
-                            }
-                            if event_name == "PointerUp" {
-                                self.toggle_group(group);
-                            }
-                            Ok(IntrospectValue::Null)
-                        }
-                    }
-                }
+                IntrospectValue::Text(ref s) => self.dispatch_send(s),
                 _ => Err(InvokeError::TypeMismatch),
             },
             // Toggle the focused bool cell (the `Space` keyboard path + RPC).
@@ -1870,6 +2134,24 @@ impl ExternalIntrospect for DataGridExternal {
                 IntrospectValue::Int(i) => {
                     let row = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
                     Ok(IntrospectValue::Bool(self.remove_row(row)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R937 — reorder: move source row `from` to resting index `to`, passed
+            // as a `"from,to"` payload (the move_elem peer; the AI-first reorder
+            // primary + the drag's RPC twin). Returns whether it moved. Rejected
+            // under a sort / filter / group — a manual position is meaningful only
+            // in the plain view where the visual order IS the source order.
+            "move_row" => match args {
+                IntrospectValue::Text(ref s) => {
+                    if !self.reorder_enabled() {
+                        return Err(InvokeError::Rejected);
+                    }
+                    let (from, to) = s
+                        .split_once(',')
+                        .and_then(|(a, b)| Some((a.trim().parse::<usize>().ok()?, b.trim().parse::<usize>().ok()?)))
+                        .ok_or(InvokeError::Rejected)?;
+                    Ok(IntrospectValue::Bool(self.move_row(from, to)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -1975,19 +2257,38 @@ fn editing_col_kind() -> Option<CellKind> {
 
 // ─── keyboard ─────────────────────────────────────────────────────
 
+/// R937 — resolve the mutable introspection of the External tagged `tag`, the one
+/// place a keyboard / activation path reaches a coordinator to drive a verb.
+/// `None` when the tag is absent or not introspectable. The within-file
+/// rule-of-three lift: [`invoke_undo`], [`invoke_move_row`] and
+/// [`activate_focused`] all folded the repeated `find_external_with_tag_mut` +
+/// `introspect_mut` boilerplate here ([[three-site-internal-duplication-substrate-lift]]).
+fn external_mut<'s>(scene: &'s mut Scene, tag: &str) -> Option<&'s mut dyn ExternalIntrospect> {
+    scene.find_external_with_tag_mut(tag)?.handle.introspect_mut()
+}
+
 /// R932 — drive `verb` (`undo` / `redo`) on the [`UndoStackExternal`] at
 /// [`UNDO_TAG`] — the SAME SSOT the RPC path drives, so the keyboard adds no
 /// hand-rolled undo logic to the coordinator (the hello-node-editor `invoke_undo`
 /// shape). Returns `true` (the grid consumes Ctrl+Z even at a history boundary,
 /// where the verb is a harmless no-op) once the undo external is found.
 fn invoke_undo(scene: &mut Scene, verb: &str) -> bool {
-    let Some(node) = scene.find_external_with_tag_mut(UNDO_TAG) else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
+    let Some(intro) = external_mut(scene, UNDO_TAG) else {
         return false;
     };
     let _ = intro.invoke(verb, IntrospectValue::Null);
+    true
+}
+
+/// R937 — move source row `from` to resting index `to` through the coordinator's
+/// `move_row` invoke funnel (so the keyboard Alt+Arrow reorder journals ONE
+/// [`MoveRowEdit`] exactly like the drag / RPC — no hand-rolled keyboard mutation,
+/// the `invoke_undo` shape). The funnel rejects under a sort / filter / group.
+fn invoke_move_row(scene: &mut Scene, from: usize, to: usize) -> bool {
+    let Some(intro) = external_mut(scene, GRID_TAG) else {
+        return false;
+    };
+    let _ = intro.invoke("move_row", IntrospectValue::Text(format!("{from},{to}")));
     true
 }
 
@@ -2002,6 +2303,24 @@ fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     let row_sig = use_focused_row();
     let col_sig = use_focused_col();
     let col = col_sig.get().min(NCOLS - 1);
+    // R937 — Alt+Arrow moves the focused row one slot: the keyboard reorder path
+    // (the AT-accessible twin of the drag handle), routed through the same
+    // `move_row` funnel so it journals ONE step + rejects under a transform. Alt
+    // distinguishes it from the plain cursor navigation below.
+    if modifiers.alt_key() && matches!(key, "ArrowDown" | "ArrowUp") {
+        let model = use_data_model().get();
+        let n = nrows(&model);
+        let from = row_sig.get().min(n.saturating_sub(1));
+        let to = if key == "ArrowDown" {
+            (from + 1).min(n.saturating_sub(1))
+        } else {
+            from.saturating_sub(1)
+        };
+        if from != to {
+            return invoke_move_row(scene, from, to);
+        }
+        return true; // at an end — consumed, no move (no wrap)
+    }
     match key {
         // R886 / R891 — vertical navigation walks the filtered+sorted VISUAL
         // sequence while the cursor itself stays SOURCE-keyed: resolve the
@@ -2062,10 +2381,7 @@ fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
 /// edit mode on a text / int / float cell. Routes through the coordinator's
 /// `invoke` so toggle / begin live in one place (the RPC path).
 fn activate_focused(scene: &mut Scene, col: usize, allow_edit: bool) -> bool {
-    let Some(node) = scene.find_external_with_tag_mut(GRID_TAG) else {
-        return false;
-    };
-    let Some(intro) = node.handle.introspect_mut() else {
+    let Some(intro) = external_mut(scene, GRID_TAG) else {
         return false;
     };
     if COL_KINDS.get(col).copied() == Some(CellKind::Bool) {
@@ -2162,8 +2478,92 @@ fn view_cell(
 }
 
 /// The column-header row.
+/// R937 — the total content width (the leading handle column + every data
+/// column); the handle width is always reserved so the data columns do not shift
+/// when a sort / filter / group toggles reorder off.
+fn content_w() -> u32 {
+    HANDLE_W + COL_W.iter().sum::<u32>()
+}
+
+/// R937 — which edge of a data row the live drop line sits on (the insertion
+/// point a release would land at), or `None` when this row is not the drop target.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DropEdge {
+    /// Insert BEFORE this row (the drop gap is this row's visual position).
+    Top,
+    /// Insert AFTER this row (the drop gap is past the last row — drop at end).
+    Bottom,
+}
+
+/// R937 — the drop edge for the row at visual position `pos` given the live drag
+/// `gap` (`0..=nrows`): a top line when the gap inserts before this row, a bottom
+/// line on the LAST row when the gap is past the end. Plain-view only (visual
+/// position == source row), so the caller passes the source index as `pos`.
+fn drop_edge_at(gap: Option<usize>, pos: usize, last: usize) -> Option<DropEdge> {
+    match gap? {
+        g if g == pos => Some(DropEdge::Top),
+        g if g == last + 1 && pos == last => Some(DropEdge::Bottom),
+        _ => None,
+    }
+}
+
+/// R937 — the leading drag-handle cell of a data row. When reorder is enabled
+/// (the plain view) it carries the grip glyph + the `data_grid#d<row>` press
+/// target; otherwise it is an untagged blank spacer of the same width, so the
+/// affordance is honest (a grip is shown exactly when a drag would work) while the
+/// data columns never shift.
+fn view_handle_cell(row: usize, enabled: bool, theme: &Theme) -> Scene {
+    let mut node = ContainerNode::new(if enabled {
+        vec![Scene::Text(TextNode::styled(
+            GRIP_GLYPH,
+            Rect::default(),
+            TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))]
+    } else {
+        Vec::new()
+    })
+    .with_layout(
+        LayoutStyle::new()
+            .flex(FlexDirection::Row)
+            .with_align_items(AlignItems::Center)
+            .with_justify(JustifyContent::Center)
+            .with_size(Size::px(HANDLE_W, ROW_H)),
+    );
+    if enabled {
+        node = node.with_tag(handle_tag(row));
+    }
+    Scene::Container(node)
+}
+
+/// R937 — the drop insertion line: a thin accent bar absolutely positioned at the
+/// target row's top (or the last row's bottom), tagged `dg_drop_line` so a
+/// `scene/snapshot` witnesses where a release would land (the AI-first peer of the
+/// `drag_preview` query).
+fn view_drop_line(edge: DropEdge, theme: &Theme) -> Scene {
+    let y = match edge {
+        DropEdge::Top => 0,
+        DropEdge::Bottom => ROW_H.saturating_sub(DROP_LINE_H),
+    };
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag("dg_drop_line")
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Accent)))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(0, y)
+                    .with_size(Size::px(content_w(), DROP_LINE_H)),
+            ),
+    )
+}
+
 fn view_header(theme: &Theme, sort: Option<(usize, bool)>) -> Scene {
-    let cells: Vec<Scene> = COL_NAMES
+    // R937 — a leading blank cell aligning the header over the data rows' handle
+    // column (the header has no grip — there is no header row to reorder).
+    let mut cells: Vec<Scene> = vec![Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_layout(LayoutStyle::new().with_size(Size::px(HANDLE_W, ROW_H))),
+    )];
+    cells.extend(COL_NAMES
         .iter()
         .enumerate()
         .map(|(col, label)| {
@@ -2191,8 +2591,7 @@ fn view_header(theme: &Theme, sort: Option<(usize, bool)>) -> Scene {
                         .with_size(Size::px(COL_W[col], ROW_H)),
                 ),
             )
-        })
-        .collect();
+        }));
     Scene::Container(
         ContainerNode::new(cells)
             .with_tag("dg_header")
@@ -2217,7 +2616,9 @@ fn view_group_header(
         &member_count.to_string(),
         collapsed,
         theme,
-        COL_W.iter().sum::<u32>(),
+        // R937 — span the full width including the (blank) handle column, so a
+        // group header aligns with the data rows beneath it.
+        content_w(),
         ROW_H,
     )
 }
@@ -2226,6 +2627,7 @@ fn view_group_header(
 /// (the same tag its a11y `row` node uses, so AT bounds attach). The cursor /
 /// edit latch are SOURCE-keyed, so this paints by source index regardless of
 /// the visual order.
+#[allow(clippy::too_many_arguments)] // one arg per orthogonal paint axis (R937 added reorder + drop edge)
 fn view_data_row(
     row: usize,
     model: &[CellValue],
@@ -2233,16 +2635,23 @@ fn view_data_row(
     editing: Option<(usize, usize)>,
     theme: &Theme,
     edit_field: (TextFieldState, u32),
+    reorder_enabled: bool,
+    drop_edge: Option<DropEdge>,
 ) -> Scene {
     let (focused_row, focused_col) = focus;
-    let cells: Vec<Scene> = (0..NCOLS)
-        .map(|col| {
-            let value = &model[idx(row, col)];
-            let focused = row == focused_row && col == focused_col;
-            let edit_active = editing == Some((row, col)) && COL_KINDS[col].is_text_editable();
-            view_cell(row, col, value, focused, edit_active, theme, edit_field)
-        })
-        .collect();
+    // R937 — the leading drag-handle cell, then the data cells.
+    let mut cells: Vec<Scene> = vec![view_handle_cell(row, reorder_enabled, theme)];
+    cells.extend((0..NCOLS).map(|col| {
+        let value = &model[idx(row, col)];
+        let focused = row == focused_row && col == focused_col;
+        let edit_active = editing == Some((row, col)) && COL_KINDS[col].is_text_editable();
+        view_cell(row, col, value, focused, edit_active, theme, edit_field)
+    }));
+    // R937 — the live drop line overlays the row's edge (absolutely positioned,
+    // last in paint order) when this row is the in-flight drag's drop target.
+    if let Some(edge) = drop_edge {
+        cells.push(view_drop_line(edge, theme));
+    }
     Scene::Container(
         ContainerNode::new(cells).with_tag(data_row_tag(row)).with_layout(
             LayoutStyle::new().flex(FlexDirection::Row).with_align_items(AlignItems::Center),
@@ -2288,6 +2697,13 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let filter = use_filter().get();
     let group_col = use_group_col().get();
     let collapsed = use_collapsed().get();
+    // R937 — reorder is enabled only in the plain source view (no transform), so
+    // the grip paints + the drag arms only then; the live drop gap drives the
+    // insertion line (reading both subscribes, so a drag move / a sort repaints).
+    let reorder_enabled =
+        sort.is_none() && filter.is_none() && group_col.is_none();
+    let drag_gap = use_drag_preview().get();
+    let last_row = nrows(&model).saturating_sub(1);
     let vis_rows = visible_rows(&model, sort, filter.as_ref(), group_col, &collapsed);
     let group_labels = group_col.map(|col| group_table(&model, col));
     // The status "showing" count stays the FILTER readout (data rows passing,
@@ -2314,7 +2730,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // body (pinned) inside the outer horizontal scroll (R784 nested pair).
     let v_scroll = use_scroll_state(V_SCROLL_KEY);
     let h_scroll = use_scroll_state(H_SCROLL_KEY);
-    let total_w: u32 = COL_W.iter().sum();
+    let total_w: u32 = content_w();
     let (_, measured_h) = v_scroll.measured_viewport();
     let window =
         compute_visible_range(v_scroll.offset_y(), measured_h, vis_rows.len(), ROW_H, OVERSCAN);
@@ -2341,6 +2757,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
                 editing,
                 &theme,
                 (edit_state, edit_caret),
+                reorder_enabled,
+                // Plain-view only, so the source index IS the visual position.
+                reorder_enabled.then(|| drop_edge_at(drag_gap, source, last_row)).flatten(),
             ),
         },
     );
@@ -2551,6 +2970,9 @@ impl WidgetA11y for DataGridView {
         let filter = use_filter().get();
         let group_col = use_group_col().get();
         let collapsed = use_collapsed().get();
+        // R937 — reorder is enabled (the grip + drag arm) only in the plain view,
+        // so the per-row reorder `button` is advertised only then.
+        let reorder_enabled = sort.is_none() && filter.is_none() && group_col.is_none();
         // R886.1 — the a11y columnheader tag IS the painted clickable header
         // tag, so `rect_for_tag` bounds attach and an AT activation routes to
         // the sort wire. The active column announces `aria-sort` (WAI-ARIA 1.2
@@ -2584,7 +3006,27 @@ impl WidgetA11y for DataGridView {
                         .collect(),
                 })
                 .collect();
-            return grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
+            let mut nodes =
+                grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
+            // R937 — in the plain view, advertise each row's reorder handle as a
+            // `button` child of its row (named for the row's Asset cell), so an AT
+            // user knows the row is draggable; the keyboard Alt+Arrow path is the
+            // AT-accessible way to actually move it. Gated on the SAME
+            // `reorder_enabled` the painted grip + the drag arm use (one gate, so
+            // the AT tree advertises reorder exactly when it works).
+            if reorder_enabled {
+                for &row in &order {
+                    let h_tag = handle_tag(row);
+                    let asset = model[idx(row, 0)].display();
+                    if let Some(node) = nodes.iter_mut().find(|n| n.tag == data_row_tag(row)) {
+                        node.children.push(h_tag.clone());
+                    }
+                    nodes.push(
+                        AccessNode::new(h_tag, AriaRole::Button).with_name(format!("Reorder {asset}")),
+                    );
+                }
+            }
+            return nodes;
         };
 
         // R895 — grouped treegrid via the substrate SSOT. The editable grid is
@@ -2841,8 +3283,9 @@ mod tests {
             use_focused_row().set(2);
             use_focused_col().set(2);
             let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
-            // grid + header row + 5 columnheaders + 4 rows + 20 cells.
-            assert_eq!(nodes.len(), 1 + 1 + NCOLS + NROWS + NROWS * NCOLS);
+            // grid + header row + 5 columnheaders + 4 rows + 20 cells + R937: 4
+            // per-row reorder handle buttons (the boot is the plain reorder view).
+            assert_eq!(nodes.len(), 1 + 1 + NCOLS + NROWS + NROWS * NCOLS + NROWS);
             assert_eq!(nodes[0].role, pinion_a11y::AriaRole::Grid);
             let active = nodes
                 .iter()
@@ -2850,6 +3293,10 @@ mod tests {
                 .expect("focused cell present");
             assert!(active.state.focused, "the focused cell is the active descendant");
             assert_eq!(active.name.as_deref(), Some("Count: 99"));
+            // R937 — the reorder handle button for row 0, a child of its row node.
+            let handle = nodes.iter().find(|n| n.tag == handle_tag(0)).expect("row 0 handle button");
+            assert_eq!(handle.role, pinion_a11y::AriaRole::Button);
+            assert!(handle.name.as_deref().unwrap_or("").starts_with("Reorder "));
         });
     }
 
@@ -3742,6 +4189,114 @@ mod tests {
             assert_eq!(intro.query("value.1.0"), Some(IntrospectValue::Text("Coin".to_owned())));
             assert_eq!(intro.query("value.2.0"), Some(IntrospectValue::Text("Boss".to_owned())));
             assert_eq!(intro.query("value.3.0"), None, "the source space shrank");
+        });
+    }
+
+    /// R937 — `move_block` moves a whole row block and its inverse restores the
+    /// model exactly (the symmetric redo / undo property).
+    #[test]
+    fn r937_move_block_is_symmetric() {
+        let mut cells: Vec<CellValue> =
+            (0..4 * NCOLS).map(|i| CellValue::Int(i64::try_from(i).unwrap())).collect();
+        let orig = cells.clone();
+        move_block(&mut cells, 0, 2); // row 0 -> resting index 2
+        assert_eq!(cells[idx(2, 0)], CellValue::Int(0), "moved row landed at index 2");
+        assert_eq!(cells[idx(0, 0)], CellValue::Int(i64::try_from(NCOLS).unwrap()), "old row 1 shifted up");
+        move_block(&mut cells, 2, 0); // the exact inverse
+        assert_eq!(cells, orig, "move then inverse restores the model");
+        // A degenerate move is a no-op.
+        move_block(&mut cells, 1, 1);
+        assert_eq!(cells, orig);
+    }
+
+    /// R937 — the gap → resting-index removal shift (the [`ReorderModel::apply_move`]
+    /// off-by-one peer).
+    #[test]
+    fn r937_gap_to_index_removal_shift() {
+        assert_eq!(DataGridExternal::gap_to_index(1, 4), 3, "a gap past `from` shifts down one");
+        assert_eq!(DataGridExternal::gap_to_index(3, 1), 1, "a gap before `from` is the index itself");
+        assert_eq!(DataGridExternal::gap_to_index(2, 2), 2, "a gap at `from` is a no-op move");
+    }
+
+    /// R937 — `move_row` reorders the source model and the moved row follows the
+    /// cursor; `from == to` / out-of-range are no-ops.
+    #[test]
+    fn r937_move_row_via_rpc_reorders_and_follows_cursor() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Boot: 0 Hero, 1 Tree, 2 Coin, 3 Boss. Move Hero (0) to index 2.
+            assert_eq!(
+                intro.invoke("move_row", IntrospectValue::Text("0,2".to_owned())),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(intro.query("value.0.0"), Some(IntrospectValue::Text("Tree".to_owned())));
+            assert_eq!(intro.query("value.1.0"), Some(IntrospectValue::Text("Coin".to_owned())));
+            assert_eq!(intro.query("value.2.0"), Some(IntrospectValue::Text("Hero".to_owned())), "Hero moved to index 2");
+            assert_eq!(intro.query("value.3.0"), Some(IntrospectValue::Text("Boss".to_owned())));
+            assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(2)), "the moved row follows the cursor");
+            assert_eq!(
+                intro.invoke("move_row", IntrospectValue::Text("1,1".to_owned())),
+                Ok(IntrospectValue::Bool(false)),
+                "from == to is a no-op",
+            );
+            assert_eq!(
+                intro.invoke("move_row", IntrospectValue::Text("0,9".to_owned())),
+                Ok(IntrospectValue::Bool(false)),
+                "out-of-range is a no-op",
+            );
+        });
+    }
+
+    /// R937 — a row move is one undo step: undo restores the original order +
+    /// cursor, redo re-applies (the symmetric `MoveRowEdit`).
+    #[test]
+    fn r937_move_row_undo_redo_symmetric() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("move_row", IntrospectValue::Text("0,2".to_owned()));
+                assert_eq!(intro.query("value.2.0"), Some(IntrospectValue::Text("Hero".to_owned())));
+            }
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(grid_intro(&scene).query("value.0.0"), Some(IntrospectValue::Text("Hero".to_owned())), "undo restored Hero to index 0");
+            assert_eq!(grid_intro(&scene).query("value.2.0"), Some(IntrospectValue::Text("Coin".to_owned())));
+            assert!(undo_invoke(&mut scene, "redo"));
+            assert_eq!(grid_intro(&scene).query("value.2.0"), Some(IntrospectValue::Text("Hero".to_owned())), "redo re-moved Hero to index 2");
+        });
+    }
+
+    /// R937 — a sort makes manual order meaningless, so the grip / drag / move_row
+    /// are disabled (`reorder_enabled` false, `move_row` rejected).
+    #[test]
+    fn r937_reorder_disabled_under_sort() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert_eq!(grid_intro(&scene).query("reorder_enabled"), Some(IntrospectValue::Bool(true)), "plain view: enabled");
+            use_sort().set(Some((0, true))); // a column sort derives the visual order
+            assert_eq!(grid_intro(&scene).query("reorder_enabled"), Some(IntrospectValue::Bool(false)), "sorted: disabled");
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            assert!(intro.invoke("move_row", IntrospectValue::Text("0,2".to_owned())).is_err(), "move_row rejected under sort");
+        });
+    }
+
+    /// R937 — Alt+Arrow moves the focused row one slot (the keyboard reorder path),
+    /// journaled like the drag / RPC; the cursor follows.
+    #[test]
+    fn r937_keyboard_alt_arrow_moves_focused_row() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            use_focused_row().set(0); // Hero
+            let alt = Modifiers { alt: true, ..Modifiers::empty() };
+            assert!(DataGridView::apply_key(&mut scene, Some(GRID_TAG), "ArrowDown", alt), "Alt+Down consumed");
+            // [Hero, Tree, Coin, Boss] -> Hero down one -> [Tree, Hero, Coin, Boss].
+            assert_eq!(grid_intro(&scene).query("value.0.0"), Some(IntrospectValue::Text("Tree".to_owned())));
+            assert_eq!(grid_intro(&scene).query("value.1.0"), Some(IntrospectValue::Text("Hero".to_owned())), "Alt+Down moved Hero down one");
+            assert_eq!(grid_intro(&scene).query("focused_row"), Some(IntrospectValue::Int(1)), "the cursor follows");
         });
     }
 
