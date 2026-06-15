@@ -2222,10 +2222,22 @@ impl TextEditState {
     /// lines re-sequenced, so the buffer's newline structure stays exact even
     /// when the move crosses the final, newline-less line (the swapped pair
     /// trade which one ends the buffer). The caret / selection rides the moved
-    /// block. Derived syntax runs re-scan; a *manual* run or fold inside a
-    /// reordered line is not carried across the move (the R933.1 per-line-splice
-    /// preservation is for in-place edits — indent / dedent / comment — not a
-    /// reorder). Returns whether the buffer changed.
+    /// block. Returns whether the buffer changed.
+    ///
+    /// View-state across the reorder (R945.1, honest scope — not an
+    /// impossibility): the single whole-region splice clips the moved region's
+    /// style runs and fold anchors. **Folds** are non-journal best-effort
+    /// view-state (R933 — `set_text` clears them, undo does not restore them),
+    /// so dropping a fold on a structural reorder is consistent with the fold
+    /// model, not a regression; the block re-derives its foldable regions on
+    /// the next read. **Derived** syntax runs re-scan, so a highlighted code
+    /// buffer is correct after a move. A *manual* `apply-style` run inside a
+    /// moved line is the one gap — it is not yet carried across the reorder
+    /// (there is no multi-line-move manual-run consumer; the textbook follow-up
+    /// shifts the moved block's anchors by its byte delta, exactly as the caret
+    /// already rides). Newlines are LF-internal: a synthesized separator is `\n`
+    /// (the editor does not normalize / round-trip CRLF, matching every other
+    /// edit path — it is `\r`-tolerant on read, not CRLF-preserving on write).
     pub fn move_lines(&self, down: bool) -> bool {
         let text = self.text.get();
         let (block_start, block_end) = self.line_block_extent(&text);
@@ -2289,8 +2301,9 @@ impl TextEditState {
     /// `Shift+Alt+Down` / `Shift+Alt+Up` "copy line" split, the AI-first peer of
     /// those chords. One undo step (a single insertion). A block that ends in
     /// `\n` is already newline-separated; the last-line block (no trailing `\n`)
-    /// gets a separator `\n` before its copy. Always inserts a copy, so returns
-    /// `true`.
+    /// gets a separator `\n` before its copy (LF-internal, like every other edit
+    /// path — see [`move_lines`](Self::move_lines)). Always inserts a copy, so
+    /// returns `true`.
     pub fn duplicate_lines(&self, down: bool) -> bool {
         let text = self.text.get();
         let (block_start, block_end) = self.line_block_extent(&text);

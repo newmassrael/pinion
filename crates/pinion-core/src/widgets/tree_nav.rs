@@ -401,6 +401,25 @@ pub fn resolve_tree_key(
     }
 }
 
+/// R945.1 §5.27 §5.40 — the keyboard cursor (or selection) id, but only when it
+/// still names a currently-visible row. A tree whose cursor can be hidden by a
+/// collapse it did not initiate — the lazy outliner's click-collapse, or the
+/// inspector's pointer selection landing under a since-collapsed ancestor —
+/// must read the cursor through this gate before advertising it as
+/// `aria-activedescendant` or painting its focus highlight: a cursor naming an
+/// off-screen row would dangle the active descendant at a node the AT can no
+/// longer reach. The shell sets the active-descendant **child** unconditionally
+/// (it self-corrects only the parent focus tag), so the gate must live with the
+/// binding. Returns `None` once the cursor row leaves the visible set, so the
+/// next navigation key restarts from an end (the resolver treats an off-list
+/// cursor as no current row). The `Signal` read that produces `cursor` stays
+/// caller-side — this is the pure SSOT every overlay-cursor tree shares.
+#[must_use]
+pub fn effective_cursor<'a>(rows: &[VisibleRow], cursor: Option<&'a str>) -> Option<&'a str> {
+    let id = cursor?;
+    rows.iter().any(|row| row.id == id).then_some(id)
+}
+
 /// R820 §5.27 §5.50 — recursive find-by-id for a mutable node in a
 /// retained `Vec<N>` tree. The depth-first search the flag-storage
 /// mutators ([`set_expanded_in`] / [`toggle_expanded`]) descend; pure
@@ -706,9 +725,9 @@ mod tests {
     //! its `FileNode` [`TreeNode`] glue.
 
     use super::{
-        apply_tree_key, find_node, find_node_mut, flat_visible, flat_visible_filtered,
-        insert_subtree, parent_row, remove_subtree, resolve_tree_key, set_expanded_in,
-        toggle_expanded, MutableTreeNode, TreeKey, TreeNode, VisibleRow,
+        apply_tree_key, effective_cursor, find_node, find_node_mut, flat_visible,
+        flat_visible_filtered, insert_subtree, parent_row, remove_subtree, resolve_tree_key,
+        set_expanded_in, toggle_expanded, MutableTreeNode, TreeKey, TreeNode, VisibleRow,
     };
     use crate::reactive::Owner;
     use crate::Signal;
@@ -1127,6 +1146,18 @@ mod tests {
         // Out-of-range position is present-but-empty; undeclared path is absent.
         assert_eq!(src.introspect_query("id_at.99"), Some(IntrospectValue::Null));
         assert_eq!(src.introspect_query("nope"), None);
+    }
+
+    #[test]
+    fn effective_cursor_gates_to_a_visible_row() {
+        // R945.1 — the shared overlay-cursor gate: a cursor naming a visible row
+        // passes through; one naming no visible row (hidden under a collapse, or
+        // never present) returns None so the binding never advertises a
+        // dangling aria-activedescendant.
+        let rows = flat_visible(&sample()); // src, src/main.rs, src/lib.rs, src/widgets, tests, docs
+        assert_eq!(effective_cursor(&rows, Some("src/lib.rs")), Some("src/lib.rs"), "visible passes");
+        assert_eq!(effective_cursor(&rows, Some("ghost")), None, "off-list cursor gates to None");
+        assert_eq!(effective_cursor(&rows, None), None, "no cursor → None");
     }
 
     #[test]

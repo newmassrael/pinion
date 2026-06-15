@@ -96,7 +96,7 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
-use pinion_core::widgets::tree_nav::{flat_visible, resolve_tree_key, TreeKey};
+use pinion_core::widgets::tree_nav::{effective_cursor, flat_visible, resolve_tree_key, TreeKey};
 use pinion_core::{Color, Frame, Owner, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView, WindowSpec};
@@ -1078,21 +1078,29 @@ impl WidgetA11y for DockPanelsView {
     /// descendant). Any other focus (the viewport button) is atomic.
     ///
     /// Global (not per-window): the shell passes this one target to every
-    /// window's `AccessTreeBuilder`, which drops the composite tag back to
-    /// the window root for any window whose node set
-    /// ([`Self::access_node_for_window`]) lacks it — so it self-corrects to
-    /// the inspector's host window (R813).
-    fn access_focus_target(
-        _state: &Self::State,
-        focused: Option<&str>,
-    ) -> Option<AccessFocus> {
+    /// window's `AccessTreeBuilder`, which drops the composite *parent* tag
+    /// back to the window root for any window whose node set
+    /// ([`Self::access_node_for_window`]) lacks it (R813) — but it sets the
+    /// active-descendant **child** tag unconditionally. So the binding must
+    /// gate the child itself: R945.1 routes the selection through
+    /// [`effective_cursor`], emitting the composite only while the selected
+    /// path still names a visible row. A pointer selection (the viewport
+    /// click router) can land on a node whose inspector-tree ancestor is then
+    /// collapsed; without this gate the active descendant would dangle at a
+    /// node the AT can no longer reach (the lazy-outliner R944 gate, lifted
+    /// here on its second consumer).
+    fn access_focus_target(state: &Self::State, focused: Option<&str>) -> Option<AccessFocus> {
         if focused == Some(INSPECTOR_TREE_TAG)
             && let Some(id) = use_selected_path().get()
         {
-            return Some(AccessFocus::composite(
-                INSPECTOR_TREE_TAG,
-                composite_row_tag(INSPECTOR_TREE_TAG, &id),
-            ));
+            let theme = use_theme(THEME_TAG).theme_animated();
+            let rows = flat_visible(&inspector_tree_items(*state, &theme));
+            if let Some(visible) = effective_cursor(&rows, Some(&id)) {
+                return Some(AccessFocus::composite(
+                    INSPECTOR_TREE_TAG,
+                    composite_row_tag(INSPECTOR_TREE_TAG, visible),
+                ));
+            }
         }
         focused.map(AccessFocus::atomic)
     }
@@ -1661,6 +1669,59 @@ mod tests {
                 walk_for_border(&scene),
                 "selection wrap must paint a Border somewhere in the dock layout",
             );
+        });
+    }
+
+    #[test]
+    fn r945_1_inspector_focus_target_gates_a_collapsed_selection() {
+        // R945.1 — the inspector's keyboard cursor / pointer selection lowers to
+        // aria-activedescendant; it must NOT dangle when the selected node leaves
+        // the visible set (a pointer selection under a since-collapsed ancestor).
+        // The shell sets the active-descendant child unconditionally, so the
+        // binding gates through the lifted `effective_cursor`.
+        Owner::new().run(|| {
+            let theme = use_theme(THEME_TAG).theme_animated();
+            let rows = flat_visible(&inspector_tree_items(ButtonState::Idle, &theme));
+            assert!(rows.len() > 1, "inspector boots with a populated, expanded tree");
+
+            // (1) A selection on a visible row → composite naming that row.
+            let visible = rows[0].id.clone();
+            use_selected_path().set(Some(visible.clone()));
+            let af = DockPanelsView::access_focus_target(&ButtonState::Idle, Some(INSPECTOR_TREE_TAG))
+                .expect("a focused inspector yields a focus target");
+            assert_eq!(
+                af.active_descendant.as_deref(),
+                Some(composite_row_tag(INSPECTOR_TREE_TAG, &visible).as_str()),
+                "a visible selection names the active descendant",
+            );
+
+            // (2) An off-tree selection never produces a dangling composite.
+            use_selected_path().set(Some("ghost/path/never/in/the/tree".to_owned()));
+            let af = DockPanelsView::access_focus_target(&ButtonState::Idle, Some(INSPECTOR_TREE_TAG))
+                .expect("focus target present");
+            assert_eq!(af.active_descendant, None, "off-tree selection drops to atomic");
+            assert_eq!(af.focus_tag, INSPECTOR_TREE_TAG, "focus stays on the tree, atomic");
+
+            // (3) The realistic trigger: select a child, then collapse its parent
+            // so the child leaves the visible set → the gate drops to atomic.
+            if let Some(bi) = (0..rows.len() - 1).find(|&i| rows[i + 1].depth > rows[i].depth) {
+                let parent = rows[bi].id.clone();
+                let child = rows[bi + 1].id.clone();
+                use_selected_path().set(Some(child.clone()));
+                set_collapsed(&parent, true);
+                let after = flat_visible(&inspector_tree_items(ButtonState::Idle, &theme));
+                assert!(
+                    !after.iter().any(|r| r.id == child),
+                    "the collapse hid the selected child",
+                );
+                let af =
+                    DockPanelsView::access_focus_target(&ButtonState::Idle, Some(INSPECTOR_TREE_TAG))
+                        .expect("focus target present");
+                assert_eq!(
+                    af.active_descendant, None,
+                    "a selection under a collapsed branch never dangles the active descendant",
+                );
+            }
         });
     }
 }

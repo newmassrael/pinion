@@ -42095,6 +42095,92 @@
         "whole-lines extent; line_starts_in_range trims the trailing line-start on a repeated move)"
       ]
     },
+    "R945.1": {
+      "decision_summary": "Adversarial session-review clearance of R944+R945 (parallel deep-audit agents, every finding re-verified by my own grep+read). Cleared 1 HIGH (the inspector's access_focus_target dangled aria-activedescendant for a pointer selection under a since-collapsed ancestor — my 'inspector safe by construction' claim was wrong; fixed by lifting effective_cursor to tree_nav as the genuine 2nd consumer and gating the inspector) + 2 MED (ArrowRight on a loading lazy branch focused the next sibling; move_lines doc over-claimed fold-preservation impossibility). Over-flags rejected by re-reading.",
+      "changes_bullets": [
+        "adversarial session-review of R944+R945 (parallel deep-audit agents; every finding re-verified by my",
+        "own grep+read per the verify-claims discipline) — 1 HIGH + 2 MED cleared, over-flags rejected",
+        "HIGH (R944): my \"inspector safe by construction\" claim was WRONG — true only for the keyboard-collapse",
+        "path, not the pointer-selection path. The inspector's access_focus_target advertised a dangling",
+        "aria-activedescendant when a pointer-selected node's ancestor is later collapsed (the shell sets the",
+        "active-descendant CHILD tag unconditionally — tree.rs:284 — guarding only the parent focus tag)",
+        "fix: lifted effective_cursor to pinion-core tree_nav (pure fn(rows, cursor)->Option, the genuine 2nd",
+        "consumer the HIGH finding revealed) + gated the inspector through it; lazy-tree delegates to the lift",
+        "MED (R944): ArrowRight on an expanded-but-still-loading branch focused the next SIBLING (skeleton",
+        "filtered from node_rows) — guarded in apply_key_impl (a descent only moves to a deeper row)",
+        "MED (R945): move_lines doc over-claimed fold-preservation was impossible — corrected: folds are",
+        "non-journal best-effort view-state (R933, set_text clears them) so losing them on a reorder is",
+        "consistent, not a regression; manual-run carry is a no-consumer latent gap; LF-internal stance noted",
+        "regression tests: tree_nav effective_cursor, lazy-tree loading-branch guard, inspector collapse-gate"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; 3 new regression tests (effective_cursor gate, ArrowRight-on-loading",
+        "stays put, inspector access_focus_target drops to atomic for an off-tree / collapsed-away selection)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "demos: r944_lazy_tree_keyboard.py ZERO-FLAKE 3/3 (apply_key_impl + effective_cursor changed) +",
+        "r811_inspector_tree_keyboard.py regression-clean (inspector access_focus_target changed)",
+        "agent over-flags rejected by re-reading: char-boundary safety / boundary no-ops / Case-B newline",
+        "conservation / undo=one-step / RPC contract parity / keyboard-deferral were all verified genuinely",
+        "clean (the R945 single-region-replace move is correct and char-safe across adversarial inputs)",
+        "validate-workspace T1 reject=0 / new orphan +0; audit-clearance (demo-exempt; re-ran affected demos)"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "FOUND pre-existing SSOT debt (deferred — out of R944/R945 scope, deserves its own focused round):",
+        "hello-data-grid::cell_fill and hello-property-grid::row_fill are byte-identical (Surface.lerp(OnSurface,",
+        "HOVER) focus fill) = a 2-consumer grid focus-fill duplication; lift to pinion-widget-paint with a proper",
+        "home/name (a DIFFERENT decision than the tree's row_focus_bg=SurfaceContainerHighest)",
+        "manual apply-style runs are still not carried across a move_lines reorder (no multi-line-move manual-run",
+        "consumer; textbook follow-up shifts the moved block's anchors by its byte delta, as the caret rides)",
+        "move/duplicate keyboard chords still deferred (Alt+Arrow overlaps vertical caret nav) — RPC-primary"
+      ],
+      "publishable_decision_summary": "Adversarial session-review clearance of R944+R945 (parallel deep-audit agents, every finding re-verified by my own grep+read). Cleared 1 HIGH (the inspector's access_focus_target dangled aria-activedescendant for a pointer selection under a since-collapsed ancestor — my 'inspector safe by construction' claim was wrong; fixed by lifting effective_cursor to tree_nav as the genuine 2nd consumer and gating the inspector) + 2 MED (ArrowRight on a loading lazy branch focused the next sibling; move_lines doc over-claimed fold-preservation impossibility). Over-flags rejected by re-reading.",
+      "publishable_changes_bullets": [
+        "adversarial session-review of R944+R945 (parallel deep-audit agents; every finding re-verified by my",
+        "own grep+read per the verify-claims discipline) — 1 HIGH + 2 MED cleared, over-flags rejected",
+        "HIGH (R944): my \"inspector safe by construction\" claim was WRONG — true only for the keyboard-collapse",
+        "path, not the pointer-selection path. The inspector's access_focus_target advertised a dangling",
+        "aria-activedescendant when a pointer-selected node's ancestor is later collapsed (the shell sets the",
+        "active-descendant CHILD tag unconditionally — tree.rs:284 — guarding only the parent focus tag)",
+        "fix: lifted effective_cursor to pinion-core tree_nav (pure fn(rows, cursor)->Option, the genuine 2nd",
+        "consumer the HIGH finding revealed) + gated the inspector through it; lazy-tree delegates to the lift",
+        "MED (R944): ArrowRight on an expanded-but-still-loading branch focused the next SIBLING (skeleton",
+        "filtered from node_rows) — guarded in apply_key_impl (a descent only moves to a deeper row)",
+        "MED (R945): move_lines doc over-claimed fold-preservation was impossible — corrected: folds are",
+        "non-journal best-effort view-state (R933, set_text clears them) so losing them on a reorder is",
+        "consistent, not a regression; manual-run carry is a no-consumer latent gap; LF-internal stance noted",
+        "regression tests: tree_nav effective_cursor, lazy-tree loading-branch guard, inspector collapse-gate"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; 3 new regression tests (effective_cursor gate, ArrowRight-on-loading",
+        "stays put, inspector access_focus_target drops to atomic for an off-tree / collapsed-away selection)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "demos: r944_lazy_tree_keyboard.py ZERO-FLAKE 3/3 (apply_key_impl + effective_cursor changed) +",
+        "r811_inspector_tree_keyboard.py regression-clean (inspector access_focus_target changed)",
+        "agent over-flags rejected by re-reading: char-boundary safety / boundary no-ops / Case-B newline",
+        "conservation / undo=one-step / RPC contract parity / keyboard-deferral were all verified genuinely",
+        "clean (the R945 single-region-replace move is correct and char-safe across adversarial inputs)",
+        "validate-workspace T1 reject=0 / new orphan +0; audit-clearance (demo-exempt; re-ran affected demos)"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "FOUND pre-existing SSOT debt (deferred — out of R944/R945 scope, deserves its own focused round):",
+        "hello-data-grid::cell_fill and hello-property-grid::row_fill are byte-identical (Surface.lerp(OnSurface,",
+        "HOVER) focus fill) = a 2-consumer grid focus-fill duplication; lift to pinion-widget-paint with a proper",
+        "home/name (a DIFFERENT decision than the tree's row_focus_bg=SurfaceContainerHighest)",
+        "manual apply-style runs are still not carried across a move_lines reorder (no multi-line-move manual-run",
+        "consumer; textbook follow-up shifts the moved block's anchors by its byte delta, as the caret rides)",
+        "move/duplicate keyboard chords still deferred (Alt+Arrow overlaps vertical caret nav) — RPC-primary"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -421,17 +421,16 @@ fn node_rows(rows: &[LazyRow]) -> Vec<VisibleRow> {
         .collect()
 }
 
-/// The keyboard cursor id, but only when it still names a currently-visible
-/// row. Collapsing a branch (or a click that hides the cursor's row) would
-/// otherwise leave a dangling `aria-activedescendant` pointing at a node the
-/// AT can no longer reach, plus an orphaned focus highlight — the R943.1
-/// dangling-pointer class. Reading the cursor through this gate everywhere
+/// The keyboard cursor id, gated to a still-visible row via the lifted
+/// [`tree_nav::effective_cursor`](pinion_core::widgets::tree_nav::effective_cursor)
+/// SSOT (the `Signal` read stays caller-side — the pure gate is shared with the
+/// dock-panels inspector, R945.1). Reading the cursor through this gate everywhere
 /// (paint, a11y, `scene/query`) keeps the three in agreement and self-heals:
 /// once the cursor row is gone the resolver sees no current row, so the next
 /// vertical key restarts navigation at the first visible row.
 fn effective_cursor(rows: &[VisibleRow], cursor: &Signal<Option<String>>) -> Option<String> {
     let id = cursor.get()?;
-    rows.iter().any(|row| row.id == id).then_some(id)
+    pinion_core::widgets::tree_nav::effective_cursor(rows, Some(&id)).map(ToOwned::to_owned)
 }
 
 /// The `role=status` band text: the loading branch while children are in
@@ -660,7 +659,25 @@ fn apply_key_impl(key: &str) -> bool {
     let cursor = use_cursor();
     let rows = node_rows(&compute_rows(&expanded, &cache));
     let current = cursor.get();
-    match resolve_tree_key(&rows, current.as_deref(), key, NAV_PAGE) {
+    let outcome = resolve_tree_key(&rows, current.as_deref(), key, NAV_PAGE);
+    // R945.1 — guard the lazy descent: an expanded branch whose children are
+    // still loading has no child rows in the semantic set yet, so the resolver's
+    // "Arrow Right on an open branch → next preorder row" would focus the next
+    // *sibling*. A genuine descent only ever moves to a deeper row; when the
+    // target is not deeper than the cursor the children have not arrived, so
+    // stay put (Consumed) until the fetch resolves.
+    if key == "ArrowRight"
+        && let TreeKey::Focus(target) = &outcome
+        && let Some(cur) = current.as_deref()
+        && let (Some(ci), Some(ti)) = (
+            rows.iter().position(|r| r.id == cur),
+            rows.iter().position(|r| r.id == *target),
+        )
+        && rows[ti].depth <= rows[ci].depth
+    {
+        return true; // Consumed — the not-yet-loaded children own the descent
+    }
+    match outcome {
         TreeKey::Focus(id) => {
             cursor.set(Some(id));
             true
@@ -1042,6 +1059,33 @@ mod tests {
                 !visible_ids().iter().any(|id| id.starts_with("0/")),
                 "collapsed branch hides its children",
             );
+        });
+    }
+
+    #[test]
+    fn arrow_right_on_a_loading_branch_does_not_descend_to_a_sibling() {
+        // R945.1 — a branch expanded but still fetching its children has no
+        // child rows in the semantic set yet; ArrowRight must stay put, not
+        // jump to the next sibling (the skeleton is filtered from node_rows, so
+        // the resolver's "next preorder row" would otherwise be sibling "1").
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            drain_pump();
+            apply_key_impl("ArrowDown"); // cursor → "0"
+            apply_key_impl("ArrowRight"); // expand "0" → children loading
+            assert!(use_expanded().get().contains("0"), "branch expanded");
+            assert!(any_skeleton(&rows_now()), "children still loading");
+            apply_key_impl("ArrowRight"); // while loading
+            assert_eq!(
+                cursor_now().as_deref(),
+                Some("0"),
+                "cursor stays on the loading branch, never the next sibling",
+            );
+            // Once the children resolve, ArrowRight descends to the first child.
+            drain_pump();
+            apply_key_impl("ArrowRight");
+            assert_eq!(cursor_now().as_deref(), Some("0/0"), "descends once children load");
         });
     }
 
