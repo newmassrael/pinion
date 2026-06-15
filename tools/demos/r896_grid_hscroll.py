@@ -4,7 +4,7 @@
 Drives `hello-data-grid` via JSON-RPC. R896 converges the editable grid onto
 the read-only grids' R784 horizontal-scroll wrap
 (`pinion_widget_paint::table::h_scrolled_column`) instead of hand-rolling a
-second copy: the five columns are now `570 px` wide — wider than the
+second copy: the six columns are now `690 px` wide — wider than the
 `GRID_VIEWPORT_W` (370 px) band — so the header + rows share ONE horizontal
 scroll and slide sideways together, the trailing Scale / Active columns
 revealing on scroll while the editable cursor / edit latch (SOURCE-keyed) stay
@@ -45,7 +45,11 @@ WIN = (460, 348)
 GRID = "data_grid"
 HEADER = "dg_header"
 H_SCROLL = "data_grid_hscroll"
-TOTAL_W = 160 + 110 + 100 + 100 + 100  # COL_W sum = 570 (> the 370 viewport)
+# The h-scroll content = the R937 grip-handle column (HANDLE_W = 22) + the six
+# data columns (COL_W sum = 690) = 712, all wider than the 370 px viewport. (The
+# handle scrolls with the columns, so it is part of the scrollable extent — the
+# clamp is `712 - viewport_w`, not `690 - viewport_w`.)
+TOTAL_W = 22 + 160 + 110 + 100 + 100 + 100 + 120  # HANDLE_W + COL_W sum = 712
 
 
 def hscroll_node(snap):

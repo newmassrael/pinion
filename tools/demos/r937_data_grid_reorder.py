@@ -83,7 +83,7 @@ def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) boot — the plain reorder view ───────────────────────
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
-        assert_eq(q(tf, "col_count"), 5, "5 data columns (the handle is not one)")
+        assert_eq(q(tf, "col_count"), 6, "6 data columns (the handle is not one)")
         assert_eq(q(tf, "reorder_enabled"), True, "the plain view enables reorder")
         assert_eq(q(tf, "drag_preview"), None, "no drag in flight at boot")
         # Boot source rows: 0 Hero, 1 Tree, 2 Coin, 3 Boss (Asset column).

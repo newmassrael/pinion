@@ -11,7 +11,7 @@ hello-property-grid) and 3rd consumer of the `grid_table_nodes` a11y SSOT.
 
 Coordinator slots (`data_grid`, the primary external):
   /external/row_count          -> 4
-  /external/col_count          -> 5
+  /external/col_count          -> 6
   /external/focused_row,_col   -> 2-D roving cursor
   /external/editing_row,_col   -> null | int (cell being text-edited)
   /external/col_name.<c>       -> column title
@@ -53,7 +53,7 @@ VIEWPORT = (460, 320)
 GRID = "data_grid"
 EDIT = "data_grid_edit"
 # R896 — the grid's horizontal scroll: the 570px columns outgrow the 370px
-# viewport, so the trailing columns (Scale / Active) clip out at rest and the
+# viewport, so the trailing columns (Scale / Active / Tint) clip out at rest and the
 # grid scrolls sideways to reveal them (the read-only grids' R784 wrap reused).
 H_SCROLL = "data_grid_hscroll"
 
@@ -89,7 +89,7 @@ def body() -> None:
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         assert find_by_tag(snap, GRID) is not None, "grid present"
         assert_eq(tf.query("/external/row_count"), 4, "4 rows")
-        assert_eq(tf.query("/external/col_count"), 5, "5 columns")
+        assert_eq(tf.query("/external/col_count"), 6, "6 columns (R943 Tint added)")
         assert_eq(tf.query("/external/focused_row"), 0, "cursor row 0")
         assert_eq(tf.query("/external/focused_col"), 0, "cursor col 0")
         assert_eq(tf.query("/external/editing_row"), None, "no cell editing")
@@ -112,11 +112,11 @@ def body() -> None:
                    tf.query("/external/focused_row") == 1, timeout=4.0, interval=0.03,
                    desc="Right+Down -> (1,1)")
         tf.key(path=GRID, name="End")
-        wait_until(lambda: tf.query("/external/focused_col") == 4, timeout=4.0,
-                   interval=0.03, desc="End -> last column")
+        wait_until(lambda: tf.query("/external/focused_col") == 5, timeout=4.0,
+                   interval=0.03, desc="End -> last column (Tint, col 5)")
         tf.key(path=GRID, name="ArrowRight")
         # Clamp no-op: the dispatch commits before the response.
-        assert_eq(tf.query("/external/focused_col"), 4, "Right at last col clamps")
+        assert_eq(tf.query("/external/focused_col"), 5, "Right at last col clamps")
         tf.key(path=GRID, name="Home")
         wait_until(lambda: tf.query("/external/focused_col") == 0, timeout=4.0,
                    interval=0.03, desc="Home -> col 0")
@@ -185,8 +185,11 @@ def body() -> None:
         # ── (F) programmatic typed set (the AI driving path) ─────────
         tf.intervene("/external/value.3.3", -2.5)  # Scale float
         assert_eq(tf.query("/external/value.3.3"), -2.5, "intervene sets a float")
-        tf.intervene("/external/value.0.1", "actor")  # Type text
-        assert_eq(tf.query("/external/value.0.1"), "actor", "intervene sets text")
+        tf.intervene("/external/value.1.0", "Oak")  # Asset text
+        assert_eq(tf.query("/external/value.1.0"), "Oak", "intervene sets text")
+        # R940 — Type is a Choice column: a typed set takes an option Int index.
+        tf.intervene("/external/value.0.1", 4)  # Type choice -> option 4 (script)
+        assert_eq(tf.query("/external/value.0.1")["label"], "script", "intervene sets a choice by index")
 
         # ── (G) double-click enters edit mode ───────────────────────
         tf.double_click(path=f"{GRID}#2_2")
@@ -203,7 +206,7 @@ def body() -> None:
         # click on an off-screen cell needs a scroll first, as in section C).
         snap = tf.snapshot(source="paint", viewport=VIEWPORT)
         for r in range(4):
-            for c in range(5):
+            for c in range(6):
                 assert find_by_tag(snap, f"{GRID}#{r}_{c}") is not None, f"cell ({r},{c}) painted"
         assert find_by_tag(snap, EDIT) is None, "no inline field when not editing"
 

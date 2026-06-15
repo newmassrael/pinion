@@ -85,7 +85,7 @@ def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) boot + reveal ────────────────────────────────────────
         assert_eq(gq(tf, "row_count"), 4, "4 rows")
-        assert_eq(gq(tf, "col_count"), 5, "5 columns")
+        assert_eq(gq(tf, "col_count"), 6, "6 columns")
         assert_eq(gq(tf, "col_kind.2"), "int", "Count (col 2) is an int")
         assert_eq(gq(tf, "col_kind.3"), "float", "Scale (col 3) is a float")
         assert_eq(gq(tf, "col_kind.4"), "bool", "Active (col 4) is a bool")

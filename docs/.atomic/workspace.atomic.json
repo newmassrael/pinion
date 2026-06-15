@@ -41797,6 +41797,72 @@
         "synthetic in-process DeferredReady source; async substrate real, latency = R924-style stand-in"
       ]
     },
+    "R943": {
+      "decision_summary": "R943 data-grid Color column: a Tint column (CellKind::Color) edited through a floating swatch-palette popup, added as the R940 choice dropdown's 2nd popup-kind (one shared edit latch + cursor + hover; the popup paint / keymap / a11y dispatch on the cell kind). The colour value layer (display/sort/filter/with_intervene-hex) was already complete in pinion-core, so the column drops in over the existing Model/View proxies. A swatch click, keyboard Enter, and RPC pick_color all journal one edit_cell (undo parity); an off-palette colour is set via intervene value with a hex string. The swatch-popup delegate is a 2nd consumer alongside the property grid (copy-adapt, lift deferred to a 3rd). The NCOLS 5->6 ripple also surfaced 3 pre-existing demo debts the touched-demos gate had missed.",
+      "changes_bullets": [
+        "New Tint column (CellKind::Color) on hello-data-grid, edited via a swatch-palette popup",
+        "The choice dropdown's 2nd popup-kind: shared edit latch + cursor + hover, kind-dispatched",
+        "popup_pos/keymap/a11y/paint branch Choice (1-D list) vs Color (2-D swatch grid) on cell kind",
+        "Closed cell paints a swatch chip + #RRGGBB hex; click/DoubleClick opens the palette",
+        "open_color + commit_color_swatch + apply_key_color (2-D nav) + invoke_pick_color funnel",
+        "Swatch click / keyboard Enter / RPC pick_color all journal ONE edit_cell (undo parity)",
+        "RPC pick_color + open_color verbs + schema; arbitrary off-palette colour via intervene value hex",
+        "a11y: the open palette is a listbox of swatch options (one active descendant)"
+      ],
+      "verification_bullets": [
+        "workspace cargo test -j2: 166 result lines ok / 0 FAILED; hello-data-grid 98 tests (+8 R943)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "demo r943_data_grid_color.py: 40+ assertions ZERO-FLAKE 3/3 (open/keyboard-2D/click/RPC/sort)",
+        "full hello-data-grid demo sweep 12/12 green after the NCOLS 5->6 ripple",
+        "cleared 3 pre-existing demo debts the touched-demos gate missed (full sweep caught them):",
+        "r892 + r837 edited the Choice column as text (R940 debt); r896 h-scroll extent (R937 handle-col)",
+        "validate-workspace T1 orphan=0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "swatch-popup delegate now 2nd consumer (property-grid 1st): copy-adapt, not lifted",
+        "a 3rd popup-delegate consumer lifts the pure (len,cursor,key)->action keymap + swatch/option paint",
+        "COLOR_SWATCHES palette duplicated across the 2 colour-cell examples (example-data, defer)",
+        "in-popup GUI hex-entry field deferred: presets + intervene-value hex cover colour selection",
+        "per-round local gate runs only touched demos; a structural example change needs a full demo sweep"
+      ],
+      "publishable_decision_summary": "R943 data-grid Color column: a Tint column (CellKind::Color) edited through a floating swatch-palette popup, added as the R940 choice dropdown's 2nd popup-kind (one shared edit latch + cursor + hover; the popup paint / keymap / a11y dispatch on the cell kind). The colour value layer (display/sort/filter/with_intervene-hex) was already complete in pinion-core, so the column drops in over the existing Model/View proxies. A swatch click, keyboard Enter, and RPC pick_color all journal one edit_cell (undo parity); an off-palette colour is set via intervene value with a hex string. The swatch-popup delegate is a 2nd consumer alongside the property grid (copy-adapt, lift deferred to a 3rd). The NCOLS 5->6 ripple also surfaced 3 pre-existing demo debts the touched-demos gate had missed.",
+      "publishable_changes_bullets": [
+        "New Tint column (CellKind::Color) on hello-data-grid, edited via a swatch-palette popup",
+        "The choice dropdown's 2nd popup-kind: shared edit latch + cursor + hover, kind-dispatched",
+        "popup_pos/keymap/a11y/paint branch Choice (1-D list) vs Color (2-D swatch grid) on cell kind",
+        "Closed cell paints a swatch chip + #RRGGBB hex; click/DoubleClick opens the palette",
+        "open_color + commit_color_swatch + apply_key_color (2-D nav) + invoke_pick_color funnel",
+        "Swatch click / keyboard Enter / RPC pick_color all journal ONE edit_cell (undo parity)",
+        "RPC pick_color + open_color verbs + schema; arbitrary off-palette colour via intervene value hex",
+        "a11y: the open palette is a listbox of swatch options (one active descendant)"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test -j2: 166 result lines ok / 0 FAILED; hello-data-grid 98 tests (+8 R943)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "demo r943_data_grid_color.py: 40+ assertions ZERO-FLAKE 3/3 (open/keyboard-2D/click/RPC/sort)",
+        "full hello-data-grid demo sweep 12/12 green after the NCOLS 5->6 ripple",
+        "cleared 3 pre-existing demo debts the touched-demos gate missed (full sweep caught them):",
+        "r892 + r837 edited the Choice column as text (R940 debt); r896 h-scroll extent (R937 handle-col)",
+        "validate-workspace T1 orphan=0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "swatch-popup delegate now 2nd consumer (property-grid 1st): copy-adapt, not lifted",
+        "a 3rd popup-delegate consumer lifts the pure (len,cursor,key)->action keymap + swatch/option paint",
+        "COLOR_SWATCHES palette duplicated across the 2 colour-cell examples (example-data, defer)",
+        "in-popup GUI hex-entry field deferred: presets + intervene-value hex cover colour selection",
+        "per-round local gate runs only touched demos; a structural example change needs a full demo sweep"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -79,7 +79,7 @@ def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) boot — Type is now a Choice column ──────────────────
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
-        assert_eq(q(tf, "col_count"), 5, "5 columns (no NCOLS ripple)")
+        assert_eq(q(tf, "col_count"), 6, "6 columns (R943 added the Tint colour column)")
         assert_eq(q(tf, "col_kind.0"), "text", "Asset stays text")
         assert_eq(q(tf, "col_kind.1"), "choice", "Type is a choice column")
         assert_eq(q(tf, "col_kind.2"), "int", "Count stays int")

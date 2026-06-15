@@ -10,7 +10,7 @@ so an appended row edits and sorts exactly like a seeded one, with no parallel
 machinery and no separate row-count to keep in sync. An AI agent drives and
 reads the whole round-trip over the §5.12 RPC plane (§2 #2).
 
-The seed table is 4 rows x 5 columns (Asset / Tag / Count / Scale / Active).
+The seed table is 4 rows x 6 columns (Asset / Type / Count / Scale / Active / Tint).
 
   (A) boot taxonomy — 4 rows, the seed values, the "of 4" status.
   (B) add_row — appends a typed-empty row, grows the count, moves the cursor
@@ -54,7 +54,7 @@ def body() -> None:
         # ── (A) boot taxonomy ────────────────────────────────────────
         assert find_by_tag(tf.snapshot(source="paint", viewport=VIEWPORT), GRID) is not None, "grid present"
         assert_eq(q(tf, "row_count"), 4, "4 seed rows")
-        assert_eq(q(tf, "col_count"), 5, "5 columns")
+        assert_eq(q(tf, "col_count"), 6, "6 columns")
         assert_eq(q(tf, "col_name.2"), "Count", "col 2 is Count")
         assert_eq(q(tf, "col_kind.2"), "int", "Count is an int column")
         assert_eq(q(tf, "col_kind.4"), "bool", "Active is a bool column")

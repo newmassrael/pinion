@@ -296,14 +296,43 @@ const POPUP_W: u32 = COL_W[TYPE_COL];
 const POPUP_OPT_H: u32 = 30;
 const POPUP_PAD: u32 = 6;
 
+// ─── colour swatch popup (R943) ───────────────────────────────────
+/// R943 — the colour cell's swatch-palette popup tag (the 2nd popup-kind after
+/// R940's choice dropdown; the property-grid `COLOR_POPUP_TAG` shape). A click
+/// on a `Color` cell opens it; a standalone overlay tag, not a send target.
+const COLOR_POPUP_TAG: &str = "data_grid_color";
+/// Each swatch chip's composite sub-key prefix (`{GRID_TAG}#sw<i>`): a click
+/// commits swatch `i`, a `PointerEnter` / `PointerLeave` sets / clears the hover
+/// (the `opt<i>` peer for the colour palette).
+const COLOR_SW_PREFIX: &str = "sw";
+/// Swatch chip size, palette column count, and inter-chip gap.
+const SWATCH_SIZE: u32 = 30;
+const SWATCH_COLS: usize = 4;
+const SWATCH_GAP: u32 = 6;
+/// R943 — the preset palette the colour popup offers (the AT label = the name,
+/// mirroring the property-grid `COLOR_SWATCHES`). An arbitrary colour is set
+/// through `intervene value` with a `#RRGGBB` hex string (the AI-first path); an
+/// in-popup GUI hex-entry field is a documented follow-up (the property grid
+/// staged its colour cell the same way — presets first, hex field later).
+const COLOR_SWATCHES: [(Color, &str); 8] = [
+    (Color::rgb(0xff, 0xff, 0xff), "White"),
+    (Color::rgb(0x21, 0x21, 0x21), "Black"),
+    (Color::rgb(0xe5, 0x39, 0x35), "Red"),
+    (Color::rgb(0x43, 0xa0, 0x47), "Green"),
+    (Color::rgb(0x1e, 0x88, 0xe5), "Blue"),
+    (Color::rgb(0xfd, 0xd8, 0x35), "Yellow"),
+    (Color::rgb(0x00, 0xac, 0xc1), "Cyan"),
+    (Color::rgb(0x8e, 0x24, 0xaa), "Purple"),
+];
+
 
 // ─── grid shape (an editable asset table) ─────────────────────────
 
 const NROWS: usize = 4;
-const NCOLS: usize = 5;
+const NCOLS: usize = 6;
 
 /// Column titles (the header row + the AT cell-name prefix).
-const COL_NAMES: [&str; NCOLS] = ["Asset", "Type", "Count", "Scale", "Active"];
+const COL_NAMES: [&str; NCOLS] = ["Asset", "Type", "Count", "Scale", "Active", "Tint"];
 
 /// The per-column [`CellKind`] — every cell in a column shares its column's
 /// kind (the editor dispatch, parse, keystroke gate, and intervene coercion
@@ -316,6 +345,7 @@ const COL_KINDS: [CellKind; NCOLS] = [
     CellKind::Int,
     CellKind::Float,
     CellKind::Bool,
+    CellKind::Color,
 ];
 
 /// R940 — the `Type` column index (the one [`CellKind::Choice`] column). The
@@ -333,12 +363,12 @@ const TYPE_OPTIONS: [&str; 5] = ["sprite", "mesh", "material", "audio", "script"
 
 /// Per-column paint width (logical px). Text columns are wider. R896 — the
 /// columns are deliberately wider than the grid viewport ([`GRID_VIEWPORT_W`])
-/// so their `570 px` total outgrows the visible band and the R784 horizontal
+/// so their `690 px` total outgrows the visible band and the R784 horizontal
 /// scroll ([`h_scrolled_column`]) engages — the "wide asset table" a DCC
 /// browser scrolls sideways.
-const COL_W: [u32; NCOLS] = [160, 110, 100, 100, 100];
+const COL_W: [u32; NCOLS] = [160, 110, 100, 100, 100, 120];
 
-/// R896 — the grid's visible width. Narrower than the `570 px` column total
+/// R896 — the grid's visible width. Narrower than the `690 px` column total
 /// ([`COL_W`]) so the columns scroll sideways under the pinned header; wide
 /// enough to show the leading Asset / Type / Count columns at rest (offset 0).
 const GRID_VIEWPORT_W: u32 = 370;
@@ -380,7 +410,7 @@ impl ColRange {
 /// Per-column clamp range, `None` for an unbounded column. Count (Int) is
 /// `0..1000`; all other columns (Asset / Type / Scale / Active) are unbounded.
 const COL_RANGE: [Option<ColRange>; NCOLS] =
-    [None, None, Some(ColRange::Int(0, 1000)), None, None];
+    [None, None, Some(ColRange::Int(0, 1000)), None, None, None];
 
 /// R894 — clamp a typed value to column `col`'s [`ColRange`] (identity for an
 /// unbounded column, a non-numeric value, or a kind / range mismatch). The one
@@ -527,6 +557,14 @@ fn choice_cell(col: usize, selected: usize) -> CellValue {
     CellValue::Choice { selected, options }
 }
 
+/// R943 — a [`CellValue::Color`] cell at preset swatch `i` (clamped, falling back
+/// to the first swatch). The constructor the seed + [`default_row`] build colour
+/// cells through, so a seeded and an added `Tint` cell start from the palette.
+fn swatch_cell(i: usize) -> CellValue {
+    let (color, _) = COLOR_SWATCHES[i.min(COLOR_SWATCHES.len() - 1)];
+    CellValue::Color(color)
+}
+
 /// R930 — a fresh row's default cells, one per column keyed by [`COL_KINDS`]
 /// (the typed empty value `add_row` appends). The typed peer of
 /// [`default_cells`]'s seed, so an added row edits exactly like a seeded one.
@@ -542,8 +580,8 @@ fn default_row() -> Vec<CellValue> {
             CellKind::Float => CellValue::Float(0.0),
             CellKind::Bool => CellValue::Bool(false),
             CellKind::Choice => choice_cell(col, 0),
-            // No colour column in this grid; the arm keeps the match total.
-            CellKind::Color => CellValue::Color(Color::rgb(0, 0, 0)),
+            // R943 — a fresh `Tint` cell starts at the first preset swatch.
+            CellKind::Color => swatch_cell(0),
         })
         .collect()
 }
@@ -556,13 +594,13 @@ fn default_row() -> Vec<CellValue> {
 fn default_cells() -> Vec<CellValue> {
     vec![
         CellValue::Text("Hero".to_owned()), choice_cell(TYPE_COL, 0),
-        CellValue::Int(1), CellValue::Float(1.0), CellValue::Bool(true),
+        CellValue::Int(1), CellValue::Float(1.0), CellValue::Bool(true), swatch_cell(4),
         CellValue::Text("Tree".to_owned()), choice_cell(TYPE_COL, 1),
-        CellValue::Int(24), CellValue::Float(2.5), CellValue::Bool(true),
+        CellValue::Int(24), CellValue::Float(2.5), CellValue::Bool(true), swatch_cell(3),
         CellValue::Text("Coin".to_owned()), choice_cell(TYPE_COL, 0),
-        CellValue::Int(99), CellValue::Float(0.5), CellValue::Bool(false),
+        CellValue::Int(99), CellValue::Float(0.5), CellValue::Bool(false), swatch_cell(5),
         CellValue::Text("Boss".to_owned()), choice_cell(TYPE_COL, 1),
-        CellValue::Int(1), CellValue::Float(4.0), CellValue::Bool(true),
+        CellValue::Int(1), CellValue::Float(4.0), CellValue::Bool(true), swatch_cell(2),
     ]
 }
 
@@ -1710,6 +1748,18 @@ impl DataGridExternal {
             }
             return Ok(IntrospectValue::Null);
         }
+        // R943 — a colour swatch chip (`sw<i>`) commits / hovers preset `i`, the
+        // `opt<i>` peer for the swatch palette. `strip_prefix(COLOR_SW_PREFIX)`
+        // is tried AFTER `opt` so the two prefixes never alias.
+        if let Some(sw) = key.strip_prefix(COLOR_SW_PREFIX) {
+            let i: usize = sw.parse().map_err(|_| InvokeError::Rejected)?;
+            if event_name == "PointerUp" {
+                self.commit_color_swatch(i);
+            } else {
+                self.set_popup_hover(event_name, i);
+            }
+            return Ok(IntrospectValue::Null);
+        }
         if let Some(row) = parse_handle_sub(key) {
             if event_name == "PointerDown" && row < self.nrows() {
                 self.arm_reorder(row);
@@ -1766,14 +1816,20 @@ impl DataGridExternal {
                 }
                 self.focused_row.set(row);
                 self.focused_col.set(col);
-                // R940 — a click on a choice cell opens its dropdown (the bool
-                // cell's single-click-toggle peer: both activate the cell's
-                // primary action). `toggle` no-ops on a non-bool, so a text /
-                // numeric cell click just focuses (the prior behaviour).
-                if COL_KINDS[col] == CellKind::Choice {
-                    self.open_choice(row, col);
-                } else {
-                    self.toggle(row, col);
+                // R940 / R943 — a click on a choice / colour cell opens its
+                // popup (the bool cell's single-click-toggle peer: both activate
+                // the cell's primary action). `toggle` no-ops on a non-bool, so a
+                // text / numeric cell click just focuses (the prior behaviour).
+                match COL_KINDS[col] {
+                    CellKind::Choice => {
+                        self.open_choice(row, col);
+                    }
+                    CellKind::Color => {
+                        self.open_color(row, col);
+                    }
+                    _ => {
+                        self.toggle(row, col);
+                    }
                 }
                 Ok(IntrospectValue::Null)
             }
@@ -1784,12 +1840,13 @@ impl DataGridExternal {
                 self.end_scrub();
                 Ok(IntrospectValue::Null)
             }
-            // R940 — a choice cell opens its dropdown (it is not text-editable,
-            // so `begin_edit` would reject it); other kinds enter inline edit.
-            "DoubleClick" => Ok(IntrospectValue::Bool(if COL_KINDS[col] == CellKind::Choice {
-                self.open_choice(row, col)
-            } else {
-                self.begin_edit(row, col)
+            // R940 / R943 — a choice / colour cell opens its popup (neither is
+            // text-editable, so `begin_edit` would reject it); other kinds enter
+            // inline edit.
+            "DoubleClick" => Ok(IntrospectValue::Bool(match COL_KINDS[col] {
+                CellKind::Choice => self.open_choice(row, col),
+                CellKind::Color => self.open_color(row, col),
+                _ => self.begin_edit(row, col),
             })),
             _ => Ok(IntrospectValue::Null),
         }
@@ -1862,6 +1919,55 @@ impl DataGridExternal {
             return false;
         };
         self.edit_cell(row, col, next, Cow::Borrowed("Edit cell"));
+        self.close_popup();
+        true
+    }
+
+    /// R943 — open the colour swatch popup on `(row, col)`: focus + latch the
+    /// cell (the shared [`use_editing_cell`] latch — a colour cell editing means
+    /// the swatch palette is open, no inline field, since a colour is not
+    /// [`CellKind::is_text_editable`]) and seed the keyboard cursor at the preset
+    /// matching the current colour (or 0 for an off-palette hex). Focus stays on
+    /// the grid: the swatch grid is its roving active descendant. Returns `false`
+    /// for a non-colour column or an out-of-range / non-colour cell. The
+    /// [`open_choice`](Self::open_choice) peer.
+    fn open_color(&self, row: usize, col: usize) -> bool {
+        if row >= self.nrows() || col >= NCOLS || COL_KINDS[col] != CellKind::Color {
+            return false;
+        }
+        let model = self.model.get();
+        let Some(CellValue::Color(c)) = model.get(idx(row, col)) else {
+            return false;
+        };
+        let cursor = COLOR_SWATCHES.iter().position(|(sw, _)| sw == c).unwrap_or(0);
+        self.focused_row.set(row);
+        self.focused_col.set(col);
+        self.editing_cell.set(Some((row, col)));
+        self.popup_cursor.set(Some(cursor));
+        self.popup_hover.set(None);
+        true
+    }
+
+    /// R943 — commit preset swatch `i` into the open colour cell, then close the
+    /// popup (the swatch click + RPC `pick_color` + keyboard path). Writes the
+    /// preset colour through the JOURNALED [`edit_cell`] (one undo step, the same
+    /// path the dropdown pick and every cell edit take), so a swatch pick
+    /// re-anchors and undoes like any other edit. `false` when no popup is open,
+    /// the editing cell is not a colour, or `i` is out of the palette range (the
+    /// defensive RPC `pick_color <bad>` path closes to avoid a stuck popup). The
+    /// [`commit_choice`](Self::commit_choice) peer.
+    fn commit_color_swatch(&self, i: usize) -> bool {
+        let Some((row, col)) = self.editing_cell.get() else {
+            return false;
+        };
+        if col >= NCOLS || COL_KINDS[col] != CellKind::Color {
+            return false;
+        }
+        let Some(&(color, _)) = COLOR_SWATCHES.get(i) else {
+            self.close_popup();
+            return false;
+        };
+        self.edit_cell(row, col, CellValue::Color(color), Cow::Borrowed("Edit cell"));
         self.close_popup();
         true
     }
@@ -2068,6 +2174,11 @@ impl ExternalIntrospect for DataGridExternal {
             ("open_choice", "json"),
             ("choose", "int"),
             ("close_popup", "json"),
+            // R943 — colour swatch popup: open it on the focused cell + commit a
+            // preset swatch (the choice popup's colour peer; the AI-first path for
+            // an arbitrary colour is `intervene value` with a `#RRGGBB` hex).
+            ("open_color", "json"),
+            ("pick_color", "int"),
         ])
     }
 
@@ -2326,6 +2437,10 @@ impl ExternalIntrospect for DataGridExternal {
         }
     }
 
+    // R943 — the RPC verb dispatch is a flat match; the colour verbs pushed it
+    // past the line budget. A dispatcher match is the idiomatic `too_many_lines`
+    // exception (the `view` fn carries the same allow).
+    #[allow(clippy::too_many_lines)]
     fn invoke(&mut self, path: &str, args: IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         match path {
             // Composite wire `"<row>_<col>:<EventName>"` (the shared
@@ -2366,6 +2481,23 @@ impl ExternalIntrospect for DataGridExternal {
                 IntrospectValue::Int(i) => {
                     let idx = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
                     Ok(IntrospectValue::Bool(self.commit_choice(idx)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R943 — open the colour swatch popup on the focused cell (the AI-first
+            // peer of a click; `false` when the focused cell is not a colour).
+            "open_color" => {
+                let started = self.open_color(self.focused_row.get(), self.focused_col.get());
+                Ok(IntrospectValue::Bool(started))
+            }
+            // R943 — commit preset swatch `i` into the open colour popup, then
+            // close it (the AI-first peer of a swatch click / keyboard `Enter`).
+            // `false` when no colour popup is open or `i` is out of range. An
+            // arbitrary (off-palette) colour is set through `intervene value`.
+            "pick_color" => match args {
+                IntrospectValue::Int(i) => {
+                    let idx = usize::try_from(i).map_err(|_| InvokeError::TypeMismatch)?;
+                    Ok(IntrospectValue::Bool(self.commit_color_swatch(idx)))
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
@@ -2647,16 +2779,59 @@ fn apply_key_choice(scene: &mut Scene, key: &str) -> bool {
     true
 }
 
+/// R943 — commit swatch `i` through the coordinator's `pick_color` invoke funnel,
+/// so the keyboard `Enter` / `Space` journals ONE cell edit exactly like the
+/// swatch click / RPC (the [`invoke_choose`] colour peer).
+fn invoke_pick_color(scene: &mut Scene, i: usize) -> bool {
+    let Some(intro) = external_mut(scene, GRID_TAG) else {
+        return false;
+    };
+    let _ = intro.invoke("pick_color", IntrospectValue::Int(int_of(i)));
+    true
+}
+
+/// R943 — the open colour popup's keymap (the grid is focused, the swatch grid is
+/// its roving active descendant): Left / Right step the cursor, Up / Down jump a
+/// palette row (`SWATCH_COLS`), Home / End go to the ends, `Enter` / `Space`
+/// commit through the journaled `pick_color` funnel, `Escape` dismisses. The
+/// 2-D [`apply_key_choice`] colour peer (the property-grid `apply_key_color`
+/// shape; copy-adapt over the 1-D dropdown keymap, divergent nav geometry).
+fn apply_key_color(scene: &mut Scene, key: &str) -> bool {
+    let len = COLOR_SWATCHES.len();
+    let cursor = use_popup_cursor().get().unwrap_or(0).min(len - 1);
+    let target = match key {
+        "ArrowRight" => (cursor + 1).min(len - 1),
+        "ArrowLeft" => cursor.saturating_sub(1),
+        "ArrowDown" => (cursor + SWATCH_COLS).min(len - 1),
+        "ArrowUp" => cursor.saturating_sub(SWATCH_COLS),
+        "Home" => 0,
+        "End" => len - 1,
+        "Enter" | "Space" => return invoke_pick_color(scene, cursor),
+        "Escape" => {
+            clear_popup(&use_editing_cell(), &use_popup_cursor(), &use_popup_hover());
+            return true;
+        }
+        _ => return false,
+    };
+    use_popup_cursor().set(Some(target));
+    true
+}
+
 /// Grid-focused keymap: undo / redo (Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z), then 2-D
 /// roving navigation + activate.
 fn apply_key_grid(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
-    // R940 — an open + visible choice dropdown owns the keymap (the grid keeps
-    // focus; the popup is its roving active descendant). Intercepted before undo
-    // + navigation. Gated on the popup being present in the flatten
+    // R940 / R943 — an open + visible choice / colour popup owns the keymap (the
+    // grid keeps focus; the popup is its roving active descendant). Intercepted
+    // before undo + navigation. Gated on the popup being present in the flatten
     // ([`popup_pos_live`]), so a collapsed / filtered-out editing row never traps
-    // the arrows (the property-grid `open_popup_kind` discipline).
-    if popup_pos_live().is_some() {
-        return apply_key_choice(scene, key);
+    // the arrows (the property-grid `open_popup_kind` discipline). Dispatched by
+    // the editing column's kind — the colour palette roves in 2-D.
+    if let Some((_, col, _)) = popup_pos_live() {
+        return if COL_KINDS[col] == CellKind::Color {
+            apply_key_color(scene, key)
+        } else {
+            apply_key_choice(scene, key)
+        };
     }
     // R932 — a held-Ctrl Z / Y drives the shared undo history before the plain
     // navigation keys (so Ctrl+Z is not read as a bare key).
@@ -2798,6 +2973,34 @@ fn cell_checkbox_style() -> CheckboxStyle {
 /// One cell: tagged `data_grid#<row>_<col>` (the `GridSendKey` encoding) so a
 /// click routes to the coordinator. Paints the shared inline field while
 /// editing, else a checkbox (bool) or the value text.
+/// R943 — a closed colour cell's inner: a filled swatch chip beside the
+/// `#RRGGBB` hex (the property-grid `color_value_cell` skin). The swatch shows
+/// the colour at a glance; the hex is the queryable / AT-readable value.
+fn color_cell_inner(c: Color, theme: &Theme) -> Scene {
+    let swatch = Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_style(
+                BoxStyle::filled(c)
+                    .with_corner_radius(4)
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
+            )
+            .with_layout(LayoutStyle::new().with_size(Size::px(CELL_PX + 5, CELL_PX + 5))),
+    );
+    let hex = Scene::Text(TextNode::styled(
+        c.to_hex(),
+        Rect::default(),
+        TextStyle::new().with_size_px(CELL_PX).with_fg(theme.resolve(ColorRole::OnSurface)),
+    ));
+    Scene::Container(
+        ContainerNode::new(vec![swatch, hex]).with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_gap(6),
+        ),
+    )
+}
+
 fn view_cell(
     row: usize,
     col: usize,
@@ -2817,6 +3020,10 @@ fn view_cell(
     } else if COL_KINDS[col] == CellKind::Bool {
         let checked = matches!(value, CellValue::Bool(true));
         view_checkbox_box(checked, CheckboxState::Idle, theme, &cell_checkbox_style())
+    } else if let CellValue::Color(c) = value {
+        // R943 — a closed colour cell: a filled swatch chip + the `#RRGGBB` hex
+        // (the property-grid `color_value_cell` skin).
+        color_cell_inner(*c, theme)
     } else {
         Scene::Text(TextNode::styled(
             value.display(),
@@ -3045,16 +3252,25 @@ fn view_undo_status(theme: &Theme) -> Scene {
 
 // ─── choice dropdown paint + anchor (R940) ────────────────────────
 
-/// R940 — the open dropdown's editing cell resolved to `(row, col, visual_pos)`,
-/// or `None` when nothing is editing, the editing cell is not a choice, or its
-/// row is filtered / collapsed out of the current flatten (so the row is hidden
-/// — no popup is painted, announced, or given the keymap, the property-grid
-/// `popup_view_pos` discipline). `visual_pos` is the row's index in the FULL
-/// flatten (group headers + data rows share the [`ROW_H`] pitch), the basis the
-/// anchor's y math uses. The SSOT the popup paint + a11y + keymap-intercept gate.
+/// R943 — whether column `col` is edited through a floating popup (a choice
+/// dropdown or a colour swatch palette) rather than an inline field / toggle.
+/// The SSOT the open dispatch + [`popup_pos`] gate share so "which columns
+/// open a popup" lives in one place.
+fn opens_popup(col: usize) -> bool {
+    matches!(COL_KINDS.get(col), Some(CellKind::Choice | CellKind::Color))
+}
+
+/// R940 / R943 — the open popup's editing cell resolved to `(row, col, visual_pos)`,
+/// or `None` when nothing is editing, the editing cell is not a popup column
+/// (choice / colour), or its row is filtered / collapsed out of the current
+/// flatten (so the row is hidden — no popup is painted, announced, or given the
+/// keymap, the property-grid `popup_view_pos` discipline). `visual_pos` is the
+/// row's index in the FULL flatten (group headers + data rows share the
+/// [`ROW_H`] pitch), the basis the anchor's y math uses. The SSOT the popup
+/// paint + a11y + keymap-intercept gate (both choice + colour).
 fn popup_pos(editing: Option<(usize, usize)>, vis_rows: &[GroupRow]) -> Option<(usize, usize, usize)> {
     let (row, col) = editing?;
-    if col >= NCOLS || COL_KINDS[col] != CellKind::Choice {
+    if col >= NCOLS || !opens_popup(col) {
         return None;
     }
     let pos = vis_rows
@@ -3162,12 +3378,100 @@ fn view_choice_popup(
     )
 }
 
-/// R940 — the popup overlay (a grid-covering light-dismiss barrier + the open
-/// dropdown panel) for the editing choice cell, both GRID-LOCAL siblings of the
-/// scroll viewport inside the grid container. Empty when nothing is editing, the
-/// editing cell is not a choice, or its row is filtered / collapsed / scrolled
-/// out (so no panel is shown). The barrier sorts first so the panel hit-tests on
-/// top; a click outside the panel routes `dismiss` to the coordinator.
+/// R943 — the colour popup palette's grid width / height (the `SWATCH_COLS`-wide
+/// swatch grid + the panel padding). The palette wraps onto
+/// `ceil(len / SWATCH_COLS)` rows. The [`choice_panel_h`] colour peer.
+fn color_panel_w() -> u32 {
+    let cols = u32::try_from(SWATCH_COLS).unwrap_or(1);
+    cols * SWATCH_SIZE + cols.saturating_sub(1) * SWATCH_GAP + 2 * POPUP_PAD
+}
+
+fn color_panel_h() -> u32 {
+    let n_rows = u32::try_from(COLOR_SWATCHES.len().div_ceil(SWATCH_COLS)).unwrap_or(1);
+    n_rows * SWATCH_SIZE + n_rows.saturating_sub(1) * SWATCH_GAP + 2 * POPUP_PAD
+}
+
+/// R943 — one popup swatch chip, tagged `{GRID_TAG}#sw<i>` so its click / hover
+/// routes to the coordinator. The cursor (active descendant), the committed
+/// colour, and a hover each get a ring (the property-grid `view_swatch` skin).
+fn view_swatch(
+    i: usize,
+    color: Color,
+    is_selected: bool,
+    is_active: bool,
+    is_hover: bool,
+    theme: &Theme,
+) -> Scene {
+    let (border_color, border_w) = if is_active || is_hover {
+        (theme.resolve(ColorRole::Accent), 2)
+    } else if is_selected {
+        (theme.resolve(ColorRole::OnSurface), 2)
+    } else {
+        (theme.resolve(ColorRole::Outline), 1)
+    };
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag(format!("{GRID_TAG}#{COLOR_SW_PREFIX}{i}"))
+            .with_style(
+                BoxStyle::filled(color)
+                    .with_corner_radius(4)
+                    .with_border(Border::new(border_color, border_w)),
+            )
+            .with_layout(LayoutStyle::new().with_size(Size::px(SWATCH_SIZE, SWATCH_SIZE))),
+    )
+}
+
+/// R943 — the open colour popup: a `SWATCH_COLS`-wide grid of preset swatch
+/// chips, absolutely positioned in GRID-LOCAL coordinates. Each swatch is tagged
+/// `{GRID_TAG}#sw<i>` for its click / hover. (An in-popup GUI hex-entry field is
+/// a documented follow-up; the presets + the RPC `intervene value` hex path
+/// cover colour selection.) The [`view_choice_popup`] colour peer.
+fn view_color_popup(
+    x: u32,
+    y: u32,
+    current: Color,
+    cursor: usize,
+    hover: Option<usize>,
+    theme: &Theme,
+) -> Scene {
+    let chip_rows: Vec<Scene> = (0..COLOR_SWATCHES.len())
+        .step_by(SWATCH_COLS)
+        .map(|start| {
+            let end = (start + SWATCH_COLS).min(COLOR_SWATCHES.len());
+            let chips: Vec<Scene> = (start..end)
+                .map(|i| {
+                    let (color, _) = COLOR_SWATCHES[i];
+                    view_swatch(i, color, color == current, cursor == i, hover == Some(i), theme)
+                })
+                .collect();
+            Scene::Container(
+                ContainerNode::new(chips)
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_gap(SWATCH_GAP)),
+            )
+        })
+        .collect();
+    Scene::Container(
+        ContainerNode::new(chip_rows)
+            .with_tag(COLOR_POPUP_TAG)
+            .with_style(popup_surface(theme))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(x, y)
+                    .with_size(Size::px(color_panel_w(), color_panel_h()))
+                    .flex(FlexDirection::Column)
+                    .with_gap(SWATCH_GAP)
+                    .with_padding(Rect::new(POPUP_PAD, POPUP_PAD, POPUP_PAD, POPUP_PAD)),
+            ),
+    )
+}
+
+/// R940 / R943 — the popup overlay (a grid-covering light-dismiss barrier + the
+/// open choice dropdown or colour swatch panel) for the editing cell, both
+/// GRID-LOCAL siblings of the scroll viewport inside the grid container. Empty
+/// when nothing is editing, the editing cell is not a popup column, or its row is
+/// filtered / collapsed / scrolled out (so no panel is shown). The barrier sorts
+/// first so the panel hit-tests on top; a click outside the panel routes
+/// `dismiss` to the coordinator.
 fn view_choice_overlay(
     editing: Option<(usize, usize)>,
     vis_rows: &[GroupRow],
@@ -3179,48 +3483,80 @@ fn view_choice_overlay(
     let Some((row, col, pos)) = popup_pos(editing, vis_rows) else {
         return Vec::new();
     };
-    let Some(CellValue::Choice { selected, options }) = model.get(idx(row, col)) else {
-        return Vec::new();
-    };
-    let Some((x, y)) = popup_anchor(pos, col, choice_panel_h(options.len()), v_off, h_off) else {
-        return Vec::new();
-    };
-    let cursor = use_popup_cursor().get().unwrap_or(*selected);
     let hover = use_popup_hover().get();
+    let cursor_sig = use_popup_cursor().get();
+    let panel = match model.get(idx(row, col)) {
+        Some(CellValue::Choice { selected, options }) => {
+            let Some((x, y)) = popup_anchor(pos, col, choice_panel_h(options.len()), v_off, h_off)
+            else {
+                return Vec::new();
+            };
+            view_choice_popup(x, y, options, *selected, cursor_sig.unwrap_or(*selected), hover, theme)
+        }
+        Some(CellValue::Color(current)) => {
+            let Some((x, y)) = popup_anchor(pos, col, color_panel_h(), v_off, h_off) else {
+                return Vec::new();
+            };
+            view_color_popup(x, y, *current, cursor_sig.unwrap_or(0), hover, theme)
+        }
+        _ => return Vec::new(),
+    };
     vec![
         dismiss_barrier(POPUP_DISMISS_TAG, (0, 0), (GRID_VIEWPORT_W, GRID_VIEWPORT_H)),
-        view_choice_popup(x, y, options, *selected, cursor, hover, theme),
+        panel,
     ]
 }
 
-/// R940 — the open dropdown's `listbox` a11y nodes (one `option` per choice),
-/// or empty when no choice popup is open / visible. Gated on [`popup_pos`] (the
-/// SSOT the paint uses) so the AT `listbox` is never announced for a popup the
-/// screen does not show. The property-grid `popup_listbox_nodes` shape.
+/// R940 / R943 — the open popup's `listbox` a11y nodes (one `option` per choice,
+/// or one per colour swatch), or empty when no popup is open / visible. Gated on
+/// [`popup_pos`] (the SSOT the paint uses) so the AT `listbox` is never announced
+/// for a popup the screen does not show. The property-grid `popup_listbox_nodes`
+/// shape; the choice + colour palettes are both `listbox` + `option`s, so they
+/// share the builder and diverge only in the per-item tag / label / selection.
 fn popup_listbox_nodes(model: &[CellValue], vis_rows: &[GroupRow], editing: Option<(usize, usize)>) -> Vec<AccessNode> {
     let Some((row, col, _)) = popup_pos(editing, vis_rows) else {
         return Vec::new();
     };
-    let Some(CellValue::Choice { selected, options }) = model.get(idx(row, col)) else {
-        return Vec::new();
-    };
-    let cursor = use_popup_cursor().get().unwrap_or(*selected);
     let hover = use_popup_hover().get();
-    let tags: Vec<String> =
-        (0..options.len()).map(|i| format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}")).collect();
-    let opts: Vec<ListOption<'_>> = options
-        .iter()
-        .enumerate()
-        .map(|(i, label)| ListOption {
-            tag: &tags[i],
-            label: Some(label.as_str()),
-            state: if hover == Some(i) { ListboxItemState::Hover } else { ListboxItemState::Idle },
-            selected: *selected == i,
-            focused: cursor == i,
-        })
-        .collect();
-    let name = format!("{} options", COL_NAMES[col]);
-    listbox_option_nodes(CHOICE_POPUP_TAG, &name, false, &opts)
+    match model.get(idx(row, col)) {
+        Some(CellValue::Choice { selected, options }) => {
+            let cursor = use_popup_cursor().get().unwrap_or(*selected);
+            let tags: Vec<String> =
+                (0..options.len()).map(|i| format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{i}")).collect();
+            let opts: Vec<ListOption<'_>> = options
+                .iter()
+                .enumerate()
+                .map(|(i, label)| ListOption {
+                    tag: &tags[i],
+                    label: Some(label.as_str()),
+                    state: if hover == Some(i) { ListboxItemState::Hover } else { ListboxItemState::Idle },
+                    selected: *selected == i,
+                    focused: cursor == i,
+                })
+                .collect();
+            let name = format!("{} options", COL_NAMES[col]);
+            listbox_option_nodes(CHOICE_POPUP_TAG, &name, false, &opts)
+        }
+        Some(CellValue::Color(current)) => {
+            let cursor = use_popup_cursor().get().unwrap_or(0);
+            let tags: Vec<String> =
+                (0..COLOR_SWATCHES.len()).map(|i| format!("{GRID_TAG}#{COLOR_SW_PREFIX}{i}")).collect();
+            let opts: Vec<ListOption<'_>> = COLOR_SWATCHES
+                .iter()
+                .enumerate()
+                .map(|(i, &(color, label))| ListOption {
+                    tag: &tags[i],
+                    label: Some(label),
+                    state: if hover == Some(i) { ListboxItemState::Hover } else { ListboxItemState::Idle },
+                    selected: color == *current,
+                    focused: cursor == i,
+                })
+                .collect();
+            let name = format!("{} swatches", COL_NAMES[col]);
+            listbox_option_nodes(COLOR_POPUP_TAG, &name, false, &opts)
+        }
+        _ => Vec::new(),
+    }
 }
 
 // R940 — the choice-dropdown overlay append pushed the paint fn past the
@@ -3724,10 +4060,13 @@ mod tests {
             let scene = boot_scene();
             let intro = grid_intro(&scene);
             assert_eq!(intro.query("row_count"), Some(IntrospectValue::Int(4)));
-            assert_eq!(intro.query("col_count"), Some(IntrospectValue::Int(5)));
+            assert_eq!(intro.query("col_count"), Some(IntrospectValue::Int(6)));
             assert_eq!(intro.query("col_name.0"), Some(IntrospectValue::Text("Asset".to_owned())));
+            assert_eq!(intro.query("col_name.5"), Some(IntrospectValue::Text("Tint".to_owned())));
             assert_eq!(intro.query("col_kind.2"), Some(IntrospectValue::Text("int".to_owned())));
             assert_eq!(intro.query("col_kind.4"), Some(IntrospectValue::Text("bool".to_owned())));
+            // R943 — the Tint column is a colour cell.
+            assert_eq!(intro.query("col_kind.5"), Some(IntrospectValue::Text("color".to_owned())));
             assert_eq!(intro.query("value.1.0"), Some(IntrospectValue::Text("Tree".to_owned())));
             assert_eq!(intro.query("value.1.2"), Some(IntrospectValue::Int(24)));
             assert_eq!(intro.query("value.2.4"), Some(IntrospectValue::Bool(false)));
@@ -3763,7 +4102,7 @@ mod tests {
             assert!(intro.intervene("focused_row", IntrospectValue::Int(99)).is_ok());
             assert!(intro.intervene("focused_col", IntrospectValue::Int(99)).is_ok());
             assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(3)));
-            assert_eq!(intro.query("focused_col"), Some(IntrospectValue::Int(4)));
+            assert_eq!(intro.query("focused_col"), Some(IntrospectValue::Int(5)));
         });
     }
 
@@ -5428,6 +5767,23 @@ mod tests {
         grid_invoke(scene, "open_choice", IntrospectValue::Null) == Ok(IntrospectValue::Bool(true))
     }
 
+    fn open_color_at(scene: &mut Scene, row: usize, col: usize) -> bool {
+        let _ = grid_set(scene, "focused_row", IntrospectValue::Int(int_of(row)));
+        let _ = grid_set(scene, "focused_col", IntrospectValue::Int(int_of(col)));
+        grid_invoke(scene, "open_color", IntrospectValue::Null) == Ok(IntrospectValue::Bool(true))
+    }
+
+    fn cell_hex(scene: &Scene, path: &str) -> String {
+        match grid_intro(scene).query(path) {
+            Some(IntrospectValue::Json(v)) => v
+                .get("hex")
+                .and_then(serde_json::Value::as_str)
+                .expect("colour cell has a hex field")
+                .to_owned(),
+            other => panic!("expected a colour cell at {path}, got {other:?}"),
+        }
+    }
+
     #[test]
     fn r940_seed_type_column_is_choice() {
         Owner::new().run(|| {
@@ -5438,10 +5794,11 @@ mod tests {
             assert_eq!(cell_choice(&scene, "value.1.1"), 1, "Tree = mesh (option 1)");
             assert_eq!(cell_choice(&scene, "value.2.1"), 0, "Coin = sprite");
             assert_eq!(cell_choice(&scene, "value.3.1"), 1, "Boss = mesh");
-            // The other columns keep their scalar kinds (no NCOLS ripple).
+            // The other columns keep their kinds; R943 appended the Tint colour
+            // column, so the grid is now NCOLS=6.
             assert_eq!(intro.query("col_kind.0"), Some(IntrospectValue::Text("text".to_owned())));
             assert_eq!(intro.query("col_kind.2"), Some(IntrospectValue::Text("int".to_owned())));
-            assert_eq!(intro.query("col_count"), Some(IntrospectValue::Int(5)));
+            assert_eq!(intro.query("col_count"), Some(IntrospectValue::Int(6)));
         });
     }
 
@@ -5708,6 +6065,158 @@ mod tests {
                 grid_intro(&scene).query("popup_open"),
                 Some(IntrospectValue::Bool(true)),
                 "re-showing the row re-opens the still-latched popup",
+            );
+        });
+    }
+
+    // ─── R943 colour swatch column ────────────────────────────────
+
+    #[test]
+    fn r943_seed_tint_column_is_colour() {
+        Owner::new().run(|| {
+            let scene = boot_scene();
+            assert_eq!(
+                grid_intro(&scene).query("col_kind.5"),
+                Some(IntrospectValue::Text("color".to_owned())),
+            );
+            // The seeded Tint cells are the preset swatches (4 / 3 / 5 / 2).
+            assert_eq!(cell_hex(&scene, "value.0.5"), COLOR_SWATCHES[4].0.to_hex(), "row 0 = Blue");
+            assert_eq!(cell_hex(&scene, "value.1.5"), COLOR_SWATCHES[3].0.to_hex(), "row 1 = Green");
+            assert_eq!(cell_hex(&scene, "value.3.5"), COLOR_SWATCHES[2].0.to_hex(), "row 3 = Red");
+        });
+    }
+
+    #[test]
+    fn r943_click_and_doubleclick_open_swatch_popup() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // A single click on a colour cell opens the swatch popup, seeding the
+            // cursor at the preset matching the cell's colour (row 0 = swatch 4).
+            grid_send(&mut scene, "0_5:PointerUp");
+            let intro = grid_intro(&scene);
+            assert_eq!(intro.query("popup_open"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(intro.query("editing_col"), Some(IntrospectValue::Int(5)));
+            assert_eq!(intro.query("popup_cursor"), Some(IntrospectValue::Int(4)), "cursor at current preset");
+            // A double-click on another colour cell re-opens there (row 1 = swatch 3).
+            grid_send(&mut scene, "1_5:DoubleClick");
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(3)));
+        });
+    }
+
+    #[test]
+    fn r943_open_color_rejects_non_colour_cell() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(!open_color_at(&mut scene, 0, 0), "text column has no swatch popup");
+            assert!(!open_color_at(&mut scene, 0, 1), "choice column has no swatch popup");
+            assert!(!open_color_at(&mut scene, 0, 4), "bool column has no swatch popup");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+        });
+    }
+
+    #[test]
+    fn r943_swatch_click_commits_dismiss_does_not() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            grid_send(&mut scene, "0_5:PointerUp"); // open (row 0 = Blue / swatch 4)
+            grid_send(&mut scene, "sw2:PointerUp"); // click Red (swatch 2)
+            assert_eq!(cell_hex(&scene, "value.0.5"), COLOR_SWATCHES[2].0.to_hex(), "swatch click commits Red");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+            // Re-open + dismiss-barrier click: closes, no commit.
+            grid_send(&mut scene, "0_5:PointerUp");
+            grid_send(&mut scene, "dismiss:PointerUp");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(cell_hex(&scene, "value.0.5"), COLOR_SWATCHES[2].0.to_hex(), "dismiss kept Red");
+        });
+    }
+
+    #[test]
+    fn r943_keyboard_2d_roves_then_commits_one_step() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_color_at(&mut scene, 0, 5)); // current Blue = swatch 4
+            assert!(grid_key(&mut scene, "Home"));
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(0)));
+            // 2-D nav: ArrowDown jumps a palette row (SWATCH_COLS = 4).
+            assert!(grid_key(&mut scene, "ArrowDown"));
+            assert_eq!(grid_intro(&scene).query("popup_cursor"), Some(IntrospectValue::Int(4)), "down jumps a row");
+            assert!(grid_key(&mut scene, "ArrowRight")); // 4 -> 5 (Yellow)
+            assert!(grid_key(&mut scene, "Enter")); // commit + close
+            assert_eq!(cell_hex(&scene, "value.0.5"), COLOR_SWATCHES[5].0.to_hex(), "committed Yellow");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+            // The swatch pick journals exactly like every other cell edit (one step).
+            assert!(undo_invoke(&mut scene, "undo"));
+            assert_eq!(cell_hex(&scene, "value.0.5"), COLOR_SWATCHES[4].0.to_hex(), "undo reverts to Blue");
+        });
+    }
+
+    #[test]
+    fn r943_pick_color_rpc_and_arbitrary_hex_intervene() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_color_at(&mut scene, 2, 5));
+            // The AI-first preset path: pick_color commits swatch i + closes.
+            assert_eq!(
+                grid_invoke(&mut scene, "pick_color", IntrospectValue::Int(6)),
+                Ok(IntrospectValue::Bool(true)),
+            );
+            assert_eq!(cell_hex(&scene, "value.2.5"), COLOR_SWATCHES[6].0.to_hex(), "pick_color committed Cyan");
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(false)));
+            // An out-of-range pick_color commits nothing and closes any popup.
+            assert!(open_color_at(&mut scene, 2, 5));
+            assert_eq!(
+                grid_invoke(&mut scene, "pick_color", IntrospectValue::Int(99)),
+                Ok(IntrospectValue::Bool(false)),
+            );
+            assert_eq!(cell_hex(&scene, "value.2.5"), COLOR_SWATCHES[6].0.to_hex(), "unchanged on bad index");
+            // The arbitrary (off-palette) colour path: intervene value with a hex.
+            assert_eq!(
+                grid_set(&mut scene, "value.2.5", IntrospectValue::Text("#123456".to_owned())),
+                Ok(()),
+            );
+            assert_eq!(cell_hex(&scene, "value.2.5"), "#123456", "off-palette hex set via intervene");
+        });
+    }
+
+    #[test]
+    fn r943_open_popup_a11y_is_a_listbox_of_swatches() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_color_at(&mut scene, 0, 5)); // Blue = swatch 4
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            let listbox = nodes.iter().find(|n| n.tag == COLOR_POPUP_TAG).expect("swatch listbox node");
+            assert_eq!(listbox.role, AriaRole::Listbox);
+            let sw_count =
+                nodes.iter().filter(|n| n.tag.starts_with(&format!("{GRID_TAG}#{COLOR_SW_PREFIX}"))).count();
+            assert_eq!(sw_count, COLOR_SWATCHES.len(), "one option per preset swatch");
+            let cursor = nodes
+                .iter()
+                .find(|n| n.tag == format!("{GRID_TAG}#{COLOR_SW_PREFIX}4"))
+                .expect("swatch 4");
+            assert!(cursor.state.focused, "the cursor swatch is the active descendant");
+            // Exactly one active descendant — the grid CELL focus is suppressed.
+            let cell = nodes.iter().find(|n| n.tag == cell_tag(0, 5)).expect("the Tint cell");
+            assert!(!cell.state.focused, "no double active-descendant while the popup is open");
+        });
+    }
+
+    #[test]
+    fn r943_closed_cell_paints_and_open_paints_the_swatch_popup() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // R897 — seed the measured viewport so the virtualized body builds
+            // the seeded rows (the read-only grid tests' convention).
+            use_scroll_state(V_SCROLL_KEY).set_measured_viewport(GRID_VIEWPORT_W, GRID_VIEWPORT_H);
+            let painted = view((TextFieldState::Idle, 0), &Frame::new());
+            assert!(painted.contains_tag(&cell_tag(0, 5)), "the closed Tint cell paints");
+            assert!(!painted.contains_tag(COLOR_POPUP_TAG), "no swatch popup at rest");
+            // Opening the popup paints the palette + the cursor swatch chip.
+            assert!(open_color_at(&mut scene, 0, 5));
+            let open = view((TextFieldState::Idle, 0), &Frame::new());
+            assert!(open.contains_tag(COLOR_POPUP_TAG), "the swatch palette paints when open");
+            assert!(
+                open.contains_tag(&format!("{GRID_TAG}#{COLOR_SW_PREFIX}4")),
+                "the swatch chips paint (one per preset)",
             );
         });
     }

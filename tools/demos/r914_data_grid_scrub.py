@@ -128,7 +128,7 @@ def body() -> None:
         gw = grid_width(tf)
         assert abs(gw - REF_W) <= 4, f"grid paints at ~{REF_W}px (the scrub basis), got {gw}"
         assert_eq(gq(tf, "row_count"), 4, "4 rows")
-        assert_eq(gq(tf, "col_count"), 5, "5 columns")
+        assert_eq(gq(tf, "col_count"), 6, "6 columns")
         assert_eq(gq(tf, "col_kind.2"), "int", "Count (col 2) is an int")
         assert_eq(gq(tf, "col_kind.3"), "float", "Scale (col 3) is a float")
         assert_eq(gq(tf, "col_kind.4"), "bool", "Active (col 4) is a bool")

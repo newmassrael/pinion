@@ -135,19 +135,22 @@ def body() -> None:
         assert_eq(tf.query("/external/group_count"), 0, "ungrouped reports 0 groups")
 
         # ── (F) edit-while-grouped: a group-key commit regroups live ─
+        # R940 made Type a Choice column (popup-edited, not inline text), so the
+        # group-key edit picks "sprite" from Tree's dropdown (`begin` on a choice
+        # cell opens the popup). The payoff is unchanged: committing the group-key
+        # cell regroups the row on the next paint.
         _focus_grid(tf)
         tf.invoke("/external/set_group", "1")
-        # Focus Tree (row 1, Type=mesh) and edit its Type to "sprite".
+        # Focus Tree (row 1, Type=mesh) and pick "sprite" (option 0) from its dropdown.
         tf.request("scene/intervene", {"path": "/external/focused_row", "value": 1})
         tf.request("scene/intervene", {"path": "/external/focused_col", "value": 1})
-        tf.invoke("/external/begin", None)
-        wait_query(tf, "/external/editing_row", 1, desc="editing Tree's Type cell")
-        for _ in range(4):  # clear the seeded "mesh"
-            tf.key(path="data_grid_edit", name="Backspace")
-        for ch in "sprite":
-            tf.key(path="data_grid_edit", name=ch)
-        tf.key(path="data_grid_edit", name="Enter")
-        wait_query(tf, "/external/value.1.1", "sprite", desc="commit writes the source cell")
+        tf.invoke("/external/begin", None)  # Type is a choice column -> opens the dropdown
+        wait_query(tf, "/external/editing_row", 1, desc="editing Tree's Type cell (dropdown open)")
+        tf.invoke("/external/choose", 0)  # pick option 0 = sprite
+        wait_query(tf, "/external/value.1.1",
+                   {"selected": 0, "label": "sprite",
+                    "options": ["sprite", "mesh", "material", "audio", "script"]},
+                   desc="the dropdown pick writes the source cell")
         # Tree now joins the sprite group (which leads): [H(sprite), 0, 1, 2,
         # H(mesh), 3]. Group count stays 2; Tree sits among the sprites.
         assert_eq(tf.query("/external/group_count"), 2, "still two Type values")
