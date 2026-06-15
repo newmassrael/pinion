@@ -41137,6 +41137,74 @@
         "hello-tree-reparent is a standalone capability demo; the editor's real outliner (columns + select + undo + reparent) is a later convergence of hello-tree-grid + this"
       ]
     },
+    "R936": {
+      "decision_summary": "property-grid array-element + array-branch modified/reset: the inspector revert-to-default axis extended to the array sub-model (the R931.1 carry)",
+      "changes_bullets": [
+        "element_modified was byte-identical to leaf_modified (self-grep) -> deleted, unified",
+        "leaf_modified made model-agnostic: serves scalar leaves (flat) + element leaves (array)",
+        "array_is_modified roll-up (length or any element differs), the array peer of struct_is_modified",
+        "use_array_defaults frozen baseline + array_defaults field, the element peer of property defaults",
+        "reset_element (per in-range element) + reset_array (wholesale, R930.1 reanchor + latch-cancel)",
+        "any_modified + reset_all now account for the array, so a dirty list never hides as clean",
+        "per-element + array-branch reset arrows at a 2nd trailing slot (RESET_DOT_X2) + a11y buttons",
+        "view_row trailing Option -> Vec so an element row carries both remove button and reset arrow",
+        "RPC: modified.<addr> (elem-aware), array_modified.<id>, reset (Text node-id), reset_array",
+        "reset routing unified through row_ref decode (scalar / element / struct / array, one match)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 WSTEST_EXIT=0 (165 ok-blocks, 0 FAILED, 0 panics)",
+        "cargo clippy --workspace --all-targets vello (-D pedantic) EXIT=0, 0 warnings",
+        "hello-property-grid 72 tests ok (65 pre-existing + 7 new R936)",
+        "demo r936_property_grid_element_reset.py PASS, 37 assertions, ZERO-FLAKE gates",
+        "self-grep: byte-identical leaf_modified/element_modified unified; reset peers kept"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "keyboard element reset absent by design: Delete on an element cursor REMOVES it (R931), not reset;",
+        "element/array reset is via reset-arrow click + RPC (reset / reset_array) — an honest divergence",
+        "an added element (past default length, no class counterpart) is array-modified (length term) but",
+        "not per-element resettable; the array-level reset truncates it back instead",
+        "R936 PIVOTED from SEED candidate (a) data-grid row drag-to-reorder per the diversify mandate",
+        "(a) confirmed a genuine gap: ReorderModel substrate ready as 3rd consumer — a future round",
+        "R937 should diversify away from the property-grid / inspector axis"
+      ],
+      "publishable_decision_summary": "property-grid array-element + array-branch modified/reset: the inspector revert-to-default axis extended to the array sub-model (the R931.1 carry)",
+      "publishable_changes_bullets": [
+        "element_modified was byte-identical to leaf_modified (self-grep) -> deleted, unified",
+        "leaf_modified made model-agnostic: serves scalar leaves (flat) + element leaves (array)",
+        "array_is_modified roll-up (length or any element differs), the array peer of struct_is_modified",
+        "use_array_defaults frozen baseline + array_defaults field, the element peer of property defaults",
+        "reset_element (per in-range element) + reset_array (wholesale, R930.1 reanchor + latch-cancel)",
+        "any_modified + reset_all now account for the array, so a dirty list never hides as clean",
+        "per-element + array-branch reset arrows at a 2nd trailing slot (RESET_DOT_X2) + a11y buttons",
+        "view_row trailing Option -> Vec so an element row carries both remove button and reset arrow",
+        "RPC: modified.<addr> (elem-aware), array_modified.<id>, reset (Text node-id), reset_array",
+        "reset routing unified through row_ref decode (scalar / element / struct / array, one match)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 WSTEST_EXIT=0 (165 ok-blocks, 0 FAILED, 0 panics)",
+        "cargo clippy --workspace --all-targets vello (-D pedantic) EXIT=0, 0 warnings",
+        "hello-property-grid 72 tests ok (65 pre-existing + 7 new R936)",
+        "demo r936_property_grid_element_reset.py PASS, 37 assertions, ZERO-FLAKE gates",
+        "self-grep: byte-identical leaf_modified/element_modified unified; reset peers kept"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "keyboard element reset absent by design: Delete on an element cursor REMOVES it (R931), not reset;",
+        "element/array reset is via reset-arrow click + RPC (reset / reset_array) — an honest divergence",
+        "an added element (past default length, no class counterpart) is array-modified (length term) but",
+        "not per-element resettable; the array-level reset truncates it back instead",
+        "R936 PIVOTED from SEED candidate (a) data-grid row drag-to-reorder per the diversify mandate",
+        "(a) confirmed a genuine gap: ReorderModel substrate ready as 3rd consumer — a future round",
+        "R937 should diversify away from the property-grid / inspector axis"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

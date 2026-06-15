@@ -167,6 +167,12 @@ const ROW_H: u32 = 38;
 /// edge (mark size + a small margin), for a modified row's reset affordance.
 const RESET_DOT: u32 = 10;
 const RESET_DOT_X: u32 = 16;
+/// R936 — the **secondary** trailing-slot inset, one mark + gap to the LEFT of
+/// [`RESET_DOT_X`]. A row with two trailing affordances (an array element's
+/// remove button / the array branch's add button at the trailing edge **plus**
+/// a modified reset arrow) parks the reset arrow here so the two never overlap;
+/// scalar / struct rows have only the reset arrow, so it stays at the edge.
+const RESET_DOT_X2: u32 = RESET_DOT_X + RESET_DOT + 4;
 const CELL_PAD: u32 = 10;
 const CHECKBOX_SIZE: u32 = 20;
 const PANEL_PAD: u32 = 20;
@@ -591,17 +597,35 @@ fn struct_is_modified(model: &[CellValue], defaults: &[CellValue], tree: &[Prope
     struct_field_indices(tree, id).iter().any(|&i| leaf_modified(model, defaults, i))
 }
 
-/// R921.1 — whether the leaf at `value_index` differs from its class default.
-/// The ONE leaf modified-gate the paint (reset arrow), the a11y (reset
-/// `button`), the External (`is_modified` / `struct_is_modified`) and the RPC
-/// (`modified.<i>`) share — the R886.1 one-gate, the leaf peer of
-/// [`struct_is_modified`] (lifted at R921.1 so the arrow and the AT button can
-/// never disagree). Out-of-range / absent reads as not-modified.
-fn leaf_modified(model: &[CellValue], defaults: &[CellValue], value_index: usize) -> bool {
-    match (model.get(value_index), defaults.get(value_index)) {
+/// R921.1 / R936 — whether the leaf at slot `i` of `values` differs from its
+/// class default at the same slot in `defaults`. Model-agnostic — `values` /
+/// `defaults` are the flat scalar model + its baseline for a **scalar** leaf, or
+/// the array sub-model + [`use_array_defaults`] baseline for an **array element**
+/// leaf (R936) — both are tree leaves comparing a value to a same-index baseline,
+/// so the one gate serves both (no byte-identical element copy). The ONE leaf
+/// modified-gate the paint (reset arrow), the a11y (reset `button`), the External
+/// (`is_modified` / `struct_is_modified` / element modified) and the RPC
+/// (`modified.<addr>`) share — the R886.1 one-gate, the leaf peer of
+/// [`struct_is_modified`]. Out-of-range / absent (an added element past the
+/// default length, with no class counterpart) reads as not-modified.
+fn leaf_modified(values: &[CellValue], defaults: &[CellValue], i: usize) -> bool {
+    match (values.get(i), defaults.get(i)) {
         (Some(value), Some(baseline)) => property_modified(value, baseline),
         _ => false,
     }
+}
+
+/// R936 — whether the array branch differs from its class default: its length
+/// changed (elements added / removed), or any in-range element differs. The
+/// array peer of [`struct_is_modified`] — the ONE roll-up the paint (array
+/// branch reset arrow), the a11y (array reset `button`) and the RPC
+/// (`array_modified.<id>`) share, so the arrow, the AT button and the query can
+/// never disagree. An added element (past the default length) is caught by the
+/// length term, not the per-element [`leaf_modified`] (which has no baseline for
+/// it).
+fn array_is_modified(elements: &[CellValue], defaults: &[CellValue]) -> bool {
+    elements.len() != defaults.len()
+        || (0..elements.len()).any(|k| leaf_modified(elements, defaults, k))
 }
 
 /// R921 — the number of leaf (editable property) descendants of a branch — the
@@ -741,6 +765,19 @@ fn use_property_defaults() -> Rc<Vec<CellValue>> {
 fn use_array_model() -> Rc<Signal<Vec<CellValue>>> {
     let owner = Owner::current().expect("use_array_model requires an active Owner scope");
     owner.cache("property_grid.array", || Signal::new(default_array()))
+}
+
+/// R936 — the frozen array baseline: the class-default elements
+/// ([`default_array`] at boot), the array peer of [`use_property_defaults`]. An
+/// element is "modified" when it differs from the element at its position here,
+/// and a reset restores it; the array branch is modified when its length or any
+/// element differs. One immutable home (an `Rc<Vec<…>>`, never a `Signal` —
+/// defaults do not change) the External, the view and the a11y all read, so the
+/// per-element / array modified indicator and the reset target cannot disagree.
+#[must_use]
+fn use_array_defaults() -> Rc<Vec<CellValue>> {
+    let owner = Owner::current().expect("use_array_defaults requires an active Owner scope");
+    owner.cache("property_grid.array_defaults", default_array)
 }
 
 /// R919 / R920 — whether `value` differs from its class default `baseline`. Uses
@@ -929,6 +966,11 @@ struct PropertyGridExternal {
     /// is modified when `model[i]` differs from `defaults[i]`; `reset` writes the
     /// baseline back through the [`set_value`](Self::set_value) funnel.
     defaults: Rc<Vec<CellValue>>,
+    /// R936 — the frozen array baseline ([`use_array_defaults`]), the element peer
+    /// of `defaults`. An element is modified when it differs from the element here;
+    /// `reset_element` / `reset_array` write it back. Held so the modified
+    /// roll-up / reset funnels are sound on the RPC thread (no Owner scope).
+    array_defaults: Rc<Vec<CellValue>>,
     /// R921 — the property tree SSOT (structure + per-branch collapse). Held so
     /// a click on a branch row can toggle its expand state, and so the struct
     /// aggregate (summary / modified / reset) can read a struct's field indices.
@@ -974,6 +1016,9 @@ impl PropertyGridExternal {
             // cached array sub-model the view reads (Owner::cache dedup).
             array: use_array_model(),
             defaults: use_property_defaults(),
+            // R936 — resolved via its hook (like `defaults` / `array`), the same
+            // cached frozen baseline the view + a11y read (Owner::cache dedup).
+            array_defaults: use_array_defaults(),
             tree,
             cursor,
             // Resolved via its hook (like `defaults`) — the same cached
@@ -1019,7 +1064,70 @@ impl PropertyGridExternal {
     /// R919 — whether any property is modified (the "Reset all" enable gate / the
     /// AI-first "is this object dirty?" read).
     fn any_modified(&self) -> bool {
-        (0..self.count()).any(|i| self.is_modified(i))
+        // R936 — the object is dirty if any scalar OR the array branch is
+        // modified; ignoring the array here would let `any_modified` falsely
+        // report a clean object while the element list differs from default.
+        (0..self.count()).any(|i| self.is_modified(i)) || self.array_modified()
+    }
+
+    /// R936 — whether the array element at `k` differs from its class default
+    /// (the per-element reset-arrow gate). The element peer of
+    /// [`is_modified`](Self::is_modified); both delegate to the [`leaf_modified`]
+    /// one-gate (a scalar leaf reads the flat model + `defaults`, an element leaf
+    /// the array sub-model + `array_defaults`) the paint + a11y + RPC also use.
+    fn element_is_modified(&self, k: usize) -> bool {
+        leaf_modified(&self.array.get(), &self.array_defaults, k)
+    }
+
+    /// R936 — whether the array branch differs from its class default (length or
+    /// any element). The array peer of [`struct_modified`](Self::struct_modified);
+    /// delegates to the [`array_is_modified`] one-gate.
+    fn array_modified(&self) -> bool {
+        array_is_modified(&self.array.get(), &self.array_defaults)
+    }
+
+    /// R936 — reset the array element at `k` to its class default, returning
+    /// whether it changed. The element peer of
+    /// [`reset_to_default`](Self::reset_to_default): a no-op `false` when the
+    /// element is already default or has no class counterpart (an added element
+    /// past the default length — [`reset_array`](Self::reset_array) truncates
+    /// those). Routes through the shared [`set_value_at`](Self::set_value_at)
+    /// `Elem` funnel, so a reset is the same write a scrub / inline-edit commit
+    /// makes — a value write, no length change, so no cursor re-anchor is needed
+    /// (exactly like the scalar `reset_to_default`).
+    fn reset_element(&self, k: usize) -> bool {
+        if !self.element_is_modified(k) {
+            return false;
+        }
+        let Some(baseline) = self.array_defaults.get(k).cloned() else {
+            return false;
+        };
+        self.set_value_at(ValueRef::Elem(k), baseline);
+        true
+    }
+
+    /// R936 — reset the whole array branch to its class default (length +
+    /// content), returning whether it changed. The array peer of
+    /// [`reset_struct`](Self::reset_struct), but a wholesale restore rather than
+    /// N field writes, because the length itself can differ. Follows the R930.1
+    /// destructive-mutation discipline a length change demands: cancel an
+    /// in-flight element edit (the array content is wholesale-replaced, so an
+    /// `Elem` latch would commit a stale slot), regenerate the element leaves,
+    /// and re-anchor the roving cursor through the same
+    /// [`reanchor_array_cursor`](Self::reanchor_array_cursor) every element
+    /// mutator uses (so a cursor on an element the restore truncated never
+    /// strands on a vanished `elem.<k>`).
+    fn reset_array(&self) -> bool {
+        if !self.array_modified() {
+            return false;
+        }
+        if matches!(self.editing_row.get(), Some(ValueRef::Elem(_))) {
+            self.cancel_active_edit();
+        }
+        self.array.set(self.array_defaults.as_ref().clone());
+        self.sync_array_children();
+        self.reanchor_array_cursor(self.array_len());
+        true
     }
 
     /// R919 — reset the property at `source` to its class default, returning
@@ -1035,10 +1143,14 @@ impl PropertyGridExternal {
         true
     }
 
-    /// R919 — reset every modified property to its default, returning the count
-    /// reset (`0` when nothing was modified).
+    /// R919 / R936 — reset every modified property to its default, returning the
+    /// count reset (`0` when nothing was modified). The array branch counts as
+    /// one reset unit (a wholesale [`reset_array`](Self::reset_array) restore),
+    /// so "Reset all" returns the whole object to default — scalars AND the
+    /// element list — never leaving the array dirty behind a "clean" readout.
     fn reset_all(&self) -> usize {
-        (0..self.count()).filter(|&i| self.reset_to_default(i)).count()
+        let scalars = (0..self.count()).filter(|&i| self.reset_to_default(i)).count();
+        scalars + usize::from(self.reset_array())
     }
 
     /// R921 — move the roving cursor onto the tree node `id` (a leaf value index
@@ -1505,15 +1617,24 @@ impl PropertyGridExternal {
             }
             return Ok(IntrospectValue::Null);
         }
-        // R919 / R921 — a click on a row's reset arrow resets that property to
-        // its default (the same `reset_*` funnel the RPC / keyboard use). The
-        // suffix is a leaf value index (`reset6`) or a struct branch id
-        // (`resetstruct.Position`, resetting every field).
+        // R919 / R921 / R936 — a click on a row's reset arrow resets that target
+        // to its default (the same `reset_*` funnel the RPC / keyboard use). The
+        // suffix is a leaf value address (a scalar `reset6` or an element
+        // `resetelem.2`) or a branch id (a struct `resetstruct.Position` reseting
+        // every field, or the array `resetarr.weights` reseting the whole list).
+        // The same `row_ref` vocabulary the click router uses elsewhere, so the
+        // four reset targets route through one decode.
         if let Some(rest) = key.strip_prefix(RESET_PREFIX) {
             if event_name == "PointerUp" {
-                match row_value_index(rest) {
-                    Some(i) => {
+                match row_ref(rest) {
+                    Some(ValueRef::Scalar(i)) => {
                         self.reset_to_default(i);
+                    }
+                    Some(ValueRef::Elem(k)) => {
+                        self.reset_element(k);
+                    }
+                    None if rest.starts_with(ARR_PREFIX) => {
+                        self.reset_array();
                     }
                     None => {
                         self.reset_struct(rest);
@@ -1686,8 +1807,10 @@ impl ExternalIntrospect for PropertyGridExternal {
             ("name.<index>", "string"),
             ("kind.<index>", "string"),
             ("value.<index>", "json"),
-            // R919 — the modified-from-default reads + the reset writes.
-            ("modified.<index>", "bool"),
+            // R919 / R936 — the modified-from-default reads + the reset writes.
+            // `modified.<addr>` takes a scalar index ("6") OR an element address
+            // ("elem.2"), the unified `ValueRef` vocabulary; `reset` likewise.
+            ("modified.<addr>", "bool"),
             ("any_modified", "bool"),
             ("reset", "int"),
             ("reset_all", "json"),
@@ -1699,6 +1822,11 @@ impl ExternalIntrospect for PropertyGridExternal {
             ("add_elem", "int"),
             ("remove_elem", "int"),
             ("move_elem", "string"),
+            // R936 — the array branch's modified roll-up (length or any element
+            // differs) + its wholesale reset, the array peer of
+            // `struct_modified.<id>` / `reset_struct`.
+            ("array_modified.<branch_id>", "bool"),
+            ("reset_array", "bool"),
             // R921 — per-branch collapse (read + intervene + toggle) and the
             // struct aggregate (summary tuple + modified roll-up + reset-all).
             ("expanded.<branch_id>", "bool"),
@@ -1757,15 +1885,18 @@ impl ExternalIntrospect for PropertyGridExternal {
                 i64::try_from(self.array_len()).expect("element count fits in i64"),
             )),
             _ => {
-                // R919 — is property `<index>` modified from its class default?
-                // (out-of-range -> `None`, like the other `<index>` reads).
-                // Scalar-only: an array element has no per-element class default.
-                if let Some(idx_str) = path.strip_prefix("modified.") {
-                    let idx: usize = idx_str.parse().ok()?;
-                    if idx >= self.count() {
-                        return None;
-                    }
-                    return Some(IntrospectValue::Bool(self.is_modified(idx)));
+                // R919 / R936 — is the leaf at `<addr>` modified from its class
+                // default? A scalar index ("modified.6") reads the flat baseline;
+                // an element address ("modified.elem.2") reads the array baseline.
+                // Out-of-range -> `None`, like the other `<addr>` reads.
+                if let Some(addr) = path.strip_prefix("modified.") {
+                    return match row_ref(addr)? {
+                        ValueRef::Scalar(i) => {
+                            (i < self.count()).then(|| IntrospectValue::Bool(self.is_modified(i)))
+                        }
+                        ValueRef::Elem(k) => (k < self.array_len())
+                            .then(|| IntrospectValue::Bool(self.element_is_modified(k))),
+                    };
                 }
                 // R931 — `name.<addr>` / `kind.<addr>` / `value.<addr>` address
                 // either a scalar leaf (a bare decimal) or an array element
@@ -1812,6 +1943,13 @@ impl ExternalIntrospect for PropertyGridExternal {
                         return Some(IntrospectValue::Null);
                     }
                     return Some(IntrospectValue::Bool(self.struct_modified(id)));
+                }
+                // R936 — whether the array branch is modified (length or any
+                // element), keyed by its branch id; the array peer of
+                // `struct_modified.<id>`. Null for any id but the array branch.
+                if let Some(id) = path.strip_prefix("array_modified.") {
+                    return (id == ARR_BRANCH_ID)
+                        .then(|| IntrospectValue::Bool(self.array_modified()));
                 }
                 None
             }
@@ -1891,21 +2029,32 @@ impl ExternalIntrospect for PropertyGridExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
-            // R919 — reset the property at a given source row to its class
+            // R919 / R936 — reset the leaf at a given address to its class
             // default (the RPC twin of clicking its reset arrow). `false` when the
-            // row is already default / out of range. The keyboard + click paths
-            // route here too, so a reset is one funnel.
+            // target is already default / out of range. An `Int` names a scalar
+            // source row; a `Text` node-id resets a scalar ("6") OR an array
+            // element ("elem.2"), the unified `ValueRef` address the click /
+            // keyboard reset also route through (one funnel, two addressings).
             "reset" => match args {
                 IntrospectValue::Int(i) => {
                     let row = usize::try_from(i).map_err(|_| InvokeError::Rejected)?;
                     Ok(IntrospectValue::Bool(self.reset_to_default(row)))
                 }
+                IntrospectValue::Text(ref id) => match row_ref(id) {
+                    Some(ValueRef::Scalar(i)) => Ok(IntrospectValue::Bool(self.reset_to_default(i))),
+                    Some(ValueRef::Elem(k)) => Ok(IntrospectValue::Bool(self.reset_element(k))),
+                    None => Err(InvokeError::Rejected),
+                },
                 _ => Err(InvokeError::TypeMismatch),
             },
             // R919 — reset every modified property; returns the count reset.
             "reset_all" => Ok(IntrospectValue::Int(
                 i64::try_from(self.reset_all()).expect("reset count fits in i64"),
             )),
+            // R936 — reset the whole array branch to its class default (length +
+            // content); returns whether it changed (the RPC twin of the array
+            // branch's reset arrow, the array peer of `reset_struct`).
+            "reset_array" => Ok(IntrospectValue::Bool(self.reset_array())),
             // R931 — append a new array element; returns its index (the RPC twin
             // of clicking the array branch's "+" button).
             "add_elem" => Ok(IntrospectValue::Int(
@@ -2390,7 +2539,7 @@ fn view_row(
     value: &CellValue,
     is_focused: bool,
     edit_active: bool,
-    trailing: Option<Scene>,
+    trailing: Vec<Scene>,
     theme: &Theme,
     edit_field: (TextFieldState, u32),
 ) -> Scene {
@@ -2453,16 +2602,15 @@ fn view_row(
         ),
     );
 
-    // R919 / R931 — an optional trailing affordance at the row's trailing edge:
+    // R919 / R931 / R936 — the row's trailing affordances at its trailing edge:
     // a scalar's reset arrow (`{GRID_TAG}#reset<index>`, whose presence IS the
-    // modified indicator) or an array element's remove button. Absolutely
-    // positioned, so it overlays the row's trailing padding without shifting the
-    // Property / Value column layout, and last in paint order so its click wins
-    // over the row beneath it.
+    // modified indicator), or an array element's remove button PLUS — when the
+    // element is modified — its reset arrow one slot to the left. Each is
+    // absolutely positioned (at its own [`RESET_DOT_X`] / [`RESET_DOT_X2`] inset),
+    // so they overlay the trailing padding without shifting the Property / Value
+    // column layout, and come last in paint order so a click wins over the row.
     let mut children = vec![name_cell, value_cell];
-    if let Some(affordance) = trailing {
-        children.push(affordance);
-    }
+    children.extend(trailing);
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!("{GRID_TAG}#{}", row.id))
@@ -2476,13 +2624,17 @@ fn view_row(
     )
 }
 
-/// R919 / R921 — the reset arrow for a modified row, a small accent mark at the
-/// row's trailing edge tagged `{GRID_TAG}#reset<suffix>` so a click routes to
-/// the coordinator's reset funnel (`suffix` = a leaf value index "6" or a struct
-/// branch id `struct.Position`). Painted only for a modified row, so its
-/// presence doubles as the modified indicator; its a11y `button` peer is gated
-/// on the same predicate (R886.1 one-gate).
-fn reset_arrow(suffix: &str, theme: &Theme) -> Scene {
+/// R919 / R921 / R936 — the reset arrow for a modified row, a small accent mark
+/// tagged `{GRID_TAG}#reset<suffix>` so a click routes to the coordinator's reset
+/// funnel (`suffix` = a scalar value index "6", a struct branch id
+/// `struct.Position`, an element address `elem.2`, or the array branch id
+/// `arr.weights`). `x_inset` is the inset from the row's trailing edge:
+/// [`RESET_DOT_X`] (the edge) for a scalar / struct row whose only trailing mark
+/// is the arrow, or [`RESET_DOT_X2`] (one slot left) for an element / array-branch
+/// row whose remove / add button already owns the edge. Painted only for a
+/// modified row, so its presence doubles as the modified indicator; its a11y
+/// `button` peer is gated on the same predicate (R886.1 one-gate).
+fn reset_arrow(suffix: &str, x_inset: u32, theme: &Theme) -> Scene {
     Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(format!("{GRID_TAG}#{RESET_PREFIX}{suffix}"))
@@ -2490,7 +2642,7 @@ fn reset_arrow(suffix: &str, theme: &Theme) -> Scene {
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(
-                        (NAME_COL_W + VALUE_COL_W).saturating_sub(RESET_DOT_X),
+                        (NAME_COL_W + VALUE_COL_W).saturating_sub(x_inset),
                         ROW_H.saturating_sub(RESET_DOT) / 2,
                     )
                     .with_size(Size::px(RESET_DOT, RESET_DOT)),
@@ -2551,11 +2703,20 @@ fn add_button(theme: &Theme) -> Scene {
     )
 }
 
-/// R931 — the **array** branch header row: `[ ⟨disclosure⟩ Spawn Weights |
-/// N elements (+) ]`, tagged `{GRID_TAG}#arr.weights` so a click toggles its
-/// collapse, with the element-count summary in the value column and a trailing
-/// "add element" button. The dynamic-collection peer of [`struct_header_row`].
-fn array_header_row(row: &VisibleRow, count: usize, is_focused: bool, theme: &Theme) -> Scene {
+/// R931 / R936 — the **array** branch header row: `[ ⟨disclosure⟩ Spawn Weights |
+/// N elements  ⟨reset?⟩ (+) ]`, tagged `{GRID_TAG}#arr.weights` so a click toggles
+/// its collapse, with the element-count summary in the value column, a trailing
+/// "add element" button, and — when `modified` (length or any element differs) —
+/// a reset arrow one slot to the left of the add button. The dynamic-collection
+/// peer of [`struct_header_row`], now with the same modified roll-up + reset
+/// affordance as the struct row.
+fn array_header_row(
+    row: &VisibleRow,
+    count: usize,
+    modified: bool,
+    is_focused: bool,
+    theme: &Theme,
+) -> Scene {
     let label = row.label.as_str();
     let glyph = if row.expanded { DISCLOSURE_EXPANDED } else { DISCLOSURE_COLLAPSED };
     let mut name_children: Vec<Scene> = Vec::new();
@@ -2593,8 +2754,12 @@ fn array_header_row(row: &VisibleRow, count: usize, is_focused: bool, theme: &Th
                 .with_size(Size::px(VALUE_COL_W, ROW_H)),
         ),
     );
+    let mut children = vec![name_cell, value_cell, add_button(theme)];
+    if modified {
+        children.push(reset_arrow(&row.id, RESET_DOT_X2, theme));
+    }
     Scene::Container(
-        ContainerNode::new(vec![name_cell, value_cell, add_button(theme)])
+        ContainerNode::new(children)
             .with_tag(format!("{GRID_TAG}#{}", row.id))
             .with_style(BoxStyle::filled(row_fill(theme, is_focused)))
             .with_layout(
@@ -2652,7 +2817,7 @@ fn struct_header_row(row: &VisibleRow, summary: &str, modified: bool, is_focused
     );
     let mut children = vec![name_cell, value_cell];
     if modified {
-        children.push(reset_arrow(struct_id, theme));
+        children.push(reset_arrow(struct_id, RESET_DOT_X, theme));
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -3067,6 +3232,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     let tree_nodes = use_property_tree().get();
     // R931 — the array sub-model snapshot, for the element rows.
     let array = use_array_model().get();
+    // R936 — the frozen array baseline, to paint a reset arrow on a modified
+    // element / array branch (the element peer of `defaults`).
+    let array_defaults = use_array_defaults();
     let visible = visible_property_rows(&tree_nodes, &current_search_query());
     let cursor_id = use_property_cursor().get();
     let editing = use_editing_row().get();
@@ -3081,17 +3249,24 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             // A scalar leaf (editable) row — trailing reset arrow iff modified.
             let value = &model[vi];
             let edit_active = editing == Some(ValueRef::Scalar(vi)) && value.kind().is_text_editable();
-            let trailing = leaf_modified(&model, &defaults, vi).then(|| reset_arrow(&vr.id, &theme));
+            let trailing = leaf_modified(&model, &defaults, vi)
+                .then(|| reset_arrow(&vr.id, RESET_DOT_X, &theme))
+                .into_iter()
+                .collect();
             rows.push(view_row(vr, value, is_focused, edit_active, trailing, &theme, (edit_state, edit_caret)));
         } else if let Some(ValueRef::Elem(k)) = row_ref(&vr.id) {
-            // R931 — an array element leaf: render the element value (from the
-            // array sub-model) through the *same* `view_row` as a scalar `Float`,
-            // with a trailing remove button. No modified arrow (an element has no
-            // per-element class default — the array's modified axis is its length
-            // / content, an honest deferred follow-up).
+            // R931 / R936 — an array element leaf: render the element value (from
+            // the array sub-model) through the *same* `view_row` as a scalar
+            // `Float`, with a trailing remove button and — when the element
+            // differs from its class default — a reset arrow one slot to its left
+            // (the element peer of a scalar leaf's reset arrow, R936 clearing the
+            // R931 "no per-element modified arrow" deferral).
             let value = array.get(k).cloned().unwrap_or(CellValue::Float(0.0));
             let edit_active = editing == Some(ValueRef::Elem(k)) && value.kind().is_text_editable();
-            let trailing = Some(remove_button(k, &theme));
+            let mut trailing = vec![remove_button(k, &theme)];
+            if leaf_modified(&array, &array_defaults, k) {
+                trailing.push(reset_arrow(&vr.id, RESET_DOT_X2, &theme));
+            }
             rows.push(view_row(vr, &value, is_focused, edit_active, trailing, &theme, (edit_state, edit_caret)));
         } else if vr.id.starts_with(STRUCT_PREFIX) {
             // A struct branch row: disclosure + name + the collapsed-value tuple.
@@ -3099,9 +3274,12 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             let modified = struct_is_modified(&model, &defaults, &tree_nodes, &vr.id);
             rows.push(struct_header_row(vr, &summary, modified, is_focused, &theme));
         } else if vr.id.starts_with(ARR_PREFIX) {
-            // R931 — the array branch row: disclosure + name + element count, with
-            // a trailing "add element" button (the dynamic-collection grow verb).
-            rows.push(array_header_row(vr, array.len(), is_focused, &theme));
+            // R931 / R936 — the array branch row: disclosure + name + element
+            // count, with a trailing "add element" button (the grow verb) and a
+            // reset arrow when the list differs from its class default (length or
+            // any element) — the array peer of the struct row's modified roll-up.
+            let modified = array_is_modified(&array, &array_defaults);
+            rows.push(array_header_row(vr, array.len(), modified, is_focused, &theme));
         } else {
             // A category branch row: the full-width section header (`collapsed`
             // is the inverse of `expanded`; a filter auto-expands branches).
@@ -3369,6 +3547,7 @@ impl WidgetA11y for PropertyGridView {
         let model = use_property_model().get();
         let array = use_array_model().get();
         let defaults = use_property_defaults();
+        let array_defaults = use_array_defaults();
         let tree_nodes = use_property_tree().get();
         let rows = visible_property_rows(&tree_nodes, &current_search_query());
         let cursor = use_property_cursor().get();
@@ -3386,17 +3565,22 @@ impl WidgetA11y for PropertyGridView {
             None, // no selection model — the cursor is keyboard focus only
             cursor.as_deref(),
         );
-        // R919 / R921 — each modified *visible* row (leaf or struct) gains a
-        // reset `button` child (`{GRID_TAG}#reset<id>`), named for the property /
-        // struct and gated on the SAME modified predicate the painted reset arrow
-        // uses, so the AT tree advertises reset exactly when it paints (R886.1
-        // one-gate). A collapsed / filtered-out row emits neither.
+        // R919 / R921 / R936 — each modified *visible* row (scalar leaf, struct,
+        // array element or array branch) gains a reset `button` child
+        // (`{GRID_TAG}#reset<id>`), named for the target and gated on the SAME
+        // modified predicate the painted reset arrow uses, so the AT tree
+        // advertises reset exactly when it paints (R886.1 one-gate). A collapsed /
+        // filtered-out row emits neither.
         for r in &rows {
             let (modified, name) = if let Some(vi) = row_value_index(&r.id) {
                 let m = leaf_modified(&model, &defaults, vi);
                 (m, PROPERTY_NAMES.get(vi).copied().unwrap_or(r.label.as_str()).to_owned())
+            } else if let Some(ValueRef::Elem(k)) = row_ref(&r.id) {
+                (leaf_modified(&array, &array_defaults, k), format!("{ARRAY_LABEL} [{k}]"))
             } else if r.id.starts_with(STRUCT_PREFIX) {
                 (struct_is_modified(&model, &defaults, &tree_nodes, &r.id), r.label.clone())
+            } else if r.id.starts_with(ARR_PREFIX) {
+                (array_is_modified(&array, &array_defaults), r.label.clone())
             } else {
                 continue; // a category is never modified-resettable
             };
@@ -3710,6 +3894,180 @@ mod tests {
             });
             assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "the arrow click reset the row");
             assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(false)));
+        });
+    }
+
+    /// R936 — an array element is modified once its value differs from the class
+    /// default `[1.0, 0.5, 0.25]`; the unified `reset` Text node-id funnel
+    /// restores it, and `modified.elem.<k>` tracks it (the element peer of
+    /// `r919_modified_and_reset_via_rpc`).
+    #[test]
+    fn r936_element_modified_and_reset_via_rpc() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert_eq!(grid_intro(&scene).query("modified.elem.0"), Some(IntrospectValue::Bool(false)), "boot: clean");
+            with_grid_mut(&mut scene, |i| i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap());
+            assert_eq!(grid_intro(&scene).query("modified.elem.0"), Some(IntrospectValue::Bool(true)), "an edited element is modified");
+            assert_eq!(grid_intro(&scene).query("modified.elem.1"), Some(IntrospectValue::Bool(false)), "a sibling element stays clean");
+            assert_eq!(grid_intro(&scene).query("modified.elem.9"), None, "out-of-range element modified -> None");
+            // The unified `reset` funnel takes an element node id, like the click.
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset", IntrospectValue::Text("elem.0".to_owned()))),
+                Ok(IntrospectValue::Bool(true)),
+                "reset changed the modified element",
+            );
+            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(1.0)), "reset restored the default");
+            assert_eq!(grid_intro(&scene).query("modified.elem.0"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset", IntrospectValue::Text("elem.0".to_owned()))),
+                Ok(IntrospectValue::Bool(false)),
+                "reset of an already-default element is a no-op",
+            );
+        });
+    }
+
+    /// R936 — the array branch's modified roll-up (`array_modified.<id>`) is true
+    /// when any element differs OR the length changed; `reset_array` restores the
+    /// whole list (length + content). The array peer of the struct aggregate.
+    #[test]
+    fn r936_array_modified_rollup_and_reset() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let arr_q = format!("array_modified.{ARR_BRANCH_ID}");
+            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(false)), "boot: array clean");
+            assert_eq!(grid_intro(&scene).query("array_modified.struct.Position"), None, "only the array branch id is valid");
+            // (a) an element edit makes the branch modified; reset clears it.
+            with_grid_mut(&mut scene, |i| i.intervene("value.elem.1", IntrospectValue::Float(9.0)).unwrap());
+            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(true)), "edited element -> array modified");
+            with_grid_mut(&mut scene, |i| { i.invoke("reset", IntrospectValue::Text("elem.1".to_owned())).unwrap(); });
+            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(false)), "element reset -> array clean");
+            // (b) a length change makes the branch modified; `reset_array` restores
+            // both length and content in one wholesale step.
+            with_grid_mut(&mut scene, |i| { i.invoke("add_elem", IntrospectValue::Null).unwrap(); });
+            with_grid_mut(&mut scene, |i| i.intervene("value.elem.0", IntrospectValue::Float(7.0)).unwrap());
+            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(true)), "length + content differ");
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset_array", IntrospectValue::Null)),
+                Ok(IntrospectValue::Bool(true)),
+                "reset_array changed the list",
+            );
+            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(3)), "length restored");
+            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(1.0)), "content restored");
+            assert_eq!(grid_intro(&scene).query(&arr_q), Some(IntrospectValue::Bool(false)));
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset_array", IntrospectValue::Null)),
+                Ok(IntrospectValue::Bool(false)),
+                "reset_array on a default list is a no-op",
+            );
+        });
+    }
+
+    /// R936 — a modified element paints its reset arrow (`reset elem.<k>`, one slot
+    /// left of the remove button) and the a11y tree advertises a matching reset
+    /// `button` child of the element row, gated on the same predicate (R886.1
+    /// one-gate). An added element (no class default) gets NO per-element reset
+    /// arrow — the array-level reset truncates it instead.
+    #[test]
+    fn r936_element_reset_arrow_paints_with_a11y_button() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let arrow_tag = format!("{GRID_TAG}#{RESET_PREFIX}elem.0");
+            assert!(!view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "no reset arrow on a clean element");
+            with_grid_mut(&mut scene, |i| i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap());
+            assert!(view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "the modified element paints a reset arrow");
+            // The remove button stays — both trailing affordances coexist.
+            assert!(view(idle_state(), &Frame::new()).contains_tag(&format!("{GRID_TAG}#{RM_ELEM_PREFIX}0")), "remove button still painted");
+            let a11y = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
+            let btn = a11y.iter().find(|n| n.tag == arrow_tag).expect("element reset button advertised");
+            assert_eq!(btn.role, AriaRole::Button);
+            assert_eq!(btn.name.as_deref(), Some("Reset Spawn Weights [0] to default"));
+            let row = a11y.iter().find(|n| n.tag == tree_row_tag(GRID_TAG, "elem.0")).expect("element row node");
+            assert!(row.children.iter().any(|c| c.as_str() == arrow_tag), "the reset button is the element row's child");
+            // An added element (index 3, no class counterpart) is array-modified but
+            // never per-element-resettable.
+            with_grid_mut(&mut scene, |i| { i.invoke("add_elem", IntrospectValue::Null).unwrap(); });
+            assert!(!view(idle_state(), &Frame::new()).contains_tag(&format!("{GRID_TAG}#{RESET_PREFIX}elem.3")), "an added element has no per-element reset arrow");
+        });
+    }
+
+    /// R936 — a modified array branch paints its reset arrow (`reset arr.weights`,
+    /// left of the add button) with a matching a11y reset `button` child of the
+    /// branch row (the array peer of the struct reset-arrow one-gate).
+    #[test]
+    fn r936_array_branch_reset_arrow_paints_with_a11y_button() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let arrow_tag = format!("{GRID_TAG}#{RESET_PREFIX}{ARR_BRANCH_ID}");
+            assert!(!view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "no reset arrow on a clean array branch");
+            with_grid_mut(&mut scene, |i| i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap());
+            assert!(view(idle_state(), &Frame::new()).contains_tag(&arrow_tag), "the modified array branch paints a reset arrow");
+            assert!(view(idle_state(), &Frame::new()).contains_tag(&format!("{GRID_TAG}#{ADD_ELEM_TAG}")), "add button still painted");
+            let a11y = PropertyGridView::access_node(&idle_state(), Some(GRID_TAG));
+            let btn = a11y.iter().find(|n| n.tag == arrow_tag).expect("array branch reset button advertised");
+            assert_eq!(btn.role, AriaRole::Button);
+            assert_eq!(btn.name.as_deref(), Some("Reset Spawn Weights to default"));
+            let row = a11y.iter().find(|n| n.tag == tree_row_tag(GRID_TAG, ARR_BRANCH_ID)).expect("array branch row node");
+            assert!(row.children.iter().any(|c| c.as_str() == arrow_tag), "the reset button is the array branch row's child");
+        });
+    }
+
+    /// R936 — clicking an element's / the array branch's reset arrow routes to the
+    /// same `reset_element` / `reset_array` funnel the RPC uses (the
+    /// `{GRID_TAG}#reset<id>` wire, one decode for all four reset targets).
+    #[test]
+    fn r936_reset_arrow_clicks_route() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Element arrow click.
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap();
+                let _ = i.invoke("send", IntrospectValue::Text(format!("{RESET_PREFIX}elem.0:PointerUp")));
+            });
+            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(1.0)), "element arrow click reset it");
+            // Array branch arrow click (after a length change).
+            with_grid_mut(&mut scene, |i| {
+                i.invoke("add_elem", IntrospectValue::Null).unwrap();
+                i.intervene("value.elem.1", IntrospectValue::Float(8.0)).unwrap();
+                let _ = i.invoke("send", IntrospectValue::Text(format!("{RESET_PREFIX}{ARR_BRANCH_ID}:PointerUp")));
+            });
+            assert_eq!(grid_intro(&scene).query("elem_count"), Some(IntrospectValue::Int(3)), "array arrow click restored length");
+            assert_eq!(grid_intro(&scene).query("value.elem.1"), Some(IntrospectValue::Float(0.5)), "array arrow click restored content");
+        });
+    }
+
+    /// R936 — `reset_all` returns the WHOLE object to default: scalars AND the
+    /// array branch (one reset unit). `any_modified` must reflect the array too,
+    /// so a dirty array never hides behind a "clean" object readout.
+    #[test]
+    fn r936_reset_all_includes_array() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            with_grid_mut(&mut scene, |i| {
+                i.intervene("value.4", IntrospectValue::Int(17)).unwrap(); // a scalar
+                i.intervene("value.elem.0", IntrospectValue::Float(9.0)).unwrap(); // the array
+            });
+            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(true)), "scalar OR array dirties the object");
+            assert_eq!(
+                with_grid_mut(&mut scene, |i| i.invoke("reset_all", IntrospectValue::Null)),
+                Ok(IntrospectValue::Int(2)),
+                "reset_all counts the scalar + the array as 2 reset units",
+            );
+            assert_eq!(grid_intro(&scene).query("value.4"), Some(IntrospectValue::Int(3)), "scalar restored");
+            assert_eq!(grid_intro(&scene).query("value.elem.0"), Some(IntrospectValue::Float(1.0)), "array restored");
+            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)), "object clean after reset_all");
+        });
+    }
+
+    /// R936 — a dirty array alone (no scalar touched) still reports `any_modified`
+    /// true, the regression guard for the object-level roll-up that R936 added.
+    #[test]
+    fn r936_dirty_array_alone_dirties_the_object() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            with_grid_mut(&mut scene, |i| i.intervene("value.elem.2", IntrospectValue::Float(3.0)).unwrap());
+            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(true)), "a dirty array alone is dirty");
+            with_grid_mut(&mut scene, |i| { i.invoke("reset", IntrospectValue::Text("elem.2".to_owned())).unwrap(); });
+            assert_eq!(grid_intro(&scene).query("any_modified"), Some(IntrospectValue::Bool(false)));
         });
     }
 
