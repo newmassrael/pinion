@@ -272,6 +272,11 @@ impl WidgetCore for SyntaxView {
         // `<textarea>`-vs-`<input>` distinction. Opt-in: single-line fields
         // keep Tab = next-field.
         text_state.set_tab_indents(true);
+        // R939 §5.22 — and Ctrl+/ toggles `//` line comments on the selected
+        // lines (and the `toggle-comment` RPC verb). The marker is the C-family
+        // token matching this editor's keyword highlighter; a field that does
+        // not opt in leaves Ctrl+/ to the application.
+        text_state.set_line_comment("//");
         let blink = use_caret_blink(TF_TAG);
         // R56.1.e §5.22 — in-memory clipboard backing the demo's
         // Ctrl+C / Ctrl+X / Ctrl+V keystrokes. Shared via

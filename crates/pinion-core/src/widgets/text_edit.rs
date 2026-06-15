@@ -326,6 +326,17 @@ pub struct TextEditState {
     /// shares the interior-mutability shape of [`undo`](Self::undo) /
     /// [`highlighter`](Self::highlighter), not the reactive content shape.
     tab_indents: Cell<bool>,
+    /// R939 §5.22 — opt-in: the line-comment marker `Ctrl+/` toggles on the
+    /// selected lines (`Some("//")` for a C-family editor), or `None` (the
+    /// default) so `Ctrl+/` falls through to the application — the marker is a
+    /// per-*language* fact the substrate cannot know, so the binding supplies
+    /// it via [`set_line_comment`](Self::set_line_comment), the way it supplies
+    /// the highlighter grammar. `&'static str` because a comment token is a
+    /// compile-time language constant, never user data. The opt-in peer of
+    /// [`tab_indents`](Self::tab_indents): both gate a code-editor keystroke an
+    /// `<input>`-style field must not capture, and both are non-reactive
+    /// wiring (no view-fn renders "does Ctrl+/ comment").
+    line_comment: Cell<Option<&'static str>>,
 }
 
 /// R938 §5.22 — the indentation unit a `Tab` inserts (and `Shift+Tab`
@@ -718,10 +729,10 @@ fn text_diff(before: &str, after: &str) -> (usize, String, String) {
 /// that empty trailing line (the VS Code "select to column 0 of line N
 /// leaves line N untouched" rule), while a collapsed caret yields exactly its
 /// own line. The line-operation SSOT — [`TextEditState::indent_selection`] /
-/// [`dedent_selection`](TextEditState::dedent_selection) iterate it now; a
-/// comment-toggle would be its next consumer. Built on the [`line_starts`] /
-/// [`line_of`] line-index SSOT (no second `\n` scan) — the only range-specific
-/// logic is the end-boundary rule.
+/// [`dedent_selection`](TextEditState::dedent_selection) /
+/// [`toggle_line_comment`](TextEditState::toggle_line_comment) all iterate it.
+/// Built on the [`line_starts`] / [`line_of`] line-index SSOT (no second `\n`
+/// scan) — the only range-specific logic is the end-boundary rule.
 fn line_starts_in_range(text: &str, start: usize, end: usize) -> Vec<usize> {
     let len = text.len();
     let start = start.min(len);
@@ -754,23 +765,60 @@ fn dedent_remove_len(text: &str, ls: usize, width: usize) -> usize {
     n
 }
 
-/// R938 §5.22 — re-anchor a caret / selection offset across a dedent's
-/// per-line removals (`(offset, removed_len)`, non-overlapping). A position
-/// after a removed run shifts left by its length; a position inside a removed
-/// run clamps to that run's start; a position before is unchanged. Each run
-/// contributes independently (they never overlap), so summation order does
-/// not matter — the dedent peer of the [`shift_runs_for_insert`] /
-/// [`clip_runs_for_delete`] byte maintenance, applied to a bare offset.
-fn shift_pos_for_removals(pos: usize, edits: &[(usize, usize)]) -> usize {
-    let mut new = pos;
-    for &(o, r) in edits {
-        if pos >= o + r {
-            new -= r;
-        } else if pos > o {
-            new -= pos - o;
+/// R939 §5.22 — the byte offset of the first non-whitespace byte on the line
+/// starting at `ls` (scanning to its `\n` or EOF), or `None` for a **blank**
+/// line (only spaces / tabs). The comment-toggle insert / detect column: a
+/// blank line takes no marker and is excluded from the "is every line already
+/// commented?" verdict, so a toggle never comments an empty line. The returned
+/// offset is a `char` boundary — the scan only steps over single-byte ASCII
+/// whitespace, so it stops at the first lead byte of any multi-byte char.
+fn line_first_non_ws(text: &str, ls: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut i = ls;
+    while let Some(&b) = bytes.get(i) {
+        match b {
+            b'\n' => return None,
+            b' ' | b'\t' => i += 1,
+            _ => return Some(i),
         }
     }
-    new
+    None
+}
+
+/// R939 §5.22 — re-anchor a caret / selection offset across a set of
+/// non-overlapping `(offset, removed_len, inserted_len)` edits. A position at
+/// or after an edit's removed run moves by `inserted_len - removed_len`; a
+/// position *inside* a removed run clamps into the replacement; a position
+/// before is unchanged. The edits are independent (never overlap), so order
+/// does not matter — the bare-offset peer of the [`shift_runs_for_insert`] /
+/// [`clip_runs_for_delete`] byte maintenance. Generalises the dedent-only
+/// removal shift at its 2nd consumer (the comment toggle): a pure insert is
+/// `removed_len == 0`, a pure delete is `inserted_len == 0`.
+///
+/// Computed with `usize` arithmetic (no signed casts): the inserted and
+/// removed lengths *strictly before* `pos` are summed separately, and a
+/// net-left shift never underflows because those removed runs all end at or
+/// before `pos`, so their total is `<= pos` (and `<= o` for the straddled run,
+/// which they precede without overlap). At most one run straddles `pos`; the
+/// result then clamps into that run's replacement.
+fn shift_pos_for_edits(pos: usize, edits: &[(usize, usize, usize)]) -> usize {
+    let mut add = 0;
+    let mut rem = 0;
+    let mut straddle = None;
+    for &(o, removed, inserted) in edits {
+        if pos >= o + removed {
+            add += inserted;
+            rem += removed;
+        } else if pos > o {
+            // `pos` falls inside this removed run (only one run can, since they
+            // never overlap) — clamp into its replacement, after the net shift.
+            straddle = Some((o, inserted));
+        }
+    }
+    match straddle {
+        Some((o, inserted)) => o + add - rem + (pos - o).min(inserted),
+        None => pos + add - rem,
+    }
 }
 
 /// R903 §5.22 — a *word* character for whole-word find matching: alphanumeric
@@ -1091,6 +1139,7 @@ impl TextEditState {
             highlighter: RefCell::new(None),
             folds: Signal::new(BTreeSet::new()),
             tab_indents: Cell::new(false),
+            line_comment: Cell::new(None),
         }
     }
 
@@ -1135,6 +1184,7 @@ impl TextEditState {
             highlighter: RefCell::new(None),
             folds: Signal::new(BTreeSet::new()),
             tab_indents: Cell::new(false),
+            line_comment: Cell::new(None),
         }
     }
 
@@ -1179,6 +1229,26 @@ impl TextEditState {
     #[must_use]
     pub fn tab_indents(&self) -> bool {
         self.tab_indents.get()
+    }
+
+    /// R939 §5.22 — opt this field into `Ctrl+/` line-comment toggling, with
+    /// `marker` the language's line-comment token (`"//"` for C-family, `"#"`
+    /// for shell / Python). Call once at wiring time for a code editor; a
+    /// field that never calls this leaves [`line_comment`](Self::line_comment)
+    /// `None`, so `Ctrl+/` falls through unhandled (the keymap returns `false`)
+    /// and the application keeps the chord. The peer of
+    /// [`set_tab_indents`](Self::set_tab_indents).
+    pub fn set_line_comment(&self, marker: &'static str) {
+        self.line_comment.set(Some(marker));
+    }
+
+    /// R939 §5.22 — the configured line-comment marker, or `None` when this
+    /// field did not opt into `Ctrl+/` toggling. Both the keyboard keymap and
+    /// the `toggle-comment` RPC verb read it, so an AI-driven toggle and a
+    /// `Ctrl+/` press land the same edit ([`toggle_line_comment`](Self::toggle_line_comment)).
+    #[must_use]
+    pub fn line_comment(&self) -> Option<&'static str> {
+        self.line_comment.get()
     }
 
     /// Run a content mutation `f`, journalling its **granular** delta onto
@@ -2008,7 +2078,99 @@ impl TextEditState {
         if let Some(stack) = self.undo_stack() {
             stack.end_macro();
         }
-        let new_end = shift_pos_for_removals(end, &edits);
+        // Re-anchor across the removals (each a delete: `inserted_len == 0`).
+        let shift: Vec<(usize, usize, usize)> =
+            edits.iter().map(|&(ls, n)| (ls, n, 0)).collect();
+        let new_end = shift_pos_for_edits(end, &shift);
+        if had_selection {
+            self.set_selection(line_starts[0], new_end);
+        } else {
+            self.set_caret(new_end);
+        }
+        true
+    }
+
+    /// R939 §5.22 — **toggle line comments** on the selected lines with the
+    /// `marker` token (`"//"` for C-family), the `Ctrl+/` editor command and
+    /// the AI-first `toggle-comment` RPC verb's shared core. The VS Code
+    /// "Toggle Line Comment" rule:
+    ///
+    /// * The touched lines are [`line_starts_in_range`] — the **2nd consumer**
+    ///   of that line-op SSOT after [`indent_selection`](Self::indent_selection)
+    ///   / [`dedent_selection`](Self::dedent_selection) (a collapsed caret
+    ///   toggles its own line). Blank lines (whitespace only) take no marker
+    ///   and are excluded from the verdict, so a toggle never comments an empty
+    ///   line.
+    /// * **Verdict**: if *every* non-blank line already begins (after its
+    ///   indent) with `marker`, the toggle **removes** it (and one following
+    ///   space, the inverse of the inserted `"{marker} "`); otherwise it
+    ///   **adds** `"{marker} "` at each non-blank line's first non-whitespace
+    ///   column, so the marker hugs the code and the indent is preserved.
+    /// * Each per-line edit is a contiguous [`replace_range`](Self::replace_range)
+    ///   splice grouped into **one** undo step via the
+    ///   [`UndoStack::begin_macro`] / [`end_macro`](UndoStack::end_macro)
+    ///   transaction (the 3rd consumer of that substrate after `replace_all`
+    ///   and indent / dedent), so the style runs **and** fold anchors shift
+    ///   line-by-line and survive the toggle (R933.1). Lines are spliced
+    ///   bottom-to-top so the earlier offsets stay valid.
+    ///
+    /// Returns whether the buffer changed (`false` for an empty `marker`, or a
+    /// selection of only blank lines). The prefix match is literal — `marker`
+    /// inside a string or a longer token (`"///"`) is not distinguished, the
+    /// every-editor baseline before a language service (the
+    /// [`matching_bracket`](Self::matching_bracket) string-awareness defer
+    /// applies here too).
+    pub fn toggle_line_comment(&self, marker: &str) -> bool {
+        if marker.is_empty() {
+            return false;
+        }
+        let text = self.text.get();
+        let had_selection = self.selection_anchor.get().is_some();
+        let (start, end) = self.selection_range().unwrap_or_else(|| {
+            let c = self.caret_pos.get().min(text.len());
+            (c, c)
+        });
+        let line_starts = line_starts_in_range(&text, start, end);
+        // The comment column of every non-blank touched line (blank lines drop
+        // out, so they are neither commented nor counted in the verdict).
+        let cols: Vec<usize> = line_starts
+            .iter()
+            .filter_map(|&ls| line_first_non_ws(&text, ls))
+            .collect();
+        if cols.is_empty() {
+            return false;
+        }
+        // Remove iff *every* non-blank line is already commented; else add.
+        let removing = cols.iter().all(|&p| text[p..].starts_with(marker));
+        let added = format!("{marker} ");
+        // `(offset, removed_len, inserted)` per non-blank line, ascending.
+        let edits: Vec<(usize, usize, String)> = cols
+            .iter()
+            .map(|&p| {
+                if removing {
+                    // Strip the marker plus one following space if present (the
+                    // inverse of the inserted `"{marker} "`).
+                    let after = p + marker.len();
+                    let strip = marker.len()
+                        + usize::from(text.as_bytes().get(after) == Some(&b' '));
+                    (p, strip, String::new())
+                } else {
+                    (p, 0, added.clone())
+                }
+            })
+            .collect();
+        if let Some(stack) = self.undo_stack() {
+            stack.begin_macro("Toggle comment");
+        }
+        for (p, removed, ins) in edits.iter().rev() {
+            self.replace_range(*p, *p + *removed, ins);
+        }
+        if let Some(stack) = self.undo_stack() {
+            stack.end_macro();
+        }
+        let shift: Vec<(usize, usize, usize)> =
+            edits.iter().map(|(p, removed, ins)| (*p, *removed, ins.len())).collect();
+        let new_end = shift_pos_for_edits(end, &shift);
         if had_selection {
             self.set_selection(line_starts[0], new_end);
         } else {
@@ -2975,10 +3137,10 @@ mod tests {
     //! hook integration.
 
     use super::{
-        clamp_to_char_boundary, dedent_remove_len, find_matches_in, fold_regions_in, line_of,
-        line_starts, line_starts_in_range, matching_bracket_in, next_char_boundary,
-        prev_char_boundary, shift_pos_for_removals, style_runs_diff, use_text_edit_state,
-        TextEditState, INDENT_UNIT, INDENT_WIDTH,
+        clamp_to_char_boundary, dedent_remove_len, find_matches_in, fold_regions_in,
+        line_first_non_ws, line_of, line_starts, line_starts_in_range, matching_bracket_in,
+        next_char_boundary, prev_char_boundary, shift_pos_for_edits, style_runs_diff,
+        use_text_edit_state, TextEditState, INDENT_UNIT, INDENT_WIDTH,
     };
     use crate::reactive::{Effect, Owner};
     use crate::scene::StyleRun;
@@ -5177,11 +5339,12 @@ mod tests {
         assert_eq!(dedent_remove_len("  x", 0, 4), 2, "fewer than width");
         assert_eq!(dedent_remove_len("\tx", 0, 4), 1, "a leading tab is one level");
         assert_eq!(dedent_remove_len("x", 0, 4), 0, "no leading whitespace");
-        // Re-anchor across removals: after a run shifts left; inside clamps to start.
-        let edits = [(0_usize, 4_usize), (7, 2)];
-        assert_eq!(shift_pos_for_removals(11, &edits), 5, "after both removals");
-        assert_eq!(shift_pos_for_removals(2, &edits), 0, "inside the first run clamps");
-        assert_eq!(shift_pos_for_removals(0, &edits), 0, "before everything");
+        // Re-anchor across removals (`inserted_len == 0`): after a run shifts
+        // left; inside clamps to start.
+        let edits = [(0_usize, 4_usize, 0_usize), (7, 2, 0)];
+        assert_eq!(shift_pos_for_edits(11, &edits), 5, "after both removals");
+        assert_eq!(shift_pos_for_edits(2, &edits), 0, "inside the first run clamps");
+        assert_eq!(shift_pos_for_edits(0, &edits), 0, "before everything");
     }
 
     #[test]
@@ -5343,6 +5506,198 @@ mod tests {
             assert!(st.undo());
             assert_eq!(st.text(), "    a\n    b", "one undo restores both lines");
         });
+    }
+
+    // R939 §5.22 — line-comment toggle.
+
+    #[test]
+    fn r939_line_comment_flag_defaults_off() {
+        let st = TextEditState::new();
+        assert_eq!(st.line_comment(), None, "off by default — Ctrl+/ falls through");
+        st.set_line_comment("//");
+        assert_eq!(st.line_comment(), Some("//"));
+    }
+
+    #[test]
+    fn r939_line_first_non_ws_finds_column_or_none_for_blank() {
+        assert_eq!(line_first_non_ws("  ab", 0), Some(2), "skips leading spaces");
+        assert_eq!(line_first_non_ws("\t\tx", 0), Some(2), "skips leading tabs");
+        assert_eq!(line_first_non_ws("ab", 0), Some(0), "no indent");
+        assert_eq!(line_first_non_ws("   \nx", 0), None, "whitespace-only line is blank");
+        assert_eq!(line_first_non_ws("", 0), None, "EOF is blank");
+        // Mid-buffer: the line starting at byte 3 ("  y").
+        assert_eq!(line_first_non_ws("a\n  y", 2), Some(4));
+    }
+
+    #[test]
+    fn r939_comment_empty_marker_is_a_noop() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb".to_string());
+            st.set_selection(0, 3);
+            assert!(!st.toggle_line_comment(""), "an empty marker changes nothing");
+            assert_eq!(st.text(), "a\nb");
+        });
+    }
+
+    #[test]
+    fn r939_comment_collapsed_caret_toggles_its_own_line() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("ab\ncd".to_string());
+            st.set_caret(4); // on the second line
+            assert!(st.toggle_line_comment("//"), "comments the caret's line");
+            assert_eq!(st.text(), "ab\n// cd", "marker + space at the column");
+            assert!(!st.has_selection(), "a collapsed toggle stays collapsed");
+            // Toggling again removes it — an involution on the line.
+            st.set_caret(st.text().len());
+            assert!(st.toggle_line_comment("//"));
+            assert_eq!(st.text(), "ab\ncd", "second toggle uncomments");
+        });
+    }
+
+    #[test]
+    fn r939_comment_adds_at_first_non_ws_preserving_indent() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("  ab\n    cd".to_string());
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"));
+            // The marker hugs the code, each line keeps its own indent.
+            assert_eq!(st.text(), "  // ab\n    // cd");
+            assert_eq!(st.selection_range(), Some((0, st.text().len())), "block re-covers");
+        });
+    }
+
+    #[test]
+    fn r939_comment_is_an_involution_over_mixed_indents() {
+        Owner::new().run(|| {
+            let original = "x\n  y\n    z".to_string();
+            let st = TextEditState::with_initial(original.clone());
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"), "comment all");
+            assert_eq!(st.text(), "// x\n  // y\n    // z");
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"), "uncomment all");
+            assert_eq!(st.text(), original, "round-trips to the original");
+        });
+    }
+
+    #[test]
+    fn r939_comment_partial_block_adds_to_all() {
+        Owner::new().run(|| {
+            // One line already commented, one not → NOT all-commented → add to
+            // both (VS Code "Toggle Line Comment" — the second marker stacks).
+            let st = TextEditState::with_initial("// a\nb".to_string());
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"));
+            assert_eq!(st.text(), "// // a\n// b", "adds to every line when not all are commented");
+        });
+    }
+
+    #[test]
+    fn r939_comment_skips_blank_lines() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\n\nb".to_string());
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"));
+            assert_eq!(st.text(), "// a\n\n// b", "the blank line takes no marker");
+            // The blank line is excluded from the verdict, so a re-toggle still
+            // sees "all non-blank commented" and removes.
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"));
+            assert_eq!(st.text(), "a\n\nb");
+        });
+    }
+
+    #[test]
+    fn r939_comment_only_blank_lines_is_a_noop() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("   \n\t".to_string());
+            st.set_selection(0, st.text().len());
+            assert!(!st.toggle_line_comment("//"), "nothing to comment");
+            assert_eq!(st.text(), "   \n\t");
+        });
+    }
+
+    #[test]
+    fn r939_comment_remove_strips_only_one_following_space() {
+        Owner::new().run(|| {
+            // A doubly-spaced comment keeps the extra space on uncomment (only
+            // the one space the toggle itself inserts is stripped).
+            let st = TextEditState::with_initial("//  ab".to_string());
+            st.set_caret(0);
+            assert!(st.toggle_line_comment("//"));
+            assert_eq!(st.text(), " ab", "marker + one space removed, extra space kept");
+        });
+    }
+
+    #[test]
+    fn r939_comment_is_one_undo_step() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a\nb\nc".to_string());
+            let stack = Rc::new(crate::undo::UndoStack::new());
+            st.attach_undo(Rc::clone(&stack)); // attach AFTER seeding
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"));
+            assert_eq!(st.text(), "// a\n// b\n// c");
+            assert_eq!(stack.len(), 1, "three line inserts fold into one undo step");
+            assert!(st.undo(), "one undo reverses the whole block comment");
+            assert_eq!(st.text(), "a\nb\nc");
+            assert!(st.redo());
+            assert_eq!(st.text(), "// a\n// b\n// c", "one redo re-applies it");
+        });
+    }
+
+    #[test]
+    fn r939_comment_shifts_style_runs() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("ab\ncd".to_string());
+            st.set_style_runs(vec![crun(3, 5, RED)]); // "cd" red
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"));
+            // "cd" gained a "// " (3 bytes) before it on its line, plus the
+            // first line's "// " (3 bytes) earlier → run shifts right by 6.
+            assert_eq!(st.text(), "// ab\n// cd");
+            assert_eq!(st.style_runs(), vec![crun(9, 11, RED)]);
+        });
+    }
+
+    #[test]
+    fn r939_comment_preserves_interior_fold() {
+        // The R933.1 discipline (cross-applied from indent): toggling comments
+        // on a block containing a collapsed fold must SHIFT the fold anchor
+        // line-by-line, never clip it.
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("fn a() {\n  x\n}\nz".to_string());
+            st.attach_undo(Rc::new(crate::undo::UndoStack::new()));
+            assert!(st.toggle_fold(0), "collapse the function body");
+            assert!(st.is_line_hidden(1), "interior hidden");
+            st.set_selection(0, st.text().len());
+            assert!(st.toggle_line_comment("//"));
+            assert_eq!(st.text(), "// fn a() {\n  // x\n// }\n// z");
+            assert!(st.fold_regions()[0].collapsed, "fold survives the comment toggle");
+            assert!(st.is_line_hidden(1), "interior still hidden");
+            assert!(st.undo());
+            assert_eq!(st.text(), "fn a() {\n  x\n}\nz");
+            assert!(st.fold_regions()[0].collapsed, "fold still valid after undo");
+        });
+    }
+
+    #[test]
+    fn r939_shift_pos_for_edits_handles_inserts_and_mixed() {
+        // Pure inserts (the comment-add case): a position after an insert
+        // shifts right by its length; before is unchanged.
+        let inserts = [(2_usize, 0_usize, 3_usize), (8, 0, 3)];
+        assert_eq!(shift_pos_for_edits(0, &inserts), 0, "before everything");
+        assert_eq!(shift_pos_for_edits(5, &inserts), 8, "past the first insert");
+        assert_eq!(shift_pos_for_edits(10, &inserts), 16, "past both inserts");
+        // A mixed edit (replace 4 bytes [4,8) with 2): a position inside the
+        // removed run clamps *into* the 2-byte replacement [4,6); after the run
+        // shifts by the net. (Neither real consumer produces a mixed edit —
+        // dedent / comment-remove have `inserted == 0`, so this clamps to the
+        // run start there; comment-add has `removed == 0`, so no straddle.)
+        let mixed = [(4_usize, 4_usize, 2_usize)];
+        assert_eq!(shift_pos_for_edits(5, &mixed), 5, "one byte into the run → into the replacement");
+        assert_eq!(shift_pos_for_edits(7, &mixed), 6, "deep in the run clamps to the replacement end");
+        assert_eq!(shift_pos_for_edits(10, &mixed), 8, "after the run shifts by net -2");
     }
 
     #[test]

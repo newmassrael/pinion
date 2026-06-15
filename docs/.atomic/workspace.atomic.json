@@ -41451,6 +41451,66 @@
         "indent width fixed 4-space (INDENT_UNIT); per-editor tab/width config deferred (consumer 0)"
       ]
     },
+    "R939": {
+      "decision_summary": "R939 §5.22 Ctrl+/ line-comment toggle = 3rd line-op family member (indent/dedent/comment); toggle_line_comment uses line_starts_in_range 2nd consumer + UndoStack macro 3rd consumer; shift_pos_for_removals generalized to shift_pos_for_edits at its 2nd consumer; opt-in line_comment marker (tab_indents peer); apply_key keymap arm (state-only key, R938.1) + toggle-comment RPC verb twin; per-line splice preserves style-runs + folds (R933.1)",
+      "changes_bullets": [
+        "§5.22 toggle_line_comment(marker): Ctrl+/ line-comment toggle, 3rd line-op family member",
+        "line_starts_in_range 2nd consumer; VS Code verdict all-commented->remove else add to all",
+        "blank lines skipped (line_first_non_ws); per-line splice preserves style-runs + folds (R933.1)",
+        "per-line edits = one undo step (UndoStack macro, 3rd consumer after replace-all + indent)",
+        "line_comment opt-in Cell (peer of tab_indents); set_line_comment / line_comment getter",
+        "apply_key Ctrl+/ arm = keymap SSOT (state-only key, R938.1); falls through when no marker",
+        "toggle-comment RPC verb (Null->Bool) reads the state marker = the keyboard twin",
+        "shift_pos_for_removals -> shift_pos_for_edits (2nd-consumer lift: dedent + comment add/remove)",
+        "hello-syntax-highlight set_line_comment(\"//\") C-family opt-in next to set_tab_indents"
+      ],
+      "verification_bullets": [
+        "pinion-core tests ok + 17 new R939 (involution / blank-skip / collapsed / one-undo / style+fold)",
+        "shift_pos_for_edits unit covers inserts + mixed clamp; dedent refactored to it",
+        "clippy 0 (-D pedantic, full workspace --all-targets, vello feature)",
+        "demo r939_comment_toggle.py PASS, 30+ ZERO-FLAKE gates (verb / Ctrl+ twin / add-all / undo / fold)",
+        "validate-workspace T1 reject=0, no new orphans"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "comment marker = caller-side language fact: highlighter `//` + set_line_comment(\"//\") parallel",
+        "not a framework SSOT (deliberate closure-grammar); converge into a Language trait at 2nd lang",
+        "literal prefix match: marker in a string / `///` not distinguished = pre-language-service baseline",
+        "ADD inserts at per-line first-non-ws (not VS Code common-min-column): involution-safe, indent-keep",
+        "column-aligned add variant + runtime marker reconfig (consumer 0) = follow-ups"
+      ],
+      "publishable_decision_summary": "R939 §5.22 Ctrl+/ line-comment toggle = 3rd line-op family member (indent/dedent/comment); toggle_line_comment uses line_starts_in_range 2nd consumer + UndoStack macro 3rd consumer; shift_pos_for_removals generalized to shift_pos_for_edits at its 2nd consumer; opt-in line_comment marker (tab_indents peer); apply_key keymap arm (state-only key, R938.1) + toggle-comment RPC verb twin; per-line splice preserves style-runs + folds (R933.1)",
+      "publishable_changes_bullets": [
+        "§5.22 toggle_line_comment(marker): Ctrl+/ line-comment toggle, 3rd line-op family member",
+        "line_starts_in_range 2nd consumer; VS Code verdict all-commented->remove else add to all",
+        "blank lines skipped (line_first_non_ws); per-line splice preserves style-runs + folds (R933.1)",
+        "per-line edits = one undo step (UndoStack macro, 3rd consumer after replace-all + indent)",
+        "line_comment opt-in Cell (peer of tab_indents); set_line_comment / line_comment getter",
+        "apply_key Ctrl+/ arm = keymap SSOT (state-only key, R938.1); falls through when no marker",
+        "toggle-comment RPC verb (Null->Bool) reads the state marker = the keyboard twin",
+        "shift_pos_for_removals -> shift_pos_for_edits (2nd-consumer lift: dedent + comment add/remove)",
+        "hello-syntax-highlight set_line_comment(\"//\") C-family opt-in next to set_tab_indents"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core tests ok + 17 new R939 (involution / blank-skip / collapsed / one-undo / style+fold)",
+        "shift_pos_for_edits unit covers inserts + mixed clamp; dedent refactored to it",
+        "clippy 0 (-D pedantic, full workspace --all-targets, vello feature)",
+        "demo r939_comment_toggle.py PASS, 30+ ZERO-FLAKE gates (verb / Ctrl+ twin / add-all / undo / fold)",
+        "validate-workspace T1 reject=0, no new orphans"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "comment marker = caller-side language fact: highlighter `//` + set_line_comment(\"//\") parallel",
+        "not a framework SSOT (deliberate closure-grammar); converge into a Language trait at 2nd lang",
+        "literal prefix match: marker in a string / `///` not distinguished = pre-language-service baseline",
+        "ADD inserts at per-line first-non-ws (not VS Code common-min-column): involution-safe, indent-keep",
+        "column-aligned add variant + runtime marker reconfig (consumer 0) = follow-ups"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

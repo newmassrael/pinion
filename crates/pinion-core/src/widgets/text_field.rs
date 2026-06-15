@@ -395,6 +395,19 @@ pub fn apply_key(
                     return true;
                 }
             }
+            // R939 §5.22 — Ctrl/Cmd+/ toggle line comment, for a code editor
+            // that opted in via `set_line_comment`. Same Ctrl-OR-Meta-not-Alt
+            // gate as select-all / undo above. A field with no configured
+            // marker (`line_comment() == None`) falls through to the generic
+            // Ctrl-reject below, so `/` is never inserted as a literal under
+            // Ctrl and the application keeps the chord — the keymap SSOT
+            // placement (a `TextEditState`-only key, R938.1).
+            if modifiers.command_key() && !modifiers.alt_key() && other == "/" {
+                if let Some(marker) = state.line_comment() {
+                    state.toggle_line_comment(marker);
+                    return true;
+                }
+            }
             // R56.1.e §5.22 — Ctrl-OR-Meta-modified printable chars
             // are clipboard / shortcut chords (Ctrl+C / Ctrl+V /
             // Ctrl+Z / etc.). The text-input layer must NOT treat
@@ -1676,6 +1689,8 @@ impl ExternalIntrospect for TextFieldExternal {
             // R938 §5.22 — indent / dedent the selection (the AI-first twin of
             // the Tab / Shift+Tab keyboard path; split out for SRP).
             "indent" | "dedent" => self.invoke_indent(path, &args),
+            // R939 §5.22 — toggle line comments (the AI-first twin of Ctrl+/).
+            "toggle-comment" => self.invoke_comment(&args),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1805,6 +1820,24 @@ impl TextFieldExternal {
                 } else {
                     s.dedent_selection(crate::widgets::text_edit::INDENT_WIDTH)
                 }
+            }))),
+            _ => Err(InvokeError::TypeMismatch),
+        }
+    }
+
+    /// R939 §5.22 — the `toggle-comment` `invoke` action, the AI-first twin of
+    /// the `Ctrl+/` keyboard path. Takes `Null` and returns `Bool` — whether
+    /// the buffer changed (a toggle over only blank lines is a `Bool(false)`
+    /// no-op, the setter-returns-read-outcome contract). The marker comes from
+    /// the field's configured [`line_comment`](crate::widgets::text_edit::TextEditState::line_comment),
+    /// the same source the keyboard path reads, so an AI-driven toggle and a
+    /// `Ctrl+/` press land the same edit. A bare field — no state, or a field
+    /// that never called `set_line_comment` — is inert (`Bool(false)`), never
+    /// `UnknownPath`.
+    fn invoke_comment(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        match args {
+            IntrospectValue::Null => Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
+                s.line_comment().is_some_and(|m| s.toggle_line_comment(m))
             }))),
             _ => Err(InvokeError::TypeMismatch),
         }
@@ -3099,6 +3132,26 @@ mod r56_1_d_tests {
         let state = TextEditState::new();
         assert!(apply_key(&state, "A", crate::input::Modifiers::empty()));
         assert_eq!(state.text(), "A");
+    }
+
+    #[test]
+    fn r939_apply_key_ctrl_slash_toggles_comment_when_opted_in() {
+        let ctrl = crate::input::Modifiers { shift: false, ctrl: true, alt: false, meta: false };
+        let state = TextEditState::with_initial("ab".to_string());
+        state.set_caret(0);
+        // Not opted in → Ctrl+/ is unhandled (falls through to the application)
+        // and never inserts a literal "/" under Ctrl.
+        assert!(!apply_key(&state, "/", ctrl), "no marker configured → falls through");
+        assert_eq!(state.text(), "ab");
+        // Opt in → Ctrl+/ toggles the line comment, the keymap-SSOT twin of the
+        // `toggle-comment` RPC verb.
+        state.set_line_comment("//");
+        assert!(apply_key(&state, "/", ctrl), "opted-in Ctrl+/ is handled");
+        assert_eq!(state.text(), "// ab");
+        // A plain "/" (no modifier) is still a literal insert.
+        state.set_caret(state.text().len());
+        assert!(apply_key(&state, "/", crate::input::Modifiers::empty()));
+        assert_eq!(state.text(), "// ab/");
     }
 
     #[test]
@@ -6188,6 +6241,50 @@ mod r933_fold_tests {
         let mut bare = TextFieldExternal::new();
         assert_eq!(
             bare.invoke("indent", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(false),
+        );
+    }
+
+    #[test]
+    fn r939_invoke_toggle_comment_round_trips() {
+        // The AI-first verb twin of Ctrl+/: comment a multi-line selection,
+        // then toggle it back, each reporting whether it changed the buffer.
+        let (state, mut tfx) = wired("a\nb");
+        state.set_line_comment("//");
+        state.set_selection(0, state.text().len());
+        assert_eq!(
+            tfx.invoke("toggle-comment", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(state.text(), "// a\n// b");
+        state.set_selection(0, state.text().len());
+        assert_eq!(
+            tfx.invoke("toggle-comment", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(true),
+        );
+        assert_eq!(state.text(), "a\nb");
+    }
+
+    #[test]
+    fn r939_invoke_toggle_comment_inert_without_marker_or_state() {
+        // A field that never called `set_line_comment` is inert — Bool(false),
+        // never UnknownPath — even though it has state to toggle.
+        let (state, mut tfx) = wired("a\nb");
+        state.set_selection(0, state.text().len());
+        assert_eq!(
+            tfx.invoke("toggle-comment", IntrospectValue::Null).unwrap(),
+            IntrospectValue::Bool(false),
+        );
+        assert_eq!(state.text(), "a\nb", "no marker → no edit");
+        // A non-Null arg is a TypeMismatch.
+        assert!(matches!(
+            tfx.invoke("toggle-comment", IntrospectValue::Int(1)),
+            Err(InvokeError::TypeMismatch),
+        ));
+        // A bare field (no state) is inert too.
+        let mut bare = TextFieldExternal::new();
+        assert_eq!(
+            bare.invoke("toggle-comment", IntrospectValue::Null).unwrap(),
             IntrospectValue::Bool(false),
         );
     }
