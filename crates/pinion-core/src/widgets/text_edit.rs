@@ -365,6 +365,12 @@ pub(crate) struct TextEditCommand {
     caret: Signal<usize>,
     anchor: Signal<Option<usize>>,
     runs: Signal<Vec<StyleRun>>,
+    /// R933.1 §5.36 — the live fold set, shifted (not snapshotted) on
+    /// undo/redo so a replayed splice keeps the byte anchors valid. Folds
+    /// are non-journal view-state, so the command does not *save/restore*
+    /// them — it only applies the same clip+shift the forward mutators do,
+    /// the fold peer of the `runs` maintenance below.
+    folds: Signal<BTreeSet<usize>>,
     /// Byte offset of the splice.
     offset: usize,
     /// Bytes removed by the edit (empty for a pure insert).
@@ -399,11 +405,16 @@ impl UndoCommand for TextEditCommand {
         // span's coverage, then shift trailing runs right for the insert.
         clip_runs_for_delete(&mut runs, self.offset, self.offset + self.removed.len());
         shift_runs_for_insert(&mut runs, self.offset, self.inserted.len());
+        // R933.1 — keep fold anchors valid across the replayed splice.
+        let mut folds = self.folds.get();
+        clip_folds_for_delete(&mut folds, self.offset, self.offset + self.removed.len());
+        shift_folds_for_insert(&mut folds, self.offset, self.inserted.len());
         batch(|| {
             self.text.set(buf);
             self.caret.set(self.caret_after);
             self.anchor.set(self.anchor_after);
             self.runs.set(runs);
+            self.folds.set(folds);
         });
     }
 
@@ -417,11 +428,17 @@ impl UndoCommand for TextEditCommand {
         shift_runs_for_insert(&mut runs, self.offset, self.removed.len());
         runs.extend(self.removed_runs.iter().cloned());
         normalize_runs(&mut runs);
+        // R933.1 — reverse the forward fold clip+shift (folds are
+        // non-journal, so only the byte-offset maintenance is mirrored).
+        let mut folds = self.folds.get();
+        clip_folds_for_delete(&mut folds, self.offset, self.offset + self.inserted.len());
+        shift_folds_for_insert(&mut folds, self.offset, self.removed.len());
         batch(|| {
             self.text.set(buf);
             self.caret.set(self.caret_before);
             self.anchor.set(self.anchor_before);
             self.runs.set(runs);
+            self.folds.set(folds);
         });
     }
 
@@ -899,9 +916,12 @@ fn line_of(starts: &[usize], byte: usize) -> usize {
 /// (`{ }`, `[ ]`, or `( )`) whose opener and closer sit on *different*
 /// logical lines (a same-line `{}` is not foldable). When collapsed, the
 /// opener line stays visible (a `…` placeholder) and the interior lines
-/// `start_line + 1 ..= end_line` hide — the VS Code / Sublime default.
-/// Derived on read from the buffer by [`TextEditState::fold_regions`]; the
-/// stored fold set keys only on [`open_byte`](Self::open_byte).
+/// `start_line + 1 ..= end_line` hide. This folds the closer `}` line into
+/// the summary too (the simplest rule); some editors keep the closer line
+/// visible after the `…` — a deliberate divergence, not a copy of any one
+/// editor's exact behaviour. Derived on read from the buffer by
+/// [`TextEditState::fold_regions`]; the stored fold set keys only on
+/// [`open_byte`](Self::open_byte).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct FoldRegion {
     /// Byte offset of the opening bracket — the stable fold anchor the
@@ -924,10 +944,14 @@ pub struct FoldRegion {
 /// each bracket block spanning ≥ 2 logical lines. Reuses [`match_forward`]
 /// for the extent and the single-pass [`line_starts`] index for the line
 /// mapping. `collapsed` is left `false` — [`TextEditState::fold_regions`]
-/// fills it from the live set. Cost is `O(text · openers)` like the
+/// fills it from the live set. Cost is `O(text · openers)` per call — each
+/// opener runs a forward [`match_forward`] scan — of the
 /// [`find_matches`](TextEditState::find_matches) / matching-bracket
-/// derive-on-read lineage it shares (paid on read, fragment-cached by an
-/// unchanged buffer).
+/// derive-on-read lineage, paid on read. There is **no** memoization here:
+/// a caller needing the regions more than once per paint (e.g. a per-line
+/// hidden-check) must call [`TextEditState::fold_regions`] once and reuse
+/// the `Vec`, not re-derive per line. An incremental fold tree is the
+/// scale answer; this baseline is honestly `O(text · openers)` each call.
 fn fold_regions_in(text: &str) -> Vec<FoldRegion> {
     let bytes = text.as_bytes();
     let starts = line_starts(text);
@@ -1083,6 +1107,7 @@ impl TextEditState {
             caret: self.caret_pos.clone(),
             anchor: self.selection_anchor.clone(),
             runs: self.style_runs.clone(),
+            folds: self.folds.clone(),
             offset,
             removed,
             inserted,
@@ -1793,11 +1818,16 @@ impl TextEditState {
         let mut runs = self.style_runs.get();
         clip_runs_for_delete(&mut runs, start, end);
         shift_runs_for_insert(&mut runs, start, s.len());
+        // R933.1 — fold anchors track the edit the same way runs do.
+        let mut folds = self.folds.get();
+        clip_folds_for_delete(&mut folds, start, end);
+        shift_folds_for_insert(&mut folds, start, s.len());
         batch(|| {
             self.text.set(buf);
             self.caret_pos.set(new_caret);
             self.selection_anchor.set(None);
             self.style_runs.set(runs);
+            self.folds.set(folds);
         });
     }
 
@@ -1927,10 +1957,14 @@ impl TextEditState {
         let new_caret = snapped + s.len();
         let mut runs = self.style_runs.get();
         shift_runs_for_insert(&mut runs, snapped, s.len());
+        // R933.1 — fold anchors shift with the insert (peer of the runs).
+        let mut folds = self.folds.get();
+        shift_folds_for_insert(&mut folds, snapped, s.len());
         batch(|| {
             self.text.set(buf);
             self.caret_pos.set(new_caret);
             self.style_runs.set(runs);
+            self.folds.set(folds);
         });
     }
 
@@ -1971,10 +2005,14 @@ impl TextEditState {
         buf.drain(prev..caret);
         let mut runs = self.style_runs.get();
         clip_runs_for_delete(&mut runs, prev, caret);
+        // R933.1 — fold anchors clip with the delete (peer of the runs).
+        let mut folds = self.folds.get();
+        clip_folds_for_delete(&mut folds, prev, caret);
         batch(|| {
             self.text.set(buf);
             self.caret_pos.set(prev);
             self.style_runs.set(runs);
+            self.folds.set(folds);
         });
     }
 
@@ -2017,12 +2055,16 @@ impl TextEditState {
         buf.drain(caret..next);
         let mut runs = self.style_runs.get();
         clip_runs_for_delete(&mut runs, caret, next);
-        // Text + runs both change: batch the two `Signal::set`s so a
+        // R933.1 — fold anchors clip with the delete (peer of the runs).
+        let mut folds = self.folds.get();
+        clip_folds_for_delete(&mut folds, caret, next);
+        // Text + runs + folds all change: batch the `Signal::set`s so a
         // subscriber re-runs once (the R55.G.24 atomic-multi-axis
         // contract — runs maintenance promoted this from a single write).
         batch(|| {
             self.text.set(buf);
             self.style_runs.set(runs);
+            self.folds.set(folds);
         });
     }
 
@@ -2548,6 +2590,46 @@ fn clip_runs_for_delete(runs: &mut Vec<StyleRun>, start: usize, end: usize) {
         r.end = clip(r.end);
     }
     runs.retain(|r| r.start < r.end);
+}
+
+/// R933.1 §5.36 — shift fold anchors right for a text insert of `len`
+/// bytes at `at` (the buffer-mutation maintenance step, the fold peer of
+/// [`shift_runs_for_insert`]). An anchor at or after the insertion point
+/// moves with its `{`; one before is untouched. Mirrors the style-run
+/// maintenance so a collapsed block tracks *its* text across an edit
+/// rather than stranding on a stale byte (which a coincidental brace
+/// collision could otherwise turn into hiding the wrong block).
+fn shift_folds_for_insert(folds: &mut BTreeSet<usize>, at: usize, len: usize) {
+    if folds.is_empty() || len == 0 {
+        return;
+    }
+    *folds = folds
+        .iter()
+        .map(|&a| if a >= at { a.saturating_add(len) } else { a })
+        .collect();
+}
+
+/// R933.1 §5.36 — clip fold anchors against a delete of `[start, end)`
+/// (the fold peer of [`clip_runs_for_delete`]). An anchor before the range
+/// is kept; one *inside* it (its `{` was deleted) is dropped — the fold
+/// ceases to exist; one after shifts left by the removed length.
+fn clip_folds_for_delete(folds: &mut BTreeSet<usize>, start: usize, end: usize) {
+    if folds.is_empty() || start >= end {
+        return;
+    }
+    let d = end - start;
+    *folds = folds
+        .iter()
+        .filter_map(|&a| {
+            if a < start {
+                Some(a)
+            } else if a < end {
+                None
+            } else {
+                Some(a - d)
+            }
+        })
+        .collect();
 }
 
 /// R768 §5.36 §5.22 — subtract the byte range `[start, end)` from the
@@ -4782,6 +4864,75 @@ mod tests {
             st.set_text("a {\n b\n}\n".to_string());
             assert!(!st.fold_regions()[0].collapsed, "set_text reset the fold set");
             assert!(!st.is_line_hidden(1), "nothing hidden after the reset");
+        });
+    }
+
+    #[test]
+    fn r933_insert_before_collapsed_fold_tracks_the_anchor() {
+        Owner::new().run(|| {
+            // "fn f() {\n  x\n}" — '{' at byte 7. Collapse, then type before it.
+            let st = TextEditState::with_initial("fn f() {\n  x\n}".to_string());
+            assert!(st.toggle_fold(0));
+            assert!(st.is_line_hidden(1), "interior hidden");
+            st.set_caret(0);
+            st.insert("pub ");
+            // The anchor shifted with its '{'; the fold did NOT spring open.
+            assert!(st.fold_regions()[0].collapsed, "fold survives an edit before it");
+            assert!(st.is_line_hidden(1), "interior still hidden");
+        });
+    }
+
+    #[test]
+    fn r933_insert_does_not_collapse_the_wrong_block() {
+        Owner::new().run(|| {
+            // Two sibling blocks: block-1 '{' at byte 2, block-2 '{' at byte 11
+            // (distance 9). Collapse ONLY block-2, then insert exactly 9 bytes
+            // before everything — without anchor-shifting the stale anchor (11)
+            // would collide onto block-1's now-shifted '{' and hide the WRONG
+            // block. The shift keeps the collapse on block-2.
+            let st = TextEditState::with_initial("a {\n b\n}\nc {\n d\n}".to_string());
+            assert_eq!(st.fold_regions().len(), 2);
+            assert!(st.toggle_fold(3), "collapse block-2 (opens on line 3)");
+            st.set_caret(0);
+            st.insert("123456789"); // 9 bytes = block2_open - block1_open
+            let regions = st.fold_regions();
+            let b1 = regions.iter().find(|r| r.start_line == 0).unwrap();
+            let b2 = regions.iter().find(|r| r.start_line == 3).unwrap();
+            assert!(!b1.collapsed, "block-1 must NOT collapse (no anchor collision)");
+            assert!(b2.collapsed, "block-2 stays collapsed, tracking its brace");
+        });
+    }
+
+    #[test]
+    fn r933_deleting_the_opener_brace_drops_the_fold() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("a {\n b\n}".to_string());
+            assert!(st.toggle_fold(0));
+            assert_eq!(st.fold_regions().len(), 1);
+            // Delete the '{' (bytes [2, 3)). The anchor is inside the deleted
+            // range → dropped; no foldable region remains.
+            st.set_selection(2, 3);
+            st.backspace();
+            assert!(st.fold_regions().is_empty(), "deleting the opener brace prunes the fold");
+            assert!(!st.is_line_hidden(1), "nothing hidden");
+        });
+    }
+
+    #[test]
+    fn r933_undo_keeps_the_fold_anchor_valid() {
+        Owner::new().run(|| {
+            let st = undoable();
+            st.set_text("fn f() {\n  x\n}".to_string());
+            assert!(st.toggle_fold(0));
+            assert!(st.fold_regions()[0].collapsed);
+            // Type before the fold (anchor shifts forward), then undo (anchor
+            // shifts back) — the fold stays valid across the round-trip.
+            st.set_caret(0);
+            st.insert("pub ");
+            assert!(st.fold_regions()[0].collapsed, "fold tracks the insert");
+            assert!(st.undo(), "undo the insert");
+            assert!(st.fold_regions()[0].collapsed, "fold still valid after undo");
+            assert!(st.is_line_hidden(1));
         });
     }
 

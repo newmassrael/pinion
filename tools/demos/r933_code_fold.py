@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """R933 §5.36 — code-folding end-to-end RPC verification demo.
 
-Code folding is the depth slice that turns a code editor into a navigable
-one: brace-delimited blocks collapse so a reader hides a body and keeps
-the structure. R933 rides the existing R56 text substrate plus one stored
+Code folding lets brace-delimited blocks collapse so a reader hides a body
+and keeps the structure. R933 rides the existing R56 text substrate plus
+one stored
 view-state field (the collapsed set) and a derive-on-read accessor,
 [`TextEditState::fold_regions`] — the latest member of the
 `find_matches` (R903) / `style_runs` (R904) / `matching_bracket` (R926)
@@ -12,10 +12,10 @@ the R926 bracket scan as `match_forward`), read by the paint gutter AND
 the `scene/<tag>/external/fold_regions` RPC, so the rendered fold and the
 wire answer can never disagree.
 
-This demo drives the `hello-code-fold` editor entirely over RPC — sets
-the buffer with `intervene`, folds with `invoke`, reads the fold set with
-`query`, and confirms the *painted* code panel actually drops the hidden
-rows — §2 #2's "RPC headless is the primary path".
+This demo drives the `hello-code-fold` fold viewer entirely over RPC —
+sets the buffer with `intervene`, folds with `invoke`, reads the fold set
+with `query`, and confirms the *painted* code panel actually drops the
+hidden rows — §2 #2's "RPC headless is the primary path".
 
 ## The verification idea: a deterministic view transform, no wall-clock
 

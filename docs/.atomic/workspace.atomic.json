@@ -40915,6 +40915,64 @@
         "strict-interleave + string/comment-aware fold needs the tokenizer (same carry as R926 bracket)"
       ]
     },
+    "R933.1": {
+      "decision_summary": "R933.1 adversarial 3-reviewer session-review of R933 (correctness / SSOT / doc-honesty), every finding re-verified by my own grep+read. One HIGH correctness defect fixed: fold anchors were not shifted on incremental edits, so an edit before a collapsed block could spring it open or, on a coincidental anchor-byte collision, hide the WRONG block (my 'never wrong content' claim was false). Folds now shift/clip at every text-mutation site and across undo/redo replay, the byte-offset peer of the style-run maintenance. Doc-honesty fixes: removed a fabricated fragment-cache claim, reframed the non-editable example as a read-only RPC fold viewer, softened an unverified VS Code citation; fixed an O(N x lines) per-paint re-derivation in the example. Over-reach rejected after re-verification: match_forward granularity (fold walks forward only) and set_text+undo fold non-restore (correct non-journal semantics).",
+      "changes_bullets": [
+        "fold anchors shift/clip on insert/backspace/delete/splice + undo/redo replay",
+        "shift_folds_for_insert / clip_folds_for_delete: byte-offset peer of the run helpers",
+        "TextEditCommand carries the folds Signal; undo/redo keep anchors valid (non-journal)",
+        "4 regression tests: edit-before-fold tracks / no wrong-block collision / brace-delete / undo",
+        "example: derive fold_regions once (drop O(N x lines) per-line is_line_hidden re-derive)",
+        "doc honesty: drop fabricated \"fragment-cached\" claim; honest O(text x openers) perf note",
+        "example reframed as read-only RPC fold viewer (no apply_key/caret); Cargo desc + docstring",
+        "soften unverified \"VS Code/Sublime default\" closer-line citation"
+      ],
+      "verification_bullets": [
+        "workspace test 0-fail; 19 R933 fold tests (15 + 4 new regressions) + 2 binding tests",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r933_code_fold.py PASS (33 gated points) after the example fixes",
+        "the HIGH fix is verified by repro tests: 9-byte insert no longer collides onto the wrong block"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "over-reach rejected (re-verified): match_forward = correct granularity (fold walks forward only)",
+        "over-reach rejected: set_text+undo fold non-restore = correct non-journal semantics, not a bug",
+        "example split('\\n') line-iter = 1-consumer seam; lift on the 2nd code-editor binding",
+        "incremental fold tree (vs O(text x openers) per derive) = scale follow-up",
+        "gutter pointer-click + editable folded code (caret display<->model map) = follow-up"
+      ],
+      "publishable_decision_summary": "R933.1 adversarial 3-reviewer session-review of R933 (correctness / SSOT / doc-honesty), every finding re-verified by my own grep+read. One HIGH correctness defect fixed: fold anchors were not shifted on incremental edits, so an edit before a collapsed block could spring it open or, on a coincidental anchor-byte collision, hide the WRONG block (my 'never wrong content' claim was false). Folds now shift/clip at every text-mutation site and across undo/redo replay, the byte-offset peer of the style-run maintenance. Doc-honesty fixes: removed a fabricated fragment-cache claim, reframed the non-editable example as a read-only RPC fold viewer, softened an unverified VS Code citation; fixed an O(N x lines) per-paint re-derivation in the example. Over-reach rejected after re-verification: match_forward granularity (fold walks forward only) and set_text+undo fold non-restore (correct non-journal semantics).",
+      "publishable_changes_bullets": [
+        "fold anchors shift/clip on insert/backspace/delete/splice + undo/redo replay",
+        "shift_folds_for_insert / clip_folds_for_delete: byte-offset peer of the run helpers",
+        "TextEditCommand carries the folds Signal; undo/redo keep anchors valid (non-journal)",
+        "4 regression tests: edit-before-fold tracks / no wrong-block collision / brace-delete / undo",
+        "example: derive fold_regions once (drop O(N x lines) per-line is_line_hidden re-derive)",
+        "doc honesty: drop fabricated \"fragment-cached\" claim; honest O(text x openers) perf note",
+        "example reframed as read-only RPC fold viewer (no apply_key/caret); Cargo desc + docstring",
+        "soften unverified \"VS Code/Sublime default\" closer-line citation"
+      ],
+      "publishable_verification_bullets": [
+        "workspace test 0-fail; 19 R933 fold tests (15 + 4 new regressions) + 2 binding tests",
+        "clippy --workspace --all-targets --features pinion-runtime/vello clean (-D pedantic)",
+        "r933_code_fold.py PASS (33 gated points) after the example fixes",
+        "the HIGH fix is verified by repro tests: 9-byte insert no longer collides onto the wrong block"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "over-reach rejected (re-verified): match_forward = correct granularity (fold walks forward only)",
+        "over-reach rejected: set_text+undo fold non-restore = correct non-journal semantics, not a bug",
+        "example split('\\n') line-iter = 1-consumer seam; lift on the 2nd code-editor binding",
+        "incremental fold tree (vs O(text x openers) per derive) = scale follow-up",
+        "gutter pointer-click + editable folded code (caret display<->model map) = follow-up"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R933 §5.36 code-folding consumer — a code editor whose brace blocks fold; foldable regions are DERIVED from the buffer (reusing the R926 bracket scan), collapse hides interior lines + shows a … placeholder, all introspectable + drivable over the fold_regions / toggle-fold RPC surface"
+description = "R933 §5.36 code-folding demo — a read-only, RPC-driven fold VIEWER (no caret/editing wired) over the TextField fold surface; foldable regions are DERIVED from the buffer (reusing the R926 bracket scan), collapse hides interior lines + shows a … placeholder, all introspectable + drivable over the fold_regions / toggle-fold RPC"
 publish = false
 
 [[bin]]

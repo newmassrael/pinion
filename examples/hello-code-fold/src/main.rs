@@ -1,27 +1,35 @@
-//! `hello-code-fold` — R933 §5.22 §5.36 code-folding consumer for the
-//! `TextField` widget's fold surface.
+//! `hello-code-fold` — R933 §5.22 §5.36 demo of the `TextField` widget's
+//! code-folding surface.
+//!
+//! ## What it is (and is not)
+//!
+//! This binding is a **read-only fold viewer driven over RPC**, not an
+//! interactive editor: it wires no `apply_key` and renders no caret, so a
+//! human cannot type or click-to-fold in it. It exists to make the fold
+//! *substrate* visible and to be driven headlessly — the fold set lives on
+//! the reactive
+//! [`TextEditState`](pinion_core::widgets::text_edit::TextEditState) (which
+//! *is* fully editable, and tracks folds across edits — see its unit
+//! tests), and this example renders that state. An AI agent (or the demo)
+//! folds / unfolds purely over the wire (`toggle-fold` / `fold-all` /
+//! `unfold-all`), which is the §2 #2 "RPC headless is the primary path".
 //!
 //! ## What it demonstrates
 //!
-//! The depth slice that turns a code editor into a *foldable* one: the
-//! foldable regions are **derived from the buffer** (each bracket block
+//! The foldable regions are **derived from the buffer** (each bracket block
 //! spanning ≥ 2 logical lines, found by the same R926 bracket scan reused
-//! as `match_forward`), not declared by hand. Collapsing a region hides
-//! its interior lines and leaves the opener line with a `…` placeholder —
-//! the VS Code / Sublime default. Because the fold set lives on the
-//! reactive
-//! [`TextEditState`](pinion_core::widgets::text_edit::TextEditState) and
-//! the regions re-derive on read (the `find_matches` / `matching_bracket`
-//! lineage), the rendered gutter, the `scene/snapshot` paint, and the
-//! `scene/<tag>/external/fold_regions` RPC all read one derivation and an
-//! AI agent folds / unfolds purely over the wire (`toggle-fold` /
-//! `fold-all` / `unfold-all`).
+//! as `match_forward`), not declared by hand. Collapsing a region hides its
+//! interior lines and leaves the opener line with a `…` placeholder.
+//! Because the regions re-derive on read (the `find_matches` /
+//! `matching_bracket` lineage), the rendered gutter, the `scene/snapshot`
+//! paint, and the `scene/<tag>/external/fold_regions` RPC all read one
+//! derivation and never disagree.
 //!
-//! Folding is **view state**, not document content: like the data
-//! widgets' sort / filter / group, it is deliberately outside the undo
-//! journal (the Qt / Unreal convention — Ctrl+Z reverses edits, never a
-//! fold). Collapsing a region that contains the caret reanchors the caret
-//! to the opener line so a fold never strands it on a hidden line.
+//! Folding is **view state**, not document content: like the data widgets'
+//! sort / filter / group, it is deliberately outside the undo journal
+//! (Ctrl+Z reverses edits, never a fold). Collapsing a region that contains
+//! the caret reanchors the caret to the opener line so a fold never strands
+//! it on a hidden line.
 //!
 //! ## Architecture
 //!
@@ -31,7 +39,10 @@
 //! - The folded code panel is rendered binding-local (one row per *visible*
 //!   logical line, hidden lines skipped) rather than through the generic
 //!   single-line `tf_paint::view_field`, because folding is a multi-line
-//!   code-editor view transform.
+//!   view transform `view_field` (one shaped layout) cannot express. This
+//!   ~40-line view body is the seed of a future shared code-panel substrate
+//!   — the moment a 2nd code-editor binding needs gutter + fold rendering it
+//!   becomes the 2nd consumer and must lift ([[abstraction-needs-second-consumer]]).
 //!
 //! ## Try it
 //!
@@ -126,13 +137,21 @@ fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
 
     let st = use_text_edit_state(TF_TAG);
     let text = st.text();
+    // Derive the fold regions ONCE; the per-line hidden check reads this
+    // `Vec` (O(regions)) instead of calling `st.is_line_hidden`, which would
+    // re-run the O(text · openers) derivation for every line of the file.
     let regions = st.fold_regions();
+    let hidden = |line: usize| {
+        regions
+            .iter()
+            .any(|r| r.collapsed && line > r.start_line && line <= r.end_line)
+    };
 
     let total = text.split('\n').count();
     let mut rows: Vec<Scene> = Vec::new();
     let mut visible = 0usize;
     for (i, line) in text.split('\n').enumerate() {
-        if st.is_line_hidden(i) {
+        if hidden(i) {
             continue;
         }
         visible += 1;
