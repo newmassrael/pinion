@@ -41679,6 +41679,56 @@
         "Phase B mid wins depleting: lazy-tree large, secondary-sort balloons, OS-native/perf blocked"
       ]
     },
+    "R941.1": {
+      "decision_summary": "R941.1 — adversarial 3-lens session-review clearance (R940+R941). Unified popup_open to ONE gate (popup_pos) matching the painted scene + made the doc true; precised go_to_line as a caret-positioning primitive; rejected 4 over-flagged findings with grep+read",
+      "changes_bullets": [
+        "popup_open() routes through popup_pos over rows() = ONE gate (latch+kind+visibility), matching",
+        "the keyboard/a11y/paint gate + the painted scene; the doc 'one predicate' claim is now true",
+        "regression test: filtered-out edit row reports popup_open=false while editing_row latch survives",
+        "go_to_line doc: caret-POSITIONING primitive; field R765 scroll follows reactively (not a gap)"
+      ],
+      "verification_bullets": [
+        "workspace cargo test -j2: 165 ok result lines, 0 FAILED (hello-data-grid 90 = 89 + 1 regression)",
+        "clippy -p hello-data-grid -p pinion-core --all-targets -D pedantic: 0 errors",
+        "r940_data_grid_choice.py + r941_go_to_line.py: PASS, 2/2 deterministic each after popup_open gating",
+        "adversarial 3-lens review (correctness/SSOT/doc-honesty); all findings re-verified by grep+read",
+        "validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "clear_popup lift REJECTED: trivial set(None)x3, no crate home, lifts with popup-delegate at 3rd",
+        "Color match arm = REQUIRED exhaustive (not removable dead code); Color column deferral honest",
+        "go_to_line negative=Rejected / 0=clamp asymmetry documented (unrepresentable vs out-of-range)",
+        "popup-delegate (keymap/paint/a11y nodes) = 2nd consumer of the property-grid pattern, lift at 3rd"
+      ],
+      "publishable_decision_summary": "R941.1 — adversarial 3-lens session-review clearance (R940+R941). Unified popup_open to ONE gate (popup_pos) matching the painted scene + made the doc true; precised go_to_line as a caret-positioning primitive; rejected 4 over-flagged findings with grep+read",
+      "publishable_changes_bullets": [
+        "popup_open() routes through popup_pos over rows() = ONE gate (latch+kind+visibility), matching",
+        "the keyboard/a11y/paint gate + the painted scene; the doc 'one predicate' claim is now true",
+        "regression test: filtered-out edit row reports popup_open=false while editing_row latch survives",
+        "go_to_line doc: caret-POSITIONING primitive; field R765 scroll follows reactively (not a gap)"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test -j2: 165 ok result lines, 0 FAILED (hello-data-grid 90 = 89 + 1 regression)",
+        "clippy -p hello-data-grid -p pinion-core --all-targets -D pedantic: 0 errors",
+        "r940_data_grid_choice.py + r941_go_to_line.py: PASS, 2/2 deterministic each after popup_open gating",
+        "adversarial 3-lens review (correctness/SSOT/doc-honesty); all findings re-verified by grep+read",
+        "validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "clear_popup lift REJECTED: trivial set(None)x3, no crate home, lifts with popup-delegate at 3rd",
+        "Color match arm = REQUIRED exhaustive (not removable dead code); Color column deferral honest",
+        "go_to_line negative=Rejected / 0=clamp asymmetry documented (unrepresentable vs out-of-range)",
+        "popup-delegate (keymap/paint/a11y nodes) = 2nd consumer of the property-grid pattern, lift at 3rd"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

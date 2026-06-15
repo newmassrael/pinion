@@ -2311,6 +2311,13 @@ impl TextEditState {
     /// setter-returns-the-read wire symmetry). Delegates to
     /// [`set_caret`](Self::set_caret), so the destination is clamped to a `char`
     /// boundary and the selection collapses identically to every caret move.
+    ///
+    /// R941.1 — this is the caret-POSITIONING primitive, not a scroll command: a
+    /// field that scrolls (the R765 `scroll_into_view` paint path) follows the
+    /// caret into view on the next paint, so the target line becomes visible
+    /// automatically; a field that renders all its lines (no scroll viewport, e.g.
+    /// `hello-syntax-highlight`) needs no scroll. Viewport scroll-to-caret is the
+    /// field's reactive concern, kept orthogonal to caret placement.
     pub fn go_to_line(&self, line: usize) -> usize {
         let starts = line_starts(&self.text.get());
         // 1-based; `starts` is never empty (always at least `[0]`).

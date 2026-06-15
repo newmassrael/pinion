@@ -1888,14 +1888,18 @@ impl DataGridExternal {
         }
     }
 
-    /// R940 — whether a choice dropdown is open: the edit latch is on a cell
-    /// whose column is a [`CellKind::Choice`] (a text / numeric edit latch is the
-    /// inline field, not a popup). The one predicate the `popup_open` query, the
-    /// keyboard-keymap intercept, and the popup paint / a11y gate share.
+    /// R940 / R941.1 — whether a choice dropdown is open **and visible**: the
+    /// edit latch is on a [`CellKind::Choice`] cell whose row is present in the
+    /// current flatten (not filtered / collapsed out). Routes through [`popup_pos`]
+    /// — the SAME predicate the keyboard-keymap intercept, the popup paint, and
+    /// the a11y gate use (those via [`popup_pos_live`], the hook-access peer over
+    /// the identical [`rows`](Self::rows) flatten). So there is genuinely ONE gate
+    /// and the `popup_open` query is consistent with the painted scene (no
+    /// "open but no panel" divergence the session-review caught). The raw latch
+    /// (still set when its row scrolls / collapses out of view) stays observable
+    /// via the `editing_row` / `editing_col` queries.
     fn popup_open(&self) -> bool {
-        self.editing_cell
-            .get()
-            .is_some_and(|(_, col)| col < NCOLS && COL_KINDS[col] == CellKind::Choice)
+        popup_pos(self.editing_cell.get(), &self.rows()).is_some()
     }
 
     fn set_focused_row_clamped(&self, row: usize) {
@@ -5671,6 +5675,40 @@ mod tests {
             // Re-apply the filter (the edit landed under it); now Hero passes.
             assert_eq!(grid_invoke(&mut scene, "set_filter", IntrospectValue::Text("1=material".to_owned())), Ok(IntrospectValue::Int(1)));
             assert_eq!(grid_intro(&scene).query("source_at.0"), Some(IntrospectValue::Int(0)), "Hero (material) is the only match");
+        });
+    }
+
+    #[test]
+    fn r941_1_popup_open_gates_on_visibility_not_latch() {
+        // R941.1 session-review fix: popup_open reports the VISIBLE state (ONE
+        // gate, popup_pos — the same predicate the keyboard / a11y / paint use),
+        // not just the edit latch. A filter that hides the editing row makes
+        // popup_open=false (matching the un-painted panel), while the raw latch
+        // stays observable via editing_row — a view change (filter / group /
+        // collapse) does NOT cancel the latch (only a structural splice / undo does).
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_choice_at(&mut scene, 0, 1)); // Hero, Type=sprite — visible
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(true)));
+            // Filter Type=mesh: Hero (sprite) is hidden, but the latch survives.
+            let _ = grid_invoke(&mut scene, "set_filter", IntrospectValue::Text("1=mesh".to_owned()));
+            assert_eq!(
+                grid_intro(&scene).query("popup_open"),
+                Some(IntrospectValue::Bool(false)),
+                "a filtered-out editing row reports closed (matches the un-painted panel)",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("editing_row"),
+                Some(IntrospectValue::Int(0)),
+                "the raw latch is still observable (the view change did not cancel it)",
+            );
+            // Clearing the filter re-shows the row → popup_open is true again.
+            let _ = grid_invoke(&mut scene, "set_filter", IntrospectValue::Null);
+            assert_eq!(
+                grid_intro(&scene).query("popup_open"),
+                Some(IntrospectValue::Bool(true)),
+                "re-showing the row re-opens the still-latched popup",
+            );
         });
     }
 }
