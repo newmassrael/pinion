@@ -42181,6 +42181,66 @@
         "move/duplicate keyboard chords still deferred (Alt+Arrow overlaps vertical caret nav) — RPC-primary"
       ]
     },
+    "R946": {
+      "decision_summary": "Virtualize hello-lazy-tree: combine R942 lazy-load + R819 windowing into the World Outliner at scale -- windowed paint over the heterogeneous LazyRow flatten + windowed a11y + keyboard scroll-into-view, all N-th-consumer reuse",
+      "changes_bullets": [
+        "hello-lazy-tree: scale child_count so top-level sections are large folders (hundreds of entries) -- the virtualization-at-scale case",
+        "view: window the heterogeneous Vec<LazyRow> through view_flex_virtual_list (closure: Node -> row paint, Skeleton -> placeholder) + AutoSizer flex band + vertical scrollbar peer",
+        "the eager view_virtual_tree cannot render a skeleton-interleaved sequence, so the example windows the LazyRow flatten itself -- the one genuinely-new axis",
+        "ROOT_TAG moved to the sized flex band (was the visible rows container, now in the scroll); a 0x0 anchor is unreachable by key / hit-test routing",
+        "access_node windows the AT treeitems to the painted window (hello-virtual-tree precedent); the query-only introspection extra still reports the whole flatten",
+        "apply_key_impl: reveal_lazy_cursor scrolls the cursor row into the window after a roving move, reusing the scroll_offset_to_reveal pixel-math SSOT over the LazyRow sequence",
+        "no new framework primitive: N-th-consumer reuse of view_flex_virtual_list / compute_visible_range / tree_access_nodes / scroll_offset_to_reveal / resolve_tree_key",
+        "combines R942 lazy-load + R819 windowing into the World Outliner at scale (Phase B Model/View-at-scale axis the self-hosted editor's scene outliner needs)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: green, incl. 3 new hello-lazy-tree tests (large-folder flood / windowed-AT-vs-full-query / keyboard reveal off-window)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0",
+        "demos r942 (lazy) + r944 (keyboard) reworked for scale + windowing, both PASS; new r946 (virtualization witness) PASS, 30 asserts",
+        "r946 witness: expand a large folder -> query row_count > 300 while painted window < 30 rows; scroll materializes a different window; keyboard rove scrolls the cursor into view",
+        "self-grep clean: windowed-tree-a11y glue stays inline in every tree example (not lifted -- row-source + selection-model diverge); reveal_lazy_cursor consumes the scroll_offset_to_reveal SSOT directly"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "FOUND-deferred (pre-existing, unrelated to R946): hello-data-grid cell_fill == hello-property-grid row_fill byte-identical focus fill (2-consumer) -> lift to pinion-widget-paint in a separate focused round (needs its own data-grid + property-grid demo-family sweep)",
+        "off-window aria-activedescendant after a pointer-scroll is the documented virtualized-tree behavior (keyboard reveal keeps the cursor in-window); effective_cursor still guards the dangling collapsed-away case (R945.1)",
+        "deferred: a 2nd lazy-windowed-tree consumer would lift reveal_lazy_cursor + the windowed-a11y glue; at 1 consumer that is premature (abstraction-needs-second-consumer)"
+      ],
+      "publishable_decision_summary": "Virtualize hello-lazy-tree: combine R942 lazy-load + R819 windowing into the World Outliner at scale -- windowed paint over the heterogeneous LazyRow flatten + windowed a11y + keyboard scroll-into-view, all N-th-consumer reuse",
+      "publishable_changes_bullets": [
+        "hello-lazy-tree: scale child_count so top-level sections are large folders (hundreds of entries) -- the virtualization-at-scale case",
+        "view: window the heterogeneous Vec<LazyRow> through view_flex_virtual_list (closure: Node -> row paint, Skeleton -> placeholder) + AutoSizer flex band + vertical scrollbar peer",
+        "the eager view_virtual_tree cannot render a skeleton-interleaved sequence, so the example windows the LazyRow flatten itself -- the one genuinely-new axis",
+        "ROOT_TAG moved to the sized flex band (was the visible rows container, now in the scroll); a 0x0 anchor is unreachable by key / hit-test routing",
+        "access_node windows the AT treeitems to the painted window (hello-virtual-tree precedent); the query-only introspection extra still reports the whole flatten",
+        "apply_key_impl: reveal_lazy_cursor scrolls the cursor row into the window after a roving move, reusing the scroll_offset_to_reveal pixel-math SSOT over the LazyRow sequence",
+        "no new framework primitive: N-th-consumer reuse of view_flex_virtual_list / compute_visible_range / tree_access_nodes / scroll_offset_to_reveal / resolve_tree_key",
+        "combines R942 lazy-load + R819 windowing into the World Outliner at scale (Phase B Model/View-at-scale axis the self-hosted editor's scene outliner needs)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: green, incl. 3 new hello-lazy-tree tests (large-folder flood / windowed-AT-vs-full-query / keyboard reveal off-window)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0",
+        "demos r942 (lazy) + r944 (keyboard) reworked for scale + windowing, both PASS; new r946 (virtualization witness) PASS, 30 asserts",
+        "r946 witness: expand a large folder -> query row_count > 300 while painted window < 30 rows; scroll materializes a different window; keyboard rove scrolls the cursor into view",
+        "self-grep clean: windowed-tree-a11y glue stays inline in every tree example (not lifted -- row-source + selection-model diverge); reveal_lazy_cursor consumes the scroll_offset_to_reveal SSOT directly"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.22",
+        "5.23",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "FOUND-deferred (pre-existing, unrelated to R946): hello-data-grid cell_fill == hello-property-grid row_fill byte-identical focus fill (2-consumer) -> lift to pinion-widget-paint in a separate focused round (needs its own data-grid + property-grid demo-family sweep)",
+        "off-window aria-activedescendant after a pointer-scroll is the documented virtualized-tree behavior (keyboard reveal keeps the cursor in-window); effective_cursor still guards the dangling collapsed-away case (R945.1)",
+        "deferred: a 2nd lazy-windowed-tree consumer would lift reveal_lazy_cursor + the windowed-a11y glue; at 1 consumer that is premature (abstraction-needs-second-consumer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

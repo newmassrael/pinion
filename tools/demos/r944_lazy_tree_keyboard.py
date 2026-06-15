@@ -132,7 +132,7 @@ def body() -> None:
             viewport=VIEWPORT,
             desc="root children resolve at boot",
         )
-        assert_eq(visible_ids(snap), ["0", "1", "2"], "boot: 3 top-level rows")
+        assert_eq(visible_ids(snap), ["0", "1", "2", "3", "4", "5"], "boot: 6 top-level rows")
         assert_eq(cursor_q(), None, "no keyboard cursor at boot")
         assert_eq(tf.query(f"/{STATE_TAG}/external/cursor_index"), None, "cursor_index unset at boot")
         assert_eq(focused_row(snap), None, "no focus highlight at boot")
@@ -160,9 +160,9 @@ def body() -> None:
         press("ArrowUp")  # clamp at top (no wrap)
         assert_eq(cursor_q(), "0", "ArrowUp clamps at the first row")
         press("End")
-        expect_cursor("2", "End jumps to the last row")
+        expect_cursor("5", "End jumps to the last row")
         press("ArrowDown")  # clamp at bottom (no wrap)
-        assert_eq(cursor_q(), "2", "ArrowDown clamps at the last row")
+        assert_eq(cursor_q(), "5", "ArrowDown clamps at the last row")
         press("Home")
         expect_cursor("0", "Home jumps to the first row")
 
@@ -192,11 +192,12 @@ def body() -> None:
             desc="node 0's children appear after the lazy fetch",
         )
         assert not has_skeleton(resolved), "children resolved → skeleton gone"
-        assert_eq(
-            visible_ids(resolved),
-            ["0", "0/0", "0/1", "1", "2"],
-            "keyboard expand inserted the children",
-        )
+        # R946 — node 0 is a large folder, so only the top window paints; the
+        # keyboard-expanded first children are in it (and the cursor stays on the
+        # branch, still in view).
+        painted = visible_ids(resolved)
+        assert "0/0" in painted, "keyboard expand inserted the children (first child in window)"
+        assert len(painted) < 30, f"only the window paints ({len(painted)} rows)"
 
         # ── (F) Arrow Right again descends to the first child ────────────────
         press("ArrowRight")
@@ -212,7 +213,9 @@ def body() -> None:
             viewport=VIEWPORT,
             desc="Arrow Left collapses the expanded branch",
         )
-        assert_eq(visible_ids(collapsed), ["0", "1", "2"], "collapsed back to the top level")
+        assert_eq(
+            visible_ids(collapsed), ["0", "1", "2", "3", "4", "5"], "collapsed back to the top level"
+        )
         assert not has_skeleton(collapsed), "collapse is synchronous — no skeleton"
         assert_eq(cursor_q(), "0", "cursor stays on the collapsed branch")
 

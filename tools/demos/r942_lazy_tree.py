@@ -126,8 +126,13 @@ def body() -> None:
         def snap_now():
             return tf.snapshot(source="paint", viewport=VIEWPORT)
 
-        # ── (A) boot: the root's children load lazily, then 3 top-level rows ──
-        # The root fetch resolves under the demo's own snapshot polling.
+        def row_count() -> int:
+            return tf.query(f"/{STATE_TAG}/external/row_count")
+
+        # ── (A) boot: the root's children load lazily, then 6 top-level rows ──
+        # The root fetch resolves under the demo's own snapshot polling. R946 —
+        # at boot the 6 sections all fit the window, so the painted ids == the
+        # full flatten; once a folder expands (B) the two diverge.
         snap = wait_snap(
             tf,
             lambda s: "0" in visible_ids(s),
@@ -135,9 +140,9 @@ def body() -> None:
             desc="root children resolve at boot (node 0 painted)",
         )
         ids0 = visible_ids(snap)
-        assert_eq(ids0, ["0", "1", "2"], "boot: 3 top-level rows in order")
+        assert_eq(ids0, ["0", "1", "2", "3", "4", "5"], "boot: 6 top-level rows in order")
         assert not has_skeleton(snap), "boot: no skeleton once the root resolved"
-        assert_eq(status_of(snap), "3 items loaded", "boot status line")
+        assert_eq(status_of(snap), "6 items loaded", "boot status line")
         assert find_by_tag(snap, "lazytree") is not None, "outliner root present at boot"
 
         # Top-level labels are the deterministic synthetic fixture.
@@ -150,7 +155,7 @@ def body() -> None:
         assert not any(i.startswith("2/") for i in ids0), "node 2 collapsed at boot"
 
         # (A1) the AI-first tree-state introspection surface mirrors the paint.
-        assert_eq(tf.query(f"/{STATE_TAG}/external/row_count"), 3, "row_count at boot")
+        assert_eq(row_count(), 6, "row_count at boot")
         assert_eq(tf.query(f"/{STATE_TAG}/external/id_at.0"), "0", "id_at.0 at boot")
         assert_eq(tf.query(f"/{STATE_TAG}/external/label_at.2"), "Textures", "label_at.2")
         assert_eq(tf.query(f"/{STATE_TAG}/external/level_at.0"), 1, "level_at.0 (root depth)")
@@ -165,7 +170,7 @@ def body() -> None:
             "node 1 is a leaf (aria-expanded undefined)",
         )
 
-        # ── (B) expand node 0 → skeleton observed, then children resolve ─────
+        # ── (B) expand node 0 (a LARGE folder) → skeleton, then children ─────
         tf.click(path=row_tag("0"))
         # (B1) the loading state is deterministically observable: the fetch
         # needs many polls, so the first snapshots after the click show a
@@ -189,14 +194,20 @@ def body() -> None:
             desc="node 0's children appear after the lazy fetch",
         )
         assert not has_skeleton(resolved), "children resolved → skeleton gone"
-        ids1 = visible_ids(resolved)
-        assert_eq(ids1, ["0", "0/0", "0/1", "1", "2"], "node 0 expanded: children inserted")
+        # (B2a) R946 — node 0 is a folder of HUNDREDS of entries, but only the
+        # ~viewport-sized window paints. The full flatten lives in the query
+        # surface; the painted scene is a small window over it.
+        big = row_count()
+        assert big > 300, f"node 0 is a large folder ({big} rows after expand)"
+        painted = visible_ids(resolved)
+        assert len(painted) < 30, f"only the window paints ({len(painted)} of {big} rows)"
+        assert "0/0" in painted, "the folder's first child is in the top window"
+        assert "5" not in painted, "rows below the window (e.g. section 5) are not painted"
         assert_eq(label_under(resolved, "0/0"), "Scenes", "child 0/0 label")
         assert_eq(label_under(resolved, "0/1"), "albedo_1.fbx", "child 0/1 label (leaf)")
-        assert_eq(status_of(resolved), "5 items loaded", "status after expand")
 
-        # (B3) introspection reflects the deeper tree (level = depth + 1).
-        assert_eq(tf.query(f"/{STATE_TAG}/external/row_count"), 5, "row_count after expand")
+        # (B3) introspection reflects the deeper tree (level = depth + 1), the
+        # whole flatten regardless of which window paints.
         assert_eq(tf.query(f"/{STATE_TAG}/external/expanded_at.0"), True, "node 0 now expanded")
         assert_eq(tf.query(f"/{STATE_TAG}/external/id_at.1"), "0/0", "id_at.1 == first child")
         assert_eq(tf.query(f"/{STATE_TAG}/external/level_at.1"), 2, "child level == 2")
@@ -210,8 +221,8 @@ def body() -> None:
             desc="collapse hides node 0's children",
         )
         assert not has_skeleton(collapsed), "collapse is synchronous — no skeleton"
-        assert_eq(visible_ids(collapsed), ["0", "1", "2"], "back to 3 top-level rows")
-        assert_eq(tf.query(f"/{STATE_TAG}/external/row_count"), 3, "row_count after collapse")
+        assert_eq(visible_ids(collapsed), ["0", "1", "2", "3", "4", "5"], "back to 6 top rows")
+        assert_eq(row_count(), 6, "row_count after collapse")
 
         # ── (D) re-expand node 0 → cache hit: children return with NO skeleton ─
         tf.click(path=row_tag("0"))
@@ -225,9 +236,11 @@ def body() -> None:
             "re-expanding a cached branch shows NO skeleton (no re-fetch) — the "
             "retained child set resolves the same frame"
         )
-        assert_eq(visible_ids(recached), ["0", "0/0", "0/1", "1", "2"], "cached children restored")
+        assert row_count() > 300, "cached folder restored to its full row count"
+        assert "0/0" in visible_ids(recached), "cached first child back in the window"
 
         # ── (E) expand a deeper branch (0/0) → multi-level lazy load ──────────
+        # 0/0 is the second row, inside the top window, so it is clickable.
         tf.click(path=row_tag("0/0"))
         deep_loading = wait_snap(
             tf,
@@ -246,13 +259,13 @@ def body() -> None:
         deep_ids = visible_ids(deep)
         assert "0/0/0" in deep_ids, "grandchild 0/0/0 visible"
         assert deep_ids.index("0/0/0") == deep_ids.index("0/0") + 1, "grandchild follows its parent"
-        # 0/0/0 is at depth 2 → aria-level 3.
-        gpos = deep_ids.index("0/0/0")
-        assert_eq(tf.query(f"/{STATE_TAG}/external/level_at.{gpos}"), 3, "grandchild level == 3")
+        # 0/0/0 is at depth 2 → aria-level 3 (query the full-flatten position).
+        assert_eq(tf.query(f"/{STATE_TAG}/external/level_at.2"), 3, "grandchild level == 3")
 
         # ── (F) clicking a leaf is a no-op (the reducer gates on id_is_branch) ─
         before_leaf = visible_ids(deep)
-        tf.click(path=row_tag("1"))
+        # 0/1 is a leaf inside the top window (odd sibling index → not a branch).
+        tf.click(path=row_tag("0/1"))
         # Dispatch commits before the response, so the unchanged set is readable
         # directly (no async edge to gate on).
         after = snap_now()

@@ -1,13 +1,19 @@
-//! R942 §5.22 §5.23 §5.27 §2 — `hello-lazy-tree`: a scene-outliner / asset
-//! browser over a tree whose **children are fetched asynchronously on
-//! expand**.
+//! R942 R946 §5.16 §5.22 §5.23 §5.27 §2 — `hello-lazy-tree`: a
+//! scene-outliner / asset browser over a tree whose **children are fetched
+//! asynchronously on expand** *and* whose rows are **virtualized** — the World
+//! Outliner at scale.
 //!
-//! The Model/View-at-scale axis so far virtualizes (`hello-virtual-tree`),
-//! lazily pages a *flat* list (`hello-lazy-list`), and reparents an
-//! in-memory tree (`hello-tree-reparent`). The gap this fills: a tree whose
-//! structure itself is out-of-memory — each branch's children arrive
-//! asynchronously the first time it is expanded, the way a real asset
-//! browser reads a directory or a scene graph streams a sub-hierarchy.
+//! The Model/View-at-scale axis virtualizes a fully-materialized tree
+//! (`hello-virtual-tree`, R819), lazily pages a *flat* list (`hello-lazy-list`,
+//! R924), and reparents an in-memory tree (`hello-tree-reparent`). This binding
+//! **combines** the first two over a tree: a structure that is *both*
+//! out-of-memory (each branch's children arrive asynchronously the first time
+//! it is expanded, the way a real asset browser reads a directory or a scene
+//! graph streams a sub-hierarchy) *and* large (R946 — a top-level section is a
+//! folder of hundreds of entries, so only the ~viewport-sized scroll window
+//! ever becomes scene nodes). That combination — lazy + windowed — is what the
+//! self-hosted editor's World Outliner needs (100k-actor scenes, streamed and
+//! windowed); R942 reserved it for a fresh full-budget round.
 //!
 //! ## Architecture (unidirectional, Effect-driven fetch-on-expand)
 //!
@@ -25,13 +31,29 @@
 //! - The view snapshots the root + every expanded branch's child state and
 //!   *flattens* the visible tree: a `Ready` branch contributes its children
 //!   (recursing into the expanded ones); a branch still `Loading` contributes
-//!   one skeleton placeholder. This async flattening is the only new
+//!   one skeleton placeholder. This async flattening is the example-local
 //!   machinery — the in-memory `flat_visible` SSOT walks a `&[TreeNode]`
 //!   slice, which a lazily-fetched tree cannot provide.
 //!
 //! This is the same Resource + Effect + `ResourceCache` + `DeferredReady` +
 //! pump substrate R923/R924 introduced (asset browser / lazy list), now keyed
 //! on expand instead of scroll, over a tree instead of a flat list.
+//!
+//! ## Virtualization (R946 — the genuinely-new axis)
+//!
+//! The lazy flattening — a heterogeneous `Vec<LazyRow>` of loaded node rows and
+//! transient skeletons — is fed to [`view_flex_virtual_list`] (the closure
+//! windowing path, `AutoSizer`-measured), so only the rows inside the scroll
+//! window become scene nodes. This is the one piece the eager windowed tree
+//! ([`view_virtual_tree`](pinion_widget_paint::tree_view::view_virtual_tree))
+//! cannot do: that helper renders a uniform `&[VisibleRow]`, whereas a lazy
+//! sequence interleaves skeleton placeholders, so the example windows the
+//! `LazyRow` sequence itself (Node → row paint, Skeleton → placeholder). Every
+//! other piece is N-th-consumer reuse: the AT treeitems window with the paint
+//! (`hello-virtual-tree` precedent), keyboard roving scrolls the cursor into
+//! the window ([`scroll_offset_to_reveal`]), and `scene/query` reports the full
+//! flattening regardless of which window paints (§2 #7 — the AI omniscience a
+//! windowed AT tree alone cannot give).
 //!
 //! ## Keyboard navigation (R944 — WAI-ARIA APG 6.13 Tree)
 //!
@@ -44,7 +66,9 @@
 //! existing fetch-on-expand `Effect` fires — keyboard expansion lazy-loads
 //! exactly as clicking does. The cursor is conveyed as `aria-activedescendant`
 //! plus an M3 focus state-layer, both gated through [`effective_cursor`] so a
-//! collapsed-away cursor never dangles.
+//! collapsed-away cursor never dangles. R946 — because the rows are now
+//! windowed, a roving move scrolls the cursor's row into the rendered window
+//! ([`reveal_lazy_cursor`]), so it stays realized.
 //!
 //! ## ZERO-FLAKE latency model
 //!
@@ -67,14 +91,19 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::scroll::{use_scroll_state, ScrollState};
+use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::tree_nav::{
     resolve_tree_key, tree_view_introspection_extra, TreeKey, VisibleRow,
 };
+use pinion_core::widgets::virtual_list::{compute_visible_range, scroll_offset_to_reveal};
 use pinion_core::{use_local_task_pump, Frame, LocalTaskPump, Scene, Signal, WidgetCore};
 use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
 use pinion_widget_paint::glyph::{DISCLOSURE_COLLAPSED, DISCLOSURE_EXPANDED};
+use pinion_widget_paint::scrollbar::{view_vertical_scrollbar, VerticalScrollbarStyle};
 use pinion_widget_paint::tree_view::{row_focus_bg, TreeRowClickExternal, TreeViewStyle};
+use pinion_widget_paint::virtual_list::view_flex_virtual_list;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
@@ -103,6 +132,24 @@ const STATUS_TAG: &str = "lazytree_status";
 const SKELETON_TAG: &str = "lazytree_skeleton";
 /// The query-only tree-state introspection extra tag (`scene/query`).
 const STATE_TAG: &str = "lazytree_state";
+/// R946 — the body `ScrollState` cache key + the painted `Scene::Scroll` tag,
+/// shared with the scrollbar peer and the keyboard scroll-into-view.
+const SCROLL_KEY: &str = "lazytree_scroll";
+/// R946 — the vertical scrollbar peer tag (shares [`SCROLL_KEY`]'s state).
+const SCROLLBAR_TAG: &str = "lazytree_scrollbar";
+/// R946 — gutter reserved on the right for the scrollbar peer.
+const SCROLLBAR_W: u32 = 12;
+/// R946 — rows rendered beyond the strict scroll window on each side (the
+/// virtualization overscan; matches `hello-virtual-tree`).
+const OVERSCAN: usize = 4;
+
+/// R946 — the uniform per-row vertical pitch the windowing geometry uses: the
+/// tree row height. One source so the paint window, the a11y window, and the
+/// keyboard scroll-into-view all derive the same pitch (a divergence would
+/// scroll the cursor to the wrong row or window the AT off by rows).
+fn tree_pitch() -> u32 {
+    TreeViewStyle::default().row_height
+}
 
 /// The dotted wire form of the row-click intent (`{ROW_PREFIX}.click`), matched
 /// in [`LazyTreeView::update`] per [[intent-tag-dotted-wire-form]].
@@ -119,6 +166,20 @@ const MAX_BRANCH_DEPTH: u32 = 3;
 /// for source latency that keeps the skeleton observable across frames
 /// (ZERO-FLAKE; long enough to survive the click's own repaints).
 const FETCH_LATENCY_POLLS: u32 = 24;
+
+/// Top-level outliner sections (the synthetic root's children) — a handful of
+/// asset categories ("Scenes", "Models", …); the boot listing.
+const TOP_SECTIONS: usize = 6;
+/// R946 — a top-level section is a *large* asset folder: hundreds of entries,
+/// so expanding one floods the visible-row count far past the rendered window.
+/// This is the virtualization-at-scale case the self-hosted editor's World
+/// Outliner needs (a folder of hundreds of meshes, only ~viewport rows ever
+/// becoming scene nodes). Deterministic (base + an id-byte spread), so every
+/// run materialises the identical tree (ZERO-FLAKE) — no RNG.
+const LARGE_FOLDER_BASE: usize = 360;
+/// The per-section spread added to [`LARGE_FOLDER_BASE`] (`base ..= base +
+/// spread - 1` entries), varied by the section id's bytes.
+const LARGE_FOLDER_SPREAD: usize = 80;
 
 /// Leaf disclosure-column placeholder (NO-BREAK SPACE) — keeps the label
 /// column of leaves aligned with branches' triangles
@@ -187,11 +248,17 @@ fn id_is_branch(id: &str) -> bool {
     child_depth(parent) < MAX_BRANCH_DEPTH && index % 2 == 0
 }
 
-/// How many children `parent_id` has — 3 at the root, else a deterministic
-/// 2..=4 from the id bytes (no RNG, so every run is identical).
+/// How many children `parent_id` has — [`TOP_SECTIONS`] at the root; a *large*
+/// folder ([`LARGE_FOLDER_BASE`]..) for a top-level section so virtualization is
+/// observable at scale (R946); else a deterministic 2..=4 from the id bytes.
+/// No RNG, so every run is identical.
 fn child_count(parent_id: &str) -> usize {
     if parent_id.is_empty() {
-        3
+        TOP_SECTIONS
+    } else if !parent_id.contains('/') {
+        // A top-level section: a large asset folder (hundreds of entries) — the
+        // scale case. Expanding it yields far more visible rows than the window.
+        LARGE_FOLDER_BASE + parent_id.bytes().map(usize::from).sum::<usize>() % LARGE_FOLDER_SPREAD
     } else {
         let seed: usize = parent_id.bytes().map(usize::from).sum();
         2 + seed % 3
@@ -608,31 +675,51 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     );
 
-    let row_scenes: Vec<Scene> = rows
-        .iter()
-        .map(|r| row_view(r, cursor.as_deref(), &theme, &style))
-        .collect();
-    let tree = Scene::Container(
-        ContainerNode::new(row_scenes)
+    // R946 — virtualized paint: only the rows inside the scroll window become
+    // scene nodes, derived from the *whole* lazy flattening's length (loaded
+    // node rows + transient skeletons alike, since both occupy one uniform-pitch
+    // slot). The closure dispatches each windowed index back to the same
+    // [`row_view`] the non-windowed era used, so a windowed row is byte-identical
+    // to its eager counterpart — only the slot count differs. Skeletons inside
+    // the window paint as placeholders; off-window rows never exist as nodes.
+    let scroll = use_scroll_state(SCROLL_KEY);
+    let pitch = tree_pitch();
+    let tree = view_flex_virtual_list(&scroll, rows.len(), pitch, OVERSCAN, |i| {
+        row_view(&rows[i], cursor.as_deref(), &theme, &style)
+    });
+
+    // The scrollbar peer shares the body `ScrollState` (its thumb reads the
+    // measured viewport against the full content height the windowing sizer
+    // reserves), so a huge lazy folder gets a proportional grip.
+    let (_, measured_h) = scroll.measured_viewport();
+    let scrollbar_style = VerticalScrollbarStyle::material(measured_h, SCROLLBAR_TAG);
+    let scrollbar_interaction = use_scrollbar_interaction(SCROLLBAR_TAG);
+    let scrollbar_visual =
+        view_vertical_scrollbar(&scroll, &theme, &scrollbar_style, scrollbar_interaction.get());
+
+    // Row band: the windowed tree beside its scrollbar peer, flex-grow so it
+    // fills the window below the title + status. The measured-viewport
+    // windowing reads its height from this flex-computed band (the `AutoSizer`).
+    // It carries ROOT_TAG — the WAI-ARIA `tree` root + primary `StubExternal`
+    // anchor + keyboard-focus surface. A real sized node (not the old visible
+    // rows container, now moved into the scroll, nor a 0x0 placeholder a key /
+    // hit-test route cannot reach): the tree region itself is the focus surface.
+    let band = Scene::Container(
+        ContainerNode::new(vec![tree, scrollbar_visual])
             .with_tag(ROOT_TAG)
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Stretch)
-                    .with_size(Size::px(WIN_W - 24, WIN_H - 96)),
-            ),
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_flex_grow(1.0)),
     );
 
     Scene::Container(
-        ContainerNode::new(vec![title, status, tree])
+        ContainerNode::new(vec![title, status, band])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Start)
+                    .with_align_items(AlignItems::Stretch)
                     .with_size(Size::px(WIN_W, WIN_H))
                     .with_gap(10)
-                    .with_padding(Rect::new(12, 12, 12, 12)),
+                    .with_padding(Rect::new(12, 12, 12 + SCROLLBAR_W, 12)),
             ),
     )
 }
@@ -657,7 +744,10 @@ fn apply_key_impl(key: &str) -> bool {
     let expanded = use_expanded();
     let cache = use_children_cache();
     let cursor = use_cursor();
-    let rows = node_rows(&compute_rows(&expanded, &cache));
+    // The whole lazy flattening (incl. skeletons) for the scroll-into-view
+    // painted-position math; the loaded node rows for the resolver / type-ahead.
+    let all = compute_rows(&expanded, &cache);
+    let rows = node_rows(&all);
     let current = cursor.get();
     let outcome = resolve_tree_key(&rows, current.as_deref(), key, NAV_PAGE);
     // R945.1 — guard the lazy descent: an expanded branch whose children are
@@ -680,6 +770,10 @@ fn apply_key_impl(key: &str) -> bool {
     match outcome {
         TreeKey::Focus(id) => {
             cursor.set(Some(id));
+            // R946 — keyboard ⊥ virtualization: a roving move may target a row
+            // outside the rendered window; scroll it in so the cursor (and its
+            // `aria-activedescendant`) stays realized.
+            reveal_lazy_cursor(&all, cursor.get().as_deref(), &use_scroll_state(SCROLL_KEY), tree_pitch());
             true
         }
         TreeKey::Expand(id) => {
@@ -697,9 +791,43 @@ fn apply_key_impl(key: &str) -> bool {
         TreeKey::Consumed => true,
         // Unrecognised printable key → type-ahead jump over the visible labels
         // (the shared `pinion-shell` SSOT; the cursor cache key is the only
-        // caller-side bit).
-        TreeKey::Unhandled => tree_typeahead_jump(&cursor, &rows, TYPEAHEAD_KEY, key),
+        // caller-side bit). A jump that moves the cursor scrolls it into view.
+        TreeKey::Unhandled => {
+            let jumped = tree_typeahead_jump(&cursor, &rows, TYPEAHEAD_KEY, key);
+            if jumped {
+                reveal_lazy_cursor(
+                    &all,
+                    cursor.get().as_deref(),
+                    &use_scroll_state(SCROLL_KEY),
+                    tree_pitch(),
+                );
+            }
+            jumped
+        }
     }
+}
+
+/// R946 — scroll the keyboard cursor's row into the rendered window over the
+/// *lazy* flattening. The cursor only ever lands on a loaded node row, so its
+/// painted slot is its index in the heterogeneous [`LazyRow`] sequence
+/// (transient skeletons occupy slots too, so an index over [`node_rows`] alone
+/// would be off by the skeletons above it). Reuses the
+/// [`scroll_offset_to_reveal`] pixel-math SSOT — the lazy peer of the lifted
+/// [`reveal_row_cursor`](pinion_core::widgets::tree_nav::reveal_row_cursor),
+/// which walks `&[VisibleRow]`, a shape a skeleton-interleaved sequence cannot
+/// supply; the shared geometry is the free fn both call (so the row-type
+/// adapter stays caller-side, R945.1's `effective_cursor` granularity).
+fn reveal_lazy_cursor(rows: &[LazyRow], cursor: Option<&str>, scroll: &ScrollState, pitch: u32) {
+    let Some(id) = cursor else { return };
+    let Some(index) = rows
+        .iter()
+        .position(|r| matches!(r, LazyRow::Node(vr) if vr.id == id))
+    else {
+        return;
+    };
+    let (_, measured_h) = scroll.measured_viewport();
+    let offset = scroll_offset_to_reveal(index, scroll.offset_y(), measured_h, pitch);
+    scroll.scroll_to(0, offset);
 }
 
 // ─── binding ────────────────────────────────────────────────────────────────
@@ -715,7 +843,7 @@ impl WidgetCore for LazyTreeView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-lazy-tree (R942 §5.22 §5.23 §5.27)"
+        "pinion hello-lazy-tree (R942 R946 §5.16 §5.22 §5.23 §5.27)"
     }
 
     fn create_external() -> Box<dyn External> {
@@ -739,8 +867,15 @@ impl WidgetCore for LazyTreeView {
         let rows_cache = cache.clone();
         vec![
             ExtraExternal::new(ROW_PREFIX, Box::new(TreeRowClickExternal::new())),
+            // R946 — the scrollbar peer shares the body scroll state (the grip
+            // is the only handle on a huge lazy folder).
+            scrollbar_extra_external(use_scroll_state(SCROLL_KEY), SCROLLBAR_TAG),
             tree_view_introspection_extra(
                 STATE_TAG,
+                // R946 — `scene/query` reports the *whole* lazy flattening's
+                // node rows (`row_count` / `id_at` over every loaded row), not
+                // just the painted window: the AI-omniscient structure surface
+                // (§2 #7) that paint-scraping a virtualized tree cannot reach.
                 move || node_rows(&compute_rows(&rows_expanded, &rows_cache)),
                 // The live keyboard cursor, gated to a visible row so
                 // `scene/query` never reports a collapsed-away cursor (the
@@ -821,13 +956,35 @@ impl WidgetA11y for LazyTreeView {
     /// [`Self::access_focus_target`], as the tree's `aria-activedescendant`.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let all = compute_rows(&use_expanded(), &use_children_cache());
-        let rows = node_rows(&all);
-        let cursor = effective_cursor(&rows, &use_cursor());
+        // R946 — window the AT treeitems with the paint: only the loaded node
+        // rows inside the current scroll window become `treeitem`s (the
+        // `hello-virtual-tree` windowed-AT precedent), so a screen reader walks
+        // exactly the realized rows. Each carries its own `aria-posinset` /
+        // `aria-setsize` from the flatten (e.g. "row 200 of 408"), correct even
+        // when the window cuts a sibling group. The full structure stays
+        // reachable through the query-only introspection extra. The cursor's
+        // `aria-activedescendant` (in [`Self::access_focus_target`]) may name a
+        // row currently off the window — a virtualized tree's active descendant
+        // need not be rendered, and a keyboard move always scrolls it back into
+        // view ([`reveal_lazy_cursor`]); only the in-flatten guard
+        // ([`effective_cursor`]) matters for a *dangling* reference (R945.1).
+        let cursor = effective_cursor(&node_rows(&all), &use_cursor());
+        let scroll = use_scroll_state(SCROLL_KEY);
+        let (_, measured_h) = scroll.measured_viewport();
+        let window =
+            compute_visible_range(scroll.offset_y(), measured_h, all.len(), tree_pitch(), OVERSCAN);
+        let windowed: Vec<VisibleRow> = all[window.first..window.first + window.count]
+            .iter()
+            .filter_map(|r| match r {
+                LazyRow::Node(vr) => Some(vr.clone()),
+                LazyRow::Skeleton { .. } => None,
+            })
+            .collect();
         let mut nodes = tree_access_nodes(
             ROOT_TAG,
             ROW_PREFIX,
             Some("Asset outliner"),
-            &rows,
+            &windowed,
             None,
             cursor.as_deref(),
         );
@@ -924,8 +1081,16 @@ mod tests {
             drain_pump();
             let ready = rows_now();
             assert!(!any_skeleton(&ready), "root resolved → no skeleton");
-            assert_eq!(node_rows(&ready).len(), 3, "3 top-level nodes after resolve");
-            assert_eq!(visible_ids(), vec!["0", "1", "2"], "root children ids");
+            assert_eq!(
+                node_rows(&ready).len(),
+                TOP_SECTIONS,
+                "top-level section count after resolve",
+            );
+            assert_eq!(
+                visible_ids(),
+                vec!["0", "1", "2", "3", "4", "5"],
+                "root children ids",
+            );
         });
     }
 
@@ -1010,9 +1175,9 @@ mod tests {
             apply_key_impl("ArrowUp"); // clamp at top (no wrap)
             assert_eq!(cursor_now().as_deref(), Some("0"), "clamps at first row");
             apply_key_impl("End");
-            assert_eq!(cursor_now().as_deref(), Some("2"), "End → last row");
+            assert_eq!(cursor_now().as_deref(), Some("5"), "End → last row");
             apply_key_impl("ArrowDown"); // clamp at bottom
-            assert_eq!(cursor_now().as_deref(), Some("2"), "clamps at last row");
+            assert_eq!(cursor_now().as_deref(), Some("5"), "clamps at last row");
             apply_key_impl("Home");
             assert_eq!(cursor_now().as_deref(), Some("0"), "Home → first row");
 
@@ -1150,6 +1315,101 @@ mod tests {
                 LazyTreeView::apply_key(&mut scene, Some(ROOT_TAG), "ArrowDown", pinion_core::Modifiers::default());
             assert!(handled, "focus on the tree root → the key navigates");
             assert_eq!(cursor_now().as_deref(), Some("0"), "focused key lands on the first row");
+        });
+    }
+
+    // ─── virtualization at scale (R946) ─────────────────────────────────────
+
+    #[test]
+    fn expanding_a_large_folder_floods_the_flatten() {
+        // The scale precondition: a top-level section is a large asset folder,
+        // so expanding it yields far more loaded rows than a window holds.
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            drain_pump();
+            toggle_expanded(&use_expanded(), "0"); // expand a large section
+            drain_pump();
+            let loaded = node_rows(&rows_now()).len();
+            assert!(
+                loaded > 100,
+                "an expanded section is a large folder ({loaded} rows) — the scale case",
+            );
+        });
+    }
+
+    #[test]
+    fn access_node_windows_the_treeitems_but_query_sees_all() {
+        // The AT tree exposes only the rendered window's loaded rows (far fewer
+        // than the loaded total), while the query-only introspection surface
+        // keeps reporting the whole flattening — the virtualized §2 #7 split.
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            drain_pump();
+            toggle_expanded(&use_expanded(), "0");
+            drain_pump();
+            let loaded = node_rows(&rows_now()).len();
+            // A ~10-row window over the large folder.
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * tree_pitch());
+            let nodes = LazyTreeView::access_node(&(), None);
+            let treeitems = nodes.iter().filter(|n| n.role == AriaRole::TreeItem).count();
+            assert!(treeitems > 0, "some treeitems exposed");
+            assert!(
+                treeitems < 32,
+                "AT windows {treeitems} treeitems of {loaded} loaded rows",
+            );
+            // Each windowed treeitem still carries its WAI-ARIA axes from the
+            // flatten (posinset/setsize correct even when the window cuts a
+            // sibling group).
+            for item in nodes.iter().filter(|n| n.role == AriaRole::TreeItem) {
+                assert!(item.position_in_set.is_some(), "treeitem carries aria-posinset");
+                assert!(item.size_of_set.is_some(), "treeitem carries aria-setsize");
+            }
+            // The introspection surface reads the FULL flattening (`node_rows`),
+            // not the window — the AI-omniscient structure.
+            assert!(loaded > treeitems, "query sees the whole tree, AT sees the window");
+        });
+    }
+
+    #[test]
+    fn keyboard_navigation_reveals_off_window_rows() {
+        // Keyboard ⊥ virtualization over a *lazy* tree: roving the cursor past
+        // the rendered window scrolls it in, so the cursor row (and its
+        // aria-activedescendant) stays realized.
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            drain_pump();
+            toggle_expanded(&use_expanded(), "0");
+            drain_pump();
+            let scroll = use_scroll_state(SCROLL_KEY);
+            scroll.set_measured_viewport(WIN_W, 10 * tree_pitch()); // 10-row window
+            // The runtime layout pass sets the bound from the sizer height; set
+            // it directly here so `scroll_to` is not clamped to 0.
+            scroll.set_max(0, 1_000_000);
+
+            apply_key_impl("ArrowDown"); // cursor onto the first row
+            assert_eq!(scroll.offset_y(), 0, "the top row needs no scroll");
+            for _ in 0..40 {
+                apply_key_impl("ArrowDown"); // descend deep into the large folder
+            }
+            assert!(scroll.offset_y() > 0, "navigating down scrolled the window");
+
+            // The cursor row sits inside the re-derived window over the LAZY
+            // sequence (its painted index, skeletons included).
+            let cursor = cursor_now().expect("cursor set");
+            let all = rows_now();
+            let idx = all
+                .iter()
+                .position(|r| matches!(r, LazyRow::Node(vr) if vr.id == cursor))
+                .expect("cursor row in the flatten");
+            let (_, mh) = scroll.measured_viewport();
+            let window = compute_visible_range(scroll.offset_y(), mh, all.len(), tree_pitch(), OVERSCAN);
+            assert!(
+                idx >= window.first && idx < window.first + window.count,
+                "cursor row {idx} stays within the revealed window {window:?}",
+            );
         });
     }
 }
