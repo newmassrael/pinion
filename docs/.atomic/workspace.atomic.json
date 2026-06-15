@@ -41917,6 +41917,98 @@
         "in-popup GUI hex-entry field deferred; presets + intervene-value hex cover colour selection"
       ]
     },
+    "R944": {
+      "decision_summary": "hello-lazy-tree keyboard navigation (WAI-ARIA APG 6.13 Tree): arrows rove a cursor over the lazy outliner as the 3rd external-overlay consumer of tree_nav resolve_tree_key; ArrowRight expanding a not-yet-loaded branch fires the same fetch-on-expand Effect a click does. effective_cursor gates the cursor to a visible row (no dangling activedescendant); row_focus_bg lifted to pub for the M3 focus fill.",
+      "changes_bullets": [
+        "hello-lazy-tree gains WAI-ARIA APG 6.13 Tree keyboard nav: arrows rove a cursor over loaded rows",
+        "3rd external-overlay consumer of tree_nav resolve_tree_key (inspector is 2nd); applies TreeKey to",
+        "the expand-set Signal + a nav cursor, not the flag-on-node apply_tree_key the retained trees use",
+        "new axis: ArrowRight expanding a not-yet-loaded branch drives the same expand set a click does, so",
+        "the existing fetch-on-expand Effect fires — keyboard expansion lazy-loads exactly as a click does",
+        "ArrowUp/Down/Home/End/PageUp/Down clamp (no wrap); ArrowRight expand/descend; ArrowLeft collapse/",
+        "ascend; Space/Enter toggle; unrecognised key falls through to the shared tree_typeahead_jump SSOT",
+        "cursor conveyed as aria-activedescendant (access_focus_target composite) + an M3 focus state-layer",
+        "effective_cursor gates every cursor read (paint/a11y/query) to a still-visible row, so a click-",
+        "collapse that hides the cursor row never dangles aria-activedescendant or the highlight (R943.1)",
+        "row_focus_bg lifted to pub in pinion-widget-paint: 2nd cross-crate consumer (lazy tree hand-rolls",
+        "skeleton-interleaved rows, cannot reuse build_row); the M3 focus-fill decision stays one SSOT",
+        "set_expanded added (expand-set membership write with change-detect), the ArrowRight/Left peer of",
+        "the click path's toggle_expanded; storage glue stays caller-side per the tree_nav substrate doc"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; 8 hello-lazy-tree unit tests (5 new: arrows rove/clamp, ArrowRight",
+        "lazy-load, Space-Enter toggle, cursor reanchor on hide, apply_key gates on root focus)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "r944_lazy_tree_keyboard.py demo (~39 assertions) ZERO-FLAKE 3/3: focus gate (keys pre-focus/set do",
+        "not navigate), cursor via scene/query cursor + cursor_index AND the painted M3 highlight, keyboard",
+        "lazy-load skeleton->resolve, descend/ascend/collapse, Enter/Space toggle, click-collapse reanchor",
+        "r942_lazy_tree.py demo re-run green (same example, additive change — click path unchanged)",
+        "self-grep: row_focus_bg is the only cross-crate tree-focus consumer; effective_cursor is genuinely",
+        "new (inspector click=select keeps its cursor on a visible row → safe by construction, no gate, no",
+        "latent bug); set_expanded/toggle_expanded are example-local storage glue (substrate-doc authorized)",
+        "validate-workspace T1 reject=0 / new orphan +0"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "type-ahead jump included via the shared tree_typeahead_jump SSOT (jump to a node by typing a label",
+        "prefix over the loaded rows); the search buffer cache key is the only caller-side bit",
+        "keyboard ArrowRight on an expanded-but-still-loading branch is a no-op until children resolve (the",
+        "resolver only moves the cursor onto a loaded semantic row); descend works once the fetch lands",
+        "effective_cursor stays example-local (1 consumer): the inspector's click=select model is safe by",
+        "construction; lift only if a 2nd click=collapse + keyboard-cursor tree appears",
+        "a scroll-into-view of an off-screen keyboard cursor is not wired (the outliner fits its window; the",
+        "reveal_row_cursor SSOT lands when a virtualized lazy tree consumer appears — R942/R934 combine axis)"
+      ],
+      "publishable_decision_summary": "hello-lazy-tree keyboard navigation (WAI-ARIA APG 6.13 Tree): arrows rove a cursor over the lazy outliner as the 3rd external-overlay consumer of tree_nav resolve_tree_key; ArrowRight expanding a not-yet-loaded branch fires the same fetch-on-expand Effect a click does. effective_cursor gates the cursor to a visible row (no dangling activedescendant); row_focus_bg lifted to pub for the M3 focus fill.",
+      "publishable_changes_bullets": [
+        "hello-lazy-tree gains WAI-ARIA APG 6.13 Tree keyboard nav: arrows rove a cursor over loaded rows",
+        "3rd external-overlay consumer of tree_nav resolve_tree_key (inspector is 2nd); applies TreeKey to",
+        "the expand-set Signal + a nav cursor, not the flag-on-node apply_tree_key the retained trees use",
+        "new axis: ArrowRight expanding a not-yet-loaded branch drives the same expand set a click does, so",
+        "the existing fetch-on-expand Effect fires — keyboard expansion lazy-loads exactly as a click does",
+        "ArrowUp/Down/Home/End/PageUp/Down clamp (no wrap); ArrowRight expand/descend; ArrowLeft collapse/",
+        "ascend; Space/Enter toggle; unrecognised key falls through to the shared tree_typeahead_jump SSOT",
+        "cursor conveyed as aria-activedescendant (access_focus_target composite) + an M3 focus state-layer",
+        "effective_cursor gates every cursor read (paint/a11y/query) to a still-visible row, so a click-",
+        "collapse that hides the cursor row never dangles aria-activedescendant or the highlight (R943.1)",
+        "row_focus_bg lifted to pub in pinion-widget-paint: 2nd cross-crate consumer (lazy tree hand-rolls",
+        "skeleton-interleaved rows, cannot reuse build_row); the M3 focus-fill decision stays one SSOT",
+        "set_expanded added (expand-set membership write with change-detect), the ArrowRight/Left peer of",
+        "the click path's toggle_expanded; storage glue stays caller-side per the tree_nav substrate doc"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; 8 hello-lazy-tree unit tests (5 new: arrows rove/clamp, ArrowRight",
+        "lazy-load, Space-Enter toggle, cursor reanchor on hide, apply_key gates on root focus)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) clean",
+        "r944_lazy_tree_keyboard.py demo (~39 assertions) ZERO-FLAKE 3/3: focus gate (keys pre-focus/set do",
+        "not navigate), cursor via scene/query cursor + cursor_index AND the painted M3 highlight, keyboard",
+        "lazy-load skeleton->resolve, descend/ascend/collapse, Enter/Space toggle, click-collapse reanchor",
+        "r942_lazy_tree.py demo re-run green (same example, additive change — click path unchanged)",
+        "self-grep: row_focus_bg is the only cross-crate tree-focus consumer; effective_cursor is genuinely",
+        "new (inspector click=select keeps its cursor on a visible row → safe by construction, no gate, no",
+        "latent bug); set_expanded/toggle_expanded are example-local storage glue (substrate-doc authorized)",
+        "validate-workspace T1 reject=0 / new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "type-ahead jump included via the shared tree_typeahead_jump SSOT (jump to a node by typing a label",
+        "prefix over the loaded rows); the search buffer cache key is the only caller-side bit",
+        "keyboard ArrowRight on an expanded-but-still-loading branch is a no-op until children resolve (the",
+        "resolver only moves the cursor onto a loaded semantic row); descend works once the fetch lands",
+        "effective_cursor stays example-local (1 consumer): the inspector's click=select model is safe by",
+        "construction; lift only if a 2nd click=collapse + keyboard-cursor tree appears",
+        "a scroll-into-view of an off-screen keyboard cursor is not wired (the outliner fits its window; the",
+        "reveal_row_cursor SSOT lands when a virtualized lazy tree consumer appears — R942/R934 combine axis)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

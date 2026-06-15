@@ -543,9 +543,17 @@ pub struct TreeGridData<'a> {
     pub cursor: Option<&'a str>,
 }
 
-/// Focus-highlight fill for a tree-grid row (shared by the name cell + the
-/// metadata strip so the focused row highlights across both panes).
-fn row_focus_bg(theme: &Theme, is_focused: bool) -> Color {
+/// Focus-highlight fill for a keyboard-cursor tree row — the M3
+/// `Surface Container Highest` state-layer when the row holds the cursor,
+/// else transparent. Shared so every tree's focused row reads the same: the
+/// name cell + metadata strip of a tree-grid row (both panes), and — across
+/// the crate boundary — `hello-lazy-tree`, whose skeleton-interleaved rows
+/// are hand-rolled (they cannot reuse [`build_row`]) yet must not pick their
+/// own focus colour. The fill *decision* is the shared SSOT; a tree painting
+/// a different focus tint than its peers would be a bug
+/// ([[use-substrate-not-hand-rolled-equivalent]]).
+#[must_use]
+pub fn row_focus_bg(theme: &Theme, is_focused: bool) -> Color {
     if is_focused {
         theme.resolve(ColorRole::SurfaceContainerHighest)
     } else {

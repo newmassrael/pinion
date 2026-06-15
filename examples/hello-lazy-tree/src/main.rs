@@ -33,6 +33,19 @@
 //! pump substrate R923/R924 introduced (asset browser / lazy list), now keyed
 //! on expand instead of scroll, over a tree instead of a flat list.
 //!
+//! ## Keyboard navigation (R944 — WAI-ARIA APG 6.13 Tree)
+//!
+//! The tree root is a single tab stop; while it holds focus the arrow keys
+//! rove a keyboard cursor (`Signal<Option<String>>`) over the loaded rows via
+//! the pure [`resolve_tree_key`] resolver — the third external-overlay
+//! consumer of the `tree_nav` substrate (the inspector is the second). The one
+//! axis new to a *lazy* tree: an Arrow Right that expands a not-yet-loaded
+//! branch flows through the **same** expand-set mutation a click does, so the
+//! existing fetch-on-expand `Effect` fires — keyboard expansion lazy-loads
+//! exactly as clicking does. The cursor is conveyed as `aria-activedescendant`
+//! plus an M3 focus state-layer, both gated through [`effective_cursor`] so a
+//! collapsed-away cursor never dangles.
+//!
 //! ## ZERO-FLAKE latency model
 //!
 //! Each child fetch is a deterministic [`DeferredReady`] future (`Pending`
@@ -42,7 +55,7 @@
 //! wall-clock race — `wait_snap` on the skeleton is guaranteed to catch it
 //! before the children resolve (same discipline as the R923 deferred demo).
 
-use pinion_a11y::{tree_access_nodes, tree_row_tag, AccessNode, AriaRole, WidgetA11y};
+use pinion_a11y::{tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, AriaRole, WidgetA11y};
 use pinion_core::command::Command;
 use pinion_core::external::{External, IntrospectValue, StubExternal};
 use pinion_core::intent::Intent;
@@ -54,11 +67,14 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{use_theme, ColorRole, Theme};
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::tree_nav::{tree_view_introspection_extra, VisibleRow};
+use pinion_core::widgets::tree_nav::{
+    resolve_tree_key, tree_view_introspection_extra, TreeKey, VisibleRow,
+};
 use pinion_core::{use_local_task_pump, Frame, LocalTaskPump, Scene, Signal, WidgetCore};
+use pinion_shell::typeahead::tree_typeahead_jump;
 use pinion_shell::{vello_renderer_impl, SizeStrategy, WidgetView};
 use pinion_widget_paint::glyph::{DISCLOSURE_COLLAPSED, DISCLOSURE_EXPANDED};
-use pinion_widget_paint::tree_view::{TreeRowClickExternal, TreeViewStyle};
+use pinion_widget_paint::tree_view::{row_focus_bg, TreeRowClickExternal, TreeViewStyle};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
@@ -122,6 +138,14 @@ const FILE_EXT: [&str; 6] = ["scene", "fbx", "png", "wav", "wgsl", "anim"];
 const CACHE_KEY: &str = "lazytree.children_cache";
 const EXPANDED_KEY: &str = "lazytree.expanded";
 const LOADER_KEY: &str = "lazytree.loader";
+/// `Owner::cache` key for the keyboard nav cursor (`Signal<Option<String>>`).
+const CURSOR_KEY: &str = "lazytree.cursor";
+/// `Owner::cache` key for the type-ahead search cursor
+/// ([`tree_typeahead_jump`]'s only caller-side bit).
+const TYPEAHEAD_KEY: &str = "lazytree.typeahead";
+/// Page Up/Down jump size — larger than the boot listing so the page arm
+/// clamps to an end (mirrors `hello-tree-view`'s `NAV_PAGE`).
+const NAV_PAGE: usize = 8;
 
 /// One fetched child descriptor — the serde payload a node's child
 /// [`ResourceState`] carries.
@@ -227,6 +251,14 @@ fn use_expanded() -> Rc<Signal<BTreeSet<String>>> {
     owner.cache(EXPANDED_KEY, || Signal::new(BTreeSet::new()))
 }
 
+/// The keyboard navigation cursor — the visible-row id the WAI-ARIA tree's
+/// roving cursor sits on (conveyed as `aria-activedescendant`, not a
+/// selection). `None` until the first vertical key lands it on a row.
+fn use_cursor() -> Rc<Signal<Option<String>>> {
+    let owner = Owner::current().expect("use_cursor requires an active Owner scope");
+    owner.cache(CURSOR_KEY, || Signal::new(None))
+}
+
 /// Toggle `id` in the expand set (add if absent, remove if present). The set
 /// is the SSOT the loader `Effect` and the flattening both read.
 fn toggle_expanded(expanded: &Signal<BTreeSet<String>>, id: &str) {
@@ -235,6 +267,24 @@ fn toggle_expanded(expanded: &Signal<BTreeSet<String>>, id: &str) {
         set.insert(id.to_owned());
     }
     expanded.set(set);
+}
+
+/// Set `id`'s membership in the expand set — insert to expand, remove to
+/// collapse — writing the `Signal` only on an actual change (no redundant
+/// repaint). The keyboard Arrow Right / Arrow Left write side, and the
+/// expand-set peer of the inspector's `set_collapsed`; the same expand-set
+/// mutation the click path's [`toggle_expanded`] drives, so a keyboard expand
+/// of a not-yet-loaded branch fires the very same fetch-on-expand `Effect`.
+fn set_expanded(expanded: &Signal<BTreeSet<String>>, id: &str, want: bool) {
+    let mut set = expanded.get();
+    let changed = if want {
+        set.insert(id.to_owned())
+    } else {
+        set.remove(id)
+    };
+    if changed {
+        expanded.set(set);
+    }
 }
 
 // ─── expand-driven loader Effect ───────────────────────────────────────────
@@ -371,6 +421,19 @@ fn node_rows(rows: &[LazyRow]) -> Vec<VisibleRow> {
         .collect()
 }
 
+/// The keyboard cursor id, but only when it still names a currently-visible
+/// row. Collapsing a branch (or a click that hides the cursor's row) would
+/// otherwise leave a dangling `aria-activedescendant` pointing at a node the
+/// AT can no longer reach, plus an orphaned focus highlight — the R943.1
+/// dangling-pointer class. Reading the cursor through this gate everywhere
+/// (paint, a11y, `scene/query`) keeps the three in agreement and self-heals:
+/// once the cursor row is gone the resolver sees no current row, so the next
+/// vertical key restarts navigation at the first visible row.
+fn effective_cursor(rows: &[VisibleRow], cursor: &Signal<Option<String>>) -> Option<String> {
+    let id = cursor.get()?;
+    rows.iter().any(|row| row.id == id).then_some(id)
+}
+
 /// The `role=status` band text: the loading branch while children are in
 /// flight (the first skeleton's parent), else the loaded visible-row count.
 fn status_text(rows: &[LazyRow]) -> String {
@@ -455,8 +518,16 @@ fn row_layout(style: &TreeViewStyle) -> LayoutStyle {
 }
 
 /// A loaded node row — tagged `{ROW_PREFIX}#{id}` so the click router toggles
-/// it and the a11y tree + bounds enrichment attach.
-fn node_row_view(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> Scene {
+/// it and the a11y tree + bounds enrichment attach. The row holding the
+/// keyboard cursor fills with the shared M3 focus state-layer
+/// ([`row_focus_bg`]) so the roving cursor is visible (WCAG 2.4.7); the rest
+/// stay transparent.
+fn node_row_view(
+    row: &VisibleRow,
+    cursor: Option<&str>,
+    theme: &Theme,
+    style: &TreeViewStyle,
+) -> Scene {
     let glyph = if !row.has_children {
         GLYPH_LEAF
     } else if row.expanded {
@@ -464,6 +535,7 @@ fn node_row_view(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> Scen
     } else {
         DISCLOSURE_COLLAPSED
     };
+    let is_focused = cursor == Some(row.id.as_str());
     Scene::Container(
         ContainerNode::new(row_cells(
             row.depth,
@@ -474,7 +546,8 @@ fn node_row_view(row: &VisibleRow, theme: &Theme, style: &TreeViewStyle) -> Scen
             style,
         ))
         .with_tag(tree_row_tag(ROW_PREFIX, &row.id))
-        .with_layout(row_layout(style)),
+        .with_layout(row_layout(style))
+        .with_style(BoxStyle::filled(row_focus_bg(theme, is_focused))),
     )
 }
 
@@ -495,9 +568,9 @@ fn skeleton_row_view(depth: u32, theme: &Theme, style: &TreeViewStyle) -> Scene 
     )
 }
 
-fn row_view(row: &LazyRow, theme: &Theme, style: &TreeViewStyle) -> Scene {
+fn row_view(row: &LazyRow, cursor: Option<&str>, theme: &Theme, style: &TreeViewStyle) -> Scene {
     match row {
-        LazyRow::Node(vr) => node_row_view(vr, theme, style),
+        LazyRow::Node(vr) => node_row_view(vr, cursor, theme, style),
         LazyRow::Skeleton { depth, .. } => skeleton_row_view(*depth, theme, style),
     }
 }
@@ -512,6 +585,9 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     let expanded = use_expanded();
     let cache = use_children_cache();
     let rows = compute_rows(&expanded, &cache);
+    // The keyboard cursor, gated to a still-visible row so a collapsed-away
+    // cursor never paints an orphaned focus highlight ([[effective_cursor]]).
+    let cursor = effective_cursor(&node_rows(&rows), &use_cursor());
 
     let title = Scene::Text(TextNode::styled(
         "Lazy-loaded asset outliner (children fetched on expand)",
@@ -533,7 +609,10 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
     );
 
-    let row_scenes: Vec<Scene> = rows.iter().map(|r| row_view(r, &theme, &style)).collect();
+    let row_scenes: Vec<Scene> = rows
+        .iter()
+        .map(|r| row_view(r, cursor.as_deref(), &theme, &style))
+        .collect();
     let tree = Scene::Container(
         ContainerNode::new(row_scenes)
             .with_tag(ROOT_TAG)
@@ -557,6 +636,53 @@ fn view(_state: (), _frame: &Frame) -> Scene {
                     .with_padding(Rect::new(12, 12, 12, 12)),
             ),
     )
+}
+
+// ─── keyboard navigation ────────────────────────────────────────────────────
+
+/// Apply one key to the lazy tree — WAI-ARIA APG 6.13 Tree navigation over the
+/// pure [`resolve_tree_key`] resolver, the third **external-overlay** consumer
+/// of the `tree_nav` substrate (`hello-dock-panels`' inspector is the second;
+/// both drive the resolver directly and apply the [`TreeKey`] outcome to their
+/// own store — here the expand-set `Signal` + the nav cursor — rather than the
+/// flag-on-node `apply_tree_key` the retained trees use). Returns `true` when
+/// the key was recognised so the shell's swallow contract stays exact.
+///
+/// The one axis new to a *lazy* tree: an Arrow Right that expands a
+/// not-yet-loaded branch routes through the same [`set_expanded`] mutation the
+/// click path drives, so the existing fetch-on-expand `Effect` fires — keyboard
+/// expansion lazy-loads exactly as a click does. The resolver only ever moves
+/// the cursor onto a loaded (semantic) row, so a branch still fetching its
+/// children contributes no cursor target until it resolves.
+fn apply_key_impl(key: &str) -> bool {
+    let expanded = use_expanded();
+    let cache = use_children_cache();
+    let cursor = use_cursor();
+    let rows = node_rows(&compute_rows(&expanded, &cache));
+    let current = cursor.get();
+    match resolve_tree_key(&rows, current.as_deref(), key, NAV_PAGE) {
+        TreeKey::Focus(id) => {
+            cursor.set(Some(id));
+            true
+        }
+        TreeKey::Expand(id) => {
+            set_expanded(&expanded, &id, true);
+            true
+        }
+        TreeKey::Collapse(id) => {
+            set_expanded(&expanded, &id, false);
+            true
+        }
+        TreeKey::Toggle(id) => {
+            toggle_expanded(&expanded, &id);
+            true
+        }
+        TreeKey::Consumed => true,
+        // Unrecognised printable key → type-ahead jump over the visible labels
+        // (the shared `pinion-shell` SSOT; the cursor cache key is the only
+        // caller-side bit).
+        TreeKey::Unhandled => tree_typeahead_jump(&cursor, &rows, TYPEAHEAD_KEY, key),
+    }
 }
 
 // ─── binding ────────────────────────────────────────────────────────────────
@@ -591,12 +717,18 @@ impl WidgetCore for LazyTreeView {
         let _loader = install_loader();
         let expanded = use_expanded();
         let cache = use_children_cache();
+        let cursor = use_cursor();
+        let rows_expanded = expanded.clone();
+        let rows_cache = cache.clone();
         vec![
             ExtraExternal::new(ROW_PREFIX, Box::new(TreeRowClickExternal::new())),
             tree_view_introspection_extra(
                 STATE_TAG,
-                move || node_rows(&compute_rows(&expanded, &cache)),
-                || None,
+                move || node_rows(&compute_rows(&rows_expanded, &rows_cache)),
+                // The live keyboard cursor, gated to a visible row so
+                // `scene/query` never reports a collapsed-away cursor (the
+                // same `effective_cursor` SSOT the paint + a11y read).
+                move || effective_cursor(&node_rows(&compute_rows(&expanded, &cache)), &cursor),
             ),
         ]
     }
@@ -611,11 +743,32 @@ impl WidgetCore for LazyTreeView {
         view(state, frame)
     }
 
-    /// Pointer / RPC driven: no keyboard tab stop (expansion is by click on a
-    /// branch row or the `click` typed shortcut). Keyboard tree navigation
-    /// over a lazy tree is a documented follow-up.
+    /// R944 §5.22 §5.27 — WAI-ARIA APG 6.13 Tree keyboard navigation, gated on
+    /// the tree root holding focus (routing and focus are separate axes — the
+    /// gate keeps the tree from stealing keys when embedded beside a sibling
+    /// focusable; the RPC demo issues `focus/set` first). Arrow keys rove the
+    /// cursor; Arrow Right on a collapsed branch lazy-loads through the same
+    /// expand path as a click. The whole keymap is the pure
+    /// [`apply_key_impl`] bridge.
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        let _ = scene;
+        if focused != Some(ROOT_TAG) {
+            return false;
+        }
+        apply_key_impl(key)
+    }
+
+    /// Single tab stop: the tree root [`ROOT_TAG`] holds keyboard focus and the
+    /// cursor roves among rows internally (conveyed as `aria-activedescendant`,
+    /// not a tab stop per row). The default would already return `Self::tag()`;
+    /// this is spelled out to mark the deliberate single-stop tree model.
     fn focusable_tags() -> Vec<&'static str> {
-        Vec::new()
+        vec![ROOT_TAG]
     }
 
     fn fmt_state_log(_state: &()) -> String {
@@ -623,9 +776,11 @@ impl WidgetCore for LazyTreeView {
     }
 
     /// Bridge the [`TreeRowClickExternal`] `click` intent into the expand-set
-    /// toggle. Side-effect-only ([[scxml-as-model-update-transient]]): the
-    /// `Signal::set` inside [`toggle_expanded`] is the mutation. Leaves never
-    /// toggle ([`id_is_branch`] gate), matching tree click semantics.
+    /// toggle (the pointer path; the keyboard path is [`apply_key_impl`], which
+    /// drives the same expand set). Side-effect-only
+    /// ([[scxml-as-model-update-transient]]): the `Signal::set` inside
+    /// [`toggle_expanded`] is the mutation. Leaves never toggle
+    /// ([`id_is_branch`] gate), matching tree click semantics.
     fn update(_state: (), intent: &Intent) -> Vec<Command> {
         if intent.tag_str() == CLICK_INTENT_TAG
             && let IntrospectValue::Text(id) = &intent.payload
@@ -644,14 +799,39 @@ impl WidgetA11y for LazyTreeView {
     /// `treeitem`s — a loading child count is unknown, so a phantom item would
     /// misreport `aria-setsize`; the load state is conveyed by the live region
     /// and the rendered placeholder text instead. There is no selection model
-    /// and no keyboard cursor, so `selected_id` / `focused_id` are `None`.
+    /// (`selected_id` is `None`); the keyboard cursor is conveyed as
+    /// `focused_id` (the row's `with_focused`) and, in
+    /// [`Self::access_focus_target`], as the tree's `aria-activedescendant`.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let all = compute_rows(&use_expanded(), &use_children_cache());
         let rows = node_rows(&all);
-        let mut nodes =
-            tree_access_nodes(ROOT_TAG, ROW_PREFIX, Some("Asset outliner"), &rows, None, None);
+        let cursor = effective_cursor(&rows, &use_cursor());
+        let mut nodes = tree_access_nodes(
+            ROOT_TAG,
+            ROW_PREFIX,
+            Some("Asset outliner"),
+            &rows,
+            None,
+            cursor.as_deref(),
+        );
         nodes.push(AccessNode::new(STATUS_TAG, AriaRole::Status).with_name(status_text(&all)));
         nodes
+    }
+
+    /// R944 §5.27 §5.40 — the keyboard cursor lowers to `aria-activedescendant`
+    /// (composite focus + the cursor row's `with_focused`) while the tree root
+    /// holds focus, carrying no `aria-selected` (no selection model). Gated on
+    /// the cursor still naming a visible row ([`effective_cursor`]) so a
+    /// collapse never advertises a dangling descendant — the same dangling
+    /// pointer R943.1 cleared for the data-grid Color popup.
+    fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
+        if focused == Some(ROOT_TAG) {
+            let rows = node_rows(&compute_rows(&use_expanded(), &use_children_cache()));
+            if let Some(cursor) = effective_cursor(&rows, &use_cursor()) {
+                return Some(AccessFocus::composite(ROOT_TAG, tree_row_tag(ROW_PREFIX, &cursor)));
+            }
+        }
+        focused.map(AccessFocus::atomic)
     }
 }
 
@@ -780,6 +960,152 @@ mod tests {
                 visible_ids().iter().any(|id| id == "0/0"),
                 "cached children reappear immediately on re-expand",
             );
+        });
+    }
+
+    // ─── keyboard navigation (R944) ─────────────────────────────────────────
+
+    fn cursor_now() -> Option<String> {
+        use_cursor().get()
+    }
+
+    /// The keyboard cursor gated through the visible-row check the paint /
+    /// a11y / query surfaces all read.
+    fn effective_cursor_now() -> Option<String> {
+        effective_cursor(&node_rows(&rows_now()), &use_cursor())
+    }
+
+    #[test]
+    fn arrows_rove_the_cursor_over_loaded_rows() {
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            drain_pump();
+            assert_eq!(cursor_now(), None, "no cursor until the first key");
+
+            // First Arrow Down from an empty cursor lands on the first row.
+            assert!(apply_key_impl("ArrowDown"), "ArrowDown is a nav key");
+            assert_eq!(cursor_now().as_deref(), Some("0"), "lands on first row");
+            apply_key_impl("ArrowDown");
+            assert_eq!(cursor_now().as_deref(), Some("1"), "steps to next row");
+            apply_key_impl("ArrowUp");
+            assert_eq!(cursor_now().as_deref(), Some("0"), "steps back");
+            apply_key_impl("ArrowUp"); // clamp at top (no wrap)
+            assert_eq!(cursor_now().as_deref(), Some("0"), "clamps at first row");
+            apply_key_impl("End");
+            assert_eq!(cursor_now().as_deref(), Some("2"), "End → last row");
+            apply_key_impl("ArrowDown"); // clamp at bottom
+            assert_eq!(cursor_now().as_deref(), Some("2"), "clamps at last row");
+            apply_key_impl("Home");
+            assert_eq!(cursor_now().as_deref(), Some("0"), "Home → first row");
+
+            // A non-navigation key is not swallowed (falls through to nothing
+            // here — there is no label starting with the digit it types).
+            assert!(!apply_key_impl("F1"), "an unrecognised key is unhandled");
+        });
+    }
+
+    #[test]
+    fn arrow_right_on_a_collapsed_branch_lazy_loads() {
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            drain_pump();
+            apply_key_impl("ArrowDown"); // cursor → "0" (a branch)
+            assert_eq!(cursor_now().as_deref(), Some("0"), "cursor on the branch");
+
+            // Arrow Right on a collapsed branch expands it through the SAME
+            // expand-set the click path drives → the fetch-on-expand Effect
+            // fires, so the children load behind a skeleton.
+            assert!(apply_key_impl("ArrowRight"), "ArrowRight is a nav key");
+            assert!(use_expanded().get().contains("0"), "branch added to expand set");
+            assert!(any_skeleton(&rows_now()), "keyboard expand shows the loading skeleton");
+            assert_eq!(cursor_now().as_deref(), Some("0"), "cursor stays on the branch");
+
+            drain_pump();
+            assert!(!any_skeleton(&rows_now()), "children resolved → skeleton gone");
+            assert!(visible_ids().iter().any(|id| id == "0/0"), "children lazy-loaded");
+
+            // Arrow Right again (now expanded) descends to the first child.
+            apply_key_impl("ArrowRight");
+            assert_eq!(cursor_now().as_deref(), Some("0/0"), "descends to first child");
+
+            // Arrow Left on the expanded child's branch collapses; here the
+            // child "0/0" is itself a branch but collapsed, so Arrow Left
+            // ascends to its parent "0".
+            apply_key_impl("ArrowLeft");
+            assert_eq!(cursor_now().as_deref(), Some("0"), "ArrowLeft ascends to parent");
+            // Arrow Left on the expanded parent collapses it.
+            apply_key_impl("ArrowLeft");
+            assert!(!use_expanded().get().contains("0"), "ArrowLeft collapses the branch");
+            assert!(
+                !visible_ids().iter().any(|id| id.starts_with("0/")),
+                "collapsed branch hides its children",
+            );
+        });
+    }
+
+    #[test]
+    fn space_and_enter_toggle_the_cursor_branch() {
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            drain_pump();
+            apply_key_impl("ArrowDown"); // cursor → "0"
+            apply_key_impl("Enter"); // toggle expand
+            assert!(use_expanded().get().contains("0"), "Enter expands the branch");
+            drain_pump();
+            apply_key_impl("Space"); // toggle collapse
+            assert!(!use_expanded().get().contains("0"), "Space collapses the branch");
+        });
+    }
+
+    #[test]
+    fn cursor_reanchors_when_its_row_is_hidden() {
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            drain_pump();
+            apply_key_impl("ArrowDown"); // "0"
+            apply_key_impl("ArrowRight"); // expand "0"
+            drain_pump();
+            apply_key_impl("ArrowRight"); // descend → "0/0"
+            assert_eq!(cursor_now().as_deref(), Some("0/0"), "cursor on a child");
+
+            // A click-path collapse of the ancestor hides the cursor's row.
+            toggle_expanded(&use_expanded(), "0");
+            assert!(!visible_ids().iter().any(|id| id == "0/0"), "child row hidden");
+            // The raw cursor is unchanged, but the gated cursor is None — so the
+            // paint highlight + aria-activedescendant never dangle.
+            assert_eq!(cursor_now().as_deref(), Some("0/0"), "raw cursor unchanged");
+            assert_eq!(effective_cursor_now(), None, "gated cursor reanchors to none");
+
+            // The next vertical key restarts navigation at the first row (the
+            // resolver treats an off-list cursor as no current row).
+            apply_key_impl("ArrowDown");
+            assert_eq!(cursor_now().as_deref(), Some("0"), "self-heals to first row");
+        });
+    }
+
+    #[test]
+    fn apply_key_gates_on_root_focus() {
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            drain_pump();
+            let mut scene = Scene::Container(ContainerNode::new(Vec::new()));
+            // The trait gate: a key while a sibling (or nothing) holds focus
+            // must not navigate (routing ⊥ focus); the focused branch is the
+            // demo's end-to-end coverage of the same gate via `focus/set`.
+            let handled =
+                LazyTreeView::apply_key(&mut scene, None, "ArrowDown", pinion_core::Modifiers::default());
+            assert!(!handled, "no focus → key not handled");
+            assert_eq!(cursor_now(), None, "an unfocused key leaves the cursor untouched");
+
+            let handled =
+                LazyTreeView::apply_key(&mut scene, Some(ROOT_TAG), "ArrowDown", pinion_core::Modifiers::default());
+            assert!(handled, "focus on the tree root → the key navigates");
+            assert_eq!(cursor_now().as_deref(), Some("0"), "focused key lands on the first row");
         });
     }
 }
