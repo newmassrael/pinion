@@ -138,6 +138,14 @@ def body() -> None:
             assert painted(tf, f"{GRID}#sw{i}"), f"swatch chip {i} paints"
         inv(tf, "close_popup", None)
         wait_query(tf, "/external/popup_open", False, desc="close_popup closes the palette")
+        # (B2) R943.1 — the keyboard activate path (the `begin` verb, the Enter/F2
+        # peer) opens the swatch popup too: a colour cell is NOT keyboard-inert.
+        tf.intervene("/external/focused_row", 0)
+        tf.intervene("/external/focused_col", TINT)
+        assert_eq(inv(tf, "begin", None), True, "the keyboard `begin` opens the swatch popup")
+        assert_eq(q(tf, "popup_open"), True, "begin opened the colour popup (not a no-op)")
+        inv(tf, "close_popup", None)
+        wait_query(tf, "/external/popup_open", False, desc="closed again before the click test")
 
         # ── (C) real click opens + focuses; keyboard 2-D rove + Enter ─────
         # The Tint column clips out at rest, so reveal it, then a real pointer

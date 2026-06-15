@@ -41863,6 +41863,60 @@
         "per-round local gate runs only touched demos; a structural example change needs a full demo sweep"
       ]
     },
+    "R943.1": {
+      "decision_summary": "R943.1 adversarial session-review clearance (user-requested 'is it textbook / SSOT / north-star?' audit of R942+R943). Found and fixed 2 real Color-popup consistency bugs: the begin verb (keyboard Enter/F2) only opened Choice popups so a Color cell was keyboard-inert (openable by click only); and access_focus_target always emitted the opt (Choice) composite prefix so an open Color popup advertised a dangling aria-activedescendant the swatch grid never paints. Both stem from generalizing the popup machinery for Color everywhere except these two activation/a11y sites. An adversarial grep of every CellKind gate + every CHOICE_OPT_PREFIX use confirmed these were the only two missed; all other Color gates are consistent. R942 (row_cells, LoaderMarker) re-confirmed local-correct.",
+      "changes_bullets": [
+        "begin verb dispatches by kind (Choice/Color/else) so keyboard Enter/F2 opens the Color popup",
+        "access_focus_target uses the kind-correct composite prefix (sw for Color, opt for Choice)",
+        "both were sites where the popup machinery was generalized for Color everywhere except here",
+        "+2 regression tests + 1 demo keyboard-begin assertion"
+      ],
+      "verification_bullets": [
+        "adversarial session-review (user-requested): grep of EVERY CellKind gate + CHOICE_OPT_PREFIX use",
+        "found 2 real bugs: keyboard Enter/F2 no-op on Color; dangling activedescendant for Color popup",
+        "both fixed; other Color gates (open/commit/popup_pos/paint/keymap/a11y) re-confirmed consistent",
+        "workspace cargo test -j2: 166 result lines ok / 0 FAILED; hello-data-grid 100 tests (+2 R943.1)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: 0; r943 demo ZERO-FLAKE 3/3",
+        "validate-workspace T1 orphan=0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "confirmed-clean: swatch write = direct Color, intervene = hex; divergence is value-intrinsic",
+        "popup delegate dup'd property-grid+data-grid (2 consumer); commit divergence defers lift to 3rd",
+        "R942 row_cells (no pub tree-row painter) + LoaderMarker (R665 idiom) re-confirmed local-correct",
+        "in-popup GUI hex-entry field deferred; presets + intervene-value hex cover colour selection"
+      ],
+      "publishable_decision_summary": "R943.1 adversarial session-review clearance (user-requested 'is it textbook / SSOT / north-star?' audit of R942+R943). Found and fixed 2 real Color-popup consistency bugs: the begin verb (keyboard Enter/F2) only opened Choice popups so a Color cell was keyboard-inert (openable by click only); and access_focus_target always emitted the opt (Choice) composite prefix so an open Color popup advertised a dangling aria-activedescendant the swatch grid never paints. Both stem from generalizing the popup machinery for Color everywhere except these two activation/a11y sites. An adversarial grep of every CellKind gate + every CHOICE_OPT_PREFIX use confirmed these were the only two missed; all other Color gates are consistent. R942 (row_cells, LoaderMarker) re-confirmed local-correct.",
+      "publishable_changes_bullets": [
+        "begin verb dispatches by kind (Choice/Color/else) so keyboard Enter/F2 opens the Color popup",
+        "access_focus_target uses the kind-correct composite prefix (sw for Color, opt for Choice)",
+        "both were sites where the popup machinery was generalized for Color everywhere except here",
+        "+2 regression tests + 1 demo keyboard-begin assertion"
+      ],
+      "publishable_verification_bullets": [
+        "adversarial session-review (user-requested): grep of EVERY CellKind gate + CHOICE_OPT_PREFIX use",
+        "found 2 real bugs: keyboard Enter/F2 no-op on Color; dangling activedescendant for Color popup",
+        "both fixed; other Color gates (open/commit/popup_pos/paint/keymap/a11y) re-confirmed consistent",
+        "workspace cargo test -j2: 166 result lines ok / 0 FAILED; hello-data-grid 100 tests (+2 R943.1)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello: 0; r943 demo ZERO-FLAKE 3/3",
+        "validate-workspace T1 orphan=0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "confirmed-clean: swatch write = direct Color, intervene = hex; divergence is value-intrinsic",
+        "popup delegate dup'd property-grid+data-grid (2 consumer); commit divergence defers lift to 3rd",
+        "R942 row_cells (no pub tree-row painter) + LoaderMarker (R665 idiom) re-confirmed local-correct",
+        "in-popup GUI hex-entry field deferred; presets + intervene-value hex cover colour selection"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

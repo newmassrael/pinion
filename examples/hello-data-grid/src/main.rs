@@ -2457,14 +2457,17 @@ impl ExternalIntrospect for DataGridExternal {
                 Ok(IntrospectValue::Bool(toggled))
             }
             // Enter edit mode on the focused cell (the `Enter` / `F2` path).
-            // R940 — a choice cell opens its dropdown instead of an inline field
-            // (the keyboard `Enter` / `F2` peer of the click open).
+            // R940 / R943 — a choice / colour cell opens its popup instead of an
+            // inline field (the keyboard `Enter` / `F2` peer of the click open).
+            // Dispatches by kind exactly like the click path (`dispatch_send`), so
+            // every activation route (click, double-click, keyboard) opens the
+            // same popup — a colour cell is not a keyboard-inert second class.
             "begin" => {
                 let (row, col) = (self.focused_row.get(), self.focused_col.get());
-                let started = if col < NCOLS && COL_KINDS[col] == CellKind::Choice {
-                    self.open_choice(row, col)
-                } else {
-                    self.begin_edit(row, col)
+                let started = match COL_KINDS.get(col) {
+                    Some(CellKind::Choice) => self.open_choice(row, col),
+                    Some(CellKind::Color) => self.open_color(row, col),
+                    _ => self.begin_edit(row, col),
                 };
                 Ok(IntrospectValue::Bool(started))
             }
@@ -3970,12 +3973,21 @@ impl WidgetA11y for DataGridView {
     /// atomically (the focused gridcell's own `focused` flag in `access_node`
     /// marks the cell active descendant, the pre-R940 behaviour).
     fn access_focus_target(_state: &RootState, focused: Option<&str>) -> Option<AccessFocus> {
-        if focused == Some(GRID_TAG) && popup_pos_live().is_some() {
+        if focused == Some(GRID_TAG)
+            && let Some((_, col, _)) = popup_pos_live()
+        {
             let cur = use_popup_cursor().get().unwrap_or(0);
-            return Some(AccessFocus::composite(
-                GRID_TAG,
-                format!("{GRID_TAG}#{CHOICE_OPT_PREFIX}{cur}"),
-            ));
+            // R943 — the active descendant is the cursor's option (choice popup) or
+            // swatch (colour popup); the composite suffix must match the open
+            // popup's kind, or the AT points at a tag the popup never paints (a
+            // dangling `aria-activedescendant`). The same per-kind tag prefix the
+            // popup paint + `popup_listbox_nodes` stamp.
+            let prefix = if COL_KINDS[col] == CellKind::Color {
+                COLOR_SW_PREFIX
+            } else {
+                CHOICE_OPT_PREFIX
+            };
+            return Some(AccessFocus::composite(GRID_TAG, format!("{GRID_TAG}#{prefix}{cur}")));
         }
         focused.map(AccessFocus::atomic)
     }
@@ -6217,6 +6229,57 @@ mod tests {
             assert!(
                 open.contains_tag(&format!("{GRID_TAG}#{COLOR_SW_PREFIX}4")),
                 "the swatch chips paint (one per preset)",
+            );
+        });
+    }
+
+    // ─── R943.1 session-review clearance ──────────────────────────
+
+    #[test]
+    fn r943_1_keyboard_begin_opens_the_colour_popup() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // The keyboard `Enter` / `F2` activate path is the `begin` verb. On a
+            // colour cell it must open the swatch popup (like a choice cell's
+            // dropdown), not fall through to `begin_edit` — a colour is not
+            // text-editable, so the old `Choice`-only `begin` left colour cells
+            // keyboard-inert (openable by click only). Now every activation route
+            // opens the popup.
+            let _ = grid_set(&mut scene, "focused_row", IntrospectValue::Int(0));
+            let _ = grid_set(&mut scene, "focused_col", IntrospectValue::Int(5));
+            assert_eq!(
+                grid_invoke(&mut scene, "begin", IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(true)),
+                "begin opens the swatch popup on a colour cell",
+            );
+            assert_eq!(grid_intro(&scene).query("popup_open"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(grid_intro(&scene).query("editing_col"), Some(IntrospectValue::Int(5)));
+            assert_eq!(
+                grid_intro(&scene).query("popup_cursor"),
+                Some(IntrospectValue::Int(4)),
+                "cursor seeded at the current preset (Blue)",
+            );
+        });
+    }
+
+    #[test]
+    fn r943_1_colour_focus_target_rings_a_swatch_not_a_phantom_option() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            assert!(open_color_at(&mut scene, 0, 5)); // Blue = swatch 4
+            let focus =
+                DataGridView::access_focus_target(&(TextFieldState::Idle, 0), Some(GRID_TAG))
+                    .expect("focus target while the popup owns the descendant");
+            assert_eq!(focus.focus_tag, GRID_TAG);
+            // The active descendant must be the cursor SWATCH (sw4), not a choice
+            // OPTION (opt4) the colour popup never paints — a dangling
+            // `aria-activedescendant` would point the AT at a non-existent node.
+            assert_eq!(focus.active_descendant.as_deref(), Some("data_grid#sw4"));
+            // And the painted + a11y swatch tag matches it (the R873 byte-match).
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), Some(GRID_TAG));
+            assert!(
+                nodes.iter().any(|n| n.tag == "data_grid#sw4"),
+                "the active-descendant swatch is a real a11y node",
             );
         });
     }
