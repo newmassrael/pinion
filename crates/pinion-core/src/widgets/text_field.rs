@@ -1223,6 +1223,20 @@ impl ExternalIntrospect for TextFieldExternal {
             ("toggle-fold", "boolean"),
             ("fold-all", "number"),
             ("unfold-all", "number"),
+            // R938 §5.22 — multi-line indent / dedent (the Tab / Shift+Tab
+            // twins). `Null` arg; returns `Bool` (did the lines shift?). R941 —
+            // schema-listed (R938 added the verbs but not the slots — cleared here).
+            ("indent", "boolean"),
+            ("dedent", "boolean"),
+            // R939 §5.22 — line-comment toggle (the Ctrl+/ twin). `Null` arg;
+            // returns `Bool` (R941 — schema-listed, cleared with the above).
+            ("toggle-comment", "boolean"),
+            // R941 §5.22 — go-to-line navigation. `line_count` is the logical
+            // (newline-delimited) line count (the navigation bound + a gutter /
+            // prompt max); `go-to-line` (arg = a 1-based line `Int`) jumps the
+            // caret to that line's start and returns the resolved (clamped) line.
+            ("line_count", "number"),
+            ("go-to-line", "number"),
         ])
     }
 
@@ -1245,6 +1259,12 @@ impl ExternalIntrospect for TextFieldExternal {
                 // against the unreachable 2^63-byte text case.
                 IntrospectValue::Int(i64::try_from(s.caret()).unwrap_or(i64::MAX))
             }),
+            // R941 §5.22 — the logical (newline-delimited) line count, the
+            // upper bound for `go-to-line` + a line-number gutter / prompt max.
+            // `None` for a bare field (no attached state), like `caret`.
+            "line_count" => self
+                .text_state()
+                .map(|s| IntrospectValue::Int(i64::try_from(s.line_count()).unwrap_or(i64::MAX))),
             // R56.1.f.3 §5.38 §5.22 — selection range as Json
             // `{"start": int, "end": int}` mirror of W3C
             // `HTMLInputElement.selectionStart` / `selectionEnd`.
@@ -1691,6 +1711,7 @@ impl ExternalIntrospect for TextFieldExternal {
             "indent" | "dedent" => self.invoke_indent(path, &args),
             // R939 §5.22 — toggle line comments (the AI-first twin of Ctrl+/).
             "toggle-comment" => self.invoke_comment(&args),
+            "go-to-line" => self.invoke_go_to_line(&args),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1839,6 +1860,27 @@ impl TextFieldExternal {
             IntrospectValue::Null => Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
                 s.line_comment().is_some_and(|m| s.toggle_line_comment(m))
             }))),
+            _ => Err(InvokeError::TypeMismatch),
+        }
+    }
+
+    /// R941 §5.22 — the `go-to-line` action: move the caret to the start of
+    /// 1-based logical line `args` (an [`IntrospectValue::Int`]), collapsing any
+    /// selection — the AI-first peer of an editor's `Ctrl+G` prompt. Returns the
+    /// resolved 1-based line the caret landed on (clamped to `1..=line_count` by
+    /// [`TextEditState::go_to_line`](crate::widgets::text_edit::TextEditState::go_to_line)),
+    /// so the caller learns the actual destination in one round-trip
+    /// (setter-returns-the-read). A negative line cannot name a row → `Rejected`
+    /// (the `usize::try_from` failure path, mirror of the `toggle-fold` guard); a
+    /// bare `TextField` with no attached state returns `Int(0)` (nothing to
+    /// navigate), distinguishing it from a real line-1 landing.
+    fn invoke_go_to_line(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        match args {
+            IntrospectValue::Int(line) => {
+                let l = usize::try_from(*line).map_err(|_| InvokeError::Rejected)?;
+                let resolved = self.text_state().map_or(0, |s| s.go_to_line(l));
+                Ok(IntrospectValue::Int(i64::try_from(resolved).unwrap_or(i64::MAX)))
+            }
             _ => Err(InvokeError::TypeMismatch),
         }
     }
@@ -2551,6 +2593,11 @@ mod tests {
                 ("toggle-fold", "boolean"),
                 ("fold-all", "number"),
                 ("unfold-all", "number"),
+                ("indent", "boolean"),
+                ("dedent", "boolean"),
+                ("toggle-comment", "boolean"),
+                ("line_count", "number"),
+                ("go-to-line", "number"),
             ],
         );
     }
@@ -6287,5 +6334,71 @@ mod r933_fold_tests {
             bare.invoke("toggle-comment", IntrospectValue::Null).unwrap(),
             IntrospectValue::Bool(false),
         );
+    }
+
+    // ─── R941 go-to-line ──────────────────────────────────────────
+
+    #[test]
+    fn r941_invoke_go_to_line_jumps_and_returns_resolved() {
+        // The AI-first peer of Ctrl+G: jump the caret to a line, echoing the
+        // resolved line (the setter-returns-read-outcome contract).
+        let (state, mut tfx) = wired("zero\none\ntwo\nthree"); // starts [0, 5, 9, 13]
+        assert_eq!(
+            tfx.invoke("go-to-line", IntrospectValue::Int(3)).unwrap(),
+            IntrospectValue::Int(3),
+        );
+        assert_eq!(state.caret(), 9, "caret at line 3 (\"two\") start");
+        assert_eq!(tfx.query("caret").unwrap(), IntrospectValue::Int(9));
+    }
+
+    #[test]
+    fn r941_invoke_go_to_line_clamps_out_of_range() {
+        let (state, mut tfx) = wired("a\nb\nc"); // 3 lines, starts [0, 2, 4]
+        assert_eq!(
+            tfx.invoke("go-to-line", IntrospectValue::Int(99)).unwrap(),
+            IntrospectValue::Int(3),
+            "past the end clamps to the last line",
+        );
+        assert_eq!(state.caret(), 4);
+        assert_eq!(
+            tfx.invoke("go-to-line", IntrospectValue::Int(0)).unwrap(),
+            IntrospectValue::Int(1),
+            "0 clamps up to the first line",
+        );
+        assert_eq!(state.caret(), 0);
+    }
+
+    #[test]
+    fn r941_invoke_go_to_line_rejects_negative_and_bad_type() {
+        let (_state, mut tfx) = wired("a\nb");
+        assert!(
+            matches!(tfx.invoke("go-to-line", IntrospectValue::Int(-1)), Err(InvokeError::Rejected)),
+            "a negative line cannot name a row (the toggle-fold guard mirror)",
+        );
+        assert!(matches!(
+            tfx.invoke("go-to-line", IntrospectValue::Null),
+            Err(InvokeError::TypeMismatch),
+        ));
+    }
+
+    #[test]
+    fn r941_query_line_count_tracks_the_buffer() {
+        let (state, tfx) = wired("a\nb\nc");
+        assert_eq!(tfx.query("line_count").unwrap(), IntrospectValue::Int(3));
+        state.set_text("solo".to_string());
+        assert_eq!(tfx.query("line_count").unwrap(), IntrospectValue::Int(1));
+    }
+
+    #[test]
+    fn r941_bare_field_go_to_line_inert_and_line_count_none() {
+        // A bare field (no attached state): go-to-line returns Int(0) — nothing
+        // to navigate, distinct from a real line-1 landing — and line_count is
+        // None ("not bound"), the same bare/wired distinction caret draws.
+        let mut bare = TextFieldExternal::new();
+        assert_eq!(
+            bare.invoke("go-to-line", IntrospectValue::Int(1)).unwrap(),
+            IntrospectValue::Int(0),
+        );
+        assert!(bare.query("line_count").is_none());
     }
 }

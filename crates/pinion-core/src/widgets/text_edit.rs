@@ -2292,6 +2292,33 @@ impl TextEditState {
         });
     }
 
+    /// R941 §5.22 — the number of logical (newline-delimited) lines, 1-based:
+    /// the count of [`line_starts`] entries. Always `>= 1` (an empty buffer is
+    /// one line). The clamp bound for [`go_to_line`](Self::go_to_line) and the
+    /// peer of a line-number gutter / a "go to line" prompt's max.
+    #[must_use]
+    pub fn line_count(&self) -> usize {
+        line_starts(&self.text.get()).len()
+    }
+
+    /// R941 §5.22 — move the caret to the start of 1-based logical line `line`,
+    /// collapsing any selection (the editor "go to line" navigation, the AI-first
+    /// peer of a `Ctrl+G` prompt). `line` is clamped to `1..=line_count` (a `0`
+    /// or `1` lands on the first line; a line past the end lands on the last
+    /// line's start), so an out-of-range jump goes to the nearest valid line
+    /// rather than failing. Returns the resolved 1-based line the caret landed
+    /// on, so an RPC / keyboard caller can echo the actual destination (the
+    /// setter-returns-the-read wire symmetry). Delegates to
+    /// [`set_caret`](Self::set_caret), so the destination is clamped to a `char`
+    /// boundary and the selection collapses identically to every caret move.
+    pub fn go_to_line(&self, line: usize) -> usize {
+        let starts = line_starts(&self.text.get());
+        // 1-based; `starts` is never empty (always at least `[0]`).
+        let resolved = line.clamp(1, starts.len());
+        self.set_caret(starts[resolved - 1]);
+        resolved
+    }
+
     /// Insert `s` at the current caret position and advance the
     /// caret by `s.len()` bytes (canonical insert-after-cursor
     /// behaviour shared by every text widget on every platform).
@@ -5878,5 +5905,52 @@ mod tests {
             // The shadowed manual runs stay empty under a highlighter.
             assert!(st.style_runs.get().is_empty(), "manual runs shadowed, not written");
         });
+    }
+
+    // ─── R941 go-to-line ──────────────────────────────────────────
+
+    #[test]
+    fn r941_line_count_counts_logical_lines() {
+        let st = TextEditState::new();
+        assert_eq!(st.line_count(), 1, "empty buffer is one line");
+        st.set_text("solo".to_string());
+        assert_eq!(st.line_count(), 1, "a single line, no newline");
+        st.set_text("a\nb\nc".to_string());
+        assert_eq!(st.line_count(), 3);
+        st.set_text("a\nb\n".to_string());
+        assert_eq!(st.line_count(), 3, "a trailing newline opens an empty last line");
+    }
+
+    #[test]
+    fn r941_go_to_line_jumps_caret_to_line_start() {
+        let st = TextEditState::new();
+        st.set_text("zero\none\ntwo\nthree".to_string()); // starts [0, 5, 9, 13]
+        assert_eq!(st.go_to_line(1), 1, "line 1 resolves to itself");
+        assert_eq!(st.caret(), 0, "line 1 starts at byte 0");
+        assert_eq!(st.go_to_line(3), 3);
+        assert_eq!(st.caret(), 9, "line 3 (\"two\") starts at byte 9");
+        assert_eq!(st.go_to_line(4), 4);
+        assert_eq!(st.caret(), 13, "line 4 (\"three\") starts at byte 13");
+    }
+
+    #[test]
+    fn r941_go_to_line_clamps_out_of_range() {
+        let st = TextEditState::new();
+        st.set_text("a\nb\nc".to_string()); // 3 lines, starts [0, 2, 4]
+        assert_eq!(st.go_to_line(0), 1, "0 clamps up to the first line");
+        assert_eq!(st.caret(), 0);
+        assert_eq!(st.go_to_line(99), 3, "past the end clamps to the last line");
+        assert_eq!(st.caret(), 4, "the last line's start");
+    }
+
+    #[test]
+    fn r941_go_to_line_collapses_selection() {
+        let st = TextEditState::new();
+        st.set_text("a\nbb\nccc".to_string()); // starts [0, 2, 5]
+        st.set_selection(0, 4); // a selection spanning lines 1-2
+        assert!(st.has_selection());
+        assert_eq!(st.go_to_line(3), 3);
+        assert_eq!(st.caret(), 5, "caret at line 3 start");
+        assert!(!st.has_selection(), "go_to_line collapses the selection (a caret move)");
     }
 }

@@ -41629,6 +41629,56 @@
         "keymap intercept gates on flatten presence (collapse/filter); a scroll-out only hides the paint"
       ]
     },
+    "R941": {
+      "decision_summary": "R941 — go-to-line navigation: TextEditState::go_to_line + line_count substrate + TextFieldExternal go-to-line RPC verb + line_count query; diversifies from R940/DCC and R938-939 line-mutation into navigation; cleared the R938/R939 schema-listing debt",
+      "changes_bullets": [
+        "TextEditState::go_to_line(n): 1-based, clamp [1,line_count], caret to line start, returns resolved",
+        "TextEditState::line_count() (logical newline-delimited lines) via the line_starts SSOT",
+        "TextFieldExternal go-to-line invoke verb (Int n -> resolved; neg=Rejected; bare field=Int(0))",
+        "TextFieldExternal line_count query (Int; None for a bare field, the caret bare/wired convention)",
+        "schema-list go-to-line + line_count + R938/R939 indent/dedent/toggle-comment verbs (found debt)",
+        "demo r941_go_to_line.py in hello-syntax-highlight (RPC-primary; Ctrl+G GUI modal deferred)"
+      ],
+      "verification_bullets": [
+        "workspace cargo test -j2: 165 ok result lines, 0 FAILED (pinion-core +9: 4 substrate + 5 RPC verb/query)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic: 0 errors",
+        "demo r941_go_to_line.py: 35 assertions, PASS, 3/3 deterministic runs (ZERO-FLAKE)",
+        "exact-match schema test updated (+5 slots: indent/dedent/toggle-comment/line_count/go-to-line)",
+        "validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "Ctrl+G GUI line-number prompt modal deferred; RPC-primary lands (R929/R931/R933 precedent)",
+        "go_to_line is line-START only (no column target, no scroll-into-view); set_caret semantics",
+        "Phase B mid wins depleting: lazy-tree large, secondary-sort balloons, OS-native/perf blocked"
+      ],
+      "publishable_decision_summary": "R941 — go-to-line navigation: TextEditState::go_to_line + line_count substrate + TextFieldExternal go-to-line RPC verb + line_count query; diversifies from R940/DCC and R938-939 line-mutation into navigation; cleared the R938/R939 schema-listing debt",
+      "publishable_changes_bullets": [
+        "TextEditState::go_to_line(n): 1-based, clamp [1,line_count], caret to line start, returns resolved",
+        "TextEditState::line_count() (logical newline-delimited lines) via the line_starts SSOT",
+        "TextFieldExternal go-to-line invoke verb (Int n -> resolved; neg=Rejected; bare field=Int(0))",
+        "TextFieldExternal line_count query (Int; None for a bare field, the caret bare/wired convention)",
+        "schema-list go-to-line + line_count + R938/R939 indent/dedent/toggle-comment verbs (found debt)",
+        "demo r941_go_to_line.py in hello-syntax-highlight (RPC-primary; Ctrl+G GUI modal deferred)"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test -j2: 165 ok result lines, 0 FAILED (pinion-core +9: 4 substrate + 5 RPC verb/query)",
+        "clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic: 0 errors",
+        "demo r941_go_to_line.py: 35 assertions, PASS, 3/3 deterministic runs (ZERO-FLAKE)",
+        "exact-match schema test updated (+5 slots: indent/dedent/toggle-comment/line_count/go-to-line)",
+        "validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Ctrl+G GUI line-number prompt modal deferred; RPC-primary lands (R929/R931/R933 precedent)",
+        "go_to_line is line-START only (no column target, no scroll-into-view); set_caret semantics",
+        "Phase B mid wins depleting: lazy-tree large, secondary-sort balloons, OS-native/perf blocked"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
