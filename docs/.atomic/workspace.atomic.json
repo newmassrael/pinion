@@ -41729,6 +41729,74 @@
         "popup-delegate (keymap/paint/a11y nodes) = 2nd consumer of the property-grid pattern, lift at 3rd"
       ]
     },
+    "R942": {
+      "decision_summary": "R942 hello-lazy-tree: a scene outliner whose children are fetched asynchronously on expand, reusing the R923/R924 Resource+Effect+ResourceCache+DeferredReady+LocalTaskPump async substrate. The only new machinery is an example-local async flattening (a Ready branch recurses, a Loading branch emits one skeleton placeholder), because the in-memory flat_visible SSOT cannot represent not-yet-fetched children. Pointer/RPC-driven expand via TreeRowClickExternal; query-only introspection surfaces the loaded tree to scene/query.",
+      "changes_bullets": [
+        "New example hello-lazy-tree: a scene outliner whose children are fetched async on expand",
+        "Per-node ResourceCache<id, Vec<LazyChild>> + expand-set Signal<BTreeSet> + loader Effect (R665)",
+        "Example-local async-flatten: a Ready branch recurses, a Loading branch emits one skeleton row",
+        "Reuses R923/R924 async substrate (Resource/Effect/ResourceCache/DeferredReady/pump); no lift",
+        "TreeRowClickExternal click router toggles expand; leaves gated by the id_is_branch SSOT",
+        "a11y tree/treeitem via lifted tree_access_nodes (loaded rows only) + a status live region",
+        "query-only tree_view_introspection_extra: row_count/id_at/level_at/expanded_at to scene/query"
+      ],
+      "verification_bullets": [
+        "workspace cargo test -j2: 166 result lines ok / 0 FAILED; +3 new example unit tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "demo r942_lazy_tree.py: 40+ assertions ZERO-FLAKE 3/3 (skeleton to resolve via snapshot-pump poll)",
+        "demo: boot lazy-load, expand skeleton->children, collapse-retains, re-expand cache-hit no-skeleton",
+        "demo: deep multi-level expand (grandchild level 3) + leaf-click no-op (id_is_branch gate)",
+        "validate-workspace T1 orphan=0"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "row_cells = 1st external per-row tree painter (crate tree_cell_content/build_row private)",
+        "lift tree_cell_content/build_row to pub at the 2nd external per-row tree consumer",
+        "LoaderMarker = pre-existing R665 effect-retention idiom across 5+ async examples (not new dup)",
+        "generic effect-guard lift = R735.1 net-zero wrapper; kept local (real substrate already lifted)",
+        "no keyboard nav over lazy tree (pointer/RPC expand only); apply_tree_key composes over loaded rows",
+        "lazy + virtualization NOT combined (isolates async-flatten); lazy + async sort/filter deferred",
+        "synthetic in-process DeferredReady source; async substrate real, latency = R924-style stand-in"
+      ],
+      "publishable_decision_summary": "R942 hello-lazy-tree: a scene outliner whose children are fetched asynchronously on expand, reusing the R923/R924 Resource+Effect+ResourceCache+DeferredReady+LocalTaskPump async substrate. The only new machinery is an example-local async flattening (a Ready branch recurses, a Loading branch emits one skeleton placeholder), because the in-memory flat_visible SSOT cannot represent not-yet-fetched children. Pointer/RPC-driven expand via TreeRowClickExternal; query-only introspection surfaces the loaded tree to scene/query.",
+      "publishable_changes_bullets": [
+        "New example hello-lazy-tree: a scene outliner whose children are fetched async on expand",
+        "Per-node ResourceCache<id, Vec<LazyChild>> + expand-set Signal<BTreeSet> + loader Effect (R665)",
+        "Example-local async-flatten: a Ready branch recurses, a Loading branch emits one skeleton row",
+        "Reuses R923/R924 async substrate (Resource/Effect/ResourceCache/DeferredReady/pump); no lift",
+        "TreeRowClickExternal click router toggles expand; leaves gated by the id_is_branch SSOT",
+        "a11y tree/treeitem via lifted tree_access_nodes (loaded rows only) + a status live region",
+        "query-only tree_view_introspection_extra: row_count/id_at/level_at/expanded_at to scene/query"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test -j2: 166 result lines ok / 0 FAILED; +3 new example unit tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "demo r942_lazy_tree.py: 40+ assertions ZERO-FLAKE 3/3 (skeleton to resolve via snapshot-pump poll)",
+        "demo: boot lazy-load, expand skeleton->children, collapse-retains, re-expand cache-hit no-skeleton",
+        "demo: deep multi-level expand (grandchild level 3) + leaf-click no-op (id_is_branch gate)",
+        "validate-workspace T1 orphan=0"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.23",
+        "5.27",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "row_cells = 1st external per-row tree painter (crate tree_cell_content/build_row private)",
+        "lift tree_cell_content/build_row to pub at the 2nd external per-row tree consumer",
+        "LoaderMarker = pre-existing R665 effect-retention idiom across 5+ async examples (not new dup)",
+        "generic effect-guard lift = R735.1 net-zero wrapper; kept local (real substrate already lifted)",
+        "no keyboard nav over lazy tree (pointer/RPC expand only); apply_tree_key composes over loaded rows",
+        "lazy + virtualization NOT combined (isolates async-flatten); lazy + async sort/filter deferred",
+        "synthetic in-process DeferredReady source; async substrate real, latency = R924-style stand-in"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

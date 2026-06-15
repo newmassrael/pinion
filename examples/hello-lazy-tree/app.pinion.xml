@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  R942 §5.22 §5.23 §5.27 lazy-loaded scene outliner: pinion-forge renderer
+  manifest for hello-lazy-tree. Emits `HelloLazyTreeRenderer` (Vello-backed).
+  Same single-source-of-truth template as the other hello-* renderers; only
+  the struct name diverges.
+-->
+<pinion xmlns="https://pinion.dev/dsl/v1"
+        kind="renderer"
+        name="HelloLazyTreeRenderer"
+        backend="vello"/>

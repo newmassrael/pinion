@@ -1,0 +1,32 @@
+[package]
+name = "hello-lazy-tree"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R942 §5.22 §5.23 §5.27 §2 lazy-loaded scene outliner: a tree whose children are fetched asynchronously on expand. Expanding a branch creates a per-node Resource fetch (through the shell-polled LocalTaskPump behind a deterministic latency); the branch shows a skeleton placeholder until its children resolve, then the rows appear. Reuses the R924 Resource + Effect + ResourceCache + DeferredReady async substrate; the example-local async flattening is the only new machinery (the in-memory flat_visible SSOT cannot represent not-yet-fetched children). The asset-browser / scene-outliner-at-scale backbone over an out-of-memory tree source."
+publish = false
+
+[[bin]]
+name = "hello-lazy-tree"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R674 §5.16 — `TreeRowClickExternal` composite-tag click router + the
+# `TreeViewStyle` row tokens (indent / glyph / row height) + the shared
+# disclosure glyphs.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+vello = { workspace = true }
+# R942 — `Resource<Vec<LazyChild>, String>` per node requires the payload
+# type to be (de)serializable; `LazyChild` derives serde.
+serde = { workspace = true }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

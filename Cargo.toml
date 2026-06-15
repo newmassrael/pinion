@@ -29,6 +29,7 @@ members = [
     "examples/hello-tab-reorder",
     "examples/hello-virtual-list",
     "examples/hello-lazy-list",
+    "examples/hello-lazy-tree",
     "examples/hello-million-row",
     "examples/hello-asset-browser",
     "examples/hello-tree-reparent",
