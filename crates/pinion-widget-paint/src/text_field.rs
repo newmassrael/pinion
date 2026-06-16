@@ -65,6 +65,7 @@ use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Color, CompositionEvent, Scene, WidgetStateName};
+use crate::coord::saturating_f32_to_u32;
 use pinion_text::{
     byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
     caret_rect_for_byte_offset, selection_rects_for_range, visual_line_metrics, CaretRect,
@@ -416,42 +417,6 @@ fn preedit_bg_fill(theme: &Theme, alpha: u8) -> Color {
 /// interactive affordances coherently).
 fn preedit_underline(theme: &Theme) -> Color {
     theme.resolve(ColorRole::Accent)
-}
-
-/// (R657 §5.16) Saturating cast from layout-space f32 to paint-space
-/// u32. Negative values clamp to 0; out-of-range positives clamp to
-/// `u32::MAX`; `NaN` / `Infinity` clamp to 0 (defensive — parley's
-/// [`caret_rect_for_byte_offset`] is `finite`-guaranteed by the
-/// R56.1.b.2 test battery, but the saturating-cast convention stays
-/// the textbook narrowing seam per
-/// [[r56-1-b-2-parley-f32-narrowing]]).
-///
-/// R956 — `pub` so a binding rendering a side affordance from the *same*
-/// layout-space metrics the field paints (the line-number gutter, placing
-/// numbers at each [`field_visual_lines`] `y`) rounds f32 → u32 with the
-/// *identical* seam `view_field` uses for the caret / band rects — so the
-/// gutter and the glyph rows land on the same pixel rows, not a rounding
-/// apart.
-#[must_use]
-pub fn saturating_f32_to_u32(v: f32) -> u32 {
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "u32::MAX -> f32 rounds to a single saturating ceiling"
-    )]
-    let ceiling = u32::MAX as f32;
-    if !v.is_finite() || v < 0.0 {
-        0
-    } else if v >= ceiling {
-        u32::MAX
-    } else {
-        #[allow(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "guarded by is_finite / >=0 / < ceiling above"
-        )]
-        let out = v as u32;
-        out
-    }
 }
 
 /// R903 §5.22 — convert a layout-space [`CaretRect`] band to a paint-space

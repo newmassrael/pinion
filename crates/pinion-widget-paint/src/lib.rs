@@ -79,6 +79,7 @@ pub mod barrier;
 pub mod button;
 pub mod checkbox;
 pub mod chip;
+pub mod coord;
 pub mod datepicker;
 pub mod devtools;
 pub mod disclosure;

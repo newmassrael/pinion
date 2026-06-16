@@ -129,9 +129,9 @@ const ROW_GAP: u32 = 16;
 // `copy_to` / `paste_from` to the inner impl (the pre-R790 per-binding
 // copies dropped PRIMARY to the trait no-op default).
 
-// R657 §5.16 §5.38 — `saturating_f32_to_u32` lifted to
-// `pinion_widget_paint::text_field` (private helper used by
-// `view_field` + `ime_caret_rect_for`).
+// R657 §5.16 §5.38 / R958.1 — `saturating_f32_to_u32` moved to
+// `pinion_widget_paint::coord` (pub; the shared f32 -> u32 paint-coord
+// seam: view_field / ime_caret_rect_for / line-gutter / menu anchor).
 
 /// view-fn (§6.3): pure-ish sync mapping `(state, frame) -> Scene`.
 /// "Pure-ish" because the reactive [`Signal`](pinion_core::reactive::Signal)

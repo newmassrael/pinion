@@ -455,28 +455,13 @@ pub fn view_context_menu(
     )
 }
 
-/// Narrow a window-space logical-pixel coordinate to `[0, max]` as `u32`,
-/// saturating non-finite / out-of-range inputs (the textbook f32 -> px
-/// seam, mirroring `text_field::saturating_f32_to_u32`).
+/// Narrow a window-space logical-pixel coordinate to `[0, max]` as `u32`:
+/// the [`coord::saturating_f32_to_u32`](crate::coord::saturating_f32_to_u32)
+/// seam (negative / non-finite → 0, overflow → `u32::MAX`) with an extra
+/// `max` ceiling so a popup anchor never escapes the viewport. R958.1 — was
+/// a re-rolled copy of the cast; now delegates to the one home.
 fn anchor_px(v: f32, max: u32) -> u32 {
-    if !v.is_finite() || v <= 0.0 {
-        return 0;
-    }
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "max -> f32 rounds to a single saturating ceiling for the compare"
-    )]
-    let ceiling = max as f32;
-    if v >= ceiling {
-        return max;
-    }
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "v is finite and within (0, max) here, so the floor fits u32"
-    )]
-    let px = v as u32;
-    px
+    crate::coord::saturating_f32_to_u32(v).min(max)
 }
 
 /// Compose one dropdown row (R805). A [`MenuItemView::separator`] paints

@@ -1133,9 +1133,9 @@ fn use_persistence_boot() -> Rc<PersistenceBootMarker> {
         })
 }
 
-// R657 §5.16 §5.38 — saturating_f32_to_u32 lifted to
-// `pinion_widget_paint::text_field` (private helper used by
-// `view_field` + `ime_caret_rect_for`).
+// R657 §5.16 §5.38 / R958.1 — `saturating_f32_to_u32` moved to
+// `pinion_widget_paint::coord` (pub; the shared f32 -> u32 paint-coord
+// seam: view_field / ime_caret_rect_for / line-gutter / menu anchor).
 
 /// §6.3 view-fn — sync `(state, frame) -> Scene`. Reactive reads
 /// (`use_text_edit_state` / `use_caret_blink` / `use_todos` /

@@ -43111,6 +43111,54 @@
         "data-grid per-cell modified/reset still a gap (audit: SMALL-MEDIUM, follows this template)"
       ]
     },
+    "R958.1": {
+      "decision_summary": "session-review clearance of R956+R957+R958: lift saturating cast to coord, route gutter decode through split_subindex, single-walk go_to_line, single-pass reset_property",
+      "changes_bullets": [
+        "saturating_f32_to_u32 moved text_field -> pinion_widget_paint::coord (pub); text_field/gutter/menu anchor_px share one home (was mis-homed + menu re-roll)",
+        "gutter_line_from_tag routes through the canonical split_subindex # SSOT (was hand-rolled strip_prefix bypassing the splitter)",
+        "go_to_line: one document walk via shared line_start_byte_at (was 2x line_starts + 2x String clone)",
+        "reset_property: one common() build + one objects.get() (was common() twice + 3x get; matches reset_all_modified)",
+        "DETAIL_ROW_W const for the inspector reset-arrow inset; 4 stale R657 doc-comments updated to the coord home"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace green (+coord unit tests); clippy -D pedantic 0",
+        "8 demos PASS: gutter r956/r957/r764, inspector r958/r922, go-to-line r941, menu r691/r772 (anchor_px delegation preserved popup positioning)",
+        "method: 2 adversarial reviewers + my grep+read re-verify of every finding; a wrong coord test (INFINITY->0, not MAX) was MY test bug, fn correct",
+        "validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.22",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "B1/B2 (R957 gutter click): flows through position_caret_for_point so it arms a char text-drag on jitter and is a no-op unless the field is already focused -> R959 re-routes gutter clicks via a TextFieldExternal send path (focus-independent, no drag-arm; also serves the R955 click-to-fold deferral). MANDATORY R959 clearance, not a perpetual carry.",
+        "A5: RESET_PREFIX/RESET_DOT 2nd consumer (property-grid+inspector, independent wire namespaces, divergence!=bug) -> the data-grid per-cell modified/reset (R960) is the 3rd consumer that triggers the shared lift"
+      ],
+      "publishable_decision_summary": "session-review clearance of R956+R957+R958: lift saturating cast to coord, route gutter decode through split_subindex, single-walk go_to_line, single-pass reset_property",
+      "publishable_changes_bullets": [
+        "saturating_f32_to_u32 moved text_field -> pinion_widget_paint::coord (pub); text_field/gutter/menu anchor_px share one home (was mis-homed + menu re-roll)",
+        "gutter_line_from_tag routes through the canonical split_subindex # SSOT (was hand-rolled strip_prefix bypassing the splitter)",
+        "go_to_line: one document walk via shared line_start_byte_at (was 2x line_starts + 2x String clone)",
+        "reset_property: one common() build + one objects.get() (was common() twice + 3x get; matches reset_all_modified)",
+        "DETAIL_ROW_W const for the inspector reset-arrow inset; 4 stale R657 doc-comments updated to the coord home"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace green (+coord unit tests); clippy -D pedantic 0",
+        "8 demos PASS: gutter r956/r957/r764, inspector r958/r922, go-to-line r941, menu r691/r772 (anchor_px delegation preserved popup positioning)",
+        "method: 2 adversarial reviewers + my grep+read re-verify of every finding; a wrong coord test (INFINITY->0, not MAX) was MY test bug, fn correct",
+        "validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.22",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "B1/B2 (R957 gutter click): flows through position_caret_for_point so it arms a char text-drag on jitter and is a no-op unless the field is already focused -> R959 re-routes gutter clicks via a TextFieldExternal send path (focus-independent, no drag-arm; also serves the R955 click-to-fold deferral). MANDATORY R959 clearance, not a perpetual carry.",
+        "A5: RESET_PREFIX/RESET_DOT 2nd consumer (property-grid+inspector, independent wire namespaces, divergence!=bug) -> the data-grid per-cell modified/reset (R960) is the 3rd consumer that triggers the shared lift"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

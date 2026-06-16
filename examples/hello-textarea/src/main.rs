@@ -135,6 +135,7 @@
 use pinion_a11y::{toolbar_button_nodes, AccessNode, ToolbarControl, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
+use pinion_core::composite_tag::split_subindex;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode, StyleRun, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
@@ -151,6 +152,7 @@ use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore, WidgetStateName
 use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_text::{CaretRect, VisualLineMetric};
+use pinion_widget_paint::coord::saturating_f32_to_u32;
 use pinion_widget_paint::text_field as tf_paint;
 use pinion_widget_paint::toolbar::composite_item_tag;
 
@@ -432,11 +434,17 @@ fn digit_count(n: usize) -> u32 {
 /// formats `ta_gutter#<n>`). Returns `None` for any other tag (the field,
 /// a toolbar control, a non-gutter decoration), so a press on a gutter
 /// number is distinguished from every other hit by tag identity alone.
+///
+/// R958.1 — splits via the canonical [`split_subindex`] `#` SSOT (the
+/// splitter the `InputRouter` / drag / focus paths use), not a hand-rolled
+/// `strip_prefix` — so the primary is matched by tag *equality*, never a
+/// substring (the sibling `ta_gutter_current` band tag can't false-match).
 fn gutter_line_from_tag(tag: &str) -> Option<usize> {
-    tag.strip_prefix(GUTTER_TAG)?
-        .strip_prefix('#')?
-        .parse::<usize>()
-        .ok()
+    let (primary, sub) = split_subindex(tag);
+    if primary != GUTTER_TAG {
+        return None;
+    }
+    sub?.parse::<usize>().ok()
 }
 
 /// R956 §5.36 §5.22 — the left line-number gutter, structurally a mirror
@@ -483,7 +491,7 @@ fn gutter(
     // range as the field — an all-absolute child contributes no flow
     // height, so the explicit size is what lets it scroll in lock-step.
     let content_h =
-        lines.last().map_or(0, |m| tf_paint::saturating_f32_to_u32(m.y + m.height));
+        lines.last().map_or(0, |m| saturating_f32_to_u32(m.y + m.height));
 
     // R957 — the caret's line number reads in the brighter `OnSurface`
     // ink; every other line stays muted. The active-line band (below)
@@ -504,8 +512,8 @@ fn gutter(
             continue;
         }
         logical_n += 1;
-        let top = tf_paint::saturating_f32_to_u32(m.y);
-        let row_h = tf_paint::saturating_f32_to_u32(m.height).max(style.font_size_px);
+        let top = saturating_f32_to_u32(m.y);
+        let row_h = saturating_f32_to_u32(m.height).max(style.font_size_px);
         // R957 — the caret's logical line (0-based) highlights its number.
         let is_current = logical_n as usize - 1 == caret_line;
         if is_current {

@@ -1119,6 +1119,16 @@ fn line_starts(text: &str) -> Vec<usize> {
     starts
 }
 
+/// R958.1 §5.22 — byte offset of 1-based logical `line`'s start, given the
+/// [`line_starts`] index, clamped to `1..=starts.len()` (`starts` is never
+/// empty — always `[0]` at minimum). The shared indexing the public
+/// [`TextEditState::line_start_byte`] and [`TextEditState::go_to_line`] both
+/// resolve through, so neither re-derives the clamp inline and each walks
+/// the document only once.
+fn line_start_byte_at(starts: &[usize], line: usize) -> usize {
+    starts[line.clamp(1, starts.len()) - 1]
+}
+
 /// R933 §5.36 — zero-based logical line containing `byte`, given the
 /// [`line_starts`] index. `partition_point` finds the first start strictly
 /// past `byte`; the line is the one before it.
@@ -2675,8 +2685,12 @@ impl TextEditState {
     /// `hello-syntax-highlight`) needs no scroll. Viewport scroll-to-caret is the
     /// field's reactive concern, kept orthogonal to caret placement.
     pub fn go_to_line(&self, line: usize) -> usize {
-        let resolved = line.clamp(1, self.line_count());
-        self.set_caret(self.line_start_byte(resolved));
+        // One document walk: derive both the clamped line number (echoed) and
+        // its start byte from a single `line_starts`, via the shared
+        // `line_start_byte_at` indexing (the SSOT `line_start_byte` also uses).
+        let starts = line_starts(&self.text.get());
+        let resolved = line.clamp(1, starts.len());
+        self.set_caret(line_start_byte_at(&starts, resolved));
         resolved
     }
 
@@ -2693,9 +2707,7 @@ impl TextEditState {
     /// returned offset is a `char` boundary (a line start always is).
     #[must_use]
     pub fn line_start_byte(&self, line: usize) -> usize {
-        let starts = line_starts(&self.text.get());
-        // 1-based; `starts` is never empty (always at least `[0]`).
-        starts[line.clamp(1, starts.len()) - 1]
+        line_start_byte_at(&line_starts(&self.text.get()), line)
     }
 
     /// Insert `s` at the current caret position and advance the

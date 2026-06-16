@@ -117,6 +117,9 @@ const ROW_H: u32 = 30;
 /// R958 — the reset-arrow mark size (px), the trailing "modified, click to
 /// reset" affordance on a Details row.
 const RESET_DOT: u32 = 10;
+/// R958.1 — the Details (property) row width; the reset arrow's trailing X
+/// inset derives from it so the arrow tracks the row edge if the width changes.
+const DETAIL_ROW_W: u32 = 260;
 const SWATCH: u32 = 16;
 
 // ─── Model ────────────────────────────────────────────────────────
@@ -434,14 +437,20 @@ impl InspectorExternal {
     /// selected object. No-op (returns `false`) when the property is already at
     /// default, so a redundant reset is idempotent.
     fn reset_property(&self, idx: usize) -> bool {
-        if !self.common_modified(idx) {
-            return false;
-        }
-        let Some(prop) = self.common().into_iter().nth(idx) else {
+        // One `common()` build + one `objects.get()` (the cleaner shape
+        // `reset_all_modified` already uses): resolve the name, gate on
+        // modified, then write — not the prior common()-twice rebuild.
+        let objects = self.objects.get();
+        let selection = self.selection_set();
+        let Some(name) =
+            common_properties(&objects, &selection).get(idx).map(|p| p.name.clone())
+        else {
             return false;
         };
-        let names = vec![prop.name];
-        let selection = self.selection_set();
+        if !property_modified_from_default(&objects, &selection, &self.defaults, &name) {
+            return false;
+        }
+        let names = vec![name];
         let defaults = Rc::clone(&self.defaults);
         self.objects.set_with(move |prev| {
             let mut next = prev.clone();
@@ -1015,7 +1024,7 @@ fn property_row(
                 .with_layout(
                     LayoutStyle::new()
                         .with_size(Size::px(RESET_DOT, RESET_DOT))
-                        .with_absolute_position(260 - RESET_DOT, (ROW_H - RESET_DOT) / 2),
+                        .with_absolute_position(DETAIL_ROW_W - RESET_DOT, (ROW_H - RESET_DOT) / 2),
                 ),
         ));
     }
@@ -1027,7 +1036,7 @@ fn property_row(
                     .flex(FlexDirection::Row)
                     .with_justify(JustifyContent::SpaceBetween)
                     .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(260, ROW_H)),
+                    .with_size(Size::px(DETAIL_ROW_W, ROW_H)),
             ),
     )
 }
