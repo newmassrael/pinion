@@ -125,6 +125,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::checkbox::CheckboxState;
 use pinion_core::widgets::listbox_item::ListboxItemState;
+use pinion_core::widgets::slider::SliderState;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldExternal, TextFieldState};
 use pinion_core::widgets::tree_nav::{
@@ -139,6 +140,7 @@ use pinion_widget_paint::checkbox::{view_checkbox_box, CheckboxStyle};
 use pinion_widget_paint::group_header::group_header_row;
 use pinion_widget_paint::listbox::{view_option, OptionRow};
 use pinion_widget_paint::popup::popup_surface;
+use pinion_widget_paint::slider::{slider_accent_for, slider_track_inactive};
 use pinion_widget_paint::text_field as tf_paint;
 
 use pinion_widget_paint::state_layer::focus_fill;
@@ -207,6 +209,118 @@ const SCRUB_FLOAT_PER_PX: f64 = 0.01;
 /// Int scrub sensitivity: pixels of horizontal drag per integer step (8 px ⇒
 /// +1), so an int scrubs in whole units without runaway.
 const SCRUB_INT_PX_PER_STEP: f64 = 8.0;
+
+// ─── bounded slider delegate (R964) ───────────────────────────────
+
+/// R964 — the flat-model slot of the `Opacity` leaf, the one bounded
+/// ("ranged") scalar (a normalised `0..1` factor). Named so [`scalar_range`]
+/// and the boot model ([`default_properties`]) agree on which slot is bounded.
+const OPACITY_SLOT: usize = 8;
+/// R964 — the in-cell slider gauge's track / fill strip height (px).
+const GAUGE_TRACK_H: u32 = 6;
+/// R964 — paint-tag prefix for a ranged leaf's gauge fill, namespaced under
+/// `GRID_TAG`. The fill is `pointer_transparent` (a press falls through to the
+/// row's scrub, the R954 cell-selection-overlay stance), so the `#` segment is
+/// a pure introspection name, never a router target.
+const GAUGE_PREFIX: &str = "gauge";
+
+/// R964 — the `[min, max]` interval of a bounded ("ranged") scalar leaf, or
+/// `None` for an unbounded one. The interval is fixed class metadata — it is not
+/// part of the value, so it lives here keyed by the flat-model slot, not on the
+/// [`CellValue`]. Only `Opacity` (a normalised factor) is ranged today.
+///
+/// The bounded-numeric-DCC clamp pattern's sibling is the data-grid's R894
+/// `ColRange` / `clamp_for_col` / `col_range.<col>` (its 1st consumer). The two
+/// are kept as separate example-local tables rather than lifted to a shared core
+/// type because they diverge in shape — R894 is `Int`-only and column-keyed,
+/// this is `Float`-only and flat-slot-keyed — so the only common ground is the
+/// stdlib `clamp` atom (already SSOT). A 3rd consumer or a unified
+/// Int+Float `NumericRange` is what would justify the lift
+/// ([[abstraction-needs-second-consumer]]); the RPC wire is already aligned
+/// (`"<lo>..<hi>"` / `"none"`) so that lift would be wire-compatible.
+fn scalar_range(slot: usize) -> Option<(f64, f64)> {
+    match slot {
+        OPACITY_SLOT => Some((0.0, 1.0)),
+        _ => None,
+    }
+}
+
+/// R964 — clamp a ranged scalar's `Float` write to its interval; a no-op for an
+/// unranged slot or a non-`Float` value. The data-grid `set_cell` clamp analogue
+/// the [`set_value`](PropertyGridExternal::set_value) doc flagged as absent:
+/// threading it through `set_value` — the one funnel the scrub, the inline-edit
+/// commit, and the RPC `value.<i>` intervene all converge on — bounds every
+/// writer at one place.
+fn clamp_to_range(slot: usize, value: CellValue) -> CellValue {
+    match (scalar_range(slot), value) {
+        (Some((lo, hi)), CellValue::Float(f)) => CellValue::Float(f.clamp(lo, hi)),
+        (_, other) => other,
+    }
+}
+
+/// R964 — the bounded-slider value cell for a ranged `Float` leaf: the Unreal
+/// Details / Blender "factor" gauge. The formatted number renders as before
+/// (flow, vertically centred), with a thin track + active fill pinned along the
+/// cell's bottom edge showing the value's position in `[min, max]`. Editing is
+/// unchanged (the existing clamped scrub / inline-edit / RPC write) — the gauge
+/// is the *visible range* affordance, so its bars are `pointer_transparent` and
+/// a press falls through to the row's scrub. The fill is tagged
+/// `{GRID_TAG}#gauge<slot>` so its rendered fraction is introspectable — the AI
+/// reads the gauge position from the painted frame, not just the value.
+fn ranged_slider_cell(slot: usize, value: f64, min: f64, max: f64, theme: &Theme) -> Scene {
+    let frac = if max > min {
+        ((value - min) / (max - min)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let track_w = VALUE_COL_W.saturating_sub(2 * CELL_PAD);
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "frac in [0,1] times a small track width — non-negative, bounded by track_w"
+    )]
+    let fill_w = (frac * f64::from(track_w)) as u32;
+    let strip_y = ROW_H.saturating_sub(GAUGE_TRACK_H);
+    let bar = |w: u32, fill: Color, tag: Option<String>| {
+        let mut node = ContainerNode::new(Vec::new())
+            .with_style(BoxStyle::filled(fill).with_corner_radius(GAUGE_TRACK_H / 2))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(w, GAUGE_TRACK_H))
+                    .with_absolute_position(0, strip_y)
+                    .with_pointer_transparent(true),
+            );
+        if let Some(t) = tag {
+            node = node.with_tag(t);
+        }
+        Scene::Container(node)
+    };
+    let idle = SliderState::Idle;
+    Scene::Container(
+        ContainerNode::new(vec![
+            // The number flows + centres exactly as the plain Float cell did.
+            Scene::Text(TextNode::styled(
+                CellValue::Float(value).display(),
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(CELL_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurface)),
+            )),
+            bar(track_w, slider_track_inactive(theme, idle), None),
+            bar(
+                fill_w,
+                slider_accent_for(theme, idle),
+                Some(format!("{GRID_TAG}#{GAUGE_PREFIX}{slot}")),
+            ),
+        ])
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_size(Size::px(track_w, ROW_H)),
+        ),
+    )
+}
 
 // ─── choice-popup geometry (R867) ─────────────────────────────────
 
@@ -1215,9 +1329,15 @@ impl PropertyGridExternal {
     /// Write a typed value into the model slot — the scrub's live commit. It
     /// writes the same shared model `Signal` the inline editor (`commit_edit`)
     /// and the RPC `value.<i>` intervene also write — each through its own path,
-    /// converging on one source of truth (the grid has no per-column range, so
-    /// unlike the data-grid's `set_cell` there is no clamp/re-anchor to funnel).
+    /// converging on one source of truth. R964 — a ranged scalar's Float write
+    /// is clamped to its interval here ([`clamp_to_range`]), so this is the one
+    /// funnel that bounds every writer (the data-grid `set_cell` clamp pattern).
     fn set_value(&self, source: usize, value: CellValue) {
+        // R964 — bound a ranged scalar's Float write to its interval. The one
+        // clamp funnel: the scrub, the inline-edit commit, and the RPC
+        // `value.<i>` intervene all converge here (the data-grid `set_cell`
+        // clamp this doc once noted was absent).
+        let value = clamp_to_range(source, value);
         self.model.set_with(|prev| {
             let mut next = prev.clone();
             if let Some(slot) = next.get_mut(source) {
@@ -1807,6 +1927,10 @@ impl ExternalIntrospect for PropertyGridExternal {
             ("name.<index>", "string"),
             ("kind.<index>", "string"),
             ("value.<index>", "json"),
+            // R964 — a bounded scalar's `"<lo>..<hi>"` interval ("none" when
+            // unranged); the AI reads it before a `value.<i>` write. Same wire
+            // as the data-grid R894 `col_range.<col>` sibling.
+            ("range.<index>", "string"),
             // R919 / R936 — the modified-from-default reads + the reset writes.
             // `modified.<addr>` takes a scalar index ("6") OR an element address
             // ("elem.2"), the unified `ValueRef` vocabulary; `reset` likewise.
@@ -1919,6 +2043,21 @@ impl ExternalIntrospect for PropertyGridExternal {
                 if let Some(addr) = path.strip_prefix("value.") {
                     let value = self.value_at(row_ref(addr)?)?;
                     return Some(value.to_introspect());
+                }
+                // R964 — the bounded scalar's `"<lo>..<hi>"` interval, or
+                // `"none"` for an unranged leaf / array element. The AI reads the
+                // bounds before a `value.<i>` write (the clamp would otherwise be
+                // silent), the §2#7 scene-as-data peer of the painted gauge. The
+                // wire mirrors the data-grid R894 `col_range.<col>` sibling
+                // (`"0..1000"` / `"none"`) so one range format reads across both
+                // DCC widgets.
+                if let Some(addr) = path.strip_prefix("range.") {
+                    return Some(IntrospectValue::Text(match row_ref(addr)? {
+                        ValueRef::Scalar(i) => {
+                            scalar_range(i).map_or_else(|| "none".to_owned(), |(lo, hi)| format!("{lo}..{hi}"))
+                        }
+                        ValueRef::Elem(_) => "none".to_owned(),
+                    }));
                 }
                 // R921 — a branch's collapse flag, by node id (`expanded.cat:…`
                 // / `expanded.struct:…`). Null for a leaf / unknown id.
@@ -2571,13 +2710,22 @@ fn view_row(
             }
             CellValue::Choice { selected, options } => choice_value_cell(*selected, options, theme),
             CellValue::Color(c) => color_value_cell(*c, theme),
-            other => Scene::Text(TextNode::styled(
-                other.display(),
-                Rect::default(),
-                TextStyle::new()
-                    .with_size_px(CELL_PX)
-                    .with_fg(theme.resolve(ColorRole::OnSurface)),
-            )),
+            // R964 — a ranged Float leaf renders the bounded-slider gauge; every
+            // other scalar (unranged Float / Int / Text) keeps the plain value
+            // text. The range is keyed by the row's leaf slot, so an array
+            // element (id `elem.<k>` → no slot) never gauges.
+            other => match (other, row_value_index(&row.id).and_then(|i| scalar_range(i).map(|(lo, hi)| (i, lo, hi)))) {
+                (CellValue::Float(f), Some((slot, lo, hi))) => {
+                    ranged_slider_cell(slot, *f, lo, hi, theme)
+                }
+                _ => Scene::Text(TextNode::styled(
+                    other.display(),
+                    Rect::default(),
+                    TextStyle::new()
+                        .with_size_px(CELL_PX)
+                        .with_fg(theme.resolve(ColorRole::OnSurface)),
+                )),
+            },
         }
     };
     let value_cell = Scene::Container(
@@ -4297,6 +4445,69 @@ mod tests {
             node.handle.introspect_mut().unwrap()
                 .invoke("send", IntrospectValue::Text("6:PointerUp".to_owned())).unwrap();
             assert_eq!(node.handle.introspect().unwrap().query("scrubbing"), Some(IntrospectValue::Bool(false)));
+        });
+    }
+
+    /// R964 — `clamp_to_range` bounds only a ranged scalar's Float; an unranged
+    /// slot and a non-Float value pass through unchanged.
+    #[test]
+    fn r964_clamp_to_range_bounds_only_ranged_float() {
+        assert_eq!(scalar_range(OPACITY_SLOT), Some((0.0, 1.0)));
+        assert_eq!(scalar_range(6), None, "Pos X is unranged");
+        assert_eq!(clamp_to_range(OPACITY_SLOT, CellValue::Float(2.5)), CellValue::Float(1.0));
+        assert_eq!(clamp_to_range(OPACITY_SLOT, CellValue::Float(-0.5)), CellValue::Float(0.0));
+        assert_eq!(clamp_to_range(OPACITY_SLOT, CellValue::Float(0.25)), CellValue::Float(0.25));
+        // Unranged slot / non-Float value are never clamped.
+        assert_eq!(clamp_to_range(6, CellValue::Float(2.5)), CellValue::Float(2.5));
+        assert_eq!(clamp_to_range(OPACITY_SLOT, CellValue::Int(9)), CellValue::Int(9));
+    }
+
+    /// R964 — `range.<i>` reports the interval for a ranged scalar and Null for an
+    /// unranged leaf; the RPC `value.<i>` intervene clamps every write.
+    #[test]
+    fn r964_range_query_and_intervene_clamp() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            assert_eq!(node.handle.introspect().unwrap().query("range.8"),
+                Some(IntrospectValue::Text("0..1".to_owned())));
+            assert_eq!(node.handle.introspect().unwrap().query("range.6"),
+                Some(IntrospectValue::Text("none".to_owned())), "Pos X is unranged");
+            // An out-of-range RPC write clamps both ends through the set_value funnel.
+            node.handle.introspect_mut().unwrap()
+                .intervene("value.8", IntrospectValue::Float(2.5)).unwrap();
+            assert_eq!(node.handle.introspect().unwrap().query("value.8"), Some(IntrospectValue::Float(1.0)),
+                "above-max write clamps to 1.0");
+            node.handle.introspect_mut().unwrap()
+                .intervene("value.8", IntrospectValue::Float(-3.0)).unwrap();
+            assert_eq!(node.handle.introspect().unwrap().query("value.8"), Some(IntrospectValue::Float(0.0)),
+                "below-min write clamps to 0.0");
+        });
+    }
+
+    /// R964 — a scrub past the interval clamps, and returning the cursor
+    /// un-clamps cleanly (the value is recomputed from the press base each move,
+    /// never from the clamped result).
+    #[test]
+    fn r964_scrub_clamps_at_top_and_unclamps_on_return() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            // Opacity (source 8) boots at the top of [0, 1].
+            assert_eq!(node.handle.introspect().unwrap().query("value.8"), Some(IntrospectValue::Float(1.0)));
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("8:PointerDown".to_owned())).unwrap();
+            node.handle.pointer_move(0.5, 0.5); // calibrate (base = 1.0)
+            node.handle.pointer_move(0.6, 0.5); // +40px → 1.0 + 0.4 = 1.4 → clamp 1.0
+            assert_eq!(node.handle.introspect().unwrap().query("value.8"), Some(IntrospectValue::Float(1.0)),
+                "scrub past the top clamps to max");
+            node.handle.pointer_move(0.45, 0.5); // −20px from press → 1.0 − 0.2 = 0.8
+            let IntrospectValue::Float(v) = node.handle.introspect().unwrap().query("value.8").unwrap() else {
+                panic!("Opacity stays a float");
+            };
+            assert!((v - 0.8).abs() < 1e-6, "the intermediate clamp un-clamps on return: got {v}");
+            node.handle.introspect_mut().unwrap()
+                .invoke("send", IntrospectValue::Text("8:PointerUp".to_owned())).unwrap();
         });
     }
 

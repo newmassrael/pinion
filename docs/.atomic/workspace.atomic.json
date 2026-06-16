@@ -43445,6 +43445,108 @@
         "substrate) — next text-axis candidate."
       ]
     },
+    "R964": {
+      "decision_summary": "Bounded slider delegate for the property grid: a ranged Float leaf (Opacity, slot 8, normalised 0..1) clamps to its interval and renders an in-cell slider gauge (Unreal Details factor field). Clamp funnels every writer through set_value (scrub + inline-edit + RPC value.<i>); range introspection via query range.<i> -> lo..hi/none aligned to the data-grid R894 col_range sibling; gauge fill tagged property_grid#gauge<slot> + pointer_transparent, reusing slider.rs colours. Self-grep: 2nd consumer of R894 bounded-numeric-DCC pattern but divergent (Int-column vs Float-slot) so share the stdlib clamp atom only, no forced lift; a11y valuemin/max a shared defer with R894.",
+      "changes_bullets": [
+        "Add the bounded (\"ranged\") slider delegate to the property grid: a",
+        "Float leaf with a fixed [min,max] (Opacity, slot 8, normalised 0..1)",
+        "is clamped to its interval and renders an in-cell slider gauge — the",
+        "Unreal Details / Blender \"factor\" field. A thin track + active fill",
+        "along the cell's bottom edge shows the value's position in range.",
+        "Clamp funnels every writer at one place: scalar_range + clamp_to_range",
+        "in set_value (the data-grid set_cell clamp the doc once flagged as",
+        "absent), so the scrub, the inline-edit commit, and the RPC value.<i>",
+        "intervene all bound the same way.",
+        "AI-first range introspection: query range.<i> -> \"<lo>..<hi>\" / \"none\",",
+        "the same wire as the data-grid R894 col_range.<col> sibling, so one",
+        "range format reads across both DCC widgets.",
+        "Gauge fill tagged property_grid#gauge<slot> + pointer_transparent: the",
+        "rendered fraction (frac * track_width) is introspectable, and a press",
+        "falls through to the row's scrub (the R954 overlay stance). Reuses the",
+        "slider.rs track/fill colours (no hand-rolled paint)."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (hello-property-grid +3 R964 tests:",
+        "pure clamp, range query + intervene clamp both ends, scrub clamp +",
+        "un-clamp-on-return; 75 pass).",
+        "cargo clippy --workspace --all-targets (-D pedantic) clean.",
+        "New demo r964_property_grid_slider.py PASS (>= 30 assertions; live",
+        "rects: range \"0..1\"/\"none\", out-of-range RPC + live scrub clamp, gauge",
+        "fill width == round(frac*230) for 0.1..1.0, reset restores default).",
+        "Regression: all 10 hello-property-grid demos PASS (shared set_value /",
+        "view_row / schema change; no breakage).",
+        "3b self-grep: R964 is the 2nd consumer of the data-grid R894 bounded-",
+        "numeric-DCC clamp pattern, but the two diverge (R894 Int-only column-",
+        "keyed vs R964 Float-only slot-keyed) -> share only the stdlib clamp",
+        "atom, no forced lift; wire aligned to R894 for a future NumericRange."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "a11y valuemin/valuemax/valuenow for the bounded slider leaf is a",
+        "shared honest defer: the data-grid R894 sibling also exposes no a11y",
+        "range (only the RPC wire), so adding aria-value range is a separate",
+        "a11y axis for both, not an R964 regression.",
+        "a unified core NumericRange (Int+Float) is the eventual lift home for",
+        "R894 + R964 once a 3rd consumer or a kind-unified column/leaf appears;",
+        "the RPC wire (\"<lo>..<hi>\"/\"none\") is already aligned so the lift is",
+        "wire-compatible.",
+        "only Opacity is ranged today; widening the range table (more leaves /",
+        "Int leaves) is additive once a consumer needs it."
+      ],
+      "publishable_decision_summary": "Bounded slider delegate for the property grid: a ranged Float leaf (Opacity, slot 8, normalised 0..1) clamps to its interval and renders an in-cell slider gauge (Unreal Details factor field). Clamp funnels every writer through set_value (scrub + inline-edit + RPC value.<i>); range introspection via query range.<i> -> lo..hi/none aligned to the data-grid R894 col_range sibling; gauge fill tagged property_grid#gauge<slot> + pointer_transparent, reusing slider.rs colours. Self-grep: 2nd consumer of R894 bounded-numeric-DCC pattern but divergent (Int-column vs Float-slot) so share the stdlib clamp atom only, no forced lift; a11y valuemin/max a shared defer with R894.",
+      "publishable_changes_bullets": [
+        "Add the bounded (\"ranged\") slider delegate to the property grid: a",
+        "Float leaf with a fixed [min,max] (Opacity, slot 8, normalised 0..1)",
+        "is clamped to its interval and renders an in-cell slider gauge — the",
+        "Unreal Details / Blender \"factor\" field. A thin track + active fill",
+        "along the cell's bottom edge shows the value's position in range.",
+        "Clamp funnels every writer at one place: scalar_range + clamp_to_range",
+        "in set_value (the data-grid set_cell clamp the doc once flagged as",
+        "absent), so the scrub, the inline-edit commit, and the RPC value.<i>",
+        "intervene all bound the same way.",
+        "AI-first range introspection: query range.<i> -> \"<lo>..<hi>\" / \"none\",",
+        "the same wire as the data-grid R894 col_range.<col> sibling, so one",
+        "range format reads across both DCC widgets.",
+        "Gauge fill tagged property_grid#gauge<slot> + pointer_transparent: the",
+        "rendered fraction (frac * track_width) is introspectable, and a press",
+        "falls through to the row's scrub (the R954 overlay stance). Reuses the",
+        "slider.rs track/fill colours (no hand-rolled paint)."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (hello-property-grid +3 R964 tests:",
+        "pure clamp, range query + intervene clamp both ends, scrub clamp +",
+        "un-clamp-on-return; 75 pass).",
+        "cargo clippy --workspace --all-targets (-D pedantic) clean.",
+        "New demo r964_property_grid_slider.py PASS (>= 30 assertions; live",
+        "rects: range \"0..1\"/\"none\", out-of-range RPC + live scrub clamp, gauge",
+        "fill width == round(frac*230) for 0.1..1.0, reset restores default).",
+        "Regression: all 10 hello-property-grid demos PASS (shared set_value /",
+        "view_row / schema change; no breakage).",
+        "3b self-grep: R964 is the 2nd consumer of the data-grid R894 bounded-",
+        "numeric-DCC clamp pattern, but the two diverge (R894 Int-only column-",
+        "keyed vs R964 Float-only slot-keyed) -> share only the stdlib clamp",
+        "atom, no forced lift; wire aligned to R894 for a future NumericRange."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "a11y valuemin/valuemax/valuenow for the bounded slider leaf is a",
+        "shared honest defer: the data-grid R894 sibling also exposes no a11y",
+        "range (only the RPC wire), so adding aria-value range is a separate",
+        "a11y axis for both, not an R964 regression.",
+        "a unified core NumericRange (Int+Float) is the eventual lift home for",
+        "R894 + R964 once a 3rd consumer or a kind-unified column/leaf appears;",
+        "the RPC wire (\"<lo>..<hi>\"/\"none\") is already aligned so the lift is",
+        "wire-compatible.",
+        "only Opacity is ranged today; widening the range table (more leaves /",
+        "Int leaves) is additive once a consumer needs it."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
