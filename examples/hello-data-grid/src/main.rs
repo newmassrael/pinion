@@ -207,7 +207,7 @@ use pinion_widget_paint::popup::popup_surface;
 use pinion_widget_paint::table::{view_virtual_grid_body, GridScroll};
 use pinion_widget_paint::text_field as tf_paint;
 
-use pinion_widget_paint::state_layer::HOVER;
+use pinion_widget_paint::state_layer::focus_fill;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloDataGridRenderer, HelloDataGridRendererError);
@@ -2954,17 +2954,6 @@ fn apply_key_edit(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
 
 // ─── paint ────────────────────────────────────────────────────────
 
-/// Focused-cell background = the M3 `OnSurface` state-layer over the surface.
-fn cell_fill(theme: &Theme, focused: bool) -> Color {
-    if focused {
-        theme
-            .resolve(ColorRole::Surface)
-            .lerp(theme.resolve(ColorRole::OnSurface), HOVER)
-    } else {
-        Color::TRANSPARENT
-    }
-}
-
 /// Cell-sized M3 checkbox-box style. The bool cell renders the lifted
 /// `view_checkbox_box` SSOT non-interactively (the grid coordinator owns the
 /// toggle, so there is no per-cell `CheckboxExternal`) — one M3 checkbox
@@ -3039,7 +3028,7 @@ fn view_cell(
     Scene::Container(
         ContainerNode::new(vec![inner])
             .with_tag(cell_tag(row, col))
-            .with_style(BoxStyle::filled(cell_fill(theme, focused)))
+            .with_style(BoxStyle::filled(focus_fill(theme, focused)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)

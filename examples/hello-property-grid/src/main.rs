@@ -141,7 +141,7 @@ use pinion_widget_paint::listbox::{view_option, OptionRow};
 use pinion_widget_paint::popup::popup_surface;
 use pinion_widget_paint::text_field as tf_paint;
 
-use pinion_widget_paint::state_layer::HOVER;
+use pinion_widget_paint::state_layer::focus_fill;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloPropertyGridRenderer, HelloPropertyGridRendererError);
@@ -2508,18 +2508,6 @@ fn apply_key_search(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool 
 
 // ─── paint ────────────────────────────────────────────────────────
 
-/// Focused-row background = the M3 `OnSurface` state-layer over the surface
-/// (the hover / pressed overlay the catalog widgets share).
-fn row_fill(theme: &Theme, focused: bool) -> Color {
-    if focused {
-        theme
-            .resolve(ColorRole::Surface)
-            .lerp(theme.resolve(ColorRole::OnSurface), HOVER)
-    } else {
-        Color::TRANSPARENT
-    }
-}
-
 /// Cell-sized M3 checkbox-box style. The bool value cell renders the lifted
 /// `view_checkbox_box` SSOT non-interactively (the grid coordinator owns the
 /// toggle, so there is no per-cell `CheckboxExternal`) — keeping one M3
@@ -2614,7 +2602,7 @@ fn view_row(
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!("{GRID_TAG}#{}", row.id))
-            .with_style(BoxStyle::filled(row_fill(theme, is_focused)))
+            .with_style(BoxStyle::filled(focus_fill(theme, is_focused)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -2761,7 +2749,7 @@ fn array_header_row(
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!("{GRID_TAG}#{}", row.id))
-            .with_style(BoxStyle::filled(row_fill(theme, is_focused)))
+            .with_style(BoxStyle::filled(focus_fill(theme, is_focused)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -2822,7 +2810,7 @@ fn struct_header_row(row: &VisibleRow, summary: &str, modified: bool, is_focused
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!("{GRID_TAG}#{struct_id}"))
-            .with_style(BoxStyle::filled(row_fill(theme, is_focused)))
+            .with_style(BoxStyle::filled(focus_fill(theme, is_focused)))
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)

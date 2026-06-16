@@ -75,6 +75,31 @@ pub fn state_layer<S: InteractionState + Copy>(base: Color, state: S, theme: &Th
     }
 }
 
+/// R947 §5.38 §5.40 §5.50 — the Material 3 **focus-highlight fill** for a DCC
+/// cell / row: the [`HOVER`] state-layer tinted from `Surface` toward
+/// `OnSurface` when `focused`, else [`Color::TRANSPARENT`] (the underlying
+/// surface shows through an unfocused cell). The editable data-grid
+/// (`hello-data-grid`) and the property-grid / inspector
+/// (`hello-property-grid`) share this one focused background, so the two DCC
+/// surfaces' focus highlight cannot drift apart — distinct from the tree's
+/// [`row_focus_bg`](crate::tree_view::row_focus_bg), which uses an opaque
+/// `SurfaceContainerHighest` (a deliberately different focus visual).
+///
+/// A divergent-from-[`state_layer`] consumer per this module's R752 doctrine:
+/// the focus → tint, else → transparent shape is not the resting-base overlay
+/// `state_layer` produces, so it keeps its own arm — but references the
+/// [`HOVER`] token, so the 8 % magic number still lives in exactly one place.
+#[must_use]
+pub fn focus_fill(theme: &Theme, focused: bool) -> Color {
+    if focused {
+        theme
+            .resolve(ColorRole::Surface)
+            .lerp(theme.resolve(ColorRole::OnSurface), HOVER)
+    } else {
+        Color::TRANSPARENT
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +144,27 @@ mod tests {
             state_layer(base, SliderState::Dragging, &theme),
             base.lerp(theme.resolve(ColorRole::OnSurface), PRESSED),
             "a held slider thumb wears the pressed state layer"
+        );
+    }
+
+    #[test]
+    fn r947_focus_fill_is_the_hover_layer_over_surface_or_transparent() {
+        // The DCC focus-highlight fill: focused == Surface tinted toward
+        // OnSurface by the HOVER token; unfocused == transparent (the cell
+        // shows the underlying surface). The data-grid + property-grid share
+        // this one decision, so the two cannot drift.
+        let theme = Theme::light();
+        let surface = theme.resolve(ColorRole::Surface);
+        let on_surface = theme.resolve(ColorRole::OnSurface);
+        assert_eq!(
+            focus_fill(&theme, true),
+            surface.lerp(on_surface, HOVER),
+            "a focused cell wears the OnSurface hover state layer over Surface"
+        );
+        assert_eq!(
+            focus_fill(&theme, false),
+            Color::TRANSPARENT,
+            "an unfocused cell is transparent"
         );
     }
 }

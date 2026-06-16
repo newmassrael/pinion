@@ -42241,6 +42241,52 @@
         "deferred: a 2nd lazy-windowed-tree consumer would lift reveal_lazy_cursor + the windowed-a11y glue; at 1 consumer that is premature (abstraction-needs-second-consumer)"
       ]
     },
+    "R947": {
+      "decision_summary": "Lift the DCC focus-highlight fill (Surface + OnSurface hover state-layer when focused, else transparent) to pinion_widget_paint::state_layer::focus_fill, consolidating the byte-identical cell_fill (data-grid) + row_fill (property-grid) 2-consumer duplication R945.1 found",
+      "changes_bullets": [
+        "new pinion_widget_paint::state_layer::focus_fill(theme, focused) -> Color: the M3 DCC focus-highlight fill (HOVER state-layer over Surface when focused, else transparent)",
+        "references the HOVER token SSOT (R752 divergent-from-state_layer-consumer doctrine: keeps its own focus/transparent arm but the 8% magic number lives once)",
+        "hello-data-grid: drop the local cell_fill, call focus_fill at the focused-cell painter (import swap HOVER -> focus_fill)",
+        "hello-property-grid: drop the local row_fill, call focus_fill at its 3 row painters (import swap HOVER -> focus_fill)",
+        "consolidates the byte-identical 2-consumer duplication R945.1 found; distinct from tree_view::row_focus_bg (SurfaceContainerHighest) -- a deliberately different focus visual, not unified"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: green incl. new focus_fill unit test (focused == Surface.lerp(OnSurface, HOVER) / unfocused == Color::TRANSPARENT)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 -- no orphaned Color / HOVER imports left by removing the local fns",
+        "behavior-preserving (byte-identical fill color); demos r837 (data-grid) + r836 (property-grid) PASS, no regression",
+        "repo-wide self-grep: the focus-highlight-fill decision (focused -> Surface.lerp(OnSurface, HOVER), else transparent) == exactly 2 consumers; the other lerp(OnSurface, HOVER) sites are interaction-state overlays, not this decision; no 3rd consumer"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.50"
+      ],
+      "carry_forward_bullets": [
+        "CLEARED: the R945.1 FOUND-deferred cell_fill == row_fill SSOT debt is now lifted to focus_fill -- no longer a carry",
+        "tree_view::row_focus_bg stays a separate decision (opaque SurfaceContainerHighest, not the hover state-layer) -- a deliberate focus-visual divergence between the tree and the grid/inspector, not a duplication to fold"
+      ],
+      "publishable_decision_summary": "Lift the DCC focus-highlight fill (Surface + OnSurface hover state-layer when focused, else transparent) to pinion_widget_paint::state_layer::focus_fill, consolidating the byte-identical cell_fill (data-grid) + row_fill (property-grid) 2-consumer duplication R945.1 found",
+      "publishable_changes_bullets": [
+        "new pinion_widget_paint::state_layer::focus_fill(theme, focused) -> Color: the M3 DCC focus-highlight fill (HOVER state-layer over Surface when focused, else transparent)",
+        "references the HOVER token SSOT (R752 divergent-from-state_layer-consumer doctrine: keeps its own focus/transparent arm but the 8% magic number lives once)",
+        "hello-data-grid: drop the local cell_fill, call focus_fill at the focused-cell painter (import swap HOVER -> focus_fill)",
+        "hello-property-grid: drop the local row_fill, call focus_fill at its 3 row painters (import swap HOVER -> focus_fill)",
+        "consolidates the byte-identical 2-consumer duplication R945.1 found; distinct from tree_view::row_focus_bg (SurfaceContainerHighest) -- a deliberately different focus visual, not unified"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: green incl. new focus_fill unit test (focused == Surface.lerp(OnSurface, HOVER) / unfocused == Color::TRANSPARENT)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 -- no orphaned Color / HOVER imports left by removing the local fns",
+        "behavior-preserving (byte-identical fill color); demos r837 (data-grid) + r836 (property-grid) PASS, no regression",
+        "repo-wide self-grep: the focus-highlight-fill decision (focused -> Surface.lerp(OnSurface, HOVER), else transparent) == exactly 2 consumers; the other lerp(OnSurface, HOVER) sites are interaction-state overlays, not this decision; no 3rd consumer"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.50"
+      ],
+      "publishable_carry_forward_bullets": [
+        "CLEARED: the R945.1 FOUND-deferred cell_fill == row_fill SSOT debt is now lifted to focus_fill -- no longer a carry",
+        "tree_view::row_focus_bg stays a separate decision (opaque SurfaceContainerHighest, not the hover state-layer) -- a deliberate focus-visual divergence between the tree and the grid/inspector, not a duplication to fold"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
