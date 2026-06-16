@@ -42445,6 +42445,58 @@
         "tray menu introspection is id-addressed (top-level + one submenu level); deeper nesting additive"
       ]
     },
+    "R949.1": {
+      "decision_summary": "R949.1 session-review clearance (adversarial 3-lens review, all re-verified by my own grep+read): fix A (R948 nudge returned 'changed' not 'handled' -> a clamped walled nudge fell through to canvas pan; restore 'handled'=selection-non-empty) + fix B (R949 TrayBackend was &mut self, breaking Box<dyn TrayBackend>; the storage.rs-documented house rule is &self -> change to &self, drop the example's redundant outer RefCell). C (premature 1-impl trait + false 'substrate-first like Storage' precedent claim, since R665/R833 shipped trait+impl together) remediated by R950 (real SniTrayBackend validates the trait)",
+      "changes_bullets": [
+        "R948 fix (A,HIGH): nudge_selected returns \"handled\" (selection non-empty), not \"changed\"",
+        "a clamped walled nudge now stays handled, so the arrow no longer falls through to canvas pan",
+        "R949 fix (B,HIGH): TrayBackend methods -> &self (was &mut self) — Storage/PrintBackend house rule",
+        "&mut self broke Box<dyn TrayBackend>; storage.rs:55 documents &self is required for dyn dispatch",
+        "InMemoryTrayBackend now all-&self via its existing interior RefCell; example drops the outer RefCell",
+        "regression test: walled nudge stays handled (no pan); + node moves nothing"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; +1 node-editor regression test (137 total)",
+        "cargo clippy pinion-core + hello-node-editor + hello-tray -D pedantic = 0",
+        "core tray 7 + hello-tray 11 tests green after the &self change",
+        "adversarial 3-lens session review (agents) re-verified by my own grep+read"
+      ],
+      "impact_refs": [
+        "5.52",
+        "5.53",
+        "3"
+      ],
+      "carry_forward_bullets": [
+        "C (HIGH, still open): TrayBackend has one impl (InMemory) — premature per abstraction-needs-2nd-consumer",
+        "the \"substrate-first like InMemoryStorage->FileStorage\" precedent claim was FALSE (R665/R833 shipped trait+impl together)",
+        "R950 = real SniTrayBackend (ksni/zbus, no gtk) validates the trait surface (ships the 2nd impl); ksni 0.3.5 available, live StatusNotifierWatcher present"
+      ],
+      "publishable_decision_summary": "R949.1 session-review clearance (adversarial 3-lens review, all re-verified by my own grep+read): fix A (R948 nudge returned 'changed' not 'handled' -> a clamped walled nudge fell through to canvas pan; restore 'handled'=selection-non-empty) + fix B (R949 TrayBackend was &mut self, breaking Box<dyn TrayBackend>; the storage.rs-documented house rule is &self -> change to &self, drop the example's redundant outer RefCell). C (premature 1-impl trait + false 'substrate-first like Storage' precedent claim, since R665/R833 shipped trait+impl together) remediated by R950 (real SniTrayBackend validates the trait)",
+      "publishable_changes_bullets": [
+        "R948 fix (A,HIGH): nudge_selected returns \"handled\" (selection non-empty), not \"changed\"",
+        "a clamped walled nudge now stays handled, so the arrow no longer falls through to canvas pan",
+        "R949 fix (B,HIGH): TrayBackend methods -> &self (was &mut self) — Storage/PrintBackend house rule",
+        "&mut self broke Box<dyn TrayBackend>; storage.rs:55 documents &self is required for dyn dispatch",
+        "InMemoryTrayBackend now all-&self via its existing interior RefCell; example drops the outer RefCell",
+        "regression test: walled nudge stays handled (no pan); + node moves nothing"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; +1 node-editor regression test (137 total)",
+        "cargo clippy pinion-core + hello-node-editor + hello-tray -D pedantic = 0",
+        "core tray 7 + hello-tray 11 tests green after the &self change",
+        "adversarial 3-lens session review (agents) re-verified by my own grep+read"
+      ],
+      "publishable_impact_refs": [
+        "5.52",
+        "5.53",
+        "3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "C (HIGH, still open): TrayBackend has one impl (InMemory) — premature per abstraction-needs-2nd-consumer",
+        "the \"substrate-first like InMemoryStorage->FileStorage\" precedent claim was FALSE (R665/R833 shipped trait+impl together)",
+        "R950 = real SniTrayBackend (ksni/zbus, no gtk) validates the trait surface (ships the 2nd impl); ksni 0.3.5 available, live StatusNotifierWatcher present"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

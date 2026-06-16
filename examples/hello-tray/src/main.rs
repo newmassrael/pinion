@@ -37,7 +37,6 @@
 //! backend records it; activate menu items → app state flips + the model
 //! re-publishes; a disabled / unknown id is rejected. Deterministic.
 
-use std::cell::RefCell;
 use std::rc::Rc;
 
 use pinion_core::external::query_proxy_external_impl;
@@ -83,10 +82,10 @@ fn use_build_running() -> Rc<Signal<bool>> {
 fn use_quit_requested() -> Rc<Signal<bool>> {
     Owner::current().expect("Owner").cache("tray.quit_requested", || Signal::new(false))
 }
-fn use_tray_backend() -> Rc<RefCell<InMemoryTrayBackend>> {
-    Owner::current()
-        .expect("Owner")
-        .cache("tray.backend", || RefCell::new(InMemoryTrayBackend::new()))
+fn use_tray_backend() -> Rc<InMemoryTrayBackend> {
+    // R949.1 — the backend's `TrayBackend` methods are `&self` (interior
+    // mutability), so no outer `RefCell` is needed (the print/storage shape).
+    Owner::current().expect("Owner").cache("tray.backend", InMemoryTrayBackend::new)
 }
 
 // ─── Model SSOT (built from app state; view + External share it) ──
@@ -184,7 +183,7 @@ struct TrayExternal {
     dark: Rc<Signal<bool>>,
     building: Rc<Signal<bool>>,
     quit: Rc<Signal<bool>>,
-    backend: Rc<RefCell<InMemoryTrayBackend>>,
+    backend: Rc<InMemoryTrayBackend>,
 }
 
 impl TrayExternal {
@@ -199,7 +198,7 @@ impl TrayExternal {
         let model = self.model();
         // InMemory is always available; a real backend may report Unavailable
         // (no tray host) — the app degrades gracefully, never panics.
-        let _ = self.backend.borrow_mut().publish(&model);
+        let _ = self.backend.publish(&model);
     }
 
     /// Route one tray event into app state.
@@ -220,7 +219,7 @@ impl TrayExternal {
     /// anything changed — the per-frame shape the real shell uses to feed OS
     /// tray events back into the app.
     fn pump(&self) {
-        let events = self.backend.borrow_mut().poll_events();
+        let events = self.backend.poll_events();
         if events.is_empty() {
             return;
         }
@@ -233,7 +232,7 @@ impl TrayExternal {
     /// Deliver a tray event through the backend queue (the headless stand-in
     /// for the OS) and pump it — the RPC twin of a real click.
     fn deliver(&self, event: TrayEvent) {
-        self.backend.borrow().push_event(event);
+        self.backend.push_event(event);
         self.pump();
     }
 }
@@ -242,7 +241,7 @@ impl core::fmt::Debug for TrayExternal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TrayExternal")
             .field("title", &self.model().title)
-            .field("publish_count", &self.backend.borrow().publish_count())
+            .field("publish_count", &self.backend.publish_count())
             .finish_non_exhaustive()
     }
 }
@@ -278,14 +277,14 @@ impl ExternalIntrospect for TrayExternal {
     fn query(&self, path: &str) -> Option<IntrospectValue> {
         let model = self.model();
         match path {
-            "available" => Some(IntrospectValue::Bool(self.backend.borrow().is_available())),
+            "available" => Some(IntrospectValue::Bool(self.backend.is_available())),
             "publish_count" => {
-                Some(IntrospectValue::Int(i64::from(self.backend.borrow().publish_count())))
+                Some(IntrospectValue::Int(i64::from(self.backend.publish_count())))
             }
             // Whether the last published model matches the live model — the
             // AI-first "is the OS showing what the app thinks it is" read.
             "published_in_sync" => {
-                Some(IntrospectValue::Bool(self.backend.borrow().published().as_ref() == Some(&model)))
+                Some(IntrospectValue::Bool(self.backend.published().as_ref() == Some(&model)))
             }
             "title" => Some(IntrospectValue::Text(model.title)),
             "icon" => Some(IntrospectValue::Text(model.icon_name)),
@@ -348,7 +347,7 @@ impl ExternalIntrospect for TrayExternal {
             // Force a publish (returns the new publish count).
             "republish" => {
                 self.publish();
-                Ok(IntrospectValue::Int(i64::from(self.backend.borrow().publish_count())))
+                Ok(IntrospectValue::Int(i64::from(self.backend.publish_count())))
             }
             _ => Err(InvokeError::UnknownPath),
         }

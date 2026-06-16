@@ -2472,9 +2472,23 @@ impl NodeGraphExternal {
     /// Nudge the selected node by `(dx, dy)` (the arrow-key path). R853 — each
     /// nudge journals a *coalescable* move, so a burst of arrow keys collapses to
     /// one undo step.
+    ///
+    /// R949.1 — returns whether the key was a nudge command (a non-empty
+    /// selection), NOT whether the position changed. The arrow keys route here
+    /// through `apply_key` and the shell falls an *unhandled* key through to
+    /// `scroll_key` (canvas pan). So a nudge of a selection pinned at the world
+    /// edge must still report **handled** — otherwise the clamped no-op would
+    /// fall through and pan the canvas, which a nudge must not do. With no
+    /// selection it reports unhandled, letting the arrow pan the canvas (the
+    /// intended empty-selection behaviour). `apply_node_moves`'s own
+    /// "did it move" result is for the journal, not the handled-flag.
     fn nudge_selected(&self, dx: i32, dy: i32) -> bool {
         let sel = self.selected_nodes();
-        self.apply_node_moves(&sel, true, |n| (n.x + dx, n.y + dy))
+        if sel.is_empty() {
+            return false;
+        }
+        self.apply_node_moves(&sel, true, |n| (n.x + dx, n.y + dy));
+        true
     }
 
     /// R948 — align every selected node to one edge / centre of the selection's
@@ -7985,6 +7999,29 @@ mod tests {
         }
         let ids: Vec<u32> = placements.iter().map(|&(id, ..)| id).collect();
         use_selection().set(sel_set(&ids));
+    }
+
+    #[test]
+    fn r949_1_walled_nudge_stays_handled_so_it_does_not_pan() {
+        // R949.1 regression: a nudge of a selection pinned at the world edge
+        // clamps to a no-op, but must still report HANDLED — else the shell
+        // falls the unhandled arrow through to scroll_key and pans the canvas.
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            // Pin node 0 at the right wall, then nudge further right (clamped).
+            assert!(coord.set_node_pos(NodeId(0), WORLD - NODE_W, 50));
+            use_selection().set(sel_set(&[0]));
+            let before = pos_of(&coord, NodeId(0));
+            assert!(
+                coord.nudge_selected(NUDGE_STEP, 0),
+                "a clamped nudge of a selection is still handled (must not fall through to pan)",
+            );
+            assert_eq!(pos_of(&coord, NodeId(0)), before, "the node did not actually move (walled)");
+            // With no selection the arrow is unhandled -> the shell pans.
+            use_selection().set(Selection::None);
+            assert!(!coord.nudge_selected(NUDGE_STEP, 0), "no selection -> unhandled (canvas pans)");
+        });
     }
 
     #[test]

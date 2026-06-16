@@ -238,9 +238,13 @@ pub enum TrayError {
 /// Mirrors [`PrintBackend`](crate::print::PrintBackend) (a small total trait
 /// with an in-memory + a platform impl).
 ///
-/// `Debug` is a super-trait so a runtime-selected `Box<dyn TrayBackend>`
-/// (a binding's "SNI if a host is present, else in-memory" choice) can derive
-/// `Debug`.
+/// Every method takes `&self` (not `&mut self`) — mirroring
+/// [`Storage`](crate::storage::Storage) / [`PrintBackend`](crate::print::PrintBackend)
+/// — so a runtime-selected `Box<dyn TrayBackend>` (a binding's "SNI if a host
+/// is present, else in-memory" choice, the `AppStorage` shape) stays
+/// object-safe and shareable; a backend that needs to mutate (the in-memory
+/// fixture, the real SNI handle's event queue) uses interior mutability.
+/// `Debug` is a super-trait so that `Box<dyn TrayBackend>` can derive `Debug`.
 pub trait TrayBackend: core::fmt::Debug {
     /// Whether a tray host is actually present (a `StatusNotifierWatcher` on
     /// Linux). A capability flag — the binding queries it to decide whether
@@ -255,12 +259,12 @@ pub trait TrayBackend: core::fmt::Debug {
     ///
     /// - [`TrayError::Unavailable`] when no tray host is present.
     /// - [`TrayError::Backend`] when the platform bridge fails.
-    fn publish(&mut self, model: &TrayModel) -> Result<(), TrayError>;
+    fn publish(&self, model: &TrayModel) -> Result<(), TrayError>;
 
     /// Drain the events accumulated since the last poll (icon activations,
     /// menu-item choices). The shell pumps this each frame and routes the
     /// events into the app the same way it drains the JSON-RPC inbox.
-    fn poll_events(&mut self) -> Vec<TrayEvent>;
+    fn poll_events(&self) -> Vec<TrayEvent>;
 }
 
 /// R949 §3 §5.53 — pure-Rust in-memory [`TrayBackend`]: records the most
@@ -328,7 +332,7 @@ impl TrayBackend for InMemoryTrayBackend {
         self.available
     }
 
-    fn publish(&mut self, model: &TrayModel) -> Result<(), TrayError> {
+    fn publish(&self, model: &TrayModel) -> Result<(), TrayError> {
         if !self.available {
             return Err(TrayError::Unavailable);
         }
@@ -337,7 +341,7 @@ impl TrayBackend for InMemoryTrayBackend {
         Ok(())
     }
 
-    fn poll_events(&mut self) -> Vec<TrayEvent> {
+    fn poll_events(&self) -> Vec<TrayEvent> {
         std::mem::take(&mut *self.pending.borrow_mut())
     }
 }
@@ -412,7 +416,7 @@ mod tests {
 
     #[test]
     fn in_memory_records_published_model() {
-        let mut b = InMemoryTrayBackend::new();
+        let b = InMemoryTrayBackend::new();
         assert!(b.is_available());
         assert_eq!(b.published(), None, "nothing published at construction");
         assert_eq!(b.publish_count(), 0);
@@ -429,7 +433,7 @@ mod tests {
 
     #[test]
     fn unavailable_backend_rejects_publish() {
-        let mut b = InMemoryTrayBackend::unavailable();
+        let b = InMemoryTrayBackend::unavailable();
         assert!(!b.is_available());
         assert_eq!(b.publish(&sample_model()), Err(TrayError::Unavailable));
         assert_eq!(b.publish_count(), 0, "a rejected publish records nothing");
@@ -438,7 +442,7 @@ mod tests {
 
     #[test]
     fn poll_drains_scripted_events_once() {
-        let mut b = InMemoryTrayBackend::new();
+        let b = InMemoryTrayBackend::new();
         assert!(b.poll_events().is_empty(), "no events at start");
         b.push_event(TrayEvent::Activated);
         b.push_event(TrayEvent::MenuItem("show".to_owned()));
@@ -449,7 +453,7 @@ mod tests {
 
     #[test]
     fn backend_is_object_safe() {
-        let mut b: Box<dyn TrayBackend> = Box::new(InMemoryTrayBackend::new());
+        let b: Box<dyn TrayBackend> = Box::new(InMemoryTrayBackend::new());
         assert!(b.is_available());
         assert!(b.publish(&sample_model()).is_ok());
     }
