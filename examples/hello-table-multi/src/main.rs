@@ -68,7 +68,7 @@ use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::table::TableExternal;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_table, TableData, TableStyle};
+use pinion_widget_paint::table::{view_table, TableData, TableSelection, TableStyle};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTableMultiRenderer, HelloTableMultiRendererError);
@@ -267,7 +267,8 @@ fn view(state: &TableMultiState, _frame: &Frame) -> Scene {
     let table = view_table(
         PRIMARY_TAG,
         TableData { headers: &HEADERS, rows: &rows, row_ids: &[] },
-        &state.row_selected,
+        // R952 — row-multi-select grid: per-row bitmap, no cell range selection.
+        TableSelection { rows: &state.row_selected, cells: None },
         &state.row_states,
         None,
         &theme,
@@ -487,6 +488,7 @@ impl WidgetA11y for TableMultiView {
                         tag: format!("{PRIMARY_TAG}#{data}_{col}"),
                         name: format!("{header}: {}", row_data[col]),
                         focused: grid_focused && active_row == data && active_col == col,
+                        selected: None, // R952 — row-multi-select grid: no cell selection
                     })
                     .collect(),
             })

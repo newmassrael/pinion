@@ -75,10 +75,10 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::grid_sort::col_sort_dir;
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::table::TableExternal;
+use pinion_core::widgets::table::{cell_in_bounds, TableExternal};
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_widget_paint::table::{view_table, TableData, TableStyle};
+use pinion_widget_paint::table::{view_table, TableData, TableSelection, TableStyle};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloTableRenderer, HelloTableRendererError);
@@ -147,6 +147,11 @@ struct TableState {
     /// ([`TableExternal::order`]): `order[visual]` is the data row painted
     /// at visual position `visual`. Identity when unsorted.
     order: [usize; NROWS],
+    /// R952 §5.38 — the selected cell rectangle `(row0, col0, row1, col1)`
+    /// (data coords, inclusive) from the coordinator's `cell_selection`
+    /// slot, or `None`. The spreadsheet cell range selection (anchor +
+    /// cursor), distinct from the per-row `selected_row`.
+    cell_selection: Option<(usize, usize, usize, usize)>,
 }
 
 impl TableState {
@@ -158,6 +163,7 @@ impl TableState {
             row_states: [RadioState::Idle; NROWS],
             sort: None,
             order: core::array::from_fn(|i| i),
+            cell_selection: None,
         }
     }
 
@@ -226,6 +232,20 @@ fn read_order(intro: &dyn pinion_core::external::ExternalIntrospect, rows: usize
         .collect()
 }
 
+/// R952 §5.38 — read the selected cell rectangle from the coordinator's
+/// `cell_selection` slot (`"row0,col0,row1,col1"` Text, or `Null`/absent →
+/// `None`). The inverse of [`TableExternal`]'s Text-encoded
+/// `cell_selection` read.
+fn read_cell_selection(
+    intro: &dyn pinion_core::external::ExternalIntrospect,
+) -> Option<(usize, usize, usize, usize)> {
+    let IntrospectValue::Text(s) = intro.query("cell_selection")? else {
+        return None;
+    };
+    let mut it = s.split(',').map(|p| p.trim().parse::<usize>().ok());
+    Some((it.next()??, it.next()??, it.next()??, it.next()??))
+}
+
 /// Set the data-row active descendant to the data row at visual position
 /// `visual` (clamped). The R730 visual↔data bridge: keyboard navigation
 /// reasons in **visual** (displayed) rows, but `focused_row` is stored as
@@ -283,6 +303,21 @@ fn move_col(intro: &mut dyn pinion_core::external::ExternalIntrospect, delta: i6
     let _ = intro.intervene("focused_col", IntrospectValue::Int(next));
 }
 
+/// R952 §5.38 — sync the cell range selection to the (just-moved) cursor: a
+/// plain arrow `select-cell`s it (a single-cell selection that collapses any
+/// prior rectangle — the spreadsheet plain-arrow model), a `Shift`-arrow
+/// `extend-cell`s it (grows the rectangle from the pinned anchor). Reads the
+/// live `(focused_row, focused_col)` the nav just wrote and drives the
+/// coordinator's cell-selection wire. No-op when the cursor has no row yet.
+fn apply_cell_selection(intro: &mut dyn pinion_core::external::ExternalIntrospect, extend: bool) {
+    let Some(row) = read_focused_row(intro) else {
+        return;
+    };
+    let col = read_focused_col(intro);
+    let action = if extend { "extend-cell" } else { "select-cell" };
+    let _ = intro.invoke(action, IntrospectValue::Text(format!("{row},{col}")));
+}
+
 /// Set the active-descendant column to a specific value (Home / End),
 /// clamped within the dataset, establishing the row first.
 fn set_col(intro: &mut dyn pinion_core::external::ExternalIntrospect, col: usize) {
@@ -317,7 +352,7 @@ fn view(state: &TableState, _frame: &Frame) -> Scene {
     let table = view_table(
         PRIMARY_TAG,
         TableData { headers: &HEADERS, rows: &rows, row_ids: &state.order },
-        &row_selected,
+        TableSelection { rows: &row_selected, cells: state.cell_selection },
         &state.row_states,
         state.sort,
         &theme,
@@ -401,6 +436,7 @@ impl WidgetCore for TableView {
             Some(IntrospectValue::Int(d)) if d >= 0 => usize::try_from(d).unwrap_or(v),
             _ => v,
         });
+        out.cell_selection = read_cell_selection(intro);
         out
     }
 
@@ -437,7 +473,7 @@ impl WidgetCore for TableView {
         scene: &mut Scene,
         focused: Option<&str>,
         key: &str,
-        _modifiers: pinion_core::Modifiers,
+        modifiers: pinion_core::Modifiers,
     ) -> bool {
         if focused != Some(PRIMARY_TAG) {
             return false;
@@ -448,7 +484,11 @@ impl WidgetCore for TableView {
         let Some(intro) = node.handle.introspect_mut() else {
             return false;
         };
-        match key {
+        // R952 §5.38 — a navigation key moves the 2-D cursor, then syncs the
+        // cell range selection to it: `Shift` extends the rectangle from the
+        // anchor, a plain move collapses it to the new cell (the spreadsheet
+        // arrow / Shift+arrow model). `Enter` / `Space` stay row-activation.
+        let navigated = match key {
             "ArrowLeft" => {
                 move_col(intro, -1);
                 true
@@ -483,6 +523,13 @@ impl WidgetCore for TableView {
                 set_visual_row(intro, last);
                 true
             }
+            _ => false,
+        };
+        if navigated {
+            apply_cell_selection(intro, modifiers.shift);
+            return true;
+        }
+        match key {
             "Enter" | "Space" => {
                 // Activate the active-descendant cell's row. Run the full
                 // pointer cycle through the coordinator's wire format so
@@ -552,6 +599,13 @@ impl WidgetA11y for TableView {
                         tag: format!("{PRIMARY_TAG}#{data}_{col}"),
                         name: format!("{header}: {}", ROWS[data][col]),
                         focused: grid_focused && active_row == data && active_col == col,
+                        // R952 §5.38 — per-cell aria-selected when a cell range
+                        // selection is active (`Some`); `None` (omit) otherwise.
+                        // Membership via the shared `cell_in_bounds` SSOT so the
+                        // a11y agrees with the paint overlay + the widget.
+                        selected: state
+                            .cell_selection
+                            .map(|bounds| cell_in_bounds(bounds, data, col)),
                     })
                     .collect(),
             })

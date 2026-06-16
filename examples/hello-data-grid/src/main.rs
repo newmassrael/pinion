@@ -3899,6 +3899,7 @@ impl WidgetA11y for DataGridView {
                             tag: cell_tag(row, col),
                             name: format!("{}: {}", COL_NAMES[col], model[idx(row, col)].display()),
                             focused: row == focused_row && col == focused_col,
+                            selected: None, // R952 — editable grid: no cell range selection
                         })
                         .collect(),
                 })

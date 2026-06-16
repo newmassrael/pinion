@@ -58,6 +58,13 @@ pub struct GridCell {
     /// `true` when this cell is the roving active descendant (the grid owns
     /// focus and this is the active cell).
     pub focused: bool,
+    /// R952 §5.38 — per-cell `aria-selected`, for a grid with **cell range
+    /// selection** (`SelectItems`): `Some(true)` for a cell inside the
+    /// selected rectangle, `Some(false)` for a cell outside it, and `None`
+    /// (the default) for a grid that does **not** select cells — which omits
+    /// the attribute entirely, so a row-select / display-only grid's cells
+    /// are byte-unchanged. Distinct from [`GridRow::selected`] (`SelectRows`).
+    pub selected: Option<bool>,
 }
 
 /// A data row within a [`grid_table_nodes`] grid.
@@ -140,14 +147,19 @@ pub fn grid_table_nodes(
         }
         nodes.push(row_node);
         for cell in &row.cells {
-            nodes.push(
-                AccessNode::new(cell.tag.as_str(), AriaRole::GridCell)
-                    .with_name(cell.name.as_str())
-                    .with_state(AccessState {
-                        focused: cell.focused,
-                        ..AccessState::from_interaction(row.state, None)
-                    }),
-            );
+            let mut cell_node = AccessNode::new(cell.tag.as_str(), AriaRole::GridCell)
+                .with_name(cell.name.as_str())
+                .with_state(AccessState {
+                    focused: cell.focused,
+                    ..AccessState::from_interaction(row.state, None)
+                });
+            // R952 §5.38 — emit `aria-selected` only for a cell-selecting grid
+            // (`Some`); a row-select / display-only grid leaves cells without
+            // the attribute (`None`), unchanged from before.
+            if let Some(sel) = cell.selected {
+                cell_node = cell_node.with_selected(sel);
+            }
+            nodes.push(cell_node);
         }
     }
     nodes
@@ -171,8 +183,8 @@ mod tests {
                 selected: true,
                 state: RadioState::Idle,
                 cells: vec![
-                    GridCell { tag: "g#0_0".into(), name: "Name: Button".into(), focused: true },
-                    GridCell { tag: "g#0_1".into(), name: "Tier: 1".into(), focused: false },
+                    GridCell { tag: "g#0_0".into(), name: "Name: Button".into(), focused: true, selected: None },
+                    GridCell { tag: "g#0_1".into(), name: "Tier: 1".into(), focused: false, selected: None },
                 ],
             },
             GridRow {
@@ -180,8 +192,8 @@ mod tests {
                 selected: false,
                 state: RadioState::Hover,
                 cells: vec![
-                    GridCell { tag: "g#1_0".into(), name: "Name: Slider".into(), focused: false },
-                    GridCell { tag: "g#1_1".into(), name: "Tier: 2".into(), focused: false },
+                    GridCell { tag: "g#1_0".into(), name: "Name: Slider".into(), focused: false, selected: None },
+                    GridCell { tag: "g#1_1".into(), name: "Tier: 2".into(), focused: false, selected: None },
                 ],
             },
         ]
@@ -261,5 +273,28 @@ mod tests {
         // grid + header row + 2 columnheaders = 4.
         assert_eq!(n.len(), 4);
         assert_eq!(n[0].children, vec!["g_hrow"], "grid references only the header row");
+    }
+
+    #[test]
+    fn r952_cell_aria_selected_is_opt_in() {
+        // The default-None fixture cells omit `aria-selected` entirely (a
+        // row-select / display-only grid is unchanged by R952).
+        let n = nodes();
+        assert_eq!(by_tag(&n, "g#0_0").selected, None, "None cell omits aria-selected");
+
+        // A cell-selecting grid passes `Some(bool)`: the rectangle's cells are
+        // `Some(true)`, others `Some(false)`.
+        let rows = vec![GridRow {
+            tag: "g_row0".into(),
+            selected: false,
+            state: RadioState::Idle,
+            cells: vec![
+                GridCell { tag: "g#0_0".into(), name: "A".into(), focused: false, selected: Some(true) },
+                GridCell { tag: "g#0_1".into(), name: "B".into(), focused: false, selected: Some(false) },
+            ],
+        }];
+        let n = grid_table_nodes("g", "Sheet", true, "g_hrow", &columns(), &rows);
+        assert_eq!(by_tag(&n, "g#0_0").selected, Some(true), "in-rectangle cell is aria-selected");
+        assert_eq!(by_tag(&n, "g#0_1").selected, Some(false), "out-of-rectangle cell is not");
     }
 }

@@ -107,6 +107,18 @@ pub struct Table {
     /// value (callers use [`Self::selected_rows`]). Mode is immutable
     /// after construction — the row [`Radio`] vector is sized once.
     multiselect: bool,
+    /// R952 §5.38 §5.40 — the pinned corner of a **cell range selection**
+    /// (`(row, col)` in **data** coords), or `None` when no rectangular
+    /// cell selection is active. The opposite corner is the roving cursor
+    /// (`focused_row` / `focused_col`), so the selected rectangle is the
+    /// bounding box of `cell_anchor` and the cursor — the spreadsheet /
+    /// Qt `QTableView` `SelectItems` model (cell range), distinct from the
+    /// `row_radios` row selection (`SelectRows`). A plain cursor move
+    /// collapses it (anchor follows the cursor → a single cell); a
+    /// `Shift`-move extends it (anchor pinned). Data-indexed like every
+    /// other selection here (R730), so a sort repositions the selected
+    /// cells without remapping the model.
+    cell_anchor: Option<(usize, usize)>,
 }
 
 impl Table {
@@ -124,6 +136,7 @@ impl Table {
             focused_col: 0,
             sort: None,
             multiselect: false,
+            cell_anchor: None,
         }
     }
 
@@ -308,6 +321,87 @@ impl Table {
         self.focused_col = col;
     }
 
+    /// R952 §5.38 §5.40 — start a **cell range selection** at `(row, col)`:
+    /// move the cursor there and pin the anchor to it, so the selection is
+    /// the single cell (the spreadsheet click / plain-arrow model — a fresh
+    /// selection that a later [`extend_cell`](Self::extend_cell) grows into a
+    /// rectangle). Out-of-range `(row, col)` is a silent no-op (the model-path
+    /// guard, mirroring [`send_cell`](Self::send_cell)).
+    pub fn select_cell(&mut self, row: usize, col: usize) {
+        if row >= self.rows.len() || col >= self.headers.len() {
+            return;
+        }
+        self.focused_row = Some(row);
+        self.focused_col = col;
+        self.cell_anchor = Some((row, col));
+    }
+
+    /// R952 §5.38 §5.40 — extend the cell range selection to `(row, col)`:
+    /// move the cursor there but keep the pinned anchor, so the selection is
+    /// the bounding rectangle of the anchor and the new cursor (the
+    /// `Shift`-arrow / `Shift`-click model). With no anchor yet (a `Shift`
+    /// move before any selection), the current cursor becomes the anchor — or
+    /// `(row, col)` itself when there is no cursor either — so the first
+    /// extension is a single cell that subsequent extensions grow. Out-of-range
+    /// `(row, col)` is a silent no-op.
+    pub fn extend_cell(&mut self, row: usize, col: usize) {
+        if row >= self.rows.len() || col >= self.headers.len() {
+            return;
+        }
+        if self.cell_anchor.is_none() {
+            self.cell_anchor = Some(self.focused_row.map_or((row, col), |r| (r, self.focused_col)));
+        }
+        self.focused_row = Some(row);
+        self.focused_col = col;
+    }
+
+    /// R952 §5.38 §5.40 — the pinned corner of the active cell range
+    /// selection (`(row, col)` data coords), or `None` when no rectangular
+    /// cell selection is active.
+    #[must_use]
+    pub fn cell_anchor(&self) -> Option<(usize, usize)> {
+        self.cell_anchor
+    }
+
+    /// R952 §5.38 §5.40 — the selected cell rectangle as
+    /// `(row0, col0, row1, col1)` (inclusive, normalized so `row0 <= row1`
+    /// and `col0 <= col1`), or `None` when no cell selection is active (no
+    /// anchor, or no cursor row to pair it with). The bounding box of the
+    /// anchor and the roving cursor — the AI-first read of "which cells are
+    /// selected", a rectangle rather than a per-cell bitmap because the model
+    /// is anchor+extent.
+    #[must_use]
+    pub fn cell_selection_bounds(&self) -> Option<(usize, usize, usize, usize)> {
+        let (ar, ac) = self.cell_anchor?;
+        let fr = self.focused_row?;
+        let fc = self.focused_col;
+        Some((ar.min(fr), ac.min(fc), ar.max(fr), ac.max(fc)))
+    }
+
+    /// R952 §5.38 §5.40 — whether the cell at `(row, col)` (data coords) lies
+    /// in the selected rectangle. `false` when no cell selection is active.
+    #[must_use]
+    pub fn is_cell_selected(&self, row: usize, col: usize) -> bool {
+        self.cell_selection_bounds()
+            .is_some_and(|bounds| cell_in_bounds(bounds, row, col))
+    }
+
+    /// R952 §5.38 §5.40 — the number of cells in the selected rectangle
+    /// (`0` when no cell selection is active). The `(rows × cols)` area of
+    /// [`cell_selection_bounds`](Self::cell_selection_bounds).
+    #[must_use]
+    pub fn cell_selection_count(&self) -> usize {
+        self.cell_selection_bounds()
+            .map_or(0, |(r0, c0, r1, c1)| (r1 - r0 + 1) * (c1 - c0 + 1))
+    }
+
+    /// R952 §5.38 §5.40 — drop the cell range selection (clear the anchor).
+    /// The roving cursor is untouched — clearing a selection leaves the
+    /// active descendant where it was (the cell stays navigable / editable).
+    pub fn clear_cell_selection(&mut self) {
+        self.cell_anchor = None;
+    }
+
     /// Interaction state of `row` (0-based), or [`RadioState::Idle`] for
     /// an out-of-range row.
     #[must_use]
@@ -380,6 +474,28 @@ impl Table {
 /// [`Table::order`] and the virtualized data-grid sort coordinator
 /// [`GridSortState`](crate::widgets::grid_sort::GridSortState); they must
 /// agree on numeric awareness, so the comparison lives in one place.)
+/// R952 §5.38 — parse a `"row,col"` cell-address wire arg (the
+/// `select-cell` / `extend-cell` invoke shape) into `(row, col)`. `None`
+/// when the arg is not exactly two comma-separated unsigned integers — the
+/// caller maps that to `TypeMismatch` (the index-range check is the caller's,
+/// against the live row / column count).
+fn parse_row_col(s: &str) -> Option<(usize, usize)> {
+    let (r, c) = s.split_once(',')?;
+    Some((r.trim().parse().ok()?, c.trim().parse().ok()?))
+}
+
+/// R952 §5.38 — whether the cell `(row, col)` lies inside the inclusive
+/// rectangle `bounds = (row0, col0, row1, col1)` (data coords). The SSOT for
+/// cell range membership shared by [`Table::is_cell_selected`] and a binding's
+/// per-cell `aria-selected` projection — paint, a11y, and the widget must agree
+/// on which cells are selected, so the test lives in one place (the `bounds`
+/// come pre-normalized from [`Table::cell_selection_bounds`]).
+#[must_use]
+pub fn cell_in_bounds(bounds: (usize, usize, usize, usize), row: usize, col: usize) -> bool {
+    let (r0, c0, r1, c1) = bounds;
+    row >= r0 && row <= r1 && col >= c0 && col <= c1
+}
+
 #[must_use]
 pub fn cell_cmp(a: &str, b: &str) -> core::cmp::Ordering {
     match (a.trim().parse::<f64>(), b.trim().parse::<f64>()) {
@@ -634,6 +750,59 @@ impl TableExternal {
         self.em.inner.order()
     }
 
+    /// R952 §5.38 — the selected cell rectangle `(row0, col0, row1, col1)`
+    /// (inclusive, data coords), or `None` when no cell selection is active
+    /// ([`Table::cell_selection_bounds`]).
+    #[must_use]
+    pub fn cell_selection_bounds(&self) -> Option<(usize, usize, usize, usize)> {
+        self.em.inner.cell_selection_bounds()
+    }
+
+    /// R952 §5.38 — the number of cells in the selected rectangle
+    /// ([`Table::cell_selection_count`]).
+    #[must_use]
+    pub fn cell_selection_count(&self) -> usize {
+        self.em.inner.cell_selection_count()
+    }
+
+    /// R952 §5.38 — the cell range selection `invoke` actions, split out of
+    /// [`invoke`](ExternalIntrospect::invoke) for SRP (and to keep that
+    /// dispatch under the line ceiling, like the find / fold helpers
+    /// elsewhere). `select-cell` / `extend-cell` take a `Text` `"row,col"`
+    /// (data coords) and start / grow the rectangle (a no-op + `Bool(false)`
+    /// when out of range); `clear-cell-selection` takes `Null` and drops it.
+    /// All return `Bool(true)` on success. `TypeMismatch` on a malformed arg.
+    fn invoke_cell_select(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        if path == "clear-cell-selection" {
+            return match args {
+                IntrospectValue::Null => {
+                    self.em.inner.clear_cell_selection();
+                    Ok(IntrospectValue::Bool(true))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            };
+        }
+        let IntrospectValue::Text(s) = args else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        let Some((row, col)) = parse_row_col(s) else {
+            return Err(InvokeError::TypeMismatch);
+        };
+        if row >= self.row_count() || col >= self.col_count() {
+            return Ok(IntrospectValue::Bool(false));
+        }
+        if path == "extend-cell" {
+            self.em.inner.extend_cell(row, col);
+        } else {
+            self.em.inner.select_cell(row, col);
+        }
+        Ok(IntrospectValue::Bool(true))
+    }
+
     /// Validate an intervene `row` index against the row count.
     fn resolve_row_intervene(&self, i: i64) -> Result<usize, InterveneError> {
         let row = usize::try_from(i).map_err(|_| InterveneError::OutOfRange)?;
@@ -740,6 +909,20 @@ impl ExternalIntrospect for TableExternal {
             ("sort_dir", "string"),
             ("order.<visual>", "int"),
             ("sort", "int"),
+            // R952 §5.38 — cell range selection (the spreadsheet / Qt
+            // `SelectItems` model, distinct from the `selected.<row>` row
+            // selection). `cell_selection` reads the selected rectangle as
+            // "row0,col0,row1,col1" (data coords, inclusive) or `null`;
+            // `cell_selection_count` is its cell area. `select-cell` (arg
+            // "row,col") starts a single-cell selection at the cursor;
+            // `extend-cell` (arg "row,col") grows the rectangle to that cell;
+            // `clear-cell-selection` (arg `null`) drops it. The AI-first peer
+            // of click / Shift+click / Shift+Arrow.
+            ("cell_selection", "string"),
+            ("cell_selection_count", "int"),
+            ("select-cell", "boolean"),
+            ("extend-cell", "boolean"),
+            ("clear-cell-selection", "boolean"),
         ])
     }
 
@@ -768,6 +951,17 @@ impl ExternalIntrospect for TableExternal {
                 self.focused_row().map_or(-1, int_of),
             )),
             "focused_col" => Some(IntrospectValue::Int(int_of(self.focused_col()))),
+            // R952 §5.38 — the selected cell rectangle as "row0,col0,row1,col1"
+            // (data coords, inclusive), or `Null` when no cell selection is
+            // active. Text-encoded (the file's `sort_dir` / `send` idiom; no
+            // serde_json dependency), parsed by the AI client on the comma.
+            "cell_selection" => Some(match self.cell_selection_bounds() {
+                Some((r0, c0, r1, c1)) => IntrospectValue::Text(format!("{r0},{c0},{r1},{c1}")),
+                None => IntrospectValue::Null,
+            }),
+            "cell_selection_count" => {
+                Some(IntrospectValue::Int(int_of(self.cell_selection_count())))
+            }
             // R730 §5.40 — sort key column (`-1` when unsorted) + the
             // WAI-ARIA `aria-sort` token the active header carries.
             "sort_col" => Some(IntrospectValue::Int(
@@ -994,6 +1188,11 @@ impl ExternalIntrospect for TableExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R952 §5.38 — cell range selection actions, split out (SRP, line
+            // ceiling) like the other dispatch helpers.
+            "select-cell" | "extend-cell" | "clear-cell-selection" => {
+                self.invoke_cell_select(path, &args)
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -1504,5 +1703,144 @@ mod tests {
             ext.intervene("selected.0", IntrospectValue::Bool(true)),
             Err(InterveneError::ReadOnly),
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R952 §5.38 — cell range selection (anchor + extent rectangle)
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r952_select_cell_is_a_single_cell() {
+        let mut t = sample(); // 3 rows x 2 cols
+        t.select_cell(1, 1);
+        assert_eq!(t.cell_selection_bounds(), Some((1, 1, 1, 1)));
+        assert_eq!(t.cell_selection_count(), 1);
+        assert!(t.is_cell_selected(1, 1));
+        assert!(!t.is_cell_selected(0, 1), "a neighbour cell is not in the selection");
+        assert_eq!(t.cell_anchor(), Some((1, 1)));
+    }
+
+    #[test]
+    fn r952_extend_cell_grows_a_rectangle() {
+        let mut t = sample();
+        t.select_cell(0, 0);
+        t.extend_cell(2, 1);
+        assert_eq!(t.cell_selection_bounds(), Some((0, 0, 2, 1)), "anchor (0,0) -> cursor (2,1)");
+        assert_eq!(t.cell_selection_count(), 6, "3 rows x 2 cols");
+        assert!(t.is_cell_selected(1, 0), "an interior cell is selected");
+        assert!(t.is_cell_selected(2, 1), "the far corner is selected");
+        // The cursor moved to the extent; the anchor stayed pinned.
+        assert_eq!(t.focused_row(), Some(2));
+        assert_eq!(t.focused_col(), 1);
+        assert_eq!(t.cell_anchor(), Some((0, 0)));
+    }
+
+    #[test]
+    fn r952_extend_cell_normalizes_up_left() {
+        let mut t = sample();
+        t.select_cell(2, 1);
+        t.extend_cell(0, 0); // extend toward the top-left
+        assert_eq!(t.cell_selection_bounds(), Some((0, 0, 2, 1)), "bounds normalize regardless of order");
+        assert_eq!(t.cell_selection_count(), 6);
+    }
+
+    #[test]
+    fn r952_extend_with_no_anchor_pins_the_cursor() {
+        let mut t = sample();
+        // A Shift-move before any selection: the current cursor (none here)
+        // makes the target itself the anchor — a single cell that later
+        // extensions grow.
+        t.extend_cell(1, 0);
+        assert_eq!(t.cell_selection_bounds(), Some((1, 0, 1, 0)));
+        assert_eq!(t.cell_anchor(), Some((1, 0)));
+        // A pre-existing cursor (no anchor) becomes the anchor on first extend.
+        let mut t2 = sample();
+        t2.set_focused_row(Some(0));
+        t2.set_focused_col(0);
+        t2.extend_cell(1, 1);
+        assert_eq!(t2.cell_selection_bounds(), Some((0, 0, 1, 1)), "old cursor (0,0) anchors the rect");
+    }
+
+    #[test]
+    fn r952_clear_cell_selection_drops_it_keeps_cursor() {
+        let mut t = sample();
+        t.select_cell(1, 1);
+        t.clear_cell_selection();
+        assert_eq!(t.cell_selection_bounds(), None);
+        assert_eq!(t.cell_selection_count(), 0);
+        assert!(!t.is_cell_selected(1, 1));
+        assert_eq!(t.focused_row(), Some(1), "the cursor survives a selection clear");
+        assert_eq!(t.focused_col(), 1);
+    }
+
+    #[test]
+    fn r952_out_of_range_cell_select_is_a_no_op() {
+        let mut t = sample();
+        t.select_cell(9, 9);
+        assert_eq!(t.cell_selection_bounds(), None, "out-of-range select is ignored");
+        t.select_cell(0, 0);
+        t.extend_cell(9, 0);
+        assert_eq!(t.cell_selection_bounds(), Some((0, 0, 0, 0)), "out-of-range extend is ignored");
+    }
+
+    fn cell_sample_ext() -> TableExternal {
+        TableExternal::new(
+            vec!["Name".to_string(), "Round".to_string()],
+            vec![
+                vec!["Tabs".to_string(), "R690".to_string()],
+                vec!["Menu".to_string(), "R691".to_string()],
+                vec!["Table".to_string(), "R707".to_string()],
+            ],
+        )
+    }
+
+    #[test]
+    fn r952_rpc_cell_selection_round_trip() {
+        let mut ext = cell_sample_ext();
+        assert_eq!(ext.query("cell_selection"), Some(IntrospectValue::Null), "no selection at boot");
+        assert_eq!(ext.query("cell_selection_count"), Some(IntrospectValue::Int(0)));
+        assert_eq!(
+            ext.invoke("select-cell", IntrospectValue::Text("1,1".to_string())),
+            Ok(IntrospectValue::Bool(true)),
+        );
+        assert_eq!(
+            ext.query("cell_selection"),
+            Some(IntrospectValue::Text("1,1,1,1".to_string())),
+        );
+        assert_eq!(ext.query("cell_selection_count"), Some(IntrospectValue::Int(1)));
+        assert_eq!(
+            ext.invoke("extend-cell", IntrospectValue::Text("2,1".to_string())),
+            Ok(IntrospectValue::Bool(true)),
+        );
+        assert_eq!(
+            ext.query("cell_selection"),
+            Some(IntrospectValue::Text("1,1,2,1".to_string())),
+            "the rectangle grew from (1,1) to (2,1)",
+        );
+        assert_eq!(ext.query("cell_selection_count"), Some(IntrospectValue::Int(2)));
+        assert_eq!(
+            ext.invoke("clear-cell-selection", IntrospectValue::Null),
+            Ok(IntrospectValue::Bool(true)),
+        );
+        assert_eq!(ext.query("cell_selection"), Some(IntrospectValue::Null), "cleared");
+    }
+
+    #[test]
+    fn r952_rpc_cell_select_out_of_range_and_bad_arg() {
+        let mut ext = cell_sample_ext();
+        assert_eq!(
+            ext.invoke("select-cell", IntrospectValue::Text("9,9".to_string())),
+            Ok(IntrospectValue::Bool(false)),
+            "out-of-range cell select is a no-op (false), not an error",
+        );
+        assert_eq!(ext.query("cell_selection"), Some(IntrospectValue::Null));
+        assert!(matches!(
+            ext.invoke("select-cell", IntrospectValue::Int(3)),
+            Err(InvokeError::TypeMismatch),
+        ));
+        assert!(matches!(
+            ext.invoke("clear-cell-selection", IntrospectValue::Text("x".to_string())),
+            Err(InvokeError::TypeMismatch),
+        ));
     }
 }

@@ -33,7 +33,7 @@ use std::rc::Rc;
 use pinion_core::composite_tag::{GridSendKey, GridTag};
 use pinion_core::scene::{ContainerNode, Rect, ScrollAxis, ScrollNode, TextNode, TextRole};
 use pinion_core::style::{
-    AlignItems, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::radio::RadioState;
@@ -137,6 +137,24 @@ pub struct TableData<'a> {
     pub row_ids: &'a [usize],
 }
 
+/// R952 §5.38 — the selection inputs for [`view_table`], bundled to keep it
+/// under the argument budget (the [`TableData`] precedent for grouping related
+/// inputs). The two selection models a grid can carry, one struct: per-row
+/// (`SelectRows`) + cell range (`SelectItems`).
+#[derive(Clone, Copy)]
+pub struct TableSelection<'a> {
+    /// Per-row selection bitmap, indexed by **data** row (parallel to
+    /// `row_states`): a `true` row strip is washed with the accent tint. One
+    /// path serves single-select (one bit) and R735 multi-select.
+    pub rows: &'a [bool],
+    /// R952 — the selected cell rectangle `(row0, col0, row1, col1)` (data
+    /// coords, inclusive) from
+    /// [`TableExternal::cell_selection_bounds`](pinion_core::widgets::table::TableExternal::cell_selection_bounds),
+    /// or `None`. Drawn as a bordered accent overlay (the spreadsheet cell
+    /// selection), distinct from the per-row `rows` wash.
+    pub cells: Option<(usize, usize, usize, usize)>,
+}
+
 /// R707 §5.50 — row-strip fill for `state` + `selected` + zebra parity
 /// via the M3 state-layer overlay matrix.
 ///
@@ -197,6 +215,58 @@ fn cell(
                 .with_size(Size::px(width, height))
                 .with_padding(Rect::new(style.cell_pad_x, 0, style.cell_pad_x, 0)),
         ),
+    )
+}
+
+/// R952 §5.38 — alpha of the cell range selection wash (a faint accent fill so
+/// the selected cells read as a group without obscuring their text — the
+/// legibility reason the highlight is a border + low-alpha wash, not an opaque
+/// fill).
+const CELL_SEL_WASH_ALPHA: u8 = 0x33;
+/// R952 §5.38 — width (px) of the cell range selection border (the crisp
+/// accent rectangle around the selection, the spreadsheet affordance).
+const CELL_SEL_BORDER_W: u32 = 2;
+
+/// R952 §5.38 — the cell range selection highlight: one accent-bordered,
+/// faintly-accent-washed rectangle absolutely positioned over the selected
+/// cells (`bounds` = `(row0, col0, row1, col1)`, data coords, inclusive). A
+/// border + low-alpha wash (not an opaque fill) keeps the cell text legible —
+/// the spreadsheet selection affordance. Positioned in the table container's
+/// content box: the header band occupies the first [`TableStyle::header_height`],
+/// then each row is [`TableStyle::row_height`] tall; columns are the cumulative
+/// `widths`. Tagged `"<tag>_cellsel"` (presentational, inert to hit routing) so
+/// an AI client reads the selection's pixel rect back from the paint scene. The
+/// caller renders this only for a visually-contiguous (unsorted) selection — a
+/// sorted view keeps the data-indexed selection RPC-readable but omits the
+/// rectangle, since the selected cells are no longer contiguous on screen.
+fn cell_selection_overlay(
+    tag: &str,
+    bounds: (usize, usize, usize, usize),
+    widths: &[u32],
+    theme: &Theme,
+    style: &TableStyle,
+) -> Scene {
+    let (r0, c0, r1, c1) = bounds;
+    // `absolute_position` is relative to the container's padding box (CSS
+    // model), so the cells — laid out inside `block_pad` of padding — start at
+    // `block_pad`; the overlay adds it back to line up with them.
+    let x: u32 = style.block_pad + widths.iter().take(c0).sum::<u32>();
+    let w: u32 = widths.iter().skip(c0).take(c1 - c0 + 1).sum();
+    let y = style.block_pad
+        + style.header_height
+        + u32::try_from(r0).unwrap_or(0) * style.row_height;
+    let h = u32::try_from(r1 - r0 + 1).unwrap_or(0) * style.row_height;
+    let accent = theme.resolve(ColorRole::Accent);
+    let wash = Color::rgba(accent.r, accent.g, accent.b, CELL_SEL_WASH_ALPHA);
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag(format!("{tag}_cellsel"))
+            .with_style(BoxStyle::filled(wash).with_border(Border::new(accent, CELL_SEL_BORDER_W)))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(x, y)
+                    .with_size(Size::px(w, h)),
+            ),
     )
 }
 
@@ -481,10 +551,13 @@ fn row_fg(theme: &Theme, state: RadioState) -> Color {
 ///   paired with
 ///   [`TableExternal`](pinion_core::widgets::table::TableExternal)'s
 ///   `rows` / `cols` / `cell.<r>.<c>` introspect slots.
-/// - `row_selected` — per-row selection bitmap, indexed by **data** row
-///   (parallel to `row_states`). A `true` row strip is washed with the
-///   accent tint; a row outside the slice defaults to unselected. One
-///   path serves both single-select (one bit set) and R735 multi-select.
+/// - `selection` — the [`TableSelection`] bundle: `rows` is the per-row
+///   selection bitmap (indexed by **data** row, parallel to `row_states`; a
+///   `true` strip washes accent — single- or R735 multi-select), and `cells`
+///   is the R952 selected cell rectangle `(row0, col0, row1, col1)` (data
+///   coords, inclusive) drawn as a bordered accent overlay over those cells
+///   (the spreadsheet selection, rendered only for an unsorted view — see the
+///   overlay note below), or `None`.
 /// - `row_states` — per-row [`RadioState`] interaction projections,
 ///   indexed by row (the binding reads them from the table's per-row
 ///   `state.<r>` introspect slots). A row outside the slice bounds
@@ -511,12 +584,14 @@ fn row_fg(theme: &Theme, state: RadioState) -> Color {
 pub fn view_table(
     tag: &str,
     data: TableData<'_>,
-    row_selected: &[bool],
+    selection: TableSelection<'_>,
     row_states: &[RadioState],
     sort: Option<(usize, bool)>,
     theme: &Theme,
     style: &TableStyle,
 ) -> Scene {
+    let row_selected = selection.rows;
+    let cell_selection = selection.cells;
     let cols = data.headers.len();
     // The eager table is one combined coordinator (header + cells route to
     // the same `TableExternal`), so the clickable header anchor is `tag`.
@@ -556,6 +631,15 @@ pub fn view_table(
             RowPane { container_tag: &row_tag, col_base: 0, widths: &widths },
             style,
         ));
+    }
+    // R952 §5.38 — the cell range selection highlight, on top of the rows. Only
+    // an unsorted view maps the data-coord rectangle to one contiguous screen
+    // rectangle; a sorted view keeps the data-indexed selection RPC-readable but
+    // omits the overlay (the selected cells are scattered across the sort).
+    if let Some(bounds) = cell_selection {
+        if sort.is_none() {
+            children.push(cell_selection_overlay(tag, bounds, &widths, theme, style));
+        }
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -1162,7 +1246,7 @@ mod tests {
             view_table(
                 "table",
                 TableData { headers: &headers, rows: &rows, row_ids: &[] },
-                &[],
+                TableSelection { rows: &[], cells: None },
                 &all_idle(),
                 None,
                 &light(),
@@ -1221,7 +1305,7 @@ mod tests {
             view_table(
                 "table",
                 TableData { headers: &headers, rows: &rows, row_ids: &[] },
-                &[],
+                TableSelection { rows: &[], cells: None },
                 &all_idle(),
                 None,
                 &theme,
@@ -1236,7 +1320,7 @@ mod tests {
             view_table(
                 "table",
                 TableData { headers: &headers, rows: &rows, row_ids: &[] },
-                &[],
+                TableSelection { rows: &[], cells: None },
                 &all_idle(),
                 Some((1, true)),
                 &theme,
@@ -1260,7 +1344,7 @@ mod tests {
             view_table(
                 "table",
                 TableData { headers: &headers, rows: &reordered, row_ids: &[2, 0, 1] },
-                &[],
+                TableSelection { rows: &[], cells: None },
                 &all_idle(),
                 Some((0, true)),
                 &light(),

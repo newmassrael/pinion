@@ -42633,6 +42633,76 @@
         "pending_style is non-journalled view-state (peer of folds/find): undo never reverses the arming, only runs"
       ]
     },
+    "R952": {
+      "decision_summary": "Cell range selection (anchor + extent rectangle) for the data grid — the spreadsheet / Qt SelectItems model — added to the Table widget, reusing its 2-D cursor as the extent; data-indexed so it survives a sort. hello-table drives it from the keyboard (plain Arrow collapses, Shift+Arrow extends), paints a bordered accent overlay, and lowers per-cell aria-selected.",
+      "changes_bullets": [
+        "Table widget: cell_anchor + select_cell / extend_cell / cell_selection_bounds / is_cell_selected / clear",
+        "the 2-D cursor (focused_row/col) doubles as the extent end; bounds = bbox(anchor, cursor)",
+        "data-indexed (R730): a sort repositions the selected cells without remapping the model",
+        "RPC query: cell_selection (\"r0,c0,r1,c1\" Text / null) + cell_selection_count",
+        "RPC invoke: select-cell / extend-cell (\"row,col\") + clear-cell-selection (invoke_cell_select, parse_row_col)",
+        "view_table: TableSelection bundle (rows + cells) folds two args under the 7-arg budget",
+        "paint: cell_selection_overlay = accent border + low-alpha wash, absolute-positioned over the cells",
+        "overlay drawn only for an unsorted view (a sorted view keeps the selection RPC-readable, omits the rect)",
+        "a11y: GridCell.selected: Option<bool> -> per-cell aria-selected (None omits; other grids unchanged)",
+        "hello-table: arrows drive cell-select (plain collapses, Shift extends); cursor follows the extent",
+        "hello-table: TableState.cell_selection projected from the coordinator slot",
+        "cell_in_bounds SSOT: shared inclusive-rect membership for is_cell_selected + a11y (divergence-is-a-bug)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: green (9 new R952: 8 Table substrate+RPC + 1 a11y cell aria-selected)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "invoke_cell_select split + TableSelection bundle hold the 100-line / 7-arg budgets",
+        "tools/demos/r952_table_cell_select.py: PASS (35 assertion-class; ZERO-FLAKE gates)",
+        "demo: RPC select/extend, cursor-follows-extent, overlay presence + same-snapshot covers-cells geometry",
+        "demo: plain Arrow collapses, Shift+Arrow extends, clear drops it, out-of-range is a no-op",
+        "3 existing Table demos (r707 / r730 / r735) re-run green (no regression)",
+        "mnemosyne validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "overlay drawn only for unsorted views; a sorted view keeps the data-indexed selection RPC-readable",
+        "pointer cell-select is keyboard+RPC for now (click keeps row-select); Shift+click extend is additive",
+        "standalone CellSelection lift deferred (1 consumer = the Table 2-D cursor; needs a 2nd to justify)"
+      ],
+      "publishable_decision_summary": "Cell range selection (anchor + extent rectangle) for the data grid — the spreadsheet / Qt SelectItems model — added to the Table widget, reusing its 2-D cursor as the extent; data-indexed so it survives a sort. hello-table drives it from the keyboard (plain Arrow collapses, Shift+Arrow extends), paints a bordered accent overlay, and lowers per-cell aria-selected.",
+      "publishable_changes_bullets": [
+        "Table widget: cell_anchor + select_cell / extend_cell / cell_selection_bounds / is_cell_selected / clear",
+        "the 2-D cursor (focused_row/col) doubles as the extent end; bounds = bbox(anchor, cursor)",
+        "data-indexed (R730): a sort repositions the selected cells without remapping the model",
+        "RPC query: cell_selection (\"r0,c0,r1,c1\" Text / null) + cell_selection_count",
+        "RPC invoke: select-cell / extend-cell (\"row,col\") + clear-cell-selection (invoke_cell_select, parse_row_col)",
+        "view_table: TableSelection bundle (rows + cells) folds two args under the 7-arg budget",
+        "paint: cell_selection_overlay = accent border + low-alpha wash, absolute-positioned over the cells",
+        "overlay drawn only for an unsorted view (a sorted view keeps the selection RPC-readable, omits the rect)",
+        "a11y: GridCell.selected: Option<bool> -> per-cell aria-selected (None omits; other grids unchanged)",
+        "hello-table: arrows drive cell-select (plain collapses, Shift extends); cursor follows the extent",
+        "hello-table: TableState.cell_selection projected from the coordinator slot",
+        "cell_in_bounds SSOT: shared inclusive-rect membership for is_cell_selected + a11y (divergence-is-a-bug)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: green (9 new R952: 8 Table substrate+RPC + 1 a11y cell aria-selected)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "invoke_cell_select split + TableSelection bundle hold the 100-line / 7-arg budgets",
+        "tools/demos/r952_table_cell_select.py: PASS (35 assertion-class; ZERO-FLAKE gates)",
+        "demo: RPC select/extend, cursor-follows-extent, overlay presence + same-snapshot covers-cells geometry",
+        "demo: plain Arrow collapses, Shift+Arrow extends, clear drops it, out-of-range is a no-op",
+        "3 existing Table demos (r707 / r730 / r735) re-run green (no regression)",
+        "mnemosyne validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "overlay drawn only for unsorted views; a sorted view keeps the data-indexed selection RPC-readable",
+        "pointer cell-select is keyboard+RPC for now (click keeps row-select); Shift+click extend is additive",
+        "standalone CellSelection lift deferred (1 consumer = the Table 2-D cursor; needs a 2nd to justify)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
