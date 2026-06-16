@@ -43547,6 +43547,98 @@
         "Int leaves) is additive once a consumer needs it."
       ]
     },
+    "R965": {
+      "decision_summary": "Per-row / per-column reset-to-default on the editable data grid (Qt/Excel reset row/column), building on R960 per-cell reset: invoke reset_row/reset_col -> count cleared. Lift batched-reset SSOT reset_cells(targets) shared by reset_all/reset_row/reset_col (3-consumer lift), preserving the R961.1 single-snapshot + col_default-hoist discipline (no re-introduced O(cells^2)). RPC verbs + schema; out-of-range = 0 no-op. Self-grep: property-grid reset_all per-field loop is fixed-small-N so no cross-example lift; reset_row/col RPC-only matching reset_all (header affordance + a11y a follow-up).",
+      "changes_bullets": [
+        "Add per-row / per-column reset-to-default to the editable data grid (the",
+        "Qt / Excel \"reset this row\" / \"reset this column\"), building on R960's",
+        "per-cell reset: invoke reset_row <row> / reset_col <col> -> count cleared.",
+        "Lift the batched-reset SSOT reset_cells(targets): reset_all / reset_row /",
+        "reset_col differ only in which cells they scan, so the one-snapshot +",
+        "in-place reset + single set + reanchor lives in one place (the 3-consumer",
+        "three-site-internal-duplication lift).",
+        "Preserve the R961.1 single-pass discipline through the lift: col_default",
+        "is hoisted once into a [CellValue; NCOLS] so a whole-grid reset never",
+        "recomputes it per cell (no re-introduced O(cells^2) / per-cell walk).",
+        "RPC verbs reset_row / reset_col (Int -> Int count) + schema; an",
+        "out-of-range row/col is a 0 no-op, a non-Int arg a TypeMismatch."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (hello-data-grid +3 R965 tests:",
+        "reset_row clears only its row / reset_col only its column / out-of-range",
+        "+ bad-arg; 107 pass).",
+        "cargo clippy --workspace --all-targets (-D pedantic) clean.",
+        "New demo r965_data_grid_row_col_reset.py PASS (>= 30 assertions: row",
+        "reset leaves other rows + the Asset column modified, column reset across",
+        "rows, counts exact, out-of-range no-op, reset dot vanishes on row reset).",
+        "Regression: all 8 hello-data-grid demos PASS (reset_all now delegates to",
+        "reset_cells; r960 reset demo unchanged).",
+        "3b self-grep: reset_cells is a within-example 3-consumer lift; the",
+        "property-grid reset_all per-field loop is fixed-small-N (not the dynamic",
+        "grid R961.1 fixed) -> no cross-example lift (divergent model/semantics)."
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "a visible row-header / column-header reset affordance (+ its a11y button)",
+        "is a follow-up: reset_row / reset_col are RPC-only this round, matching",
+        "reset_all (RPC-only); the per-cell reset dot stays the only painted reset",
+        "control. The demo shows the visible effect (cells revert, dots vanish).",
+        "a11y valuemin/valuemax/valuenow for the bounded numeric widgets (R964 +",
+        "R894) remains the high-value next axis but needs an a11y-crate substrate",
+        "first: both widgets fold the value into the access NAME (no structured",
+        "AccessValue::Float), and a gridcell/treeitem with aria-valuenow is non-",
+        "standard -> needs a value-range field on pinion-a11y GridCell + tree",
+        "builders + WAI-ARIA role reasoning (a substrate-first sub-round)."
+      ],
+      "publishable_decision_summary": "Per-row / per-column reset-to-default on the editable data grid (Qt/Excel reset row/column), building on R960 per-cell reset: invoke reset_row/reset_col -> count cleared. Lift batched-reset SSOT reset_cells(targets) shared by reset_all/reset_row/reset_col (3-consumer lift), preserving the R961.1 single-snapshot + col_default-hoist discipline (no re-introduced O(cells^2)). RPC verbs + schema; out-of-range = 0 no-op. Self-grep: property-grid reset_all per-field loop is fixed-small-N so no cross-example lift; reset_row/col RPC-only matching reset_all (header affordance + a11y a follow-up).",
+      "publishable_changes_bullets": [
+        "Add per-row / per-column reset-to-default to the editable data grid (the",
+        "Qt / Excel \"reset this row\" / \"reset this column\"), building on R960's",
+        "per-cell reset: invoke reset_row <row> / reset_col <col> -> count cleared.",
+        "Lift the batched-reset SSOT reset_cells(targets): reset_all / reset_row /",
+        "reset_col differ only in which cells they scan, so the one-snapshot +",
+        "in-place reset + single set + reanchor lives in one place (the 3-consumer",
+        "three-site-internal-duplication lift).",
+        "Preserve the R961.1 single-pass discipline through the lift: col_default",
+        "is hoisted once into a [CellValue; NCOLS] so a whole-grid reset never",
+        "recomputes it per cell (no re-introduced O(cells^2) / per-cell walk).",
+        "RPC verbs reset_row / reset_col (Int -> Int count) + schema; an",
+        "out-of-range row/col is a 0 no-op, a non-Int arg a TypeMismatch."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (hello-data-grid +3 R965 tests:",
+        "reset_row clears only its row / reset_col only its column / out-of-range",
+        "+ bad-arg; 107 pass).",
+        "cargo clippy --workspace --all-targets (-D pedantic) clean.",
+        "New demo r965_data_grid_row_col_reset.py PASS (>= 30 assertions: row",
+        "reset leaves other rows + the Asset column modified, column reset across",
+        "rows, counts exact, out-of-range no-op, reset dot vanishes on row reset).",
+        "Regression: all 8 hello-data-grid demos PASS (reset_all now delegates to",
+        "reset_cells; r960 reset demo unchanged).",
+        "3b self-grep: reset_cells is a within-example 3-consumer lift; the",
+        "property-grid reset_all per-field loop is fixed-small-N (not the dynamic",
+        "grid R961.1 fixed) -> no cross-example lift (divergent model/semantics)."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "a visible row-header / column-header reset affordance (+ its a11y button)",
+        "is a follow-up: reset_row / reset_col are RPC-only this round, matching",
+        "reset_all (RPC-only); the per-cell reset dot stays the only painted reset",
+        "control. The demo shows the visible effect (cells revert, dots vanish).",
+        "a11y valuemin/valuemax/valuenow for the bounded numeric widgets (R964 +",
+        "R894) remains the high-value next axis but needs an a11y-crate substrate",
+        "first: both widgets fold the value into the access NAME (no structured",
+        "AccessValue::Float), and a gridcell/treeitem with aria-valuenow is non-",
+        "standard -> needs a value-range field on pinion-a11y GridCell + tree",
+        "builders + WAI-ARIA role reasoning (a substrate-first sub-round)."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
