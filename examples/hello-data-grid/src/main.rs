@@ -1699,9 +1699,11 @@ impl DataGridExternal {
         self.reset_cells((0..NCOLS).flat_map(|col| (0..rows).map(move |row| (row, col))))
     }
 
-    /// R965 — reset every modified cell in `row` to its column default (the Qt /
-    /// Excel "reset this row" affordance), returning the count cleared. A no-op
-    /// (0) for an out-of-range row. One batched pass via [`reset_cells`].
+    /// R965 — reset every modified cell in `row` to its column default (the
+    /// bulk-reset behind the Qt / Excel "reset this row" — exposed here as the
+    /// `reset_row` RPC verb; a header / context-menu control is a follow-up,
+    /// R965.1 honesty), returning the count cleared. A no-op (0) for an
+    /// out-of-range row. One batched pass via [`reset_cells`].
     fn reset_row(&self, row: usize) -> usize {
         if row >= self.nrows() {
             return 0;
@@ -1710,8 +1712,9 @@ impl DataGridExternal {
     }
 
     /// R965 — reset every modified cell in `col` (all rows) to its column default
-    /// (the "reset this column" affordance), returning the count cleared. A
-    /// no-op (0) for an out-of-range column. One batched pass via [`reset_cells`].
+    /// (the "reset this column" bulk-reset, exposed as the `reset_col` RPC verb;
+    /// a header control is a follow-up), returning the count cleared. A no-op (0)
+    /// for an out-of-range column. One batched pass via [`reset_cells`].
     fn reset_col(&self, col: usize) -> usize {
         if col >= NCOLS {
             return 0;
@@ -4417,14 +4420,18 @@ mod tests {
             let mut scene = boot_scene();
             let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
             let intro = node.handle.introspect_mut().expect("introspectable");
-            // Clean slate, then modify the Count cell (col 2) in rows 0 and 1.
+            // Clean slate, then modify row 0 in TWO columns (Count col 2 + Asset
+            // col 0) plus the Count cell in row 1. The two columns in row 0 catch
+            // a buggy reset_row that only ever touched one column.
             intro.invoke("reset_all", IntrospectValue::Null).unwrap();
             intro.intervene("value.0.2", IntrospectValue::Int(50)).unwrap();
+            intro.intervene("value.0.0", IntrospectValue::Text("renamed".to_owned())).unwrap();
             intro.intervene("value.1.2", IntrospectValue::Int(60)).unwrap();
-            assert_eq!(intro.query("modified_count"), Some(IntrospectValue::Int(2)));
-            // reset_row(0) clears row 0 only (1 cell), row 1 stays modified.
-            assert_eq!(intro.invoke("reset_row", IntrospectValue::Int(0)).unwrap(), IntrospectValue::Int(1));
-            assert_eq!(intro.query("modified.0.2"), Some(IntrospectValue::Bool(false)), "row 0 reset");
+            assert_eq!(intro.query("modified_count"), Some(IntrospectValue::Int(3)));
+            // reset_row(0) clears BOTH of row 0's cells (cols 0 and 2); row 1 stays.
+            assert_eq!(intro.invoke("reset_row", IntrospectValue::Int(0)).unwrap(), IntrospectValue::Int(2));
+            assert_eq!(intro.query("modified.0.0"), Some(IntrospectValue::Bool(false)), "row 0 col 0 reset");
+            assert_eq!(intro.query("modified.0.2"), Some(IntrospectValue::Bool(false)), "row 0 col 2 reset");
             assert_eq!(intro.query("modified.1.2"), Some(IntrospectValue::Bool(true)), "row 1 untouched");
             assert_eq!(intro.query("modified_count"), Some(IntrospectValue::Int(1)));
             // An already-default row is a 0 no-op.

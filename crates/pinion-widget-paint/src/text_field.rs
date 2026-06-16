@@ -426,24 +426,39 @@ fn preedit_bg_fill(theme: &Theme, alpha: u8) -> Color {
 /// Accent overlays (it covers a whole row, not a glyph span), and the
 /// body sibling of the example's R957 gutter current-line band, which
 /// shares the same Accent hue. A named seam alongside
-/// [`selection_fill`] / [`find_highlight_fill`] / [`preedit_bg_fill`]
-/// so a future per-role highlight palette can restain it independently.
+/// [`selection_fill`] / [`find_highlight_fill`] / [`preedit_bg_fill`].
+///
+/// R965.1 honesty: all four bodies are currently byte-identical
+/// (`Accent.with_alpha`) because [`ColorRole`] has no dedicated
+/// selection / find / line-highlight roles to diverge into *yet*. The
+/// four named fns are kept (not merged) because real editor themes do
+/// distinguish those backgrounds (`editor.selectionBackground` vs
+/// `findMatchHighlightBackground` vs `lineHighlightBackground`), so this
+/// is the seam where those roles plug in — a prepared, not yet exercised,
+/// divergence point. Merge them if that palette never materialises.
 fn current_line_fill(theme: &Theme, alpha: u8) -> Color {
     theme.resolve(ColorRole::Accent).with_alpha(alpha)
 }
 
 /// R962 §5.22 §5.36 — paint tag for the current-line background band
 /// [`view_field`] emits when [`TextFieldStyle::current_line_alpha`] is
-/// non-zero, derived from the field's own paint `tag`. A consumer reads
-/// the band's rendered rect from a snapshot by this exact tag (the AI
-/// side grounds "which row is active" from the painted frame, the same
-/// contract the R957 gutter band's tag provides) — produced here and
-/// consumed there through one helper, so the two never drift. The band
-/// is a passive paint node (no `#` composite separator → the
-/// `InputRouter` never routes to it); the `-current-line` suffix cannot
-/// collide with the field's own `tag` or its `{tag}#…` send sub-tags.
+/// non-zero, derived from the field's own paint `tag`. The in-crate SSOT
+/// for the `-current-line` suffix, so the emitter and the band tests
+/// cannot drift on it. A snapshot consumer grounds "which row is active"
+/// by this tag (the same idea as the R957 gutter band); a cross-language
+/// consumer such as the demo mirrors the `{tag}-current-line` format
+/// directly. The band is a passive paint node — `pointer_transparent` with
+/// no `#` composite separator, so the `InputRouter` never routes to it; its
+/// suffix cannot collide with the field's own `tag` or its `{tag}#…`
+/// send sub-tags.
+///
+/// R965.1 — `pub(crate)`, not `pub`: its only callers are the emitter
+/// [`view_field`] and the in-crate band tests (no external Rust consumer
+/// exists; the demo hardcodes the literal). Re-export it `pub` if and when
+/// an out-of-crate embedder needs to introspect the band by tag (the
+/// R952.1 "no dead `pub` API" discipline).
 #[must_use]
-pub fn current_line_band_tag(field_tag: &str) -> String {
+pub(crate) fn current_line_band_tag(field_tag: &str) -> String {
     format!("{field_tag}-current-line")
 }
 
@@ -861,7 +876,16 @@ pub fn view_field(
             .with_layout(
                 LayoutStyle::new()
                     .with_size(Size::px(inner_w, caret_box_height))
-                    .with_absolute_position(inner_pad, band_top),
+                    .with_absolute_position(inner_pad, band_top)
+                    // R965.1 — the band is a passive decoration: `pointer_transparent`
+                    // so a click on the current line falls through to the field's
+                    // caret hit-test (it is the one *tagged* overlay in the field, so
+                    // unlike the untagged selection / find bands it could otherwise be
+                    // the router's resolved hit-target; the R954 overlay stance + the
+                    // R964 gauge-fill precedent). It works today only because the
+                    // untagged text node paints on top and shadows it — this makes the
+                    // non-interception explicit rather than incidental.
+                    .with_pointer_transparent(true),
             ),
         ));
     }

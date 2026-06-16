@@ -43639,6 +43639,112 @@
         "builders + WAI-ARIA role reasoning (a substrate-first sub-round)."
       ]
     },
+    "R965.1": {
+      "decision_summary": "Adversarial session-review clearance of R962+R964+R965 (2 parallel reviewers + my grep+read + live click; 8th review). Clear-cut fixes: R962 current-line band -> pointer_transparent (the one tagged passive overlay, safe only by text-node shadowing; R954/R964 stance); current_line_band_tag pub -> pub(crate) (R952.1 dead-pub-API, only emitter+tests call it); harden r965_reset_row test (dirty a 2nd column to catch a single-column bug). Honest doc: 4 *_fill seams byte-identical because ColorRole has no per-role highlight palette yet (kept, not merged); reset_row/reset_col are RPC verbs not shipped UI affordances; property-grid reset_all per-field-through-funnel is KISS+single-SSOT-write for its fixed-16 model (NOT the data-grid dynamic O(cells^2) cost) -> no change, framing corrected. Verified clean (no action): with_alpha lift complete, R894 deferral honest, gauge transparency load-bearing, introspection symmetric.",
+      "changes_bullets": [
+        "R962 current-line band: add pointer_transparent. It is the one TAGGED",
+        "passive overlay in view_field, so unlike the untagged selection/find",
+        "bands it could be the router's resolved hit-target; it worked only",
+        "because the untagged text node paints on top and shadows it. Make the",
+        "non-interception explicit (the R954 overlay + R964 gauge-fill stance).",
+        "current_line_band_tag: pub -> pub(crate). Its only callers are the",
+        "emitter view_field + in-crate tests; no external Rust consumer exists",
+        "(the demo hardcodes the literal). R952.1 no-dead-pub-API discipline.",
+        "Honest doc: the 4 *_fill fns are byte-identical because ColorRole has no",
+        "dedicated selection/find/line-highlight roles to diverge into YET; kept",
+        "as named seams (real editor themes distinguish them), merge if the",
+        "palette never lands.",
+        "R965 reset_row/reset_col docstrings: name them RPC verbs (a header /",
+        "context-menu control is a follow-up), not the shipped Qt/Excel affordance.",
+        "Harden r965_reset_row test: dirty a SECOND column in the reset row so a",
+        "single-column reset_row bug is caught (was Count-col-only)."
+      ],
+      "verification_bullets": [
+        "Live click re-test: clicking the current line (band now transparent)",
+        "still repositions the caret (17 -> 27) — confirmed the band is not a",
+        "hit target and caret hit-test falls through.",
+        "workspace test green; clippy -D pedantic 0 (fixed a doc_lazy_continuation",
+        "the reworded doc introduced).",
+        "Touched demos PASS: r962_textarea_current_line, r957/r956 gutter,",
+        "r765 softwrap, r965 + r960 data-grid reset; hardened r965 unit test green.",
+        "Adversarial session-review = 2 parallel reviewers + my own grep+read +",
+        "live click. 8th review; again found real MED items (band transparency,",
+        "dead-pub-API, affordance over-claim, thin test) -> self-assessment stays",
+        "suspect until grep+read+live-test verified."
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.36",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "property-grid reset_all / reset_struct reset per-field through the single",
+        "set_value funnel (one Vec clone per field). This is NOT the data-grid's",
+        "dynamic O(cells^2) cost the R961.1 batching fixed: the model is FIXED 16",
+        "fields, and per-field-through-the-funnel is the KISS + single-SSOT-write",
+        "structure (batching would add a 2nd bulk write path bypassing set_value).",
+        "Earlier \"divergent\" framing was imprecise; corrected: same shape, fixed-",
+        "trivial scale, per-field is correct here. No change.",
+        "row/col-header reset visible affordance (+ its a11y button) is a genuine",
+        "follow-up: reset_row/reset_col/reset_all are all RPC-only verbs; the only",
+        "painted reset control is the per-cell dot.",
+        "a11y valuemin/valuemax/valuenow for bounded numeric widgets remains the",
+        "high-value next axis, needs a pinion-a11y GridCell value-range substrate",
+        "first (R965 audit) -> R966 candidate."
+      ],
+      "publishable_decision_summary": "Adversarial session-review clearance of R962+R964+R965 (2 parallel reviewers + my grep+read + live click; 8th review). Clear-cut fixes: R962 current-line band -> pointer_transparent (the one tagged passive overlay, safe only by text-node shadowing; R954/R964 stance); current_line_band_tag pub -> pub(crate) (R952.1 dead-pub-API, only emitter+tests call it); harden r965_reset_row test (dirty a 2nd column to catch a single-column bug). Honest doc: 4 *_fill seams byte-identical because ColorRole has no per-role highlight palette yet (kept, not merged); reset_row/reset_col are RPC verbs not shipped UI affordances; property-grid reset_all per-field-through-funnel is KISS+single-SSOT-write for its fixed-16 model (NOT the data-grid dynamic O(cells^2) cost) -> no change, framing corrected. Verified clean (no action): with_alpha lift complete, R894 deferral honest, gauge transparency load-bearing, introspection symmetric.",
+      "publishable_changes_bullets": [
+        "R962 current-line band: add pointer_transparent. It is the one TAGGED",
+        "passive overlay in view_field, so unlike the untagged selection/find",
+        "bands it could be the router's resolved hit-target; it worked only",
+        "because the untagged text node paints on top and shadows it. Make the",
+        "non-interception explicit (the R954 overlay + R964 gauge-fill stance).",
+        "current_line_band_tag: pub -> pub(crate). Its only callers are the",
+        "emitter view_field + in-crate tests; no external Rust consumer exists",
+        "(the demo hardcodes the literal). R952.1 no-dead-pub-API discipline.",
+        "Honest doc: the 4 *_fill fns are byte-identical because ColorRole has no",
+        "dedicated selection/find/line-highlight roles to diverge into YET; kept",
+        "as named seams (real editor themes distinguish them), merge if the",
+        "palette never lands.",
+        "R965 reset_row/reset_col docstrings: name them RPC verbs (a header /",
+        "context-menu control is a follow-up), not the shipped Qt/Excel affordance.",
+        "Harden r965_reset_row test: dirty a SECOND column in the reset row so a",
+        "single-column reset_row bug is caught (was Count-col-only)."
+      ],
+      "publishable_verification_bullets": [
+        "Live click re-test: clicking the current line (band now transparent)",
+        "still repositions the caret (17 -> 27) — confirmed the band is not a",
+        "hit target and caret hit-test falls through.",
+        "workspace test green; clippy -D pedantic 0 (fixed a doc_lazy_continuation",
+        "the reworded doc introduced).",
+        "Touched demos PASS: r962_textarea_current_line, r957/r956 gutter,",
+        "r765 softwrap, r965 + r960 data-grid reset; hardened r965 unit test green.",
+        "Adversarial session-review = 2 parallel reviewers + my own grep+read +",
+        "live click. 8th review; again found real MED items (band transparency,",
+        "dead-pub-API, affordance over-claim, thin test) -> self-assessment stays",
+        "suspect until grep+read+live-test verified."
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.36",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "property-grid reset_all / reset_struct reset per-field through the single",
+        "set_value funnel (one Vec clone per field). This is NOT the data-grid's",
+        "dynamic O(cells^2) cost the R961.1 batching fixed: the model is FIXED 16",
+        "fields, and per-field-through-the-funnel is the KISS + single-SSOT-write",
+        "structure (batching would add a 2nd bulk write path bypassing set_value).",
+        "Earlier \"divergent\" framing was imprecise; corrected: same shape, fixed-",
+        "trivial scale, per-field is correct here. No change.",
+        "row/col-header reset visible affordance (+ its a11y button) is a genuine",
+        "follow-up: reset_row/reset_col/reset_all are all RPC-only verbs; the only",
+        "painted reset control is the per-cell dot.",
+        "a11y valuemin/valuemax/valuenow for bounded numeric widgets remains the",
+        "high-value next axis, needs a pinion-a11y GridCell value-range substrate",
+        "first (R965 audit) -> R966 candidate."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
