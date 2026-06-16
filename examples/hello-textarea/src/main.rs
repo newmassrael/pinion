@@ -135,7 +135,7 @@
 use pinion_a11y::{toolbar_button_nodes, AccessNode, ToolbarControl, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
-use pinion_core::scene::{ContainerNode, Rect, StyleRun, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, ScrollNode, StyleRun, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
     LayoutStyle, Size, TextAlign, TextStyle,
@@ -150,7 +150,7 @@ use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
 use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_platform_clipboard::use_app_clipboard;
 use pinion_shell::{vello_renderer_impl, WidgetView};
-use pinion_text::CaretRect;
+use pinion_text::{CaretRect, VisualLineMetric};
 use pinion_widget_paint::text_field as tf_paint;
 use pinion_widget_paint::toolbar::composite_item_tag;
 
@@ -159,6 +159,9 @@ vello_renderer_impl!(HelloTextAreaRenderer, HelloTextAreaRendererError);
 
 /// Paint-root + input-router + reactive-cache tag for the textarea.
 const TA_TAG: &str = "main_textarea";
+/// R956 — the line-number gutter box tag; each number is the composite
+/// `ta_gutter#<n>` so the demo can address an individual line number.
+const GUTTER_TAG: &str = "ta_gutter";
 /// Shared [`ThemeProvider`] cache key (matches the gallery `"app"`
 /// convention so a host binding shares one provider).
 const THEME_TAG: &str = "app";
@@ -412,6 +415,109 @@ fn toolbar_active_style(edit: &TextEditState) -> Option<TextStyle> {
 // text-field binding (the lifted wrapper also forwards the
 // selection-aware `copy_to` / `paste_from`).
 
+/// R956 — decimal digit count of `n` (clamped to ≥ 1), sizing the gutter
+/// wide enough for the highest line number it shows.
+fn digit_count(n: usize) -> u32 {
+    n.max(1).ilog10() + 1
+}
+
+/// R956 §5.36 §5.22 — the left line-number gutter, structurally a mirror
+/// of the field's own multi-line `Scene::Scroll`: a fixed `gutter_w ×
+/// field_h` box whose padded inner scroll viewport carries one
+/// right-aligned number per **logical** line, absolute-positioned at that
+/// line's layout-space `y` and scrolled by the *same*
+/// [`tf_paint::field_scroll_offset`] the field applies — so the numbers
+/// track the scrolled text rows pixel-for-pixel.
+///
+/// `lines` is the [`tf_paint::field_visual_lines`] readout (the painted
+/// layout's per-visual-line metrics): soft-wrapped continuation rows have
+/// [`VisualLineMetric::starts_logical_line`] `false` and so get no number,
+/// the canonical "one number per logical line, on its first row" gutter.
+///
+/// The gutter mirrors the field's scroll offset *manually*
+/// (`with_offset(scroll_y)`) rather than via the R859 linked-scroll
+/// follower substrate (`from_state` + `as_follower`): the field's own
+/// `Scene::Scroll` is a manual-offset, *untagged* node (built inside
+/// `view_field`, not a `from_state` primary), and `from_state` would
+/// derive the field's `ScrollState` tag (`main_textarea`) onto the gutter
+/// node — colliding with the field container's tag. A `state: None` scroll
+/// is already skipped by `update_scroll_state_bounds`, so this gutter is a
+/// passive slider (it never publishes bounds) exactly like a follower,
+/// without the tag tangle — the path consistent with how the field itself
+/// scrolls.
+fn gutter(
+    theme: &pinion_core::theme::Theme,
+    style: &tf_paint::TextFieldStyle,
+    lines: &[VisualLineMetric],
+    scroll_y: u32,
+) -> Scene {
+    let pad = style.field_pad;
+    let logical_count = lines.iter().filter(|l| l.starts_logical_line).count();
+    // ~0.6em per digit + one digit of right margin so the numbers never
+    // touch the field edge.
+    let digit_w = (style.font_size_px * 3) / 5;
+    let inner_w = (digit_count(logical_count) + 1) * digit_w;
+    let gutter_w = inner_w + 2 * pad;
+    let inner_h = style.field_h.saturating_sub(2 * pad);
+    // The scroll content must be as tall as the field's content (the last
+    // line's bottom) so the gutter's `Scene::Scroll` has the same scroll
+    // range as the field — an all-absolute child contributes no flow
+    // height, so the explicit size is what lets it scroll in lock-step.
+    let content_h =
+        lines.last().map_or(0, |m| tf_paint::saturating_f32_to_u32(m.y + m.height));
+
+    let num_style = TextStyle::new()
+        .with_size_px(style.font_size_px)
+        .with_fg(theme.resolve(ColorRole::OnSurfaceMuted))
+        .with_align(TextAlign::End);
+
+    let mut logical_n: u32 = 0;
+    let mut numbers: Vec<Scene> = Vec::new();
+    for m in lines {
+        if !m.starts_logical_line {
+            continue;
+        }
+        logical_n += 1;
+        let top = tf_paint::saturating_f32_to_u32(m.y);
+        let row_h = tf_paint::saturating_f32_to_u32(m.height).max(style.font_size_px);
+        numbers.push(Scene::Text(
+            TextNode::styled(format!("{logical_n}"), Rect::default(), num_style.clone())
+                .with_tag(composite_item_tag(GUTTER_TAG, logical_n as usize))
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_size(Size::px(inner_w, row_h))
+                        .with_absolute_position(0, top),
+                ),
+        ));
+    }
+
+    let content = Scene::Container(
+        ContainerNode::new(numbers)
+            .with_layout(LayoutStyle::new().with_size(Size::px(inner_w, content_h))),
+    );
+    #[allow(
+        clippy::cast_possible_wrap,
+        reason = "scroll_y <= content_h; UI content height never approaches i32::MAX"
+    )]
+    let offset_y = scroll_y as i32;
+    let scroll = Scene::Scroll(
+        ScrollNode::new(Rect::new(0, 0, inner_w, inner_h), content).with_offset(0, offset_y),
+    );
+
+    Scene::Container(
+        ContainerNode::new(vec![scroll])
+            .with_tag(GUTTER_TAG.to_owned())
+            .with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)))
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Start)
+                    .with_size(Size::px(gutter_w, style.field_h))
+                    .with_padding(Rect::new(pad, pad, pad, pad)),
+            ),
+    )
+}
+
 /// View: title + the multi-line field + a status line mirroring the
 /// live `(state, caret, selection)` so the AI side verifies the same
 /// data the visible field renders via `scene/query`.
@@ -430,6 +536,22 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         &theme,
         &ta_style(),
         "Multi-line text input",
+    );
+
+    // R956 §5.36 §5.22 — the line-number gutter. Built AFTER `view_field`
+    // so `field_scroll_offset` reads the offset the paint just stored, and
+    // from `field_visual_lines` (the same shaped layout `view_field`
+    // painted) so the numbers align row-for-row with the text. Placed left
+    // of the field in a top-aligned Row.
+    let lines = tf_paint::field_visual_lines(TA_TAG, interaction, caret_byte, &theme, &ta_style());
+    let scroll_y = tf_paint::field_scroll_offset(TA_TAG, &ta_style());
+    let editor = Scene::Container(
+        ContainerNode::new(vec![gutter(&theme, &ta_style(), &lines, scroll_y), field])
+            .with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Start),
+            ),
     );
 
     let title = Scene::Text(TextNode::styled(
@@ -471,7 +593,7 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     ));
 
     Scene::Container(
-        ContainerNode::new(vec![title, field, toolbar(&theme, bold_active, italic_active), status])
+        ContainerNode::new(vec![title, editor, toolbar(&theme, bold_active, italic_active), status])
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(
                 LayoutStyle::new()

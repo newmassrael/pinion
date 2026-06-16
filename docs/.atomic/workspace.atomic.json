@@ -42969,6 +42969,56 @@
         "the honest deferred axes are unchanged by this clearance: live marquee drag (capture+pixel->cell), pointer click-to-fold (TextFieldExternal click->fold path), editable fold viewer"
       ]
     },
+    "R956": {
+      "decision_summary": "line-number gutter for the multi-line textarea: visual_line_metrics substrate + field_visual_lines reader + scroll-synced gutter",
+      "changes_bullets": [
+        "visual_line_metrics(layout) -> Vec<VisualLineMetric> in pinion-text: per-visual-line y / height + flag",
+        "VisualLineMetric non_exhaustive {y, height, starts_logical_line}; soft-wrap rows leave flag false",
+        "tf_paint::field_visual_lines reads the same field_shaping layout view_field paints (cache hit, aligned)",
+        "tf_paint::saturating_f32_to_u32 + field_scroll_offset now pub: the gutter is the first external consumer",
+        "hello-textarea: left line-number gutter, one right-aligned number per logical line, scroll-synced to field"
+      ],
+      "verification_bullets": [
+        "pinion-text +7 tests (count / empty / soft-wrap=1-logical / metric y == caret y alignment)",
+        "pinion-widget-paint +2 tests (field_visual_lines logical lines + soft-wrap one number)",
+        "demo r956_textarea_line_gutter.py 36 assertions PASS (alignment, soft-wrap=1, scroll lock-step)",
+        "cargo test --workspace green; clippy -D pedantic 0; 10 hello-textarea demos no regression",
+        "gutter geometry read from paint snapshot abs_rects (scroll-translated), grounded not inferred"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "pointer click-to-go-to-line on a gutter number deferred (needs ta_gutter click route)",
+        "gutter mirrors field scroll manually; R859 follower N/A (field scroll node is manual + untagged)",
+        "digit_count kept local to the example (1 consumer, trivial sizing, not framework surface)"
+      ],
+      "publishable_decision_summary": "line-number gutter for the multi-line textarea: visual_line_metrics substrate + field_visual_lines reader + scroll-synced gutter",
+      "publishable_changes_bullets": [
+        "visual_line_metrics(layout) -> Vec<VisualLineMetric> in pinion-text: per-visual-line y / height + flag",
+        "VisualLineMetric non_exhaustive {y, height, starts_logical_line}; soft-wrap rows leave flag false",
+        "tf_paint::field_visual_lines reads the same field_shaping layout view_field paints (cache hit, aligned)",
+        "tf_paint::saturating_f32_to_u32 + field_scroll_offset now pub: the gutter is the first external consumer",
+        "hello-textarea: left line-number gutter, one right-aligned number per logical line, scroll-synced to field"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-text +7 tests (count / empty / soft-wrap=1-logical / metric y == caret y alignment)",
+        "pinion-widget-paint +2 tests (field_visual_lines logical lines + soft-wrap one number)",
+        "demo r956_textarea_line_gutter.py 36 assertions PASS (alignment, soft-wrap=1, scroll lock-step)",
+        "cargo test --workspace green; clippy -D pedantic 0; 10 hello-textarea demos no regression",
+        "gutter geometry read from paint snapshot abs_rects (scroll-translated), grounded not inferred"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pointer click-to-go-to-line on a gutter number deferred (needs ta_gutter click route)",
+        "gutter mirrors field scroll manually; R859 follower N/A (field scroll node is manual + untagged)",
+        "digit_count kept local to the example (1 consumer, trivial sizing, not framework surface)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

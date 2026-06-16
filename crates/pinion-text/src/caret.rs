@@ -27,7 +27,7 @@
 //! decides clamp policy).
 
 use crate::Layout;
-use parley::{Affinity, Cursor, Selection};
+use parley::{Affinity, BreakReason, Cursor, Selection};
 
 /// R762 §5.36 §5.38 — closed-form **pixel → byte** hit-test: the inverse
 /// of [`caret_rect_for_byte_offset`]. Maps a layout-space point
@@ -349,6 +349,95 @@ pub fn byte_offset_for_line_boundary(layout: &Layout, byte: usize, end: bool) ->
     moved.focus().index()
 }
 
+/// R956 §5.36 §5.22 — geometry of one **visual line** in a shaped
+/// [`Layout`]: its top edge, box height, and whether it begins a new
+/// *logical* (hard-`\n`-delimited) line.
+///
+/// A "visual line" is parley's [`parley::Line`] — the unit a layout
+/// breaks into, counting soft-wrap rows separately. A logical line that
+/// soft-wraps into three displayed rows is three visual lines, only the
+/// first of which has [`starts_logical_line`](Self::starts_logical_line)
+/// set — exactly the row a line-number gutter paints its number on.
+///
+/// `y` / `height` are layout-space f32 (parley `block_min_coord` and the
+/// `block_max_coord - block_min_coord` span), the same coordinate frame
+/// [`caret_rect_for_byte_offset`] returns — a caret on visual line *i*
+/// shares that line's `y` and `height`, so a gutter built from these
+/// metrics aligns row-for-row with the painted glyphs and the caret box.
+///
+/// `#[non_exhaustive]` matches the [`CaretRect`] convention: a later
+/// field (baseline offset, first byte of the line) lands additively
+/// without a `SemVer` major break.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VisualLineMetric {
+    /// Top edge of the visual line box in layout-space pixels
+    /// (parley `LineMetrics::block_min_coord`).
+    pub y: f32,
+    /// Height of the visual line box
+    /// (`block_max_coord - block_min_coord`) — the full line box a
+    /// gutter number / current-line highlight spans.
+    pub height: f32,
+    /// `true` when this visual line is the **first** row of a logical
+    /// (hard-`\n`-delimited) line. The first line of the layout starts
+    /// logical line 0; any line whose predecessor terminated at an
+    /// explicit `\n` ([`parley::BreakReason::Explicit`]) starts the next
+    /// one. Soft-wrap (`Regular`) and long-word (`Emergency`) breaks
+    /// continue the current logical line, so their following rows leave
+    /// this `false` — the gutter shows one number per logical line, on
+    /// its first displayed row.
+    pub starts_logical_line: bool,
+}
+
+/// R956 §5.36 §5.22 — per-**visual-line** geometry for a shaped
+/// [`Layout`], one [`VisualLineMetric`] per displayed row in top-to-bottom
+/// order. Wraps [`parley::Layout::lines`] + [`parley::Line::metrics`] /
+/// [`break_reason`](parley::Line::break_reason).
+///
+/// This is the line-metrics sibling of the caret / selection geometry
+/// helpers: where [`caret_rect_for_byte_offset`] answers "where is byte
+/// *b*?" and [`selection_rects_for_range`] answers "which rows does range
+/// *[s, e)* cover?", this answers "where is every line?" — the substrate a
+/// line-number gutter, a current-line highlight, or viewport row-culling
+/// reads. The returned `y` / `height` share the layout-space frame of the
+/// caret rect, so a gutter aligns with the painted text without a second
+/// shaping pass (the caller borrows the same shared
+/// [`LayoutCache`](crate::LayoutCache) `Layout`).
+///
+/// An empty layout (no text) still yields one metric: parley lays out a
+/// single empty line carrying the resolved style's line box, so a gutter
+/// shows line "1" for an empty document.
+///
+/// ## Example
+///
+/// ```ignore
+/// // "first\nsecond" shaped via LayoutCache::layout:
+/// let lines = pinion_text::visual_line_metrics(layout);
+/// assert_eq!(lines.len(), 2);                       // two visual lines
+/// assert!(lines[0].starts_logical_line);            // line 1
+/// assert!(lines[1].starts_logical_line);            // line 2 (after \n)
+/// assert!(lines[1].y > lines[0].y);                 // second sits lower
+/// ```
+#[must_use]
+pub fn visual_line_metrics(layout: &Layout) -> Vec<VisualLineMetric> {
+    let mut out = Vec::new();
+    // The first line always opens logical line 0; thereafter a line opens
+    // a new logical line iff its predecessor was terminated by a hard
+    // `\n` (parley `BreakReason::Explicit`). Soft-wrap / emergency breaks
+    // continue the current logical line.
+    let mut starts_logical_line = true;
+    for line in layout.lines() {
+        let metrics = line.metrics();
+        out.push(VisualLineMetric {
+            y: metrics.block_min_coord,
+            height: metrics.block_max_coord - metrics.block_min_coord,
+            starts_logical_line,
+        });
+        starts_logical_line = line.break_reason() == BreakReason::Explicit;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.b.2 §5.36 §5.38 — `caret_rect_for_byte_offset` regression
@@ -358,7 +447,7 @@ mod tests {
 
     use super::{
         byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
-        caret_rect_for_byte_offset, selection_rects_for_range, CaretRect,
+        caret_rect_for_byte_offset, selection_rects_for_range, visual_line_metrics, CaretRect,
     };
     use crate::LayoutCache;
     use pinion_core::style::TextStyle;
@@ -546,6 +635,110 @@ mod tests {
              (home {home}, end {end}, len {})",
             text.len(),
         );
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // R956 §5.36 §5.22 — visual_line_metrics (per-visual-line geometry)
+    // ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r956_visual_line_metrics_single_line_is_one_logical_start() {
+        let mut cache = shape("hello");
+        let layout = layout_for(&mut cache, "hello");
+        let lines = visual_line_metrics(layout);
+        assert_eq!(lines.len(), 1, "one visual line for unwrapped single line");
+        assert!(lines[0].starts_logical_line, "the only line opens logical line 0");
+        assert!(lines[0].height > 0.0, "line box has positive height");
+    }
+
+    #[test]
+    fn r956_visual_line_metrics_empty_layout_still_has_one_line() {
+        // An empty document shows gutter "1": parley lays out one empty
+        // line carrying the resolved style's line box.
+        let mut cache = shape("");
+        let layout = layout_for(&mut cache, "");
+        let lines = visual_line_metrics(layout);
+        assert_eq!(lines.len(), 1, "empty text is still one (empty) line");
+        assert!(lines[0].starts_logical_line);
+    }
+
+    #[test]
+    fn r956_visual_line_metrics_counts_hard_lines_in_order() {
+        // "abc\nxyz" — two logical lines, each its own visual line, both
+        // logical-line starts, the second below the first.
+        let mut cache = shape("abc\nxyz");
+        let layout = layout_for(&mut cache, "abc\nxyz");
+        let lines = visual_line_metrics(layout);
+        assert_eq!(lines.len(), 2, "two hard lines = two visual lines");
+        assert!(lines[0].starts_logical_line && lines[1].starts_logical_line);
+        assert!(lines[1].y > lines[0].y, "the second line sits lower (y {} > {})", lines[1].y, lines[0].y);
+    }
+
+    #[test]
+    fn r956_visual_line_metrics_empty_line_between_is_its_own_logical_line() {
+        // "a\n\nb" — three logical lines including the blank middle one,
+        // so a gutter numbers 1 / 2 / 3 (the blank line keeps its number).
+        let mut cache = shape("a\n\nb");
+        let layout = layout_for(&mut cache, "a\n\nb");
+        let lines = visual_line_metrics(layout);
+        assert_eq!(lines.len(), 3, "the blank middle line is its own visual line");
+        assert!(
+            lines.iter().all(|l| l.starts_logical_line),
+            "every hard-break line opens a logical line",
+        );
+    }
+
+    #[test]
+    fn r956_visual_line_metrics_soft_wrap_continues_one_logical_line() {
+        // One hard line that soft-wraps into ≥2 visual rows: only the
+        // first row is a logical-line start, so a gutter paints a single
+        // number for the wrapped paragraph.
+        let text = "the quick brown fox jumps over the lazy dog";
+        let mut cache = LayoutCache::new();
+        let style = pinion_core::style::TextStyle::default();
+        let _ = cache.layout(text, &style, Some(90));
+        let layout = cache.layout(text, &style, Some(90));
+        let lines = visual_line_metrics(layout);
+        assert!(lines.len() >= 2, "the long line wraps onto ≥2 rows (got {})", lines.len());
+        assert!(lines[0].starts_logical_line, "the first row opens the logical line");
+        assert!(
+            lines[1..].iter().all(|l| !l.starts_logical_line),
+            "soft-wrapped continuation rows do not open a new logical line",
+        );
+        let logical = lines.iter().filter(|l| l.starts_logical_line).count();
+        assert_eq!(logical, 1, "the whole wrapped paragraph is exactly one logical line");
+    }
+
+    #[test]
+    fn r956_visual_line_metrics_y_aligns_with_caret_rect() {
+        // The gutter aligns with the painted glyphs because the line
+        // metric `y` shares the caret rect's layout-space frame: the y of
+        // a line equals the y of a caret placed at that line's first byte.
+        let text = "abc\nxyz";
+        let mut cache = shape(text);
+        let layout = layout_for(&mut cache, text);
+        let lines = visual_line_metrics(layout);
+        // line 0 first byte = 0, line 1 first byte = 4 ("abc\n").
+        for (line_ix, byte) in [(0usize, 0usize), (1, 4)] {
+            let caret = caret_rect_for_byte_offset(layout, byte, 1.0);
+            assert!(
+                (lines[line_ix].y - caret.y).abs() < 0.5,
+                "line {line_ix} metric y {} matches caret y {} at byte {byte}",
+                lines[line_ix].y,
+                caret.y,
+            );
+        }
+    }
+
+    #[test]
+    fn r956_visual_line_metric_is_copy_value() {
+        let lines = {
+            let mut cache = shape("x");
+            visual_line_metrics(layout_for(&mut cache, "x"))
+        };
+        let first = lines[0];
+        let copy = first; // Copy
+        assert_eq!(first, copy);
     }
 
     #[test]

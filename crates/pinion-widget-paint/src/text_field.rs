@@ -67,7 +67,8 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Color, CompositionEvent, Scene, WidgetStateName};
 use pinion_text::{
     byte_offset_for_line_boundary, byte_offset_for_line_move, byte_offset_for_point,
-    caret_rect_for_byte_offset, selection_rects_for_range, CaretRect, LayoutCache,
+    caret_rect_for_byte_offset, selection_rects_for_range, visual_line_metrics, CaretRect,
+    LayoutCache, VisualLineMetric,
 };
 
 /// (R657 §5.16) Owner-cache key for the shared
@@ -424,7 +425,15 @@ fn preedit_underline(theme: &Theme) -> Color {
 /// R56.1.b.2 test battery, but the saturating-cast convention stays
 /// the textbook narrowing seam per
 /// [[r56-1-b-2-parley-f32-narrowing]]).
-fn saturating_f32_to_u32(v: f32) -> u32 {
+///
+/// R956 — `pub` so a binding rendering a side affordance from the *same*
+/// layout-space metrics the field paints (the line-number gutter, placing
+/// numbers at each [`field_visual_lines`] `y`) rounds f32 → u32 with the
+/// *identical* seam `view_field` uses for the caret / band rects — so the
+/// gutter and the glyph rows land on the same pixel rows, not a rounding
+/// apart.
+#[must_use]
+pub fn saturating_f32_to_u32(v: f32) -> u32 {
     #[allow(
         clippy::cast_precision_loss,
         reason = "u32::MAX -> f32 rounds to a single saturating ceiling"
@@ -553,7 +562,15 @@ fn scroll_into_view(
 /// fields never scroll (always 0), so they never touch the
 /// [`ScrollState`] cache slot. The paint view fn is the sole writer
 /// (via [`scroll_into_view`]); this is a pure read.
-fn field_scroll_offset(tag: &'static str, style: &TextFieldStyle) -> u32 {
+///
+/// R956 — `pub` so a binding rendering a side affordance that must track
+/// the field's scroll (the line-number gutter, which mirrors the field's
+/// `Scene::Scroll` offset so its numbers stay aligned with the scrolled
+/// text rows) reads the same SSOT offset the paint applied. Call *after*
+/// [`view_field`] in the same view pass so the value is the current
+/// frame's (the paint view fn writes it, this reads it back).
+#[must_use]
+pub fn field_scroll_offset(tag: &'static str, style: &TextFieldStyle) -> u32 {
     if !style.multi_line {
         return 0;
     }
@@ -1142,6 +1159,57 @@ pub fn byte_for_field_point(
     byte_offset_for_point(layout, local_x, local_y + scroll_y_f)
 }
 
+/// R956 §5.36 §5.22 — per-**visual-line** metrics for the field's painted
+/// content, the substrate a binding's line-number gutter reads. Mirrors
+/// [`ime_caret_rect_for`] / [`byte_for_field_point`]: shapes against the
+/// *identical* [`field_shaping`] `(effective_text, style, width)` key as
+/// [`view_field`] (a same-frame [`LayoutCache`] hit, no re-shape), so the
+/// returned line `y` / `height` are in the same layout-space frame as the
+/// painted glyphs and the caret box — a gutter built from them aligns
+/// row-for-row with the text.
+///
+/// Returns one [`VisualLineMetric`] per displayed row (soft-wrap rows
+/// counted separately, only the first flagged
+/// [`starts_logical_line`](VisualLineMetric::starts_logical_line)), in
+/// layout-space **content** coordinates (relative to the text origin, not
+/// the field box): the gutter applies the field's padding when it places
+/// its column and the field's [`field_scroll_offset`] when it scrolls,
+/// exactly as [`view_field`] nests the painted text at `(pad, pad)` inside
+/// a `Scene::Scroll`.
+///
+/// `caret_byte` threads through [`field_shaping`] (the IME preedit splice)
+/// so the metrics describe the same `effective_text` the field paints
+/// during composition — the gutter tracks the displayed rows, not the
+/// committed buffer.
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope (same shape as
+/// [`view_field`] — only test paths trigger).
+#[must_use]
+pub fn field_visual_lines(
+    tag: &'static str,
+    interaction: TextFieldState,
+    caret_byte: u32,
+    theme: &Theme,
+    style: &TextFieldStyle,
+) -> Vec<VisualLineMetric> {
+    // R762 — shared `field_shaping` SSOT: identical (text, style, width)
+    // key as `view_field` so the line metrics address the painted Layout.
+    let FieldShaping {
+        effective_text,
+        text_style,
+        max_width,
+        runs,
+        ..
+    } = field_shaping(tag, caret_byte as usize, interaction, theme, style);
+
+    let layout_cache = use_text_field_layout_cache();
+    let mut cache = layout_cache.borrow_mut();
+    let layout = cache.layout_with_runs(effective_text.as_str(), &text_style, &runs, max_width);
+    visual_line_metrics(layout)
+}
+
 /// R764 §5.36 §5.22 / R766 — vertical caret navigation for a multi-line
 /// field: resolve the byte offset after moving the caret `delta` visual
 /// lines (`ArrowUp` = `-1`, `ArrowDown` = `+1`) from the field's current
@@ -1699,6 +1767,46 @@ mod tests {
                 flat_lines, 1,
                 "unbounded layout keeps the no-newline line on one visual line",
             );
+        });
+    }
+
+    #[test]
+    fn r956_field_visual_lines_reports_logical_lines_aligned_with_paint() {
+        // R956 — the gutter substrate: `field_visual_lines` shapes the
+        // SAME `field_shaping` layout `view_field` paints, so its line
+        // metrics describe the painted rows. Three hard lines → three
+        // visual lines, each a logical-line start, in increasing y.
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "ta_gutter";
+            use_text_edit_state(tag).set_text("alpha\nbeta\ngamma".to_owned());
+            let style = TextFieldStyle::m3_multiline(5);
+            let lines = field_visual_lines(tag, TextFieldState::Editing, 0, &theme, &style);
+            assert_eq!(lines.len(), 3, "three hard lines = three visual lines");
+            assert!(
+                lines.iter().all(|l| l.starts_logical_line),
+                "each hard line opens a logical line (gutter numbers 1/2/3)",
+            );
+            assert!(lines[1].y > lines[0].y && lines[2].y > lines[1].y, "rows increase in y");
+        });
+    }
+
+    #[test]
+    fn r956_field_visual_lines_soft_wrap_keeps_one_logical_number() {
+        // R956 — a long no-`\n` line wraps onto multiple visual rows, but
+        // only the first is a logical-line start, so the gutter paints a
+        // single number for the wrapped paragraph.
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "ta_gutter_wrap";
+            let long = "the quick brown fox jumps over the lazy dog repeatedly today";
+            use_text_edit_state(tag).set_text(long.to_owned());
+            let style = TextFieldStyle::m3_multiline(3);
+            let lines =
+                field_visual_lines(tag, TextFieldState::Editing, 0, &theme, &style);
+            assert!(lines.len() > 1, "the long line wraps onto ≥2 rows");
+            let logical = lines.iter().filter(|l| l.starts_logical_line).count();
+            assert_eq!(logical, 1, "one logical line ⇒ one gutter number");
         });
     }
 }
