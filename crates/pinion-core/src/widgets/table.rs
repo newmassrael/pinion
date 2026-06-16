@@ -57,6 +57,24 @@ use crate::widgets::selection;
 use crate::widgets::{IntentEmitter, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
+/// R954 §5.38 §5.40 — what a pointer click selects in a [`Table`], the
+/// pinion analog of Qt `QAbstractItemView::SelectionBehavior`. Orthogonal
+/// to the `SelectRows` cardinality ([`Table::with_multiselect`]); it picks
+/// *what* a click selects (rows vs cells), not *how many*.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectionBehavior {
+    /// Activating a cell selects (washes) its whole **row** — the R707
+    /// single-row / R735 multi-row model (`hello-table`). The default.
+    #[default]
+    SelectRows,
+    /// Activating a cell selects that single **cell**, and `Shift`+click
+    /// grows the rectangle from the pinned anchor — the spreadsheet / Qt
+    /// `SelectItems` model (`hello-cell-select`). The row [`Radio`] state
+    /// is untouched: pointer selection drives the cell rectangle
+    /// ([`Table::select_cell`] / [`Table::extend_cell`]), not row washing.
+    SelectItems,
+}
+
 /// Logical data grid with framework-owned single-row selection. See
 /// module docs for the design rationale.
 ///
@@ -119,6 +137,14 @@ pub struct Table {
     /// other selection here (R730), so a sort repositions the selected
     /// cells without remapping the model.
     cell_anchor: Option<(usize, usize)>,
+    /// R954 §5.38 — what a pointer click selects (rows vs cells). `SelectRows`
+    /// (via [`Self::new`] / [`Self::with_multiselect`]) washes the clicked
+    /// cell's row; `SelectItems` (via [`Self::with_select_items`]) selects the
+    /// clicked cell, `Shift`+click extending the rectangle. Immutable after
+    /// construction (a grid is one behavior, never both — the R953 no-mode
+    /// smell). Only the pointer `send` path reads it; the keyboard / RPC
+    /// `select-cell` / `extend-cell` wire is behavior-agnostic.
+    selection_behavior: SelectionBehavior,
 }
 
 impl Table {
@@ -137,7 +163,28 @@ impl Table {
             sort: None,
             multiselect: false,
             cell_anchor: None,
+            selection_behavior: SelectionBehavior::SelectRows,
         }
+    }
+
+    /// R954 §5.38 — construct a **cell-range** (`SelectItems`) table: a
+    /// pointer click selects the clicked cell (collapsing any rectangle) and
+    /// `Shift`+click extends the rectangle from the anchor, the spreadsheet /
+    /// Qt `SelectItems` model (`hello-cell-select`). The row [`Radio`] state
+    /// is never washed; pointer selection drives [`Self::select_cell`] /
+    /// [`Self::extend_cell`]. All rows start idle with no selection.
+    #[must_use]
+    pub fn with_select_items(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
+        let mut t = Self::new(headers, rows);
+        t.selection_behavior = SelectionBehavior::SelectItems;
+        t
+    }
+
+    /// R954 §5.38 — this table's pointer [`SelectionBehavior`] (`SelectRows`
+    /// unless constructed via [`Self::with_select_items`]).
+    #[must_use]
+    pub fn selection_behavior(&self) -> SelectionBehavior {
+        self.selection_behavior
     }
 
     /// R735 §5.38 — construct a **multi-select** table (the WAI-ARIA
@@ -622,11 +669,27 @@ impl TableExternal {
         Self { em: IntentEmitter::new(Table::with_multiselect(headers, rows)) }
     }
 
+    /// R954 §5.38 — construct a **cell-range** (`SelectItems`) table: a
+    /// pointer click selects the clicked cell and `Shift`+click extends the
+    /// rectangle, the spreadsheet model (`hello-cell-select`). The row
+    /// selection is never washed.
+    #[must_use]
+    pub fn with_select_items(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
+        Self { em: IntentEmitter::new(Table::with_select_items(headers, rows)) }
+    }
+
     /// R735 §5.38 — `true` if this table was constructed via
     /// [`Self::with_multiselect`].
     #[must_use]
     pub fn is_multiselect(&self) -> bool {
         self.em.inner.is_multiselect()
+    }
+
+    /// R954 §5.38 — this table's pointer [`SelectionBehavior`] (`SelectRows`
+    /// unless constructed via [`Self::with_select_items`]).
+    #[must_use]
+    pub fn selection_behavior(&self) -> SelectionBehavior {
+        self.em.inner.selection_behavior()
     }
 
     /// Drive `event` to the cell at `(row, col)`. Queues a `"selected"`
@@ -1094,7 +1157,7 @@ impl ExternalIntrospect for TableExternal {
                     // strips a held-modifier third segment (a hand-rolled
                     // split_once read "PointerUp:c" as the event name and
                     // a Ctrl+click on a cell/header was silently rejected).
-                    let (key, event_name, _mods) =
+                    let (key, event_name, mods) =
                         crate::composite_tag::split_send_payload(s)
                             .ok_or(InvokeError::Rejected)?;
                     // R730 §5.40 / R777.1 — the `'#'`-split sub-key is
@@ -1119,6 +1182,23 @@ impl ExternalIntrospect for TableExternal {
                         crate::composite_tag::GridSendKey::Cell { row, col } => {
                             if row >= self.row_count() || col >= self.col_count() {
                                 return Err(InvokeError::Rejected);
+                            }
+                            // R954 §5.38 — a `SelectItems` grid selects the
+                            // clicked *cell* on the activate edge (PointerUp):
+                            // a plain click collapses the rectangle to it, a
+                            // `Shift`-click extends it from the anchor. Other
+                            // pointer phases are inert — no row washing (the
+                            // R953 SelectRows-on-click smell). The keyboard /
+                            // RPC `select-cell` wire is behavior-agnostic.
+                            if self.selection_behavior() == SelectionBehavior::SelectItems {
+                                if event_name == PointerWireEvent::Up.as_wire_name() {
+                                    if mods.shift {
+                                        self.em.inner.extend_cell(row, col);
+                                    } else {
+                                        self.em.inner.select_cell(row, col);
+                                    }
+                                }
+                                return Ok(IntrospectValue::Null);
                             }
                             let ev = RadioEvent::from_name(event_name)
                                 .ok_or(InvokeError::Rejected)?;
@@ -1809,5 +1889,112 @@ mod tests {
             ext.invoke("clear-cell-selection", IntrospectValue::Text("x".to_string())),
             Err(InvokeError::TypeMismatch),
         ));
+    }
+
+    fn cell_select_items_ext() -> TableExternal {
+        TableExternal::with_select_items(
+            vec!["Name".to_string(), "Round".to_string()],
+            vec![
+                vec!["Tabs".to_string(), "R690".to_string()],
+                vec!["Menu".to_string(), "R691".to_string()],
+                vec!["Table".to_string(), "R707".to_string()],
+            ],
+        )
+    }
+
+    /// R954 §5.38 — a plain pointer click on a `SelectItems` grid selects the
+    /// clicked *cell* (collapse) and washes **no** row (the R953
+    /// SelectRows-on-click smell is gone); the cursor follows the click.
+    #[test]
+    fn r954_select_items_click_selects_cell_not_row() {
+        use crate::composite_tag::compose_send_payload;
+        use crate::input::Modifiers;
+        let mut ext = cell_select_items_ext();
+        assert_eq!(ext.selection_behavior(), SelectionBehavior::SelectItems);
+        let wire = compose_send_payload(Some("1_1"), "PointerUp", Modifiers::default());
+        assert_eq!(ext.invoke("send", IntrospectValue::Text(wire)), Ok(IntrospectValue::Null));
+        assert_eq!(
+            ext.query("cell_selection"),
+            Some(IntrospectValue::Text("1,1,1,1".to_string())),
+            "the click selected the single cell (1,1)",
+        );
+        assert_eq!(
+            ext.query("selected_row"),
+            Some(IntrospectValue::Int(-1)),
+            "no row was washed (SelectItems, not SelectRows)",
+        );
+        assert_eq!(ext.query("focused_row"), Some(IntrospectValue::Int(1)), "cursor followed click");
+        assert_eq!(ext.query("focused_col"), Some(IntrospectValue::Int(1)));
+    }
+
+    /// R954 §5.38 — a `Shift`+click extends the rectangle from the anchor (the
+    /// held modifier rides the composite `send` wire's third segment).
+    #[test]
+    fn r954_select_items_shift_click_extends_rectangle() {
+        use crate::composite_tag::compose_send_payload;
+        use crate::input::Modifiers;
+        let mut ext = cell_select_items_ext();
+        let plain = compose_send_payload(Some("0_0"), "PointerUp", Modifiers::default());
+        let _ = ext.invoke("send", IntrospectValue::Text(plain));
+        let shift = compose_send_payload(
+            Some("2_1"),
+            "PointerUp",
+            Modifiers { shift: true, ..Default::default() },
+        );
+        assert_eq!(ext.invoke("send", IntrospectValue::Text(shift)), Ok(IntrospectValue::Null));
+        assert_eq!(
+            ext.query("cell_selection"),
+            Some(IntrospectValue::Text("0,0,2,1".to_string())),
+            "Shift+click grew the rectangle (0,0)->(2,1) from the pinned anchor",
+        );
+        assert_eq!(ext.query("cell_selection_count"), Some(IntrospectValue::Int(6)));
+    }
+
+    /// R954 §5.38 — only the activate edge (`PointerUp`) selects; the other
+    /// pointer phases of a click are inert (no premature anchor / no row wash).
+    #[test]
+    fn r954_select_items_non_activate_phases_are_inert() {
+        use crate::composite_tag::compose_send_payload;
+        use crate::input::Modifiers;
+        let mut ext = cell_select_items_ext();
+        for ev in ["PointerEnter", "PointerDown", "PointerLeave"] {
+            let wire = compose_send_payload(Some("1_1"), ev, Modifiers::default());
+            assert_eq!(ext.invoke("send", IntrospectValue::Text(wire)), Ok(IntrospectValue::Null));
+        }
+        assert_eq!(
+            ext.query("cell_selection"),
+            Some(IntrospectValue::Null),
+            "hover / press / leave selected nothing — only PointerUp activates",
+        );
+        assert_eq!(ext.query("selected_row"), Some(IntrospectValue::Int(-1)), "no row washed");
+    }
+
+    /// R954 §5.38 — the default `SelectRows` behavior is unaffected: a click
+    /// still washes the row (the `hello-table` model), so the new mode is
+    /// strictly additive.
+    #[test]
+    fn r954_select_rows_default_click_still_washes_row() {
+        use crate::composite_tag::compose_send_payload;
+        use crate::input::Modifiers;
+        let mut ext = cell_sample_ext(); // SelectRows (default)
+        assert_eq!(ext.selection_behavior(), SelectionBehavior::SelectRows);
+        // The full pointer cycle — the radio activate edge is Pressed->Hover on
+        // the PointerUp, so a bare Up does not wash (unlike SelectItems, where
+        // the Up *is* the cell activate edge).
+        let mut up_ret = Ok(IntrospectValue::Null);
+        for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+            let wire = compose_send_payload(Some("1_1"), ev, Modifiers::default());
+            let r = ext.invoke("send", IntrospectValue::Text(wire));
+            if ev == "PointerUp" {
+                up_ret = r;
+            }
+        }
+        assert_eq!(up_ret, Ok(IntrospectValue::Int(1)), "SelectRows click washes + returns row 1");
+        assert_eq!(ext.query("selected_row"), Some(IntrospectValue::Int(1)), "row 1 washed");
+        assert_eq!(
+            ext.query("cell_selection"),
+            Some(IntrospectValue::Null),
+            "no cell rectangle in SelectRows mode",
+        );
     }
 }

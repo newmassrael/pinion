@@ -265,7 +265,13 @@ fn cell_selection_overlay(
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(x, y)
-                    .with_size(Size::px(w, h)),
+                    .with_size(Size::px(w, h))
+                    // R954 §5.38 — the highlight is a passive overlay drawn on
+                    // top of the cells; it must be pointer-transparent so a
+                    // click on a cell *inside* the current selection still
+                    // routes to that cell (a `SelectItems` grid re-selects it),
+                    // rather than the overlay swallowing the hit.
+                    .with_pointer_transparent(true),
             ),
     )
 }

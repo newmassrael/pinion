@@ -17,10 +17,14 @@
 //! ## Composition — one composite External
 //!
 //! The state scene holds **one** [`TableExternal`] at the [`PRIMARY_TAG`]
-//! composite paint root (the same single-coordinator shape as `hello-table`).
-//! Each cell is tagged `"grid#<row>_<col>"` (the R51.41 composite paint
-//! convention); the [`InputRouter`](pinion_runtime::input::InputRouter)
-//! R51.42 `'#'`-split routes a click on cell `(r, c)` to the coordinator.
+//! composite paint root (the same single-coordinator shape as `hello-table`),
+//! constructed with the R954 [`SelectItems`](pinion_core::widgets::table::SelectionBehavior::SelectItems)
+//! behavior. Each cell is tagged `"grid#<row>_<col>"` (the R51.41 composite
+//! paint convention); the [`InputRouter`](pinion_runtime::input::InputRouter)
+//! R51.42 `'#'`-split routes a click on cell `(r, c)` to the coordinator,
+//! whose `SelectItems` behavior selects that **cell** (a plain click
+//! collapses, a `Shift`+click extends the rectangle) rather than washing the
+//! row — so the mouse drives the same cell-range model the keyboard does.
 //!
 //! ## Selection model — cell range (anchor + extent)
 //!
@@ -52,13 +56,17 @@
 //! reads back `cell_selection` (the `"r0,c0,r1,c1"` rectangle) +
 //! `cell_selection_count`.
 //!
-//! **Deferred axes** (our-code, honestly deferred): **pointer-driven**
-//! marquee range selection (click-drag to sweep a rectangle) — the
-//! coordinator's pointer `send` is row-oriented (`hello-table`'s
-//! `SelectRows`), so a real left-click here repositions the cursor but does
-//! not start a cell drag; a `SelectItems` pointer wiring in the coordinator
-//! is the follow-up. Also deferred: a `Ctrl`-click disjoint multi-rectangle
-//! selection, fill-handle / range copy, and editable cells.
+//! Pointer: a click selects the clicked cell (collapse), a `Shift`+click
+//! extends the rectangle from the anchor (R954 `SelectItems` — the held
+//! modifier rides the composite `send` wire's third segment, R880.1), the
+//! same cell-range model the keyboard drives.
+//!
+//! **Deferred axes** (our-code, honestly deferred): **live marquee drag**
+//! (press-drag-release to sweep a rectangle in one gesture) — that needs the
+//! coordinator's capture-path pointer wiring with a pixel→cell hit-test
+//! (the click / `Shift`+click range here is the discrete form). Also
+//! deferred: a `Ctrl`-click disjoint multi-rectangle selection, fill-handle /
+//! range copy, and editable cells.
 
 use pinion_a11y::{
     grid_table_nodes, AccessAction, AccessFocus, AccessNode, GridCell, GridColumn, GridRow,
@@ -303,7 +311,11 @@ impl WidgetCore for CellSelectView {
             .iter()
             .map(|r| r.iter().map(|c| (*c).to_string()).collect())
             .collect();
-        Box::new(TableExternal::new(headers, rows))
+        // R954 §5.38 — the `SelectItems` behavior: a pointer click selects the
+        // clicked cell (collapse) and `Shift`+click extends the rectangle, so
+        // the mouse and the keyboard drive the *same* cell-range model (no
+        // invisible row washing — the R953 SelectRows-on-click smell).
+        Box::new(TableExternal::with_select_items(headers, rows))
     }
 
     fn tag() -> &'static str {
@@ -711,6 +723,33 @@ mod tests {
         ));
         assert_eq!(bounds(&scene), Some((3, 2, 3, 2)), "AT click selects that one cell");
         assert_eq!(cursor(&scene), (3, 2), "the cursor followed the AT click");
+    }
+
+    /// R954 §5.38 — a real pointer click routes through the composite `send`
+    /// wire (the R51.42 `'#'`-split) and, because the grid is `SelectItems`,
+    /// selects the clicked *cell* (collapse) instead of washing the row; a
+    /// `Shift`+click extends the rectangle.
+    #[test]
+    fn pointer_click_and_shift_click_drive_cell_range() {
+        use pinion_core::composite_tag::compose_send_payload;
+        let mut scene = scene_fixture();
+        let click = |scene: &mut Scene, cell: &str, shift: bool| {
+            let Scene::External(node) = scene else {
+                panic!("external");
+            };
+            let intro = node.handle.introspect_mut().expect("introspect");
+            let mods = pinion_core::Modifiers { shift, ..Default::default() };
+            // A real click is the full pointer cycle; only PointerUp activates.
+            for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+                let wire = compose_send_payload(Some(cell), ev, mods);
+                let _ = intro.invoke("send", IntrospectValue::Text(wire));
+            }
+        };
+        click(&mut scene, "2_1", false);
+        assert_eq!(bounds(&scene), Some((2, 1, 2, 1)), "plain click selects the single cell");
+        assert_eq!(cursor(&scene), (2, 1), "the cursor followed the click");
+        click(&mut scene, "0_0", true);
+        assert_eq!(bounds(&scene), Some((0, 0, 2, 1)), "Shift+click extends from the anchor");
     }
 
     #[test]

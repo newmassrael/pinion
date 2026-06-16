@@ -42819,6 +42819,58 @@
         "R7 (sorted-overlay-omit) moot: dedicated grid never sorts; R8 (bounds wire) owned by parse_cell_bounds + pin test"
       ]
     },
+    "R954": {
+      "decision_summary": "R954 §5.38 §5.40 pointer cell-range selection: Table SelectionBehavior::SelectItems makes click select a cell / Shift+click extend; resolves the R953 SelectRows-on-click smell",
+      "changes_bullets": [
+        "SelectionBehavior{SelectRows(default),SelectItems} on Table; with_select_items + selection_behavior()",
+        "SelectItems send: PointerUp select_cell / Shift+click extend_cell; other phases inert; no row wash",
+        "hello-cell-select with_select_items: mouse + keyboard drive one cell-range model (R953 smell gone)",
+        "cell_selection_overlay pointer-transparent: a click on a cell inside the selection routes to the cell",
+        "R954 demo (pointer click / Shift+click, ~34 assert) + 4 substrate + 1 example pointer test"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green: 4 new substrate + 1 example pointer test; SelectRows regression covered",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "r954_cell_pointer_select.py PASS (~34 assert; no-row-washed headline; same-snapshot overlay geometry)",
+        "regression: r953 keyboard / r707 row-select / r730 sort / r735 multi-select all PASS",
+        "self-grep: SelectionBehavior 1 consumer (new primitive); with_pointer_transparent reuses overlay pattern",
+        "validate-workspace T1=0 new orphan +0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "live marquee drag (press-drag-release sweep) deferred: needs capture-path pointer + pixel->cell hit-test",
+        "Ctrl-click disjoint multi-rectangle / fill-handle range-copy / editable cells = deferred DCC axes",
+        "SelectColumns behavior variant = additive when a real consumer needs it (the enum is extensible)"
+      ],
+      "publishable_decision_summary": "R954 §5.38 §5.40 pointer cell-range selection: Table SelectionBehavior::SelectItems makes click select a cell / Shift+click extend; resolves the R953 SelectRows-on-click smell",
+      "publishable_changes_bullets": [
+        "SelectionBehavior{SelectRows(default),SelectItems} on Table; with_select_items + selection_behavior()",
+        "SelectItems send: PointerUp select_cell / Shift+click extend_cell; other phases inert; no row wash",
+        "hello-cell-select with_select_items: mouse + keyboard drive one cell-range model (R953 smell gone)",
+        "cell_selection_overlay pointer-transparent: a click on a cell inside the selection routes to the cell",
+        "R954 demo (pointer click / Shift+click, ~34 assert) + 4 substrate + 1 example pointer test"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green: 4 new substrate + 1 example pointer test; SelectRows regression covered",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "r954_cell_pointer_select.py PASS (~34 assert; no-row-washed headline; same-snapshot overlay geometry)",
+        "regression: r953 keyboard / r707 row-select / r730 sort / r735 multi-select all PASS",
+        "self-grep: SelectionBehavior 1 consumer (new primitive); with_pointer_transparent reuses overlay pattern",
+        "validate-workspace T1=0 new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "live marquee drag (press-drag-release sweep) deferred: needs capture-path pointer + pixel->cell hit-test",
+        "Ctrl-click disjoint multi-rectangle / fill-handle range-copy / editable cells = deferred DCC axes",
+        "SelectColumns behavior variant = additive when a real consumer needs it (the enum is extensible)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
