@@ -78,7 +78,7 @@ use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
 use pinion_core::input::{is_activation_event, Modifiers, MultiSelectKeyOp, SelectionChord};
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontWeight, JustifyContent, LayoutStyle,
     Size, TextStyle,
@@ -114,6 +114,9 @@ const ROW_FONT_PX: u32 = 13;
 
 const LIST_W: u32 = 150;
 const ROW_H: u32 = 30;
+/// R958 — the reset-arrow mark size (px), the trailing "modified, click to
+/// reset" affordance on a Details row.
+const RESET_DOT: u32 = 10;
 const SWATCH: u32 = 16;
 
 // ─── Model ────────────────────────────────────────────────────────
@@ -205,6 +208,17 @@ fn default_objects() -> Vec<ObjectData> {
 fn use_objects() -> Rc<Signal<Vec<ObjectData>>> {
     let owner = Owner::current().expect("use_objects requires an active Owner scope");
     owner.cache("inspector.objects", || Signal::new(default_objects()))
+}
+
+/// R958 — the frozen class-defaults snapshot (the original [`default_objects`]),
+/// the baseline every property's "modified" indicator + reset compares against.
+/// Immutable `Rc<Vec<ObjectData>>` cached per Owner (mirrors hello-property-grid's
+/// `use_property_defaults`); never mutated, so a reset always restores the boot
+/// value. Same object indices + property names as the live model, so a lookup by
+/// `(object index, property name)` always resolves.
+fn use_object_defaults() -> Rc<Vec<ObjectData>> {
+    let owner = Owner::current().expect("use_object_defaults requires an active Owner scope");
+    owner.cache("inspector.defaults", default_objects)
 }
 
 /// The shared multi-select model over the object list (R922): the pure
@@ -302,6 +316,60 @@ fn common_properties(objects: &[ObjectData], selection: &BTreeSet<usize>) -> Vec
     rows
 }
 
+/// R958 — the composite-tag key prefix the Details-panel reset arrow routes
+/// under (`inspector#reset<i>`), distinguishing a reset click from a row-select
+/// click (`inspector#<i>`) in [`InspectorExternal::handle_send`].
+const RESET_PREFIX: &str = "reset";
+
+/// R958 — is the common property `name` MODIFIED from its class default in ANY
+/// selected object? Each selected object compares its own current value (by
+/// name) to its own frozen default (by name) via the NaN-safe
+/// [`CellValue::value_eq`] SSOT, so the "reset to default" arrow shows whenever
+/// the selection diverges from the baseline — the Unreal / Qt inspector
+/// affordance. Orthogonal to [`CommonProperty::mixed`]: a property can be
+/// uniform-but-modified or mixed-but-default. The single source the External
+/// query, the reset gate, and the paint indicator all read (divergence-is-a-bug).
+fn property_modified_from_default(
+    objects: &[ObjectData],
+    selection: &BTreeSet<usize>,
+    defaults: &[ObjectData],
+    name: &str,
+) -> bool {
+    selection.iter().any(|&j| {
+        let cur = objects.get(j).and_then(|o| o.properties.iter().find(|p| p.name == name));
+        let def = defaults.get(j).and_then(|o| o.properties.iter().find(|p| p.name == name));
+        matches!((cur, def), (Some(c), Some(d)) if !c.value.value_eq(&d.value))
+    })
+}
+
+/// R958 — restore every property in `names` to its class default across every
+/// selected object (the write SSOT shared by single-property reset and
+/// reset-all). Each object restores its OWN default (defaults differ per object,
+/// e.g. `Layer` is `1, 1, 2`), so after a reset the selection may read "Multiple
+/// Values" yet "not modified".
+fn reset_names_to_default(
+    next: &mut [ObjectData],
+    selection: &BTreeSet<usize>,
+    defaults: &[ObjectData],
+    names: &[String],
+) {
+    for &j in selection {
+        for name in names {
+            let def = defaults
+                .get(j)
+                .and_then(|o| o.properties.iter().find(|p| &p.name == name))
+                .map(|p| p.value.clone());
+            if let Some(defv) = def {
+                if let Some(p) =
+                    next.get_mut(j).and_then(|o| o.properties.iter_mut().find(|p| &p.name == name))
+                {
+                    p.value = defv;
+                }
+            }
+        }
+    }
+}
+
 /// The Details header text for a selection: the lone object's name when one
 /// is selected, "N objects selected" for several, "No selection" for none.
 fn selection_summary(objects: &[ObjectData], selection: &BTreeSet<usize>) -> String {
@@ -324,11 +392,91 @@ fn selection_summary(objects: &[ObjectData], selection: &BTreeSet<usize>) -> Str
 struct InspectorExternal {
     objects: Rc<Signal<Vec<ObjectData>>>,
     selection: Rc<Signal<VirtualSelect>>,
+    /// R958 — the frozen class defaults the "modified" indicator + reset compare
+    /// against (the [`use_object_defaults`] snapshot).
+    defaults: Rc<Vec<ObjectData>>,
 }
 
 impl InspectorExternal {
-    fn new(objects: Rc<Signal<Vec<ObjectData>>>, selection: Rc<Signal<VirtualSelect>>) -> Self {
-        Self { objects, selection }
+    fn new(
+        objects: Rc<Signal<Vec<ObjectData>>>,
+        selection: Rc<Signal<VirtualSelect>>,
+        defaults: Rc<Vec<ObjectData>>,
+    ) -> Self {
+        Self { objects, selection, defaults }
+    }
+
+    /// R958 — is common property `idx` modified from default in any selected
+    /// object (the per-row reset-arrow gate + the `modified.<i>` query SSOT).
+    fn common_modified(&self, idx: usize) -> bool {
+        let common = self.common();
+        common.get(idx).is_some_and(|prop| {
+            property_modified_from_default(
+                &self.objects.get(),
+                &self.selection_set(),
+                &self.defaults,
+                &prop.name,
+            )
+        })
+    }
+
+    /// R958 — does the selection diverge from default on any common property
+    /// (the panel-level "reset all" enable + `any_modified` query)?
+    fn any_modified(&self) -> bool {
+        let objects = self.objects.get();
+        let selection = self.selection_set();
+        self.common().iter().any(|prop| {
+            property_modified_from_default(&objects, &selection, &self.defaults, &prop.name)
+        })
+    }
+
+    /// R958 — reset common property `idx` to its class default across every
+    /// selected object. No-op (returns `false`) when the property is already at
+    /// default, so a redundant reset is idempotent.
+    fn reset_property(&self, idx: usize) -> bool {
+        if !self.common_modified(idx) {
+            return false;
+        }
+        let Some(prop) = self.common().into_iter().nth(idx) else {
+            return false;
+        };
+        let names = vec![prop.name];
+        let selection = self.selection_set();
+        let defaults = Rc::clone(&self.defaults);
+        self.objects.set_with(move |prev| {
+            let mut next = prev.clone();
+            reset_names_to_default(&mut next, &selection, &defaults, &names);
+            next
+        });
+        true
+    }
+
+    /// R958 — reset every modified common property across the selection in one
+    /// atomic write; returns the number of properties reset.
+    fn reset_all_modified(&self) -> usize {
+        let names: Vec<String> = {
+            let objects = self.objects.get();
+            let selection = self.selection_set();
+            self.common()
+                .into_iter()
+                .filter(|prop| {
+                    property_modified_from_default(&objects, &selection, &self.defaults, &prop.name)
+                })
+                .map(|prop| prop.name)
+                .collect()
+        };
+        if names.is_empty() {
+            return 0;
+        }
+        let count = names.len();
+        let selection = self.selection_set();
+        let defaults = Rc::clone(&self.defaults);
+        self.objects.set_with(move |prev| {
+            let mut next = prev.clone();
+            reset_names_to_default(&mut next, &selection, &defaults, &names);
+            next
+        });
+        count
     }
 
     fn object_count(&self) -> usize {
@@ -420,15 +568,26 @@ impl InspectorExternal {
         let Some((key, event_name, modifiers)) = split_send_payload(payload) else {
             return;
         };
+        if !is_activation_event(event_name) {
+            return;
+        }
+        // R958 — a `reset<i>` key is the Details-panel reset arrow; route it to
+        // the per-property reset instead of the row-select chord (the `inspector#`
+        // funnel carries both, distinguished by the key prefix — the
+        // hello-property-grid `reset<i>` send pattern).
+        if let Some(rest) = key.strip_prefix(RESET_PREFIX) {
+            if let Ok(idx) = rest.parse::<usize>() {
+                self.reset_property(idx);
+            }
+            return;
+        }
         let Some(index) = key.parse::<usize>().ok() else {
             return;
         };
-        if is_activation_event(event_name) {
-            match SelectionChord::from_modifiers(modifiers) {
-                SelectionChord::Toggle => self.toggle(index),
-                SelectionChord::Extend => self.extend_to(index),
-                SelectionChord::Replace => self.select(index),
-            }
+        match SelectionChord::from_modifiers(modifiers) {
+            SelectionChord::Toggle => self.toggle(index),
+            SelectionChord::Extend => self.extend_to(index),
+            SelectionChord::Replace => self.select(index),
         }
     }
 
@@ -506,12 +665,16 @@ impl ExternalIntrospect for InspectorExternal {
             ("kind.<i>", "string"),
             ("value.<i>", "json"),
             ("mixed.<i>", "bool"),
+            ("modified.<i>", "bool"),
+            ("any_modified", "bool"),
             ("select", "int"),
             ("toggle", "int"),
             ("extend_to", "int"),
             ("select_all", "null"),
             ("clear", "null"),
             ("send", "string"),
+            ("reset", "int"),
+            ("reset_all", "null"),
         ])
     }
 
@@ -530,6 +693,7 @@ impl ExternalIntrospect for InspectorExternal {
             "row_count" => {
                 Some(IntrospectValue::Int(i64::try_from(common_properties(&objects, &selection).len()).ok()?))
             }
+            "any_modified" => Some(IntrospectValue::Bool(self.any_modified())),
             _ => {
                 if let Some(j) = path.strip_prefix("object_name.") {
                     let j: usize = j.parse().ok()?;
@@ -551,6 +715,10 @@ impl ExternalIntrospect for InspectorExternal {
                 if let Some(i) = path.strip_prefix("mixed.") {
                     let i: usize = i.parse().ok()?;
                     return common.get(i).map(|c| IntrospectValue::Bool(c.mixed));
+                }
+                if let Some(i) = path.strip_prefix("modified.") {
+                    let i: usize = i.parse().ok()?;
+                    return (i < common.len()).then(|| IntrospectValue::Bool(self.common_modified(i)));
                 }
                 None
             }
@@ -652,6 +820,17 @@ impl ExternalIntrospect for InspectorExternal {
                 self.clear();
                 Ok(selected_to_value(self.cursor()))
             }
+            // R958 — reset common property `idx` to default across the selection;
+            // returns whether anything changed (idempotent on an at-default row).
+            "reset" => {
+                let idx = int_arg(args)?;
+                Ok(IntrospectValue::Bool(self.reset_property(idx)))
+            }
+            // R958 — reset every modified property across the selection; returns
+            // the count reset (the panel-level "reset all").
+            "reset_all" => Ok(IntrospectValue::Int(
+                i64::try_from(self.reset_all_modified()).expect("reset count fits in i64"),
+            )),
             // R910/R902.1 — the composite pointer wire (modifier-aware).
             "send" => match args {
                 IntrospectValue::Text(ref payload) => {
@@ -666,7 +845,7 @@ impl ExternalIntrospect for InspectorExternal {
 }
 
 fn make_inspector_external() -> InspectorExternal {
-    InspectorExternal::new(use_objects(), use_selection())
+    InspectorExternal::new(use_objects(), use_selection(), use_object_defaults())
 }
 
 // ─── View ─────────────────────────────────────────────────────────
@@ -807,15 +986,41 @@ fn detail_value_visual(prop: &CommonProperty, fg: Color, accent: Color, muted: C
 }
 
 /// One Details row: `name` (left, muted) + value visual (right). Tagged
-/// `prop_<i>` so the demo can locate it.
-fn property_row(index: usize, prop: &CommonProperty, fg: Color, muted: Color, accent: Color) -> Scene {
+/// `prop_<i>` so the demo can locate it. R958 — when `modified` (the property
+/// diverges from its class default in any selected object) a reset arrow is
+/// absolutely positioned at the trailing edge, tagged `inspector#reset<i>` so a
+/// click routes to [`InspectorExternal::reset_property`] (the Unreal / Qt
+/// "reset to default" affordance; the arrow paints only on a changed property).
+fn property_row(
+    index: usize,
+    prop: &CommonProperty,
+    modified: bool,
+    fg: Color,
+    muted: Color,
+    accent: Color,
+) -> Scene {
     let name = Scene::Text(TextNode::styled(
         prop.name.clone(),
         Rect::default(),
         TextStyle::new().with_size_px(ROW_FONT_PX).with_fg(muted),
     ));
+    let mut children = vec![name, detail_value_visual(prop, fg, accent, muted)];
+    if modified {
+        // A small accent square at the trailing edge: the "modified, click to
+        // reset" mark. Absolutely positioned (out of the SpaceBetween flow) so
+        // the name / value layout is byte-identical to an unmodified row.
+        children.push(Scene::Box(
+            BoxNode::new(Rect::default(), BoxStyle::filled(accent).with_corner_radius(RESET_DOT / 2))
+                .with_tag(format!("{INSPECTOR_TAG}#{RESET_PREFIX}{index}"))
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_size(Size::px(RESET_DOT, RESET_DOT))
+                        .with_absolute_position(260 - RESET_DOT, (ROW_H - RESET_DOT) / 2),
+                ),
+        ));
+    }
     Scene::Container(
-        ContainerNode::new(vec![name, detail_value_visual(prop, fg, accent, muted)])
+        ContainerNode::new(children)
             .with_tag(format!("prop_{index}"))
             .with_layout(
                 LayoutStyle::new()
@@ -904,8 +1109,12 @@ fn view(state: &InspectorState, _frame: &Frame) -> Scene {
         TextStyle::new().with_size_px(HEADER_FONT_PX).with_weight(FontWeight::BOLD).with_fg(on_surface),
     ));
     let mut detail_children = vec![header];
+    // R958 — the frozen defaults the per-row reset arrow compares against
+    // (same SSOT the External's `modified.<i>` query reads).
+    let defaults = use_object_defaults();
     for (i, prop) in common_properties(&objects, &selection).iter().enumerate() {
-        detail_children.push(property_row(i, prop, on_surface, muted, accent));
+        let modified = property_modified_from_default(&objects, &selection, &defaults, &prop.name);
+        detail_children.push(property_row(i, prop, modified, on_surface, muted, accent));
     }
     let detail = Scene::Container(
         ContainerNode::new(detail_children)
@@ -1117,6 +1326,72 @@ mod tests {
             }
             _ => panic!("expected a JSON array, got {v:?}"),
         }
+    }
+
+    #[test]
+    fn r958_multi_object_modified_reset_to_each_default() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        // Common base across all three: Visible(0), Layer(1), Locked(2).
+        assert_eq!(e.query("name.1"), Some(IntrospectValue::Text("Layer".to_owned())));
+        assert_eq!(
+            e.query("modified.1"),
+            Some(IntrospectValue::Bool(false)),
+            "boot Layer is at default",
+        );
+        // Edit Layer to 5 across all three -> each diverges from its own default.
+        e.intervene("value.1", IntrospectValue::Int(5)).unwrap();
+        assert_eq!(e.query("modified.1"), Some(IntrospectValue::Bool(true)), "edited Layer is modified");
+        assert_eq!(e.query("any_modified"), Some(IntrospectValue::Bool(true)));
+        // Reset Layer -> each object restores its OWN default (1, 1, 2).
+        assert_eq!(e.invoke("reset", IntrospectValue::Int(1)).unwrap(), IntrospectValue::Bool(true));
+        assert_eq!(e.query("modified.1"), Some(IntrospectValue::Bool(false)), "reset clears modified");
+        // The per-object defaults differ (1, 1, 2), so the selection now reads
+        // "Multiple Values" — reset-to-default is per object, not to a shared value.
+        assert_eq!(
+            e.query("mixed.1"),
+            Some(IntrospectValue::Bool(true)),
+            "per-object defaults -> mixed after reset",
+        );
+        // Idempotent: a reset on an at-default row changes nothing.
+        assert_eq!(e.invoke("reset", IntrospectValue::Int(1)).unwrap(), IntrospectValue::Bool(false));
+    }
+
+    #[test]
+    fn r958_reset_all_clears_every_modified_property() {
+        let mut e = ext();
+        e.invoke("select_all", IntrospectValue::Null).unwrap();
+        e.intervene("value.0", IntrospectValue::Bool(false)).unwrap(); // Visible
+        e.intervene("value.1", IntrospectValue::Int(9)).unwrap(); // Layer
+        assert_eq!(e.query("any_modified"), Some(IntrospectValue::Bool(true)));
+        // reset_all returns the count of modified properties it cleared (Locked
+        // was never touched, so only Visible + Layer = 2).
+        assert_eq!(e.invoke("reset_all", IntrospectValue::Null).unwrap(), IntrospectValue::Int(2));
+        assert_eq!(e.query("any_modified"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("modified.0"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("modified.1"), Some(IntrospectValue::Bool(false)));
+    }
+
+    #[test]
+    fn r958_reset_arrow_paints_only_on_a_modified_row() {
+        // The Details reset arrow (`inspector#reset<i>`) appears only when the
+        // property is modified — the paint reads the same SSOT as the query.
+        let owner = Owner::new();
+        owner.run(|| {
+            let mut e = make_inspector_external();
+            e.invoke("select_all", IntrospectValue::Null).unwrap();
+            let reset_tag = format!("{INSPECTOR_TAG}#{RESET_PREFIX}1"); // Layer (common idx 1)
+            let sel = InspectorState::from_parts(&[0, 1, 2], Some(0));
+            assert!(
+                !view(&sel, &Frame::new()).contains_tag(&reset_tag),
+                "no reset arrow on an at-default Layer row",
+            );
+            e.intervene("value.1", IntrospectValue::Int(5)).unwrap();
+            assert!(
+                view(&sel, &Frame::new()).contains_tag(&reset_tag),
+                "the reset arrow paints once Layer is modified",
+            );
+        });
     }
 
     const SHIFT: Modifiers = Modifiers { shift: true, ctrl: false, alt: false, meta: false };
@@ -1384,7 +1659,10 @@ mod tests {
             let objects = Rc::new(Signal::new(vec![mode(0), mode(1)]));
             let mut model = VirtualSelect::new(2, SelectionMode::Multi);
             model.set_selection(&[0usize, 1].into_iter().collect());
-            InspectorExternal::new(objects, Rc::new(Signal::new(model)))
+            // R958 — defaults match the boot values (option 0), so the initial
+            // state reads "not modified"; the test edits then asserts the change.
+            let defaults = Rc::new(vec![mode(0), mode(1)]);
+            InspectorExternal::new(objects, Rc::new(Signal::new(model)), defaults)
         });
         // value.0 (the common "Mode") set to option index 2 across both.
         e.intervene("value.0", IntrospectValue::Int(2)).unwrap();

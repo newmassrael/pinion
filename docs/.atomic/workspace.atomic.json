@@ -43065,6 +43065,52 @@
         "full editor current-line background (beyond the gutter band) deferred"
       ]
     },
+    "R958": {
+      "decision_summary": "multi-object inspector: per-property modified-from-default indicator + reset-to-default (RPC + clickable arrow), per-object defaults",
+      "changes_bullets": [
+        "hello-inspector: per-property modified-from-default indicator + reset-to-default across the multi-selection",
+        "use_object_defaults frozen baseline; property_modified_from_default SSOT (any selected obj != its own default)",
+        "reset/reset_all RPC + clickable reset arrow (inspector#reset<i> via the existing send funnel) + modified.<i>/any_modified",
+        "reset is per-object (each restores its own default) so a divergent-default selection reads mixed-but-not-modified"
+      ],
+      "verification_bullets": [
+        "hello-inspector +3 tests (modified/reset round-trip, reset_all count, arrow paints only when modified) + 20 existing",
+        "demo r958 ~35 assert PASS (modified vs mixed orthogonal, RPC + click reset, per-object defaults, reset_all, idempotent)",
+        "cargo test workspace + clippy 0; 5 existing inspector demos no regression; validate T1=0",
+        "self-grep: modified-from-default differs in shape from property-grid leaf_modified (index vs name+selection); value_eq SSOT reused"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "RESET_PREFIX const + reset-send routing now 2nd consumer (property-grid + inspector, separate wire namespaces); 3rd -> lift shared helper",
+        "reset-dot paint 2nd consumer (trivial Box, divergent positioning); inline per R735.1; 3rd identical -> pinion_widget_paint lift",
+        "data-grid per-cell modified/reset still a gap (audit: SMALL-MEDIUM, follows this template)"
+      ],
+      "publishable_decision_summary": "multi-object inspector: per-property modified-from-default indicator + reset-to-default (RPC + clickable arrow), per-object defaults",
+      "publishable_changes_bullets": [
+        "hello-inspector: per-property modified-from-default indicator + reset-to-default across the multi-selection",
+        "use_object_defaults frozen baseline; property_modified_from_default SSOT (any selected obj != its own default)",
+        "reset/reset_all RPC + clickable reset arrow (inspector#reset<i> via the existing send funnel) + modified.<i>/any_modified",
+        "reset is per-object (each restores its own default) so a divergent-default selection reads mixed-but-not-modified"
+      ],
+      "publishable_verification_bullets": [
+        "hello-inspector +3 tests (modified/reset round-trip, reset_all count, arrow paints only when modified) + 20 existing",
+        "demo r958 ~35 assert PASS (modified vs mixed orthogonal, RPC + click reset, per-object defaults, reset_all, idempotent)",
+        "cargo test workspace + clippy 0; 5 existing inspector demos no regression; validate T1=0",
+        "self-grep: modified-from-default differs in shape from property-grid leaf_modified (index vs name+selection); value_eq SSOT reused"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RESET_PREFIX const + reset-send routing now 2nd consumer (property-grid + inspector, separate wire namespaces); 3rd -> lift shared helper",
+        "reset-dot paint 2nd consumer (trivial Box, divergent positioning); inline per R735.1; 3rd identical -> pinion_widget_paint lift",
+        "data-grid per-cell modified/reset still a gap (audit: SMALL-MEDIUM, follows this template)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
