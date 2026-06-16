@@ -43251,6 +43251,52 @@
         "next: pro-tool perf measurement-first (large-scene scenario) / full editor current-line bg / code-folding pointer-interactive (R959 fold<n> send-route)"
       ]
     },
+    "R961": {
+      "decision_summary": "code-folding pointer click-to-fold (the R955 deferral) via the R959 send-route: a fold-chevron click routes to the field's send wire -> toggle_fold; the 2nd send sub-target triggers the R959-planned TextFieldSendKey enum lift (GutterLine | FoldToggle, the GridSendKey precedent) over R959's gl free-fns",
+      "changes_bullets": [
+        "TextFieldSendKey enum {GutterLine(gl<n>, 1-based) | FoldToggle(fold<n>, 0-based start_line}} = the field send-sub-grammar SSOT (parse + per-kind encode), migrating R959's gl free-fns (GridSendKey precedent)",
+        "invoke_send dispatches via the enum: GutterLine -> go_to_line / Shift-extend, FoldToggle -> toggle_fold (the keyboard Enter + toggle-fold RPC peer)",
+        "hello-code-fold: chevron split into a fixed-width code_editor#fold<i> click target on foldable lines only (R955 click-to-fold landed = the 2nd send sub-target consumer)",
+        "hello-textarea: gl tag via TextFieldSendKey::gutter_line_tag (identical wire string, r956/r957 unaffected)"
+      ],
+      "verification_bullets": [
+        "pinion-core: r961 +3 (enum encode/decode roundtrip + fold-send collapse/expand + non-activation/no-opener no-op); r959 5 + r933 40 unchanged",
+        "hello-code-fold +1 (chevron is a fold target on foldable lines 0/2 only, not line 1) + hello-textarea 15 unchanged",
+        "r933 demo + pointer click-to-fold (live click verified hittable per R960 lesson — code panel unscrolled) + r956/r957 PASS; workspace test + clippy -D pedantic 0; validate T1=0",
+        "entry audit CONFIRMED (not falsified): hello-code-fold has a field External (send target); toggle_fold already line-addressed; fold<n> is the genuine 2nd send sub-target → the R959-planned enum lift is justified"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "TextFieldSendKey now 2 kinds (gl 1-based line-nav, fold 0-based fold-toggle); a 3rd send sub-target extends the enum (each kind keeps its RPC peer's line base)",
+        "hello-code-fold gutter NUMBER is not a go-to-line target (read-only viewer, keyboard-nav) — only the chevron is interactive; a future editable code-view could add gl<n>",
+        "next: full editor current-line bg / multi-cursor / pro-tool perf measurement-first (large-scene scenario, perf 43%)"
+      ],
+      "publishable_decision_summary": "code-folding pointer click-to-fold (the R955 deferral) via the R959 send-route: a fold-chevron click routes to the field's send wire -> toggle_fold; the 2nd send sub-target triggers the R959-planned TextFieldSendKey enum lift (GutterLine | FoldToggle, the GridSendKey precedent) over R959's gl free-fns",
+      "publishable_changes_bullets": [
+        "TextFieldSendKey enum {GutterLine(gl<n>, 1-based) | FoldToggle(fold<n>, 0-based start_line}} = the field send-sub-grammar SSOT (parse + per-kind encode), migrating R959's gl free-fns (GridSendKey precedent)",
+        "invoke_send dispatches via the enum: GutterLine -> go_to_line / Shift-extend, FoldToggle -> toggle_fold (the keyboard Enter + toggle-fold RPC peer)",
+        "hello-code-fold: chevron split into a fixed-width code_editor#fold<i> click target on foldable lines only (R955 click-to-fold landed = the 2nd send sub-target consumer)",
+        "hello-textarea: gl tag via TextFieldSendKey::gutter_line_tag (identical wire string, r956/r957 unaffected)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core: r961 +3 (enum encode/decode roundtrip + fold-send collapse/expand + non-activation/no-opener no-op); r959 5 + r933 40 unchanged",
+        "hello-code-fold +1 (chevron is a fold target on foldable lines 0/2 only, not line 1) + hello-textarea 15 unchanged",
+        "r933 demo + pointer click-to-fold (live click verified hittable per R960 lesson — code panel unscrolled) + r956/r957 PASS; workspace test + clippy -D pedantic 0; validate T1=0",
+        "entry audit CONFIRMED (not falsified): hello-code-fold has a field External (send target); toggle_fold already line-addressed; fold<n> is the genuine 2nd send sub-target → the R959-planned enum lift is justified"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TextFieldSendKey now 2 kinds (gl 1-based line-nav, fold 0-based fold-toggle); a 3rd send sub-target extends the enum (each kind keeps its RPC peer's line base)",
+        "hello-code-fold gutter NUMBER is not a go-to-line target (read-only viewer, keyboard-nav) — only the chevron is interactive; a future editable code-view could add gl<n>",
+        "next: full editor current-line bg / multi-cursor / pro-tool perf measurement-first (large-scene scenario, perf 43%)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -21,10 +21,11 @@
 //! `caret`), the §2 #2 "RPC headless is the primary path", and the keyboard
 //! calls the same `TextEditState` methods — they converge on one mutation.
 //!
-//! **Deferred** (honest): pointer click-to-fold on a gutter chevron — the
-//! fold rows are not composite-routable click targets yet (it needs a
-//! `TextFieldExternal` click→toggle-fold path, the R954 `SelectItems`-send
-//! analog).
+//! R961 §5.36 — **pointer click-to-fold landed**: a foldable line's chevron is
+//! a composite click target `code_editor#fold<i>` that routes to the field
+//! External's `send` wire → `TextEditState::toggle_fold` (the keyboard `Enter`
+//! peer). It is the 2nd consumer of the R959 `TextFieldSendKey` send-sub-grammar
+//! (`gl<n>` line-nav was the 1st), the path the prior cut deferred.
 //!
 //! ## What it demonstrates
 //!
@@ -67,11 +68,13 @@ use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
-use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
+use pinion_core::widgets::text_field::{
+    TextFieldEvent, TextFieldExternal, TextFieldSendKey, TextFieldState,
+};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 // R657 §5.16 §5.38 — lifted TextField substrate: state-scene introspect
@@ -110,6 +113,12 @@ const STATUS_FONT_PX: u32 = 12;
 const ROW_GAP: u32 = 14;
 const LINE_GAP: u32 = 2;
 const GUTTER_GAP: u32 = 12;
+/// R961 — fixed width of the gutter chevron column (the click-to-fold target),
+/// so a foldable row's chevron and a non-foldable row's spacer align. Sized to
+/// the glyph cell + a little slack for an easy pointer target.
+const CHEVRON_W: u32 = CODE_FONT_PX;
+/// R961 — gap between the chevron column and the line number.
+const CHEVRON_GAP: u32 = 4;
 
 // R933 §5.36 — fold-affordance glyphs. Per the repo non-ASCII-in-source
 // rule each is a named const with a `\u{..}` escape (the doc names the
@@ -203,11 +212,34 @@ fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             Some(_) => CHEVRON_EXPANDED,
             None => CHEVRON_NONE,
         };
-        let gutter = Scene::Text(TextNode::styled(
-            format!("{chevron} {:>2}", i + 1),
+        // R961 §5.36 — the chevron is its own fixed-width node, so a foldable
+        // line's chevron is a click-to-toggle-fold target
+        // (`code_editor#fold<i>` → the field External's `send` wire →
+        // `TextEditState::toggle_fold`, the keyboard `Enter` peer). A
+        // non-foldable line's chevron is an untagged spacer; the fixed width
+        // keeps the number column aligned across both row kinds. The number is a
+        // sibling node (this read-only viewer does not click-to-navigate, so the
+        // number carries no `gl<n>` target — only the chevron is interactive).
+        let chevron_text = TextNode::styled(
+            chevron.to_owned(),
+            Rect::default(),
+            TextStyle::new().with_size_px(CODE_FONT_PX).with_fg(muted),
+        )
+        .with_layout(LayoutStyle::new().with_size(Size::px(CHEVRON_W, CODE_FONT_PX)));
+        let chevron_node = Scene::Text(if opener.is_some() {
+            chevron_text.with_tag(TextFieldSendKey::fold_toggle_tag(TF_TAG, i))
+        } else {
+            chevron_text
+        });
+        let number_node = Scene::Text(TextNode::styled(
+            format!("{:>2}", i + 1),
             Rect::default(),
             TextStyle::new().with_size_px(CODE_FONT_PX).with_fg(muted),
         ));
+        let gutter = Scene::Container(
+            ContainerNode::new(vec![chevron_node, number_node])
+                .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_gap(CHEVRON_GAP)),
+        );
         let code_text = if opener.is_some_and(|r| r.collapsed) {
             format!("{line} {FOLD_ELLIPSIS}")
         } else {
@@ -399,7 +431,7 @@ mod tests {
     use pinion_core::reactive::Owner;
     use pinion_core::scene::ExternalNode;
     use pinion_core::widgets::text_edit::use_text_edit_state;
-    use pinion_core::widgets::text_field::TextFieldState;
+    use pinion_core::widgets::text_field::{TextFieldSendKey, TextFieldState};
     use pinion_core::{Frame, Modifiers, Scene, WidgetCore};
 
     /// A live fold-viewer scene (one composite `Scene::External` at `TF_TAG`)
@@ -442,6 +474,30 @@ mod tests {
             assert!(!scene.contains_tag("fold_row_1"), "interior row hidden");
             assert!(!scene.contains_tag("fold_row_3"), "interior row hidden");
             assert!(!scene.contains_tag("fold_row_5"), "closer row hidden");
+        });
+    }
+
+    #[test]
+    fn r961_chevron_is_a_fold_click_target_on_foldable_lines_only() {
+        Owner::new().run(|| {
+            let st = use_text_edit_state(TF_TAG);
+            st.set_text(SEED_CODE.to_string());
+            let scene: Scene = view((TextFieldState::Idle, 0), &Frame::default());
+            // SEED_CODE opens blocks on line 0 (`fn main() {`) and line 2 (`if x > 0 {`);
+            // each foldable line's chevron is a composite `code_editor#fold<i>` target.
+            assert!(
+                scene.contains_tag(&TextFieldSendKey::fold_toggle_tag(TF_TAG, 0)),
+                "line 0 opens a block -> its chevron routes a fold click",
+            );
+            assert!(
+                scene.contains_tag(&TextFieldSendKey::fold_toggle_tag(TF_TAG, 2)),
+                "line 2 opens a block -> its chevron routes a fold click",
+            );
+            // A non-foldable line's chevron is an untagged spacer (no click target).
+            assert!(
+                !scene.contains_tag(&TextFieldSendKey::fold_toggle_tag(TF_TAG, 1)),
+                "line 1 opens no block -> no fold click target",
+            );
         });
     }
 

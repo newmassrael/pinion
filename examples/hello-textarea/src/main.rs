@@ -146,7 +146,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{
-    gutter_line_sub_tag, TextFieldEvent, TextFieldExternal, TextFieldState,
+    TextFieldEvent, TextFieldExternal, TextFieldSendKey, TextFieldState,
 };
 use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
 use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore, WidgetStateName};
@@ -164,9 +164,9 @@ vello_renderer_impl!(HelloTextAreaRenderer, HelloTextAreaRendererError);
 const TA_TAG: &str = "main_textarea";
 /// R956 — the line-number gutter box (container) tag. R959 — each number is
 /// tagged under the *field's* own composite namespace `main_textarea#gl<n>`
-/// ([`gutter_line_sub_tag`]), not this box, so a click routes through the
-/// `InputRouter` to the field's `send` wire (`go_to_line`) — focus-independent,
-/// no caret-drag arm (see [`gutter_line_sub_tag`]'s doc for the B1/B2 fix).
+/// (`TextFieldSendKey::gutter_line_tag`), not this box, so a click routes
+/// through the `InputRouter` to the field's `send` wire (`go_to_line`) —
+/// focus-independent, no caret-drag arm (see [`TextFieldSendKey`]'s B1/B2 doc).
 const GUTTER_TAG: &str = "ta_gutter";
 /// R957 — the current-line highlight band tag (the gutter row the caret's
 /// logical line sits on); one per frame, moves with the caret.
@@ -523,7 +523,7 @@ fn gutter(
             // InputRouter to the field's `send` wire (`go_to_line`) instead of
             // the geometry press hook: focus-independent + no caret-drag arm.
             TextNode::styled(format!("{logical_n}"), Rect::default(), ink.clone())
-                .with_tag(gutter_line_sub_tag(TA_TAG, logical_n as usize))
+                .with_tag(TextFieldSendKey::gutter_line_tag(TA_TAG, logical_n as usize))
                 .with_layout(
                     LayoutStyle::new()
                         .with_size(Size::px(inner_w, row_h))
@@ -966,7 +966,7 @@ impl WidgetView for TextAreaView {
         // longer re-scans its own rect (the pre-R801 workaround).
         // R959 — a gutter line-number click is NOT handled in this geometry
         // hook. The number is tagged under the field's own composite namespace
-        // (`main_textarea#gl<n>`, `gutter_line_sub_tag`), so the InputRouter
+        // (`main_textarea#gl<n>`, `TextFieldSendKey::gutter_line_tag`), so the InputRouter
         // routes the click to the field's `send` wire (→ `go_to_line`) and
         // click-to-focus resolves the composite to this field (focusing the
         // editor). That `main_textarea#gl<n>` hit-tag is a composite, never the

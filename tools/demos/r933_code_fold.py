@@ -49,6 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
+    find_by_tag,
     run_demo,
     wait_until,
 )
@@ -203,6 +204,28 @@ def body() -> None:
         assert ed.invoke(f"{_EXT}/unfold-all", None) == 0, "unfold-all expands all"
         _wait_collapsed(ed, set())
         _wait_visible(ed, _ALL_ROWS)
+
+        # ── (P) R961: pointer click on a chevron toggles that fold ───
+        # A foldable line's chevron is a composite click target
+        # `code_editor#fold<i>`; a non-foldable line has none. A live click
+        # routes through the InputRouter to the field's `send` wire ->
+        # `toggle_fold` (the keyboard `Enter` / `toggle-fold` RPC peer).
+        snap = ed.snapshot(source="paint")
+        assert find_by_tag(snap, f"{_EDITOR_TAG}#fold0") is not None, "line 0 chevron is a fold target"
+        assert find_by_tag(snap, f"{_EDITOR_TAG}#fold2") is not None, "line 2 chevron is a fold target"
+        assert find_by_tag(snap, f"{_EDITOR_TAG}#fold1") is None, "line 1 (non-foldable) has no target"
+        ed.click(path=f"{_EDITOR_TAG}#fold0")
+        _wait_collapsed(ed, {0})
+        assert _region_by_start(_regions(ed), 0)["collapsed"] is True, "chevron click collapsed line 0"
+        _wait_visible(ed, {0})
+        ed.click(path=f"{_EDITOR_TAG}#fold0")  # click again expands
+        _wait_collapsed(ed, set())
+        _wait_visible(ed, _ALL_ROWS)
+        # The inner chevron folds independently of the outer.
+        ed.click(path=f"{_EDITOR_TAG}#fold2")
+        _wait_collapsed(ed, {2})
+        ed.click(path=f"{_EDITOR_TAG}#fold2")
+        _wait_collapsed(ed, set())
 
         # ── (G) Non-opener line is a no-op; negative line rejected ───
         assert ed.invoke(f"{_EXT}/toggle-fold", 1) is False, "line 1 opens no block"

@@ -736,52 +736,87 @@ impl WidgetTransition for TextField {
     }
 }
 
-/// R959 §5.36 §5.22 — the **gutter line-number send sub-target** prefix.
+/// R959 / R961 §5.36 §5.22 — the field's **`send`-wire sub-target** grammar:
+/// the closed set of `"<field>#<key>"` composite click targets a multi-line
+/// editor's gutter routes to its own [`TextFieldExternal`]'s
+/// `invoke("send", "<key>:PointerUp")` wire. The
+/// [`GridSendKey`](crate::composite_tag::GridSendKey) precedent applied to
+/// the text field — one [`parse`](Self::parse), one encode-per-kind — so the
+/// paint producer and the `send` decoder cannot drift.
 ///
-/// A multi-line field's line-number gutter paints each number under the
-/// field's *own* composite tag `"<field>#gl<n>"` (1-based logical line
-/// `n`). A click on that number routes through the
-/// [`InputRouter`](pinion_runtime::InputRouter) to **this** field's
-/// `invoke("send", "gl<n>:PointerUp")` wire — focus-independent and with
-/// no caret text-drag arm, unlike the geometry press hook
-/// ([`position_caret_for_point`](pinion_shell::WidgetView::position_caret_for_point))
-/// the first cut (R957) used: that hook short-circuited unless the field
-/// already held focus (a no-op gutter click, R959 B2) and, bound to the
-/// press → drag funnel, armed a character text-selection on the smallest
-/// pointer jitter (R959 B1). Routing the number under the field tag fixes
-/// both — click-to-focus resolves the composite to the primary focusable
-/// field (so the click focuses the editor), and the press hook rejects the
-/// composite tag (`!= field`) so no drag arms. The line number *is* the
-/// address; there is no pixel → line geometry.
+/// A gutter click routes here instead of through the geometry press hook
+/// ([`position_caret_for_point`](pinion_shell::WidgetView::position_caret_for_point)):
+/// focus-independent and arming no caret text-drag, because click-to-focus
+/// resolves the composite to the primary focusable field and the press hook
+/// rejects the `!= field` composite tag (R959 B1/B2). The discrete tagged
+/// node IS the addressed line — there is no pixel → line geometry.
 ///
-/// The `gl` prefix namespaces line-number targets apart from a future
-/// fold-chevron sub-target (`"<field>#fold<n>"`) the same gutter will host
-/// (R955 deferred click-to-fold), so both share one `send` wire.
+/// Two kinds today, both `"<prefix><line>"`:
 ///
-/// [`gutter_line_sub_tag`] (producer) and [`gutter_line_from_sub`]
-/// (decoder) both reference this const, so the wire grammar cannot drift —
-/// the [`GridSendKey`](crate::composite_tag::GridSendKey) encode↔decode
-/// SSOT precedent applied to the field's gutter sub-target.
-pub const GUTTER_LINE_PREFIX: &str = "gl";
-
-/// R959 — build the composite paint tag a line-number gutter gives its
-/// `line`-th number (1-based): `"<field_tag>#gl<line>"`. The **encode**
-/// twin of [`gutter_line_from_sub`]; the `'#'` join is the R51.42 §5.35
-/// frozen-separator idiom (R803), the `gl` half the [`GUTTER_LINE_PREFIX`]
-/// SSOT this shares with the decoder.
-#[must_use]
-pub fn gutter_line_sub_tag(field_tag: &str, line: usize) -> String {
-    format!("{field_tag}#{GUTTER_LINE_PREFIX}{line}")
+/// * [`GutterLine`](Self::GutterLine) (`"gl<n>"`) — a line-number click;
+///   `<n>` is the **1-based** logical line (the
+///   [`go_to_line`](crate::widgets::text_edit::TextEditState::go_to_line)
+///   convention). R959.
+/// * [`FoldToggle`](Self::FoldToggle) (`"fold<n>"`) — a fold-chevron click;
+///   `<n>` is the **0-based** opener `start_line` (the
+///   [`toggle_fold`](crate::widgets::text_edit::TextEditState::toggle_fold) /
+///   `toggle-fold` convention). The R955 deferred click-to-fold, landed as
+///   the 2nd consumer of this grammar (R961).
+///
+/// Each kind carries its line in its substrate method's native base (the two
+/// RPC peers `go-to-line` / `toggle-fold` already differ), so the `send` wire
+/// and the RPC agree per kind.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum TextFieldSendKey {
+    /// A line-number gutter click — `"gl<n>"`.
+    GutterLine {
+        /// 1-based logical line (the `go_to_line` target).
+        line: usize,
+    },
+    /// A fold-chevron click — `"fold<n>"`.
+    FoldToggle {
+        /// 0-based opener `start_line` (the `toggle_fold` target).
+        line: usize,
+    },
 }
 
-/// R959 — decode the 1-based logical line a gutter number's `'#'`-split
-/// sub-target addresses (`"gl<line>"` → `Some(line)`), or `None` for any
-/// other sub-target on the same field (a non-gutter composite). The
-/// **decode** twin of [`gutter_line_sub_tag`], built on the
-/// [`GUTTER_LINE_PREFIX`] SSOT.
-#[must_use]
-pub fn gutter_line_from_sub(sub: &str) -> Option<usize> {
-    sub.strip_prefix(GUTTER_LINE_PREFIX)?.parse().ok()
+impl TextFieldSendKey {
+    /// The line-number sub-target prefix (`"gl"`).
+    const GUTTER_LINE_PREFIX: &'static str = "gl";
+    /// The fold-chevron sub-target prefix (`"fold"`). Disjoint from
+    /// [`GUTTER_LINE_PREFIX`](Self::GUTTER_LINE_PREFIX) — neither prefixes the
+    /// other — so the [`parse`](Self::parse) order is irrelevant.
+    const FOLD_PREFIX: &'static str = "fold";
+
+    /// Decode a `'#'`-split sub-target (the part after `"<field>#"`). `None`
+    /// for any sub that addresses neither kind (no field `send` target).
+    #[must_use]
+    pub fn parse(sub: &str) -> Option<Self> {
+        if let Some(n) = sub.strip_prefix(Self::GUTTER_LINE_PREFIX) {
+            return n.parse().ok().map(|line| Self::GutterLine { line });
+        }
+        if let Some(n) = sub.strip_prefix(Self::FOLD_PREFIX) {
+            return n.parse().ok().map(|line| Self::FoldToggle { line });
+        }
+        None
+    }
+
+    /// Build a line-number gutter click target — `"<field_tag>#gl<line>"`
+    /// (1-based `line`). The encode twin of [`parse`](Self::parse) for the
+    /// [`GutterLine`](Self::GutterLine) kind; the `'#'` join is the R51.42
+    /// §5.35 frozen-separator idiom (R803).
+    #[must_use]
+    pub fn gutter_line_tag(field_tag: &str, line: usize) -> String {
+        format!("{field_tag}#{}{line}", Self::GUTTER_LINE_PREFIX)
+    }
+
+    /// Build a fold-chevron click target — `"<field_tag>#fold<line>"`
+    /// (0-based opener `start_line`). The encode twin of [`parse`](Self::parse)
+    /// for the [`FoldToggle`](Self::FoldToggle) kind.
+    #[must_use]
+    pub fn fold_toggle_tag(field_tag: &str, line: usize) -> String {
+        format!("{field_tag}#{}{line}", Self::FOLD_PREFIX)
+    }
 }
 
 /// `External` adapter wrapping a [`TextField`]. Emits a single
@@ -2011,26 +2046,32 @@ impl TextFieldExternal {
         }
     }
 
-    /// R56.1.a / R959 §5.38 §5.36 — the `invoke("send", Text(...))` channel.
-    /// A bare event name (`"Focus"` / `"Blur"` / …) dispatches the matching
-    /// SCXML [`TextFieldEvent`]; the composite sub-target `"gl<n>:PointerUp"`
-    /// is a line-number gutter click (the `<field>#gl<n>` number tag the
-    /// `InputRouter` split + forwarded) handled by
-    /// [`send_gutter_line`](Self::send_gutter_line). Returns the post-send
-    /// state name (the established `send` read-outcome contract).
+    /// R56.1.a / R959 / R961 §5.38 §5.36 — the `invoke("send", Text(...))`
+    /// channel. A bare event name (`"Focus"` / `"Blur"` / …) dispatches the
+    /// matching SCXML [`TextFieldEvent`]; a composite sub-target
+    /// `"<key>:PointerUp"` is a gutter click decoded through
+    /// [`TextFieldSendKey`] — a line-number ([`send_gutter_line`](Self::send_gutter_line))
+    /// or a fold-chevron ([`toggle_fold_at_line`](Self::toggle_fold_at_line)).
+    /// Returns the post-send state name (the established `send` read-outcome
+    /// contract).
     fn invoke_send(&mut self, name: &str) -> Result<IntrospectValue, InvokeError> {
-        // R959 — a line-number gutter routes its clicks to the field's own
-        // `send` wire as `"gl<n>:PointerUp[:mods]"`. Decode through the `:`
-        // grammar SSOT and act once, on the activation edge: a plain click
-        // jumps the caret to that 1-based logical line, a `Shift`+click extends
-        // the selection to the line's start. The `PointerDown` / `PointerEnter`
-        // / `PointerLeave` edges the router fires around the click are a
-        // recognized no-op. Decoded before the bare-event path so the gutter
-        // sub never reaches `from_name` (which would reject it).
+        // R959 / R961 — a gutter affordance routes its clicks to the field's
+        // own `send` wire as `"<key>:PointerUp[:mods]"`. Decode through the `:`
+        // grammar SSOT, then the `TextFieldSendKey` SSOT, and act once, on the
+        // activation edge: a line-number click jumps / Shift-extends to that
+        // line, a fold chevron toggles the region opening there. The
+        // `PointerDown` / `PointerEnter` / `PointerLeave` edges the router fires
+        // around the click are a recognized no-op. Decoded before the bare-event
+        // path so the sub never reaches `from_name` (which would reject it).
         if let Some((sub, event, mods)) = split_send_payload(name) {
-            if let Some(line) = gutter_line_from_sub(sub) {
+            if let Some(key) = TextFieldSendKey::parse(sub) {
                 if is_activation_event(event) {
-                    self.send_gutter_line(line, mods.shift_key());
+                    match key {
+                        TextFieldSendKey::GutterLine { line } => {
+                            self.send_gutter_line(line, mods.shift_key());
+                        }
+                        TextFieldSendKey::FoldToggle { line } => self.toggle_fold_at_line(line),
+                    }
                 }
                 return Ok(IntrospectValue::Text(self.state().as_name().to_string()));
             }
@@ -2059,6 +2100,18 @@ impl TextFieldExternal {
             state.set_selection(anchor, state.line_start_byte(line));
         } else {
             state.go_to_line(line);
+        }
+    }
+
+    /// R961 §5.36 §5.22 — toggle the fold of the region opening on 0-based
+    /// `line` (the `send`-wire peer of the `toggle-fold` invoke + the keyboard
+    /// `Enter` path, decoded from a `"fold<n>:PointerUp"` chevron click). The
+    /// same [`TextEditState::toggle_fold`](crate::widgets::text_edit::TextEditState::toggle_fold)
+    /// SSOT — a collapse reanchors the caret out of the hidden interior. Inert
+    /// on a bare field (no attached [`TextEditState`]).
+    fn toggle_fold_at_line(&self, line: usize) {
+        if let Some(state) = self.text_state() {
+            state.toggle_fold(line);
         }
     }
 
@@ -6509,7 +6562,7 @@ mod r933_fold_tests {
     //! the `fold_regions` derived read and the `toggle-fold` / `fold-all`
     //! / `unfold-all` actions (the AI-first peer of the gutter chevron).
 
-    use super::{gutter_line_from_sub, gutter_line_sub_tag, TextFieldExternal};
+    use super::{TextFieldExternal, TextFieldSendKey};
     use crate::external::{ExternalIntrospect, IntrospectValue, InvokeError};
     use crate::widgets::text_edit::TextEditState;
     use std::rc::Rc;
@@ -6762,23 +6815,29 @@ mod r933_fold_tests {
         assert!(bare.query("line_count").is_none());
     }
 
-    // ─── R959 §5.36 §5.22 — gutter line-number send-route ───────────────────
+    // ─── R959 / R961 §5.36 §5.22 — gutter send-route (TextFieldSendKey) ──────
 
     fn send_text(tfx: &mut TextFieldExternal, payload: &str) -> Result<IntrospectValue, InvokeError> {
         tfx.invoke("send", IntrospectValue::Text(payload.into()))
     }
 
     #[test]
-    fn r959_gutter_line_sub_tag_encode_decode_roundtrip() {
-        // The producer (gutter paint) and decoder (this field's `send` arm)
-        // share the `gl` prefix, so the wire grammar cannot drift.
-        assert_eq!(gutter_line_sub_tag("main_textarea", 3), "main_textarea#gl3");
+    fn r961_send_key_encode_decode_roundtrip() {
+        // The paint producer and the `send` decoder share one SSOT, so the
+        // wire grammar cannot drift — across BOTH kinds.
+        assert_eq!(TextFieldSendKey::gutter_line_tag("main_textarea", 3), "main_textarea#gl3");
+        assert_eq!(TextFieldSendKey::fold_toggle_tag("code_editor", 2), "code_editor#fold2");
         let (primary, sub) = crate::composite_tag::split_subindex("main_textarea#gl3");
         assert_eq!(primary, "main_textarea");
-        assert_eq!(gutter_line_from_sub(sub.unwrap()), Some(3));
-        // A non-gutter composite sub on the same field does not decode.
-        assert_eq!(gutter_line_from_sub("3"), None, "a bare numeric is not a gutter sub");
-        assert_eq!(gutter_line_from_sub("glx"), None, "a non-numeric tail is rejected");
+        assert_eq!(TextFieldSendKey::parse(sub.unwrap()), Some(TextFieldSendKey::GutterLine { line: 3 }));
+        assert_eq!(
+            TextFieldSendKey::parse("fold2"),
+            Some(TextFieldSendKey::FoldToggle { line: 2 }),
+        );
+        // The `gl` / `fold` prefixes are disjoint and a non-key sub does not decode.
+        assert_eq!(TextFieldSendKey::parse("3"), None, "a bare numeric is not a key");
+        assert_eq!(TextFieldSendKey::parse("glx"), None, "a non-numeric gl tail is rejected");
+        assert_eq!(TextFieldSendKey::parse("foldx"), None, "a non-numeric fold tail is rejected");
     }
 
     #[test]
@@ -6839,6 +6898,30 @@ mod r933_fold_tests {
         // A bare field (no attached state) is inert — Ok, never a panic.
         let mut bare = TextFieldExternal::new();
         assert!(send_text(&mut bare, "gl3:PointerUp").is_ok());
+    }
+
+    #[test]
+    fn r961_send_fold_toggle_collapses_and_expands_region() {
+        // A fold-chevron click reaches the field as `"fold<n>:PointerUp"` (0-based
+        // opener line); it toggles the region opening there — the same
+        // `toggle_fold` SSOT the keyboard `Enter` + `toggle-fold` RPC drive.
+        let (_state, mut tfx) = wired("x {\n y\n}\n"); // a region opens on line 0
+        assert!(send_text(&mut tfx, "fold0:PointerUp").is_ok());
+        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(true), "click collapsed line 0");
+        assert!(send_text(&mut tfx, "fold0:PointerUp").is_ok());
+        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(false), "click again expanded it");
+    }
+
+    #[test]
+    fn r961_send_fold_toggle_non_activation_and_no_opener_are_noops() {
+        // Only the `PointerUp` activation edge acts; the `PointerDown` /
+        // `PointerEnter` cycle around the click is a recognized no-op. A fold
+        // sub on a non-opener line toggles nothing (toggle_fold returns false).
+        let (_state, mut tfx) = wired("x {\n y\n}\n");
+        assert!(send_text(&mut tfx, "fold0:PointerDown").is_ok());
+        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(false), "PointerDown did not fold");
+        assert!(send_text(&mut tfx, "fold1:PointerUp").is_ok(), "no opener on line 1 -> recognized no-op");
+        assert_eq!(regions(&tfx)[0]["collapsed"], serde_json::json!(false), "line 1 has no region");
     }
 
     // ─── R945 §5.22 — move-line / duplicate-line invoke verbs ───────────────
