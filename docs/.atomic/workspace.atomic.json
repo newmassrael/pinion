@@ -42765,6 +42765,60 @@
         "that relocation also moots the sorted-overlay-omitted gap and cleanly owns the bounds wire-form encode/decode SSOT"
       ]
     },
+    "R953": {
+      "decision_summary": "R953 §5.38 §5.40 relocate cell range selection to a dedicated hello-cell-select grid (SelectItems); revert hello-table to pure SelectRows",
+      "changes_bullets": [
+        "Revert hello-table to pure SelectRows: drop cell_selection field/decoder/apply + a11y; arrows nav-only",
+        "New hello-cell-select example: a SelectItems-only grid over the R952 Table cell-range API (one model)",
+        "Keyboard: plain arrow select-cell (collapse), Shift+arrow extend-cell, Escape clear; Home/End/PageUp/Down",
+        "a11y per-cell aria-selected from rectangle membership; AT click select-cell; single-tab activedescendant",
+        "parse_cell_bounds named decoder owns the \"r0,c0,r1,c1\" wire (R8); round-trip test pins encode/decode",
+        "R952 substrate unchanged (select/extend/clear-cell + cell_selection query); demo retargeted r952 to r953"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green: hello-cell-select 14 tests + hello-table 9 tests after revert",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "r953_cell_select.py PASS (~43 assertions; overlay geometry same-snapshot; keyboard + RPC plane)",
+        "hello-table regression hidden-window: r707_table.py + r730_table_sort.py PASS (row-select intact)",
+        "self-grep: read_focused_row/col/rows/cols x3 = pervasive introspect idiom (32 files), not a lift",
+        "removed-symbol grep 0 (apply_cell_selection/read_cell_selection); validate-workspace T1=0 new orphan +0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "pointer marquee range-select deferred: coordinator send is SelectRows-oriented; SelectItems pointer wiring follow-up",
+        "Ctrl-click disjoint multi-rectangle / fill-handle range-copy / editable cells = deferred DCC axes",
+        "R7 (sorted-overlay-omit) moot: dedicated grid never sorts; R8 (bounds wire) owned by parse_cell_bounds + pin test"
+      ],
+      "publishable_decision_summary": "R953 §5.38 §5.40 relocate cell range selection to a dedicated hello-cell-select grid (SelectItems); revert hello-table to pure SelectRows",
+      "publishable_changes_bullets": [
+        "Revert hello-table to pure SelectRows: drop cell_selection field/decoder/apply + a11y; arrows nav-only",
+        "New hello-cell-select example: a SelectItems-only grid over the R952 Table cell-range API (one model)",
+        "Keyboard: plain arrow select-cell (collapse), Shift+arrow extend-cell, Escape clear; Home/End/PageUp/Down",
+        "a11y per-cell aria-selected from rectangle membership; AT click select-cell; single-tab activedescendant",
+        "parse_cell_bounds named decoder owns the \"r0,c0,r1,c1\" wire (R8); round-trip test pins encode/decode",
+        "R952 substrate unchanged (select/extend/clear-cell + cell_selection query); demo retargeted r952 to r953"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green: hello-cell-select 14 tests + hello-table 9 tests after revert",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0",
+        "r953_cell_select.py PASS (~43 assertions; overlay geometry same-snapshot; keyboard + RPC plane)",
+        "hello-table regression hidden-window: r707_table.py + r730_table_sort.py PASS (row-select intact)",
+        "self-grep: read_focused_row/col/rows/cols x3 = pervasive introspect idiom (32 files), not a lift",
+        "removed-symbol grep 0 (apply_cell_selection/read_cell_selection); validate-workspace T1=0 new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pointer marquee range-select deferred: coordinator send is SelectRows-oriented; SelectItems pointer wiring follow-up",
+        "Ctrl-click disjoint multi-rectangle / fill-handle range-copy / editable cells = deferred DCC axes",
+        "R7 (sorted-overlay-omit) moot: dedicated grid never sorts; R8 (bounds wire) owned by parse_cell_bounds + pin test"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -84,6 +84,7 @@ members = [
     "examples/hello-datepicker",
     "examples/hello-table",
     "examples/hello-table-multi",
+    "examples/hello-cell-select",
     "examples/hello-radio",
     "examples/hello-radio-group",
     "examples/hello-filter-chip",
