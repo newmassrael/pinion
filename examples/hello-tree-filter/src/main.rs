@@ -46,7 +46,7 @@
 //! the visible rows (the windowed-widget keyboard model
 //! `hello-virtual-select` / `hello-virtual-nav` use).
 
-use pinion_a11y::{tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, WidgetA11y};
+use pinion_a11y::{tree_row_tag, windowed_tree_access_nodes, AccessFocus, AccessNode, WidgetA11y};
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
 };
@@ -668,12 +668,12 @@ impl WidgetA11y for SceneGraphFilter {
         let (_, measured_h) = scroll.measured_viewport();
         let window =
             compute_visible_range(scroll.offset_y(), measured_h, rows.len(), ROW_PITCH, OVERSCAN);
-        let slice: &[VisibleRow] = &rows[window.first..window.first + window.count];
-        tree_access_nodes(
+        windowed_tree_access_nodes(
             ROOT_TAG,
             TREE_TAG,
             Some("Scene graph"),
-            slice,
+            &rows,
+            &window,
             cursor.as_deref(),
             cursor.as_deref(),
         )

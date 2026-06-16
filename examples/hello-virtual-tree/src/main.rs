@@ -43,7 +43,7 @@
 //! the `clamp_nav` + `scroll_offset_to_reveal` SSOTs the family already
 //! owns; no new substrate.
 
-use pinion_a11y::{tree_access_nodes, tree_row_tag, AccessFocus, AccessNode, WidgetA11y};
+use pinion_a11y::{tree_row_tag, windowed_tree_access_nodes, AccessFocus, AccessNode, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -57,7 +57,7 @@ use pinion_core::widgets::button::{ButtonEvent, ButtonExternal, ButtonState};
 use pinion_core::widgets::scroll::use_scroll_state;
 use pinion_core::widgets::scrollbar::{scrollbar_extra_external, use_scrollbar_interaction};
 use pinion_core::widgets::tree_nav::{
-    flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode, VisibleRow,
+    flat_visible, toggle_expanded, tree_view_introspection_extra, TreeNode,
 };
 use pinion_core::widgets::virtual_list::compute_visible_range;
 use pinion_core::{Frame, Owner, Scene, Signal, WidgetCore};
@@ -440,12 +440,15 @@ impl WidgetA11y for VirtualTreeView {
     /// sibling-group `aria-level` / `aria-posinset` / `aria-setsize` /
     /// `aria-expanded` (preserved from the `flat_visible` SSOT, so the AT
     /// announces exactly the rows the paint window renders). Built through
-    /// the lifted [`tree_access_nodes`] (R812) over the same window the
-    /// view paints — the a11y tree and the painted tree never diverge.
+    /// the lifted [`windowed_tree_access_nodes`] (R947.1) over the same window
+    /// the view paints — the a11y tree and the painted tree never diverge.
     /// R820 — the keyboard cursor row carries `aria-selected`
     /// (selection-follows-focus / `aria-activedescendant`); when the cursor
     /// is off-window it is absent here exactly as it is absent from the
-    /// paint, and `reveal_cursor` scrolls it back in on the next key.
+    /// paint, and `reveal_cursor` scrolls it back in on the next key. R947.1 —
+    /// the shell's `AccessTreeBuilder::build` now drops an off-window
+    /// `aria-activedescendant` to atomic root focus, so the transient
+    /// off-window cursor never dangles.
     fn access_node(_state: &ButtonState, _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_tree_state();
         let nodes = state.nodes.get();
@@ -455,12 +458,12 @@ impl WidgetA11y for VirtualTreeView {
         let (_, measured_h) = scroll.measured_viewport();
         let window =
             compute_visible_range(scroll.offset_y(), measured_h, rows.len(), ROW_PITCH, OVERSCAN);
-        let slice: &[VisibleRow] = &rows[window.first..window.first + window.count];
-        tree_access_nodes(
+        windowed_tree_access_nodes(
             ROOT_TAG,
             TREE_TAG,
             Some("Virtual file tree"),
-            slice,
+            &rows,
+            &window,
             cursor.as_deref(),
             cursor.as_deref(),
         )

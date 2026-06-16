@@ -964,10 +964,17 @@ impl WidgetA11y for LazyTreeView {
         // when the window cuts a sibling group. The full structure stays
         // reachable through the query-only introspection extra. The cursor's
         // `aria-activedescendant` (in [`Self::access_focus_target`]) may name a
-        // row currently off the window — a virtualized tree's active descendant
-        // need not be rendered, and a keyboard move always scrolls it back into
-        // view ([`reveal_lazy_cursor`]); only the in-flatten guard
-        // ([`effective_cursor`]) matters for a *dangling* reference (R945.1).
+        // row currently off the window — e.g. a wheel scroll moves the viewport
+        // without moving the cursor. R947.1 corrected the earlier claim that
+        // `effective_cursor`'s in-flatten guard alone prevents a dangling
+        // reference: it does not (off-window-but-in-flatten still excludes the
+        // row from this windowed node set). The actual guard is the shell's
+        // `AccessTreeBuilder::build`, which now drops an active-descendant tag
+        // absent from the emitted nodes to atomic root focus (symmetric with
+        // the focus filter) — so no dangling reference, here or in any windowed
+        // roving widget. A keyboard move additionally scrolls the cursor back
+        // into view ([`reveal_lazy_cursor`]), so the off-window state is
+        // transient under keyboard nav.
         let cursor = effective_cursor(&node_rows(&all), &use_cursor());
         let scroll = use_scroll_state(SCROLL_KEY);
         let (_, measured_h) = scroll.measured_viewport();

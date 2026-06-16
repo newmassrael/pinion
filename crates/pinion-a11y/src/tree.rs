@@ -282,7 +282,20 @@ impl AccessTreeBuilder {
             // through the tree's own children list (no out-of-band
             // node lookup needed at the AT side).
             if let Some(child_tag) = self.active_descendants.get(tag) {
-                node.set_active_descendant(tag_to_node_id(child_tag));
+                // R947.1 — symmetric with the `focus` existence filter below:
+                // name an active-descendant ONLY when the tree actually emits
+                // that node. A windowed / roving widget whose cursor row
+                // scrolled out of the realized set (e.g. a wheel scroll that
+                // moves the viewport without moving the cursor) would otherwise
+                // advertise a dangling `aria-activedescendant` — a NodeId
+                // absent from this frame's tree. Dropping it leaves the parent
+                // focused (atomic), the correct virtualized posture: no active
+                // descendant while the active row is not rendered. This is the
+                // contract `pinion_shell`'s `access_node_for_window` doc already
+                // promised but `build` only honored for the focus tag.
+                if self.nodes.contains_key(child_tag.as_str()) {
+                    node.set_active_descendant(tag_to_node_id(child_tag));
+                }
             }
             nodes.push((node_id, node));
         }
@@ -887,6 +900,57 @@ mod tests {
         // No panic, no spurious node — the declaration applies only
         // to lowered nodes whose tag matches.
         assert_eq!(update.nodes.len(), 2);
+    }
+
+    #[test]
+    fn r947_1_active_descendant_present_in_nodes_is_set() {
+        // A realized cursor row (in the emitted node set) is named as the
+        // parent's aria-activedescendant — the normal roving case.
+        let mut b = AccessTreeBuilder::new();
+        b.add(&AccessNode::new("tree", AriaRole::Tree).with_child("tree#0"));
+        b.add(&AccessNode::new("tree#0", AriaRole::TreeItem));
+        b.focused(Some("tree"));
+        b.active_descendant("tree", "tree#0");
+        let update = b.build(None);
+        let (_, tree_node) = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == tag_to_node_id("tree"))
+            .expect("tree node emitted");
+        assert_eq!(
+            tree_node.active_descendant(),
+            Some(tag_to_node_id("tree#0")),
+            "a realized active-descendant child is named"
+        );
+    }
+
+    #[test]
+    fn r947_1_active_descendant_absent_from_nodes_is_dropped_not_dangling() {
+        // R947.1 regression: a roving widget whose active-descendant child is
+        // NOT in the emitted node set (a virtualized cursor row scrolled
+        // off-window by a wheel scroll that did not move the cursor) must NOT
+        // advertise a dangling aria-activedescendant. The builder drops it —
+        // symmetric with the focus filter — so the parent stays focused
+        // atomically with no descendant (the correct virtualized posture).
+        let mut b = AccessTreeBuilder::new();
+        b.add(&AccessNode::new("tree", AriaRole::Tree).with_child("tree#0"));
+        b.add(&AccessNode::new("tree#0", AriaRole::TreeItem));
+        b.focused(Some("tree"));
+        // The cursor (#9) is off the rendered window: declared but never added.
+        b.active_descendant("tree", "tree#9");
+        let update = b.build(None);
+        let (_, tree_node) = update
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == tag_to_node_id("tree"))
+            .expect("tree node emitted");
+        assert_eq!(
+            tree_node.active_descendant(),
+            None,
+            "an absent active-descendant is dropped, never a dangling NodeId"
+        );
+        // Focus still lands on the realized parent (atomic).
+        assert_eq!(update.focus, tag_to_node_id("tree"));
     }
 
     #[test]

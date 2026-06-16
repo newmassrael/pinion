@@ -42287,6 +42287,60 @@
         "tree_view::row_focus_bg stays a separate decision (opaque SurfaceContainerHighest, not the hover state-layer) -- a deliberate focus-visual divergence between the tree and the grid/inspector, not a duplication to fold"
       ]
     },
+    "R947.1": {
+      "decision_summary": "Adversarial session-review clearance of R946+R947: fix a dangling aria-activedescendant in the shell a11y build substrate (off-window virtualized cursor) + lift windowed_tree_access_nodes SSOT (the tree peer of windowed_list_nodes/windowed_grid_nodes), both surfaced by a user-requested review and re-verified by reading",
+      "changes_bullets": [
+        "(B) pinion-a11y AccessTreeBuilder::build: filter the active-descendant child for node-set existence, symmetric with the focus filter",
+        "(B) an off-window virtualized cursor row (wheel-scrolled out, cursor unmoved) no longer advertises a dangling aria-activedescendant -- it drops to atomic root focus",
+        "(B) makes the pinion-shell access_node_for_window doc contract true for the active-descendant, not only the focus tag (the doc already promised both)",
+        "(B) + 2 regression tests (present child named / absent child dropped not dangling); corrected the false R946 hello-lazy-tree access_node doc comment",
+        "(A) pinion-a11y: new windowed_tree_access_nodes -- the tree peer of windowed_list_nodes / windowed_grid_nodes -- lifting the byte-identical compute_visible_range -> slice -> tree_access_nodes wiring",
+        "(A) hello-virtual-tree + hello-tree-filter had hand-rolled that wiring (the R866 precedent lifted the symmetric keyboard windowed pipeline at its 2nd consumer); migrated both, dropped an orphaned VisibleRow import",
+        "(A) hello-lazy-tree's heterogeneous LazyRow windowing (skeleton-interleaved) stays inline -- the documented divergence, not a missed consumer"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: green incl. 2 B regression tests (tree.rs) + the windowed_tree_access_nodes test (tree_view.rs)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 (orphaned VisibleRow import removed)",
+        "behavior-preserving: A = byte-identical a11y nodes (windowed_tree_access_nodes == the inline slice+tree_access_nodes); B = only the off-window-cursor edge changes",
+        "demos r824 + r820 (virtual-tree) + r821 (tree-filter) + r946 (lazy-tree) PASS, no regression",
+        "provenance: bug + lift surfaced by a user-requested adversarial review (2 parallel reviewers); every finding re-verified by reading the actual code (the agent-claims-are-suspect rule)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "carry_forward_bullets": [
+        "B was a substrate bug affecting EVERY windowed-roving widget (hello-virtual-tree, hello-tree-grid, hello-lazy-tree) -- the AccessTreeBuilder::build fix hardens all three at once (root-cause fix, not a per-example patch)",
+        "self-review lesson: my R946 'safe by construction / only the in-flatten guard matters' was the R945.1 path-blindness error recurring -- a safe/never claim must grep EVERY path (here the wheel-scroll path that moves the viewport but not the cursor), and the fix belongs at the substrate where the contract was already documented but unimplemented",
+        "A was a pre-existing missed lift (2nd consumer = hello-tree-filter, before R946); my R946 'every tree example inlines it, they diverge' dismissal was wrong -- 2 of the 3 were byte-identical"
+      ],
+      "publishable_decision_summary": "Adversarial session-review clearance of R946+R947: fix a dangling aria-activedescendant in the shell a11y build substrate (off-window virtualized cursor) + lift windowed_tree_access_nodes SSOT (the tree peer of windowed_list_nodes/windowed_grid_nodes), both surfaced by a user-requested review and re-verified by reading",
+      "publishable_changes_bullets": [
+        "(B) pinion-a11y AccessTreeBuilder::build: filter the active-descendant child for node-set existence, symmetric with the focus filter",
+        "(B) an off-window virtualized cursor row (wheel-scrolled out, cursor unmoved) no longer advertises a dangling aria-activedescendant -- it drops to atomic root focus",
+        "(B) makes the pinion-shell access_node_for_window doc contract true for the active-descendant, not only the focus tag (the doc already promised both)",
+        "(B) + 2 regression tests (present child named / absent child dropped not dangling); corrected the false R946 hello-lazy-tree access_node doc comment",
+        "(A) pinion-a11y: new windowed_tree_access_nodes -- the tree peer of windowed_list_nodes / windowed_grid_nodes -- lifting the byte-identical compute_visible_range -> slice -> tree_access_nodes wiring",
+        "(A) hello-virtual-tree + hello-tree-filter had hand-rolled that wiring (the R866 precedent lifted the symmetric keyboard windowed pipeline at its 2nd consumer); migrated both, dropped an orphaned VisibleRow import",
+        "(A) hello-lazy-tree's heterogeneous LazyRow windowing (skeleton-interleaved) stays inline -- the documented divergence, not a missed consumer"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: green incl. 2 B regression tests (tree.rs) + the windowed_tree_access_nodes test (tree_view.rs)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 (orphaned VisibleRow import removed)",
+        "behavior-preserving: A = byte-identical a11y nodes (windowed_tree_access_nodes == the inline slice+tree_access_nodes); B = only the off-window-cursor edge changes",
+        "demos r824 + r820 (virtual-tree) + r821 (tree-filter) + r946 (lazy-tree) PASS, no regression",
+        "provenance: bug + lift surfaced by a user-requested adversarial review (2 parallel reviewers); every finding re-verified by reading the actual code (the agent-claims-are-suspect rule)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.27"
+      ],
+      "publishable_carry_forward_bullets": [
+        "B was a substrate bug affecting EVERY windowed-roving widget (hello-virtual-tree, hello-tree-grid, hello-lazy-tree) -- the AccessTreeBuilder::build fix hardens all three at once (root-cause fix, not a per-example patch)",
+        "self-review lesson: my R946 'safe by construction / only the in-flatten guard matters' was the R945.1 path-blindness error recurring -- a safe/never claim must grep EVERY path (here the wheel-scroll path that moves the viewport but not the cursor), and the fix belongs at the substrate where the contract was already documented but unimplemented",
+        "A was a pre-existing missed lift (2nd consumer = hello-tree-filter, before R946); my R946 'every tree example inlines it, they diverge' dismissal was wrong -- 2 of the 3 were byte-identical"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

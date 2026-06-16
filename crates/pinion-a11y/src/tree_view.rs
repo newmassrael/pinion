@@ -46,6 +46,7 @@ use crate::node::AccessNode;
 use crate::role::AriaRole;
 use pinion_core::composite_tag::GridTag;
 use pinion_core::widgets::tree_nav::VisibleRow;
+use pinion_core::widgets::virtual_list::VisibleWindow;
 use std::collections::BTreeSet;
 
 /// Compose a row's composite `AccessNode` tag — the frozen R51.42
@@ -142,6 +143,47 @@ pub fn tree_access_nodes(
         nodes.push(node);
     }
     nodes
+}
+
+/// R947.1 §5.40 §5.27 — the **windowed** peer of [`tree_access_nodes`]: emit
+/// `treeitem`s only for the rows inside the scroll `window`, the AT analog of
+/// [`windowed_list_nodes`](crate::windowed_list_nodes) /
+/// [`windowed_grid_nodes`](crate::windowed_grid_nodes) for the tree family.
+///
+/// Lifted at the **second** byte-identical windowed-tree consumer
+/// (`hello-virtual-tree` R819 + `hello-tree-filter`), which had hand-rolled the
+/// same `&rows[window.first..window.first + window.count]` slice → [`tree_access_nodes`]
+/// wiring — the R866 precedent that lifted the symmetric *keyboard* windowed
+/// pipeline ([`apply_windowed_tree_key`](pinion_shell::typeahead::apply_windowed_tree_key))
+/// at its 2nd consumer, here applied to the windowed *a11y* pipeline (the
+/// project's `[[abstraction-needs-second-consumer]]` rule; an a11y-topology
+/// divergence between the two would be a bug, not a style choice — R758/R759).
+///
+/// The binding still computes `window` itself (via `compute_visible_range*`
+/// against its own scroll state), exactly as [`windowed_list_nodes`] takes a
+/// caller-computed [`VisibleWindow`] — so the a11y tree and the painted tree
+/// window the same flattening by the same math. A virtualized tree whose
+/// **rows are not a uniform `&[VisibleRow]`** (e.g. `hello-lazy-tree`, whose
+/// flattening interleaves skeleton placeholders) cannot use this peer and
+/// windows its heterogeneous sequence inline — the documented divergence, not
+/// a missed consumer.
+///
+/// Per-row axes (`aria-level` / `posinset` / `setsize` / `expanded`) come from
+/// each [`VisibleRow`]'s own fields (set by `flat_visible` from the absolute
+/// sibling position), so a window that cuts a sibling group still reports the
+/// correct "row N of M" — see [`tree_access_nodes`].
+#[must_use]
+pub fn windowed_tree_access_nodes(
+    tree_tag: &str,
+    row_prefix: &str,
+    name: Option<&str>,
+    rows: &[VisibleRow],
+    window: &VisibleWindow,
+    selected_id: Option<&str>,
+    focused_id: Option<&str>,
+) -> Vec<AccessNode> {
+    let slice = &rows[window.first..window.first + window.count];
+    tree_access_nodes(tree_tag, row_prefix, name, slice, selected_id, focused_id)
 }
 
 /// R902 §5.40 — the multi-select state a [`treegrid_nodes`] row lowers to: the
@@ -333,10 +375,11 @@ mod tests {
     //! builder was lifted here at R812; the example now keeps only a
     //! binding-side composite-format lockstep pin.
 
-    use super::tree_access_nodes;
+    use super::{tree_access_nodes, tree_row_tag, windowed_tree_access_nodes};
     use crate::node::AccessNode;
     use crate::role::AriaRole;
     use pinion_core::widgets::tree_nav::VisibleRow;
+    use pinion_core::widgets::virtual_list::VisibleWindow;
 
     /// A deterministic visible-row flattening, mirroring the
     /// `hello-tree-view` R674 sample tree:
@@ -409,6 +452,28 @@ mod tests {
         for row in &out[1..] {
             assert_eq!(row.role, AriaRole::TreeItem, "every child is a treeitem");
         }
+    }
+
+    #[test]
+    fn r947_1_windowed_emits_only_the_window_rows() {
+        // windowed_tree_access_nodes slices `rows` to the window, then emits the
+        // same root + treeitem topology tree_access_nodes would for that slice —
+        // only the windowed rows become nodes, with their absolute axes intact.
+        let rows = sample_rows();
+        // Window rows[1..3]: "main.rs" + "widgets" (the middle two of five).
+        let window = VisibleWindow { first: 1, count: 2 };
+        let out =
+            windowed_tree_access_nodes("tree", "tree", None, &rows, &window, None, Some("src/widgets"));
+        assert_eq!(out.len(), 3, "root + 2 windowed treeitems, not all 5 rows");
+        assert_eq!(out[0].role, AriaRole::Tree, "first node is the tree root");
+        assert_eq!(out[1].tag, tree_row_tag("tree", "src/main.rs"), "first windowed row");
+        assert_eq!(out[2].tag, tree_row_tag("tree", "src/widgets"), "second windowed row");
+        // The window cuts the top-level sibling group, but each treeitem keeps
+        // its absolute posinset/setsize from the row (not the slice position).
+        assert_eq!(out[2].position_in_set, Some(2), "absolute posinset survives windowing");
+        assert_eq!(out[2].size_of_set, Some(2), "absolute setsize survives windowing");
+        // The root references exactly the windowed children.
+        assert_eq!(out[0].children.len(), 2, "root claims only the windowed rows");
     }
 
     #[test]
