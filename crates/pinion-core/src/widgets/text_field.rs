@@ -1245,6 +1245,20 @@ impl ExternalIntrospect for TextFieldExternal {
             ("move-line-down", "boolean"),
             ("duplicate-line-up", "boolean"),
             ("duplicate-line-down", "boolean"),
+            // R951 §5.36 §5.22 — active typing mark (collapsed-caret formatting,
+            // ProseMirror `storedMarks`). `style_at_caret` reads the style the
+            // next char would carry (armed mark, else inherited-from-left) as
+            // the full TextStyle object (the `apply-style` `style` shape), or
+            // Null for the field base; `pending_style` reads only the *armed*
+            // mark (Null when merely inherited). `mark` (Json = the
+            // `style_at_caret` read shape, bare or `{"style": {...}}`) arms it
+            // so the next typed text is styled; `clear-mark` (Null) drops it.
+            // The AI-first peer of pressing Bold with nothing selected, then
+            // typing — `apply-style` remains the selection path.
+            ("style_at_caret", "json"),
+            ("pending_style", "json"),
+            ("mark", "boolean"),
+            ("clear-mark", "boolean"),
         ])
     }
 
@@ -1298,6 +1312,18 @@ impl ExternalIntrospect for TextFieldExternal {
                         .unwrap_or_else(|_| serde_json::Value::Array(Vec::new())),
                 )
             }),
+            // R951 §5.36 §5.22 — the style the next inserted char would carry
+            // (armed typing mark, else inherited from the char to the left): the
+            // full TextStyle object (the `apply-style` `style` shape an agent
+            // mutates + writes back via `mark`), or `Null` when the next char is
+            // the field base. What a Bold toolbar button lights from.
+            "style_at_caret" => self
+                .text_state()
+                .map(|s| style_to_value(s.style_at_caret())),
+            // R951 §5.36 §5.22 — the *armed* typing mark only (`Null` when the
+            // next char merely inherits): lets an AI / toolbar distinguish "Bold
+            // is armed" from "the text here is already bold".
+            "pending_style" => self.text_state().map(|s| style_to_value(s.pending_style())),
             // R56.1.g.2 §5.38 §5.22 — preedit (IME composition) read
             // path. `Text(s)` when composing (mirror of W3C
             // `CompositionEvent.data` observed during
@@ -1706,6 +1732,11 @@ impl ExternalIntrospect for TextFieldExternal {
                 },
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R951 §5.36 §5.22 — active typing marks (collapsed-caret formatting,
+            // ProseMirror storedMarks). `mark` arms it (so the next typed text is
+            // styled), `clear-mark` drops it; split out (SRP, line ceiling) like
+            // the find / fold / indent helpers.
+            "mark" | "clear-mark" => self.invoke_mark(path, &args),
             // R903 §5.22 — find &amp; replace actions live in a dedicated helper
             // (SRP: keeps the invoke dispatch under the line ceiling).
             "find-next" | "find-prev" | "replace" | "replace-all" => {
@@ -1739,6 +1770,45 @@ impl TextFieldExternal {
     /// `Text` replacement and returns `Bool`, `replace-all` takes the `Text`
     /// replacement and returns the `Int` count. A bare field (no state) is
     /// inert — `Null` / `Bool(false)` / `Int(0)` — never `UnknownPath`.
+    /// R951 §5.36 §5.22 — the active-typing-mark `invoke` actions, split out of
+    /// [`invoke`](ExternalIntrospect::invoke) for SRP (and to keep that dispatch
+    /// under the line ceiling, like the find / fold / indent helpers). `mark`
+    /// (Json = the `style_at_caret` read shape — a bare full-style object or
+    /// `{"style": {...}}`) arms the mark so the next typed text is styled; an
+    /// agent reads `style_at_caret`, mutates a field, and writes it back.
+    /// `clear-mark` (`Null`) drops it. Both return `Bool(true)` when a
+    /// [`TextEditState`] is attached, `Bool(false)` otherwise; `TypeMismatch` on
+    /// a malformed arg. `apply-style` stays the selection path; this is the
+    /// collapsed-caret typing attribute.
+    fn invoke_mark(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "mark" => match args {
+                IntrospectValue::Json(obj) => match parse_mark_style_json(obj) {
+                    Some(style) => Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
+                        s.set_pending_style(Some(style));
+                        true
+                    }))),
+                    None => Err(InvokeError::TypeMismatch),
+                },
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "clear-mark" => match args {
+                IntrospectValue::Null => Ok(IntrospectValue::Bool(self.text_state().is_some_and(
+                    |s| {
+                        s.set_pending_style(None);
+                        true
+                    },
+                ))),
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+
     fn invoke_find_replace(
         &mut self,
         path: &str,
@@ -2198,6 +2268,38 @@ fn parse_apply_style_json(value: &serde_json::Value) -> Option<(usize, usize, Te
     Some((start, end, style))
 }
 
+/// R951 §5.36 §5.22 — decode the `mark` invoke arg into the [`TextStyle`] to
+/// arm at the collapsed caret. The wire shape is the `style_at_caret` read
+/// shape: either a bare full-style object (the round-trip — read, mutate a
+/// field, write it back) or `{"style": {...}}` (the same wrapped form
+/// [`parse_apply_style_json`] accepts). Unlike `apply-style` it carries no
+/// byte range (the mark applies to the *next* insert, not an existing span),
+/// so there is nothing to clamp. Any object decodes (missing fields default
+/// via [`json_to_text_style`], a wholesale set-with-defaults like
+/// [`TextEditState::set_pending_style`](crate::widgets::TextEditState::set_pending_style)
+/// expects); a non-object arg is `None` (→ `TypeMismatch`).
+fn parse_mark_style_json(value: &serde_json::Value) -> Option<TextStyle> {
+    let obj = value.as_object()?;
+    let style_obj = obj
+        .get("style")
+        .and_then(serde_json::Value::as_object)
+        .unwrap_or(obj);
+    Some(json_to_text_style(style_obj))
+}
+
+/// R951 §5.36 §5.22 — encode an optional [`TextStyle`] for a query read: the
+/// full [`TextStyle`] serde object (the `apply-style` `style` shape, round-trippable
+/// via [`json_to_text_style`]) or `Null` for the field base. The shared encode
+/// of the `style_at_caret` + `pending_style` reads, so the two never drift.
+fn style_to_value(style: Option<TextStyle>) -> IntrospectValue {
+    match style {
+        Some(style) => {
+            IntrospectValue::Json(serde_json::to_value(style).unwrap_or(serde_json::Value::Null))
+        }
+        None => IntrospectValue::Null,
+    }
+}
+
 /// R770.1 §5.36 §5.49 — decode a wire `style` object back into a
 /// [`TextStyle`]. The exact inverse of `text_style_to_json` (pinion-rpc),
 /// so a run round-trips: snapshot → mutate → `apply-style`. Each field is
@@ -2604,6 +2706,9 @@ mod tests {
         // R945 grew the surface: + move-line-up / move-line-down /
         // duplicate-line-up / duplicate-line-down (line manipulation actions,
         // the AI-first peers of Alt+Up / Alt+Down + Shift+Alt copy).
+        // R951 grew the surface: + style_at_caret / pending_style (active
+        // typing-mark reads) + mark / clear-mark (arm / drop the mark, the
+        // AI-first peer of pressing Bold with nothing selected, then typing).
         // The schema shape is stable across bare and wired-up
         // TextFields — text/caret/selection/preedit queries return
         // None / intervene returns ReadOnly when no TextEditState is
@@ -2649,6 +2754,10 @@ mod tests {
                 ("move-line-down", "boolean"),
                 ("duplicate-line-up", "boolean"),
                 ("duplicate-line-down", "boolean"),
+                ("style_at_caret", "json"),
+                ("pending_style", "json"),
+                ("mark", "boolean"),
+                ("clear-mark", "boolean"),
             ],
         );
     }
@@ -3496,6 +3605,112 @@ mod r56_1_d_tests {
         let spans: Vec<(u32, u32)> =
             state.style_runs().iter().map(|r| (r.start, r.end)).collect();
         assert_eq!(spans, vec![(0, 3), (8, 11)], "clear splits the run without shifting");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R951 §5.36 — mark / clear-mark + style_at_caret / pending_style
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r951_invoke_mark_then_key_types_styled_text() {
+        let state = Rc::new(TextEditState::with_initial(String::new()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        let armed = tfx
+            .invoke(
+                "mark",
+                IntrospectValue::Json(serde_json::json!({ "font_weight": 700 })),
+            )
+            .unwrap();
+        assert_eq!(armed, IntrospectValue::Bool(true));
+        // Typing through the same code path the shell drives picks up the mark.
+        tfx.invoke("key", IntrospectValue::Text("X".to_string())).unwrap();
+        let runs = state.style_runs();
+        assert_eq!(runs.len(), 1, "the armed mark styles the typed char");
+        assert_eq!((runs[0].start, runs[0].end), (0, 1));
+        assert_eq!(runs[0].style.font_weight, FontWeight::BOLD);
+    }
+
+    #[test]
+    fn r951_query_style_at_caret_returns_armed_mark() {
+        let state = Rc::new(TextEditState::with_initial("hi".to_string()));
+        state.set_caret(1);
+        let tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        let mut s = TextStyle::new();
+        s.font_size_px = 30;
+        state.set_pending_style(Some(s));
+        match tfx.query("style_at_caret").unwrap() {
+            IntrospectValue::Json(v) => assert_eq!(
+                v.get("font_size_px").and_then(serde_json::Value::as_u64),
+                Some(30),
+                "the armed mark round-trips through the read"
+            ),
+            other => panic!("expected Json, got {other:?}"),
+        }
+        assert!(
+            matches!(tfx.query("pending_style").unwrap(), IntrospectValue::Json(_)),
+            "pending_style reports the armed mark"
+        );
+    }
+
+    #[test]
+    fn r951_query_pending_style_null_when_inherited() {
+        let state = Rc::new(TextEditState::with_initial("abcd".to_string()));
+        state.set_style_runs(vec![StyleRun::new(
+            0,
+            2,
+            TextStyle::new().with_fg(Color::rgb(0xD0, 0x28, 0x28)),
+        )]);
+        state.set_caret(2); // inheriting the red run, but nothing armed
+        let tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        assert_eq!(
+            tfx.query("pending_style").unwrap(),
+            IntrospectValue::Null,
+            "inherited style is not an armed mark"
+        );
+        assert!(
+            matches!(tfx.query("style_at_caret").unwrap(), IntrospectValue::Json(_)),
+            "style_at_caret still reflects the inherited run"
+        );
+    }
+
+    #[test]
+    fn r951_invoke_clear_mark_drops_the_mark() {
+        let state = Rc::new(TextEditState::with_initial(String::new()));
+        let mut armed = TextStyle::new();
+        armed.font_size_px = 30;
+        state.set_pending_style(Some(armed));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        assert!(matches!(tfx.query("pending_style").unwrap(), IntrospectValue::Json(_)));
+        let r = tfx.invoke("clear-mark", IntrospectValue::Null).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true));
+        assert_eq!(
+            tfx.query("pending_style").unwrap(),
+            IntrospectValue::Null,
+            "clear-mark drops the mark"
+        );
+    }
+
+    #[test]
+    fn r951_invoke_mark_on_bare_field_returns_false() {
+        // No TextEditState attached → recognized at the path level, no effect.
+        let mut tfx = TextFieldExternal::new();
+        let r = tfx
+            .invoke(
+                "mark",
+                IntrospectValue::Json(serde_json::json!({ "font_weight": 700 })),
+            )
+            .unwrap();
+        assert_eq!(r, IntrospectValue::Bool(false));
+    }
+
+    #[test]
+    fn r951_invoke_mark_rejects_non_json_arg() {
+        let state = Rc::new(TextEditState::with_initial(String::new()));
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        assert!(matches!(
+            tfx.invoke("mark", IntrospectValue::Text("nope".to_string())),
+            Err(InvokeError::TypeMismatch)
+        ));
     }
 
     #[test]

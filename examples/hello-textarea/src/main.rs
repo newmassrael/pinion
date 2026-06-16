@@ -144,7 +144,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::undo::use_undo_stack;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
-use pinion_core::widgets::text_edit::use_text_edit_state;
+use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
 use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore, WidgetStateName};
@@ -349,35 +349,61 @@ fn toolbar(theme: &pinion_core::theme::Theme, bold_active: bool, italic_active: 
 /// when nothing is selected — formatting needs a range.
 fn apply_format(index: usize, interaction: TextFieldState) {
     let edit = use_text_edit_state(TA_TAG);
-    let Some((start, end)) = edit.selection_range() else {
-        return;
-    };
+    // R951 §5.36 — the toolbar works selected-or-not. With a selection the
+    // format lands on the runs (the R768/R769 path); at a collapsed caret it
+    // arms an active typing mark so the *next* typed text is styled (Word's
+    // "press Bold, then type"). The selection range, if any, threads through to
+    // the swatch overlays (which need a range); the toggle delegates the branch
+    // to `format_at_caret_or_selection`.
+    let selection = edit.selection_range();
     match index {
         FMT_BOLD | FMT_ITALIC => {
             // Field-level merge (`mergeCharFormat`): flip only the weight /
-            // style, preserving the run's colour. Unstyled bytes resolve
-            // against the field base before the transform.
+            // style, preserving the run's colour. The toggle direction reads
+            // the next-char style (`style_at_caret` collapsed, the selection
+            // start when selecting) so it flips relative to what is / would-be
+            // styled. Unstyled bytes resolve against the field base.
             let theme = use_theme(THEME_TAG).theme_animated();
             let base = base_text_style(&theme, interaction);
-            let at_start = edit.style_at(start);
+            let at = toolbar_active_style(&edit);
             if index == FMT_BOLD {
-                let now = at_start.is_some_and(|st| st.font_weight == FontWeight::BOLD);
+                let now = at.is_some_and(|st| st.font_weight == FontWeight::BOLD);
                 let target = if now { FontWeight::NORMAL } else { FontWeight::BOLD };
-                edit.merge_style_run(start, end, &base, move |st| st.font_weight = target);
+                edit.format_at_caret_or_selection(&base, move |st| st.font_weight = target);
             } else {
-                let now = at_start.is_some_and(|st| st.font_style == FontStyle::Italic);
+                let now = at.is_some_and(|st| st.font_style == FontStyle::Italic);
                 let target = if now { FontStyle::Normal } else { FontStyle::Italic };
-                edit.merge_style_run(start, end, &base, move |st| st.font_style = target);
+                edit.format_at_caret_or_selection(&base, move |st| st.font_style = target);
             }
         }
-        // Colour swatches: wholesale `setCharFormat`; the clear swatch
-        // (`None`) strips formatting back to the base style.
+        // Colour swatches: wholesale `setCharFormat` over the selection; the
+        // clear swatch (`None`) strips it. At a collapsed caret the swatch arms
+        // a pending colour mark (and clear drops the mark) — the colour peer of
+        // the Bold / Italic caret path.
         _ => match FMT_SWATCHES.get(index - FMT_SWATCH_BASE) {
-            Some(Some(rgb)) => edit.apply_style_run(start, end, swatch_text_style(*rgb)),
-            Some(None) => edit.clear_style_runs(start, end),
+            Some(Some(rgb)) => match selection {
+                Some((start, end)) => edit.apply_style_run(start, end, swatch_text_style(*rgb)),
+                None => edit.set_pending_style(Some(swatch_text_style(*rgb))),
+            },
+            Some(None) => match selection {
+                Some((start, end)) => edit.clear_style_runs(start, end),
+                None => edit.set_pending_style(None),
+            },
             None => {} // index out of range — ignore.
         },
     }
+}
+
+/// R951 §5.36 — the style the B / I toolbar cells reflect (and the toggle
+/// direction `apply_format` reads): the selection start's style when selecting
+/// (the toolbar mirrors the selected run, the R799 reflective model), else the
+/// style the next typed char would carry ([`TextEditState::style_at_caret`] —
+/// an armed mark or the inherited style), so the toggles light up for
+/// collapsed-caret marks too. One SSOT for the view paint + the a11y
+/// `aria-pressed` reads (the two reflective sites).
+fn toolbar_active_style(edit: &TextEditState) -> Option<TextStyle> {
+    edit.selection_range()
+        .map_or_else(|| edit.style_at_caret(), |(start, _)| edit.style_at(start))
 }
 
 // R790 §5.22 — the `Owner::cache`-keyed clipboard hook (`AppClipboard`
@@ -421,12 +447,11 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         Some((start, end)) => format!(" | sel={start}..{end}"),
         None => String::new(),
     };
-    // R799 — reflective toggle state for the B / I cells: read the
-    // selection start's style so the toolbar *mirrors* the document (it
-    // owns no format state). No selection → both inactive.
-    let (bold_active, italic_active) = text_state
-        .selection_range()
-        .and_then(|(start, _)| text_state.style_at(start))
+    // R799 — reflective toggle state for the B / I cells: the toolbar *mirrors*
+    // the document (it owns no format state). R951 — via the shared
+    // `toolbar_active_style`, so the cells also light for a collapsed-caret
+    // armed mark / inherited style, not only a selection.
+    let (bold_active, italic_active) = toolbar_active_style(&text_state)
         .map_or((false, false), |st| {
             (st.font_weight == FontWeight::BOLD, st.font_style == FontStyle::Italic)
         });
@@ -700,9 +725,7 @@ impl WidgetA11y for TextAreaView {
         // the colour swatches are command buttons named explicitly (no glyph
         // to enrich from). The strip is non-focusable, so it rings nothing
         // (`focused_control = None`).
-        let (bold_active, italic_active) = edit
-            .selection_range()
-            .and_then(|(start, _)| edit.style_at(start))
+        let (bold_active, italic_active) = toolbar_active_style(&edit)
             .map_or((false, false), |st| {
                 (st.font_weight == FontWeight::BOLD, st.font_style == FontStyle::Italic)
             });

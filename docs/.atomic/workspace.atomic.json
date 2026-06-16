@@ -42553,6 +42553,86 @@
         "a runtime Box<dyn TrayBackend> = SNI-if-available-else-InMemory binding (AppStorage shape) lands when a real app needs it"
       ]
     },
+    "R951": {
+      "decision_summary": "Active typing marks (collapsed-caret formatting) for the rich-text textarea — the ProseMirror storedMarks / Word pending-format model: a format armed at a collapsed caret styles the next typed text, cleared by navigation, preserved across edits. Adds the symmetric inserted_runs undo peer so redo restores a typed mark.",
+      "changes_bullets": [
+        "pending_style Signal on TextEditState: the active typing mark armed at a collapsed caret",
+        "style_at_caret reads next-char style (armed mark else inherited-left); pending_style only the armed mark",
+        "set_pending_style arms/clears; format_at_caret_or_selection = unified Ctrl+B toggle",
+        "toggle routes: with a selection -> merge_style_run; at a collapsed caret -> arm the pending mark",
+        "insert overlays the armed mark on the typed span yet leaves it armed (a keystroke run stays styled)",
+        "navigation movers (set_caret/move_*/select_*) + wholesale set_text clear the mark; edits preserve it",
+        "TextEditCommand gains inserted_runs, the symmetric peer of removed_runs",
+        "redo re-overlays run coverage an insert added (clip+shift cannot re-derive it) so a mark survives redo",
+        "record_edit captures post-edit coverage; merge concats it across coalesced typing",
+        "RPC: style_at_caret + pending_style queries; mark + clear-mark invokes (invoke_mark, parse_mark_style_json)",
+        "hello-textarea B/I toggles + colour swatches now work selected-or-not (collapsed caret arms a mark)",
+        "toolbar_active_style is one SSOT for the view-paint + a11y reflective toggle reads",
+        "style_to_value lifts the Option<TextStyle> -> Json/Null encode shared by the two query reads"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: green (16 new R951 tests: 10 substrate lifecycle/undo-redo + 6 RPC)",
+        "pinion-core suite: 2342 passed / 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "invoke split into invoke_mark to hold the 100-line ceiling (this file's established SRP split)",
+        "tools/demos/r951_textarea_typing_marks.py: PASS (65 assertion-class; ZERO-FLAKE wait_query/until gates)",
+        "demo: AI round-trip read/mutate/write mark; continue across keystrokes; navigation drops the mark",
+        "demo: undo+redo restores the typed mark (inserted_runs headline); Backspace preserves the mark",
+        "demo: toolbar Bold CLICK arms the mark at a collapsed caret; pending-vs-inherited; clear-mark",
+        "6 existing hello-textarea formatting/undo demos re-run green (no regression in the shared path)",
+        "mnemosyne validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.22",
+        "5.52"
+      ],
+      "carry_forward_bullets": [
+        "IME-committed text does NOT carry a mark (preedit_commit bypasses insert_inner)",
+        "the mark survives composition + applies to the next direct keystroke; marking composed text is deferred",
+        "no keyboard chord arms a mark yet (toolbar B/I click + RPC mark are the consumers); Ctrl+B is additive",
+        "pending_style is non-journalled view-state (peer of folds/find): undo never reverses the arming, only runs"
+      ],
+      "publishable_decision_summary": "Active typing marks (collapsed-caret formatting) for the rich-text textarea — the ProseMirror storedMarks / Word pending-format model: a format armed at a collapsed caret styles the next typed text, cleared by navigation, preserved across edits. Adds the symmetric inserted_runs undo peer so redo restores a typed mark.",
+      "publishable_changes_bullets": [
+        "pending_style Signal on TextEditState: the active typing mark armed at a collapsed caret",
+        "style_at_caret reads next-char style (armed mark else inherited-left); pending_style only the armed mark",
+        "set_pending_style arms/clears; format_at_caret_or_selection = unified Ctrl+B toggle",
+        "toggle routes: with a selection -> merge_style_run; at a collapsed caret -> arm the pending mark",
+        "insert overlays the armed mark on the typed span yet leaves it armed (a keystroke run stays styled)",
+        "navigation movers (set_caret/move_*/select_*) + wholesale set_text clear the mark; edits preserve it",
+        "TextEditCommand gains inserted_runs, the symmetric peer of removed_runs",
+        "redo re-overlays run coverage an insert added (clip+shift cannot re-derive it) so a mark survives redo",
+        "record_edit captures post-edit coverage; merge concats it across coalesced typing",
+        "RPC: style_at_caret + pending_style queries; mark + clear-mark invokes (invoke_mark, parse_mark_style_json)",
+        "hello-textarea B/I toggles + colour swatches now work selected-or-not (collapsed caret arms a mark)",
+        "toolbar_active_style is one SSOT for the view-paint + a11y reflective toggle reads",
+        "style_to_value lifts the Option<TextStyle> -> Json/Null encode shared by the two query reads"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: green (16 new R951 tests: 10 substrate lifecycle/undo-redo + 6 RPC)",
+        "pinion-core suite: 2342 passed / 0 failed",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "invoke split into invoke_mark to hold the 100-line ceiling (this file's established SRP split)",
+        "tools/demos/r951_textarea_typing_marks.py: PASS (65 assertion-class; ZERO-FLAKE wait_query/until gates)",
+        "demo: AI round-trip read/mutate/write mark; continue across keystrokes; navigation drops the mark",
+        "demo: undo+redo restores the typed mark (inserted_runs headline); Backspace preserves the mark",
+        "demo: toolbar Bold CLICK arms the mark at a collapsed caret; pending-vs-inherited; clear-mark",
+        "6 existing hello-textarea formatting/undo demos re-run green (no regression in the shared path)",
+        "mnemosyne validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.22",
+        "5.52"
+      ],
+      "publishable_carry_forward_bullets": [
+        "IME-committed text does NOT carry a mark (preedit_commit bypasses insert_inner)",
+        "the mark survives composition + applies to the next direct keystroke; marking composed text is deferred",
+        "no keyboard chord arms a mark yet (toolbar B/I click + RPC mark are the consumers); Ctrl+B is additive",
+        "pending_style is non-journalled view-state (peer of folds/find): undo never reverses the arming, only runs"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

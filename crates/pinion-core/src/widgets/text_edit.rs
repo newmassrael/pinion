@@ -337,6 +337,40 @@ pub struct TextEditState {
     /// `<input>`-style field must not capture, and both are non-reactive
     /// wiring (no view-fn renders "does Ctrl+/ comment").
     line_comment: Cell<Option<&'static str>>,
+    /// R951 §5.36 §5.22 — the **active typing mark** armed at a collapsed
+    /// caret: when `Some`, the next inserted text carries this style even where
+    /// the buffer is otherwise unstyled — the canonical rich-text "press Bold,
+    /// then type" affordance (`ProseMirror` `storedMarks` / Slate `editor.marks` /
+    /// Word's pending format). `None` (the default) means a fresh insert
+    /// *inherits the style of the character to its left* (which
+    /// [`shift_runs_for_insert`] already produces), so an unstyled field is
+    /// byte-unchanged. A toolbar reads [`pending_style`](Self::pending_style) to
+    /// show that a mark is armed and [`style_at_caret`](Self::style_at_caret)
+    /// for the next-char style; the `scene/<tag>/external` RPC mirrors both.
+    ///
+    /// A reactive [`Signal`] (a toolbar view-fn lights its Bold button as a
+    /// mark arms / clears) but **not** journalled: like the find session and
+    /// the [`folds`](Self::folds) it is transient caret-adjacent view-state,
+    /// never document content — the undo journal stays exactly
+    /// `{text, caret, anchor, runs}` ([`TextEditCommand`]).
+    ///
+    /// Lifecycle (the `ProseMirror` `storedMarks` model): **navigation clears
+    /// it** — every caret mover ([`set_caret`](Self::set_caret) /
+    /// [`move_left`](Self::move_left) / `select_*` / …) drops it alongside its
+    /// [`goal_column`](Self::goal_column) reset (the W3C `selectionchange`
+    /// model: relocating the caret discards a pending mark), and a wholesale
+    /// [`set_text`](Self::set_text) resets it with the rest of the transient
+    /// state. **Edits preserve it** — [`insert`](Self::insert) overlays the
+    /// mark onto the typed span yet leaves the signal armed, so a run of
+    /// keystrokes all stay styled, and a Backspace-then-type keeps the mark
+    /// (the Word convention). The [`has_selection`](Self::has_selection) guard
+    /// in [`effective_pending`](Self::effective_pending) is the only further
+    /// gate: a mark is collapsed-caret state, inert while a selection is active
+    /// (where formatting goes straight onto the runs). IME-committed text does
+    /// not carry the mark (the mark survives composition and applies to the
+    /// next direct keystroke — marking composed text is a deferred IME
+    /// interaction).
+    pending_style: Signal<Option<TextStyle>>,
 }
 
 /// R938 §5.22 — the indentation unit a `Tab` inserts (and `Shift+Tab`
@@ -419,6 +453,17 @@ pub(crate) struct TextEditCommand {
     /// Style-run fragments covering `[offset, offset + removed.len())` before
     /// the edit (absolute byte positions), restored on undo.
     removed_runs: Vec<StyleRun>,
+    /// R951 §5.36 — style-run fragments covering `[offset, offset +
+    /// inserted.len())` *after* the edit (absolute byte positions), re-applied
+    /// on redo. The symmetric peer of [`removed_runs`](Self::removed_runs): an
+    /// insert that *adds* run coverage the surrounding-run clip+shift cannot
+    /// re-derive — the R951 active-typing-mark path overlays the armed style
+    /// onto the typed span — is removed correctly on undo (clipped away with
+    /// its bytes) but would be **lost on redo** (which re-derives runs purely by
+    /// clip+shift) without this. For a plain insert (the run merely shifts) the
+    /// captured coverage equals what the shift already produces, so re-overlaying
+    /// it on redo is idempotent.
+    inserted_runs: Vec<StyleRun>,
     caret_before: usize,
     caret_after: usize,
     anchor_before: Option<usize>,
@@ -444,6 +489,14 @@ impl UndoCommand for TextEditCommand {
         // span's coverage, then shift trailing runs right for the insert.
         clip_runs_for_delete(&mut runs, self.offset, self.offset + self.removed.len());
         shift_runs_for_insert(&mut runs, self.offset, self.inserted.len());
+        // R951 §5.36 — restore run coverage the edit *added* over the inserted
+        // span (an active typing mark), which clip+shift alone cannot re-derive.
+        // Idempotent for a plain insert (the shifted run already covers it);
+        // essential for an overlaid mark — the redo peer of the `removed_runs`
+        // restore in `undo`.
+        for run in &self.inserted_runs {
+            overlay_style_run(&mut runs, run.clone());
+        }
         // R933.1 — keep fold anchors valid across the replayed splice.
         let mut folds = self.folds.get();
         clip_folds_for_delete(&mut folds, self.offset, self.offset + self.removed.len());
@@ -506,6 +559,11 @@ impl UndoCommand for TextEditCommand {
                     return false;
                 }
                 self.inserted.push_str(&next.inserted);
+                // R951 §5.36 — the continuation's added run coverage is at
+                // absolute offsets right after this one's (contiguous inserts),
+                // so it appends in order (overlay on redo re-fuses identicals).
+                self.inserted_runs
+                    .extend(next.inserted_runs.iter().cloned());
             }
             // Backspace runs grow leftward: the next delete ends where this
             // one begins. Prepend its bytes + run coverage (already absolute).
@@ -1153,6 +1211,7 @@ impl TextEditState {
             folds: Signal::new(BTreeSet::new()),
             tab_indents: Cell::new(false),
             line_comment: Cell::new(None),
+            pending_style: Signal::new(None),
         }
     }
 
@@ -1198,6 +1257,7 @@ impl TextEditState {
             folds: Signal::new(BTreeSet::new()),
             tab_indents: Cell::new(false),
             line_comment: Cell::new(None),
+            pending_style: Signal::new(None),
         }
     }
 
@@ -1294,6 +1354,12 @@ impl TextEditState {
         }
         let (offset, removed, inserted) = text_diff(&before_text, &after_text);
         let removed_runs = runs_over_range(&before_runs, offset, offset + removed.len());
+        // R951 §5.36 — capture run coverage the edit *added* over the inserted
+        // span (post-edit), the redo peer of `removed_runs` (pre-edit, removed
+        // span). For a plain insert this is the shifted surrounding run; for an
+        // active-typing-mark insert it is the overlaid mark redo must restore.
+        let after_runs = self.style_runs.get();
+        let inserted_runs = runs_over_range(&after_runs, offset, offset + inserted.len());
         stack.push_applied(TextEditCommand {
             text: self.text.clone(),
             caret: self.caret_pos.clone(),
@@ -1304,6 +1370,7 @@ impl TextEditState {
             removed,
             inserted,
             removed_runs,
+            inserted_runs,
             caret_before,
             caret_after: self.caret_pos.get(),
             anchor_before,
@@ -1450,6 +1517,7 @@ impl TextEditState {
     /// `selection_anchor` + `caret_pos` collapse into one cascade).
     pub fn set_selection(&self, anchor: usize, focus: usize) {
         self.goal_column.set(None);
+        self.clear_pending_style();
         let text = self.text.get();
         let len = text.len();
         let snapped_anchor = clamp_to_char_boundary(&text, anchor.min(len));
@@ -1690,6 +1758,101 @@ impl TextEditState {
             .into_iter()
             .find(|r| r.start <= b && b < r.end)
             .map(|r| r.style)
+    }
+
+    /// R951 §5.36 §5.22 — the **armed typing mark** at a collapsed caret, or
+    /// `None` when the next insert would merely inherit the surrounding style.
+    /// `Some` only while the caret still sits where the mark was armed and no
+    /// selection is active (the collapsed-caret invariant the
+    /// [`pending_style`](Self::pending_style) field documents), so a toolbar can
+    /// show "Bold is armed" distinctly from "the text here is already bold". The
+    /// reactive read peer of [`set_pending_style`](Self::set_pending_style): a
+    /// view-fn calling it re-runs when a mark arms, clears, or the caret leaves.
+    #[must_use]
+    pub fn pending_style(&self) -> Option<TextStyle> {
+        self.effective_pending()
+    }
+
+    /// R951 §5.36 §5.22 — the style the **next inserted char** would carry: the
+    /// armed [`pending_style`](Self::pending_style) if one is set, else the
+    /// style inherited from the character to the caret's left (`None` = the
+    /// field base). A toolbar's Bold button lights from this (bold whether
+    /// *armed* or merely *inherited*); the AI-first peer reads it over RPC
+    /// before typing. At offset `0` with no mark there is no left character, so
+    /// the next char is the field base (`None`) — matching what
+    /// [`shift_runs_for_insert`] produces for a leading insert.
+    #[must_use]
+    pub fn style_at_caret(&self) -> Option<TextStyle> {
+        if let Some(style) = self.effective_pending() {
+            return Some(style);
+        }
+        let text = self.text.get();
+        let caret = self.caret_pos.get().min(text.len());
+        if caret == 0 {
+            return None;
+        }
+        self.style_at(prev_char_boundary(&text, caret))
+    }
+
+    /// The armed mark, honoured only at a collapsed caret (a mark is
+    /// collapsed-caret state; with a selection, formatting goes onto the runs).
+    /// Reads `pending_style` + `selection_anchor` (via
+    /// [`has_selection`](Self::has_selection)) so the public reactive readers
+    /// built on it subscribe to both — a view-fn re-runs when the mark changes
+    /// or a selection forms / collapses.
+    fn effective_pending(&self) -> Option<TextStyle> {
+        let style = self.pending_style.get()?;
+        if self.has_selection() {
+            return None;
+        }
+        Some(style)
+    }
+
+    /// R951 §5.36 §5.22 — arm (or clear, with `None`) the active typing mark so
+    /// the next inserted text carries `style`: the absolute setter, the AI-first
+    /// peer of the toolbar toggle. An agent reads
+    /// [`style_at_caret`](Self::style_at_caret), mutates a field, and writes the
+    /// whole style back (the `apply-style` round-trip shape). The mark stays
+    /// armed until a caret **navigation** clears it (the
+    /// [`pending_style`](Self::pending_style) lifecycle). Arming with a
+    /// selection active has no effect until the selection collapses — with a
+    /// selection, format straight onto the runs via
+    /// [`apply_style_run`](Self::apply_style_run) /
+    /// [`merge_style_run`](Self::merge_style_run); use
+    /// [`format_at_caret_or_selection`](Self::format_at_caret_or_selection) for
+    /// the unified "works selected-or-not" toggle.
+    pub fn set_pending_style(&self, style: Option<TextStyle>) {
+        self.pending_style.set(style);
+    }
+
+    /// R951 §5.36 §5.22 — the unified **toggle a character format** command
+    /// (Ctrl+B / Ctrl+I), working selected-or-not: the one entry a toolbar /
+    /// keymap calls. With a selection it merges the transform over the selected
+    /// runs ([`merge_style_run`](Self::merge_style_run), one undo step); at a
+    /// collapsed caret it arms a pending mark — seeded from
+    /// [`style_at_caret`](Self::style_at_caret) so the toggle flips relative to
+    /// what would otherwise be typed (Bold over already-bold-inheriting text
+    /// un-bolds the next keystrokes) — so the format takes effect on the
+    /// following keystrokes. `base` is the field's default char format (the same
+    /// `base` `merge_style_run` resolves uncovered bytes against); `mutate`
+    /// flips the field(s) (e.g. toggle `font_weight`).
+    pub fn format_at_caret_or_selection(&self, base: &TextStyle, mutate: impl Fn(&mut TextStyle)) {
+        if let Some((start, end)) = self.selection_range() {
+            self.merge_style_run(start, end, base, mutate);
+            return;
+        }
+        let mut style = self.style_at_caret().unwrap_or_else(|| base.clone());
+        mutate(&mut style);
+        self.set_pending_style(Some(style));
+    }
+
+    /// Drop any armed typing mark — the caret-navigation maintenance step (a
+    /// pending mark is collapsed-caret state; moving the caret discards it, the
+    /// W3C `selectionchange` model). Called by every navigation mover alongside
+    /// its [`goal_column`](Self::goal_column) reset; equality-skips via the
+    /// signal, so a move with no mark armed never notifies subscribers.
+    fn clear_pending_style(&self) {
+        self.pending_style.set(None);
     }
 
     // ───────────────────────── R903 §5.22 find &amp; replace ─────────────────
@@ -2391,6 +2554,10 @@ impl TextEditState {
 
     fn set_text_inner(&self, new_text: String) {
         self.goal_column.set(None);
+        // R951 §5.36 — a wholesale replace resets the transient typing mark too
+        // (the peer of clearing the selection / runs / folds below): its byte
+        // context is gone with the old buffer.
+        self.clear_pending_style();
         let new_len = new_text.len();
         let cur_caret = self.caret_pos.get();
         let clamped_caret = clamp_to_char_boundary(&new_text, cur_caret.min(new_len));
@@ -2426,6 +2593,7 @@ impl TextEditState {
     /// extension collapses to caret-only).
     pub fn set_caret(&self, pos: usize) {
         self.goal_column.set(None);
+        self.clear_pending_style();
         let text = self.text.get();
         let clamped = clamp_to_char_boundary(&text, pos.min(text.len()));
         batch(|| {
@@ -2508,14 +2676,32 @@ impl TextEditState {
             self.splice_inner(start, end, s);
             return;
         }
+        // R951 §5.36 — an active typing mark (Bold armed at a collapsed caret,
+        // ProseMirror `storedMarks`) styles the text typed next. Read it before
+        // the buffer changes; it is honoured only at this exact caret.
+        let mark = self.effective_pending();
         let snapped = clamp_to_char_boundary(&buf, caret);
         buf.insert_str(snapped, s);
         let new_caret = snapped + s.len();
         let mut runs = self.style_runs.get();
         shift_runs_for_insert(&mut runs, snapped, s.len());
+        if let Some(style) = &mark {
+            // Overlay the armed mark over exactly the inserted span; adjacent
+            // identical runs coalesce so a run of keystrokes is one run.
+            overlay_style_run(
+                &mut runs,
+                StyleRun::new(
+                    u32::try_from(snapped).unwrap_or(u32::MAX),
+                    u32::try_from(new_caret).unwrap_or(u32::MAX),
+                    style.clone(),
+                ),
+            );
+        }
         // R933.1 — fold anchors shift with the insert (peer of the runs).
         let mut folds = self.folds.get();
         shift_folds_for_insert(&mut folds, snapped, s.len());
+        // R951 — the mark stays armed (the signal is untouched here): a run of
+        // keystrokes all carry it; only a caret navigation clears it.
         batch(|| {
             self.text.set(buf);
             self.caret_pos.set(new_caret);
@@ -2636,6 +2822,7 @@ impl TextEditState {
     /// extension variant.
     pub fn move_left(&self) {
         self.goal_column.set(None);
+        self.clear_pending_style();
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
         if let Some((start, _)) = self.selection_range_against(&text, caret) {
@@ -2660,6 +2847,7 @@ impl TextEditState {
     /// [`Self::select_right`] for the Shift+ArrowRight extension.
     pub fn move_right(&self) {
         self.goal_column.set(None);
+        self.clear_pending_style();
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
         if let Some((_, end)) = self.selection_range_against(&text, caret) {
@@ -2681,6 +2869,7 @@ impl TextEditState {
     /// selection (R56.1.f).
     pub fn move_home(&self) {
         self.goal_column.set(None);
+        self.clear_pending_style();
         batch(|| {
             self.caret_pos.set(0);
             self.selection_anchor.set(None);
@@ -2692,6 +2881,7 @@ impl TextEditState {
     /// selection (R56.1.f).
     pub fn move_end(&self) {
         self.goal_column.set(None);
+        self.clear_pending_style();
         let len = self.text.get().len();
         batch(|| {
             self.caret_pos.set(len);
@@ -2715,6 +2905,7 @@ impl TextEditState {
     /// selection is active.
     pub fn select_left(&self) {
         self.goal_column.set(None);
+        self.clear_pending_style();
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
         if caret == 0 {
@@ -2740,6 +2931,7 @@ impl TextEditState {
     /// (mirror of [`Self::select_left`]). Shift+ArrowRight canonical.
     pub fn select_right(&self) {
         self.goal_column.set(None);
+        self.clear_pending_style();
         let text = self.text.get();
         let caret = self.caret_pos.get().min(text.len());
         if caret >= text.len() {
@@ -2762,6 +2954,7 @@ impl TextEditState {
     /// selection was active, the current caret position becomes the
     /// anchor; the caret then jumps to byte 0.
     pub fn select_home(&self) {
+        self.clear_pending_style();
         let caret = self.caret_pos.get();
         let anchor = self.selection_anchor.get().unwrap_or(caret);
         batch(|| {
@@ -2777,6 +2970,7 @@ impl TextEditState {
     /// R56.1.f §5.22 — extend the selection to the end of the
     /// buffer. Shift+End canonical (single-line fields).
     pub fn select_end(&self) {
+        self.clear_pending_style();
         let caret = self.caret_pos.get();
         let len = self.text.get().len();
         let anchor = self.selection_anchor.get().unwrap_or(caret);
@@ -6240,6 +6434,200 @@ mod tests {
             assert_eq!(stack.len(), 1, "the insertion is one undo step");
             assert!(st.undo());
             assert_eq!(st.text(), "a\nb\nc", "one undo removes the copy");
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R951 §5.36 — active typing marks (collapsed-caret formatting)
+    // ─────────────────────────────────────────────────────────────
+
+    /// A distinct, non-default mark for the typing-attribute battery.
+    fn bold_style() -> TextStyle {
+        let mut s = TextStyle::new();
+        s.font_weight = crate::style::FontWeight::BOLD;
+        s
+    }
+
+    #[test]
+    fn r951_typing_mark_styles_inserted_text() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial(String::new());
+            st.set_pending_style(Some(bold_style()));
+            st.insert("X");
+            assert_eq!(st.text(), "X");
+            let runs = st.style_runs();
+            assert_eq!(runs.len(), 1, "the armed mark styles the typed char");
+            assert_eq!((runs[0].start, runs[0].end), (0, 1));
+            assert_eq!(runs[0].style, bold_style(), "the run carries the armed style");
+        });
+    }
+
+    #[test]
+    fn r951_typing_mark_continues_across_keystrokes() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial(String::new());
+            st.set_pending_style(Some(bold_style()));
+            st.insert("a");
+            st.insert("b");
+            assert_eq!(st.text(), "ab");
+            let runs = st.style_runs();
+            assert_eq!(runs.len(), 1, "consecutive marked keystrokes coalesce to one run");
+            assert_eq!((runs[0].start, runs[0].end), (0, 2));
+        });
+    }
+
+    #[test]
+    fn r951_navigation_clears_typing_mark() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("abc".to_string());
+            st.set_caret(1);
+            st.set_pending_style(Some(bold_style()));
+            assert!(st.pending_style().is_some(), "armed at the collapsed caret");
+            st.move_right();
+            assert!(st.pending_style().is_none(), "moving the caret drops the mark");
+            st.insert("Z"); // at caret 2 in "abc" -> "abZc"; left neighbour 'b' is unstyled
+            assert!(
+                st.style_runs().is_empty(),
+                "no mark + unstyled neighbour -> unstyled insert"
+            );
+        });
+    }
+
+    #[test]
+    fn r951_edit_preserves_typing_mark() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial(String::new());
+            st.set_pending_style(Some(bold_style()));
+            st.insert("a"); // bold "a", mark stays armed
+            st.backspace(); // an edit, not a navigation
+            assert_eq!(st.text(), "");
+            assert!(
+                st.pending_style().is_some(),
+                "an edit keeps the mark armed (the Word convention)"
+            );
+            st.insert("b");
+            let runs = st.style_runs();
+            assert_eq!(runs.len(), 1, "the preserved mark styles the re-typed char");
+            assert_eq!((runs[0].start, runs[0].end), (0, 1));
+        });
+    }
+
+    #[test]
+    fn r951_style_at_caret_inherits_from_left() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("abcd".to_string());
+            st.set_style_runs(vec![StyleRun::new(0, 2, bold_style())]); // "ab" bold
+            st.set_caret(2); // right edge of the bold run
+            assert_eq!(
+                st.style_at_caret(),
+                Some(bold_style()),
+                "caret after a bold char inherits bold"
+            );
+            st.set_caret(3); // after the unstyled 'c'
+            assert_eq!(st.style_at_caret(), None, "caret after unstyled inherits the base");
+            st.set_caret(0); // no char to the left
+            assert_eq!(st.style_at_caret(), None, "caret at the start is the field base");
+        });
+    }
+
+    #[test]
+    fn r951_pending_distinguishes_armed_from_inherited() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("abcd".to_string());
+            st.set_style_runs(vec![StyleRun::new(0, 2, bold_style())]);
+            st.set_caret(2);
+            assert_eq!(st.style_at_caret(), Some(bold_style()), "inheriting bold");
+            assert_eq!(st.pending_style(), None, "inherited is not the same as armed");
+            let mut big = TextStyle::new();
+            big.font_size_px = 24;
+            st.set_pending_style(Some(big.clone()));
+            assert_eq!(st.pending_style(), Some(big.clone()), "the armed mark is reported");
+            assert_eq!(st.style_at_caret(), Some(big), "the armed mark overrides inherited");
+        });
+    }
+
+    #[test]
+    fn r951_format_toggle_routes_selection_vs_caret() {
+        Owner::new().run(|| {
+            let base = TextStyle::new();
+            // selection path -> merge onto the runs, no pending mark.
+            let st = TextEditState::with_initial("hello".to_string());
+            st.set_selection(0, 3);
+            st.format_at_caret_or_selection(&base, |s| {
+                s.font_weight = crate::style::FontWeight::BOLD;
+            });
+            assert!(st.pending_style().is_none(), "the selection path arms no mark");
+            let runs = st.style_runs();
+            assert_eq!(runs.len(), 1, "the selection got a bold run");
+            assert_eq!((runs[0].start, runs[0].end), (0, 3));
+            assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD);
+
+            // collapsed path -> arm a pending mark, runs untouched.
+            let st2 = TextEditState::with_initial("hello".to_string());
+            st2.set_caret(2);
+            st2.format_at_caret_or_selection(&base, |s| {
+                s.font_weight = crate::style::FontWeight::BOLD;
+            });
+            assert!(st2.style_runs().is_empty(), "the collapsed path touches no runs");
+            assert_eq!(
+                st2.pending_style().map(|s| s.font_weight),
+                Some(crate::style::FontWeight::BOLD),
+                "the collapsed path arms the mark"
+            );
+        });
+    }
+
+    #[test]
+    fn r951_styled_typing_undo_redo_roundtrip() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial(String::new());
+            let stack = Rc::new(crate::undo::UndoStack::new());
+            st.attach_undo(Rc::clone(&stack));
+            st.set_pending_style(Some(bold_style()));
+            st.insert("a");
+            st.insert("b");
+            assert_eq!(st.text(), "ab");
+            assert_eq!(st.style_runs().len(), 1, "typed bold run");
+            assert_eq!(stack.len(), 1, "coalesced typing is one undo step");
+            // Undo removes the text *and* the overlaid mark (clipped with the bytes).
+            assert!(st.undo());
+            assert_eq!(st.text(), "");
+            assert!(
+                st.style_runs().is_empty(),
+                "undo removes the bold run with the bytes"
+            );
+            // Redo restores the text *and* the mark — the `inserted_runs` peer
+            // (clip+shift alone cannot re-derive an added run).
+            assert!(st.redo());
+            assert_eq!(st.text(), "ab");
+            let runs = st.style_runs();
+            assert_eq!(runs.len(), 1, "redo restores the overlaid mark, not just the text");
+            assert_eq!((runs[0].start, runs[0].end), (0, 2));
+            assert_eq!(runs[0].style, bold_style());
+        });
+    }
+
+    #[test]
+    fn r951_set_pending_style_none_clears() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial(String::new());
+            st.set_pending_style(Some(bold_style()));
+            st.set_pending_style(None);
+            st.insert("a");
+            assert!(st.style_runs().is_empty(), "a cleared mark -> unstyled insert");
+        });
+    }
+
+    #[test]
+    fn r951_mark_inert_while_selection_active() {
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("hello".to_string());
+            st.set_pending_style(Some(bold_style()));
+            st.set_selection(1, 3);
+            assert!(
+                st.pending_style().is_none(),
+                "forming a selection clears / masks the mark"
+            );
         });
     }
 }
