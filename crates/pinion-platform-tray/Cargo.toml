@@ -1,0 +1,33 @@
+[package]
+name = "pinion-platform-tray"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R950 §3 §5.53 §5.15 — Linux system-tray bridge for the pinion-core TrayBackend trait. SniTrayBackend publishes the pinion-owned TrayModel as a StatusNotifierItem over pure D-Bus (ksni, no gtk — composes with the winit shell), draining icon/menu activations into TrayEvents. The FileStorage / CupsPrintBackend-equivalent platform impl; InMemoryTrayBackend stays the headless / CI default."
+publish = false
+
+[dependencies]
+# R950 §3 §5.53 — the `pinion_core::tray::TrayBackend` trait this crate's
+# `SniTrayBackend` second-consumer impl satisfies. The in-memory first impl
+# (`InMemoryTrayBackend`) stays the headless / CI default; this crate adds the
+# real Linux tray path.
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+
+# R950 §5.53 — `ksni` is the canonical pure-D-Bus StatusNotifierItem crate
+# (zbus-based, **no gtk**), so it composes with pinion's winit shell where the
+# Tauri `tray-icon` crate's gtk backend does not. It runs the SNI service on
+# its own background thread/executor and hands back a `Handle` to update +
+# callbacks to drain — the "backend -> channel -> UI" shape Win/macOS also use
+# (`docs/cross-platform-native-strategy.md`).
+ksni = { version = "0.3", features = ["blocking"] }
+
+# R950 §5.53 — `zbus` (already in the tree via ksni) for the synchronous
+# `is_available` capability check: a blocking `NameHasOwner` query for
+# `org.kde.StatusNotifierWatcher` (a tray host present?). The integration test
+# also queries the registered item back over the same session bus.
+zbus = "5"
+
+[lints]
+workspace = true

@@ -74,6 +74,7 @@ members = [
     "examples/hello-status-bar",
     "examples/hello-textfield-tui",
     "examples/hello-tray",
+    "crates/pinion-platform-tray",
     "examples/hello-toggle",
     "examples/hello-toggle-tui",
     "examples/hello-checkbox",

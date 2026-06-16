@@ -42497,6 +42497,62 @@
         "R950 = real SniTrayBackend (ksni/zbus, no gtk) validates the trait surface (ships the 2nd impl); ksni 0.3.5 available, live StatusNotifierWatcher present"
       ]
     },
+    "R950": {
+      "decision_summary": "R950 real Linux system-tray D-Bus bridge: new pinion-platform-tray crate + SniTrayBackend implementing pinion_core::tray::TrayBackend over a StatusNotifierItem via ksni (zbus-based, no gtk; composes with the winit shell). The 2nd impl that validates the R949 trait surface (FileStorage/Cups-equivalent), resolving the R949.1 finding-C premature-trait — trait now ships with its real impl like Storage/Print. Verified against the live session-bus StatusNotifierWatcher by a #[ignore] integration test (item registers + serves Title + publish round-trip); the test stays out of the portable workspace gate for bus-less CI",
+      "changes_bullets": [
+        "new pinion-platform-tray crate: SniTrayBackend impls TrayBackend over a StatusNotifierItem (ksni, no gtk)",
+        "maps TrayModel -> ksni (status / tooltip / menu); icon = themed name; menu activations -> TrayEvent sink",
+        "is_available = blocking NameHasOwner(org.kde.StatusNotifierWatcher); publish = sync ksni Handle::update",
+        "poll_events drains the Arc<Mutex> sink the ksni callbacks push (Activated / MenuItem)",
+        "validates the R949 TrayBackend trait as the 2nd impl — resolves the R949.1 finding-C premature trait",
+        "#[ignore] D-Bus integration test: SNI item registers + serves published Title + publish round-trip"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; the #[ignore] SNI test stays out of the bus-less gate",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic = 0",
+        "integration test PASS on the live session bus (StatusNotifierWatcher present): item registers a",
+        "well-known name + serves Title over org.kde.StatusNotifierItem + publish updates the live item",
+        "mnemosyne validate-workspace T1 reject = 0"
+      ],
+      "impact_refs": [
+        "3",
+        "5.53",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "the D-Bus integration test is #[ignore] (needs a session bus + watcher); CI runs it with a bus (x11grab-demo convention)",
+        "KDE global menu (com.canonical.dbusmenu Registrar) = strategy-doc step 2, deferred to a consumer",
+        "Win/macOS native tray (muda/tray-icon behind the same trait) = step 3, needs those OS CI runners",
+        "a runtime Box<dyn TrayBackend> = SNI-if-available-else-InMemory binding (AppStorage shape) lands when a real app needs it"
+      ],
+      "publishable_decision_summary": "R950 real Linux system-tray D-Bus bridge: new pinion-platform-tray crate + SniTrayBackend implementing pinion_core::tray::TrayBackend over a StatusNotifierItem via ksni (zbus-based, no gtk; composes with the winit shell). The 2nd impl that validates the R949 trait surface (FileStorage/Cups-equivalent), resolving the R949.1 finding-C premature-trait — trait now ships with its real impl like Storage/Print. Verified against the live session-bus StatusNotifierWatcher by a #[ignore] integration test (item registers + serves Title + publish round-trip); the test stays out of the portable workspace gate for bus-less CI",
+      "publishable_changes_bullets": [
+        "new pinion-platform-tray crate: SniTrayBackend impls TrayBackend over a StatusNotifierItem (ksni, no gtk)",
+        "maps TrayModel -> ksni (status / tooltip / menu); icon = themed name; menu activations -> TrayEvent sink",
+        "is_available = blocking NameHasOwner(org.kde.StatusNotifierWatcher); publish = sync ksni Handle::update",
+        "poll_events drains the Arc<Mutex> sink the ksni callbacks push (Activated / MenuItem)",
+        "validates the R949 TrayBackend trait as the 2nd impl — resolves the R949.1 finding-C premature trait",
+        "#[ignore] D-Bus integration test: SNI item registers + serves published Title + publish round-trip"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; the #[ignore] SNI test stays out of the bus-less gate",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic = 0",
+        "integration test PASS on the live session bus (StatusNotifierWatcher present): item registers a",
+        "well-known name + serves Title over org.kde.StatusNotifierItem + publish updates the live item",
+        "mnemosyne validate-workspace T1 reject = 0"
+      ],
+      "publishable_impact_refs": [
+        "3",
+        "5.53",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the D-Bus integration test is #[ignore] (needs a session bus + watcher); CI runs it with a bus (x11grab-demo convention)",
+        "KDE global menu (com.canonical.dbusmenu Registrar) = strategy-doc step 2, deferred to a consumer",
+        "Win/macOS native tray (muda/tray-icon behind the same trait) = step 3, needs those OS CI runners",
+        "a runtime Box<dyn TrayBackend> = SNI-if-available-else-InMemory binding (AppStorage shape) lands when a real app needs it"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
