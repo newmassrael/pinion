@@ -43205,6 +43205,52 @@
         "R960 next: data-grid per-cell modified/reset (RESET_PREFIX 3rd consumer -> pinion_widget_paint lift, R958 carry)"
       ]
     },
+    "R960": {
+      "decision_summary": "data-grid per-cell modified-from-default indicator + reset-to-default (Unreal/Qt reset-to-default at 2-D cell granularity); entry audit falsified the hypothesised 3rd-consumer lift — the three reset consumers diverge, so CellValue::value_eq is the only shared SSOT and the decode + dot paint stay per-binding",
+      "changes_bullets": [
+        "hello-data-grid: per-cell reset dot (cell != column default) + click-to-reset; col_default SSOT extracted from default_row",
+        "reset<row>_<col> send decode (reuses GridSendKey::Cell grammar) + modified.<r>.<c>/modified_count query + reset/reset_all invoke",
+        "cell_modified/reset_cell/reset_all via CellValue::value_eq + the set_cell re-anchor funnel (a reset of the sort key re-sorts)",
+        "dot positioned inside the CELL_PAD content box so the h-scroll viewport hit-test routes the click to the dot, not the cell"
+      ],
+      "verification_bullets": [
+        "hello-data-grid +4 tests (modified/reset/idempotent, edit-to-default clears, reset_all count, bad-key reject + out-of-range no-op)",
+        "demo r960 PASS (dot on non-default cell only, pointer-reset col 0, RPC reset off-screen col, edit-to-default clears, reset_all)",
+        "cargo test workspace + clippy -D pedantic 0; 7 existing data-grid demos no regression (additive dot paint); validate T1=0",
+        "entry audit read-verified: gap real (no prior reset) + lift unjustified (property-grid 4-way ValueRef/Container square vs inspector usize/rounded Box vs this 2-D cell key — diverge in arity/node/positioning)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "RESET_PREFIX now 3 consumers (property-grid/inspector/data-grid) but all divergent -> NOT a lift; value_eq is the shared atom (audit-settled, do not retry)",
+        "right-column reset dots are h-scroll-clip-gated (paint but need scroll to click) — correct; the RPC reset peer addresses any cell regardless",
+        "next: pro-tool perf measurement-first (large-scene scenario) / full editor current-line bg / code-folding pointer-interactive (R959 fold<n> send-route)"
+      ],
+      "publishable_decision_summary": "data-grid per-cell modified-from-default indicator + reset-to-default (Unreal/Qt reset-to-default at 2-D cell granularity); entry audit falsified the hypothesised 3rd-consumer lift — the three reset consumers diverge, so CellValue::value_eq is the only shared SSOT and the decode + dot paint stay per-binding",
+      "publishable_changes_bullets": [
+        "hello-data-grid: per-cell reset dot (cell != column default) + click-to-reset; col_default SSOT extracted from default_row",
+        "reset<row>_<col> send decode (reuses GridSendKey::Cell grammar) + modified.<r>.<c>/modified_count query + reset/reset_all invoke",
+        "cell_modified/reset_cell/reset_all via CellValue::value_eq + the set_cell re-anchor funnel (a reset of the sort key re-sorts)",
+        "dot positioned inside the CELL_PAD content box so the h-scroll viewport hit-test routes the click to the dot, not the cell"
+      ],
+      "publishable_verification_bullets": [
+        "hello-data-grid +4 tests (modified/reset/idempotent, edit-to-default clears, reset_all count, bad-key reject + out-of-range no-op)",
+        "demo r960 PASS (dot on non-default cell only, pointer-reset col 0, RPC reset off-screen col, edit-to-default clears, reset_all)",
+        "cargo test workspace + clippy -D pedantic 0; 7 existing data-grid demos no regression (additive dot paint); validate T1=0",
+        "entry audit read-verified: gap real (no prior reset) + lift unjustified (property-grid 4-way ValueRef/Container square vs inspector usize/rounded Box vs this 2-D cell key — diverge in arity/node/positioning)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RESET_PREFIX now 3 consumers (property-grid/inspector/data-grid) but all divergent -> NOT a lift; value_eq is the shared atom (audit-settled, do not retry)",
+        "right-column reset dots are h-scroll-clip-gated (paint but need scroll to click) — correct; the RPC reset peer addresses any cell regardless",
+        "next: pro-tool perf measurement-first (large-scene scenario) / full editor current-line bg / code-folding pointer-interactive (R959 fold<n> send-route)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

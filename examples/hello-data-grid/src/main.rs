@@ -224,6 +224,11 @@ const CELL_PX: u32 = 15;
 
 const ROW_H: u32 = 36;
 const CELL_PAD: u32 = 8;
+/// R960 — side of the per-cell "modified, click to reset" accent dot. It sits
+/// inside the cell's [`CELL_PAD`] content box (not the trailing edge) so it is
+/// not clipped out of the scroll viewport's hit-test — a dot past the content
+/// box would paint but route its click to the cell underneath.
+const RESET_DOT: u32 = 8;
 const CHECKBOX_SIZE: u32 = 18;
 const PANEL_PAD: u32 = 20;
 const ROW_GAP: u32 = 1;
@@ -242,6 +247,13 @@ const DROP_LINE_H: u32 = 2;
 
 /// Primary External — the grid coordinator (the single keyboard Tab stop).
 const GRID_TAG: &str = "data_grid";
+/// R960 — a cell's reset-to-default click target is `data_grid#reset<row>_<col>`
+/// (this prefix + the shared [`GridSendKey::Cell`] `<row>_<col>` grammar). The
+/// 3rd `reset`-send consumer after hello-property-grid and hello-inspector, but
+/// the three diverge in key arity (2-D cell here, 1-D index / `ValueRef` there),
+/// arrow node, and positioning, so the decode + paint stay per-binding — only
+/// the [`CellValue::value_eq`] modified atom is shared (an audit-falsified lift).
+const RESET_PREFIX: &str = "reset";
 /// Extra External — the one shared inline cell editor.
 const EDIT_TF_TAG: &str = "data_grid_edit";
 /// R932 — Extra External tag of the AI-first undo-history surface
@@ -438,6 +450,14 @@ fn cell_tag(row: usize, col: usize) -> String {
     format!("{GRID_TAG}#{}", GridSendKey::Cell { row, col }.encode())
 }
 
+/// R960 — a cell's reset-dot click target — `data_grid#reset<row>_<col>`
+/// ([`RESET_PREFIX`] + the same [`GridSendKey::Cell`] `<row>_<col>` grammar, so
+/// the cell address is not re-derived). The decoder ([`dispatch_send`]) strips
+/// `reset` and reuses [`GridSendKey::parse`] on the remainder.
+fn reset_cell_tag(row: usize, col: usize) -> String {
+    format!("{GRID_TAG}#{RESET_PREFIX}{}", GridSendKey::Cell { row, col }.encode())
+}
+
 /// Column-header click target — `data_grid#h<col>` (`GridSendKey::Header`).
 fn col_header_tag(col: usize) -> String {
     format!("{GRID_TAG}#{}", GridSendKey::Header { col }.encode())
@@ -571,19 +591,25 @@ fn swatch_cell(i: usize) -> CellValue {
 /// R940 — column-aware: a choice column seeds its [`choice_cell`] (option 0)
 /// so an added `Type` row carries the full dropdown, not an empty list.
 fn default_row() -> Vec<CellValue> {
-    COL_KINDS
-        .iter()
-        .enumerate()
-        .map(|(col, k)| match k {
-            CellKind::Text => CellValue::Text(String::new()),
-            CellKind::Int => CellValue::Int(0),
-            CellKind::Float => CellValue::Float(0.0),
-            CellKind::Bool => CellValue::Bool(false),
-            CellKind::Choice => choice_cell(col, 0),
-            // R943 — a fresh `Tint` cell starts at the first preset swatch.
-            CellKind::Color => swatch_cell(0),
-        })
-        .collect()
+    (0..NCOLS).map(col_default).collect()
+}
+
+/// R960 — the default value of column `col` (what a fresh [`default_row`] cell
+/// gets): the per-column reset target AND the modified-from-default baseline.
+/// A cell is "modified" when it differs from this ([`CellValue::value_eq`]); a
+/// reset writes this back. One notion of default — the value a new row carries,
+/// the value a reset restores — so the indicator and the reset agree by
+/// construction (the SSOT [`default_row`] maps over).
+fn col_default(col: usize) -> CellValue {
+    match COL_KINDS[col] {
+        CellKind::Text => CellValue::Text(String::new()),
+        CellKind::Int => CellValue::Int(0),
+        CellKind::Float => CellValue::Float(0.0),
+        CellKind::Bool => CellValue::Bool(false),
+        CellKind::Choice => choice_cell(col, 0),
+        // R943 — a fresh `Tint` cell starts at the first preset swatch.
+        CellKind::Color => swatch_cell(0),
+    }
 }
 
 /// First-paint cell values (row-major). Each column's values match
@@ -1591,6 +1617,55 @@ impl DataGridExternal {
         self.reanchor(prior_vis);
     }
 
+    /// R960 — `true` when cell `(row, col)` differs from its column default
+    /// ([`col_default`], via the [`CellValue::value_eq`] NaN-safe equality the
+    /// inspector / property-grid modified indicators also use). The single
+    /// predicate the per-cell reset dot, the `modified.<row>.<col>` query, and
+    /// `reset_cell` all read, so the paint and the wire cannot disagree.
+    fn cell_modified(&self, row: usize, col: usize) -> bool {
+        if col >= NCOLS {
+            return false;
+        }
+        self.model
+            .get()
+            .get(idx(row, col))
+            .is_some_and(|v| !v.value_eq(&col_default(col)))
+    }
+
+    /// R960 — reset cell `(row, col)` to its column default through the
+    /// [`set_cell`](Self::set_cell) funnel (so a reset that changes the sort key
+    /// re-sorts + re-anchors exactly like an edit). Returns whether it was
+    /// modified (the setter-returns-the-read-outcome contract; an already-default
+    /// cell is a `false` no-op).
+    fn reset_cell(&self, row: usize, col: usize) -> bool {
+        if !self.cell_modified(row, col) {
+            return false;
+        }
+        self.set_cell(row, col, col_default(col));
+        true
+    }
+
+    /// R960 — reset every modified cell to its column default, returning the
+    /// count cleared (the inspector `reset_all` shape). Each cell flows through
+    /// the [`reset_cell`](Self::reset_cell) → [`set_cell`](Self::set_cell) funnel.
+    fn reset_all(&self) -> usize {
+        let nrows = self.nrows();
+        (0..nrows)
+            .flat_map(|row| (0..NCOLS).map(move |col| (row, col)))
+            .filter(|&(row, col)| self.reset_cell(row, col))
+            .count()
+    }
+
+    /// R960 — how many cells differ from their column default (the `reset_all`
+    /// would-clear count, exposed as a query for the AI-first / demo path).
+    fn modified_count(&self) -> usize {
+        let nrows = self.nrows();
+        (0..nrows)
+            .flat_map(|row| (0..NCOLS).map(move |col| (row, col)))
+            .filter(|&(row, col)| self.cell_modified(row, col))
+            .count()
+    }
+
     /// R914 — arm a numeric cell scrub: a `PointerDown` over an Int / Float
     /// column records the cell so the first capture `pointer_move` calibrates.
     /// A press on a non-numeric (or out-of-range) cell leaves the arm clear (it
@@ -1763,6 +1838,21 @@ impl DataGridExternal {
         if let Some(row) = parse_handle_sub(key) {
             if event_name == "PointerDown" && row < self.nrows() {
                 self.arm_reorder(row);
+            }
+            return Ok(IntrospectValue::Null);
+        }
+        // R960 — a click on a cell's reset dot (`reset<row>_<col>`) resets that
+        // cell to its column default. Decoded before the shared `GridSendKey`
+        // grammar (a `reset`-prefixed key is data-grid-local, like the `d<row>`
+        // handle above); the `<row>_<col>` remainder reuses `GridSendKey::Cell`
+        // so the cell-address grammar is not re-derived (the property-grid
+        // `reset`-first ordering, the 3rd `reset`-send consumer — decode stays
+        // per-binding, the key arity differs from the 1-D consumers).
+        if let Some(rest) = key.strip_prefix(RESET_PREFIX) {
+            if event_name == "PointerUp" {
+                if let Some(GridSendKey::Cell { row, col }) = GridSendKey::parse(rest) {
+                    self.reset_cell(row, col);
+                }
             }
             return Ok(IntrospectValue::Null);
         }
@@ -2179,6 +2269,12 @@ impl ExternalIntrospect for DataGridExternal {
             // an arbitrary colour is `intervene value` with a `#RRGGBB` hex).
             ("open_color", "json"),
             ("pick_color", "int"),
+            // R960 — per-cell modified-from-default + reset-to-default (the
+            // editable grid's Unreal / Qt "reset property to default" affordance).
+            ("modified.<row>.<col>", "bool"),
+            ("modified_count", "int"),
+            ("reset", "string"),
+            ("reset_all", "json"),
         ])
     }
 
@@ -2226,6 +2322,8 @@ impl ExternalIntrospect for DataGridExternal {
             // (headers + uncollapsed data rows; `view_len` ungrouped).
             "group_count" => Some(IntrospectValue::Int(int_of(self.group_count()))),
             "visible_len" => Some(IntrospectValue::Int(int_of(self.visible_len()))),
+            // R960 — how many cells differ from their column default.
+            "modified_count" => Some(IntrospectValue::Int(int_of(self.modified_count()))),
             // R914 — whether a live numeric cell scrub is in flight (the
             // AI-first read peer of the capture-drag scrub gesture).
             "scrubbing" => Some(IntrospectValue::Bool(self.is_scrubbing())),
@@ -2312,6 +2410,14 @@ impl ExternalIntrospect for DataGridExternal {
                     let col: usize = col_str.parse().ok()?;
                     let model = self.model.get();
                     return model.get(idx(row, col)).map(CellValue::to_introspect);
+                }
+                // R960 — `modified.<row>.<col>` → does the cell differ from its
+                // column default (the `value.<row>.<col>` predicate peer).
+                if let Some(rest) = path.strip_prefix("modified.") {
+                    let (row_str, col_str) = rest.split_once('.')?;
+                    let row: usize = row_str.parse().ok()?;
+                    let col: usize = col_str.parse().ok()?;
+                    return Some(IntrospectValue::Bool(self.cell_modified(row, col)));
                 }
                 None
             }
@@ -2597,6 +2703,22 @@ impl ExternalIntrospect for DataGridExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R960 — reset cell `"<row>_<col>"` (the `GridSendKey::Cell` wire,
+            // the same grammar the reset-dot click sends) to its column default;
+            // returns whether it was modified. The AI-first peer of a click on
+            // the cell's reset dot.
+            "reset" => match args {
+                IntrospectValue::Text(ref s) => {
+                    let Some(GridSendKey::Cell { row, col }) = GridSendKey::parse(s) else {
+                        return Err(InvokeError::Rejected);
+                    };
+                    Ok(IntrospectValue::Bool(self.reset_cell(row, col)))
+                }
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R960 — reset every modified cell to its column default; returns the
+            // count cleared (the inspector `reset_all` shape).
+            "reset_all" => Ok(IntrospectValue::Int(int_of(self.reset_all()))),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -3025,8 +3147,15 @@ fn view_cell(
                 .with_fg(theme.resolve(ColorRole::OnSurface)),
         ))
     };
+    // R960 — a cell differs from its column default → paint the trailing-edge
+    // reset dot (suppressed while the inline editor owns the cell).
+    let modified = !edit_active && !value.value_eq(&col_default(col));
+    let mut children = vec![inner];
+    if modified {
+        children.push(reset_dot(row, col, theme));
+    }
     Scene::Container(
-        ContainerNode::new(vec![inner])
+        ContainerNode::new(children)
             .with_tag(cell_tag(row, col))
             .with_style(BoxStyle::filled(focus_fill(theme, focused)))
             .with_layout(
@@ -3035,6 +3164,32 @@ fn view_cell(
                     .with_align_items(AlignItems::Center)
                     .with_padding(Rect::new(CELL_PAD, 0, CELL_PAD, 0))
                     .with_size(Size::px(COL_W[col], ROW_H)),
+            ),
+    )
+}
+
+/// R960 — the per-cell "modified, click to reset" dot: a small accent square
+/// absolutely positioned at the cell's trailing edge (out of the flex flow, so
+/// the cell content layout is byte-identical to an unmodified cell). Its
+/// presence doubles as the modified indicator; a click routes to
+/// [`reset_cell`](DataGridExternal::reset_cell) via the [`reset_cell_tag`]
+/// target. Inline (not a `pinion_widget_paint` lift): the cell-grid positioning
+/// diverges from the property-grid / inspector trailing-edge arrows, so per
+/// R735.1 only the modified atom (`value_eq`) is the shared SSOT.
+fn reset_dot(row: usize, col: usize, theme: &Theme) -> Scene {
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_tag(reset_cell_tag(row, col))
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::Accent)).with_corner_radius(RESET_DOT / 2),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(RESET_DOT, RESET_DOT))
+                    .with_absolute_position(
+                        COL_W[col].saturating_sub(CELL_PAD + RESET_DOT),
+                        (ROW_H - RESET_DOT) / 2,
+                    ),
             ),
     )
 }
@@ -4105,6 +4260,87 @@ mod tests {
             assert!(intro.intervene("focused_col", IntrospectValue::Int(99)).is_ok());
             assert_eq!(intro.query("focused_row"), Some(IntrospectValue::Int(3)));
             assert_eq!(intro.query("focused_col"), Some(IntrospectValue::Int(5)));
+        });
+    }
+
+    // ─── R960 §5.38 §5.40 — per-cell modified-from-default + reset ───────────
+
+    #[test]
+    fn r960_cell_modified_and_reset_to_column_default() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // The Count column default is 0; the seed's row-0 Count is 1 -> modified.
+            assert_eq!(intro.query("value.0.2"), Some(IntrospectValue::Int(1)));
+            assert_eq!(intro.query("modified.0.2"), Some(IntrospectValue::Bool(true)));
+            // Reset that cell to its column default (0); it was modified -> true.
+            assert_eq!(
+                intro.invoke("reset", IntrospectValue::Text("0_2".to_owned())).unwrap(),
+                IntrospectValue::Bool(true),
+            );
+            assert_eq!(intro.query("value.0.2"), Some(IntrospectValue::Int(0)), "reset to column default");
+            assert_eq!(intro.query("modified.0.2"), Some(IntrospectValue::Bool(false)));
+            // Re-resetting an already-default cell is an idempotent false no-op.
+            assert_eq!(
+                intro.invoke("reset", IntrospectValue::Text("0_2".to_owned())).unwrap(),
+                IntrospectValue::Bool(false),
+            );
+        });
+    }
+
+    #[test]
+    fn r960_edit_to_default_clears_modified() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // Editing a cell TO its column default clears the modified flag — the
+            // indicator tracks the value, not a separate "dirty" bit.
+            assert!(intro.intervene("value.0.2", IntrospectValue::Int(0)).is_ok());
+            assert_eq!(intro.query("modified.0.2"), Some(IntrospectValue::Bool(false)));
+            // Editing away from default sets it again.
+            assert!(intro.intervene("value.0.2", IntrospectValue::Int(7)).is_ok());
+            assert_eq!(intro.query("modified.0.2"), Some(IntrospectValue::Bool(true)));
+        });
+    }
+
+    #[test]
+    fn r960_reset_all_clears_every_modified_cell() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            let Some(IntrospectValue::Int(n)) = intro.query("modified_count") else {
+                panic!("modified_count is an int");
+            };
+            assert!(n > 0, "the seed differs from the empty column defaults");
+            // reset_all clears exactly that many cells.
+            assert_eq!(intro.invoke("reset_all", IntrospectValue::Null).unwrap(), IntrospectValue::Int(n));
+            assert_eq!(intro.query("modified_count"), Some(IntrospectValue::Int(0)), "all at default");
+        });
+    }
+
+    #[test]
+    fn r960_reset_rejects_bad_key_and_out_of_range_is_noop() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+            let intro = node.handle.introspect_mut().expect("introspectable");
+            // A non-cell key (a header) is not a reset target -> Rejected.
+            assert!(matches!(
+                intro.invoke("reset", IntrospectValue::Text("h2".to_owned())),
+                Err(InvokeError::Rejected),
+            ));
+            assert!(matches!(
+                intro.invoke("reset", IntrospectValue::Int(3)),
+                Err(InvokeError::TypeMismatch),
+            ));
+            // An out-of-range cell is not modified -> a false no-op, never a panic.
+            assert_eq!(
+                intro.invoke("reset", IntrospectValue::Text("99_2".to_owned())).unwrap(),
+                IntrospectValue::Bool(false),
+            );
         });
     }
 
