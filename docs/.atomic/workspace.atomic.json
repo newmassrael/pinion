@@ -42871,6 +42871,54 @@
         "SelectColumns behavior variant = additive when a real consumer needs it (the enum is extensible)"
       ]
     },
+    "R955": {
+      "decision_summary": "R955 §5.22 §5.36 keyboard-interactive code folding: hello-code-fold arrows navigate visible logical lines + Enter/Space toggle the fold at the cursor line (reuses the R933 fold substrate)",
+      "changes_bullets": [
+        "hello-code-fold focusable + apply_key: arrows nav visible logical lines (skip folded), Enter/Space toggle fold, Home/End",
+        "current-line highlight band — the read-only viewer's cursor affordance (state.1 caret offset)",
+        "reuses TextEditState caret/toggle_fold/is_line_hidden (no new substrate); keyboard + RPC converge on one mutation",
+        "logical-line nav helpers (caret_line/line_start_byte/next_visible_line) — pure text, no parley geometry"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green: 3 new example tests (arrow nav / Enter toggles / steps over a collapsed block)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0 (naive_bytecount fixed via str::matches)",
+        "r955_code_fold_keyboard.py PASS (~34 gated assert; caret line + fold_regions + painted visible rows)",
+        "regression r933 fold viewer PASS; self-grep nav helpers 1-consumer (textarea uses parley visual-line nav, distinct)",
+        "validate-workspace T1=0 new orphan +0"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "pointer click-to-fold on a gutter chevron deferred: needs a TextFieldExternal click->toggle-fold path (R954 SelectItems-send analog)",
+        "editable code (typing / insert in the fold viewer) = the hello-textarea axis; not wired here",
+        "shared code-panel substrate lift still 1-consumer (R933 prediction holds: a 2nd gutter+fold binding triggers it)"
+      ],
+      "publishable_decision_summary": "R955 §5.22 §5.36 keyboard-interactive code folding: hello-code-fold arrows navigate visible logical lines + Enter/Space toggle the fold at the cursor line (reuses the R933 fold substrate)",
+      "publishable_changes_bullets": [
+        "hello-code-fold focusable + apply_key: arrows nav visible logical lines (skip folded), Enter/Space toggle fold, Home/End",
+        "current-line highlight band — the read-only viewer's cursor affordance (state.1 caret offset)",
+        "reuses TextEditState caret/toggle_fold/is_line_hidden (no new substrate); keyboard + RPC converge on one mutation",
+        "logical-line nav helpers (caret_line/line_start_byte/next_visible_line) — pure text, no parley geometry"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green: 3 new example tests (arrow nav / Enter toggles / steps over a collapsed block)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic) = 0 (naive_bytecount fixed via str::matches)",
+        "r955_code_fold_keyboard.py PASS (~34 gated assert; caret line + fold_regions + painted visible rows)",
+        "regression r933 fold viewer PASS; self-grep nav helpers 1-consumer (textarea uses parley visual-line nav, distinct)",
+        "validate-workspace T1=0 new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pointer click-to-fold on a gutter chevron deferred: needs a TextFieldExternal click->toggle-fold path (R954 SelectItems-send analog)",
+        "editable code (typing / insert in the fold viewer) = the hello-textarea axis; not wired here",
+        "shared code-panel substrate lift still 1-consumer (R933 prediction holds: a 2nd gutter+fold binding triggers it)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

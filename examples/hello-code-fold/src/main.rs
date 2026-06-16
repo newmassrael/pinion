@@ -3,16 +3,28 @@
 //!
 //! ## What it is (and is not)
 //!
-//! This binding is a **read-only fold viewer driven over RPC**, not an
-//! interactive editor: it wires no `apply_key` and renders no caret, so a
-//! human cannot type or click-to-fold in it. It exists to make the fold
-//! *substrate* visible and to be driven headlessly — the fold set lives on
-//! the reactive
+//! This binding is a **keyboard-interactive fold navigator** over a
+//! read-only buffer (R955): the gutter shows code lines + fold chevrons, and
+//! while it owns shell focus `ArrowUp` / `ArrowDown` move a current-line
+//! cursor over the *visible* lines (stepping over a collapsed block, not into
+//! its hidden interior) and `Enter` / `Space` fold / unfold the region at the
+//! cursor. The current line is highlighted (the read-only viewer paints no
+//! caret glyph — the line band is the cursor affordance). The text itself is
+//! not editable here — typing / insertion is the `hello-textarea` axis; this
+//! viewer exercises the R933 fold *substrate* with a cursor on top.
+//!
+//! The fold set + caret live on the reactive
 //! [`TextEditState`](pinion_core::widgets::text_edit::TextEditState) (which
-//! *is* fully editable, and tracks folds across edits — see its unit
-//! tests), and this example renders that state. An AI agent (or the demo)
-//! folds / unfolds purely over the wire (`toggle-fold` / `fold-all` /
-//! `unfold-all`), which is the §2 #2 "RPC headless is the primary path".
+//! *is* fully editable, and tracks folds across edits — see its unit tests).
+//! Both paths drive the same state: an AI agent folds / unfolds / moves the
+//! caret purely over the wire (`toggle-fold` / `fold-all` / `unfold-all` /
+//! `caret`), the §2 #2 "RPC headless is the primary path", and the keyboard
+//! calls the same `TextEditState` methods — they converge on one mutation.
+//!
+//! **Deferred** (honest): pointer click-to-fold on a gutter chevron — the
+//! fold rows are not composite-routable click targets yet (it needs a
+//! `TextFieldExternal` click→toggle-fold path, the R954 `SelectItems`-send
+//! analog).
 //!
 //! ## What it demonstrates
 //!
@@ -58,7 +70,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::text_edit::use_text_edit_state;
+use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
 use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
@@ -119,6 +131,57 @@ const FOLD_ELLIPSIS: &str = "\u{2026}";
 const SEED_CODE: &str =
     "fn main() {\n    let x = 1;\n    if x > 0 {\n        log(x);\n    }\n}";
 
+/// R955 §5.22 §5.36 — the **logical** line (0-based) the caret byte offset
+/// `caret` sits on: the count of `\n`s before it. The fold view is a
+/// per-logical-line transform (not a parley single-block), so navigation
+/// reasons in logical lines, computed from the text — no shaped layout.
+fn caret_line(text: &str, caret: usize) -> usize {
+    let c = caret.min(text.len());
+    text.get(..c).map_or(0, |s| s.matches('\n').count())
+}
+
+/// R955 §5.22 — the byte offset where logical `line` starts (the position
+/// after the `line`-th `\n`); clamps to the text end past the last line.
+fn line_start_byte(text: &str, line: usize) -> usize {
+    if line == 0 {
+        return 0;
+    }
+    let mut seen = 0;
+    for (i, &b) in text.as_bytes().iter().enumerate() {
+        if b == b'\n' {
+            seen += 1;
+            if seen == line {
+                return i + 1;
+            }
+        }
+    }
+    text.len()
+}
+
+/// R955 §5.22 §5.36 — the next **visible** logical line from `cur` in the
+/// `down` direction, skipping lines hidden inside a collapsed region
+/// ([`TextEditState::is_line_hidden`]); `None` at the visible end. Arrow
+/// navigation steps over a collapsed block rather than into its hidden
+/// interior — the editor's "fold acts like one line" rule.
+fn next_visible_line(edit: &TextEditState, cur: usize, total: usize, down: bool) -> Option<usize> {
+    let mut line = cur;
+    loop {
+        if down {
+            line += 1;
+            if line >= total {
+                return None;
+            }
+        } else if line == 0 {
+            return None;
+        } else {
+            line -= 1;
+        }
+        if !edit.is_line_hidden(line) {
+            return Some(line);
+        }
+    }
+}
+
 /// view-fn (§6.3): pure-ish sync mapping `(state, frame) -> Scene`. The
 /// reactive reads inside `use_text_edit_state` / `use_theme` subscribe, so
 /// the same reactive store state yields the same `Scene`.
@@ -130,13 +193,18 @@ const SEED_CODE: &str =
     clippy::trivially_copy_pass_by_ref,
     reason = "view-fn shape mirrors WidgetCore::view (&Frame)"
 )]
-fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
+fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let fg = theme.resolve(ColorRole::OnSurface);
     let muted = theme.resolve(ColorRole::OnSurfaceMuted);
 
     let st = use_text_edit_state(TF_TAG);
     let text = st.text();
+    // R955 §5.22 — the keyboard cursor's logical line, highlighted as the
+    // current line so a human sees where Arrow navigation / fold-toggle act
+    // (the read-only viewer paints no caret glyph — the line band is the
+    // cursor affordance). `state.1` is the caret byte offset.
+    let cursor_line = caret_line(&text, state.1 as usize);
     // Derive the fold regions ONCE; the per-line hidden check reads this
     // `Vec` (O(regions)) instead of calling `st.is_line_hidden`, which would
     // re-run the O(text · openers) derivation for every line of the file.
@@ -178,11 +246,15 @@ fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             Rect::default(),
             TextStyle::new().with_size_px(CODE_FONT_PX).with_fg(fg),
         ));
-        rows.push(Scene::Container(
-            ContainerNode::new(vec![gutter, code])
-                .with_tag(format!("fold_row_{i}"))
-                .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_gap(GUTTER_GAP)),
-        ));
+        let mut row = ContainerNode::new(vec![gutter, code])
+            .with_tag(format!("fold_row_{i}"))
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_gap(GUTTER_GAP));
+        if i == cursor_line {
+            // Current-line band — a step lighter than the panel so the active
+            // line reads as the keyboard cursor's position.
+            row = row.with_style(BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh)));
+        }
+        rows.push(Scene::Container(row));
     }
 
     let code_panel = Scene::Container(
@@ -259,6 +331,66 @@ impl WidgetCore for FoldView {
     fn title() -> &'static str {
         "pinion hello-code-fold (R933 §5.22 §5.36)"
     }
+
+    /// R955 §5.22 §5.36 — the viewer is a single Tab stop so the keyboard
+    /// fold navigation reaches it.
+    fn focusable_tags() -> Vec<&'static str> {
+        vec![TF_TAG]
+    }
+
+    /// R955 §5.22 §5.36 — keyboard fold navigation. While the viewer owns
+    /// shell focus: `ArrowUp` / `ArrowDown` move the cursor to the previous /
+    /// next **visible** logical line (stepping over a collapsed block, not
+    /// into its hidden interior), `Home` / `End` jump to the first / last
+    /// visible line, and `Enter` / `Space` toggle the fold at the cursor line.
+    /// Drives the reactive `TextEditState` directly (the `hello-textarea`
+    /// pattern) — the same `caret` / `toggle-fold` an AI client drives over
+    /// the §5.12 RPC plane, so the two paths converge on one mutation.
+    fn apply_key(
+        _scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        if focused != Some(TF_TAG) {
+            return false;
+        }
+        let edit = use_text_edit_state(TF_TAG);
+        let text = edit.text();
+        let total = text.split('\n').count();
+        let cur = caret_line(&text, edit.caret());
+        match key {
+            "ArrowDown" => {
+                if let Some(next) = next_visible_line(&edit, cur, total, true) {
+                    edit.set_caret(line_start_byte(&text, next));
+                }
+                true
+            }
+            "ArrowUp" => {
+                if let Some(prev) = next_visible_line(&edit, cur, total, false) {
+                    edit.set_caret(line_start_byte(&text, prev));
+                }
+                true
+            }
+            "Home" => {
+                edit.set_caret(0);
+                true
+            }
+            "End" => {
+                let mut last = total.saturating_sub(1);
+                while last > 0 && edit.is_line_hidden(last) {
+                    last -= 1;
+                }
+                edit.set_caret(line_start_byte(&text, last));
+                true
+            }
+            "Enter" | "Space" => {
+                edit.toggle_fold(cur);
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 impl WidgetA11y for FoldView {
@@ -291,11 +423,27 @@ mod tests {
     //! R933 §5.36 — binding-level regression: paint-root tag presence +
     //! the folded view actually drops the hidden rows.
 
-    use super::{view, SEED_CODE, STATUS_TAG, TF_TAG};
+    use super::{caret_line, line_start_byte, view, FoldView, SEED_CODE, STATUS_TAG, TF_TAG};
     use pinion_core::reactive::Owner;
+    use pinion_core::scene::ExternalNode;
     use pinion_core::widgets::text_edit::use_text_edit_state;
     use pinion_core::widgets::text_field::TextFieldState;
-    use pinion_core::{Frame, Scene};
+    use pinion_core::{Frame, Modifiers, Scene, WidgetCore};
+
+    /// A live fold-viewer scene (one composite `Scene::External` at `TF_TAG`)
+    /// so `apply_key` walks the shell's exact topology. `apply_key` reads the
+    /// reactive `TextEditState` (not the scene), so it shares state with the
+    /// `use_text_edit_state(TF_TAG)` the test seeds in the same `Owner`.
+    fn scene_fixture() -> Scene {
+        Scene::External(ExternalNode::new(FoldView::create_external()).with_tag(TF_TAG))
+    }
+
+    fn press(scene: &mut Scene, key: &str) {
+        assert!(
+            FoldView::apply_key(scene, Some(TF_TAG), key, Modifiers::default()),
+            "the fold viewer handles {key}",
+        );
+    }
 
     #[test]
     fn r933_view_carries_paint_root_and_status_tags() {
@@ -322,6 +470,60 @@ mod tests {
             assert!(!scene.contains_tag("fold_row_1"), "interior row hidden");
             assert!(!scene.contains_tag("fold_row_3"), "interior row hidden");
             assert!(!scene.contains_tag("fold_row_5"), "closer row hidden");
+        });
+    }
+
+    #[test]
+    fn r955_arrows_move_the_cursor_line() {
+        Owner::new().run(|| {
+            let st = use_text_edit_state(TF_TAG);
+            st.set_text(SEED_CODE.to_string());
+            st.set_caret(0);
+            let mut scene = scene_fixture();
+            press(&mut scene, "ArrowDown");
+            assert_eq!(caret_line(&st.text(), st.caret()), 1, "ArrowDown -> line 1");
+            press(&mut scene, "ArrowDown");
+            assert_eq!(caret_line(&st.text(), st.caret()), 2, "ArrowDown -> line 2");
+            press(&mut scene, "ArrowUp");
+            assert_eq!(caret_line(&st.text(), st.caret()), 1, "ArrowUp -> line 1");
+            press(&mut scene, "End");
+            assert_eq!(caret_line(&st.text(), st.caret()), 5, "End -> last line");
+            press(&mut scene, "Home");
+            assert_eq!(caret_line(&st.text(), st.caret()), 0, "Home -> first line");
+        });
+    }
+
+    #[test]
+    fn r955_enter_toggles_the_fold_at_the_cursor_line() {
+        Owner::new().run(|| {
+            let st = use_text_edit_state(TF_TAG);
+            st.set_text(SEED_CODE.to_string());
+            st.set_caret(0); // line 0 = the outer foldable opener
+            let mut scene = scene_fixture();
+            let collapsed_at0 = || st.fold_regions().iter().any(|r| r.start_line == 0 && r.collapsed);
+            assert!(!collapsed_at0(), "the outer block is open at the start");
+            press(&mut scene, "Enter");
+            assert!(collapsed_at0(), "Enter folded the region at the cursor line");
+            press(&mut scene, "Enter");
+            assert!(!collapsed_at0(), "Enter again unfolded it");
+        });
+    }
+
+    #[test]
+    fn r955_arrow_down_steps_over_a_collapsed_block() {
+        Owner::new().run(|| {
+            let st = use_text_edit_state(TF_TAG);
+            st.set_text(SEED_CODE.to_string());
+            // Collapse the inner block (opens line 2, closes line 4): lines 3,4
+            // go hidden, so from line 2 an ArrowDown lands on line 5, never on a
+            // hidden interior line.
+            assert!(st.toggle_fold(2));
+            st.set_caret(line_start_byte(&st.text(), 2));
+            let mut scene = scene_fixture();
+            press(&mut scene, "ArrowDown");
+            let line = caret_line(&st.text(), st.caret());
+            assert_eq!(line, 5, "ArrowDown stepped over the collapsed inner block to line 5");
+            assert!(!st.is_line_hidden(line), "the cursor never lands on a hidden line");
         });
     }
 }
