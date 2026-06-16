@@ -42391,6 +42391,60 @@
         "distribute spaces node centres (not edge gaps); edge-gap distribute deferred (no consumer)"
       ]
     },
+    "R949": {
+      "decision_summary": "R949 system-tray substrate: pinion-core TrayBackend trait + InMemoryTrayBackend + own-rendered TrayModel (id/icon/tooltip/status/menu, scene-as-data) + hello-tray consumer whose menu drives app state and re-publishes on change, fully RPC-introspectable. The real StatusNotifierItem D-Bus bridge (pinion-platform-tray, ksni/zbus, no gtk) is the follow-up platform round R950, mirroring InMemoryStorage->FileStorage and print->Cups",
+      "changes_bullets": [
+        "pinion-core::tray — TrayBackend trait + InMemoryTrayBackend (R665 Storage / R833 Print house pattern)",
+        "own-rendered TrayModel (id/title/icon_name/tooltip/status/menu) — scene-as-data: themed icon name, no pixels",
+        "TrayMenuItem (Action/Check/Separator/SubMenu) + TrayStatus (Active/Passive/NeedsAttention) wire tokens",
+        "TrayEvent (Activated/MenuItem) + poll_events drain; capability-honest is_available + TrayError::Unavailable",
+        "hello-tray example: menu drives app state (show/hide / dark / bake / quit), re-publishes on every change",
+        "the tray is fully RPC-introspectable + activatable headlessly; no panel needed"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; +7 pinion-core tray unit + 11 hello-tray tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic = 0",
+        "r949_tray.py PASS: 35+ assertions over RPC, scene-as-data (no pixels)",
+        "mnemosyne validate-workspace T1 reject = 0, no new orphan"
+      ],
+      "impact_refs": [
+        "3",
+        "5.53",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "real StatusNotifierItem D-Bus bridge (pinion-platform-tray, ksni/zbus, no gtk) = R950 follow-up",
+        "live org.kde.StatusNotifierWatcher confirmed present this box → the bridge is end-to-end verifiable",
+        "this is the FileStorage / CupsPrintBackend-equivalent platform round (substrate-first, bridge next)",
+        "tray menu introspection is id-addressed (top-level + one submenu level); deeper nesting additive"
+      ],
+      "publishable_decision_summary": "R949 system-tray substrate: pinion-core TrayBackend trait + InMemoryTrayBackend + own-rendered TrayModel (id/icon/tooltip/status/menu, scene-as-data) + hello-tray consumer whose menu drives app state and re-publishes on change, fully RPC-introspectable. The real StatusNotifierItem D-Bus bridge (pinion-platform-tray, ksni/zbus, no gtk) is the follow-up platform round R950, mirroring InMemoryStorage->FileStorage and print->Cups",
+      "publishable_changes_bullets": [
+        "pinion-core::tray — TrayBackend trait + InMemoryTrayBackend (R665 Storage / R833 Print house pattern)",
+        "own-rendered TrayModel (id/title/icon_name/tooltip/status/menu) — scene-as-data: themed icon name, no pixels",
+        "TrayMenuItem (Action/Check/Separator/SubMenu) + TrayStatus (Active/Passive/NeedsAttention) wire tokens",
+        "TrayEvent (Activated/MenuItem) + poll_events drain; capability-honest is_available + TrayError::Unavailable",
+        "hello-tray example: menu drives app state (show/hide / dark / bake / quit), re-publishes on every change",
+        "the tray is fully RPC-introspectable + activatable headlessly; no panel needed"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; +7 pinion-core tray unit + 11 hello-tray tests",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic = 0",
+        "r949_tray.py PASS: 35+ assertions over RPC, scene-as-data (no pixels)",
+        "mnemosyne validate-workspace T1 reject = 0, no new orphan"
+      ],
+      "publishable_impact_refs": [
+        "3",
+        "5.53",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "real StatusNotifierItem D-Bus bridge (pinion-platform-tray, ksni/zbus, no gtk) = R950 follow-up",
+        "live org.kde.StatusNotifierWatcher confirmed present this box → the bridge is end-to-end verifiable",
+        "this is the FileStorage / CupsPrintBackend-equivalent platform round (substrate-first, bridge next)",
+        "tray menu introspection is id-addressed (top-level + one submenu level); deeper nesting additive"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

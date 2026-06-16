@@ -2902,6 +2902,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-tray"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-tree-filter"
 version = "0.0.1"
 dependencies = [
