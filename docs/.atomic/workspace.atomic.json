@@ -43019,6 +43019,52 @@
         "digit_count kept local to the example (1 consumer, trivial sizing, not framework surface)"
       ]
     },
+    "R957": {
+      "decision_summary": "interactive line-number gutter: click->go-to-line, Shift+click->extend-to-line (new line_start_byte SSOT), current-line highlight band",
+      "changes_bullets": [
+        "TextEditState::line_start_byte(line) -> usize: pure byte-positioning SSOT under go_to_line (refactored to use it)",
+        "hello-textarea: click gutter#n -> go_to_line(n); Shift+click -> extend selection to line_start_byte(n)",
+        "gutter current-line band (ta_gutter_current, faint Accent) + brighter OnSurface ink on the caret's number",
+        "gutter_line_from_tag decodes ta_gutter#n (the #-composite idiom, kept local per R803/R953 — not lifted)"
+      ],
+      "verification_bullets": [
+        "pinion-core +1 test (line_start_byte pure read + clamp); r941 go_to_line tests/demo pass (refactor preserved)",
+        "demo r957_gutter_interactive.py ~35 assertions PASS (click->jump, Shift->extend, band tracks the caret line)",
+        "cargo test --workspace green; clippy -D pedantic 0; 12 textarea demos + r941 no regression",
+        "self-grep: line_start_byte 2-consumer lift; gutter tag-decode = pervasive #-idiom (7 siblings, precedent 0) not lifted"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "gutter clicks need the editor already focused (gutter = non-focusable decoration per W3C); click-to-focus-editor deferred",
+        "gutter numbers are pointer-only (no a11y node / tab stop) — matches the click-to-position-caret convention",
+        "full editor current-line background (beyond the gutter band) deferred"
+      ],
+      "publishable_decision_summary": "interactive line-number gutter: click->go-to-line, Shift+click->extend-to-line (new line_start_byte SSOT), current-line highlight band",
+      "publishable_changes_bullets": [
+        "TextEditState::line_start_byte(line) -> usize: pure byte-positioning SSOT under go_to_line (refactored to use it)",
+        "hello-textarea: click gutter#n -> go_to_line(n); Shift+click -> extend selection to line_start_byte(n)",
+        "gutter current-line band (ta_gutter_current, faint Accent) + brighter OnSurface ink on the caret's number",
+        "gutter_line_from_tag decodes ta_gutter#n (the #-composite idiom, kept local per R803/R953 — not lifted)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core +1 test (line_start_byte pure read + clamp); r941 go_to_line tests/demo pass (refactor preserved)",
+        "demo r957_gutter_interactive.py ~35 assertions PASS (click->jump, Shift->extend, band tracks the caret line)",
+        "cargo test --workspace green; clippy -D pedantic 0; 12 textarea demos + r941 no regression",
+        "self-grep: line_start_byte 2-consumer lift; gutter tag-decode = pervasive #-idiom (7 siblings, precedent 0) not lifted"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "gutter clicks need the editor already focused (gutter = non-focusable decoration per W3C); click-to-focus-editor deferred",
+        "gutter numbers are pointer-only (no a11y node / tab stop) — matches the click-to-position-caret convention",
+        "full editor current-line background (beyond the gutter band) deferred"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

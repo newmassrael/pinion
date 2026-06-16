@@ -2675,11 +2675,27 @@ impl TextEditState {
     /// `hello-syntax-highlight`) needs no scroll. Viewport scroll-to-caret is the
     /// field's reactive concern, kept orthogonal to caret placement.
     pub fn go_to_line(&self, line: usize) -> usize {
+        let resolved = line.clamp(1, self.line_count());
+        self.set_caret(self.line_start_byte(resolved));
+        resolved
+    }
+
+    /// R957 §5.22 — UTF-8 byte offset of the start of 1-based logical line
+    /// `line`, clamped to `1..=line_count` (a `0` / `1` lands on the first
+    /// line; a line past the end lands on the last line's start). The pure
+    /// *byte-positioning* SSOT under [`go_to_line`](Self::go_to_line)
+    /// (which is `set_caret(line_start_byte(line))` + the resolved-line
+    /// echo) — exposed so a caller that must position **without** moving
+    /// the caret can address a line directly: a gutter `Shift`+click
+    /// extends the selection to a line's start
+    /// (`set_selection(anchor, line_start_byte(line))`), where
+    /// `go_to_line` would wrongly collapse the selection first. The
+    /// returned offset is a `char` boundary (a line start always is).
+    #[must_use]
+    pub fn line_start_byte(&self, line: usize) -> usize {
         let starts = line_starts(&self.text.get());
         // 1-based; `starts` is never empty (always at least `[0]`).
-        let resolved = line.clamp(1, starts.len());
-        self.set_caret(starts[resolved - 1]);
-        resolved
+        starts[line.clamp(1, starts.len()) - 1]
     }
 
     /// Insert `s` at the current caret position and advance the
@@ -6348,6 +6364,24 @@ mod tests {
         assert_eq!(st.go_to_line(3), 3);
         assert_eq!(st.caret(), 5, "caret at line 3 start");
         assert!(!st.has_selection(), "go_to_line collapses the selection (a caret move)");
+    }
+
+    #[test]
+    fn r957_line_start_byte_addresses_line_without_moving_caret() {
+        // R957 — the pure byte-positioning SSOT under go_to_line. Same
+        // line starts go_to_line jumps to, but a pure read: the caret /
+        // selection are untouched, so a gutter Shift+click can extend to
+        // a line's start without the collapse go_to_line forces.
+        let st = TextEditState::new();
+        st.set_text("zero\none\ntwo\nthree".to_string()); // starts [0, 5, 9, 13]
+        st.set_caret(2);
+        assert_eq!(st.line_start_byte(1), 0, "line 1 starts at byte 0");
+        assert_eq!(st.line_start_byte(3), 9, "line 3 (\"two\") starts at byte 9");
+        assert_eq!(st.line_start_byte(4), 13, "line 4 (\"three\") starts at byte 13");
+        assert_eq!(st.caret(), 2, "line_start_byte is a pure read — the caret did not move");
+        // Clamps like go_to_line: 0 / past-end land on the first / last line.
+        assert_eq!(st.line_start_byte(0), 0, "0 clamps to the first line");
+        assert_eq!(st.line_start_byte(99), 13, "past the end clamps to the last line");
     }
 
     // ─── R945 §5.22 — move-line / duplicate-line ────────────────────────────

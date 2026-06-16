@@ -135,7 +135,7 @@
 use pinion_a11y::{toolbar_button_nodes, AccessNode, ToolbarControl, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
-use pinion_core::scene::{ContainerNode, Rect, ScrollNode, StyleRun, TextNode};
+use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode, StyleRun, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
     LayoutStyle, Size, TextAlign, TextStyle,
@@ -162,6 +162,12 @@ const TA_TAG: &str = "main_textarea";
 /// R956 — the line-number gutter box tag; each number is the composite
 /// `ta_gutter#<n>` so the demo can address an individual line number.
 const GUTTER_TAG: &str = "ta_gutter";
+/// R957 — the current-line highlight band tag (the gutter row the caret's
+/// logical line sits on); one per frame, moves with the caret.
+const GUTTER_CURRENT_TAG: &str = "ta_gutter_current";
+/// R957 — alpha of the current-line gutter band (a faint Accent tint, the
+/// caret / selection hue, so a palette swap restains it coherently).
+const GUTTER_CURRENT_ALPHA: u8 = 0x33;
 /// Shared [`ThemeProvider`] cache key (matches the gallery `"app"`
 /// convention so a host binding shares one provider).
 const THEME_TAG: &str = "app";
@@ -421,6 +427,18 @@ fn digit_count(n: usize) -> u32 {
     n.max(1).ilog10() + 1
 }
 
+/// R957 — decode the 1-based logical line a gutter number's composite tag
+/// addresses: the inverse of `composite_item_tag(GUTTER_TAG, n)` (which
+/// formats `ta_gutter#<n>`). Returns `None` for any other tag (the field,
+/// a toolbar control, a non-gutter decoration), so a press on a gutter
+/// number is distinguished from every other hit by tag identity alone.
+fn gutter_line_from_tag(tag: &str) -> Option<usize> {
+    tag.strip_prefix(GUTTER_TAG)?
+        .strip_prefix('#')?
+        .parse::<usize>()
+        .ok()
+}
+
 /// R956 §5.36 §5.22 — the left line-number gutter, structurally a mirror
 /// of the field's own multi-line `Scene::Scroll`: a fixed `gutter_w ×
 /// field_h` box whose padded inner scroll viewport carries one
@@ -450,6 +468,7 @@ fn gutter(
     style: &tf_paint::TextFieldStyle,
     lines: &[VisualLineMetric],
     scroll_y: u32,
+    caret_line: usize,
 ) -> Scene {
     let pad = style.field_pad;
     let logical_count = lines.iter().filter(|l| l.starts_logical_line).count();
@@ -466,10 +485,17 @@ fn gutter(
     let content_h =
         lines.last().map_or(0, |m| tf_paint::saturating_f32_to_u32(m.y + m.height));
 
-    let num_style = TextStyle::new()
+    // R957 — the caret's line number reads in the brighter `OnSurface`
+    // ink; every other line stays muted. The active-line band (below)
+    // carries the same hue family as the field's caret / selection.
+    let muted_style = TextStyle::new()
         .with_size_px(style.font_size_px)
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted))
         .with_align(TextAlign::End);
+    let current_style = muted_style.clone().with_fg(theme.resolve(ColorRole::OnSurface));
+    let accent = theme.resolve(ColorRole::Accent);
+    let current_band_fill =
+        Color::rgba(accent.r, accent.g, accent.b, GUTTER_CURRENT_ALPHA);
 
     let mut logical_n: u32 = 0;
     let mut numbers: Vec<Scene> = Vec::new();
@@ -480,8 +506,25 @@ fn gutter(
         logical_n += 1;
         let top = tf_paint::saturating_f32_to_u32(m.y);
         let row_h = tf_paint::saturating_f32_to_u32(m.height).max(style.font_size_px);
+        // R957 — the caret's logical line (0-based) highlights its number.
+        let is_current = logical_n as usize - 1 == caret_line;
+        if is_current {
+            // The band paints BEFORE the number (so the glyph sits on top),
+            // spanning the gutter inner width at this row's y. Tagged so the
+            // AI side reads which line is active from the rendered frame.
+            numbers.push(Scene::Box(
+                BoxNode::new(Rect::default(), BoxStyle::filled(current_band_fill))
+                    .with_tag(GUTTER_CURRENT_TAG.to_owned())
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_size(Size::px(inner_w, row_h))
+                            .with_absolute_position(0, top),
+                    ),
+            ));
+        }
+        let ink = if is_current { &current_style } else { &muted_style };
         numbers.push(Scene::Text(
-            TextNode::styled(format!("{logical_n}"), Rect::default(), num_style.clone())
+            TextNode::styled(format!("{logical_n}"), Rect::default(), ink.clone())
                 .with_tag(composite_item_tag(GUTTER_TAG, logical_n as usize))
                 .with_layout(
                     LayoutStyle::new()
@@ -545,8 +588,10 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // of the field in a top-aligned Row.
     let lines = tf_paint::field_visual_lines(TA_TAG, interaction, caret_byte, &theme, &ta_style());
     let scroll_y = tf_paint::field_scroll_offset(TA_TAG, &ta_style());
+    // R957 — the caret's logical line drives the gutter current-line band.
+    let caret_line = use_text_edit_state(TA_TAG).caret_line();
     let editor = Scene::Container(
-        ContainerNode::new(vec![gutter(&theme, &ta_style(), &lines, scroll_y), field])
+        ContainerNode::new(vec![gutter(&theme, &ta_style(), &lines, scroll_y, caret_line), field])
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
@@ -921,6 +966,25 @@ impl WidgetView for TextAreaView {
         // otherwise a toolbar press would clear the selection its command
         // needs. The router already hit-tested the press; the field no
         // longer re-scans its own rect (the pre-R801 workaround).
+        // R957 — a click on a gutter line number jumps the caret to that
+        // logical line (the editor "click the gutter to go to a line"
+        // affordance). The number's composite tag `ta_gutter#<n>` already
+        // carries the 1-based logical line, so the discrete tagged node IS
+        // the line address — no pixel->line geometry. Shift+click extends
+        // the selection to that line's start (select whole lines), via the
+        // `line_start_byte` pure-positioning peer of `go_to_line` (which
+        // would collapse the selection). Handled before the field-tag gate
+        // because the gutter is a sibling tag, not `TA_TAG`.
+        if let Some(line) = hit_tag.and_then(gutter_line_from_tag) {
+            let edit = use_text_edit_state(TA_TAG);
+            if extend {
+                let anchor = edit.selection_anchor().unwrap_or_else(|| edit.caret());
+                edit.set_selection(anchor, edit.line_start_byte(line));
+                return Some(anchor);
+            }
+            edit.go_to_line(line);
+            return Some(edit.caret());
+        }
         if hit_tag != Some(TA_TAG) {
             return None;
         }
