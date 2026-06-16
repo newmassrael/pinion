@@ -355,15 +355,20 @@ pub struct TextEditState {
     /// `{text, caret, anchor, runs}` ([`TextEditCommand`]).
     ///
     /// Lifecycle (the `ProseMirror` `storedMarks` model): **navigation clears
-    /// it** — every caret mover ([`set_caret`](Self::set_caret) /
+    /// it** — every *navigation* mover ([`set_caret`](Self::set_caret) /
     /// [`move_left`](Self::move_left) / `select_*` / …) drops it alongside its
     /// [`goal_column`](Self::goal_column) reset (the W3C `selectionchange`
-    /// model: relocating the caret discards a pending mark), and a wholesale
+    /// model: relocating the caret discards a pending mark), a
+    /// [`clear_selection`](Self::clear_selection) drops it (collapsing a
+    /// selection is a selection change), an IME composition start drops it
+    /// ([`preedit_start`](Self::preedit_start)), and a wholesale
     /// [`set_text`](Self::set_text) resets it with the rest of the transient
     /// state. **Edits preserve it** — [`insert`](Self::insert) overlays the
     /// mark onto the typed span yet leaves the signal armed, so a run of
     /// keystrokes all stay styled, and a Backspace-then-type keeps the mark
-    /// (the Word convention). The [`has_selection`](Self::has_selection) guard
+    /// (the Word convention); an edit that *relocates* the caret (a
+    /// selection-replacing splice) preserves it too, since the mark is inert
+    /// under the `has_selection` guard until that selection collapses. The [`has_selection`](Self::has_selection) guard
     /// in [`effective_pending`](Self::effective_pending) is the only further
     /// gate: a mark is collapsed-caret state, inert while a selection is active
     /// (where formatting goes straight onto the runs). IME-committed text does
@@ -1541,6 +1546,13 @@ impl TextEditState {
     /// the selection per the W3C `selectionchange` canonical
     /// behaviour).
     pub fn clear_selection(&self) {
+        // R952.1 §5.36 — collapsing the selection is a selection change, so it
+        // drops any pending typing mark too (the W3C `selectionchange` model,
+        // the peer of the navigation movers). Without this, a mark armed via
+        // `set_pending_style` while a selection was active (inert under the
+        // `has_selection` guard) would resurrect when the selection collapses
+        // here, applying to text it was never meant to.
+        self.clear_pending_style();
         self.selection_anchor.set(None);
     }
 
@@ -3098,6 +3110,13 @@ impl TextEditState {
         if self.preedit_buffer.get().is_some() {
             return;
         }
+        // R952.1 §5.36 — starting an IME composition drops any pending typing
+        // mark, so the deferral "IME-committed text does not carry the mark" is
+        // *consistent*: the composed text is unstyled AND the next direct
+        // keystroke after the commit is too (until re-armed). Without this the
+        // mark survived the bypassing `preedit_commit` and mis-applied to the
+        // post-commit keystroke while skipping the composed text itself.
+        self.clear_pending_style();
         let buf = self.text.get();
         let caret = self.caret_pos.get().min(buf.len());
         if let Some((start, end)) = self.selection_range_against(&buf, caret) {
@@ -6628,6 +6647,44 @@ mod tests {
                 st.pending_style().is_none(),
                 "forming a selection clears / masks the mark"
             );
+        });
+    }
+
+    #[test]
+    fn r952_1_clear_selection_drops_a_mark_no_resurrection() {
+        // R952.1 — a mark armed while a selection is active (inert under the
+        // has_selection guard) must NOT resurrect when the selection collapses
+        // via clear_selection.
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("hello".to_string());
+            st.set_selection(1, 3);
+            st.set_pending_style(Some(bold_style())); // armed during selection -> inert
+            assert!(st.pending_style().is_none(), "inert while the selection is active");
+            st.clear_selection(); // collapse
+            assert!(st.pending_style().is_none(), "the mark does not resurrect on collapse");
+            st.set_caret(0);
+            st.insert("X");
+            assert!(st.style_runs().is_empty(), "the next typed char is unstyled");
+        });
+    }
+
+    #[test]
+    fn r952_1_ime_composition_start_drops_the_mark() {
+        // R952.1 — starting an IME composition clears a pending mark, so the
+        // deferral is consistent: composed text and the next direct keystroke
+        // are both unstyled (the mark no longer skips the composed text only to
+        // re-apply to the following char).
+        Owner::new().run(|| {
+            let st = TextEditState::with_initial("ab".to_string());
+            st.set_caret(2);
+            st.set_pending_style(Some(bold_style()));
+            assert!(st.pending_style().is_some(), "armed before composition");
+            st.preedit_start();
+            assert!(st.pending_style().is_none(), "IME start drops the mark");
+            st.preedit_commit("c");
+            assert!(st.style_runs().is_empty(), "the committed text is unstyled");
+            st.insert("d");
+            assert!(st.style_runs().is_empty(), "the next direct keystroke is also unstyled");
         });
     }
 }

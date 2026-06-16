@@ -75,7 +75,7 @@ use pinion_core::style::{
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::grid_sort::col_sort_dir;
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::table::{cell_in_bounds, TableExternal};
+use pinion_core::widgets::table::TableExternal;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::table::{view_table, TableData, TableSelection, TableStyle};
@@ -601,11 +601,13 @@ impl WidgetA11y for TableView {
                         focused: grid_focused && active_row == data && active_col == col,
                         // R952 §5.38 — per-cell aria-selected when a cell range
                         // selection is active (`Some`); `None` (omit) otherwise.
-                        // Membership via the shared `cell_in_bounds` SSOT so the
-                        // a11y agrees with the paint overlay + the widget.
-                        selected: state
-                            .cell_selection
-                            .map(|bounds| cell_in_bounds(bounds, data, col)),
+                        // Inclusive-rectangle membership against the selection
+                        // bounds (the a11y is the only consumer of per-cell
+                        // membership — the paint overlay draws one geometric rect
+                        // from the same bounds, so there is no shared lift).
+                        selected: state.cell_selection.map(|(r0, c0, r1, c1)| {
+                            data >= r0 && data <= r1 && col >= c0 && col <= c1
+                        }),
                     })
                     .collect(),
             })

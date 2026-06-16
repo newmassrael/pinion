@@ -42703,6 +42703,68 @@
         "standalone CellSelection lift deferred (1 consumer = the Table 2-D cursor; needs a 2nd to justify)"
       ]
     },
+    "R952.1": {
+      "decision_summary": "Session-review clearance: the user's adversarial 'textbook/SSOT/north-star?' review of R951+R952 found real defects (confirmed by my grep+read). Cleared the clear-cut ones — R952's dead public API (is_cell_selected/cell_anchor) and the premature cell_in_bounds lift it justified (a phantom test-only consumer, an abstraction-needs-second-consumer violation), and R951's inconsistent IME-vs-mark and the arm-during-selection resurrection. Deferred the two-selection-model smell to a dedicated-example round (R953).",
+      "changes_bullets": [
+        "adversarial \"textbook/SSOT?\" session-review of R951+R952 found real defects; this clears the clear-cut ones",
+        "R952 dead public API removed: Table::is_cell_selected + cell_anchor() had zero production consumers (test-only, YAGNI)",
+        "R952 premature lift removed: cell_in_bounds was justified by the dead is_cell_selected (phantom 2nd consumer)",
+        "rect-membership inlined in hello-table a11y (the one real consumer); abstraction-needs-second-consumer restored",
+        "R951 preedit_start now clears the pending mark: IME composition no longer leaves an inconsistent mark",
+        "(composed text AND the next direct keystroke are both unstyled, a consistent IME deferral)",
+        "R951 clear_selection now clears the pending mark: a mark armed during a selection cannot resurrect on collapse",
+        "R951 pending_style doc fixed: \"every navigation mover\" (was \"every caret mover\", which contradicted edits-preserve)",
+        "tests: +2 (R952.1 clear_selection-no-resurrection + IME-start-drops-mark); table tests verify via bounds, not removed methods"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: green",
+        "pinion-core: r951 (16) + r952 (10, incl. 2 new R952.1) green",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "demos re-run green (no regression): r707_table, r951_textarea_typing_marks, r952_table_cell_select",
+        "grep confirms zero remaining refs to the removed is_cell_selected / cell_anchor / cell_in_bounds",
+        "mnemosyne validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "DEFERRED to R953 (needs a dedicated example): two-selection-model smell — hello-table shows row-select AND cell-range-select at once, no mode (Excel/Qt pick one)",
+        "r707 relies on WAI-ARIA cursor-roves-independent-of-row-selection, so widget-level mutual-exclusion would break it",
+        "textbook fix: relocate cell-range-select to a dedicated cell-select example, leaving hello-table pure row-select",
+        "that relocation also moots the sorted-overlay-omitted gap and cleanly owns the bounds wire-form encode/decode SSOT"
+      ],
+      "publishable_decision_summary": "Session-review clearance: the user's adversarial 'textbook/SSOT/north-star?' review of R951+R952 found real defects (confirmed by my grep+read). Cleared the clear-cut ones — R952's dead public API (is_cell_selected/cell_anchor) and the premature cell_in_bounds lift it justified (a phantom test-only consumer, an abstraction-needs-second-consumer violation), and R951's inconsistent IME-vs-mark and the arm-during-selection resurrection. Deferred the two-selection-model smell to a dedicated-example round (R953).",
+      "publishable_changes_bullets": [
+        "adversarial \"textbook/SSOT?\" session-review of R951+R952 found real defects; this clears the clear-cut ones",
+        "R952 dead public API removed: Table::is_cell_selected + cell_anchor() had zero production consumers (test-only, YAGNI)",
+        "R952 premature lift removed: cell_in_bounds was justified by the dead is_cell_selected (phantom 2nd consumer)",
+        "rect-membership inlined in hello-table a11y (the one real consumer); abstraction-needs-second-consumer restored",
+        "R951 preedit_start now clears the pending mark: IME composition no longer leaves an inconsistent mark",
+        "(composed text AND the next direct keystroke are both unstyled, a consistent IME deferral)",
+        "R951 clear_selection now clears the pending mark: a mark armed during a selection cannot resurrect on collapse",
+        "R951 pending_style doc fixed: \"every navigation mover\" (was \"every caret mover\", which contradicted edits-preserve)",
+        "tests: +2 (R952.1 clear_selection-no-resurrection + IME-start-drops-mark); table tests verify via bounds, not removed methods"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: green",
+        "pinion-core: r951 (16) + r952 (10, incl. 2 new R952.1) green",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0 (-D pedantic)",
+        "demos re-run green (no regression): r707_table, r951_textarea_typing_marks, r952_table_cell_select",
+        "grep confirms zero remaining refs to the removed is_cell_selected / cell_anchor / cell_in_bounds",
+        "mnemosyne validate-workspace: T1 orphan total=0, T3 reject=0"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "DEFERRED to R953 (needs a dedicated example): two-selection-model smell — hello-table shows row-select AND cell-range-select at once, no mode (Excel/Qt pick one)",
+        "r707 relies on WAI-ARIA cursor-roves-independent-of-row-selection, so widget-level mutual-exclusion would break it",
+        "textbook fix: relocate cell-range-select to a dedicated cell-select example, leaving hello-table pure row-select",
+        "that relocation also moots the sorted-overlay-omitted gap and cleanly owns the bounds wire-form encode/decode SSOT"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

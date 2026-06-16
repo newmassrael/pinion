@@ -355,14 +355,6 @@ impl Table {
         self.focused_col = col;
     }
 
-    /// R952 §5.38 §5.40 — the pinned corner of the active cell range
-    /// selection (`(row, col)` data coords), or `None` when no rectangular
-    /// cell selection is active.
-    #[must_use]
-    pub fn cell_anchor(&self) -> Option<(usize, usize)> {
-        self.cell_anchor
-    }
-
     /// R952 §5.38 §5.40 — the selected cell rectangle as
     /// `(row0, col0, row1, col1)` (inclusive, normalized so `row0 <= row1`
     /// and `col0 <= col1`), or `None` when no cell selection is active (no
@@ -376,14 +368,6 @@ impl Table {
         let fr = self.focused_row?;
         let fc = self.focused_col;
         Some((ar.min(fr), ac.min(fc), ar.max(fr), ac.max(fc)))
-    }
-
-    /// R952 §5.38 §5.40 — whether the cell at `(row, col)` (data coords) lies
-    /// in the selected rectangle. `false` when no cell selection is active.
-    #[must_use]
-    pub fn is_cell_selected(&self, row: usize, col: usize) -> bool {
-        self.cell_selection_bounds()
-            .is_some_and(|bounds| cell_in_bounds(bounds, row, col))
     }
 
     /// R952 §5.38 §5.40 — the number of cells in the selected rectangle
@@ -482,18 +466,6 @@ impl Table {
 fn parse_row_col(s: &str) -> Option<(usize, usize)> {
     let (r, c) = s.split_once(',')?;
     Some((r.trim().parse().ok()?, c.trim().parse().ok()?))
-}
-
-/// R952 §5.38 — whether the cell `(row, col)` lies inside the inclusive
-/// rectangle `bounds = (row0, col0, row1, col1)` (data coords). The SSOT for
-/// cell range membership shared by [`Table::is_cell_selected`] and a binding's
-/// per-cell `aria-selected` projection — paint, a11y, and the widget must agree
-/// on which cells are selected, so the test lives in one place (the `bounds`
-/// come pre-normalized from [`Table::cell_selection_bounds`]).
-#[must_use]
-pub fn cell_in_bounds(bounds: (usize, usize, usize, usize), row: usize, col: usize) -> bool {
-    let (r0, c0, r1, c1) = bounds;
-    row >= r0 && row <= r1 && col >= c0 && col <= c1
 }
 
 #[must_use]
@@ -1713,11 +1685,10 @@ mod tests {
     fn r952_select_cell_is_a_single_cell() {
         let mut t = sample(); // 3 rows x 2 cols
         t.select_cell(1, 1);
+        // A single-cell rectangle: anchor == cursor == (1,1), so the bounds
+        // collapse to that cell (the bounds are the public read of the model).
         assert_eq!(t.cell_selection_bounds(), Some((1, 1, 1, 1)));
         assert_eq!(t.cell_selection_count(), 1);
-        assert!(t.is_cell_selected(1, 1));
-        assert!(!t.is_cell_selected(0, 1), "a neighbour cell is not in the selection");
-        assert_eq!(t.cell_anchor(), Some((1, 1)));
     }
 
     #[test]
@@ -1725,14 +1696,12 @@ mod tests {
         let mut t = sample();
         t.select_cell(0, 0);
         t.extend_cell(2, 1);
+        // The bounds = bbox(anchor (0,0), cursor (2,1)); a `(0,0)` lower corner
+        // proves the anchor stayed pinned while the cursor moved to the extent.
         assert_eq!(t.cell_selection_bounds(), Some((0, 0, 2, 1)), "anchor (0,0) -> cursor (2,1)");
         assert_eq!(t.cell_selection_count(), 6, "3 rows x 2 cols");
-        assert!(t.is_cell_selected(1, 0), "an interior cell is selected");
-        assert!(t.is_cell_selected(2, 1), "the far corner is selected");
-        // The cursor moved to the extent; the anchor stayed pinned.
-        assert_eq!(t.focused_row(), Some(2));
-        assert_eq!(t.focused_col(), 1);
-        assert_eq!(t.cell_anchor(), Some((0, 0)));
+        assert_eq!(t.focused_row(), Some(2), "the cursor moved to the extent (row)");
+        assert_eq!(t.focused_col(), 1, "the cursor moved to the extent (col)");
     }
 
     #[test]
@@ -1751,8 +1720,7 @@ mod tests {
         // makes the target itself the anchor — a single cell that later
         // extensions grow.
         t.extend_cell(1, 0);
-        assert_eq!(t.cell_selection_bounds(), Some((1, 0, 1, 0)));
-        assert_eq!(t.cell_anchor(), Some((1, 0)));
+        assert_eq!(t.cell_selection_bounds(), Some((1, 0, 1, 0)), "anchor pins to (1,0), a single cell");
         // A pre-existing cursor (no anchor) becomes the anchor on first extend.
         let mut t2 = sample();
         t2.set_focused_row(Some(0));
@@ -1768,7 +1736,6 @@ mod tests {
         t.clear_cell_selection();
         assert_eq!(t.cell_selection_bounds(), None);
         assert_eq!(t.cell_selection_count(), 0);
-        assert!(!t.is_cell_selected(1, 1));
         assert_eq!(t.focused_row(), Some(1), "the cursor survives a selection clear");
         assert_eq!(t.focused_col(), 1);
     }
