@@ -109,11 +109,13 @@ use sm::TextFieldPolicy;
 use std::rc::Rc;
 
 use crate::clipboard::{Clipboard, ClipboardSelection};
+use crate::composite_tag::split_send_payload;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner,
     ThreadOwnership,
 };
+use crate::input::is_activation_event;
 use crate::intent::Intent;
 use crate::scene::Rect;
 use crate::style::{
@@ -732,6 +734,54 @@ impl WidgetTransition for TextField {
             Vec::new()
         }
     }
+}
+
+/// R959 §5.36 §5.22 — the **gutter line-number send sub-target** prefix.
+///
+/// A multi-line field's line-number gutter paints each number under the
+/// field's *own* composite tag `"<field>#gl<n>"` (1-based logical line
+/// `n`). A click on that number routes through the
+/// [`InputRouter`](pinion_runtime::InputRouter) to **this** field's
+/// `invoke("send", "gl<n>:PointerUp")` wire — focus-independent and with
+/// no caret text-drag arm, unlike the geometry press hook
+/// ([`position_caret_for_point`](pinion_shell::WidgetView::position_caret_for_point))
+/// the first cut (R957) used: that hook short-circuited unless the field
+/// already held focus (a no-op gutter click, R959 B2) and, bound to the
+/// press → drag funnel, armed a character text-selection on the smallest
+/// pointer jitter (R959 B1). Routing the number under the field tag fixes
+/// both — click-to-focus resolves the composite to the primary focusable
+/// field (so the click focuses the editor), and the press hook rejects the
+/// composite tag (`!= field`) so no drag arms. The line number *is* the
+/// address; there is no pixel → line geometry.
+///
+/// The `gl` prefix namespaces line-number targets apart from a future
+/// fold-chevron sub-target (`"<field>#fold<n>"`) the same gutter will host
+/// (R955 deferred click-to-fold), so both share one `send` wire.
+///
+/// [`gutter_line_sub_tag`] (producer) and [`gutter_line_from_sub`]
+/// (decoder) both reference this const, so the wire grammar cannot drift —
+/// the [`GridSendKey`](crate::composite_tag::GridSendKey) encode↔decode
+/// SSOT precedent applied to the field's gutter sub-target.
+pub const GUTTER_LINE_PREFIX: &str = "gl";
+
+/// R959 — build the composite paint tag a line-number gutter gives its
+/// `line`-th number (1-based): `"<field_tag>#gl<line>"`. The **encode**
+/// twin of [`gutter_line_from_sub`]; the `'#'` join is the R51.42 §5.35
+/// frozen-separator idiom (R803), the `gl` half the [`GUTTER_LINE_PREFIX`]
+/// SSOT this shares with the decoder.
+#[must_use]
+pub fn gutter_line_sub_tag(field_tag: &str, line: usize) -> String {
+    format!("{field_tag}#{GUTTER_LINE_PREFIX}{line}")
+}
+
+/// R959 — decode the 1-based logical line a gutter number's `'#'`-split
+/// sub-target addresses (`"gl<line>"` → `Some(line)`), or `None` for any
+/// other sub-target on the same field (a non-gutter composite). The
+/// **decode** twin of [`gutter_line_sub_tag`], built on the
+/// [`GUTTER_LINE_PREFIX`] SSOT.
+#[must_use]
+pub fn gutter_line_from_sub(sub: &str) -> Option<usize> {
+    sub.strip_prefix(GUTTER_LINE_PREFIX)?.parse().ok()
 }
 
 /// `External` adapter wrapping a [`TextField`]. Emits a single
@@ -1560,14 +1610,7 @@ impl ExternalIntrospect for TextFieldExternal {
     ) -> Result<IntrospectValue, InvokeError> {
         match path {
             "send" => match args {
-                IntrospectValue::Text(ref name) => {
-                    let ev =
-                        TextFieldEvent::from_name(name).ok_or(InvokeError::Rejected)?;
-                    self.send(ev);
-                    Ok(IntrospectValue::Text(
-                        self.state().as_name().to_string(),
-                    ))
-                }
+                IntrospectValue::Text(ref name) => self.invoke_send(name),
                 _ => Err(InvokeError::TypeMismatch),
             },
             // R56.1.d §5.38 §5.22 — W3C UI Events keystroke dispatch.
@@ -1965,6 +2008,57 @@ impl TextFieldExternal {
                 Ok(IntrospectValue::Int(i64::try_from(resolved).unwrap_or(i64::MAX)))
             }
             _ => Err(InvokeError::TypeMismatch),
+        }
+    }
+
+    /// R56.1.a / R959 §5.38 §5.36 — the `invoke("send", Text(...))` channel.
+    /// A bare event name (`"Focus"` / `"Blur"` / …) dispatches the matching
+    /// SCXML [`TextFieldEvent`]; the composite sub-target `"gl<n>:PointerUp"`
+    /// is a line-number gutter click (the `<field>#gl<n>` number tag the
+    /// `InputRouter` split + forwarded) handled by
+    /// [`send_gutter_line`](Self::send_gutter_line). Returns the post-send
+    /// state name (the established `send` read-outcome contract).
+    fn invoke_send(&mut self, name: &str) -> Result<IntrospectValue, InvokeError> {
+        // R959 — a line-number gutter routes its clicks to the field's own
+        // `send` wire as `"gl<n>:PointerUp[:mods]"`. Decode through the `:`
+        // grammar SSOT and act once, on the activation edge: a plain click
+        // jumps the caret to that 1-based logical line, a `Shift`+click extends
+        // the selection to the line's start. The `PointerDown` / `PointerEnter`
+        // / `PointerLeave` edges the router fires around the click are a
+        // recognized no-op. Decoded before the bare-event path so the gutter
+        // sub never reaches `from_name` (which would reject it).
+        if let Some((sub, event, mods)) = split_send_payload(name) {
+            if let Some(line) = gutter_line_from_sub(sub) {
+                if is_activation_event(event) {
+                    self.send_gutter_line(line, mods.shift_key());
+                }
+                return Ok(IntrospectValue::Text(self.state().as_name().to_string()));
+            }
+        }
+        let ev = TextFieldEvent::from_name(name).ok_or(InvokeError::Rejected)?;
+        self.send(ev);
+        Ok(IntrospectValue::Text(self.state().as_name().to_string()))
+    }
+
+    /// R959 §5.36 §5.22 — apply a gutter line-number click (the `send`-wire
+    /// peer of [`invoke_go_to_line`](Self::invoke_go_to_line), decoded from
+    /// the `"gl<n>:PointerUp"` sub-target): move the caret to the start of
+    /// 1-based logical `line` ([`TextEditState::go_to_line`](crate::widgets::text_edit::TextEditState::go_to_line)),
+    /// or — when `extend` (a `Shift`+click) — extend the selection from the
+    /// live anchor to that line's start
+    /// ([`line_start_byte`](crate::widgets::text_edit::TextEditState::line_start_byte),
+    /// the pure-positioning peer that does not collapse the selection the way
+    /// `go_to_line` would). Inert on a bare field (no attached
+    /// [`TextEditState`]).
+    fn send_gutter_line(&self, line: usize, extend: bool) {
+        let Some(state) = self.text_state() else {
+            return;
+        };
+        if extend {
+            let anchor = state.selection_anchor().unwrap_or_else(|| state.caret());
+            state.set_selection(anchor, state.line_start_byte(line));
+        } else {
+            state.go_to_line(line);
         }
     }
 
@@ -6415,7 +6509,7 @@ mod r933_fold_tests {
     //! the `fold_regions` derived read and the `toggle-fold` / `fold-all`
     //! / `unfold-all` actions (the AI-first peer of the gutter chevron).
 
-    use super::TextFieldExternal;
+    use super::{gutter_line_from_sub, gutter_line_sub_tag, TextFieldExternal};
     use crate::external::{ExternalIntrospect, IntrospectValue, InvokeError};
     use crate::widgets::text_edit::TextEditState;
     use std::rc::Rc;
@@ -6666,6 +6760,85 @@ mod r933_fold_tests {
             IntrospectValue::Int(0),
         );
         assert!(bare.query("line_count").is_none());
+    }
+
+    // ─── R959 §5.36 §5.22 — gutter line-number send-route ───────────────────
+
+    fn send_text(tfx: &mut TextFieldExternal, payload: &str) -> Result<IntrospectValue, InvokeError> {
+        tfx.invoke("send", IntrospectValue::Text(payload.into()))
+    }
+
+    #[test]
+    fn r959_gutter_line_sub_tag_encode_decode_roundtrip() {
+        // The producer (gutter paint) and decoder (this field's `send` arm)
+        // share the `gl` prefix, so the wire grammar cannot drift.
+        assert_eq!(gutter_line_sub_tag("main_textarea", 3), "main_textarea#gl3");
+        let (primary, sub) = crate::composite_tag::split_subindex("main_textarea#gl3");
+        assert_eq!(primary, "main_textarea");
+        assert_eq!(gutter_line_from_sub(sub.unwrap()), Some(3));
+        // A non-gutter composite sub on the same field does not decode.
+        assert_eq!(gutter_line_from_sub("3"), None, "a bare numeric is not a gutter sub");
+        assert_eq!(gutter_line_from_sub("glx"), None, "a non-numeric tail is rejected");
+    }
+
+    #[test]
+    fn r959_send_gutter_line_jumps_caret() {
+        // A gutter-number click reaches the field as `"gl<n>:PointerUp"`; the
+        // caret jumps to that 1-based line's start — focus-independent, no
+        // caret-drag arm (the press hook never sees it).
+        let (state, mut tfx) = wired("zero\none\ntwo\nthree\nfour"); // starts [0,5,9,13,19]
+        assert!(send_text(&mut tfx, "gl3:PointerUp").is_ok());
+        assert_eq!(state.caret(), 9, "click gutter 3 -> caret at line 3 (\"two\") start");
+        assert_eq!(state.selection_range(), None, "a plain gutter click collapses any selection");
+    }
+
+    #[test]
+    fn r959_send_gutter_line_shift_extends_selection() {
+        // `Shift`+click extends the selection from the live anchor to the
+        // clicked line's start (the `line_start_byte` peer, not `go_to_line`
+        // which would collapse). Modifiers ride the third wire segment.
+        let (state, mut tfx) = wired("zero\none\ntwo\nthree\nfour"); // starts [0,5,9,13,19]
+        send_text(&mut tfx, "gl2:PointerUp").unwrap(); // caret -> line 2 start (5), anchor
+        assert_eq!(state.caret(), 5);
+        send_text(&mut tfx, "gl5:PointerUp:s").unwrap(); // Shift+click -> extend to line 5 start (19)
+        assert_eq!(
+            state.selection_range(),
+            Some((5, 19)),
+            "Shift+click extends from line 2 to line 5 start",
+        );
+    }
+
+    #[test]
+    fn r959_send_gutter_line_non_activation_edge_is_noop() {
+        // The router fires the whole pointer cycle; only the `PointerUp`
+        // activation edge acts. `PointerDown` / `PointerEnter` / `PointerLeave`
+        // are recognized no-ops (Ok, caret unmoved) — not `Rejected`.
+        let (state, mut tfx) = wired("zero\none\ntwo\nthree\nfour");
+        state.set_caret(2);
+        for edge in ["gl4:PointerDown", "gl4:PointerEnter", "gl4:PointerLeave"] {
+            assert!(send_text(&mut tfx, edge).is_ok(), "{edge} is a recognized send");
+            assert_eq!(state.caret(), 2, "{edge} does not move the caret");
+        }
+    }
+
+    #[test]
+    fn r959_send_bare_event_and_non_gutter_composite_unaffected() {
+        // The gutter branch is decoded before the bare-event path, so the
+        // existing SCXML-event send is unchanged, and a non-gutter composite
+        // falls through to `from_name` (which rejects it).
+        let (_state, mut tfx) = wired("a\nb");
+        assert!(send_text(&mut tfx, "Focus").is_ok(), "a bare SCXML event still dispatches");
+        assert!(
+            matches!(send_text(&mut tfx, "foo:PointerUp"), Err(InvokeError::Rejected)),
+            "a non-gutter composite is not a recognized send",
+        );
+    }
+
+    #[test]
+    fn r959_send_gutter_line_bare_field_inert() {
+        // A bare field (no attached state) is inert — Ok, never a panic.
+        let mut bare = TextFieldExternal::new();
+        assert!(send_text(&mut bare, "gl3:PointerUp").is_ok());
     }
 
     // ─── R945 §5.22 — move-line / duplicate-line invoke verbs ───────────────

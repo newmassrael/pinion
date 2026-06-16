@@ -1,24 +1,34 @@
 #!/usr/bin/env python3
-"""R957 §5.22 §5.36 — interactive line-number gutter for the textarea.
+"""R957 / R959 §5.22 §5.36 — interactive line-number gutter for the textarea.
 
 Drives hello-textarea over JSON-RPC. R956 added the line-number gutter (one
-number per logical line, aligned + scroll-synced). R957 makes it interactive:
+number per logical line, aligned + scroll-synced). R957 made it interactive;
+R959 re-routed the clicks to fix two defects:
 
-  (A) **click a gutter number -> go to that line**: the number's composite tag
-      `ta_gutter#<n>` carries the 1-based logical line, so a click resolves
-      straight to `TextEditState::go_to_line(n)` (no pixel->line geometry) —
-      the caret jumps to the line's start;
-  (B) **Shift+click -> extend the selection to that line**: via the new pure
+  (A) **click a gutter number -> go to that line**: each number is tagged under
+      the field's own composite namespace `main_textarea#gl<n>` (1-based logical
+      line), so a click routes through the InputRouter to the field's `send`
+      wire (`gl<n>:PointerUp`) -> `TextEditState::go_to_line(n)`. No pixel->line
+      geometry; the line number IS the address;
+  (B) **Shift+click -> extend the selection to that line**: the modifier rides
+      the send wire (`gl<n>:PointerUp:s`); the field extends via
       `TextEditState::line_start_byte` (the byte-positioning peer of
       `go_to_line`, which would collapse the selection) — select whole lines;
   (C) **current-line highlight**: the gutter row the caret sits on carries a
       tagged band (`ta_gutter_current`) that tracks the caret line, exactly one
       per frame, aligned with that line's number.
 
-The gutter clicks flow through the binding's `position_caret_for_point` press
-hook (the field stays focused — the gutter is a non-focusable decoration, so a
-click on it leaves focus on the editor per the W3C convention), so this is a
-real pointer arc, not an External invoke.
+R959 send-route fix (the defects the R957 first cut had — it decoded the gutter
+inside the `position_caret_for_point` geometry press hook):
+
+  (B2) **focus-independent**: a gutter click now FOCUSES the editor and moves
+       the caret in one arc (click-to-focus resolves the `main_textarea#gl<n>`
+       composite to the primary focusable field). The R957 cut short-circuited
+       unless the field already held focus — a no-op gutter click;
+  (B1) **no caret text-drag arm**: the composite hit-tag is rejected by the
+       press hook (`!= main_textarea`), so a gutter press + jitter arms NO
+       character text-selection. The R957 cut armed a text-drag on the smallest
+       pointer movement.
 
 Run from the workspace root:
     cargo build -p hello-textarea --release
@@ -46,12 +56,18 @@ from rpc_verify import (  # noqa: E402
 
 WIN = (480, 320)
 EXT = "/external"
-GUT = "ta_gutter"
+FIELD = "main_textarea"
 CURRENT = "ta_gutter_current"
 
 # "alpha\nbeta\ngamma\ndelta\nepsilon" — five logical lines.
 DOC = "alpha\nbeta\ngamma\ndelta\nepsilon"
 LINE_START = [0, 6, 11, 17, 23]
+
+
+def gnum(n: int) -> str:
+    """R959 — the composite paint tag of the gutter's 1-based line number `n`,
+    in the field's own send namespace (`gutter_line_sub_tag(FIELD, n)`)."""
+    return f"{FIELD}#gl{n}"
 
 
 def _set_text(ed: RpcSubprocess, text: str) -> None:
@@ -60,7 +76,7 @@ def _set_text(ed: RpcSubprocess, text: str) -> None:
 
 
 def _gutter_rects(snap: Any) -> dict[str, tuple[int, int, int, int]]:
-    return {t: r for t, r in abs_rects_of(snap).items() if t.startswith(GUT + "#")}
+    return {t: r for t, r in abs_rects_of(snap).items() if t.startswith(FIELD + "#gl")}
 
 
 def _band_count(snap: Any) -> int:
@@ -87,22 +103,33 @@ def body() -> None:
     with RpcSubprocess("hello-textarea", request_timeout=12.0) as ed:
         _set_text(ed, DOC)
         assert_eq(ed.query(f"{EXT}/line_count"), 5, "five logical lines")
-        # Focus the editor so gutter clicks reach the caret hook (the gutter
-        # is a non-focusable decoration; the editor must already hold focus).
-        ed.click(path="main_textarea")
 
         snap = wait_snap(
             ed,
-            lambda s: find_by_tag(s, f"{GUT}#5") is not None,
+            lambda s: find_by_tag(s, gnum(5)) is not None,
             viewport=WIN,
             desc="gutter shows five numbers",
         )
         assert_eq(len(_gutter_rects(snap)), 5, "five gutter numbers")
-        assert find_by_tag(snap, f"{GUT}#6") is None, "no sixth number"
+        assert find_by_tag(snap, gnum(6)) is None, "no sixth number"
+
+        # ── (B2) R959: a gutter click is FOCUS-INDEPENDENT. The field has not
+        #         been clicked, so it is Idle; clicking a gutter number both
+        #         moves the caret AND focuses the editor (click-to-focus
+        #         resolves `main_textarea#gl<n>` to the primary field). The
+        #         R957 press-hook cut no-op'd unless the field already held
+        #         focus.
+        wait_query(ed, f"{EXT}/state", "Idle", desc="editor is unfocused before any click")
+        ed.click(path=gnum(3))
+        wait_query(
+            ed, f"{EXT}/caret", LINE_START[2],
+            desc="gutter click moves the caret with no prior focus (B2)",
+        )
+        wait_query(ed, f"{EXT}/state", "Focused", desc="the gutter click focused the editor (B2)")
 
         # ── (A) click each gutter number -> caret jumps to that line ─────
         for n in range(1, 6):
-            ed.click(path=f"{GUT}#{n}")
+            ed.click(path=gnum(n))
             wait_query(
                 ed,
                 f"{EXT}/caret",
@@ -114,7 +141,7 @@ def body() -> None:
             snap = wait_snap(
                 ed,
                 lambda s, ln=n: find_by_tag(s, CURRENT) is not None
-                and abs_rects_of(s).get(CURRENT) == abs_rects_of(s).get(f"{GUT}#{ln}"),
+                and abs_rects_of(s).get(CURRENT) == abs_rects_of(s).get(gnum(ln)),
                 viewport=WIN,
                 desc=f"current band aligns with gutter number {n}",
             )
@@ -122,22 +149,22 @@ def body() -> None:
             rects = abs_rects_of(snap)
             assert_eq(
                 rects[CURRENT],
-                rects[f"{GUT}#{n}"],
+                rects[gnum(n)],
                 f"band rect == gutter number {n} rect",
             )
 
         # ── (B) clicking is idempotent + the jump collapses any selection ─
-        ed.click(path=f"{GUT}#3")
+        ed.click(path=gnum(3))
         wait_query(ed, f"{EXT}/caret", LINE_START[2], desc="caret at line 3")
         assert_eq(ed.query(f"{EXT}/selection"), None, "a plain gutter click collapses selection")
-        ed.click(path=f"{GUT}#3")
+        ed.click(path=gnum(3))
         assert_eq(ed.query(f"{EXT}/caret"), LINE_START[2], "re-clicking line 3 is idempotent")
 
         # ── (B) Shift+click extends the selection to that line ──────────
-        ed.click(path=f"{GUT}#2")  # caret -> line 2 start (byte 6), anchor here
+        ed.click(path=gnum(2))  # caret -> line 2 start (byte 6), anchor here
         wait_query(ed, f"{EXT}/caret", LINE_START[1], desc="caret at line 2 (anchor)")
         ed.modifiers(shift=True)
-        ed.click(path=f"{GUT}#5")  # extend to line 5 start (byte 23)
+        ed.click(path=gnum(5))  # extend to line 5 start (byte 23)
         ed.modifiers()  # release Shift
         wait_query(
             ed,
@@ -147,11 +174,11 @@ def body() -> None:
         )
 
         # Shift+click UPWARD: collapse first, then extend up to an earlier line.
-        ed.click(path=f"{GUT}#4")  # caret -> line 4 (byte 17), selection collapses
+        ed.click(path=gnum(4))  # caret -> line 4 (byte 17), selection collapses
         wait_query(ed, f"{EXT}/caret", LINE_START[3], desc="caret at line 4")
         assert_eq(ed.query(f"{EXT}/selection"), None, "the plain click collapsed the prior selection")
         ed.modifiers(shift=True)
-        ed.click(path=f"{GUT}#1")  # extend up to line 1 start (byte 0)
+        ed.click(path=gnum(1))  # extend up to line 1 start (byte 0)
         ed.modifiers()
         wait_query(
             ed,
@@ -160,30 +187,45 @@ def body() -> None:
             desc="Shift+click upward extends from line 4 to line 1 start",
         )
 
+        # ── (B1) R959: a drag that STARTS on a gutter number arms NO character
+        #         text-selection (the R957 press-hook cut armed a text-drag on
+        #         the smallest pointer jitter). Park the caret with a plain
+        #         click (selection collapses), then drag off a gutter number —
+        #         the selection stays empty.
+        ed.click(path=gnum(2))
+        wait_query(ed, f"{EXT}/caret", LINE_START[1], desc="caret parked at line 2")
+        assert_eq(ed.query(f"{EXT}/selection"), None, "caret parked, no selection")
+        ed.drag(from_path=gnum(3), to_path=gnum(5), steps=6)
+        assert_eq(
+            ed.query(f"{EXT}/selection"),
+            None,
+            "a drag starting on a gutter number arms no text-selection (B1)",
+        )
+
         # ── (C) the band follows a keyboard caret move too (not just clicks)
         ed.invoke(f"{EXT}/go-to-line", 5)
         wait_query(ed, f"{EXT}/caret", LINE_START[4], desc="go-to-line 5 (RPC) moves the caret")
         snap = wait_snap(
             ed,
-            lambda s: abs_rects_of(s).get(CURRENT) == abs_rects_of(s).get(f"{GUT}#5"),
+            lambda s: abs_rects_of(s).get(CURRENT) == abs_rects_of(s).get(gnum(5)),
             viewport=WIN,
             desc="current band follows the RPC caret move to line 5",
         )
         assert_eq(_band_count(snap), 1, "still exactly one current-line band")
         assert_eq(
             abs_rects_of(snap)[CURRENT],
-            abs_rects_of(snap)[f"{GUT}#5"],
+            abs_rects_of(snap)[gnum(5)],
             "band aligned with line 5 after the keyboard-path move",
         )
 
         # ── (D) gutter geometry sanity: numbers left of the field, in order
         snap = ed.snapshot(source="paint", viewport=WIN)
         rects = abs_rects_of(snap)
-        field = rects["main_textarea"]
+        field = rects[FIELD]
         for n in range(1, 6):
-            gx = rects[f"{GUT}#{n}"]
+            gx = rects[gnum(n)]
             assert gx[0] + gx[2] <= field[0], f"gutter number {n} is left of the field"
-        ys = [rects[f"{GUT}#{n}"][1] for n in range(1, 6)]
+        ys = [rects[gnum(n)][1] for n in range(1, 6)]
         assert all(ys[i] < ys[i + 1] for i in range(4)), f"gutter numbers in increasing y: {ys}"
 
 

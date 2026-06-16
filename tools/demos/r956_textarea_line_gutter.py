@@ -56,8 +56,15 @@ from rpc_verify import (  # noqa: E402
 WIN = (480, 320)
 PAD = 8  # TextFieldStyle::m3_multiline field_pad
 EXT = "/external"
-GUT = "ta_gutter"
+GUT = "ta_gutter"  # the gutter container box (still tagged here)
 FIELD = "main_textarea"
+
+
+def gnum(n: int) -> str:
+    """R959 — the gutter's 1-based line number `n` is tagged in the field's own
+    composite send namespace (`gutter_line_sub_tag(FIELD, n)`), not under the
+    `ta_gutter` box, so a click routes to the field's `send` wire."""
+    return f"{FIELD}#gl{n}"
 
 
 def _set_text(ed: RpcSubprocess, text: str) -> None:
@@ -70,11 +77,11 @@ def _logical_count(text: str) -> int:
 
 
 def _gutter_tags(snap: Any) -> dict[str, tuple[int, int, int, int]]:
-    return {t: r for t, r in abs_rects_of(snap).items() if t.startswith(GUT + "#")}
+    return {t: r for t, r in abs_rects_of(snap).items() if t.startswith(FIELD + "#gl")}
 
 
 def _num_content(snap: Any, n: int) -> Optional[str]:
-    node = find_by_tag(snap, f"{GUT}#{n}")
+    node = find_by_tag(snap, gnum(n))
     return node.get("content") if node else None
 
 
@@ -109,7 +116,7 @@ def body() -> None:
         _set_text(ed, seed)
         snap = wait_snap(
             ed,
-            lambda s: find_by_tag(s, f"{GUT}#3") is not None,
+            lambda s: find_by_tag(s, gnum(3)) is not None,
             viewport=WIN,
             desc="gutter shows three numbers",
         )
@@ -118,7 +125,7 @@ def body() -> None:
         assert_eq(_num_content(snap, 1), "1", "first number reads '1'")
         assert_eq(_num_content(snap, 2), "2", "second number reads '2'")
         assert_eq(_num_content(snap, 3), "3", "third number reads '3'")
-        assert find_by_tag(snap, f"{GUT}#4") is None, "no fourth number for three lines"
+        assert find_by_tag(snap, gnum(4)) is None, "no fourth number for three lines"
 
         rects = abs_rects_of(snap)
         gutter_box = rects[GUT]
@@ -131,13 +138,13 @@ def body() -> None:
         assert_eq(gutter_box[1], field_box[1], "gutter and field share the box top")
         assert_eq(gutter_box[3], field_box[3], "gutter and field share the box height")
         # Number 1 aligns with the field's content origin (box top + padding).
-        g1y = nums[f"{GUT}#1"][1]
+        g1y = nums[gnum(1)][1]
         assert abs(g1y - (field_box[1] + PAD)) <= 4, (
             f"number 1 (y {g1y}) aligns with the field content top "
             f"({field_box[1] + PAD})"
         )
         # Numbers increase in y and are evenly spaced (one per row).
-        ys = [nums[f"{GUT}#{n}"][1] for n in (1, 2, 3)]
+        ys = [nums[gnum(n)][1] for n in (1, 2, 3)]
         assert ys[0] < ys[1] < ys[2], f"numbers descend the gutter in order: {ys}"
         step1, step2 = ys[1] - ys[0], ys[2] - ys[1]
         assert step1 > 0 and abs(step1 - step2) <= 2, (
@@ -151,7 +158,7 @@ def body() -> None:
         _set_text(ed, "a\nb\nc\nd\ne\nf")
         snap = wait_snap(
             ed,
-            lambda s: find_by_tag(s, f"{GUT}#6") is not None,
+            lambda s: find_by_tag(s, gnum(6)) is not None,
             viewport=WIN,
             desc="gutter grows to six numbers",
         )
@@ -161,13 +168,13 @@ def body() -> None:
         _set_text(ed, "only\ntwo")
         snap = wait_snap(
             ed,
-            lambda s: find_by_tag(s, f"{GUT}#3") is None
-            and find_by_tag(s, f"{GUT}#2") is not None,
+            lambda s: find_by_tag(s, gnum(3)) is None
+            and find_by_tag(s, gnum(2)) is not None,
             viewport=WIN,
             desc="gutter shrinks to two numbers",
         )
         assert_eq(len(_gutter_tags(snap)), 2, "two lines -> two numbers")
-        assert find_by_tag(snap, f"{GUT}#3") is None, "the third number is gone"
+        assert find_by_tag(snap, gnum(3)) is None, "the third number is gone"
 
         # ── (C) a soft-wrapped paragraph keeps ONE number ───────────────
         # No '\n', long enough to wrap past five rows so the field scrolls.
@@ -176,13 +183,13 @@ def body() -> None:
         _set_text(ed, wrapped)
         snap = wait_snap(
             ed,
-            lambda s: find_by_tag(s, f"{GUT}#1") is not None,
+            lambda s: find_by_tag(s, gnum(1)) is not None,
             viewport=WIN,
             desc="the wrapped paragraph shows its single number",
         )
         assert_eq(_logical_count(wrapped), 1, "the fixture is one logical line")
         assert_eq(len(_gutter_tags(snap)), 1, "a wrapped line keeps ONE gutter number")
-        assert find_by_tag(snap, f"{GUT}#2") is None, "no second number for one logical line"
+        assert find_by_tag(snap, gnum(2)) is None, "no second number for one logical line"
 
         # Move the caret to the end: the wrapped content overflows five rows,
         # so the field scrolls — proving the single line wrapped — and the
@@ -213,7 +220,7 @@ def body() -> None:
         _set_text(ed, tall)
         snap = wait_snap(
             ed,
-            lambda s: find_by_tag(s, f"{GUT}#20") is not None,
+            lambda s: find_by_tag(s, gnum(20)) is not None,
             viewport=WIN,
             desc="twenty numbers for twenty lines",
         )
@@ -251,8 +258,8 @@ def body() -> None:
         _set_text(ed, "")
         snap = wait_snap(
             ed,
-            lambda s: find_by_tag(s, f"{GUT}#1") is not None
-            and find_by_tag(s, f"{GUT}#2") is None,
+            lambda s: find_by_tag(s, gnum(1)) is not None
+            and find_by_tag(s, gnum(2)) is None,
             viewport=WIN,
             desc="an empty buffer shows one number",
         )

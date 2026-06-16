@@ -135,7 +135,6 @@
 use pinion_a11y::{toolbar_button_nodes, AccessNode, ToolbarControl, WidgetA11y};
 use pinion_core::external::{External, IntrospectValue};
 use pinion_core::intent::Intent;
-use pinion_core::composite_tag::split_subindex;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode, StyleRun, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, FontStyle, FontWeight, JustifyContent,
@@ -146,7 +145,9 @@ use pinion_core::undo::use_undo_stack;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
 use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
-use pinion_core::widgets::text_field::{TextFieldEvent, TextFieldExternal, TextFieldState};
+use pinion_core::widgets::text_field::{
+    gutter_line_sub_tag, TextFieldEvent, TextFieldExternal, TextFieldState,
+};
 use pinion_core::widgets::toolbar::{ToolItem, ToolbarExternal};
 use pinion_core::{intent_tag, Command, Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_platform_clipboard::use_app_clipboard;
@@ -161,8 +162,11 @@ vello_renderer_impl!(HelloTextAreaRenderer, HelloTextAreaRendererError);
 
 /// Paint-root + input-router + reactive-cache tag for the textarea.
 const TA_TAG: &str = "main_textarea";
-/// R956 — the line-number gutter box tag; each number is the composite
-/// `ta_gutter#<n>` so the demo can address an individual line number.
+/// R956 — the line-number gutter box (container) tag. R959 — each number is
+/// tagged under the *field's* own composite namespace `main_textarea#gl<n>`
+/// ([`gutter_line_sub_tag`]), not this box, so a click routes through the
+/// `InputRouter` to the field's `send` wire (`go_to_line`) — focus-independent,
+/// no caret-drag arm (see [`gutter_line_sub_tag`]'s doc for the B1/B2 fix).
 const GUTTER_TAG: &str = "ta_gutter";
 /// R957 — the current-line highlight band tag (the gutter row the caret's
 /// logical line sits on); one per frame, moves with the caret.
@@ -429,24 +433,6 @@ fn digit_count(n: usize) -> u32 {
     n.max(1).ilog10() + 1
 }
 
-/// R957 — decode the 1-based logical line a gutter number's composite tag
-/// addresses: the inverse of `composite_item_tag(GUTTER_TAG, n)` (which
-/// formats `ta_gutter#<n>`). Returns `None` for any other tag (the field,
-/// a toolbar control, a non-gutter decoration), so a press on a gutter
-/// number is distinguished from every other hit by tag identity alone.
-///
-/// R958.1 — splits via the canonical [`split_subindex`] `#` SSOT (the
-/// splitter the `InputRouter` / drag / focus paths use), not a hand-rolled
-/// `strip_prefix` — so the primary is matched by tag *equality*, never a
-/// substring (the sibling `ta_gutter_current` band tag can't false-match).
-fn gutter_line_from_tag(tag: &str) -> Option<usize> {
-    let (primary, sub) = split_subindex(tag);
-    if primary != GUTTER_TAG {
-        return None;
-    }
-    sub?.parse::<usize>().ok()
-}
-
 /// R956 §5.36 §5.22 — the left line-number gutter, structurally a mirror
 /// of the field's own multi-line `Scene::Scroll`: a fixed `gutter_w ×
 /// field_h` box whose padded inner scroll viewport carries one
@@ -532,8 +518,12 @@ fn gutter(
         }
         let ink = if is_current { &current_style } else { &muted_style };
         numbers.push(Scene::Text(
+            // R959 — tag each number under the *field's* composite namespace
+            // (`main_textarea#gl<n>`), so a click routes through the
+            // InputRouter to the field's `send` wire (`go_to_line`) instead of
+            // the geometry press hook: focus-independent + no caret-drag arm.
             TextNode::styled(format!("{logical_n}"), Rect::default(), ink.clone())
-                .with_tag(composite_item_tag(GUTTER_TAG, logical_n as usize))
+                .with_tag(gutter_line_sub_tag(TA_TAG, logical_n as usize))
                 .with_layout(
                     LayoutStyle::new()
                         .with_size(Size::px(inner_w, row_h))
@@ -974,25 +964,17 @@ impl WidgetView for TextAreaView {
         // otherwise a toolbar press would clear the selection its command
         // needs. The router already hit-tested the press; the field no
         // longer re-scans its own rect (the pre-R801 workaround).
-        // R957 — a click on a gutter line number jumps the caret to that
-        // logical line (the editor "click the gutter to go to a line"
-        // affordance). The number's composite tag `ta_gutter#<n>` already
-        // carries the 1-based logical line, so the discrete tagged node IS
-        // the line address — no pixel->line geometry. Shift+click extends
-        // the selection to that line's start (select whole lines), via the
-        // `line_start_byte` pure-positioning peer of `go_to_line` (which
-        // would collapse the selection). Handled before the field-tag gate
-        // because the gutter is a sibling tag, not `TA_TAG`.
-        if let Some(line) = hit_tag.and_then(gutter_line_from_tag) {
-            let edit = use_text_edit_state(TA_TAG);
-            if extend {
-                let anchor = edit.selection_anchor().unwrap_or_else(|| edit.caret());
-                edit.set_selection(anchor, edit.line_start_byte(line));
-                return Some(anchor);
-            }
-            edit.go_to_line(line);
-            return Some(edit.caret());
-        }
+        // R959 — a gutter line-number click is NOT handled in this geometry
+        // hook. The number is tagged under the field's own composite namespace
+        // (`main_textarea#gl<n>`, `gutter_line_sub_tag`), so the InputRouter
+        // routes the click to the field's `send` wire (→ `go_to_line`) and
+        // click-to-focus resolves the composite to this field (focusing the
+        // editor). That `main_textarea#gl<n>` hit-tag is a composite, never the
+        // bare `TA_TAG`, so it falls through the gate below to `None`: the
+        // press hook arms no caret text-drag for it. (The R957 first cut
+        // decoded the gutter here, which armed a char text-drag on the
+        // smallest pointer jitter and no-op'd unless the field already held
+        // focus — the B1 / B2 defects this round retired.)
         if hit_tag != Some(TA_TAG) {
             return None;
         }

@@ -43159,6 +43159,52 @@
         "A5: RESET_PREFIX/RESET_DOT 2nd consumer (property-grid+inspector, independent wire namespaces, divergence!=bug) -> the data-grid per-cell modified/reset (R960) is the 3rd consumer that triggers the shared lift"
       ]
     },
+    "R959": {
+      "decision_summary": "gutter line-number click send-route: route via the field send wire (gl<n>:PointerUp -> go_to_line / Shift-extend), retiring the R957 geometry press-hook path that armed a jitter text-drag (B1) and no-op'd unless the field already held focus (B2)",
+      "changes_bullets": [
+        "TextFieldExternal send arm decodes \"gl<n>:PointerUp[:mods]\" -> go_to_line / Shift-extend (invoke_send extracted, SRP)",
+        "gutter_line_sub_tag (encode) + gutter_line_from_sub (decode) share GUTTER_LINE_PREFIX \"gl\" SSOT (GridSendKey precedent)",
+        "hello-textarea: gutter numbers tagged main_textarea#gl<n> (field namespace); drop press-hook gutter decode + gutter_line_from_tag",
+        "click-to-focus resolves the composite to the primary field (B2 auto-focus); press hook rejects composite tag (B1 no drag arm)"
+      ],
+      "verification_bullets": [
+        "pinion-core +6 R959 tests (jump, Shift-extend, non-activation no-op, bare-event/non-gutter, bare-field inert, encode/decode)",
+        "demo r957 updated: B2 (gutter click focuses + moves caret with no prior focus) + B1 (drag-on-gutter arms no text-selection)",
+        "cargo test workspace + clippy -D pedantic 0; r956 + r957 demos PASS (clean exit); validate-workspace T1=0",
+        "reused split_send_payload + is_activation_event decode SSOT (no hand-roll, R958.1 lesson); decode homed in field substrate"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "gutter send-route is the template for R955 deferred click-to-fold (fold chevron -> <field>#fold<n> -> toggle-fold)",
+        "gl<n> is the 1st field send sub-target; a 2nd prefix (fold<n>) -> lift to a TextFieldSendKey enum (GridSendKey precedent)",
+        "R960 next: data-grid per-cell modified/reset (RESET_PREFIX 3rd consumer -> pinion_widget_paint lift, R958 carry)"
+      ],
+      "publishable_decision_summary": "gutter line-number click send-route: route via the field send wire (gl<n>:PointerUp -> go_to_line / Shift-extend), retiring the R957 geometry press-hook path that armed a jitter text-drag (B1) and no-op'd unless the field already held focus (B2)",
+      "publishable_changes_bullets": [
+        "TextFieldExternal send arm decodes \"gl<n>:PointerUp[:mods]\" -> go_to_line / Shift-extend (invoke_send extracted, SRP)",
+        "gutter_line_sub_tag (encode) + gutter_line_from_sub (decode) share GUTTER_LINE_PREFIX \"gl\" SSOT (GridSendKey precedent)",
+        "hello-textarea: gutter numbers tagged main_textarea#gl<n> (field namespace); drop press-hook gutter decode + gutter_line_from_tag",
+        "click-to-focus resolves the composite to the primary field (B2 auto-focus); press hook rejects composite tag (B1 no drag arm)"
+      ],
+      "publishable_verification_bullets": [
+        "pinion-core +6 R959 tests (jump, Shift-extend, non-activation no-op, bare-event/non-gutter, bare-field inert, encode/decode)",
+        "demo r957 updated: B2 (gutter click focuses + moves caret with no prior focus) + B1 (drag-on-gutter arms no text-selection)",
+        "cargo test workspace + clippy -D pedantic 0; r956 + r957 demos PASS (clean exit); validate-workspace T1=0",
+        "reused split_send_payload + is_activation_event decode SSOT (no hand-roll, R958.1 lesson); decode homed in field substrate"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "gutter send-route is the template for R955 deferred click-to-fold (fold chevron -> <field>#fold<n> -> toggle-fold)",
+        "gl<n> is the 1st field send sub-target; a 2nd prefix (fold<n>) -> lift to a TextFieldSendKey enum (GridSendKey precedent)",
+        "R960 next: data-grid per-cell modified/reset (RESET_PREFIX 3rd consumer -> pinion_widget_paint lift, R958 carry)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
