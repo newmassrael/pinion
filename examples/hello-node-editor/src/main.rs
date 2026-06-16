@@ -170,10 +170,18 @@
 //!   background-drag stays reserved, R877; it needs the router to expose a
 //!   became-drag edge for background presses). The selection *model* it
 //!   writes into landed in R879 (`Selection::Nodes` + `selected_ids`).
+//! - **Align / distribute** (R948): `invoke align_{left,center_h,right,top,
+//!   center_v,bottom}` snaps the selected nodes to one edge / centre of their
+//!   bounding box; `invoke distribute_{h,v}` spaces their centres evenly
+//!   (extremes fixed). Each is ONE non-coalescing undo step through the same
+//!   `MoveNodesCmd` the drag / nudge journal — the AI-first peer of an align
+//!   toolbar, no GUI chrome needed (`query node.<id>.{x,y}` reads the result).
+//!   Align needs ≥2 selected, distribute ≥3; the move loop is the shared
+//!   `apply_node_moves` SSOT (nudge / align / distribute).
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use pinion_a11y::{
@@ -583,6 +591,22 @@ impl GraphNode {
     fn bottom(&self) -> i32 {
         self.y + self.height()
     }
+}
+
+/// R948 — the union bounding box `(left, top, right, bottom)` in graph units
+/// of a node set (each node spans `x..right()` × `y..bottom()`), or `None`
+/// for an empty set. The one home for the min/max fold that [`frame_all`] (all
+/// nodes) and [`align_selected`] (the selection) both need — a divergent fold
+/// would let the two read a node's extent differently ([[ssot-lift-grep-repo-wide-cross-enum]]).
+fn node_bounds<'a>(nodes: impl Iterator<Item = &'a GraphNode>) -> Option<(i32, i32, i32, i32)> {
+    let mut bounds: Option<(i32, i32, i32, i32)> = None;
+    for n in nodes {
+        bounds = Some(match bounds {
+            None => (n.x, n.y, n.right(), n.bottom()),
+            Some((l, t, r, b)) => (l.min(n.x), t.min(n.y), r.max(n.right()), b.max(n.bottom())),
+        });
+    }
+    bounds
 }
 
 /// A directed connection (output port → input port), addressed by stable
@@ -1340,6 +1364,39 @@ impl UndoCommand for GraphEdit {
 /// R879 — one journaled member move: `(id, before, after)` window positions.
 type NodeMove = (NodeId, (i32, i32), (i32, i32));
 
+/// R948 — which edge / centre line of the selection's bounding box an
+/// `align_*` snaps every selected node to. Horizontal specs move only `x`,
+/// vertical specs only `y` — the canonical Qt / Blender / Figma align set.
+#[derive(Clone, Copy)]
+enum AlignSpec {
+    Left,
+    CenterH,
+    Right,
+    Top,
+    CenterV,
+    Bottom,
+}
+
+/// R948 — the axis a `distribute_*` equalises: it spaces the selected nodes'
+/// *centres* evenly along x (`Horizontal`) or y (`Vertical`), holding the two
+/// extreme members fixed (the PowerPoint / Figma "distribute centres" rule).
+#[derive(Clone, Copy)]
+enum DistributeAxis {
+    Horizontal,
+    Vertical,
+}
+
+/// R948 — twice a node's centre on `axis` (`2x + NODE_W` h / `2y + height()`
+/// v). Doubling keeps the key an integer so the distribute sort + position math
+/// use a total `Ord` key with no float compare; the `/2` only re-enters at the
+/// final px target.
+fn centre_key(n: &GraphNode, axis: DistributeAxis) -> i32 {
+    match axis {
+        DistributeAxis::Horizontal => 2 * n.x + NODE_W,
+        DistributeAxis::Vertical => 2 * n.y + n.height(),
+    }
+}
+
 /// R879 — generalises the R853 single-node `MoveNodeCmd`: one undo step
 /// holding one `(id, before, after)` per moved member, so a multi-select
 /// drag / nudge is exactly ONE journal entry (the Unreal / Qt group-move
@@ -1903,19 +1960,11 @@ impl NodeGraphExternal {
     /// graph (nothing to frame, viewport unchanged).
     fn frame_all(&self) -> bool {
         let nodes = self.nodes.get();
-        let Some(first) = nodes.first() else {
+        // R948 — the union bbox over all nodes (the [`node_bounds`] SSOT, also
+        // the selection-bbox source for `align_selected`).
+        let Some((min_x, min_y, max_x, max_y)) = node_bounds(nodes.iter()) else {
             return false;
         };
-        let mut min_x = first.x;
-        let mut min_y = first.y;
-        let mut max_x = first.right();
-        let mut max_y = first.bottom();
-        for n in &nodes {
-            min_x = min_x.min(n.x);
-            min_y = min_y.min(n.y);
-            max_x = max_x.max(n.right());
-            max_y = max_y.max(n.bottom());
-        }
         let bw = f64::from((max_x - min_x).max(1));
         let bh = f64::from((max_y - min_y).max(1));
         let fit_w = f64::from(i32::try_from(WIN_W).unwrap_or(0) - 2 * FRAME_MARGIN) / bw;
@@ -2380,36 +2429,112 @@ impl NodeGraphExternal {
             .map(|e| e.id)
     }
 
+    /// R948 — the selection move-loop SSOT behind nudge / align / distribute:
+    /// map `target(n)` onto every node in `sel` through the clamped
+    /// [`set_node_pos`], inside one reactive [`batch`] (so subscribers see one
+    /// atomic group move), and journal the net displacement as ONE
+    /// [`MoveNodesCmd`]. `coalescable` folds a contiguous same-member run — true
+    /// for an arrow-nudge burst, false for a discrete align / distribute
+    /// command. Returns whether any node actually moved (a fully-clamped or
+    /// already-in-place run journals nothing and returns `false`). The three
+    /// callers differ only in how they compute `target` ([[three-site-internal-duplication-substrate-lift]]).
+    fn apply_node_moves(
+        &self,
+        sel: &[GraphNode],
+        coalescable: bool,
+        target: impl Fn(&GraphNode) -> (i32, i32),
+    ) -> bool {
+        let mut moves = Vec::with_capacity(sel.len());
+        batch(|| {
+            for n in sel {
+                let (x, y) = target(n);
+                let before = (n.x, n.y);
+                if self.set_node_pos(n.id, x, y) {
+                    let after = self.node_by_id(n.id).map_or(before, |m| (m.x, m.y));
+                    moves.push((n.id, before, after));
+                }
+            }
+        });
+        let changed = moves.iter().any(|(_, before, after)| before != after);
+        self.record_moves(moves, coalescable);
+        changed
+    }
+
+    /// The selected nodes, snapshotted by value in id order — the shared
+    /// preamble for the move commands (so the bbox / sort math reads a stable
+    /// set while [`apply_node_moves`] mutates the live signal).
+    fn selected_nodes(&self) -> Vec<GraphNode> {
+        let members = self.selection.get().nodes();
+        let nodes = self.nodes.get();
+        nodes.iter().filter(|n| members.contains(&n.id)).cloned().collect()
+    }
+
     /// Nudge the selected node by `(dx, dy)` (the arrow-key path). R853 — each
     /// nudge journals a *coalescable* move, so a burst of arrow keys collapses to
     /// one undo step.
     fn nudge_selected(&self, dx: i32, dy: i32) -> bool {
-        let members = self.selection.get().nodes();
-        if members.is_empty() {
+        let sel = self.selected_nodes();
+        self.apply_node_moves(&sel, true, |n| (n.x + dx, n.y + dy))
+    }
+
+    /// R948 — align every selected node to one edge / centre of the selection's
+    /// bounding box, as ONE (non-coalescable, discrete) undo step. A no-op
+    /// (`false`) on fewer than two selected nodes — a single node is already its
+    /// own bbox — or when nothing actually moves. Horizontal specs touch only
+    /// `x`, vertical only `y`; vertical centre / bottom use each node's own
+    /// `height()` so cards of different port counts land flush.
+    fn align_selected(&self, spec: AlignSpec) -> bool {
+        let sel = self.selected_nodes();
+        if sel.len() < 2 {
             return false;
         }
-        // R879 — move every selected member; ONE journal entry per
-        // keystroke, and the burst coalesces because the member list is
-        // identical across the run ([`MoveNodesCmd::merge`]). The signal
-        // writes batch so subscribers see one atomic group move.
-        let mut moves = Vec::with_capacity(members.len());
-        batch(|| {
-            for id in &members {
-                let Some(node) = self.node_by_id(*id) else {
-                    continue;
+        let Some((left, top, right, bottom)) = node_bounds(sel.iter()) else {
+            return false;
+        };
+        self.apply_node_moves(&sel, false, |n| match spec {
+            AlignSpec::Left => (left, n.y),
+            AlignSpec::CenterH => (i32::midpoint(left, right) - NODE_W / 2, n.y),
+            AlignSpec::Right => (right - NODE_W, n.y),
+            AlignSpec::Top => (n.x, top),
+            AlignSpec::CenterV => (n.x, i32::midpoint(top, bottom) - n.height() / 2),
+            AlignSpec::Bottom => (n.x, bottom - n.height()),
+        })
+    }
+
+    /// R948 — distribute the selected nodes so their centres are equally spaced
+    /// along `axis`, holding the two extreme members fixed. A no-op (`false`) on
+    /// fewer than three selected nodes (two have nothing between the extremes to
+    /// space, and would divide by zero). ONE discrete undo step. The i-th of N
+    /// (sorted by centre) lands at `first_centre + i·(span / (N-1))`.
+    fn distribute_selected(&self, axis: DistributeAxis) -> bool {
+        let mut sel = self.selected_nodes();
+        if sel.len() < 3 {
+            return false;
+        }
+        sel.sort_by_key(|n| centre_key(n, axis));
+        let first_c = f64::from(centre_key(&sel[0], axis));
+        let last_c = f64::from(centre_key(&sel[sel.len() - 1], axis));
+        let span = last_c - first_c;
+        let denom = f64::from(i32::try_from(sel.len() - 1).unwrap_or(1));
+        // R948 — precompute each member's target centre (key = doubled centre),
+        // keyed by id so the move loop is order-independent.
+        let targets: BTreeMap<NodeId, (i32, i32)> = sel
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let c2 = first_c + span * f64::from(i32::try_from(i).unwrap_or(0)) / denom;
+                let pos = match axis {
+                    DistributeAxis::Horizontal => {
+                        (round_i32((c2 - f64::from(NODE_W)) / 2.0), n.y)
+                    }
+                    DistributeAxis::Vertical => {
+                        (n.x, round_i32((c2 - f64::from(n.height())) / 2.0))
+                    }
                 };
-                let before = (node.x, node.y);
-                if self.set_node_pos(*id, node.x + dx, node.y + dy) {
-                    let after = self.node_by_id(*id).map_or(before, |n| (n.x, n.y));
-                    moves.push((*id, before, after));
-                }
-            }
-        });
-        if moves.is_empty() {
-            return false;
-        }
-        self.record_moves(moves, true);
-        true
+                (n.id, pos)
+            })
+            .collect();
+        self.apply_node_moves(&sel, false, |n| targets.get(&n.id).copied().unwrap_or((n.x, n.y)))
     }
 
     /// Select a node by id (must exist). The sum type makes any prior edge
@@ -3119,6 +3244,17 @@ impl ExternalIntrospect for NodeGraphExternal {
             ("delete_selected", "json"),
             ("select_all", "json"),
             ("nudge", "string"),
+            // R948 — align / distribute the selection (no args; the AI-first
+            // peer of an editor's align toolbar). Each returns whether the
+            // graph changed.
+            ("align_left", "json"),
+            ("align_center_h", "json"),
+            ("align_right", "json"),
+            ("align_top", "json"),
+            ("align_center_v", "json"),
+            ("align_bottom", "json"),
+            ("distribute_h", "json"),
+            ("distribute_v", "json"),
             ("serialized", "string"),
             ("set_graph", "string"),
             ("save", "json"),
@@ -3483,8 +3619,34 @@ impl ExternalIntrospect for NodeGraphExternal {
             // returns false (graph unchanged) when nothing is stored yet.
             "save" => Ok(IntrospectValue::Bool(self.save())),
             "load" => Ok(IntrospectValue::Bool(self.load())),
-            _ => Err(InvokeError::UnknownPath),
+            // R948 — the no-arg align / distribute verbs live in their own
+            // dispatch (keeps `invoke` under the line budget); `None` falls
+            // through to UnknownPath.
+            _ => match self.invoke_layout(path) {
+                Some(changed) => Ok(IntrospectValue::Bool(changed)),
+                None => Err(InvokeError::UnknownPath),
+            },
         }
+    }
+}
+
+impl NodeGraphExternal {
+    /// R948 — the align / distribute verbs (all no-arg `-> Bool`, the AI-first
+    /// peer of an editor's align toolbar), split out of the main `invoke`
+    /// match. `false` when the selection is too small or nothing moves; `None`
+    /// for a non-layout verb.
+    fn invoke_layout(&self, path: &str) -> Option<bool> {
+        Some(match path {
+            "align_left" => self.align_selected(AlignSpec::Left),
+            "align_center_h" => self.align_selected(AlignSpec::CenterH),
+            "align_right" => self.align_selected(AlignSpec::Right),
+            "align_top" => self.align_selected(AlignSpec::Top),
+            "align_center_v" => self.align_selected(AlignSpec::CenterV),
+            "align_bottom" => self.align_selected(AlignSpec::Bottom),
+            "distribute_h" => self.distribute_selected(DistributeAxis::Horizontal),
+            "distribute_v" => self.distribute_selected(DistributeAxis::Vertical),
+            _ => return None,
+        })
     }
 }
 
@@ -7809,6 +7971,213 @@ mod tests {
             assert_eq!(flag(1), Some(true), "member 1 flagged");
             assert_eq!(flag(3), Some(true), "member 3 flagged");
             assert_eq!(flag(0), Some(false), "non-member unflagged");
+        });
+    }
+
+    // ─── R948 align / distribute ───────────────────────────────────
+
+    /// Place the named nodes at explicit positions (the low-level, non-journaling
+    /// `set_node_pos`) and select exactly them — the shared setup so the
+    /// assertions read from known geometry, not the seed layout.
+    fn place_and_select(coord: &NodeGraphExternal, placements: &[(u32, i32, i32)]) {
+        for &(id, x, y) in placements {
+            assert!(coord.set_node_pos(NodeId(id), x, y), "node {id} present");
+        }
+        let ids: Vec<u32> = placements.iter().map(|&(id, ..)| id).collect();
+        use_selection().set(sel_set(&ids));
+    }
+
+    #[test]
+    fn r948_align_horizontal_snaps_x_to_left_centre_right() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            // Left edges 100 / 300 / 200; equal NODE_W (130) -> right edges
+            // 230 / 430 / 330 -> bbox left = 100, right = 430.
+            let setup = |c: &NodeGraphExternal| {
+                place_and_select(c, &[(0, 100, 50), (1, 300, 80), (2, 200, 120)]);
+            };
+            setup(&coord);
+            assert!(coord.align_selected(AlignSpec::Left));
+            for id in [0u32, 1, 2] {
+                assert_eq!(pos_of(&coord, NodeId(id)).0, 100, "left: x -> bbox left");
+            }
+            setup(&coord);
+            assert!(coord.align_selected(AlignSpec::Right));
+            for id in [0u32, 1, 2] {
+                assert_eq!(pos_of(&coord, NodeId(id)).0, 300, "right: x -> bbox right - w (430-130)");
+            }
+            setup(&coord);
+            assert!(coord.align_selected(AlignSpec::CenterH));
+            for id in [0u32, 1, 2] {
+                // midpoint(100, 430) - NODE_W/2 = 265 - 65 = 200.
+                assert_eq!(pos_of(&coord, NodeId(id)).0, 200, "centre_h: centres on the bbox mid");
+            }
+            assert_eq!(pos_of(&coord, NodeId(0)).1, 50, "a horizontal align never touches y");
+        });
+    }
+
+    #[test]
+    fn r948_align_vertical_respects_each_node_height() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            // Node 0 (Texture, 1 port row) is short; node 2 (Multiply, 2 rows)
+            // is tall — so vertical centre / bottom must use each node's own
+            // height(), not a shared constant.
+            let h0 = coord.node_by_id(NodeId(0)).unwrap().height();
+            let h2 = coord.node_by_id(NodeId(2)).unwrap().height();
+            assert!(h2 > h0, "the 2-port card is taller than the 1-port card");
+            let setup = |c: &NodeGraphExternal| {
+                place_and_select(c, &[(0, 40, 50), (2, 300, 200)]);
+            };
+            setup(&coord);
+            assert!(coord.align_selected(AlignSpec::Top));
+            assert_eq!(pos_of(&coord, NodeId(0)).1, 50, "top: both y -> bbox top (min)");
+            assert_eq!(pos_of(&coord, NodeId(2)).1, 50, "top: both y -> bbox top (min)");
+            setup(&coord);
+            assert!(coord.align_selected(AlignSpec::Bottom));
+            let (b0, b2) = (pos_of(&coord, NodeId(0)), pos_of(&coord, NodeId(2)));
+            assert_eq!(b0.1 + h0, b2.1 + h2, "bottom: bottom EDGES align (per-node height)");
+            assert_eq!(b2.1, 200, "the lowest card is the anchor (it does not move)");
+            assert_eq!(b0.1, 200 + h2 - h0, "the short card drops so its bottom matches");
+            setup(&coord);
+            assert!(coord.align_selected(AlignSpec::CenterV));
+            let (c0, c2) = (pos_of(&coord, NodeId(0)), pos_of(&coord, NodeId(2)));
+            assert_eq!(c0.1 + h0 / 2, c2.1 + h2 / 2, "centre_v: vertical centres coincide");
+            assert_eq!(c0.0, 40, "a vertical align never touches x");
+        });
+    }
+
+    #[test]
+    fn r948_align_needs_two_and_a_noop_journals_nothing() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            use_selection().set(sel_set(&[0]));
+            assert!(!coord.align_selected(AlignSpec::Left), "one node has nothing to align to");
+            use_selection().set(Selection::None);
+            assert!(!coord.align_selected(AlignSpec::Top), "an empty selection -> false");
+            assert_eq!(stack.len(), 0, "no undo step from a too-small align");
+            // An already-aligned selection moves nothing and journals nothing.
+            place_and_select(&coord, &[(0, 100, 50), (1, 100, 200)]);
+            assert!(!coord.align_selected(AlignSpec::Left), "already left-aligned -> no move");
+            assert_eq!(stack.len(), 0, "an idempotent align journals nothing");
+        });
+    }
+
+    #[test]
+    fn r948_align_is_one_discrete_undo_step() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            place_and_select(&coord, &[(0, 100, 50), (1, 300, 80), (2, 200, 120)]);
+            let (p0, p1, p2) = (
+                pos_of(&coord, NodeId(0)),
+                pos_of(&coord, NodeId(1)),
+                pos_of(&coord, NodeId(2)),
+            );
+            assert!(coord.align_selected(AlignSpec::Right));
+            assert_eq!(stack.len(), 1, "one discrete (non-coalescing) undo step");
+            // A second, different align does NOT fold into the first.
+            assert!(coord.align_selected(AlignSpec::Top));
+            assert_eq!(stack.len(), 2, "discrete aligns never coalesce");
+            assert!(stack.undo());
+            assert!(stack.undo());
+            assert_eq!(pos_of(&coord, NodeId(0)), p0, "two undos restore node 0");
+            assert_eq!(pos_of(&coord, NodeId(1)), p1, "and node 1");
+            assert_eq!(pos_of(&coord, NodeId(2)), p2, "and node 2");
+        });
+    }
+
+    #[test]
+    fn r948_distribute_h_equalises_centres_holding_extremes() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            // Centres (x + NODE_W/2 = x + 65): 165 / 215 / 565 (uneven).
+            place_and_select(&coord, &[(0, 100, 50), (1, 150, 50), (2, 500, 50)]);
+            assert!(coord.distribute_selected(DistributeAxis::Horizontal));
+            assert_eq!(pos_of(&coord, NodeId(0)).0, 100, "leftmost extreme stays fixed");
+            assert_eq!(pos_of(&coord, NodeId(2)).0, 500, "rightmost extreme stays fixed");
+            // Middle centre -> midpoint(165, 565) = 365 -> x = 365 - 65 = 300.
+            assert_eq!(pos_of(&coord, NodeId(1)).0, 300, "middle centre evenly spaced");
+            assert_eq!(stack.len(), 1, "one undo step");
+        });
+    }
+
+    #[test]
+    fn r948_distribute_v_equalises_centres() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            // Nodes 0 / 1 / 3 are all 1-row cards -> equal height, so the
+            // centre spacing is clean y arithmetic.
+            place_and_select(&coord, &[(0, 40, 100), (1, 40, 150), (3, 40, 500)]);
+            assert!(coord.distribute_selected(DistributeAxis::Vertical));
+            assert_eq!(pos_of(&coord, NodeId(0)).1, 100, "topmost extreme stays fixed");
+            assert_eq!(pos_of(&coord, NodeId(3)).1, 500, "bottommost extreme stays fixed");
+            assert_eq!(pos_of(&coord, NodeId(1)).1, 300, "middle centre evenly spaced (y)");
+        });
+    }
+
+    #[test]
+    fn r948_distribute_needs_three_selected() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let coord = coordinator();
+            let stack = use_undo();
+            place_and_select(&coord, &[(0, 100, 50), (1, 400, 50)]);
+            assert!(
+                !coord.distribute_selected(DistributeAxis::Horizontal),
+                "two nodes have no middle to space",
+            );
+            use_selection().set(sel_set(&[0]));
+            assert!(!coord.distribute_selected(DistributeAxis::Vertical), "one node -> false");
+            assert_eq!(stack.len(), 0, "no undo step from a too-small distribute");
+        });
+    }
+
+    #[test]
+    fn r948_layout_verbs_dispatch_and_are_schema_declared() {
+        Owner::new().run(|| {
+            let _ = boot_scene();
+            let mut coord = coordinator();
+            place_and_select(&coord, &[(0, 100, 50), (1, 300, 80), (2, 200, 120)]);
+            // The invoke dispatch routes through invoke_layout -> Bool.
+            assert_eq!(
+                coord.invoke("align_left", IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(true)),
+                "align_left moves the selection",
+            );
+            // After align_left the x are collinear, so distribute_h is a no-op.
+            assert_eq!(
+                coord.invoke("distribute_h", IntrospectValue::Null),
+                Ok(IntrospectValue::Bool(false)),
+                "distribute_h over a same-x set moves nothing",
+            );
+            // Every layout verb is schema-declared (AI-discoverable).
+            let fields: Vec<&str> = coord.schema().fields.iter().map(|(p, _)| *p).collect();
+            for v in [
+                "align_left",
+                "align_center_h",
+                "align_right",
+                "align_top",
+                "align_center_v",
+                "align_bottom",
+                "distribute_h",
+                "distribute_v",
+            ] {
+                assert!(fields.contains(&v), "{v} must be schema-declared");
+            }
+            // An unknown verb still falls through to UnknownPath.
+            assert_eq!(
+                coord.invoke("align_nope", IntrospectValue::Null),
+                Err(InvokeError::UnknownPath),
+            );
         });
     }
 }

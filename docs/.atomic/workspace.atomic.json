@@ -42341,6 +42341,56 @@
         "A was a pre-existing missed lift (2nd consumer = hello-tree-filter, before R946); my R946 'every tree example inlines it, they diverge' dismissal was wrong -- 2 of the 3 were byte-identical"
       ]
     },
+    "R948": {
+      "decision_summary": "R948 node-graph align / distribute selected nodes (RPC-first): 6 align + 2 distribute invoke verbs, one discrete undo step each via the existing MoveNodesCmd batch; lift apply_node_moves (nudge/align/distribute move-loop SSOT) + node_bounds (frame_all/align bbox SSOT)",
+      "changes_bullets": [
+        "node-editor align_{left,center_h,right,top,center_v,bottom} + distribute_{h,v} invoke verbs",
+        "align snaps the selection to a bbox edge / centre; vertical specs use each node's height()",
+        "distribute equalises selected-node centres along an axis, holding the two extremes fixed",
+        "each is ONE discrete (non-coalescing) undo step through the existing MoveNodesCmd batch",
+        "lift apply_node_moves: the selection move-loop SSOT (nudge / align / distribute 3rd consumer)",
+        "lift node_bounds: the selection-bbox SSOT (frame_all + align_selected 2nd consumer)",
+        "8 schema slots + invoke_layout dispatch helper (keeps invoke under the pedantic line budget)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green; +8 R948 unit tests (136 node-editor tests total)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic = 0",
+        "r948_node_align_distribute.py PASS: 40+ assertions over RPC, scene-as-data (no pixels)",
+        "mnemosyne validate-workspace T1 reject = 0, no new orphan"
+      ],
+      "impact_refs": [
+        "5.52",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "align / distribute are RPC-primary (AI-first); a GUI align-toolbar awaits a toolbar consumer",
+        "distribute spaces node centres (not edge gaps); edge-gap distribute deferred (no consumer)"
+      ],
+      "publishable_decision_summary": "R948 node-graph align / distribute selected nodes (RPC-first): 6 align + 2 distribute invoke verbs, one discrete undo step each via the existing MoveNodesCmd batch; lift apply_node_moves (nudge/align/distribute move-loop SSOT) + node_bounds (frame_all/align bbox SSOT)",
+      "publishable_changes_bullets": [
+        "node-editor align_{left,center_h,right,top,center_v,bottom} + distribute_{h,v} invoke verbs",
+        "align snaps the selection to a bbox edge / centre; vertical specs use each node's height()",
+        "distribute equalises selected-node centres along an axis, holding the two extremes fixed",
+        "each is ONE discrete (non-coalescing) undo step through the existing MoveNodesCmd batch",
+        "lift apply_node_moves: the selection move-loop SSOT (nudge / align / distribute 3rd consumer)",
+        "lift node_bounds: the selection-bbox SSOT (frame_all + align_selected 2nd consumer)",
+        "8 schema slots + invoke_layout dispatch helper (keeps invoke under the pedantic line budget)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green; +8 R948 unit tests (136 node-editor tests total)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic = 0",
+        "r948_node_align_distribute.py PASS: 40+ assertions over RPC, scene-as-data (no pixels)",
+        "mnemosyne validate-workspace T1 reject = 0, no new orphan"
+      ],
+      "publishable_impact_refs": [
+        "5.52",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "align / distribute are RPC-primary (AI-first); a GUI align-toolbar awaits a toolbar consumer",
+        "distribute spaces node centres (not edge gaps); edge-gap distribute deferred (no consumer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
