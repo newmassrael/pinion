@@ -525,6 +525,54 @@ pub fn cell_cmp(a: &str, b: &str) -> core::cmp::Ordering {
     }
 }
 
+/// R955.1 §5.40 — **deserialize peer** of the [`TableExternal`] `focused_row`
+/// query slot: the roving active-descendant row (`-1` / absent → `None`).
+///
+/// Lifted from the three table-family grid bindings (`hello-table`,
+/// `hello-table-multi`, `hello-cell-select`) where this and its siblings were
+/// byte-identical hand-decoders. The decode lives next to its `query` encode
+/// (the R743.1 decode-of-encode rule, the [`read_selected`] sibling), so a
+/// slot rename can't silently break three copies.
+///
+/// [`read_selected`]: crate::widgets::virtual_select::read_selected
+#[must_use]
+pub fn read_focused_row(intro: &dyn ExternalIntrospect) -> Option<usize> {
+    match intro.query("focused_row") {
+        Some(IntrospectValue::Int(r)) if r >= 0 => usize::try_from(r).ok(),
+        _ => None,
+    }
+}
+
+/// R955.1 §5.40 — deserialize peer of the `focused_col` slot: the roving
+/// active-descendant column (defaults to `0`). See [`read_focused_row`].
+#[must_use]
+pub fn read_focused_col(intro: &dyn ExternalIntrospect) -> usize {
+    match intro.query("focused_col") {
+        Some(IntrospectValue::Int(c)) if c >= 0 => usize::try_from(c).unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// R955.1 §5.40 — deserialize peer of the `rows` slot: the row count (`0`
+/// when unavailable). See [`read_focused_row`].
+#[must_use]
+pub fn read_rows(intro: &dyn ExternalIntrospect) -> usize {
+    match intro.query("rows") {
+        Some(IntrospectValue::Int(r)) => usize::try_from(r).unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// R955.1 §5.40 — deserialize peer of the `cols` slot: the column count (`0`
+/// when unavailable). See [`read_focused_row`].
+#[must_use]
+pub fn read_cols(intro: &dyn ExternalIntrospect) -> usize {
+    match intro.query("cols") {
+        Some(IntrospectValue::Int(c)) => usize::try_from(c).unwrap_or(0),
+        _ => 0,
+    }
+}
+
 /// R778 §5.40 — the clicked-column-header sort transition, lifted from
 /// [`Table::cycle_sort`] when the virtualized data grid became its second
 /// consumer (the cycle is a controller wiring whose divergence between the
@@ -869,7 +917,8 @@ impl core::fmt::Debug for TableExternal {
         let mut dbg = f.debug_struct("TableExternal");
         dbg.field("rows", &self.row_count())
             .field("cols", &self.col_count())
-            .field("multiselect", &self.is_multiselect());
+            .field("multiselect", &self.is_multiselect())
+            .field("selection_behavior", &self.selection_behavior());
         // R735 §5.38 — `selected_row` panics in multi-mode, so the Debug
         // output substitutes the mode-agnostic `selected_rows` there.
         if self.is_multiselect() {
@@ -926,6 +975,10 @@ impl ExternalIntrospect for TableExternal {
             // `selected_row` returns `null` in multi-mode and rejects
             // intervene.
             ("multiselect", "bool"),
+            // R955.1 §5.38 — what a click selects (rows vs cells); the AI-first
+            // peer of `with_select_items` (the `multiselect` introspection
+            // sibling): `"rows"` (SelectRows) or `"items"` (SelectItems).
+            ("selection_behavior", "string"),
             ("selected", "bool"),
             ("selected_row", "int"),
             ("focused_row", "int"),
@@ -969,6 +1022,16 @@ impl ExternalIntrospect for TableExternal {
             // picks the right path (`selected.<i>` per-row vs
             // `selected_row` single).
             "multiselect" => Some(IntrospectValue::Bool(self.is_multiselect())),
+            // R955.1 §5.38 — the pointer SelectionBehavior as a wire token, so
+            // an AI client reads the grid's mode (rows vs cells) the same way
+            // it reads `multiselect`.
+            "selection_behavior" => Some(IntrospectValue::Text(
+                match self.selection_behavior() {
+                    SelectionBehavior::SelectRows => "rows",
+                    SelectionBehavior::SelectItems => "items",
+                }
+                .to_string(),
+            )),
             // `selected` (any row selected?) is mode-agnostic — reads the
             // selection set, never the single-only `selected_row`.
             "selected" => Some(IntrospectValue::Bool(!self.selected_rows().is_empty())),
@@ -1197,6 +1260,13 @@ impl ExternalIntrospect for TableExternal {
                                     } else {
                                         self.em.inner.select_cell(row, col);
                                     }
+                                    // R955.1 — setter-returns-read-outcome: echo
+                                    // the new cell rectangle so a pointer client
+                                    // learns the selection in one round-trip (the
+                                    // SelectRows branch's `selected_row` analog).
+                                    return Ok(self
+                                        .query("cell_selection")
+                                        .unwrap_or(IntrospectValue::Null));
                                 }
                                 return Ok(IntrospectValue::Null);
                             }
@@ -1912,7 +1982,11 @@ mod tests {
         let mut ext = cell_select_items_ext();
         assert_eq!(ext.selection_behavior(), SelectionBehavior::SelectItems);
         let wire = compose_send_payload(Some("1_1"), "PointerUp", Modifiers::default());
-        assert_eq!(ext.invoke("send", IntrospectValue::Text(wire)), Ok(IntrospectValue::Null));
+        assert_eq!(
+            ext.invoke("send", IntrospectValue::Text(wire)),
+            Ok(IntrospectValue::Text("1,1,1,1".to_string())),
+            "the click echoes the new cell rectangle (setter-returns-read-outcome)",
+        );
         assert_eq!(
             ext.query("cell_selection"),
             Some(IntrospectValue::Text("1,1,1,1".to_string())),
@@ -1941,7 +2015,11 @@ mod tests {
             "PointerUp",
             Modifiers { shift: true, ..Default::default() },
         );
-        assert_eq!(ext.invoke("send", IntrospectValue::Text(shift)), Ok(IntrospectValue::Null));
+        assert_eq!(
+            ext.invoke("send", IntrospectValue::Text(shift)),
+            Ok(IntrospectValue::Text("0,0,2,1".to_string())),
+            "the Shift+click echoes the grown rectangle",
+        );
         assert_eq!(
             ext.query("cell_selection"),
             Some(IntrospectValue::Text("0,0,2,1".to_string())),
@@ -1996,5 +2074,37 @@ mod tests {
             Some(IntrospectValue::Null),
             "no cell rectangle in SelectRows mode",
         );
+    }
+
+    /// R955.1 §5.38 — the pointer [`SelectionBehavior`] is introspectable over
+    /// the wire (the AI-first peer of `multiselect`), so a client reads the
+    /// grid's mode rather than knowing it out-of-band.
+    #[test]
+    fn r955_1_selection_behavior_is_introspectable() {
+        assert_eq!(
+            cell_select_items_ext().query("selection_behavior"),
+            Some(IntrospectValue::Text("items".to_string())),
+            "a SelectItems grid reports its mode",
+        );
+        assert_eq!(
+            cell_sample_ext().query("selection_behavior"),
+            Some(IntrospectValue::Text("rows".to_string())),
+            "a SelectRows grid reports its mode",
+        );
+    }
+
+    /// R955.1 §5.40 — the lifted [`read_focused_row`] / [`read_focused_col`] /
+    /// [`read_rows`] / [`read_cols`] decode the cursor / dimension query slots
+    /// (the table-family grid bindings' shared decoders).
+    #[test]
+    fn r955_1_lifted_readers_decode_the_query_slots() {
+        let mut ext = cell_select_items_ext();
+        assert_eq!(read_rows(&ext), 3);
+        assert_eq!(read_cols(&ext), 2);
+        assert_eq!(read_focused_row(&ext), None, "no cursor at boot");
+        assert_eq!(read_focused_col(&ext), 0);
+        let _ = ext.invoke("select-cell", IntrospectValue::Text("2,1".to_string()));
+        assert_eq!(read_focused_row(&ext), Some(2), "reader reflects the moved cursor");
+        assert_eq!(read_focused_col(&ext), 1);
     }
 }

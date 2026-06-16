@@ -79,7 +79,9 @@ use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
 use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::table::TableExternal;
+use pinion_core::widgets::table::{
+    read_cols, read_focused_col, read_focused_row, read_rows, TableExternal,
+};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::table::{view_table, TableData, TableSelection, TableStyle};
@@ -155,38 +157,6 @@ fn active_cell(state: &CellSelectState) -> (usize, usize) {
     let row = state.focused_row.unwrap_or(0).min(NROWS - 1);
     let col = state.focused_col.min(NCOLS - 1);
     (row, col)
-}
-
-/// Read the live `focused_row` active descendant (`-1` / absent → `None`).
-fn read_focused_row(intro: &dyn pinion_core::external::ExternalIntrospect) -> Option<usize> {
-    match intro.query("focused_row") {
-        Some(IntrospectValue::Int(r)) if r >= 0 => usize::try_from(r).ok(),
-        _ => None,
-    }
-}
-
-/// Read the live `focused_col` active descendant (defaults to 0).
-fn read_focused_col(intro: &dyn pinion_core::external::ExternalIntrospect) -> usize {
-    match intro.query("focused_col") {
-        Some(IntrospectValue::Int(c)) if c >= 0 => usize::try_from(c).unwrap_or(0),
-        _ => 0,
-    }
-}
-
-/// Read the row count from the introspect surface (0 if unavailable).
-fn read_rows(intro: &dyn pinion_core::external::ExternalIntrospect) -> usize {
-    match intro.query("rows") {
-        Some(IntrospectValue::Int(r)) => usize::try_from(r).unwrap_or(0),
-        _ => 0,
-    }
-}
-
-/// Read the column count from the introspect surface (0 if unavailable).
-fn read_cols(intro: &dyn pinion_core::external::ExternalIntrospect) -> usize {
-    match intro.query("cols") {
-        Some(IntrospectValue::Int(c)) => usize::try_from(c).unwrap_or(0),
-        _ => 0,
-    }
 }
 
 /// R953 §5.38 — decode the coordinator's `cell_selection` wire value into

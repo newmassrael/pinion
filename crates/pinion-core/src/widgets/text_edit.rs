@@ -1154,6 +1154,28 @@ pub struct FoldRegion {
     pub collapsed: bool,
 }
 
+impl FoldRegion {
+    /// R955.1 §5.36 — whether logical `line` is in this region's **interior**:
+    /// after the opener, through the closer (`start_line < line <= end_line`).
+    /// The single definition of the fold boundary rule — [`TextEditState::is_line_hidden`],
+    /// the paint gutter's per-line hidden-check, and caret reanchoring all
+    /// defer to it, so a future boundary change (e.g. some editors keep the
+    /// closer line visible) lands in exactly one place rather than desyncing
+    /// the painted gutter from keyboard navigation.
+    #[must_use]
+    pub fn contains_interior(&self, line: usize) -> bool {
+        line > self.start_line && line <= self.end_line
+    }
+
+    /// R955.1 §5.36 — whether this region currently **hides** `line`: it is
+    /// [`collapsed`](Self::collapsed) and `line` is in its
+    /// [`interior`](Self::contains_interior).
+    #[must_use]
+    pub fn hides(&self, line: usize) -> bool {
+        self.collapsed && self.contains_interior(line)
+    }
+}
+
 /// R933 §5.36 — every foldable region in `text`, in opener (byte) order:
 /// each bracket block spanning ≥ 2 logical lines. Reuses [`match_forward`]
 /// for the extent and the single-pass [`line_starts`] index for the line
@@ -1976,9 +1998,7 @@ impl TextEditState {
     /// [`fold_regions`](Self::fold_regions); paint skips hidden lines.
     #[must_use]
     pub fn is_line_hidden(&self, line: usize) -> bool {
-        self.fold_regions()
-            .iter()
-            .any(|r| r.collapsed && line > r.start_line && line <= r.end_line)
+        self.fold_regions().iter().any(|r| r.hides(line))
     }
 
     /// R933 §5.36 — toggle the fold of the region that *opens* on logical
@@ -2042,9 +2062,11 @@ impl TextEditState {
         let set = self.folds.get();
         // Opener order ⇒ the first match is the outermost hiding region,
         // whose opener line is the visible row the fold summarises to.
-        let hiding = fold_regions_in(&text).into_iter().find(|r| {
-            set.contains(&r.open_byte) && caret_line > r.start_line && caret_line <= r.end_line
-        });
+        let hiding = fold_regions_in(&text)
+            .into_iter()
+            // `fold_regions_in` leaves `collapsed` false, so the collapse source
+            // is the raw `set`; the boundary geometry defers to the SSOT.
+            .find(|r| set.contains(&r.open_byte) && r.contains_interior(caret_line));
         if let Some(r) = hiding {
             let opener_end = if r.start_line + 1 < starts.len() {
                 // End of the opener's logical line: the byte just before
@@ -2621,6 +2643,18 @@ impl TextEditState {
     #[must_use]
     pub fn line_count(&self) -> usize {
         line_starts(&self.text.get()).len()
+    }
+
+    /// R955.1 §5.22 — the 0-based logical (newline-delimited) line the caret
+    /// currently sits on: the count of `\n`s before [`caret`](Self::caret).
+    /// The read peer of [`go_to_line`](Self::go_to_line) (which positions by
+    /// 1-based line) and the current-line input for a gutter highlight / fold
+    /// navigation; in `0..line_count()`. Lifts the `line_of(&line_starts, …)`
+    /// the state already computes internally (caret reanchoring) so a binding
+    /// reads the current line from the substrate rather than re-deriving it.
+    #[must_use]
+    pub fn caret_line(&self) -> usize {
+        line_of(&line_starts(&self.text.get()), self.caret())
     }
 
     /// R941 §5.22 — move the caret to the start of 1-based logical line `line`,

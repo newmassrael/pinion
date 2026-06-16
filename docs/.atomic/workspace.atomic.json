@@ -42919,6 +42919,56 @@
         "shared code-panel substrate lift still 1-consumer (R933 prediction holds: a 2nd gutter+fold binding triggers it)"
       ]
     },
+    "R955.1": {
+      "decision_summary": "R955.1 adversarial session-review clearance (R953+R954+R955): lift table readers + caret_line to substrate, unify the fold-boundary predicate, introspect selection_behavior — my textbook/SSOT self-assessment was overclaimed again",
+      "changes_bullets": [
+        "I3: lift read_focused_row/col/rows/cols to pinion-core::table (3 grid examples migrated; my \"idiom not lift\" was a rationalization)",
+        "I1/I2: selection_behavior introspection (schema+query+Debug, mirror multiselect); the getter is now production-live",
+        "IMP-1: FoldRegion::contains_interior/hides boundary SSOT — is_line_hidden + view closure + reanchor defer to one predicate",
+        "IMP-2/MIN-3: TextEditState::caret_line(); hello-code-fold uses caret_line/go_to_line/line_count + live caret read (no re-rolled text walks)",
+        "M2: SelectItems pointer send echoes the new cell rectangle (setter-returns-read-outcome)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (+2 substrate r955_1 tests + a view-to-substrate hidden-agreement test); clippy --workspace pedantic = 0",
+        "7 touched demos PASS (r707/r730/r735/r953/r954/r933/r955); self-grep: readers 1-home+3-consumers, fold predicate 1-impl, no orphans",
+        "both reviewer precedent claims verified by grep before lifting (virtual_select::read_selected, go_to_line/line_count) — agent claims read, not trusted",
+        "validate-workspace T1=0 new orphan +0"
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.36",
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "pre-existing asymmetry (M1): multiselect is a bool field while SelectionBehavior is an enum; a SelectionMode{Single,Multi} symmetry refactor is out of scope",
+        "the honest deferred axes are unchanged by this clearance: live marquee drag (capture+pixel->cell), pointer click-to-fold (TextFieldExternal click->fold path), editable fold viewer"
+      ],
+      "publishable_decision_summary": "R955.1 adversarial session-review clearance (R953+R954+R955): lift table readers + caret_line to substrate, unify the fold-boundary predicate, introspect selection_behavior — my textbook/SSOT self-assessment was overclaimed again",
+      "publishable_changes_bullets": [
+        "I3: lift read_focused_row/col/rows/cols to pinion-core::table (3 grid examples migrated; my \"idiom not lift\" was a rationalization)",
+        "I1/I2: selection_behavior introspection (schema+query+Debug, mirror multiselect); the getter is now production-live",
+        "IMP-1: FoldRegion::contains_interior/hides boundary SSOT — is_line_hidden + view closure + reanchor defer to one predicate",
+        "IMP-2/MIN-3: TextEditState::caret_line(); hello-code-fold uses caret_line/go_to_line/line_count + live caret read (no re-rolled text walks)",
+        "M2: SelectItems pointer send echoes the new cell rectangle (setter-returns-read-outcome)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (+2 substrate r955_1 tests + a view-to-substrate hidden-agreement test); clippy --workspace pedantic = 0",
+        "7 touched demos PASS (r707/r730/r735/r953/r954/r933/r955); self-grep: readers 1-home+3-consumers, fold predicate 1-impl, no orphans",
+        "both reviewer precedent claims verified by grep before lifting (virtual_select::read_selected, go_to_line/line_count) — agent claims read, not trusted",
+        "validate-workspace T1=0 new orphan +0"
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.36",
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "pre-existing asymmetry (M1): multiselect is a bool field while SelectionBehavior is an enum; a SelectionMode{Single,Multi} symmetry refactor is out of scope",
+        "the honest deferred axes are unchanged by this clearance: live marquee drag (capture+pixel->cell), pointer click-to-fold (TextFieldExternal click->fold path), editable fold viewer"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

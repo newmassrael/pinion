@@ -131,33 +131,6 @@ const FOLD_ELLIPSIS: &str = "\u{2026}";
 const SEED_CODE: &str =
     "fn main() {\n    let x = 1;\n    if x > 0 {\n        log(x);\n    }\n}";
 
-/// R955 §5.22 §5.36 — the **logical** line (0-based) the caret byte offset
-/// `caret` sits on: the count of `\n`s before it. The fold view is a
-/// per-logical-line transform (not a parley single-block), so navigation
-/// reasons in logical lines, computed from the text — no shaped layout.
-fn caret_line(text: &str, caret: usize) -> usize {
-    let c = caret.min(text.len());
-    text.get(..c).map_or(0, |s| s.matches('\n').count())
-}
-
-/// R955 §5.22 — the byte offset where logical `line` starts (the position
-/// after the `line`-th `\n`); clamps to the text end past the last line.
-fn line_start_byte(text: &str, line: usize) -> usize {
-    if line == 0 {
-        return 0;
-    }
-    let mut seen = 0;
-    for (i, &b) in text.as_bytes().iter().enumerate() {
-        if b == b'\n' {
-            seen += 1;
-            if seen == line {
-                return i + 1;
-            }
-        }
-    }
-    text.len()
-}
-
 /// R955 §5.22 §5.36 — the next **visible** logical line from `cur` in the
 /// `down` direction, skipping lines hidden inside a collapsed region
 /// ([`TextEditState::is_line_hidden`]); `None` at the visible end. Arrow
@@ -193,7 +166,7 @@ fn next_visible_line(edit: &TextEditState, cur: usize, total: usize, down: bool)
     clippy::trivially_copy_pass_by_ref,
     reason = "view-fn shape mirrors WidgetCore::view (&Frame)"
 )]
-fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
+fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let fg = theme.resolve(ColorRole::OnSurface);
     let muted = theme.resolve(ColorRole::OnSurfaceMuted);
@@ -203,19 +176,18 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
     // R955 §5.22 — the keyboard cursor's logical line, highlighted as the
     // current line so a human sees where Arrow navigation / fold-toggle act
     // (the read-only viewer paints no caret glyph — the line band is the
-    // cursor affordance). `state.1` is the caret byte offset.
-    let cursor_line = caret_line(&text, state.1 as usize);
+    // cursor affordance). Read live from the reactive state (R955.1, not the
+    // paint snapshot) so the subscription is on the caret signal directly.
+    let cursor_line = st.caret_line();
     // Derive the fold regions ONCE; the per-line hidden check reads this
     // `Vec` (O(regions)) instead of calling `st.is_line_hidden`, which would
     // re-run the O(text · openers) derivation for every line of the file.
+    // Membership defers to the `FoldRegion::hides` boundary SSOT (R955.1), so
+    // the painted gutter and keyboard navigation can never disagree.
     let regions = st.fold_regions();
-    let hidden = |line: usize| {
-        regions
-            .iter()
-            .any(|r| r.collapsed && line > r.start_line && line <= r.end_line)
-    };
+    let hidden = |line: usize| regions.iter().any(|r| r.hides(line));
 
-    let total = text.split('\n').count();
+    let total = st.line_count();
     let mut rows: Vec<Scene> = Vec::new();
     let mut visible = 0usize;
     for (i, line) in text.split('\n').enumerate() {
@@ -356,24 +328,24 @@ impl WidgetCore for FoldView {
             return false;
         }
         let edit = use_text_edit_state(TF_TAG);
-        let text = edit.text();
-        let total = text.split('\n').count();
-        let cur = caret_line(&text, edit.caret());
+        let total = edit.line_count();
+        let cur = edit.caret_line();
+        // `go_to_line` is 1-based; the cursor lines here are 0-based.
         match key {
             "ArrowDown" => {
                 if let Some(next) = next_visible_line(&edit, cur, total, true) {
-                    edit.set_caret(line_start_byte(&text, next));
+                    edit.go_to_line(next + 1);
                 }
                 true
             }
             "ArrowUp" => {
                 if let Some(prev) = next_visible_line(&edit, cur, total, false) {
-                    edit.set_caret(line_start_byte(&text, prev));
+                    edit.go_to_line(prev + 1);
                 }
                 true
             }
             "Home" => {
-                edit.set_caret(0);
+                edit.go_to_line(1);
                 true
             }
             "End" => {
@@ -381,7 +353,7 @@ impl WidgetCore for FoldView {
                 while last > 0 && edit.is_line_hidden(last) {
                     last -= 1;
                 }
-                edit.set_caret(line_start_byte(&text, last));
+                edit.go_to_line(last + 1);
                 true
             }
             "Enter" | "Space" => {
@@ -423,7 +395,7 @@ mod tests {
     //! R933 §5.36 — binding-level regression: paint-root tag presence +
     //! the folded view actually drops the hidden rows.
 
-    use super::{caret_line, line_start_byte, view, FoldView, SEED_CODE, STATUS_TAG, TF_TAG};
+    use super::{view, FoldView, SEED_CODE, STATUS_TAG, TF_TAG};
     use pinion_core::reactive::Owner;
     use pinion_core::scene::ExternalNode;
     use pinion_core::widgets::text_edit::use_text_edit_state;
@@ -481,15 +453,15 @@ mod tests {
             st.set_caret(0);
             let mut scene = scene_fixture();
             press(&mut scene, "ArrowDown");
-            assert_eq!(caret_line(&st.text(), st.caret()), 1, "ArrowDown -> line 1");
+            assert_eq!(st.caret_line(), 1, "ArrowDown -> line 1");
             press(&mut scene, "ArrowDown");
-            assert_eq!(caret_line(&st.text(), st.caret()), 2, "ArrowDown -> line 2");
+            assert_eq!(st.caret_line(), 2, "ArrowDown -> line 2");
             press(&mut scene, "ArrowUp");
-            assert_eq!(caret_line(&st.text(), st.caret()), 1, "ArrowUp -> line 1");
+            assert_eq!(st.caret_line(), 1, "ArrowUp -> line 1");
             press(&mut scene, "End");
-            assert_eq!(caret_line(&st.text(), st.caret()), 5, "End -> last line");
+            assert_eq!(st.caret_line(), 5, "End -> last line");
             press(&mut scene, "Home");
-            assert_eq!(caret_line(&st.text(), st.caret()), 0, "Home -> first line");
+            assert_eq!(st.caret_line(), 0, "Home -> first line");
         });
     }
 
@@ -518,12 +490,34 @@ mod tests {
             // go hidden, so from line 2 an ArrowDown lands on line 5, never on a
             // hidden interior line.
             assert!(st.toggle_fold(2));
-            st.set_caret(line_start_byte(&st.text(), 2));
+            st.go_to_line(3); // 1-based: logical line 2
             let mut scene = scene_fixture();
             press(&mut scene, "ArrowDown");
-            let line = caret_line(&st.text(), st.caret());
+            let line = st.caret_line();
             assert_eq!(line, 5, "ArrowDown stepped over the collapsed inner block to line 5");
             assert!(!st.is_line_hidden(line), "the cursor never lands on a hidden line");
+        });
+    }
+
+    /// R955.1 §5.36 — the painted gutter (the view's `hidden` closure) and the
+    /// keyboard navigation (`is_line_hidden`) defer to one boundary SSOT
+    /// ([`FoldRegion::hides`](pinion_core::widgets::text_edit::FoldRegion::hides)),
+    /// so a row is painted iff it is not hidden — they can never disagree.
+    #[test]
+    fn r955_1_painted_rows_match_is_line_hidden() {
+        Owner::new().run(|| {
+            let st = use_text_edit_state(TF_TAG);
+            st.set_text(SEED_CODE.to_string());
+            assert!(st.toggle_fold(2)); // collapse the inner block (lines 3,4 hide)
+            let scene = view((TextFieldState::Idle, 0), &Frame::default());
+            for line in 0..st.line_count() {
+                let painted = scene.contains_tag(&format!("fold_row_{line}"));
+                assert_eq!(
+                    painted,
+                    !st.is_line_hidden(line),
+                    "row {line}: painted == not hidden (view closure agrees with is_line_hidden)",
+                );
+            }
         });
     }
 }
