@@ -739,10 +739,19 @@ impl WidgetTransition for TextField {
 /// R959 / R961 §5.36 §5.22 — the field's **`send`-wire sub-target** grammar:
 /// the closed set of `"<field>#<key>"` composite click targets a multi-line
 /// editor's gutter routes to its own [`TextFieldExternal`]'s
-/// `invoke("send", "<key>:PointerUp")` wire. The
-/// [`GridSendKey`](crate::composite_tag::GridSendKey) precedent applied to
-/// the text field — one [`parse`](Self::parse), one encode-per-kind — so the
-/// paint producer and the `send` decoder cannot drift.
+/// `invoke("send", "<key>:PointerUp")` wire. A closed sum type over the field's
+/// two send sub-targets, so one [`parse`](Self::parse) + one encode-per-kind
+/// keep the paint producer and the `send` decoder from drifting.
+///
+/// R961.1 honesty note: this is a thin codec, NOT the
+/// [`GridSendKey`](crate::composite_tag::GridSendKey) pattern in full —
+/// `GridSendKey` earns its enum via a *polymorphic* `row()` projection that
+/// several row-only coordinators consume without caring about the variant; this
+/// has no such polymorphic consumer (its sole decoder, [`invoke_send`](TextFieldExternal::invoke_send),
+/// immediately matches and dispatches per-kind). The enum is justified as the
+/// one home of the two-kind send grammar (and the exhaustive `match` forces a
+/// future kind to be handled), not by shared downstream behaviour — the two
+/// kinds bifurcate into unrelated actions (`go_to_line` vs `toggle_fold`).
 ///
 /// A gutter click routes here instead of through the geometry press hook
 /// ([`position_caret_for_point`](pinion_shell::WidgetView::position_caret_for_point)):

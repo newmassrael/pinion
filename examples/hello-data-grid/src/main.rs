@@ -600,6 +600,17 @@ fn default_row() -> Vec<CellValue> {
 /// reset writes this back. One notion of default — the value a new row carries,
 /// the value a reset restores — so the indicator and the reset agree by
 /// construction (the SSOT [`default_row`] maps over).
+///
+/// R961.1 honesty note: this is a **per-column** default (Unreal "reset to the
+/// column's default value"), NOT a frozen per-row boot snapshot. It deliberately
+/// differs from `hello-inspector` / `hello-property-grid`, which freeze the boot
+/// SEED as the baseline (so those boot with zero modified cells). A per-column
+/// default is the right fit for a **dynamic-length** grid — a runtime-added row
+/// has no boot-snapshot entry, so a frozen per-row baseline would need threading
+/// through every structural mutator (add / remove / move). The trade-off: a seed
+/// whose values differ from the empty column defaults boots with those cells
+/// marked modified (which is the same way Unreal shows a customized instance's
+/// overridden properties), and a reset clears such a cell to the column default.
 fn col_default(col: usize) -> CellValue {
     match COL_KINDS[col] {
         CellKind::Text => CellValue::Text(String::new()),
@@ -1646,24 +1657,51 @@ impl DataGridExternal {
     }
 
     /// R960 — reset every modified cell to its column default, returning the
-    /// count cleared (the inspector `reset_all` shape). Each cell flows through
-    /// the [`reset_cell`](Self::reset_cell) → [`set_cell`](Self::set_cell) funnel.
+    /// count cleared.
+    ///
+    /// R961.1 — **single batched pass**: snapshot the model once, reset every
+    /// modified cell in place, then do ONE `set` + ONE `reanchor`. The R960
+    /// first cut looped `reset_cell` → [`set_cell`](Self::set_cell) per cell,
+    /// and each `set_cell` clones the whole model + runs two `cur_visible` sort
+    /// passes + a repaint — so a bulk reset was O(cells²) allocation + a
+    /// per-cell repaint storm on a dynamic-length grid (the R958.1 "hidden
+    /// per-item walk" cost, reintroduced one round later and now cleared).
     fn reset_all(&self) -> usize {
-        let nrows = self.nrows();
-        (0..nrows)
-            .flat_map(|row| (0..NCOLS).map(move |col| (row, col)))
-            .filter(|&(row, col)| self.reset_cell(row, col))
-            .count()
+        let mut cells = self.model.get();
+        let rows = cells.len() / NCOLS;
+        let mut cleared = 0;
+        for col in 0..NCOLS {
+            let def = col_default(col);
+            for row in 0..rows {
+                let i = idx(row, col);
+                if !cells[i].value_eq(&def) {
+                    cells[i] = def.clone();
+                    cleared += 1;
+                }
+            }
+        }
+        if cleared > 0 {
+            let prior_vis = self.cursor_prior_vis();
+            self.model.set(cells);
+            self.reanchor(prior_vis);
+        }
+        cleared
     }
 
     /// R960 — how many cells differ from their column default (the `reset_all`
     /// would-clear count, exposed as a query for the AI-first / demo path).
+    ///
+    /// R961.1 — one model snapshot then an in-place scan (the R960 first cut
+    /// cloned the whole model per cell via `cell_modified`).
     fn modified_count(&self) -> usize {
-        let nrows = self.nrows();
-        (0..nrows)
-            .flat_map(|row| (0..NCOLS).map(move |col| (row, col)))
-            .filter(|&(row, col)| self.cell_modified(row, col))
-            .count()
+        let cells = self.model.get();
+        let rows = cells.len() / NCOLS;
+        (0..NCOLS)
+            .map(|col| {
+                let def = col_default(col);
+                (0..rows).filter(|&row| !cells[idx(row, col)].value_eq(&def)).count()
+            })
+            .sum()
     }
 
     /// R914 — arm a numeric cell scrub: a `PointerDown` over an Int / Float

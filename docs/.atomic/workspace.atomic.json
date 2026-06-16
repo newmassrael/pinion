@@ -43297,6 +43297,56 @@
         "next: full editor current-line bg / multi-cursor / pro-tool perf measurement-first (large-scene scenario, perf 43%)"
       ]
     },
+    "R961.1": {
+      "decision_summary": "adversarial session-review clearance of R959/R960/R961: cleared the clear-cut HIGH defect (data-grid reset_all/modified_count were O(cells^2), a reintroduction of the R958.1 hidden-per-item-walk cost) via a single batched pass; honestly downgraded two MED overclaims (col_default is a per-column not frozen-seed baseline; TextFieldSendKey is a thin codec not the polymorphic GridSendKey pattern) in the docs",
+      "changes_bullets": [
+        "data-grid reset_all + modified_count: single model snapshot + in-place scan + ONE set/reanchor (was O(cells^2): per-cell reset_cell->set_cell cloned the whole model + 2 cur_visible sort passes + a repaint, looped per cell, on a dynamic-length grid = the R958.1 hidden-per-item-walk cost reintroduced)",
+        "col_default doc: honest note that the grid uses a per-column default (Unreal reset-to-default, boots dirty for customized data), NOT the inspector/property-grid frozen-boot-seed baseline (those boot clean) — the dynamic-length grid can't use a frozen per-row baseline without threading it through every structural mutator",
+        "TextFieldSendKey doc: retract the GridSendKey-precedent overclaim — GridSendKey earns its enum via a polymorphic row() projection this lacks (single decoder, per-kind dispatch); the enum is justified as the one home of the 2-kind send grammar, not by shared downstream behaviour",
+        "hello-code-fold gutter: align_items Center so the shorter chevron box centers vertically against the taller number/code (column-X alignment was already correct, verified live x=224 all rows)"
+      ],
+      "verification_bullets": [
+        "adversarial session-review (2 parallel reviewers + my own grep+read re-verification) of R959/R960/R961 — my textbook/SSOT self-claim overclaimed a 7th time",
+        "HIGH cleared: reset_all/modified_count O(cells^2) confirmed by reading set_cell (full model clone + 2 cur_visible passes + repaint) and the per-cell loop; batched fix verified live (reset_all 21 -> modified_count 0)",
+        "MED downgraded honestly (not code bugs): col_default boots 21/24 modified (verified) but reset-to-column-default is a defensible Unreal semantic; TextFieldSendKey single consumer (verified) but a defensible thin sum-type codec",
+        "NOT a defect (verified clean): chevron column alignment x=224 all rows + code aligned; CHEVRON_W fixed-width works; demos r960/r933 + data-grid regression demos PASS; workspace test + clippy -D pedantic 0; validate T1=0"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40",
+        "5.36",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "OPEN design choice (user decision): unify the 3 modified/reset widgets on boot-clean semantics? the data-grid would need a frozen per-cell baseline threaded through add_row/remove_row/move_row/move_row_to_gap (substantial, constraint-change-grep-all-layers risk) — deferred pending user direction",
+        "LOW: TextFieldSendKey gl(1-based)/fold(0-based) carry different line bases in an identically-named field (documented; theoretical footgun for a future uniform consumer; no such consumer exists)",
+        "recurring failure pattern (7th): my in-round textbook/SSOT self-assessment overclaims; the adversarial session-review reliably finds real defects — keep treating self-claims as suspect until grep+read verified"
+      ],
+      "publishable_decision_summary": "adversarial session-review clearance of R959/R960/R961: cleared the clear-cut HIGH defect (data-grid reset_all/modified_count were O(cells^2), a reintroduction of the R958.1 hidden-per-item-walk cost) via a single batched pass; honestly downgraded two MED overclaims (col_default is a per-column not frozen-seed baseline; TextFieldSendKey is a thin codec not the polymorphic GridSendKey pattern) in the docs",
+      "publishable_changes_bullets": [
+        "data-grid reset_all + modified_count: single model snapshot + in-place scan + ONE set/reanchor (was O(cells^2): per-cell reset_cell->set_cell cloned the whole model + 2 cur_visible sort passes + a repaint, looped per cell, on a dynamic-length grid = the R958.1 hidden-per-item-walk cost reintroduced)",
+        "col_default doc: honest note that the grid uses a per-column default (Unreal reset-to-default, boots dirty for customized data), NOT the inspector/property-grid frozen-boot-seed baseline (those boot clean) — the dynamic-length grid can't use a frozen per-row baseline without threading it through every structural mutator",
+        "TextFieldSendKey doc: retract the GridSendKey-precedent overclaim — GridSendKey earns its enum via a polymorphic row() projection this lacks (single decoder, per-kind dispatch); the enum is justified as the one home of the 2-kind send grammar, not by shared downstream behaviour",
+        "hello-code-fold gutter: align_items Center so the shorter chevron box centers vertically against the taller number/code (column-X alignment was already correct, verified live x=224 all rows)"
+      ],
+      "publishable_verification_bullets": [
+        "adversarial session-review (2 parallel reviewers + my own grep+read re-verification) of R959/R960/R961 — my textbook/SSOT self-claim overclaimed a 7th time",
+        "HIGH cleared: reset_all/modified_count O(cells^2) confirmed by reading set_cell (full model clone + 2 cur_visible passes + repaint) and the per-cell loop; batched fix verified live (reset_all 21 -> modified_count 0)",
+        "MED downgraded honestly (not code bugs): col_default boots 21/24 modified (verified) but reset-to-column-default is a defensible Unreal semantic; TextFieldSendKey single consumer (verified) but a defensible thin sum-type codec",
+        "NOT a defect (verified clean): chevron column alignment x=224 all rows + code aligned; CHEVRON_W fixed-width works; demos r960/r933 + data-grid regression demos PASS; workspace test + clippy -D pedantic 0; validate T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40",
+        "5.36",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "OPEN design choice (user decision): unify the 3 modified/reset widgets on boot-clean semantics? the data-grid would need a frozen per-cell baseline threaded through add_row/remove_row/move_row/move_row_to_gap (substantial, constraint-change-grep-all-layers risk) — deferred pending user direction",
+        "LOW: TextFieldSendKey gl(1-based)/fold(0-based) carry different line bases in an identically-named field (documented; theoretical footgun for a future uniform consumer; no such consumer exists)",
+        "recurring failure pattern (7th): my in-round textbook/SSOT self-assessment overclaims; the adversarial session-review reliably finds real defects — keep treating self-claims as suspect until grep+read verified"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -237,8 +237,12 @@ fn view(_state: (TextFieldState, u32), _frame: &Frame) -> Scene {
             TextStyle::new().with_size_px(CODE_FONT_PX).with_fg(muted),
         ));
         let gutter = Scene::Container(
-            ContainerNode::new(vec![chevron_node, number_node])
-                .with_layout(LayoutStyle::new().flex(FlexDirection::Row).with_gap(CHEVRON_GAP)),
+            ContainerNode::new(vec![chevron_node, number_node]).with_layout(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_gap(CHEVRON_GAP),
+            ),
         );
         let code_text = if opener.is_some_and(|r| r.collapsed) {
             format!("{line} {FOLD_ELLIPSIS}")
