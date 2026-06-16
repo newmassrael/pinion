@@ -174,6 +174,10 @@ const GUTTER_CURRENT_TAG: &str = "ta_gutter_current";
 /// R957 — alpha of the current-line gutter band (a faint Accent tint, the
 /// caret / selection hue, so a palette swap restains it coherently).
 const GUTTER_CURRENT_ALPHA: u8 = 0x33;
+/// R962 — alpha of the *body* current-line band ([`TextFieldStyle::current_line_alpha`]).
+/// Fainter than the gutter band: it washes a whole editor-width row, so a
+/// stronger tint would swamp the glyphs. The VS Code current-line weight.
+const BODY_CURRENT_ALPHA: u8 = 0x14;
 /// Shared [`ThemeProvider`] cache key (matches the gallery `"app"`
 /// convention so a host binding shares one provider).
 const THEME_TAG: &str = "app";
@@ -240,7 +244,14 @@ const SWATCH_GAP: u32 = 10;
 /// style so the painted Layout and the hit-tested / line-moved Layout
 /// stay one cache entry (the R762.1 `field_shaping` SSOT discipline).
 fn ta_style() -> tf_paint::TextFieldStyle {
-    tf_paint::TextFieldStyle::m3_multiline(TA_ROWS)
+    // R962 — opt into the body current-line band. This editor is a code
+    // surface (it already carries a line-number gutter), so the row the
+    // caret sits on gets the VS Code current-line wash spanning the full
+    // field width — the body sibling of the R957 gutter band.
+    tf_paint::TextFieldStyle {
+        current_line_alpha: BODY_CURRENT_ALPHA,
+        ..tf_paint::TextFieldStyle::m3_multiline(TA_ROWS)
+    }
 }
 
 /// R768 §5.36 — the colour-only [`TextStyle`] a swatch (and the R767
@@ -487,9 +498,7 @@ fn gutter(
         .with_fg(theme.resolve(ColorRole::OnSurfaceMuted))
         .with_align(TextAlign::End);
     let current_style = muted_style.clone().with_fg(theme.resolve(ColorRole::OnSurface));
-    let accent = theme.resolve(ColorRole::Accent);
-    let current_band_fill =
-        Color::rgba(accent.r, accent.g, accent.b, GUTTER_CURRENT_ALPHA);
+    let current_band_fill = theme.resolve(ColorRole::Accent).with_alpha(GUTTER_CURRENT_ALPHA);
 
     let mut logical_n: u32 = 0;
     let mut numbers: Vec<Scene> = Vec::new();

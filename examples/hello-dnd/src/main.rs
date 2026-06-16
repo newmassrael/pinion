@@ -254,7 +254,7 @@ fn row(
         // Translucent so the dragged row reads as "lifted"; the witness
         // colour still shows through but muted (non-dragged rows stay
         // opaque, so the live-pixel order check is unaffected).
-        Color::rgba(base.r, base.g, base.b, 0x55)
+        base.with_alpha(0x55)
     } else {
         base
     };

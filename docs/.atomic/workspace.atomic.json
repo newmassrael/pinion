@@ -43347,6 +43347,104 @@
         "recurring failure pattern (7th): my in-round textbook/SSOT self-assessment overclaims; the adversarial session-review reliably finds real defects — keep treating self-claims as suspect until grep+read verified"
       ]
     },
+    "R962": {
+      "decision_summary": "Body current-line background band for multi-line TextField: view_field paints an opt-in (TextFieldStyle::current_line_alpha) faint full-width Accent wash across the caret's visual line, beneath every other overlay (VS Code current-line affordance), the body sibling of the R957 gutter band; Color::with_alpha lifted to pinion-core from the 7-site rgba(c.r,c.g,c.b,a) tint idiom; 4 *_fill fns kept as role seams (real editor themes distinguish selection/find/line-highlight colours).",
+      "changes_bullets": [
+        "Add `Color::with_alpha(self, alpha)` to pinion-core: the canonical",
+        "\"resolved hue -> faint tint\" op, replacing the `Color::rgba(c.r, c.g,",
+        "c.b, a)` channel-copy idiom at 7 sites (selection/find/preedit fills,",
+        "table cell wash, DnD + tab-reorder drag ghosts, gutter band).",
+        "Add `TextFieldStyle::current_line_alpha` (u8, default 0 = off): when",
+        "non-zero on a multi-line field, `view_field` paints a faint full-width",
+        "Accent band across the caret's visual line, beneath every other",
+        "overlay (the VS Code current-line wash). Single-line and unset fields",
+        "stay byte-identical.",
+        "Add `current_line_fill` named seam (4th alongside selection/find/",
+        "preedit) + `current_line_band_tag(field_tag)` deriver so the rendered",
+        "band is introspectable by tag (the body sibling of the R957 gutter",
+        "band; producer + reader share one helper, no drift).",
+        "hello-textarea opts in (alpha 0x14, fainter than the 0x33 gutter band)",
+        "and gains a new RPC demo grounding band uniqueness, full-width inset,",
+        "caret-line tracking (top == gutter band top), and keyboard-move follow."
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-core +1 with_alpha test;",
+        "pinion-widget-paint +5 R962 band tests: present/width/track/off-when-",
+        "zero/single-line-excluded/tag-format; 483 widget-paint pass).",
+        "cargo clippy --workspace --all-targets (-D pedantic) clean.",
+        "New demo r962_textarea_current_line.py PASS (>= 30 assertions; live",
+        "rects: band == field inner width at caret row, top == ta_gutter_current",
+        "top, monotonic descent, RPC go-to-line follow).",
+        "Regression: all 12 hello-textarea demos PASS (additive gated band; no",
+        "child-count breakage). Touched-site demos for table / DnD / tab-reorder",
+        "covered by workspace build + clippy.",
+        "3b self-grep: 7-site `rgba(c.r,c.g,c.b,a)` idiom lifted to",
+        "`Color::with_alpha`; 4 `*_fill` fns kept as role seams (real editor",
+        "themes distinguish selection/find/line-highlight colours), not merged."
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "current-line band highlights the caret's VISUAL line (caret rect); a",
+        "soft-wrapped logical line spanning rows highlights only the caret's",
+        "row, while the gutter number highlights the logical line's first row",
+        "(they diverge on wrapped continuations) — caret-accurate, matches the",
+        "band-follows-caret model; full-logical-line wrap highlight is a future",
+        "opt if a consumer wants it.",
+        "multi-cursor / column-select still deferred (text-axis depth, larger",
+        "substrate) — next text-axis candidate."
+      ],
+      "publishable_decision_summary": "Body current-line background band for multi-line TextField: view_field paints an opt-in (TextFieldStyle::current_line_alpha) faint full-width Accent wash across the caret's visual line, beneath every other overlay (VS Code current-line affordance), the body sibling of the R957 gutter band; Color::with_alpha lifted to pinion-core from the 7-site rgba(c.r,c.g,c.b,a) tint idiom; 4 *_fill fns kept as role seams (real editor themes distinguish selection/find/line-highlight colours).",
+      "publishable_changes_bullets": [
+        "Add `Color::with_alpha(self, alpha)` to pinion-core: the canonical",
+        "\"resolved hue -> faint tint\" op, replacing the `Color::rgba(c.r, c.g,",
+        "c.b, a)` channel-copy idiom at 7 sites (selection/find/preedit fills,",
+        "table cell wash, DnD + tab-reorder drag ghosts, gutter band).",
+        "Add `TextFieldStyle::current_line_alpha` (u8, default 0 = off): when",
+        "non-zero on a multi-line field, `view_field` paints a faint full-width",
+        "Accent band across the caret's visual line, beneath every other",
+        "overlay (the VS Code current-line wash). Single-line and unset fields",
+        "stay byte-identical.",
+        "Add `current_line_fill` named seam (4th alongside selection/find/",
+        "preedit) + `current_line_band_tag(field_tag)` deriver so the rendered",
+        "band is introspectable by tag (the body sibling of the R957 gutter",
+        "band; producer + reader share one helper, no drift).",
+        "hello-textarea opts in (alpha 0x14, fainter than the 0x33 gutter band)",
+        "and gains a new RPC demo grounding band uniqueness, full-width inset,",
+        "caret-line tracking (top == gutter band top), and keyboard-move follow."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 green (pinion-core +1 with_alpha test;",
+        "pinion-widget-paint +5 R962 band tests: present/width/track/off-when-",
+        "zero/single-line-excluded/tag-format; 483 widget-paint pass).",
+        "cargo clippy --workspace --all-targets (-D pedantic) clean.",
+        "New demo r962_textarea_current_line.py PASS (>= 30 assertions; live",
+        "rects: band == field inner width at caret row, top == ta_gutter_current",
+        "top, monotonic descent, RPC go-to-line follow).",
+        "Regression: all 12 hello-textarea demos PASS (additive gated band; no",
+        "child-count breakage). Touched-site demos for table / DnD / tab-reorder",
+        "covered by workspace build + clippy.",
+        "3b self-grep: 7-site `rgba(c.r,c.g,c.b,a)` idiom lifted to",
+        "`Color::with_alpha`; 4 `*_fill` fns kept as role seams (real editor",
+        "themes distinguish selection/find/line-highlight colours), not merged."
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "current-line band highlights the caret's VISUAL line (caret rect); a",
+        "soft-wrapped logical line spanning rows highlights only the caret's",
+        "row, while the gutter number highlights the logical line's first row",
+        "(they diverge on wrapped continuations) — caret-accurate, matches the",
+        "band-follows-caret model; full-logical-line wrap highlight is a future",
+        "opt if a consumer wants it.",
+        "multi-cursor / column-select still deferred (text-axis depth, larger",
+        "substrate) — next text-axis candidate."
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

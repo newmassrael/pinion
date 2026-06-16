@@ -257,7 +257,7 @@ fn cell_selection_overlay(
         + u32::try_from(r0).unwrap_or(0) * style.row_height;
     let h = u32::try_from(r1 - r0 + 1).unwrap_or(0) * style.row_height;
     let accent = theme.resolve(ColorRole::Accent);
-    let wash = Color::rgba(accent.r, accent.g, accent.b, CELL_SEL_WASH_ALPHA);
+    let wash = accent.with_alpha(CELL_SEL_WASH_ALPHA);
     Scene::Container(
         ContainerNode::new(Vec::new())
             .with_tag(format!("{tag}_cellsel"))

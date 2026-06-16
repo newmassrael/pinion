@@ -45,6 +45,19 @@ impl Color {
         Self::rgba(r, g, b, 0xff)
     }
 
+    /// Return this color with its alpha channel replaced by `alpha`,
+    /// keeping the R/G/B triplet. The canonical "take a resolved hue,
+    /// make it a semi-transparent tint" operation — selection / find /
+    /// preedit / current-line bands all overlay `ColorRole::Accent` at a
+    /// faint alpha so a palette swap restains them coherently, and the
+    /// drag-and-drop / reorder ghosts dim their swatch base the same way.
+    /// Replaces the
+    /// repeated `Color::rgba(c.r, c.g, c.b, alpha)` channel-copy idiom.
+    #[must_use]
+    pub const fn with_alpha(self, alpha: u8) -> Self {
+        Self { a: alpha, ..self }
+    }
+
     /// Decode a softbuffer-style `0xAARRGGBB` ARGB literal.
     ///
     /// The R17 / R18 `BoxNode.fill` field carried this exact layout
@@ -2650,6 +2663,14 @@ mod tests {
     fn rgb_helper_sets_opaque_alpha() {
         let c = Color::rgb(0xff, 0x00, 0x00);
         assert_eq!(c.a, 0xff);
+    }
+
+    #[test]
+    fn with_alpha_replaces_alpha_keeps_rgb() {
+        let c = Color::rgb(0x12, 0x34, 0x56).with_alpha(0x80);
+        assert_eq!(c, Color::rgba(0x12, 0x34, 0x56, 0x80));
+        // Idempotent on the RGB triplet: re-applying only swaps alpha.
+        assert_eq!(c.with_alpha(0xff), Color::rgb(0x12, 0x34, 0x56));
     }
 
     // ─────────────────────────────────────────────────────────────

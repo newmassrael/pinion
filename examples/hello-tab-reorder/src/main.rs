@@ -405,7 +405,7 @@ fn tab_node(
     let grabbed = focused && state.grabbed;
 
     let swatch_fill = if dim {
-        Color::rgba(swatch_base.r, swatch_base.g, swatch_base.b, 0x55)
+        swatch_base.with_alpha(0x55)
     } else {
         swatch_base
     };

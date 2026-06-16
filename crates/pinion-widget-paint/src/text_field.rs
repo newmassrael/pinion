@@ -134,6 +134,18 @@ pub struct TextFieldStyle {
     /// Preedit underline thickness in logical pixels (default 1 —
     /// the canonical IME underline shape).
     pub preedit_underline_thickness: u32,
+    /// R962 §5.22 §5.36 — current-line background band alpha. `0`
+    /// (default) leaves the field body unhighlighted (every existing
+    /// single- and multi-line field is byte-identical). A non-zero
+    /// alpha paints a faint `ColorRole::Accent` band spanning the full
+    /// content width at the caret's visual line — the VS Code
+    /// "current line" affordance a code editor wants. The band is the
+    /// body sibling of the R957 gutter current-line band; only the
+    /// [`multi_line`](Self::multi_line) variant paints it (a single-line
+    /// field is one row, so a full-width highlight would just restate
+    /// the field fill). Fainter than [`selection_alpha`](Self::selection_alpha)
+    /// because it covers a whole row, not a glyph span.
+    pub current_line_alpha: u8,
     /// R764 §5.22 — multi-line (textarea) mode. `false` (default) is
     /// the single-line filled `TextField`: the content is
     /// vertically *centred* in the 40 px field box (text origin ≈
@@ -181,6 +193,9 @@ impl TextFieldStyle {
             find_highlight_alpha: 0x38,
             preedit_bg_alpha: 0x40,
             preedit_underline_thickness: 1,
+            // Off by default — opt-in per field (a code editor sets a
+            // faint alpha; a plain input / comment box leaves it 0).
+            current_line_alpha: 0,
             multi_line: false,
             soft_wrap: false,
         }
@@ -387,8 +402,7 @@ fn field_fill_for(theme: &Theme, interaction: TextFieldState) -> Color {
 /// readable. The selection inherits the active-control hue per the
 /// M3 caret-color convention.
 fn selection_fill(theme: &Theme, alpha: u8) -> Color {
-    let a = theme.resolve(ColorRole::Accent);
-    Color::rgba(a.r, a.g, a.b, alpha)
+    theme.resolve(ColorRole::Accent).with_alpha(alpha)
 }
 
 /// R903 §5.22 — find-match highlight tint — a fainter `ColorRole::Accent`
@@ -398,16 +412,39 @@ fn selection_fill(theme: &Theme, alpha: u8) -> Color {
 /// restains both) — the textbook find-highlight within a role-based palette
 /// that has no dedicated highlight role.
 fn find_highlight_fill(theme: &Theme, alpha: u8) -> Color {
-    let a = theme.resolve(ColorRole::Accent);
-    Color::rgba(a.r, a.g, a.b, alpha)
+    theme.resolve(ColorRole::Accent).with_alpha(alpha)
 }
 
 /// (R657 §5.16) Preedit background tint — fainter Accent overlay
 /// than [`selection_fill`] so the IME composition segment reads as
 /// provisional. Companion role for [`preedit_underline`].
 fn preedit_bg_fill(theme: &Theme, alpha: u8) -> Color {
-    let a = theme.resolve(ColorRole::Accent);
-    Color::rgba(a.r, a.g, a.b, alpha)
+    theme.resolve(ColorRole::Accent).with_alpha(alpha)
+}
+
+/// R962 §5.22 — current-line band tint. The faintest of the field's
+/// Accent overlays (it covers a whole row, not a glyph span), and the
+/// body sibling of the example's R957 gutter current-line band, which
+/// shares the same Accent hue. A named seam alongside
+/// [`selection_fill`] / [`find_highlight_fill`] / [`preedit_bg_fill`]
+/// so a future per-role highlight palette can restain it independently.
+fn current_line_fill(theme: &Theme, alpha: u8) -> Color {
+    theme.resolve(ColorRole::Accent).with_alpha(alpha)
+}
+
+/// R962 §5.22 §5.36 — paint tag for the current-line background band
+/// [`view_field`] emits when [`TextFieldStyle::current_line_alpha`] is
+/// non-zero, derived from the field's own paint `tag`. A consumer reads
+/// the band's rendered rect from a snapshot by this exact tag (the AI
+/// side grounds "which row is active" from the painted frame, the same
+/// contract the R957 gutter band's tag provides) — produced here and
+/// consumed there through one helper, so the two never drift. The band
+/// is a passive paint node (no `#` composite separator → the
+/// `InputRouter` never routes to it); the `-current-line` suffix cannot
+/// collide with the field's own `tag` or its `{tag}#…` send sub-tags.
+#[must_use]
+pub fn current_line_band_tag(field_tag: &str) -> String {
+    format!("{field_tag}-current-line")
 }
 
 /// (R657 §5.16) Preedit underline color — opaque Accent. Mirrors
@@ -797,6 +834,37 @@ pub fn view_field(
     // content anchor at 0 — the `pad` lives in the Scroll's placement,
     // not in each band's offset.
     let inner_pad = if style.multi_line { 0 } else { pad };
+
+    // R962 §5.22 §5.36 — current-line background band. Painted FIRST so
+    // it sits beneath the find / selection tints, the text, and the
+    // caret (the VS Code "current line" layering: a faint full-width
+    // wash the glyphs read on top of). Multi-line only, and only when
+    // the style opts in (`current_line_alpha > 0`) — a single-line field
+    // is one row, and an unset alpha keeps every existing field
+    // byte-identical. The band spans the inner content width
+    // (`field_w - 2 * field_pad`, the multi-line viewport the content
+    // Scroll clips to) at the caret's *visual* line: `caret_layout_y` /
+    // `caret_box_height` are the caret rect's own row box, so the band
+    // tracks the caret across soft-wrapped rows without a second shaping
+    // pass. Tagged via `current_line_band_tag` so the rendered rect is
+    // introspectable from a snapshot (the AI side reads which row is
+    // active).
+    if style.multi_line && style.current_line_alpha > 0 {
+        let inner_w = style.field_w.saturating_sub(2 * style.field_pad);
+        let band_top = inner_pad.saturating_add(caret_layout_y);
+        field_children.push(Scene::Box(
+            BoxNode::new(
+                Rect::default(),
+                BoxStyle::filled(current_line_fill(theme, style.current_line_alpha)),
+            )
+            .with_tag(current_line_band_tag(tag))
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(inner_w, caret_box_height))
+                    .with_absolute_position(inner_pad, band_top),
+            ),
+        ));
+    }
 
     // R903 §5.22 — find-match highlight bands paint FIRST (behind the
     // selection band and the text), so the current match's stronger selection
@@ -1430,6 +1498,8 @@ mod tests {
         assert_eq!(s.selection_alpha, 0xA0);
         assert_eq!(s.preedit_bg_alpha, 0x40);
         assert_eq!(s.preedit_underline_thickness, 1);
+        // R962 — current-line band off by default (opt-in per field).
+        assert_eq!(s.current_line_alpha, 0);
     }
 
     #[test]
@@ -1588,6 +1658,116 @@ mod tests {
                 "unfocused field shows no bracket box",
             );
         });
+    }
+
+    /// R962 §5.22 — find the first `Scene::Box` carrying `tag`, recursing
+    /// into containers and the multi-line content `Scene::Scroll`. The
+    /// current-line band lives inside the Scroll content, so a flat
+    /// child-list scan would miss it.
+    fn find_box_by_tag<'a>(scene: &'a Scene, tag: &str) -> Option<&'a BoxNode> {
+        match scene {
+            Scene::Box(b) if b.tag.as_deref() == Some(tag) => Some(b),
+            Scene::Container(c) => c.children.iter().find_map(|ch| find_box_by_tag(ch, tag)),
+            Scene::Scroll(s) => find_box_by_tag(&s.content, tag),
+            _ => None,
+        }
+    }
+
+    fn current_line_style() -> TextFieldStyle {
+        TextFieldStyle { current_line_alpha: 0x14, ..TextFieldStyle::m3_multiline(4) }
+    }
+
+    #[test]
+    fn r962_current_line_band_spans_inner_width_at_line_zero() {
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "ta_cl";
+            let st = use_text_edit_state(tag);
+            st.set_text("alpha\nbeta\ngamma".to_owned());
+            let style = current_line_style();
+            let scene = view_field(tag, TextFieldState::Focused, 0, &theme, &style, "code");
+            let band = find_box_by_tag(&scene, &current_line_band_tag(tag))
+                .expect("multi-line + opt-in alpha paints the current-line band");
+            // Full content width, anchored at the content origin — both are
+            // deterministic (no font metrics), so this is system-font-safe.
+            assert_eq!(
+                band.layout.size.width,
+                SizeValue::Px(style.field_w - 2 * style.field_pad),
+                "the band spans the inner content width",
+            );
+            assert_eq!(
+                band.layout.absolute_position,
+                Some((0, 0)),
+                "line 0 anchors the band at the content top-left",
+            );
+        });
+    }
+
+    #[test]
+    fn r962_current_line_band_follows_caret_to_lower_line() {
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "ta_cl2";
+            let st = use_text_edit_state(tag);
+            st.set_text("alpha\nbeta\ngamma".to_owned());
+            let style = current_line_style();
+            let band_top = |caret: u32| {
+                find_box_by_tag(
+                    &view_field(tag, TextFieldState::Focused, caret, &theme, &style, "code"),
+                    &current_line_band_tag(tag),
+                )
+                .unwrap()
+                .layout
+                .absolute_position
+                .unwrap()
+                .1
+            };
+            // caret on line 0 vs the start of logical line 2 ("gamma"). The
+            // exact pixel y is font-dependent, so assert only the relation.
+            let caret_line2 = u32::try_from("alpha\nbeta\n".len()).unwrap();
+            assert_eq!(band_top(0), 0, "line 0 band sits at the content top");
+            assert!(
+                band_top(caret_line2) > 0,
+                "the band drops to the caret's lower visual line",
+            );
+        });
+    }
+
+    #[test]
+    fn r962_no_current_line_band_when_alpha_zero() {
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "ta_cl3";
+            use_text_edit_state(tag).set_text("alpha\nbeta".to_owned());
+            // m3_multiline leaves current_line_alpha at the 0 default.
+            let style = TextFieldStyle::m3_multiline(4);
+            let scene = view_field(tag, TextFieldState::Focused, 0, &theme, &style, "code");
+            assert!(
+                find_box_by_tag(&scene, &current_line_band_tag(tag)).is_none(),
+                "a default multi-line field opts out of the band",
+            );
+        });
+    }
+
+    #[test]
+    fn r962_no_current_line_band_on_single_line() {
+        with_owner(|| {
+            let theme = Theme::light();
+            let tag = "tf_cl_single";
+            use_text_edit_state(tag).set_text("oneline".to_owned());
+            // Alpha set, but single-line is one row — the gate excludes it.
+            let style = TextFieldStyle { current_line_alpha: 0x40, ..TextFieldStyle::m3_filled() };
+            let scene = view_field(tag, TextFieldState::Focused, 0, &theme, &style, "in");
+            assert!(
+                find_box_by_tag(&scene, &current_line_band_tag(tag)).is_none(),
+                "a single-line field never paints the row band",
+            );
+        });
+    }
+
+    #[test]
+    fn r962_current_line_band_tag_derives_from_field_tag() {
+        assert_eq!(current_line_band_tag("main_textarea"), "main_textarea-current-line");
     }
 
     #[test]
