@@ -63,8 +63,8 @@ use crate::scroll_state::{
 };
 use crate::substrate_introspect::{introspect_error_to_data, SubstrateIntrospectError};
 use crate::snapshot::{
-    snapshot, GridRowSnapshot, GridStyleRun, SnapshotError, SnapshotNode, TermColorSnapshot,
-    TextGridSnapshot,
+    snapshot, GridCursorSnapshot, GridRowSnapshot, GridStyleRun, SnapshotError, SnapshotNode,
+    TermColorSnapshot, TextGridSnapshot,
 };
 use crate::text::{text_normalize, NormalizeForm, NormalizeOutcome};
 use crate::text_state::{
@@ -3139,6 +3139,21 @@ fn text_grid_snapshot_fields(obj: &mut serde_json::Map<String, Value>, snap: &Te
         "grid_rows".to_string(),
         Value::Array(snap.grid_rows.iter().map(grid_row_to_json).collect()),
     );
+    // R975 §5.41 — the grid's single cursor (position / shape / visible).
+    obj.insert("cursor".to_string(), grid_cursor_to_json(&snap.cursor));
+}
+
+/// R975 §5.41 — wire form for a [`GridCursorSnapshot`]: `{col, row, shape,
+/// visible}`. `shape` is the wire string `"block"` / `"bar"` /
+/// `"underline"`; a client tests `(col, row)` against the grid's `(cols,
+/// rows)` to know whether the cursor is in bounds.
+fn grid_cursor_to_json(cursor: &GridCursorSnapshot) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("col".to_string(), Value::Number(cursor.col.into()));
+    obj.insert("row".to_string(), Value::Number(cursor.row.into()));
+    obj.insert("shape".to_string(), Value::String(cursor.shape.to_string()));
+    obj.insert("visible".to_string(), Value::Bool(cursor.visible));
+    Value::Object(obj)
 }
 
 /// R973 §5.41 — wire form for one [`GridRowSnapshot`]: `{text, runs}`.

@@ -29,13 +29,14 @@
 //!   terminal's default foreground / background.
 //!
 //! The cell's **attributes** ([`CellAttrs`]: bold / dim / italic /
-//! underline / blink / reverse / hidden / strikethrough) land in R974.
-//! The **cursor**, **wide-char trailer** cells, the **alternate-screen**
-//! buffer, and **damage** tracking are each a deliberate follow-up S5
-//! slice; these slices prove the data model with their cell + projection
-//! consumer (the [`crate::scene::TextGridNode`] cells + the
-//! `scene/snapshot` readback), not pixel paint (glyph rendering stays
-//! deferred — the grid is still paint-opaque this round).
+//! underline / blink / reverse / hidden / strikethrough) land in R974,
+//! and the grid **cursor** ([`GridCursor`]: position / shape /
+//! visibility) in R975. The **wide-char trailer** cells, the
+//! **alternate-screen** buffer, and **damage** tracking are each a
+//! deliberate follow-up S5 slice; these slices prove the data model with
+//! their cell + projection consumer (the [`crate::scene::TextGridNode`]
+//! cells + the `scene/snapshot` readback), not pixel paint (glyph
+//! rendering stays deferred — the grid is still paint-opaque this round).
 
 use crate::style::Color;
 use std::borrow::Cow;
@@ -411,6 +412,79 @@ impl Default for TermCell {
     }
 }
 
+/// The shape a terminal cursor is drawn as — the closed DECSCUSR set
+/// (`CSI Ps SP q`): a full-cell **block**, a thin vertical **bar** (the
+/// text-insertion beam), or a baseline **underline**.
+///
+/// Like [`TermColor`], this is the *complete, closed* terminal vocabulary
+/// — DECSCUSR defines no fourth shape — so `#[non_exhaustive]` is
+/// deliberately **not** applied and callers may match exhaustively. (The
+/// DECSCUSR blink-vs-steady axis is a separate concern and is not folded
+/// into the shape.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorShape {
+    /// A filled full-cell block — the conventional terminal default.
+    #[default]
+    Block,
+    /// A thin vertical bar at the cell's leading edge (the insertion beam).
+    Bar,
+    /// A thin underline along the cell's baseline.
+    Underline,
+}
+
+/// The terminal cursor (R975): its cell position plus how it is drawn.
+///
+/// This is the cursor as it should currently *appear* — the **effective**
+/// cursor a producer reports each frame, not an emulator's internal mode
+/// state. A real emulator (the producer, e.g. `sprag`'s `vte`) owns the
+/// DECTCEM (show / hide) and DECSCUSR (shape) mode logic and the cursor
+/// save / restore the alternate screen performs; it folds all of that
+/// into the one effective cursor it hands pinion, keeping the projection
+/// at the right altitude (R969 "producer owns authoritative state"). The
+/// cursor therefore lives on the [`GridBuffer`] — like
+/// `alacritty_terminal`'s `Grid::cursor` — so when the alternate-screen
+/// buffer slice lands each buffer simply carries its own.
+///
+/// The position is the producer's reported `(col, row)` and may briefly
+/// fall outside the buffer's `(cols, rows)` during an in-flight resize
+/// (the producer clamps it); a client detects that by comparing this
+/// position against the grid's dimensions — both are first-class facts
+/// (R974.1 dual-fact discipline), so no separate in-bounds flag is stored.
+///
+/// `#[non_exhaustive]` per the R974.1 forward-compat hedge (matching
+/// [`TermCell`] / [`CellAttrs`]): later refinements add fields (e.g. a
+/// blink flag or an explicit cursor colour), and construction routes
+/// through [`Self::new`] / [`Self::default`], so the hedge is free.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct GridCursor {
+    /// Cursor column (cell coordinate).
+    pub col: u16,
+    /// Cursor row (cell coordinate).
+    pub row: u16,
+    /// How the cursor is drawn ([`CursorShape::Block`] by default).
+    pub shape: CursorShape,
+    /// Whether the cursor is shown (DECTCEM). `false` is also the default
+    /// a freshly-constructed [`GridBuffer`] carries: a projection reports
+    /// no visible cursor until its producer asks for one.
+    pub visible: bool,
+}
+
+impl GridCursor {
+    /// A cursor at `(col, row)` drawn as `shape`, shown iff `visible` —
+    /// the producer assembles this from its emulator's effective cursor
+    /// state each frame.
+    #[must_use]
+    pub const fn new(col: u16, row: u16, shape: CursorShape, visible: bool) -> Self {
+        Self {
+            col,
+            row,
+            shape,
+            visible,
+        }
+    }
+}
+
 /// A row-major rectangular buffer of [`TermCell`]s — the retained
 /// projection of the producer's terminal buffer (R969). Its own
 /// `(cols, rows)` describe the *snapshot the producer last sent*; the
@@ -421,18 +495,23 @@ impl Default for TermCell {
 /// requested size vs. a received snapshot), not a dual mutable grid.
 ///
 /// The buffer is assembled by the producer and projected wholesale; it
-/// exposes construction ([`Self::new`] / [`Self::with_row`]) and reads
-/// ([`Self::cell`]) but the *node* that holds it never mutates it
-/// per-cell — it swaps the whole projection.
+/// exposes construction ([`Self::new`] / [`Self::with_row`] /
+/// [`Self::with_cursor`]) and reads ([`Self::cell`] / [`Self::cursor`])
+/// but the *node* that holds it never mutates it per-cell — it swaps the
+/// whole projection. The [`GridCursor`] (R975) rides along with the cells
+/// as part of the same projection.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GridBuffer {
     cols: u16,
     rows: u16,
     cells: Vec<TermCell>,
+    cursor: GridCursor,
 }
 
 impl GridBuffer {
-    /// A `cols × rows` buffer filled with [`TermCell::blank`].
+    /// A `cols × rows` buffer filled with [`TermCell::blank`], carrying
+    /// the default ([`GridCursor::default`]: hidden, home, block) cursor
+    /// until the producer sets one via [`Self::with_cursor`].
     #[must_use]
     pub fn new(cols: u16, rows: u16) -> Self {
         let count = usize::from(cols) * usize::from(rows);
@@ -440,6 +519,7 @@ impl GridBuffer {
             cols,
             rows,
             cells: vec![TermCell::blank(); count],
+            cursor: GridCursor::default(),
         }
     }
 
@@ -477,6 +557,23 @@ impl GridBuffer {
         self.index(col, row).map(|i| &self.cells[i])
     }
 
+    /// The [`GridCursor`] this projection carries (R975) — its position,
+    /// shape, and visibility. A freshly-[`new`](Self::new)'d buffer
+    /// carries the default (hidden, home, block) cursor until the producer
+    /// sets one.
+    #[must_use]
+    pub const fn cursor(&self) -> GridCursor {
+        self.cursor
+    }
+
+    /// Set the grid cursor (builder form). The producer reports its
+    /// emulator's effective cursor here alongside the cell projection.
+    #[must_use]
+    pub const fn with_cursor(mut self, cursor: GridCursor) -> Self {
+        self.cursor = cursor;
+        self
+    }
+
     /// Write a whole row of cells starting at column 0 (builder form).
     /// Cells beyond the buffer width are ignored; a short row leaves the
     /// trailing cells blank.
@@ -493,7 +590,9 @@ impl GridBuffer {
 
 #[cfg(test)]
 mod tests {
-    use super::{CellAttrs, ColorTarget, GridBuffer, TermCell, Palette, TermColor};
+    use super::{
+        CellAttrs, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, TermCell, TermColor,
+    };
     use crate::style::Color;
 
     #[test]
@@ -628,5 +727,53 @@ mod tests {
             .with_attrs(CellAttrs::empty().with_italic(true).with_underline(true));
         assert!(styled.attrs.italic && styled.attrs.underline);
         assert!(!styled.attrs.bold);
+    }
+
+    #[test]
+    fn cursor_shape_default_is_block() {
+        // Block is the conventional terminal default. The enum is the
+        // complete closed DECSCUSR set (exhaustively matchable — the
+        // `grid_cursor_snapshot` wire map matches all three by name).
+        assert_eq!(CursorShape::default(), CursorShape::Block);
+        assert_ne!(CursorShape::Bar, CursorShape::Underline);
+    }
+
+    #[test]
+    fn grid_cursor_default_is_hidden_home_block() {
+        // The default is the "no cursor reported yet" state: a projection
+        // shows no cursor until its producer asks for one.
+        let c = GridCursor::default();
+        assert_eq!((c.col, c.row), (0, 0));
+        assert_eq!(c.shape, CursorShape::Block);
+        assert!(!c.visible);
+    }
+
+    #[test]
+    fn grid_cursor_new_carries_every_field() {
+        let c = GridCursor::new(7, 3, CursorShape::Bar, true);
+        assert_eq!((c.col, c.row), (7, 3));
+        assert_eq!(c.shape, CursorShape::Bar);
+        assert!(c.visible);
+        // A hidden underline cursor round-trips its fields too.
+        let h = GridCursor::new(1, 2, CursorShape::Underline, false);
+        assert_eq!(h.shape, CursorShape::Underline);
+        assert!(!h.visible);
+    }
+
+    #[test]
+    fn grid_buffer_default_cursor_is_hidden_then_settable() {
+        // A fresh buffer carries the hidden default cursor...
+        let b = GridBuffer::new(4, 2);
+        assert_eq!(b.cursor(), GridCursor::default());
+        assert!(!b.cursor().visible);
+        // ...and the producer sets the effective cursor wholesale.
+        let cur = GridCursor::new(2, 1, CursorShape::Bar, true);
+        let b = b.with_cursor(cur);
+        assert_eq!(b.cursor(), cur);
+        // The cursor is independent of the cells (setting it leaves the
+        // blank projection intact).
+        assert_eq!(b.cell(0, 0), Some(&TermCell::blank()));
+        // The geometry-only default buffer also carries the hidden cursor.
+        assert_eq!(GridBuffer::default().cursor(), GridCursor::default());
     }
 }

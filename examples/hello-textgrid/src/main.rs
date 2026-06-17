@@ -31,10 +31,16 @@
 //! combinations and a `reverse` cell whose stored colours are reported
 //! unswapped (the swap is a paint-time transform, still deferred).
 //!
-//! Cell **cursor / wide-char trailer / alt-screen / damage** and **glyph
-//! paint** stay deliberate follow-up rounds — the grid is still
-//! paint-opaque, so the window renders only its surface background; the
-//! deliverable is the cell *data model*, read as data.
+//! R975 adds a fifth grid, **`htg_cursor`**, carrying the grid
+//! [`GridCursor`]: a visible vertical **bar** cursor at the input column
+//! of a prompt line (row 1), proving the cursor's cell position / shape /
+//! visibility travel with the projection. The other grids carry the
+//! default (hidden, home, block) cursor.
+//!
+//! Cell **wide-char trailer / alt-screen / damage** and **glyph paint**
+//! stay deliberate follow-up rounds — the grid is still paint-opaque, so
+//! the window renders only its surface background; the deliverable is the
+//! cell *data model*, read as data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
@@ -46,14 +52,20 @@
 //! (`tools/r972_textgrid.py`) asserts this for both metrics. For
 //! `htg_content`, `grid_rows` reports each row's text and its
 //! palette-resolved style runs — `tools/r973_textgrid_cells.py` asserts
-//! every colour form resolves correctly.
+//! every colour form resolves correctly. For `htg_cursor`, `cursor`
+//! reports the cursor's `(col, row)`, `shape`, and `visible` —
+//! `tools/demos/r975_textgrid_cursor.py` asserts it (and that the other
+//! grids carry the default hidden cursor).
 
 use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
 use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size};
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::{CellAttrs, CellMetric, Frame, GridBuffer, TermCell, Scene, TermColor, WidgetCore};
+use pinion_core::{
+    CellAttrs, CellMetric, CursorShape, Frame, GridBuffer, GridCursor, Scene, TermCell, TermColor,
+    WidgetCore,
+};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -181,6 +193,39 @@ fn attrs_buffer() -> GridBuffer {
         )
 }
 
+/// Tag of the R975 cursor grid, and its placement + extent.
+const CURSOR_TAG: &str = "htg_cursor";
+const CURSOR_POS: (u32, u32) = (400, 600);
+/// `8 × 2` cells at the `8×16` baseline metric → `64 × 32` px.
+const CURSOR_COLS: u16 = 8;
+const CURSOR_ROWS: u16 = 2;
+const CURSOR_SIZE: (u32, u32) = (64, 32);
+/// Where the bar cursor sits: the input column (col 2, past the `"$ "`
+/// prompt) on the prompt line (row 1). Non-zero on both axes so the
+/// snapshot witnesses real cell addressing, not a trivial home position.
+const CURSOR_AT: (u16, u16) = (2, 1);
+
+/// Build the R975 cursor projection: a two-row prompt buffer with a
+/// **visible bar** cursor at the input column of the prompt line. A real
+/// producer reports its emulator's effective cursor like this each frame;
+/// here the position / shape / visibility are set explicitly so the
+/// snapshot consumer can witness the whole [`GridCursor`].
+fn cursor_buffer() -> GridBuffer {
+    let default = |c: char| TermCell::new(c.to_string(), TermColor::Default, TermColor::Default);
+    GridBuffer::new(CURSOR_COLS, CURSOR_ROWS)
+        // Row 0 — a label line (exactly 8 glyphs), so the cursor on row 1
+        // is provably not at the home row.
+        .with_row(0, "line one".chars().map(default))
+        // Row 1 — the prompt; the bar cursor waits at the input column.
+        .with_row(1, "$ ".chars().map(default))
+        .with_cursor(GridCursor::new(
+            CURSOR_AT.0,
+            CURSOR_AT.1,
+            CursorShape::Bar,
+            true,
+        ))
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -232,12 +277,27 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             ),
     );
 
+    // The R975 cursor grid (8×16 baseline), carrying a prompt projection
+    // with a visible bar cursor. Isolated from the other grids so their
+    // demos stay regression-free (they keep the default hidden cursor).
+    let cursor = Scene::TextGrid(
+        TextGridNode::new(CellMetric::DEFAULT)
+            .with_tag(CURSOR_TAG)
+            .with_cells(cursor_buffer())
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(CURSOR_POS.0, CURSOR_POS.1)
+                    .with_size(Size::px(CURSOR_SIZE.0, CURSOR_SIZE.1)),
+            ),
+    );
+
     Scene::Container(
         ContainerNode::new(vec![
             grid(DEFAULT_TAG, CellMetric::DEFAULT, DEFAULT_POS, DEFAULT_SIZE),
             grid(MEASURED_TAG, measured, MEASURED_POS, MEASURED_SIZE),
             content,
             attrs,
+            cursor,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -353,6 +413,41 @@ mod tests {
         assert!(scene.contains_tag(MEASURED_TAG));
         assert!(scene.contains_tag(CONTENT_TAG));
         assert!(scene.contains_tag(ATTRS_TAG));
+        assert!(scene.contains_tag(CURSOR_TAG));
+    }
+
+    #[test]
+    fn cursor_buffer_is_8x2_with_a_visible_bar_at_the_input_column() {
+        let b = cursor_buffer();
+        assert_eq!((b.cols(), b.rows()), (CURSOR_COLS, CURSOR_ROWS));
+
+        // The cursor: a visible bar at the prompt's input column (col 2,
+        // row 1) — non-zero on both axes.
+        let cur = b.cursor();
+        assert_eq!((cur.col, cur.row), CURSOR_AT);
+        assert_eq!(cur.shape, CursorShape::Bar);
+        assert!(cur.visible);
+        // It sits within the 8×2 grid.
+        assert!(cur.col < b.cols() && cur.row < b.rows());
+
+        // Row 0 is the 8-glyph label; row 1 is the prompt. The cursor is
+        // on row 1, provably not the home row.
+        assert_eq!(b.cell(0, 0).unwrap().cluster, "l");
+        assert_eq!(b.cell(0, 1).unwrap().cluster, "$");
+        assert_eq!(b.cell(1, 1).unwrap().cluster, " ");
+        // The input cell under the cursor is still blank (the cursor is
+        // grid state, not a cell mutation).
+        assert_eq!(b.cell(2, 1), Some(&TermCell::blank()));
+    }
+
+    #[test]
+    fn scaffold_grids_carry_the_default_hidden_cursor() {
+        // The colour / attrs / geometry grids do not set a cursor, so each
+        // carries the default (hidden, home, block) — proving the cursor
+        // is opt-in per projection.
+        assert_eq!(content_buffer().cursor(), GridCursor::default());
+        assert_eq!(attrs_buffer().cursor(), GridCursor::default());
+        assert!(!content_buffer().cursor().visible);
     }
 
     #[test]

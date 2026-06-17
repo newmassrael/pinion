@@ -44445,6 +44445,68 @@
         "reverse/dim/bold paint시점 swap·intensity = glyph paint 슬라이스"
       ]
     },
+    "R975": {
+      "decision_summary": "R975 §5.41 cell-native TextGrid grid cursor (S5 slice 3): GridCursor (position/shape/visible) on GridBuffer + snapshot cursor field + hello-textgrid htg_cursor consumer",
+      "changes_bullets": [
+        "term_grid: CursorShape enum Block/Bar/Underline = closed DECSCUSR set, exhaustive like TermColor",
+        "GridCursor {col,row,shape,visible}: producer effective cursor, modelled on alacritty Grid::cursor",
+        "cursor lives on GridBuffer (rides the projection); later alt-screen buffer-swap slice is then free",
+        "GridBuffer::with_cursor/cursor(); default = hidden/home/block (cursor opt-in per projection)",
+        "#[non_exhaustive] on GridCursor per R974.1 hedge (like TermCell); CursorShape left closed",
+        "snapshot: TextGridSnapshot.cursor = GridCursorSnapshot {col,row,shape,visible}, always present",
+        "dispatch grid_cursor_to_json wire field; shape = wire-string (mirrors TermColor kind)",
+        "in-bounds is derived (col/row vs cols/rows), not a stored flag — R974.1 dual-fact discipline",
+        "hello-textgrid htg_cursor grid: a visible bar cursor at a prompt input column (col 2, row 1)",
+        "other 4 grids keep the default hidden cursor; additive field, R973/R974 demos regression-free"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; 7 new cursor tests: 4 core + 2 example + 1 snapshot)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r975 demo PASS (~34 assertions); r972/r973/r974 PASS (additive cursor field regression-free)",
+        "mnemosyne validate-workspace T1 reject=0, no new orphan",
+        "3b self-grep whole-repo: GridCursor/CursorShape are free names (only unrelated TypeaheadCursor)",
+        "domain check: cell cursor (col/row) distinct from text-edit caret (byte-offset) — no merge"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "remaining S5 slices: wide-char trailer (cluster-width, R969 Tier1) / alt-screen / damage",
+        "glyph paint stays deferred (grid is paint-opaque); cursor is read as scene-as-data, not drawn",
+        "on the wire the demo witnesses block (default) + bar (explicit); Underline is unit-tested only",
+        "a11y grid/treegrid role + per-cell nodes land with the paint+input slice (still partly deferred)"
+      ],
+      "publishable_decision_summary": "R975 §5.41 cell-native TextGrid grid cursor (S5 slice 3): GridCursor (position/shape/visible) on GridBuffer + snapshot cursor field + hello-textgrid htg_cursor consumer",
+      "publishable_changes_bullets": [
+        "term_grid: CursorShape enum Block/Bar/Underline = closed DECSCUSR set, exhaustive like TermColor",
+        "GridCursor {col,row,shape,visible}: producer effective cursor, modelled on alacritty Grid::cursor",
+        "cursor lives on GridBuffer (rides the projection); later alt-screen buffer-swap slice is then free",
+        "GridBuffer::with_cursor/cursor(); default = hidden/home/block (cursor opt-in per projection)",
+        "#[non_exhaustive] on GridCursor per R974.1 hedge (like TermCell); CursorShape left closed",
+        "snapshot: TextGridSnapshot.cursor = GridCursorSnapshot {col,row,shape,visible}, always present",
+        "dispatch grid_cursor_to_json wire field; shape = wire-string (mirrors TermColor kind)",
+        "in-bounds is derived (col/row vs cols/rows), not a stored flag — R974.1 dual-fact discipline",
+        "hello-textgrid htg_cursor grid: a visible bar cursor at a prompt input column (col 2, row 1)",
+        "other 4 grids keep the default hidden cursor; additive field, R973/R974 demos regression-free"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; 7 new cursor tests: 4 core + 2 example + 1 snapshot)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r975 demo PASS (~34 assertions); r972/r973/r974 PASS (additive cursor field regression-free)",
+        "mnemosyne validate-workspace T1 reject=0, no new orphan",
+        "3b self-grep whole-repo: GridCursor/CursorShape are free names (only unrelated TypeaheadCursor)",
+        "domain check: cell cursor (col/row) distinct from text-edit caret (byte-offset) — no merge"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "remaining S5 slices: wide-char trailer (cluster-width, R969 Tier1) / alt-screen / damage",
+        "glyph paint stays deferred (grid is paint-opaque); cursor is read as scene-as-data, not drawn",
+        "on the wire the demo witnesses block (default) + bar (explicit); Underline is unit-tested only",
+        "a11y grid/treegrid role + per-cell nodes land with the paint+input slice (still partly deferred)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

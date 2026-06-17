@@ -47,7 +47,9 @@
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::Rect;
 use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
-use pinion_core::{CellAttrs, ColorTarget, GridBuffer, Palette, Scene, TermColor};
+use pinion_core::{
+    CellAttrs, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, Scene, TermColor,
+};
 
 use crate::path::{self, PathError};
 
@@ -263,6 +265,9 @@ pub struct ImmediateModeSnapshot {
 /// resize (or a producer bug) an AI client can now detect directly,
 /// rather than inferring the projection size from `grid_rows` lengths. A
 /// geometry-only grid reports `buffer_cols == buffer_rows == 0`.
+///
+/// R975 §5.41 — `cursor` is the grid's [`GridCursorSnapshot`]: a grid has
+/// exactly one cursor (position / shape / visibility), always reported.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextGridSnapshot {
@@ -275,6 +280,7 @@ pub struct TextGridSnapshot {
     pub buffer_cols: u16,
     pub buffer_rows: u16,
     pub grid_rows: Vec<GridRowSnapshot>,
+    pub cursor: GridCursorSnapshot,
 }
 
 /// R973 §5.41 — one row of a [`TextGridSnapshot`] cell projection: the
@@ -317,6 +323,22 @@ pub struct TermColorSnapshot {
     pub kind: &'static str,
     pub index: Option<u8>,
     pub rgb: String,
+}
+
+/// R975 §5.41 — the grid cursor in a snapshot: its `(col, row)` cell
+/// position, its `shape` (`"block"` / `"bar"` / `"underline"`), and
+/// whether it is `visible`. Always present — a grid has exactly one
+/// cursor; a geometry-only grid (or one whose producer has not set a
+/// cursor) reports the default: hidden, home `(0, 0)`, block. Compare
+/// `(col, row)` against the grid's `(cols, rows)` to tell whether the
+/// cursor sits in bounds — both are first-class facts (R974.1 dual-fact
+/// discipline), so no in-bounds flag is pre-computed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridCursorSnapshot {
+    pub col: u16,
+    pub row: u16,
+    pub shape: &'static str,
+    pub visible: bool,
 }
 
 /// `External` payload of [`SnapshotNode::External`] (R51.198 added
@@ -464,6 +486,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
                 buffer_cols: node.cells().cols(),
                 buffer_rows: node.cells().rows(),
                 grid_rows: text_grid_rows(node.cells(), &node.palette()),
+                cursor: grid_cursor_snapshot(node.cells().cursor()),
             })
         }
         // `Scene` is non_exhaustive; future variants surface as Unknown
@@ -525,6 +548,24 @@ fn term_color_snapshot(
     TermColorSnapshot { kind, index, rgb }
 }
 
+/// R975 §5.41 — capture a grid's [`GridCursor`] as a snapshot: the cursor
+/// [`shape`](pinion_core::CursorShape) becomes its wire-string
+/// discriminator (mirroring [`TermColorSnapshot`]'s `kind`); position and
+/// visibility pass through verbatim.
+fn grid_cursor_snapshot(cursor: GridCursor) -> GridCursorSnapshot {
+    let shape = match cursor.shape {
+        CursorShape::Block => "block",
+        CursorShape::Bar => "bar",
+        CursorShape::Underline => "underline",
+    };
+    GridCursorSnapshot {
+        col: cursor.col,
+        row: cursor.row,
+        shape,
+        visible: cursor.visible,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -568,6 +609,33 @@ mod tests {
                 // requested winsize is 80×24 but the received buffer is 0×0.
                 assert_eq!((snap.buffer_cols, snap.buffer_rows), (0, 0));
                 assert!(snap.grid_rows.is_empty());
+                // R975 — a geometry-only grid reports the default cursor:
+                // hidden, home, block (no producer has set one).
+                assert_eq!((snap.cursor.col, snap.cursor.row), (0, 0));
+                assert_eq!(snap.cursor.shape, "block");
+                assert!(!snap.cursor.visible);
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_grid_snapshot_reports_explicit_cursor() {
+        // R975 §5.41 — a producer-set cursor is reported verbatim: cell
+        // position, the shape's wire string, and visibility.
+        use pinion_core::{CursorShape, GridBuffer, GridCursor};
+        let buf = GridBuffer::new(8, 2).with_cursor(GridCursor::new(2, 1, CursorShape::Bar, true));
+        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
+            .with_cells(buf);
+        node.rect = Rect::new(0, 0, 64, 32); // 8 × 2 @ 8×16
+        match snapshot(&Scene::TextGrid(node), "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                assert_eq!((snap.cursor.col, snap.cursor.row), (2, 1));
+                assert_eq!(snap.cursor.shape, "bar");
+                assert!(snap.cursor.visible);
+                // The cursor (col 2, row 1) sits within the 8×2 grid — a
+                // client derives that from the two first-class facts.
+                assert!(snap.cursor.col < snap.cols && snap.cursor.row < snap.rows);
             }
             other => panic!("expected TextGrid, got {other:?}"),
         }
