@@ -44105,6 +44105,58 @@
         "CoordSpace::Cell 전역 승격 트리거 = 셀-네이티브 레이아웃 엔진 (R968 defer 유지)"
       ]
     },
+    "R971": {
+      "decision_summary": "R971 §5.41 CellMetric 권위 dims + R1.8 hit-test 증명 (S3): cols_for/rows_for(winsize 권위, R1.4) + DRY cells_x/cells_y; hit_test_is_stable property로 셀-span 픽셀 매핑 형식 증명; cell_at 헬퍼 리팩터(동작 동일)",
+      "changes_bullets": [
+        "pinion-core CellMetric: cols_for(width_px)/rows_for(height_px) -> u16 권위 dims (R1.4 winsize, floor+u16포화)",
+        "private cells_x/cells_y 추출: cell_at(셀 인덱스)+cols_for(셀 개수) 공유 나눗셈 DRY (평행-공식 차단)",
+        "cell_at = cells_x/cells_y 기반 리팩터 (동작 byte-동일; S2 테스트 무변경 통과)",
+        "substrate-first 근거 doc: in-repo 소비자 없음, R968 chicken-and-egg + frozen R969 winsize 구현",
+        "shape = per-axis (tuple-order 모호성 회피); 소비자는 TextGrid/S4서 winsize 조립"
+      ],
+      "verification_bullets": [
+        "cell_metric 테스트 10/10 pass (S2 7 + S3 3 신규)",
+        "hit_test_is_stable: 3 metric(8x16/10x20/6x13) x 각 셀 전 픽셀 -> 그 셀 매핑 (R1.8 형식 증명)",
+        "cols_for/rows_for: floor(639/8=79, 640/8=80) + u16 포화 + boundary 테스트",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: exit 0",
+        "cargo test --workspace -j2: exit 0, 171 ok blocks 0 failed; validate-workspace 신규 violation 0"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.2"
+      ],
+      "carry_forward_bullets": [
+        "S4: TextGrid geometry 스캐폴드가 CellMetric::new(font advance,line-height) + cols_for/rows_for 소비",
+        "S4: Vello가 2nd 백엔드 소비자 = core-home 정당성 실증; introspection으로 round-trip 증명",
+        "cell_at = R1.8 hit-test primitive (현재 production 소비자 0, TextGrid서 사용)",
+        "CoordSpace::Cell 전역 승격 트리거 = 셀-네이티브 레이아웃 엔진 (R968 defer 유지)"
+      ],
+      "publishable_decision_summary": "R971 §5.41 CellMetric 권위 dims + R1.8 hit-test 증명 (S3): cols_for/rows_for(winsize 권위, R1.4) + DRY cells_x/cells_y; hit_test_is_stable property로 셀-span 픽셀 매핑 형식 증명; cell_at 헬퍼 리팩터(동작 동일)",
+      "publishable_changes_bullets": [
+        "pinion-core CellMetric: cols_for(width_px)/rows_for(height_px) -> u16 권위 dims (R1.4 winsize, floor+u16포화)",
+        "private cells_x/cells_y 추출: cell_at(셀 인덱스)+cols_for(셀 개수) 공유 나눗셈 DRY (평행-공식 차단)",
+        "cell_at = cells_x/cells_y 기반 리팩터 (동작 byte-동일; S2 테스트 무변경 통과)",
+        "substrate-first 근거 doc: in-repo 소비자 없음, R968 chicken-and-egg + frozen R969 winsize 구현",
+        "shape = per-axis (tuple-order 모호성 회피); 소비자는 TextGrid/S4서 winsize 조립"
+      ],
+      "publishable_verification_bullets": [
+        "cell_metric 테스트 10/10 pass (S2 7 + S3 3 신규)",
+        "hit_test_is_stable: 3 metric(8x16/10x20/6x13) x 각 셀 전 픽셀 -> 그 셀 매핑 (R1.8 형식 증명)",
+        "cols_for/rows_for: floor(639/8=79, 640/8=80) + u16 포화 + boundary 테스트",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: exit 0",
+        "cargo test --workspace -j2: exit 0, 171 ok blocks 0 failed; validate-workspace 신규 violation 0"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S4: TextGrid geometry 스캐폴드가 CellMetric::new(font advance,line-height) + cols_for/rows_for 소비",
+        "S4: Vello가 2nd 백엔드 소비자 = core-home 정당성 실증; introspection으로 round-trip 증명",
+        "cell_at = R1.8 hit-test primitive (현재 production 소비자 0, TextGrid서 사용)",
+        "CoordSpace::Cell 전역 승격 트리거 = 셀-네이티브 레이아웃 엔진 (R968 defer 유지)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

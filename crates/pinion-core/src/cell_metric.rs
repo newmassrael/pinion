@@ -97,15 +97,55 @@ impl CellMetric {
 
     /// Logical-pixel `(x, y)` → cell `(col, row)`, truncating toward the
     /// cell origin (a pixel anywhere inside a cell maps to that cell).
+    /// This is the R1.8 pointer hit-test primitive.
     ///
     /// Saturates at [`u16::MAX`] so the result always fits a ratatui
     /// buffer coordinate. The non-zero axis invariant guarantees the
     /// division never traps.
     #[must_use]
     pub fn cell_at(self, px: u32, py: u32) -> (u16, u16) {
-        let col = u16::try_from(px / self.cell_w).unwrap_or(u16::MAX);
-        let row = u16::try_from(py / self.cell_h).unwrap_or(u16::MAX);
-        (col, row)
+        (self.cells_x(px), self.cells_y(py))
+    }
+
+    /// Whole cell columns spanning `width_px` logical pixels — the
+    /// authoritative column count for a grid occupying that width (the
+    /// R1.4 PTY-winsize authority a terminal host reports via
+    /// `TIOCSWINSZ`). A trailing partial cell is not a usable column, so
+    /// the count floors; saturates at [`u16::MAX`].
+    ///
+    /// No in-tree consumer exists yet — the count is read by the
+    /// forthcoming `Scene::TextGrid` (and, downstream, a terminal host).
+    /// It lands now as sanctioned substrate-first per the R968 cell-native
+    /// ratify, serving the frozen R969 winsize requirement; it is the
+    /// authoritative-dimension half of the cell-native axis, not a
+    /// speculative abstraction.
+    #[must_use]
+    pub fn cols_for(self, width_px: u32) -> u16 {
+        self.cells_x(width_px)
+    }
+
+    /// Whole cell rows spanning `height_px` logical pixels — the
+    /// authoritative row count (the R1.4 PTY-winsize authority). Floors a
+    /// trailing partial cell; saturates at [`u16::MAX`]. See
+    /// [`CellMetric::cols_for`] for the substrate-first rationale.
+    #[must_use]
+    pub fn rows_for(self, height_px: u32) -> u16 {
+        self.cells_y(height_px)
+    }
+
+    /// Whole cells spanning `px` logical pixels on the x axis (floor,
+    /// saturating at [`u16::MAX`]). Shared by [`Self::cell_at`] (the cell
+    /// index containing a pixel) and [`Self::cols_for`] (a column count) —
+    /// numerically one formula, two distinct public semantics, so the
+    /// division lives in one place rather than as parallel copies.
+    fn cells_x(self, px: u32) -> u16 {
+        u16::try_from(px / self.cell_w).unwrap_or(u16::MAX)
+    }
+
+    /// Whole cells spanning `px` logical pixels on the y axis — the
+    /// y-axis twin of [`Self::cells_x`].
+    fn cells_y(self, px: u32) -> u16 {
+        u16::try_from(px / self.cell_h).unwrap_or(u16::MAX)
     }
 }
 
@@ -185,5 +225,53 @@ mod tests {
         assert_eq!((x, y), (50.0, 80.0));
         assert_eq!(m.cell_at(50, 80), (5, 4));
         assert_eq!(m.cell_at(59, 99), (5, 4)); // interior floors to origin
+    }
+
+    #[test]
+    fn cols_and_rows_for_floor_whole_cells() {
+        let m = CellMetric::DEFAULT; // 8x16
+        assert_eq!(m.cols_for(0), 0);
+        assert_eq!(m.cols_for(7), 0); // partial first cell is not usable
+        assert_eq!(m.cols_for(8), 1); // exact
+        assert_eq!(m.cols_for(639), 79); // 639 / 8 = 79.875 -> 79
+        assert_eq!(m.cols_for(640), 80); // exact 80 columns
+        assert_eq!(m.rows_for(15), 0);
+        assert_eq!(m.rows_for(16), 1);
+        assert_eq!(m.rows_for(384), 24); // 384 / 16 = 24 rows
+    }
+
+    #[test]
+    fn cols_and_rows_for_saturate_at_u16_max() {
+        let m = CellMetric::DEFAULT;
+        assert_eq!(m.cols_for(u32::MAX), u16::MAX);
+        assert_eq!(m.rows_for(u32::MAX), u16::MAX);
+    }
+
+    #[test]
+    fn hit_test_is_stable_across_each_cell_span() {
+        // R1.8 guarantee: every pixel within a cell's pixel span maps to
+        // that cell (clicking anywhere in a cell hits it), and the cell
+        // origin equals cell_to_px. Proven for several metrics so the
+        // property is not specific to the 8x16 default.
+        for m in [
+            CellMetric::DEFAULT,
+            CellMetric::new(10, 20).expect("non-zero"),
+            CellMetric::new(6, 13).expect("non-zero"),
+        ] {
+            for col in 0u16..8 {
+                for row in 0u16..8 {
+                    let ox = u32::from(col) * m.cell_w();
+                    let oy = u32::from(row) * m.cell_h();
+                    // forward map lands exactly on the integer cell origin
+                    assert_eq!(m.cell_to_px(col, row), (f64::from(ox), f64::from(oy)));
+                    // every pixel inside the cell's span maps back to the cell
+                    for dx in 0..m.cell_w() {
+                        for dy in 0..m.cell_h() {
+                            assert_eq!(m.cell_at(ox + dx, oy + dy), (col, row));
+                        }
+                    }
+                }
+            }
+        }
     }
 }
