@@ -495,21 +495,17 @@ impl Scene {
                 s.content.paint_hash().hash(&mut h);
                 h.finish()
             }
-            // R972 §5.41 — geometry-leaf hash. Paint is a follow-up
-            // round (the scaffold paints nothing yet), but the cache key
-            // already folds the geometry that future cell paint depends
-            // on (rect + node-local metric); the cell data model joins
-            // the hash when it lands.
-            Scene::TextGrid(g) => {
-                let mut h = std::hash::DefaultHasher::new();
-                b"pinion.scene.TextGrid".hash(&mut h);
-                g.rect.hash(&mut h);
-                g.metric.cell_w().hash(&mut h);
-                g.metric.cell_h().hash(&mut h);
-                g.layout.hash(&mut h);
-                h.finish()
-            }
-            Scene::Effect(_) => PAINT_HASH_EFFECT_SENTINEL,
+            // R972.1 §5.41 — the geometry scaffold paints NOTHING yet
+            // (paint is a follow-up round; it falls through the paint
+            // walker's no-op `_` arm, exactly like `Effect`). So its
+            // observable fragment is the empty no-op, and the contract
+            // above ("same hash for observationally identical fragments")
+            // requires the no-op sentinel — NOT a geometry hash, which
+            // would give two empty-painting grids different hashes and
+            // miss the cache for byte-identical output. When cell paint +
+            // the data model land, this becomes a real geometry+content
+            // hash IN THE ROUND THAT MAKES PAINT OBSERVABLE.
+            Scene::TextGrid(_) | Scene::Effect(_) => PAINT_HASH_EFFECT_SENTINEL,
             Scene::External(_) | Scene::ImmediateModeNode(_) => PAINT_HASH_UNCACHEABLE,
         }
     }
@@ -2888,6 +2884,12 @@ impl ImmediateModeNode {
 /// alt-screen / damage) is a deliberate follow-up round; this scaffold
 /// proves the coordinate space alone, exposed as scene-as-data (§2 #7)
 /// through `scene/snapshot` (`cell_w` / `cell_h` / `cols` / `rows`).
+///
+/// `#[non_exhaustive]` per the R14 forward-compat hedge (like every peer
+/// leaf node): the R969 cell data-model round will add fields
+/// (cluster / fg / bg / attrs / cursor), and construction already goes
+/// through [`Self::new`] + builders, so the hedge is free.
+#[non_exhaustive]
 #[derive(Debug, Clone)]
 pub struct TextGridNode {
     /// §5.20 intent-system carrier, when the grid participates in
@@ -5379,6 +5381,24 @@ mod tests {
         let b = Scene::Effect(EffectNode::new());
         assert_eq!(a.paint_hash(), b.paint_hash());
         assert_eq!(a.paint_hash(), PAINT_HASH_EFFECT_SENTINEL);
+    }
+
+    #[test]
+    fn r972_1_text_grid_paints_nothing_hashes_as_noop_sentinel() {
+        // R972.1 — the geometry scaffold paints nothing yet (falls through
+        // the paint walker's no-op `_` arm, like Effect), so two grids with
+        // DIFFERENT geometry produce identical (empty) fragments and MUST
+        // share the no-op sentinel. A geometry hash (the R972 first cut)
+        // would give them different hashes and miss the cache for
+        // byte-identical output, contradicting the paint_hash contract.
+        let mut a_node = TextGridNode::new(CellMetric::DEFAULT);
+        a_node.rect = Rect::new(0, 0, 640, 384);
+        let mut b_node = TextGridNode::new(CellMetric::new(9, 18).expect("non-zero"));
+        b_node.rect = Rect::new(10, 20, 360, 360);
+        let a = Scene::TextGrid(a_node);
+        let b = Scene::TextGrid(b_node);
+        assert_eq!(a.paint_hash(), PAINT_HASH_EFFECT_SENTINEL);
+        assert_eq!(a.paint_hash(), b.paint_hash());
     }
 
     #[test]

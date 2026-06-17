@@ -116,7 +116,7 @@ impl CellMetric {
     /// rect — the R969 one-directional `(rows, cols)` SSOT.
     #[must_use]
     pub fn cols_for(self, width_px: u32) -> u16 {
-        u16::try_from(width_px / self.cell_w).unwrap_or(u16::MAX)
+        Self::whole_cells(width_px, self.cell_w)
     }
 
     /// Whole cell rows spanning `height_px` logical pixels — the
@@ -126,7 +126,20 @@ impl CellMetric {
     /// [`TextGridNode::rows`](crate::scene::TextGridNode::rows).
     #[must_use]
     pub fn rows_for(self, height_px: u32) -> u16 {
-        u16::try_from(height_px / self.cell_h).unwrap_or(u16::MAX)
+        Self::whole_cells(height_px, self.cell_h)
+    }
+
+    /// Whole cells spanning `px` logical pixels at `cell` pixels per cell
+    /// — the single home of the winsize floor+saturate policy: a trailing
+    /// partial cell is not a usable cell (floor), and the count saturates
+    /// at [`u16::MAX`] so it always fits a ratatui buffer coordinate.
+    /// Shared by [`Self::cols_for`] / [`Self::rows_for`] so the two axes
+    /// can never drift to a different rounding — the R971 "one formula,
+    /// not parallel copies" SSOT (restored R972.1: the R972 `cell_at`
+    /// removal had briefly inlined it into both axes). The non-zero axis
+    /// invariant guarantees the division never traps.
+    fn whole_cells(px: u32, cell: u32) -> u16 {
+        u16::try_from(px / cell).unwrap_or(u16::MAX)
     }
 }
 

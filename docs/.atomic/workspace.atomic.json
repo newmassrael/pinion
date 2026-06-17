@@ -44213,6 +44213,58 @@
         "CoordSpace::Cell global promotion trigger = cell-native layout engine (R968 defer held)"
       ]
     },
+    "R972.1": {
+      "decision_summary": "R972.1 adversarial session-review clearance (2 reviewers + my grep/read re-verify): 3 real R972 defects cleared — (1) winsize floor+saturate de-single-sourced (restored R971 one-formula SSOT the cell_at removal had inlined); (2) paint_hash gave a no-op TextGrid a geometry hash (contract: identical fragments must share a hash) -> Effect sentinel; (3) TextGridNode missing #[non_exhaustive]. Over-flags rejected with evidence (Clone derive, introspection, cell_at removal, layout rect, helper extraction = clean)",
+      "changes_bullets": [
+        "cell_metric.rs: restore single-source whole_cells(px,cell); cols_for/rows_for delegate",
+        "restores R971 \"one formula not parallel copies\" SSOT that the R972 cell_at removal had inlined",
+        "scene.rs paint_hash: Scene::TextGrid -> PAINT_HASH_EFFECT_SENTINEL (paints nothing = no-op leaf)",
+        "geometry hash gave two empty-painting grids different hashes = paint_hash contract violation",
+        "scene.rs: TextGridNode gains #[non_exhaustive] (peer leaf-node + R969 data-model adds fields)",
+        "scene.rs: r972_1 regression test = two different-geometry grids share the no-op sentinel hash"
+      ],
+      "verification_bullets": [
+        "workspace cargo test exit 0; clippy --workspace --all-targets -D pedantic exit 0; validate T1=0",
+        "pinion-core 2381 tests pass incl r972_1 + cols_and_rows_for_* (cols_for/rows_for behavior preserved)",
+        "review = 2 adversarial agents + my grep+read re-verify; 2 MED + 1 LOW real, cleared inline",
+        "reviewer over-flags rejected w/ evidence: Clone derive (value-leaf peer-consistent), introspection",
+        "completeness/symmetry, cell_at removal, layout rect field, line-budget helper extraction = clean"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "S5: TextGrid data model (R969 color circular+palette / alt-screen / wide-char trailer / damage)",
+        "cell_at (R1.8 hit-test) re-added WITH consumer in pointer-to-cell input-routing round",
+        "paint follow-up: when cell paint lands, TextGrid paint_hash becomes a real geometry+content hash",
+        "CoordSpace::Cell global promotion trigger = cell-native layout engine (R968 defer held)"
+      ],
+      "publishable_decision_summary": "R972.1 adversarial session-review clearance (2 reviewers + my grep/read re-verify): 3 real R972 defects cleared — (1) winsize floor+saturate de-single-sourced (restored R971 one-formula SSOT the cell_at removal had inlined); (2) paint_hash gave a no-op TextGrid a geometry hash (contract: identical fragments must share a hash) -> Effect sentinel; (3) TextGridNode missing #[non_exhaustive]. Over-flags rejected with evidence (Clone derive, introspection, cell_at removal, layout rect, helper extraction = clean)",
+      "publishable_changes_bullets": [
+        "cell_metric.rs: restore single-source whole_cells(px,cell); cols_for/rows_for delegate",
+        "restores R971 \"one formula not parallel copies\" SSOT that the R972 cell_at removal had inlined",
+        "scene.rs paint_hash: Scene::TextGrid -> PAINT_HASH_EFFECT_SENTINEL (paints nothing = no-op leaf)",
+        "geometry hash gave two empty-painting grids different hashes = paint_hash contract violation",
+        "scene.rs: TextGridNode gains #[non_exhaustive] (peer leaf-node + R969 data-model adds fields)",
+        "scene.rs: r972_1 regression test = two different-geometry grids share the no-op sentinel hash"
+      ],
+      "publishable_verification_bullets": [
+        "workspace cargo test exit 0; clippy --workspace --all-targets -D pedantic exit 0; validate T1=0",
+        "pinion-core 2381 tests pass incl r972_1 + cols_and_rows_for_* (cols_for/rows_for behavior preserved)",
+        "review = 2 adversarial agents + my grep+read re-verify; 2 MED + 1 LOW real, cleared inline",
+        "reviewer over-flags rejected w/ evidence: Clone derive (value-leaf peer-consistent), introspection",
+        "completeness/symmetry, cell_at removal, layout rect field, line-budget helper extraction = clean"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S5: TextGrid data model (R969 color circular+palette / alt-screen / wide-char trailer / damage)",
+        "cell_at (R1.8 hit-test) re-added WITH consumer in pointer-to-cell input-routing round",
+        "paint follow-up: when cell paint lands, TextGrid paint_hash becomes a real geometry+content hash",
+        "CoordSpace::Cell global promotion trigger = cell-native layout engine (R968 defer held)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
