@@ -44841,6 +44841,58 @@
         "property-grid reset/remove/add are announced but not yet AT-activatable (no access_child_invoke there)"
       ]
     },
+    "R981": {
+      "decision_summary": "R981 property-grid AT-activatable in-widget controls: the reset arrow plus the R931 remove/add-element buttons were announced (R980 attach_child_button) but lacked access_child_invoke, so an AT Click fell through to the parent grid Enter. R981 adds the hook routing an AT Click/Default on a control button through the same send funnel a pointer click drains, so AT activation equals pointer activation, completing the R967.1 carry symmetrically with R980's data-grid slice.",
+      "changes_bullets": [
+        "property-grid: add access_child_invoke routing an AT Click/Default on a control button to send",
+        "gate to reset/rmelem/addelem prefixes; branch-row/leaf activation stays on the keyboard roving",
+        "demo r981_access_reset_property_grid: scene/access shows controls; AT-wire send resets/removes/adds",
+        "unit test: access_child_invoke Click on the reset button resets the row; non-control Click falls through"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 failed); new r981 access_child_invoke reset test",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic exit 0",
+        "demo r981 PASS + r979/r872 property-grid regression-free",
+        "3b self-grep: Click->send routing now in data-grid + property-grid (2 sites); per R803 the {sub}:PointerUp",
+        "encode is idiom (split_send_payload decode is the SSOT), not a lift; attach_child_button already lifted R980",
+        "validate-workspace T1=0"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "data-grid ROW reset still deferred: a button is invalid as a grid row child; needs a rowheader node",
+        "grouped-treegrid reset emission still deferred (flat grid done in R980)",
+        "property-grid branch-row AT Click toggle intentionally NOT send-routed: the grid's keyboard roving + Enter",
+        "covers branch toggle; only the control buttons (reset/remove/add) need the explicit access_child_invoke hook"
+      ],
+      "publishable_decision_summary": "R981 property-grid AT-activatable in-widget controls: the reset arrow plus the R931 remove/add-element buttons were announced (R980 attach_child_button) but lacked access_child_invoke, so an AT Click fell through to the parent grid Enter. R981 adds the hook routing an AT Click/Default on a control button through the same send funnel a pointer click drains, so AT activation equals pointer activation, completing the R967.1 carry symmetrically with R980's data-grid slice.",
+      "publishable_changes_bullets": [
+        "property-grid: add access_child_invoke routing an AT Click/Default on a control button to send",
+        "gate to reset/rmelem/addelem prefixes; branch-row/leaf activation stays on the keyboard roving",
+        "demo r981_access_reset_property_grid: scene/access shows controls; AT-wire send resets/removes/adds",
+        "unit test: access_child_invoke Click on the reset button resets the row; non-control Click falls through"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 failed); new r981 access_child_invoke reset test",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic exit 0",
+        "demo r981 PASS + r979/r872 property-grid regression-free",
+        "3b self-grep: Click->send routing now in data-grid + property-grid (2 sites); per R803 the {sub}:PointerUp",
+        "encode is idiom (split_send_payload decode is the SSOT), not a lift; attach_child_button already lifted R980",
+        "validate-workspace T1=0"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "data-grid ROW reset still deferred: a button is invalid as a grid row child; needs a rowheader node",
+        "grouped-treegrid reset emission still deferred (flat grid done in R980)",
+        "property-grid branch-row AT Click toggle intentionally NOT send-routed: the grid's keyboard roving + Enter",
+        "covers branch toggle; only the control buttons (reset/remove/add) need the explicit access_child_invoke hook"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

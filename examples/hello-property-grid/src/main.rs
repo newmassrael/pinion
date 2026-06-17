@@ -106,8 +106,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    attach_child_button, listbox_option_nodes, tree_access_nodes, tree_row_tag, AccessFocus,
-    AccessNode, AriaRole, ListOption, WidgetA11y,
+    attach_child_button, listbox_option_nodes, tree_access_nodes, tree_row_tag, AccessAction,
+    AccessFocus, AccessNode, AriaRole, ListOption, WidgetA11y,
 };
 use pinion_core::composite_tag::split_send_payload;
 use pinion_core::input::{DragCalibration, DRAG_CLICK_THRESHOLD_PX};
@@ -3831,6 +3831,41 @@ impl WidgetA11y for PropertyGridView {
             |id| AccessFocus::composite(GRID_TAG, tree_row_tag(GRID_TAG, &id)),
         ))
     }
+
+    /// R981 §5.40 — an AT Click / Default on an in-widget control button (the
+    /// R919/R936 reset arrow, the R931 remove / add-element buttons) routes
+    /// through the SAME `send` funnel a pointer click on that button drains, so
+    /// AT activation and pointer activation are identical (the R980 carry,
+    /// property-grid slice — the buttons were already announced via `access_node`
+    /// and `attach_child_button` but, lacking this hook, an AT Click fell through
+    /// to the parent grid's Enter). The gate keeps it to the control affordances:
+    /// branch-row / leaf activation stays on the grid's keyboard roving (its
+    /// cursor + Enter), so only a button child is send-routed here.
+    fn access_child_invoke(
+        scene: &mut Scene,
+        _parent_tag: &str,
+        sub_tag: &str,
+        action: AccessAction,
+    ) -> bool {
+        if !matches!(action, AccessAction::Click | AccessAction::Default) {
+            return false;
+        }
+        let is_control = sub_tag.starts_with(RESET_PREFIX)
+            || sub_tag.starts_with(RM_ELEM_PREFIX)
+            || sub_tag == ADD_ELEM_TAG;
+        if !is_control {
+            return false;
+        }
+        let Some(node) = scene.find_external_with_tag_mut(GRID_TAG) else {
+            return false;
+        };
+        let Some(intro) = node.handle.introspect_mut() else {
+            return false;
+        };
+        intro
+            .invoke("send", IntrospectValue::Text(format!("{sub_tag}:PointerUp")))
+            .is_ok()
+    }
 }
 
 impl WidgetView for PropertyGridView {
@@ -3936,6 +3971,36 @@ mod tests {
                 with_grid_mut(&mut scene, |i| i.invoke("reset", IntrospectValue::Int(4))),
                 Ok(IntrospectValue::Bool(false)),
                 "reset of an unmodified row is a no-op",
+            );
+        });
+    }
+
+    /// R981 §5.40 — an AT Click on the reset arrow routes through the same `send`
+    /// funnel a pointer click drains, so AT reset == pointer reset (the R980
+    /// carry, property-grid slice; the reset button was already announced via
+    /// `access_node` but lacked this activation hook). A non-control Click still
+    /// falls through to the grid's keyboard roving.
+    #[test]
+    fn r981_at_click_on_reset_button_resets_via_access_child_invoke() {
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            // Modify row 4 ("Layer", Int default 3) so its reset arrow is active.
+            with_grid_mut(&mut scene, |i| i.intervene("value.4", IntrospectValue::Int(17)).unwrap());
+            assert_eq!(grid_intro(&scene).query("modified.4"), Some(IntrospectValue::Bool(true)));
+            // An AT Click on the reset button child resets the row to its default.
+            assert!(
+                PropertyGridView::access_child_invoke(&mut scene, GRID_TAG, "reset4", AccessAction::Click),
+                "an AT Click on the reset button is handled",
+            );
+            assert_eq!(
+                grid_intro(&scene).query("modified.4"),
+                Some(IntrospectValue::Bool(false)),
+                "the AT reset restored the row to its default",
+            );
+            // A non-control Click (a bare leaf row id) falls through (no prefix).
+            assert!(
+                !PropertyGridView::access_child_invoke(&mut scene, GRID_TAG, "6", AccessAction::Click),
+                "a non-control Click falls through to the grid's roving",
             );
         });
     }
