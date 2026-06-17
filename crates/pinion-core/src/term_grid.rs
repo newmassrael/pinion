@@ -30,13 +30,15 @@
 //!
 //! The cell's **attributes** ([`CellAttrs`]: bold / dim / italic /
 //! underline / blink / reverse / hidden / strikethrough) land in R974,
-//! and the grid **cursor** ([`GridCursor`]: position / shape /
-//! visibility) in R975. The **wide-char trailer** cells, the
-//! **alternate-screen** buffer, and **damage** tracking are each a
-//! deliberate follow-up S5 slice; these slices prove the data model with
-//! their cell + projection consumer (the [`crate::scene::TextGridNode`]
-//! cells + the `scene/snapshot` readback), not pixel paint (glyph
-//! rendering stays deferred — the grid is still paint-opaque this round).
+//! the grid **cursor** ([`GridCursor`]: position / shape / visibility) in
+//! R975, and the **wide-char trailer** ([`CellWidth`]: a wide cluster
+//! occupies two columns — a head cell plus a continuation trailer) in
+//! R976. The **alternate-screen** buffer and **damage** tracking are each
+//! a deliberate follow-up S5 slice; these slices prove the data model
+//! with their cell + projection consumer (the
+//! [`crate::scene::TextGridNode`] cells + the `scene/snapshot` readback),
+//! not pixel paint (glyph rendering stays deferred — the grid is still
+//! paint-opaque this round).
 
 use crate::style::Color;
 use std::borrow::Cow;
@@ -347,23 +349,63 @@ impl CellAttrs {
     }
 }
 
+/// A cell's display-width role (R976) — how many terminal columns its
+/// grapheme cluster occupies, and whether it is the *continuation* column
+/// of a wide cluster.
+///
+/// A CJK ideograph or a fullwidth Latin form occupies **two** columns: the
+/// cluster is drawn in the [`Wide`](Self::Wide) head cell and the next
+/// column is a [`Trailer`](Self::Trailer) — a continuation marker that
+/// carries no independent glyph and is not separately addressable. This
+/// mirrors a real emulator's two-cell representation (`alacritty`'s
+/// `WIDE_CHAR` + `WIDE_CHAR_SPACER`). The display width is the
+/// *producer's* determination (it owns the emulator and its width tables —
+/// R969 "producer owns authoritative state"); pinion's model only
+/// represents the result, so no width table lives in the core.
+///
+/// Like [`TermColor`] / [`CursorShape`] this is the *complete, closed* set
+/// of width roles a cell in a settled projection can carry, so
+/// `#[non_exhaustive]` is deliberately **not** applied and callers may
+/// match exhaustively. (The line-wrap leading-spacer edge case an emulator
+/// tracks during reflow is resolved producer-side into a blank
+/// [`Narrow`](Self::Narrow) cell before projection — it is not a fourth
+/// display state.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CellWidth {
+    /// A single-column cluster — the default for every cell.
+    #[default]
+    Narrow,
+    /// A wide-cluster **head**: the cluster is drawn here and occupies
+    /// this column plus the following [`Trailer`](Self::Trailer) column.
+    Wide,
+    /// The continuation column occupied by the preceding [`Wide`](Self::Wide)
+    /// head: no independent glyph (an empty cluster), not separately
+    /// addressable. It carries the head's colours so the background paints
+    /// across both columns.
+    Trailer,
+}
+
 /// One terminal grid cell: the displayed grapheme cluster plus its
-/// foreground / background [`TermColor`]s and its [`CellAttrs`] (R974).
-/// The wide-char trailer marker and the cursor are follow-up S5 slices.
+/// foreground / background [`TermColor`]s, its [`CellAttrs`] (R974), and
+/// its [`CellWidth`] display-width role (R976). The cursor is a grid-level
+/// concern carried on the [`GridBuffer`] (R975), not on the cell.
 ///
 /// `cluster` is a grapheme cluster string (not a single `char`) so a
 /// base char plus combining marks / a ZWJ emoji sequence occupy one cell
 /// — `Cow<'static, str>` lets a blank cell borrow the static `" "` while
-/// produced cells own their string.
+/// produced cells own their string. A [`CellWidth::Trailer`] cell carries
+/// the empty cluster `""`, so a wide cluster contributes its glyph exactly
+/// once to an assembled row even though it occupies two columns.
 ///
-/// `#[non_exhaustive]` per the R974.1 forward-compat hedge: the follow-up
-/// slices add fields (wide-char trailer marker, cursor), and construction
-/// routes through [`Self::new`] + [`Self::with_attrs`], so the hedge is
-/// free (matching [`crate::scene::TextGridNode`]).
+/// `#[non_exhaustive]` per the R974.1 forward-compat hedge: later slices
+/// add fields, and construction routes through [`Self::new`] /
+/// [`Self::blank`] + the builders, so the hedge is free (matching
+/// [`crate::scene::TextGridNode`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TermCell {
-    /// The grapheme cluster painted in this cell. `" "` for a blank cell.
+    /// The grapheme cluster painted in this cell. `" "` for a blank cell,
+    /// `""` for a [`CellWidth::Trailer`].
     pub cluster: Cow<'static, str>,
     /// Foreground (glyph) colour, resolved via the grid's [`Palette`].
     pub fg: TermColor,
@@ -371,11 +413,14 @@ pub struct TermCell {
     pub bg: TermColor,
     /// SGR display attributes (R974). Empty for a blank cell.
     pub attrs: CellAttrs,
+    /// Display-width role (R976). [`CellWidth::Narrow`] for a blank cell.
+    pub width: CellWidth,
 }
 
 impl TermCell {
-    /// A blank cell: a single space with default foreground / background
-    /// and no attributes. The fill value a fresh [`GridBuffer`] uses.
+    /// A blank cell: a single narrow space with default foreground /
+    /// background and no attributes. The fill value a fresh [`GridBuffer`]
+    /// uses.
     #[must_use]
     pub const fn blank() -> Self {
         Self {
@@ -383,11 +428,13 @@ impl TermCell {
             fg: TermColor::Default,
             bg: TermColor::Default,
             attrs: CellAttrs::empty(),
+            width: CellWidth::Narrow,
         }
     }
 
-    /// A cell carrying `cluster` with the given foreground / background
-    /// and no attributes. Chain [`Self::with_attrs`] to add SGR styling.
+    /// A narrow cell carrying `cluster` with the given foreground /
+    /// background and no attributes. Chain [`Self::with_attrs`] for SGR
+    /// styling or [`Self::wide`] to mark it a wide-cluster head.
     #[must_use]
     pub fn new(cluster: impl Into<Cow<'static, str>>, fg: TermColor, bg: TermColor) -> Self {
         Self {
@@ -395,6 +442,7 @@ impl TermCell {
             fg,
             bg,
             attrs: CellAttrs::empty(),
+            width: CellWidth::Narrow,
         }
     }
 
@@ -403,6 +451,32 @@ impl TermCell {
     pub fn with_attrs(mut self, attrs: CellAttrs) -> Self {
         self.attrs = attrs;
         self
+    }
+
+    /// Mark this cell a wide-cluster **head** ([`CellWidth::Wide`], builder
+    /// form): its cluster occupies this column and the next, which the
+    /// producer fills with [`Self::trailer`]. The producer marks the cells
+    /// it knows are wide — pinion stores the determination, it does not
+    /// compute width.
+    #[must_use]
+    pub fn wide(mut self) -> Self {
+        self.width = CellWidth::Wide;
+        self
+    }
+
+    /// The [`CellWidth::Trailer`] cell that occupies the column after this
+    /// wide head: the empty cluster `""`, this head's colours and
+    /// attributes (so the background paints across both columns). The
+    /// producer places it in the column immediately after the head.
+    #[must_use]
+    pub fn trailer(&self) -> Self {
+        Self {
+            cluster: Cow::Borrowed(""),
+            fg: self.fg,
+            bg: self.bg,
+            attrs: self.attrs,
+            width: CellWidth::Trailer,
+        }
     }
 }
 
@@ -591,7 +665,8 @@ impl GridBuffer {
 #[cfg(test)]
 mod tests {
     use super::{
-        CellAttrs, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, TermCell, TermColor,
+        CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, TermCell,
+        TermColor,
     };
     use crate::style::Color;
 
@@ -775,5 +850,60 @@ mod tests {
         assert_eq!(b.cell(0, 0), Some(&TermCell::blank()));
         // The geometry-only default buffer also carries the hidden cursor.
         assert_eq!(GridBuffer::default().cursor(), GridCursor::default());
+    }
+
+    /// `\u{4e16}` is the CJK ideograph 世 (East Asian Wide) — kept as an
+    /// escape per the non-ASCII-literal rule (raw glyphs in docs only).
+    const WIDE_CLUSTER: &str = "\u{4e16}";
+
+    #[test]
+    fn cell_width_default_is_narrow() {
+        // Narrow is the default role; the enum is the complete closed set
+        // (exhaustively matchable, like CursorShape / TermColor).
+        assert_eq!(CellWidth::default(), CellWidth::Narrow);
+        assert_eq!(TermCell::blank().width, CellWidth::Narrow);
+        assert_eq!(
+            TermCell::new("a", TermColor::Default, TermColor::Default).width,
+            CellWidth::Narrow,
+        );
+    }
+
+    #[test]
+    fn wide_head_and_trailer_pair_up() {
+        let head = TermCell::new(WIDE_CLUSTER, TermColor::Indexed(1), TermColor::Indexed(4))
+            .with_attrs(CellAttrs::empty().with_bold(true))
+            .wide();
+        assert_eq!(head.width, CellWidth::Wide);
+        assert_eq!(head.cluster, WIDE_CLUSTER);
+
+        // The trailer derives from the head: empty cluster, the head's
+        // colours + attrs (so the background paints across), Trailer role.
+        let trail = head.trailer();
+        assert_eq!(trail.width, CellWidth::Trailer);
+        assert_eq!(trail.cluster, ""); // no independent glyph
+        assert_eq!(trail.fg, head.fg);
+        assert_eq!(trail.bg, head.bg);
+        assert_eq!(trail.attrs, head.attrs);
+    }
+
+    #[test]
+    fn wide_cluster_contributes_its_glyph_once_across_two_columns() {
+        // A 3-column row: a wide head + its trailer + one narrow cell. The
+        // assembled text has two glyphs (世 once, then x) for three columns
+        // — the trailer's empty cluster contributes nothing.
+        let head = TermCell::new(WIDE_CLUSTER, TermColor::Default, TermColor::Default).wide();
+        let b = GridBuffer::new(3, 1).with_row(
+            0,
+            [
+                head.clone(),
+                head.trailer(),
+                TermCell::new("x", TermColor::Default, TermColor::Default),
+            ],
+        );
+        assert_eq!(b.cell(0, 0).unwrap().width, CellWidth::Wide);
+        assert_eq!(b.cell(1, 0).unwrap().width, CellWidth::Trailer);
+        assert_eq!(b.cell(2, 0).unwrap().width, CellWidth::Narrow);
+        let row: String = (0..3).map(|c| b.cell(c, 0).unwrap().cluster.clone()).collect();
+        assert_eq!(row, format!("{WIDE_CLUSTER}x")); // two glyphs, three columns
     }
 }

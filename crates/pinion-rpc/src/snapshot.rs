@@ -48,7 +48,8 @@ use pinion_core::external::IntrospectValue;
 use pinion_core::scene::Rect;
 use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
 use pinion_core::{
-    CellAttrs, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, Scene, TermColor,
+    CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, Scene,
+    TermColor,
 };
 
 use crate::path::{self, PathError};
@@ -294,8 +295,12 @@ pub struct GridRowSnapshot {
 }
 
 /// R973 §5.41 — a maximal run of consecutive cells in a row sharing one
-/// `(fg, bg, attrs)` triple, `[start, start + len)` in columns. R974 adds
-/// `attrs` to the run key so a change in SGR styling starts a new run.
+/// `(fg, bg, attrs, width)` tuple, `[start, start + len)` in columns. R974
+/// added `attrs` to the run key (an SGR change starts a new run); R976
+/// adds `width` (`"narrow"` / `"wide"` / `"trailer"`), so a wide-cluster
+/// head and its continuation trailer are each their own run and a client
+/// can map glyphs to columns unambiguously even where wide and narrow
+/// cells mix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridStyleRun {
     pub start: u16,
@@ -303,6 +308,7 @@ pub struct GridStyleRun {
     pub fg: TermColorSnapshot,
     pub bg: TermColorSnapshot,
     pub attrs: CellAttrs,
+    pub width: &'static str,
 }
 
 /// R973 §5.41 — a cell colour in a snapshot. Reports both the *stored*
@@ -498,20 +504,22 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
 /// R973 §5.41 — project a [`GridBuffer`] into per-row snapshots, resolving
 /// each cell's colours through `palette` (the R969 "resolve at paint
 /// time" contract — a snapshot is a paint-time readback). Consecutive
-/// cells with an identical `(fg, bg)` pair collapse into one
-/// [`GridStyleRun`] (run-length style compression). An empty buffer
-/// yields no rows.
+/// cells with an identical `(fg, bg, attrs, width)` tuple collapse into
+/// one [`GridStyleRun`] (run-length style compression). A
+/// [`CellWidth::Trailer`] carries the empty cluster, so a wide cluster
+/// contributes its glyph to `text` exactly once even across its two
+/// columns (R976). An empty buffer yields no rows.
 fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot> {
     (0..buffer.rows())
         .map(|row| {
             let mut text = String::new();
             let mut runs: Vec<GridStyleRun> = Vec::new();
-            let mut prev: Option<(TermColor, TermColor, CellAttrs)> = None;
+            let mut prev: Option<(TermColor, TermColor, CellAttrs, CellWidth)> = None;
             for col in 0..buffer.cols() {
                 // Every coordinate in `0..cols × 0..rows` is in bounds.
                 let cell = buffer.cell(col, row).expect("cell within buffer bounds");
                 text.push_str(&cell.cluster);
-                let style = (cell.fg, cell.bg, cell.attrs);
+                let style = (cell.fg, cell.bg, cell.attrs, cell.width);
                 match runs.last_mut() {
                     Some(run) if prev == Some(style) => run.len += 1,
                     _ => runs.push(GridStyleRun {
@@ -520,6 +528,7 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
                         fg: term_color_snapshot(cell.fg, ColorTarget::Foreground, palette),
                         bg: term_color_snapshot(cell.bg, ColorTarget::Background, palette),
                         attrs: cell.attrs,
+                        width: cell_width_wire(cell.width),
                     }),
                 }
                 prev = Some(style);
@@ -527,6 +536,17 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
             GridRowSnapshot { text, runs }
         })
         .collect()
+}
+
+/// R976 §5.41 — the wire string for a cell's [`CellWidth`] role, used as
+/// the [`GridStyleRun::width`] discriminator (mirroring how
+/// [`grid_cursor_snapshot`] maps a [`CursorShape`]).
+fn cell_width_wire(width: CellWidth) -> &'static str {
+    match width {
+        CellWidth::Narrow => "narrow",
+        CellWidth::Wide => "wide",
+        CellWidth::Trailer => "trailer",
+    }
 }
 
 /// R973 §5.41 — capture a cell's stored [`TermColor`] plus its
@@ -620,6 +640,43 @@ mod tests {
     }
 
     #[test]
+    fn text_grid_snapshot_marks_wide_and_trailer_runs() {
+        // R976 §5.41 — a wide head, its trailer, and a narrow cell each
+        // become their own run; the wide cluster contributes one glyph and
+        // the trailer none, so `text` has two glyphs over three columns.
+        use pinion_core::{GridBuffer, TermCell, TermColor};
+        let shi = "\u{4e16}"; // 世 — East Asian Wide
+        let head = TermCell::new(shi, TermColor::Indexed(1), TermColor::Default).wide();
+        let buf = GridBuffer::new(3, 1).with_row(
+            0,
+            [
+                head.clone(),
+                head.trailer(),
+                TermCell::new("x", TermColor::Default, TermColor::Default),
+            ],
+        );
+        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
+            .with_cells(buf);
+        node.rect = Rect::new(0, 0, 24, 16); // 3 × 1 @ 8×16
+        match snapshot(&Scene::TextGrid(node), "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                let row = &snap.grid_rows[0];
+                assert_eq!(row.text, format!("{shi}x"), "wide glyph once, then narrow");
+                assert_eq!(row.runs.len(), 3, "head / trailer / narrow are distinct runs");
+                assert_eq!((row.runs[0].start, row.runs[0].len), (0, 1));
+                assert_eq!(row.runs[0].width, "wide");
+                assert_eq!(row.runs[0].fg.index, Some(1)); // head keeps its colour
+                assert_eq!((row.runs[1].start, row.runs[1].len), (1, 1));
+                assert_eq!(row.runs[1].width, "trailer");
+                // The trailer carries the head's colour (bg paints across).
+                assert_eq!(row.runs[1].fg.index, Some(1));
+                assert_eq!(row.runs[2].width, "narrow");
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn text_grid_snapshot_reports_explicit_cursor() {
         // R975 §5.41 — a producer-set cursor is reported verbatim: cell
         // position, the shape's wire string, and visibility.
@@ -673,6 +730,8 @@ mod tests {
                 assert_eq!((runs[2].start, runs[2].len), (3, 1)); // A again (not merged with run 0)
                 assert_eq!((runs[3].start, runs[3].len), (4, 1)); // A+bold (attrs break)
                 assert!(runs[3].attrs.bold && !runs[2].attrs.bold);
+                // R976 — narrow cells report the narrow width role.
+                assert!(runs.iter().all(|r| r.width == "narrow"));
             }
             other => panic!("expected TextGrid, got {other:?}"),
         }

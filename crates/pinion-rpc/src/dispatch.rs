@@ -3168,7 +3168,8 @@ fn grid_row_to_json(row: &GridRowSnapshot) -> Value {
 }
 
 /// R973 §5.41 — wire form for one [`GridStyleRun`]: `{start, len, fg, bg,
-/// attrs}` (R974 adds the SGR `attrs` object).
+/// attrs, width}` (R974 added the SGR `attrs` object; R976 added the
+/// `width` role `"narrow"` / `"wide"` / `"trailer"`).
 fn grid_style_run_to_json(run: &GridStyleRun) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("start".to_string(), Value::Number(run.start.into()));
@@ -3176,6 +3177,7 @@ fn grid_style_run_to_json(run: &GridStyleRun) -> Value {
     obj.insert("fg".to_string(), term_color_snapshot_to_json(&run.fg));
     obj.insert("bg".to_string(), term_color_snapshot_to_json(&run.bg));
     obj.insert("attrs".to_string(), cell_attrs_to_json(run.attrs));
+    obj.insert("width".to_string(), Value::String(run.width.to_string()));
     Value::Object(obj)
 }
 

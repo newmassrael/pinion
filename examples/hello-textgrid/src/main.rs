@@ -37,10 +37,18 @@
 //! visibility travel with the projection. The other grids carry the
 //! default (hidden, home, block) cursor.
 //!
-//! Cell **wide-char trailer / alt-screen / damage** and **glyph paint**
-//! stay deliberate follow-up rounds — the grid is still paint-opaque, so
-//! the window renders only its surface background; the deliverable is the
-//! cell *data model*, read as data.
+//! R976 adds a sixth grid, **`htg_wide`**, carrying wide-cluster cells
+//! ([`CellWidth`]): each CJK ideograph (世界) and fullwidth Latin form (Ａ)
+//! occupies two columns — a head cell ([`TermCell::wide`]) plus a
+//! continuation trailer ([`TermCell::trailer`]) that carries no glyph. The
+//! snapshot's row text holds each wide glyph once even though it spans two
+//! columns, and the style runs mark `wide` / `trailer` so a client maps
+//! glyphs to columns. The other grids stay all-narrow.
+//!
+//! Cell **alt-screen / damage** and **glyph paint** stay deliberate
+//! follow-up rounds — the grid is still paint-opaque, so the window
+//! renders only its surface background; the deliverable is the cell *data
+//! model*, read as data.
 //!
 //! ## The AI-first witness (§2 #7 scene-as-data)
 //!
@@ -55,7 +63,10 @@
 //! every colour form resolves correctly. For `htg_cursor`, `cursor`
 //! reports the cursor's `(col, row)`, `shape`, and `visible` —
 //! `tools/demos/r975_textgrid_cursor.py` asserts it (and that the other
-//! grids carry the default hidden cursor).
+//! grids carry the default hidden cursor). For `htg_wide`, each style run
+//! carries a `width` (`narrow` / `wide` / `trailer`) and the row text
+//! holds each wide glyph once — `tools/demos/r976_textgrid_wide.py`
+//! asserts the head / trailer structure and glyph-to-column mapping.
 
 use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::{External, StubExternal};
@@ -226,6 +237,39 @@ fn cursor_buffer() -> GridBuffer {
         ))
 }
 
+/// Tag of the R976 wide-char grid, and its placement + extent.
+const WIDE_TAG: &str = "htg_wide";
+const WIDE_POS: (u32, u32) = (400, 680);
+/// `8 × 2` cells at the `8×16` baseline metric → `64 × 32` px.
+const WIDE_COLS: u16 = 8;
+const WIDE_ROWS: u16 = 2;
+const WIDE_SIZE: (u32, u32) = (64, 32);
+
+// CJK ideographs / fullwidth Latin occupy two terminal columns. Kept as
+// `\u{..}` escapes per the non-ASCII-literal rule (raw glyphs in docs only):
+//   世 U+4E16, 界 U+754C (East Asian Wide); Ａ U+FF21 (Fullwidth Latin A).
+const CJK_SHI: &str = "\u{4e16}";
+const CJK_JIE: &str = "\u{754c}";
+const FW_A: &str = "\u{ff21}";
+
+/// Build the R976 wide-char projection: each wide cluster is a head cell
+/// (marked [`TermCell::wide`]) plus a continuation [`TermCell::trailer`].
+/// A real producer marks the cells its emulator computed as wide; here the
+/// two known-wide forms (CJK ideograph, fullwidth Latin) are marked
+/// explicitly so the snapshot consumer can witness the head / trailer
+/// run structure and the glyph-to-column mapping.
+fn wide_buffer() -> GridBuffer {
+    let shi = TermCell::new(CJK_SHI, TermColor::Indexed(1), TermColor::Default).wide();
+    let jie = TermCell::new(CJK_JIE, TermColor::Indexed(2), TermColor::Default).wide();
+    let fw_a = TermCell::new(FW_A, TermColor::Indexed(4), TermColor::Default).wide();
+    let narrow = |c: &'static str| TermCell::new(c, TermColor::Default, TermColor::Default);
+    GridBuffer::new(WIDE_COLS, WIDE_ROWS)
+        // Row 0 — two wide CJK ideographs: 4 columns, each a head + trailer.
+        .with_row(0, [shi.clone(), shi.trailer(), jie.clone(), jie.trailer()])
+        // Row 1 — narrow A, a wide fullwidth Ａ (head + trailer), narrow B.
+        .with_row(1, [narrow("A"), fw_a.clone(), fw_a.trailer(), narrow("B")])
+}
+
 /// Build one absolutely-positioned grid: the absolute layout removes it
 /// from flow and gives it exactly its own `Size`, so the layout pass
 /// resolves a deterministic pixel `Rect` and the derived `(cols, rows)`
@@ -291,6 +335,20 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             ),
     );
 
+    // The R976 wide-char grid (8×16 baseline), carrying a projection with
+    // wide CJK / fullwidth clusters (head + trailer). Isolated from the
+    // other grids so their demos stay regression-free (all-narrow).
+    let wide = Scene::TextGrid(
+        TextGridNode::new(CellMetric::DEFAULT)
+            .with_tag(WIDE_TAG)
+            .with_cells(wide_buffer())
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(WIDE_POS.0, WIDE_POS.1)
+                    .with_size(Size::px(WIDE_SIZE.0, WIDE_SIZE.1)),
+            ),
+    );
+
     Scene::Container(
         ContainerNode::new(vec![
             grid(DEFAULT_TAG, CellMetric::DEFAULT, DEFAULT_POS, DEFAULT_SIZE),
@@ -298,6 +356,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
             content,
             attrs,
             cursor,
+            wide,
         ])
         .with_tag(ROOT_TAG)
         .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface))),
@@ -375,6 +434,7 @@ fn main() {
 mod tests {
     use super::*;
     use pinion_core::scene::Rect;
+    use pinion_core::CellWidth;
 
     /// The derived dims are a pure function of `rect` + metric — the
     /// R969 layout-derived SSOT. The running shell fills `rect` via the
@@ -414,6 +474,31 @@ mod tests {
         assert!(scene.contains_tag(CONTENT_TAG));
         assert!(scene.contains_tag(ATTRS_TAG));
         assert!(scene.contains_tag(CURSOR_TAG));
+        assert!(scene.contains_tag(WIDE_TAG));
+    }
+
+    #[test]
+    fn wide_buffer_pairs_each_wide_cluster_with_a_trailer() {
+        let b = wide_buffer();
+        assert_eq!((b.cols(), b.rows()), (WIDE_COLS, WIDE_ROWS));
+
+        // Row 0 — two wide CJK ideographs, each head (col even) + trailer.
+        assert_eq!(b.cell(0, 0).unwrap().cluster, CJK_SHI);
+        assert_eq!(b.cell(0, 0).unwrap().width, CellWidth::Wide);
+        assert_eq!(b.cell(1, 0).unwrap().width, CellWidth::Trailer);
+        assert_eq!(b.cell(1, 0).unwrap().cluster, ""); // trailer carries no glyph
+        // The trailer shares the head's colour (so the bg paints across).
+        assert_eq!(b.cell(1, 0).unwrap().fg, b.cell(0, 0).unwrap().fg);
+        assert_eq!(b.cell(2, 0).unwrap().cluster, CJK_JIE);
+        assert_eq!(b.cell(3, 0).unwrap().width, CellWidth::Trailer);
+
+        // Row 1 — narrow A, wide fullwidth Ａ (head + trailer), narrow B.
+        assert_eq!(b.cell(0, 1).unwrap().width, CellWidth::Narrow);
+        assert_eq!(b.cell(1, 1).unwrap().cluster, FW_A);
+        assert_eq!(b.cell(1, 1).unwrap().width, CellWidth::Wide);
+        assert_eq!(b.cell(2, 1).unwrap().width, CellWidth::Trailer);
+        assert_eq!(b.cell(3, 1).unwrap().cluster, "B");
+        assert_eq!(b.cell(3, 1).unwrap().width, CellWidth::Narrow);
     }
 
     #[test]

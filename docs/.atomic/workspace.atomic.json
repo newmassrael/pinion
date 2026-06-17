@@ -44507,6 +44507,64 @@
         "a11y grid/treegrid role + per-cell nodes land with the paint+input slice (still partly deferred)"
       ]
     },
+    "R976": {
+      "decision_summary": "R976 §5.41 cell-native TextGrid wide-char trailer (S5 slice 4): CellWidth (Narrow/Wide/Trailer) on TermCell + snapshot run width field + hello-textgrid htg_wide consumer",
+      "changes_bullets": [
+        "term_grid: CellWidth enum Narrow/Wide/Trailer = closed set, exhaustive like CursorShape",
+        "TermCell.width field (TermCell already non_exhaustive: R974.1 hedge provisioned wide-char)",
+        "TermCell::wide() head builder + trailer() = empty cluster + head colours/attrs, Trailer role",
+        "no width fn in core: producer determines width (R969), pinion only represents the result",
+        "snapshot: GridStyleRun.width (narrow/wide/trailer); run key += width so head/trailer split",
+        "trailer carries empty cluster so a wide glyph contributes to row text once across two columns",
+        "dispatch grid_style_run_to_json += width; cell_width_wire mirrors the cursor-shape wire-string",
+        "hello-textgrid htg_wide grid: 世界 (two wide CJK) + A/Ａ/B (narrow/wide interleave)",
+        "other grids all-narrow; additive width field, r972-r975 demos regression-free"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; new: 3 core + 1 snapshot + 1 example test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r976 demo PASS (>30 assertions); r972-r975 PASS (additive width field regression-free)",
+        "mnemosyne validate-workspace T1 reject=0, no new orphan",
+        "3b self-grep: CellWidth free name; no existing trailer concept; CJK via \\u escapes (R815 rule)",
+        "audit: unicode-width is a workspace dep but NOT added to core (producer owns width, R969)"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "remaining S5 slices: alt-screen (main vs alt buffer) / damage (token streaming, R969 Tier1)",
+        "glyph paint stays deferred (paint-opaque); cell model now complete (colour+attrs+cursor+width)",
+        "leading-wide-char-spacer wrap edge = producer-resolved to a blank Narrow cell, not a 4th state"
+      ],
+      "publishable_decision_summary": "R976 §5.41 cell-native TextGrid wide-char trailer (S5 slice 4): CellWidth (Narrow/Wide/Trailer) on TermCell + snapshot run width field + hello-textgrid htg_wide consumer",
+      "publishable_changes_bullets": [
+        "term_grid: CellWidth enum Narrow/Wide/Trailer = closed set, exhaustive like CursorShape",
+        "TermCell.width field (TermCell already non_exhaustive: R974.1 hedge provisioned wide-char)",
+        "TermCell::wide() head builder + trailer() = empty cluster + head colours/attrs, Trailer role",
+        "no width fn in core: producer determines width (R969), pinion only represents the result",
+        "snapshot: GridStyleRun.width (narrow/wide/trailer); run key += width so head/trailer split",
+        "trailer carries empty cluster so a wide glyph contributes to row text once across two columns",
+        "dispatch grid_style_run_to_json += width; cell_width_wire mirrors the cursor-shape wire-string",
+        "hello-textgrid htg_wide grid: 世界 (two wide CJK) + A/Ａ/B (narrow/wide interleave)",
+        "other grids all-narrow; additive width field, r972-r975 demos regression-free"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 fail; new: 3 core + 1 snapshot + 1 example test)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello exit 0 (-D pedantic)",
+        "r976 demo PASS (>30 assertions); r972-r975 PASS (additive width field regression-free)",
+        "mnemosyne validate-workspace T1 reject=0, no new orphan",
+        "3b self-grep: CellWidth free name; no existing trailer concept; CJK via \\u escapes (R815 rule)",
+        "audit: unicode-width is a workspace dep but NOT added to core (producer owns width, R969)"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "remaining S5 slices: alt-screen (main vs alt buffer) / damage (token streaming, R969 Tier1)",
+        "glyph paint stays deferred (paint-opaque); cell model now complete (colour+attrs+cursor+width)",
+        "leading-wide-char-spacer wrap edge = producer-resolved to a blank Narrow cell, not a 4th state"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
