@@ -43805,6 +43805,60 @@
         "property-grid slider-leaf a11y (R964/R894 sibling) still open"
       ]
     },
+    "R967": {
+      "decision_summary": "AI-first toggle-format RPC verb (mergeCharFormat over RPC): toggle one style field over the selection/caret preserving the run's other fields, closing the wire-symmetry gap where the human toolbar could toggle-preserve-colour but the RPC could only apply-style wholesale. The toggle-direction read + flip live in one TextEditState SSOT (reflective_style + toggle_format + FormatField), shared by the toolbar and the RPC so the human + AI channels cannot diverge.",
+      "changes_bullets": [
+        "AI-first `toggle-format` RPC verb: flip bold/italic/underline/strikethrough over selection/caret, preserve other fields",
+        "closes the wire-symmetry gap: human toolbar (R769) could toggle-preserve-color; RPC could only apply-style (wholesale)",
+        "FormatField enum {Bold,Italic,Underline,Strikethrough} + is_on/set/from_wire (the field discriminator + wire vocab)",
+        "TextEditState::reflective_style() SSOT: the selection-start/caret style the toggle direction + toolbar pressed-state share",
+        "TextEditState::toggle_format(field, base): flip one field via reflective_style + format_at_caret_or_selection, one undo step",
+        "hello-textarea apply_format + toolbar pressed-state both delegate to the substrate SSOT (no inline flip, no byte-dup read)",
+        "invoke_style helper extracted from invoke (too_many_lines, R959 precedent); schema slot 34->35 + slot-count test renamed"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: exit 0 (authoritative, no pipe), 171 ok groups, 0 fail; 5 new R967 tests + renamed slot test",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): exit 0",
+        "r967 demo PASS (33 assertions: toggle bold preserves colour, reversible, underline/strikethrough RPC-superset, unknown reject)",
+        "regression: r769/r768/r951/r928/r796 textarea demos PASS",
+        "session-review hardening folded in pre-commit: reflective_style SSOT (read was byte-dup'd), honest base doc, slot-count fix"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "RPC base for unstyled GAP bytes = caret's effective style (default fallback), NOT the toolbar's animated theme ink: an inherent view/headless layer boundary (documented); the AI uses apply-style for explicit colour over plain text",
+        "FormatField::is_on Bold = exact FontWeight::BOLD (700); a 600/800 weight reads as not-bold (matches pre-R967; no non-700 source in the example) - latent if richer weights arrive",
+        "AT screen-reader toggle (focusable format-control node) not exposed; the toolbar aria-pressed reflects state, activation is pointer/RPC - follow-up if AT activation is needed"
+      ],
+      "publishable_decision_summary": "AI-first toggle-format RPC verb (mergeCharFormat over RPC): toggle one style field over the selection/caret preserving the run's other fields, closing the wire-symmetry gap where the human toolbar could toggle-preserve-colour but the RPC could only apply-style wholesale. The toggle-direction read + flip live in one TextEditState SSOT (reflective_style + toggle_format + FormatField), shared by the toolbar and the RPC so the human + AI channels cannot diverge.",
+      "publishable_changes_bullets": [
+        "AI-first `toggle-format` RPC verb: flip bold/italic/underline/strikethrough over selection/caret, preserve other fields",
+        "closes the wire-symmetry gap: human toolbar (R769) could toggle-preserve-color; RPC could only apply-style (wholesale)",
+        "FormatField enum {Bold,Italic,Underline,Strikethrough} + is_on/set/from_wire (the field discriminator + wire vocab)",
+        "TextEditState::reflective_style() SSOT: the selection-start/caret style the toggle direction + toolbar pressed-state share",
+        "TextEditState::toggle_format(field, base): flip one field via reflective_style + format_at_caret_or_selection, one undo step",
+        "hello-textarea apply_format + toolbar pressed-state both delegate to the substrate SSOT (no inline flip, no byte-dup read)",
+        "invoke_style helper extracted from invoke (too_many_lines, R959 precedent); schema slot 34->35 + slot-count test renamed"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: exit 0 (authoritative, no pipe), 171 ok groups, 0 fail; 5 new R967 tests + renamed slot test",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): exit 0",
+        "r967 demo PASS (33 assertions: toggle bold preserves colour, reversible, underline/strikethrough RPC-superset, unknown reject)",
+        "regression: r769/r768/r951/r928/r796 textarea demos PASS",
+        "session-review hardening folded in pre-commit: reflective_style SSOT (read was byte-dup'd), honest base doc, slot-count fix"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "RPC base for unstyled GAP bytes = caret's effective style (default fallback), NOT the toolbar's animated theme ink: an inherent view/headless layer boundary (documented); the AI uses apply-style for explicit colour over plain text",
+        "FormatField::is_on Bold = exact FontWeight::BOLD (700); a 600/800 weight reads as not-bold (matches pre-R967; no non-700 source in the example) - latent if richer weights arrive",
+        "AT screen-reader toggle (focusable format-control node) not exposed; the toolbar aria-pressed reflects state, activation is pointer/RPC - follow-up if AT activation is needed"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -122,7 +122,7 @@ use crate::style::{
     Color, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
 };
 use crate::widgets::caret_blink::CaretBlink;
-use crate::widgets::text_edit::TextEditState;
+use crate::widgets::text_edit::{FormatField, TextEditState};
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 use crate::{WidgetEventName, WidgetStateName};
 
@@ -1280,6 +1280,11 @@ impl ExternalIntrospect for TextFieldExternal {
             // [`StyleRun`]: crate::scene::StyleRun
             ("apply-style", "boolean"),
             ("clear-style", "boolean"),
+            // R967 §5.36 — toggle ONE style field (bold / italic / underline /
+            // strikethrough) over the selection / caret, preserving the run's
+            // other fields (the AI-first peer of the toolbar B / I toggle —
+            // mergeCharFormat). Text arg = the field name; returns the new state.
+            ("toggle-format", "boolean"),
             // R903 §5.22 — find &amp; replace. `find_query` /
             // `find_case_sensitive` / `find_whole_word` are query+intervene
             // (the needle + its flags); `find_matches` is a derived read
@@ -1791,34 +1796,12 @@ impl ExternalIntrospect for TextFieldExternal {
             // the `key` / `composition` arg-shape discipline).
             //
             // [`Color::from_hex`]: crate::style::Color::from_hex
-            "apply-style" => match args {
-                IntrospectValue::Json(ref obj) => match parse_apply_style_json(obj) {
-                    Some((start, end, style)) => Ok(IntrospectValue::Bool(
-                        self.text_state().is_some_and(|s| {
-                            s.apply_style_run(start, end, style);
-                            true
-                        }),
-                    )),
-                    None => Err(InvokeError::TypeMismatch),
-                },
-                _ => Err(InvokeError::TypeMismatch),
-            },
-            // R768 §5.36 §5.22 — clear styling over a byte range
-            // (clearFormat). Json `{"start", "end"}`; returns
-            // `Bool(true)` when a state is attached (the range's runs are
-            // stripped back to the base style), `Bool(false)` otherwise.
-            "clear-style" => match args {
-                IntrospectValue::Json(ref obj) => match parse_clear_style_json(obj) {
-                    Some((start, end)) => Ok(IntrospectValue::Bool(
-                        self.text_state().is_some_and(|s| {
-                            s.clear_style_runs(start, end);
-                            true
-                        }),
-                    )),
-                    None => Err(InvokeError::TypeMismatch),
-                },
-                _ => Err(InvokeError::TypeMismatch),
-            },
+            // R768 / R967 §5.36 — the styled-run verbs (apply-style wholesale
+            // setCharFormat / clear-style clearFormat / toggle-format
+            // mergeCharFormat), delegated to keep `invoke` under the
+            // `too_many_lines` budget (the R959 `invoke_send` / `invoke_mark`
+            // extraction precedent).
+            "apply-style" | "clear-style" | "toggle-format" => self.invoke_style(path, &args),
             // R951 §5.36 §5.22 — active typing marks (collapsed-caret formatting,
             // ProseMirror storedMarks). `mark` arms it (so the next typed text is
             // styled), `clear-mark` drops it; split out (SRP, line ceiling) like
@@ -1849,6 +1832,70 @@ impl ExternalIntrospect for TextFieldExternal {
 }
 
 impl TextFieldExternal {
+    /// R768 / R967 §5.36 — the styled-run `invoke` verbs, split out of
+    /// [`invoke`](ExternalIntrospect::invoke) for SRP + the `too_many_lines`
+    /// ceiling (the find / fold / mark precedent): `apply-style` overlays one run
+    /// wholesale (setCharFormat), `clear-style` strips a range (clearFormat), and
+    /// `toggle-format` flips ONE field preserving the run's others
+    /// (mergeCharFormat — the AI-first peer of the toolbar B / I toggle, routed
+    /// through the shared [`TextEditState::toggle_format`] SSOT, so the human + AI
+    /// channels flip the field identically over already-styled bytes). Each
+    /// returns `Bool` (setter-returns-outcome): the styled / cleared flag, or for
+    /// `toggle-format` the new on-state. `TypeMismatch` on a malformed arg.
+    fn invoke_style(
+        &mut self,
+        path: &str,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        match path {
+            "apply-style" => match args {
+                IntrospectValue::Json(obj) => match parse_apply_style_json(obj) {
+                    Some((start, end, style)) => Ok(IntrospectValue::Bool(
+                        self.text_state().is_some_and(|s| {
+                            s.apply_style_run(start, end, style);
+                            true
+                        }),
+                    )),
+                    None => Err(InvokeError::TypeMismatch),
+                },
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            "clear-style" => match args {
+                IntrospectValue::Json(obj) => match parse_clear_style_json(obj) {
+                    Some((start, end)) => Ok(IntrospectValue::Bool(
+                        self.text_state().is_some_and(|s| {
+                            s.clear_style_runs(start, end);
+                            true
+                        }),
+                    )),
+                    None => Err(InvokeError::TypeMismatch),
+                },
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            // R967 — toggle ONE field, preserving the run's others. The base is
+            // only consumed for bytes with NO existing run; an already-styled
+            // byte ignores it (its run resolves the toggle). The generic headless
+            // field has no theme handle (the live theme is view-layer + animated),
+            // so the base is the caret's effective style, falling back to
+            // `TextStyle::default()`. Caveat: for a selection spanning UNSTYLED
+            // gap bytes, those bytes materialise against this default base, NOT
+            // the toolbar's theme ink — the one place the AI + human channels'
+            // OUTPUT can differ (the flip itself is identical). The AI uses
+            // `apply-style` when it needs an explicit colour over plain text.
+            "toggle-format" => match args {
+                IntrospectValue::Text(token) => match FormatField::from_wire(token) {
+                    Some(field) => Ok(IntrospectValue::Bool(self.text_state().is_some_and(|s| {
+                        let base = s.style_at_caret().unwrap_or_default();
+                        s.toggle_format(field, &base)
+                    }))),
+                    None => Err(InvokeError::TypeMismatch),
+                },
+                _ => Err(InvokeError::TypeMismatch),
+            },
+            _ => Err(InvokeError::UnknownPath),
+        }
+    }
+
     /// R903 §5.22 §5.52 — the find &amp; replace `invoke` actions, split out of
     /// [`invoke`](ExternalIntrospect::invoke) for SRP (and to keep that
     /// dispatch under the line ceiling). `path` is one of `find-next` /
@@ -2834,7 +2881,7 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_thirty_four_slots() {
+    fn external_schema_declares_thirty_five_slots() {
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
@@ -2888,6 +2935,7 @@ mod tests {
                 ("paste-primary", "boolean"),
                 ("apply-style", "boolean"),
                 ("clear-style", "boolean"),
+                ("toggle-format", "boolean"),
                 ("find_query", "string"),
                 ("find_case_sensitive", "boolean"),
                 ("find_whole_word", "boolean"),
@@ -3726,6 +3774,39 @@ mod r56_1_d_tests {
         assert_eq!(runs.len(), 1, "one run applied");
         assert_eq!((runs[0].start, runs[0].end), (6, 11));
         assert_eq!(runs[0].style.fg_color, Color::rgb(0xD0, 0x28, 0x28));
+    }
+
+    #[test]
+    fn r967_invoke_toggle_format_flips_one_field_preserving_colour() {
+        // R967 — the AI-first `toggle-format` verb: toggle ONE field over the
+        // selection, preserving the run's colour (the toolbar B / I peer).
+        let state = Rc::new(TextEditState::with_initial("hello".to_string()));
+        state.set_style_runs(vec![StyleRun::new(
+            0,
+            5,
+            TextStyle::new().with_fg(Color::rgb(0xD0, 0x28, 0x28)),
+        )]);
+        state.set_selection(0, 5);
+        let mut tfx = TextFieldExternal::new().attach_state(Rc::clone(&state));
+        // First toggle bolds -> Bool(true); the run's colour is untouched.
+        let r = tfx.invoke("toggle-format", IntrospectValue::Text("bold".to_owned())).unwrap();
+        assert_eq!(r, IntrospectValue::Bool(true), "the new on-state is bold");
+        let runs = state.style_runs();
+        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "bold via RPC");
+        assert_eq!(runs[0].style.fg_color, Color::rgb(0xD0, 0x28, 0x28), "RPC toggle keeps colour");
+        // A second toggle returns Bool(false) and un-bolds (round-trip).
+        let r2 = tfx.invoke("toggle-format", IntrospectValue::Text("bold".to_owned())).unwrap();
+        assert_eq!(r2, IntrospectValue::Bool(false));
+        assert_eq!(
+            state.style_runs()[0].style.font_weight,
+            crate::style::FontWeight::NORMAL,
+            "un-bolded via RPC",
+        );
+        // An unknown field token is rejected (not a silent no-op).
+        assert!(
+            tfx.invoke("toggle-format", IntrospectValue::Text("rainbow".to_owned())).is_err(),
+            "an unknown field token is a TypeMismatch",
+        );
     }
 
     #[test]

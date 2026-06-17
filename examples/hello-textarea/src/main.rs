@@ -144,7 +144,7 @@ use pinion_core::theme::{use_theme, ColorRole};
 use pinion_core::undo::use_undo_stack;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::caret_blink::use_caret_blink;
-use pinion_core::widgets::text_edit::{use_text_edit_state, TextEditState};
+use pinion_core::widgets::text_edit::{use_text_edit_state, FormatField};
 use pinion_core::widgets::text_field::{
     TextFieldEvent, TextFieldExternal, TextFieldSendKey, TextFieldState,
 };
@@ -384,23 +384,16 @@ fn apply_format(index: usize, interaction: TextFieldState) {
     let selection = edit.selection_range();
     match index {
         FMT_BOLD | FMT_ITALIC => {
-            // Field-level merge (`mergeCharFormat`): flip only the weight /
-            // style, preserving the run's colour. The toggle direction reads
-            // the next-char style (`style_at_caret` collapsed, the selection
-            // start when selecting) so it flips relative to what is / would-be
-            // styled. Unstyled bytes resolve against the field base.
+            // R967 §5.36 — the toggle direction (read the selection-start / caret
+            // style, flip the one field) + the mergeCharFormat apply now live in
+            // the substrate ([`TextEditState::toggle_format`]) — the SSOT the
+            // AI-first `toggle-format` RPC verb shares, so the toolbar **B** / **I**
+            // and the AI channel flip identically (divergence-is-a-bug). Unstyled
+            // bytes still resolve against the theme field base.
             let theme = use_theme(THEME_TAG).theme_animated();
             let base = base_text_style(&theme, interaction);
-            let at = toolbar_active_style(&edit);
-            if index == FMT_BOLD {
-                let now = at.is_some_and(|st| st.font_weight == FontWeight::BOLD);
-                let target = if now { FontWeight::NORMAL } else { FontWeight::BOLD };
-                edit.format_at_caret_or_selection(&base, move |st| st.font_weight = target);
-            } else {
-                let now = at.is_some_and(|st| st.font_style == FontStyle::Italic);
-                let target = if now { FontStyle::Normal } else { FontStyle::Italic };
-                edit.format_at_caret_or_selection(&base, move |st| st.font_style = target);
-            }
+            let field = if index == FMT_BOLD { FormatField::Bold } else { FormatField::Italic };
+            edit.toggle_format(field, &base);
         }
         // Colour swatches: wholesale `setCharFormat` over the selection; the
         // clear swatch (`None`) strips it. At a collapsed caret the swatch arms
@@ -418,18 +411,6 @@ fn apply_format(index: usize, interaction: TextFieldState) {
             None => {} // index out of range — ignore.
         },
     }
-}
-
-/// R951 §5.36 — the style the B / I toolbar cells reflect (and the toggle
-/// direction `apply_format` reads): the selection start's style when selecting
-/// (the toolbar mirrors the selected run, the R799 reflective model), else the
-/// style the next typed char would carry ([`TextEditState::style_at_caret`] —
-/// an armed mark or the inherited style), so the toggles light up for
-/// collapsed-caret marks too. One SSOT for the view paint + the a11y
-/// `aria-pressed` reads (the two reflective sites).
-fn toolbar_active_style(edit: &TextEditState) -> Option<TextStyle> {
-    edit.selection_range()
-        .map_or_else(|| edit.style_at_caret(), |(start, _)| edit.style_at(start))
 }
 
 // R790 §5.22 — the `Owner::cache`-keyed clipboard hook (`AppClipboard`
@@ -622,12 +603,14 @@ fn view(state: (TextFieldState, u32), _frame: &Frame) -> Scene {
         None => String::new(),
     };
     // R799 — reflective toggle state for the B / I cells: the toolbar *mirrors*
-    // the document (it owns no format state). R951 — via the shared
-    // `toolbar_active_style`, so the cells also light for a collapsed-caret
-    // armed mark / inherited style, not only a selection.
-    let (bold_active, italic_active) = toolbar_active_style(&text_state)
+    // the document (it owns no format state). R967.1 — via the substrate
+    // `reflective_style` SSOT (the SAME read `toggle_format` uses for its flip
+    // direction, so pressed-state + flip cannot diverge), so the cells also light
+    // for a collapsed-caret armed mark / inherited style, not only a selection.
+    let (bold_active, italic_active) = text_state
+        .reflective_style()
         .map_or((false, false), |st| {
-            (st.font_weight == FontWeight::BOLD, st.font_style == FontStyle::Italic)
+            (FormatField::Bold.is_on(&st), FormatField::Italic.is_on(&st))
         });
     let status_str = format!(
         "{} | caret={} | lines={}{}",
@@ -899,9 +882,10 @@ impl WidgetA11y for TextAreaView {
         // the colour swatches are command buttons named explicitly (no glyph
         // to enrich from). The strip is non-focusable, so it rings nothing
         // (`focused_control = None`).
-        let (bold_active, italic_active) = toolbar_active_style(&edit)
+        let (bold_active, italic_active) = edit
+            .reflective_style()
             .map_or((false, false), |st| {
-                (st.font_weight == FontWeight::BOLD, st.font_style == FontStyle::Italic)
+                (FormatField::Bold.is_on(&st), FormatField::Italic.is_on(&st))
             });
         let tags: Vec<String> =
             (0..FMT_CONTROLS).map(|i| composite_item_tag(FMT_TAG, i)).collect();

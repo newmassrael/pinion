@@ -89,6 +89,69 @@ use crate::scene::StyleRun;
 use crate::style::TextStyle;
 use crate::undo::{UndoCommand, UndoStack};
 
+/// R967 §5.36 — which single [`TextStyle`] field a [`TextEditState::toggle_format`]
+/// flips (a `mergeCharFormat` toggle: it changes only this field and preserves
+/// every other one of the covered run). The discriminator the AI-first
+/// `toggle-format` RPC verb and the `hello-textarea` **B** / **I** toolbar share,
+/// so the two channels flip identically (a divergence would be a bug, not a
+/// style choice — the lift criterion).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormatField {
+    /// `font_weight` Bold (700) ↔ Normal (400).
+    Bold,
+    /// `font_style` Italic ↔ Normal.
+    Italic,
+    /// `underline` on ↔ off.
+    Underline,
+    /// `strikethrough` on ↔ off.
+    Strikethrough,
+}
+
+impl FormatField {
+    /// Whether `style` currently has this field "on". The Bold check matches
+    /// the exact `FontWeight::BOLD` the toolbar reflective state reads, so the
+    /// toggle direction agrees across the toolbar + RPC channels.
+    #[must_use]
+    pub fn is_on(self, style: &TextStyle) -> bool {
+        match self {
+            FormatField::Bold => style.font_weight == crate::style::FontWeight::BOLD,
+            FormatField::Italic => style.font_style == crate::style::FontStyle::Italic,
+            FormatField::Underline => style.decoration.underline,
+            FormatField::Strikethrough => style.decoration.strikethrough,
+        }
+    }
+
+    /// Set this field on / off, leaving every OTHER field of `style` untouched
+    /// (the `mergeCharFormat` contract — toggling Bold keeps the run's colour).
+    pub fn set(self, style: &mut TextStyle, on: bool) {
+        match self {
+            FormatField::Bold => {
+                style.font_weight =
+                    if on { crate::style::FontWeight::BOLD } else { crate::style::FontWeight::NORMAL };
+            }
+            FormatField::Italic => {
+                style.font_style =
+                    if on { crate::style::FontStyle::Italic } else { crate::style::FontStyle::Normal };
+            }
+            FormatField::Underline => style.decoration.underline = on,
+            FormatField::Strikethrough => style.decoration.strikethrough = on,
+        }
+    }
+
+    /// R967 — parse the AI-first `toggle-format` wire token (the lowercase field
+    /// name); `None` for an unknown token.
+    #[must_use]
+    pub fn from_wire(token: &str) -> Option<Self> {
+        match token {
+            "bold" => Some(FormatField::Bold),
+            "italic" => Some(FormatField::Italic),
+            "underline" => Some(FormatField::Underline),
+            "strikethrough" => Some(FormatField::Strikethrough),
+            _ => None,
+        }
+    }
+}
+
 /// R56.1.b §5.38 §5.22 — Reactive text + caret pair for one
 /// [`TextField`](crate::widgets::text_field::TextField).
 ///
@@ -1890,6 +1953,37 @@ impl TextEditState {
         self.set_pending_style(Some(style));
     }
 
+    /// R967.1 §5.36 — the "reflective" style a format toggle reads to decide its
+    /// direction AND a toolbar reads to light its pressed-state: the selection
+    /// start's style when selecting, else the next-typed-char style
+    /// ([`style_at_caret`](Self::style_at_caret)) at a collapsed caret (so the
+    /// toggles light for an armed mark / inherited style too — the R799
+    /// reflective model). ONE substrate home so the toggle's flip-direction and
+    /// the toolbar's lit/unlit state cannot diverge (a session-review found the
+    /// read byte-duplicated between `toggle_format` and the example's
+    /// `toolbar_active_style` — divergence-is-a-bug, since they MUST agree).
+    #[must_use]
+    pub fn reflective_style(&self) -> Option<TextStyle> {
+        self.selection_range()
+            .map_or_else(|| self.style_at_caret(), |(start, _)| self.style_at(start))
+    }
+
+    /// R967 §5.36 — toggle one [`FormatField`] over the selection (or arm it at a
+    /// collapsed caret), preserving the covered runs' OTHER fields
+    /// (`mergeCharFormat`). The toggle DIRECTION reads [`reflective_style`](Self::reflective_style)
+    /// (the same read the toolbar's pressed-state uses), so it flips relative to
+    /// what is / would-be styled; unstyled bytes resolve against `base`. Returns
+    /// the new on-state. The SSOT shared by the `hello-textarea` **B** / **I**
+    /// toolbar (`apply_format`) and the AI-first `toggle-format` RPC verb — both
+    /// flip via this one method. Routes through
+    /// [`format_at_caret_or_selection`](Self::format_at_caret_or_selection), so
+    /// the toggle is one undoable [`UndoStack`] step like every other format edit.
+    pub fn toggle_format(&self, field: FormatField, base: &TextStyle) -> bool {
+        let target = !self.reflective_style().is_some_and(|st| field.is_on(&st));
+        self.format_at_caret_or_selection(base, move |st| field.set(st, target));
+        target
+    }
+
     /// Drop any armed typing mark — the caret-navigation maintenance step (a
     /// pending mark is collapsed-caret state; moving the caret discards it, the
     /// W3C `selectionchange` model). Called by every navigation mover alongside
@@ -3595,7 +3689,7 @@ mod tests {
         clamp_to_char_boundary, dedent_remove_len, find_matches_in, fold_regions_in,
         line_first_non_ws, line_of, line_starts, line_starts_in_range, matching_bracket_in,
         next_char_boundary, prev_char_boundary, shift_pos_for_edits, style_runs_diff,
-        use_text_edit_state, TextEditState, INDENT_UNIT, INDENT_WIDTH,
+        use_text_edit_state, FormatField, TextEditState, INDENT_UNIT, INDENT_WIDTH,
     };
     use crate::reactive::{Effect, Owner};
     use crate::scene::StyleRun;
@@ -5042,6 +5136,70 @@ mod tests {
             st.font_weight = crate::style::FontWeight::NORMAL;
         });
         assert_eq!(s.style_runs(), original, "bold then un-bold returns the exact original runs");
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // R967 §5.36 — toggle_format: the toggle-direction SSOT shared by the
+    // hello-textarea B / I toolbar and the AI-first `toggle-format` RPC verb.
+    // ─────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r967_toggle_format_flips_one_field_and_keeps_colour() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        s.set_selection(0, 5);
+        // First toggle reads not-bold at the start -> targets bold.
+        let now = s.toggle_format(FormatField::Bold, &base_ink(INK_BASE));
+        assert!(now, "toggle reports the new on-state (bold)");
+        let runs = s.style_runs();
+        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::BOLD, "now bold");
+        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour preserved (mergeCharFormat)");
+        // Second toggle reads bold -> targets normal, round-tripping the colour.
+        let now2 = s.toggle_format(FormatField::Bold, &base_ink(INK_BASE));
+        assert!(!now2, "the second toggle reports off");
+        let runs = s.style_runs();
+        assert_eq!(runs[0].style.font_weight, crate::style::FontWeight::NORMAL, "un-bolded");
+        assert_eq!(runs[0].style.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour still preserved");
+    }
+
+    #[test]
+    fn r967_toggle_format_each_field_is_orthogonal() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        s.set_style_runs(vec![crun(0, 5, RED)]);
+        s.set_selection(0, 5);
+        assert!(s.toggle_format(FormatField::Bold, &base_ink(INK_BASE)));
+        assert!(s.toggle_format(FormatField::Italic, &base_ink(INK_BASE)));
+        assert!(s.toggle_format(FormatField::Underline, &base_ink(INK_BASE)));
+        let st = s.style_runs()[0].style.clone();
+        assert_eq!(st.font_weight, crate::style::FontWeight::BOLD, "bold set");
+        assert_eq!(st.font_style, crate::style::FontStyle::Italic, "italic set, weight untouched");
+        assert!(st.decoration.underline, "underline set, weight + style untouched");
+        assert_eq!(st.fg_color, Color::rgb(RED.0, RED.1, RED.2), "colour preserved through all three toggles");
+    }
+
+    #[test]
+    fn r967_toggle_format_at_collapsed_caret_arms_pending_mark() {
+        let s = TextEditState::with_initial("hello".to_owned());
+        // No selection -> the toggle arms a pending typing mark (Word's "press
+        // Bold then type"), not a run over existing text.
+        s.set_caret(5);
+        let now = s.toggle_format(FormatField::Bold, &base_ink(INK_BASE));
+        assert!(now, "caret toggle reports bold armed");
+        assert_eq!(
+            s.pending_style().map(|st| st.font_weight),
+            Some(crate::style::FontWeight::BOLD),
+            "the next typed char would be bold",
+        );
+        assert!(s.style_runs().is_empty(), "no run materialised at a collapsed caret");
+    }
+
+    #[test]
+    fn r967_format_field_from_wire_round_trips_and_rejects_unknown() {
+        assert_eq!(FormatField::from_wire("bold"), Some(FormatField::Bold));
+        assert_eq!(FormatField::from_wire("italic"), Some(FormatField::Italic));
+        assert_eq!(FormatField::from_wire("underline"), Some(FormatField::Underline));
+        assert_eq!(FormatField::from_wire("strikethrough"), Some(FormatField::Strikethrough));
+        assert_eq!(FormatField::from_wire("rainbow"), None, "unknown token rejected");
     }
 
     #[test]
