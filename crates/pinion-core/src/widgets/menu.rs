@@ -54,19 +54,32 @@
 //! * `invoke("send", "t<m>:<PointerWireEvent>")` — a top-level **title**
 //!   pointer event (composite tag `<bar>#t<m>`). Only `PointerUp`
 //!   toggles menu `m` open/closed.
-//! * `invoke("send", "i<i>:<PointerWireEvent>")` — a dropdown **item**
-//!   pointer event (composite tag `<bar>#i<i>`). `PointerEnter`
-//!   highlights item `i`; `PointerUp` activates it (emits `"command"`,
-//!   closes).
-//! * `invoke("key", "<W3CKeyName>")` — the full WAI-ARIA §3.5 menubar
-//!   keyboard model in one place (Arrow Left/Right between titles,
-//!   Arrow Up/Down + Home/End within an open menu, Arrow Right/Left to
-//!   the adjacent menu, Enter/Space to activate, Escape to close).
-//!   Returns [`IntrospectValue::Bool`] = "did this key do anything"
-//!   so the binding's `apply_key` reports the right swallow verdict.
+//! * `invoke("send", "i<path>:<PointerWireEvent>")` — a dropdown **item**
+//!   pointer event (composite tag `<bar>#i<path>`). R985 — `<path>` is the
+//!   descent **relative to the open dropdown** (the open menu is implicit
+//!   because you can only click a *visible* item): `i0` is top item 0,
+//!   `i1.2` is item 2 of submenu 1. `PointerEnter` highlights (collapsing
+//!   any deeper-open submenus to that level); `PointerUp` activates — a
+//!   submenu *opens*, a leaf emits `"command"` and closes.
+//! * `invoke("key", "<W3CKeyName>")` — the full WAI-ARIA §3.5 / §3.16
+//!   menubar keyboard model in one place (Arrow Left/Right between titles,
+//!   Arrow Up/Down + Home/End within an open menu, Arrow Right opens a
+//!   submenu / moves to the adjacent menu on a leaf, Arrow Left / Escape
+//!   close one submenu level, Enter/Space to activate). Returns
+//!   [`IntrospectValue::Bool`] = "did this key do anything".
 //!
-//! On item activation the §5.20 channel emits a `"command"` intent
-//! whose payload is [`IntrospectValue::Text`] `"<menu>.<item>"`; the
+//! **Addressing asymmetry (deliberate):** the read slots (`item_kind` /
+//! `item_count` / `checked` / `enabled`) take an **absolute** `<path>`
+//! (`<menu>` then descent, e.g. `item_kind.0.1.2`) because they inspect the
+//! *static* structure of any menu; `send` takes an **open-relative** path
+//! because a pointer can only reach the *currently visible* cascade (menu
+//! implicit). The full open state is itself readable — `open` (top index),
+//! `open_path` (dotted submenu descent), `active_path` (the absolute path
+//! of the highlighted item) — so an AI client never has to guess.
+//!
+//! On leaf activation the §5.20 channel emits a `"command"` intent whose
+//! payload is [`IntrospectValue::Text`] the **absolute** dotted path
+//! (`"<menu>.<item>"`, R985 `"<menu>.<item>.<sub>…"` for a nested leaf); the
 //! runtime walk prefixes the scene-side `ExternalNode` tag (e.g.
 //! `"menu"` → `"menu.command"`) so widget identity stays decoupled
 //! from the UI-chosen tag, exactly like `Button::"click"`.
@@ -333,14 +346,7 @@ impl MenuBar {
     fn item_at_path_mut(&mut self, path: &[usize]) -> Option<&mut MenuItem> {
         let (&last, parent) = path.split_last()?;
         let (&menu, rest) = parent.split_first()?;
-        let mut items: &mut Vec<MenuItem> = self.menus.get_mut(menu)?;
-        for &p in rest {
-            items = match items.get_mut(p)? {
-                MenuItem::Submenu { items: sub, .. } => sub,
-                _ => return None,
-            };
-        }
-        items.get_mut(last)
+        walk_submenus_mut(self.menus.get_mut(menu)?, rest)?.get_mut(last)
     }
 
     /// R985 — the item slice of the *current* (deepest open) menu, or
@@ -480,14 +486,7 @@ impl MenuBar {
     fn current_items_mut(&mut self) -> Option<&mut Vec<MenuItem>> {
         let m = self.open?;
         let path = self.open_path.clone();
-        let mut items: &mut Vec<MenuItem> = self.menus.get_mut(m)?;
-        for p in path {
-            items = match items.get_mut(p)? {
-                MenuItem::Submenu { items: sub, .. } => sub,
-                _ => return None,
-            };
-        }
-        Some(items)
+        walk_submenus_mut(self.menus.get_mut(m)?, &path)
     }
 
     /// R985 — mouse: activate the item reached by `rel_path` (relative to
@@ -496,8 +495,17 @@ impl MenuBar {
     /// the activated leaf's absolute path, or `None` (submenu / inert).
     fn activate_rel(&mut self, rel_path: &[usize]) -> Option<Vec<usize>> {
         let (&last, prefix) = rel_path.split_last()?;
-        // Validate the descent prefix is reachable before collapsing to it.
-        self.rel_items_at(prefix)?;
+        // R985.1 — validate the WHOLE target (prefix reachable AND `last` a
+        // navigable item) BEFORE mutating `open_path`. A malformed nested send
+        // (e.g. `i1.99` for an out-of-range item) must not collapse the cascade
+        // to `prefix` as a side-effect (validate-before-mutate invariant).
+        let navigable = self
+            .rel_items_at(prefix)?
+            .get(last)
+            .is_some_and(MenuItem::is_navigable);
+        if !navigable {
+            return None;
+        }
         self.open_path = prefix.to_vec();
         self.activate_item(last)
     }
@@ -511,22 +519,18 @@ impl MenuBar {
 
     /// R985 — open the [`MenuItem::Submenu`] at current-menu index `i`,
     /// descending a level and highlighting the submenu's first navigable
-    /// item. No-op if `i` is not an enabled submenu.
+    /// item. No-op if `i` is not a submenu. R985.1 — single-pass: the outer
+    /// `Some` of `first` IS the "`i` is a submenu" verdict (its `submenu_items`
+    /// returned `Some`), so no separate `is_submenu` re-walk is needed.
     fn descend_into(&mut self, i: usize) {
         let first = self
             .current_items()
             .and_then(|items| items.get(i))
             .and_then(MenuItem::submenu_items)
-            .and_then(|sub| menu_nav::nav_edge_skip(sub.len(), false, |k| sub[k].is_navigable()));
-        // Only descend when `i` really is a submenu (first computed above
-        // would have read its items; guard via is_submenu for clarity).
-        if self
-            .current_items()
-            .and_then(|items| items.get(i))
-            .is_some_and(MenuItem::is_submenu)
-        {
+            .map(|sub| menu_nav::nav_edge_skip(sub.len(), false, |k| sub[k].is_navigable()));
+        if let Some(active) = first {
             self.open_path.push(i);
-            self.active = first;
+            self.active = active;
         }
     }
 
@@ -931,11 +935,34 @@ fn walk_submenus<'a>(start: &'a [MenuItem], descent: &[usize]) -> Option<&'a [Me
     Some(items)
 }
 
-/// R985 — parse a dotted index path (`"0"`, `"0.2"`, `"0.2.1"`) into its
-/// component indices. `None` for an empty string or a non-numeric component.
-/// Generalises the R805 two-index `parse_menu_item` to arbitrary nesting
-/// depth (a top-level item path is `[menu, item]`).
-fn parse_path(suffix: &str) -> Option<Vec<usize>> {
+/// R985.1 — the mutable mirror of [`walk_submenus`]: descend a submenu chain
+/// by `descent`, returning the deepest item list `&mut`. Lifted at the 2nd
+/// consumer ([`MenuBar::item_at_path_mut`] / `current_items_mut`) so the
+/// mutable descent cannot diverge from the immutable one (a divergence would
+/// be a navigation bug, not a style choice — the R743.1 lift class).
+fn walk_submenus_mut<'a>(
+    start: &'a mut Vec<MenuItem>,
+    descent: &[usize],
+) -> Option<&'a mut Vec<MenuItem>> {
+    let mut items = start;
+    for &p in descent {
+        items = match items.get_mut(p)? {
+            MenuItem::Submenu { items: sub, .. } => sub,
+            _ => return None,
+        };
+    }
+    Some(items)
+}
+
+/// R985 / R985.1 — the **decode** half of the dotted item-path wire codec:
+/// parse `"0"` / `"0.2"` / `"0.2.1"` into its component indices. `None` for an
+/// empty string or a non-numeric component. `pub` so wire consumers (a
+/// binding, an RPC client adapter) read the path format from its one home
+/// rather than re-rolling the split — the inverse of [`path_text`]
+/// (`decode == inverse(encode)`, [[wire-form-read-write-symmetry]]).
+/// Generalises the R805 two-index `parse_menu_item` to arbitrary depth.
+#[must_use]
+pub fn parse_path(suffix: &str) -> Option<Vec<usize>> {
     if suffix.is_empty() {
         return None;
     }
@@ -951,9 +978,13 @@ fn open_value(idx: Option<usize>) -> IntrospectValue {
     }
 }
 
-/// R985 — lower a dotted-path value (`open_path` / `active_path`) to its
-/// wire `Text` form, joining indices with `.` (empty slice → `""`).
-fn path_text(path: &[usize]) -> String {
+/// R985 / R985.1 — the **encode** half of the dotted item-path wire codec:
+/// lower a `&[usize]` path (`open_path` / `active_path` / a `"command"`
+/// payload / a composite item tag) to its dotted `Text` form (empty slice →
+/// `""`). `pub` so the one encode home is shared across crates (the paint
+/// composite-tag builder, a binding) — the inverse of [`parse_path`].
+#[must_use]
+pub fn path_text(path: &[usize]) -> String {
     path.iter().map(usize::to_string).collect::<Vec<_>>().join(".")
 }
 
@@ -2089,5 +2120,23 @@ mod tests {
         assert_eq!(e.open_path(), &[1]);
         assert_eq!(e.open_menu(), Some(0), "menu stays open (submenu, not a command)");
         assert!(!e.is_dirty(), "opening a submenu fires no command");
+    }
+
+    #[test]
+    fn r985_1_malformed_nested_send_does_not_mutate_state() {
+        // R985.1 (session-review): activate_rel must validate the WHOLE target
+        // before mutating open_path. A send to an out-of-range nested item
+        // (`i1.99`, when Open Recent has 2 items) must be inert — NOT collapse
+        // the cascade to `[1]` as a side-effect (validate-before-mutate).
+        let mut e = nested_ext();
+        e.invoke("send", IntrospectValue::Text("t0:PointerUp".into())).unwrap();
+        e.invoke("send", IntrospectValue::Text("i0:PointerEnter".into())).unwrap(); // highlight top item 0
+        let open_before = e.open_path().to_vec();
+        let active_before = e.active_item();
+        e.invoke("send", IntrospectValue::Text("i1.99:PointerUp".into())).unwrap();
+        assert_eq!(e.open_path(), open_before.as_slice(), "malformed send left open_path untouched");
+        assert_eq!(e.active_item(), active_before, "malformed send left active untouched");
+        assert_eq!(e.open_menu(), Some(0), "the top menu is still open");
+        assert!(!e.is_dirty(), "a malformed send fires no command");
     }
 }

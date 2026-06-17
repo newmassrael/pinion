@@ -36,7 +36,7 @@ use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, TextStyle,
 };
 use pinion_core::theme::{use_theme, ColorRole};
-use pinion_core::widgets::menu::{MenuBarExternal, MenuItem};
+use pinion_core::widgets::menu::{parse_path, path_text, MenuBarExternal, MenuItem};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{vello_renderer_impl, WidgetView};
 use pinion_widget_paint::barrier::dismiss_barrier;
@@ -58,9 +58,16 @@ const BAR_TAG: &str = "menu";
 const BARRIER_TAG: &str = "menu#barrier";
 const BODY_FONT_PX: u32 = 15;
 const FOOTER_FONT_PX: u32 = 12;
-/// R985 — the maximum cascade depth `MenuState` carries (top dropdown +
-/// nested submenus); 6 ≫ the demo's deepest chain (top + 2 submenus).
-const MAX_OPEN_DEPTH: usize = 6;
+/// R985 — the maximum cascade depth this *demo binding's* `MenuState`
+/// snapshot carries (top dropdown + nested submenus). The core `MenuBar` is
+/// uncapped (`open_path: Vec<usize>`); this cap exists only because
+/// [`pinion_core::WidgetCore::State`] is `Copy`, so the snapshot needs a
+/// fixed-size collection. R985.1 (session-review): set well past any
+/// conceivable real menu nesting (16 ≫ the demo's 2 deep, and no real menu
+/// nests anywhere near this) so the `read_state` cap is never reached in
+/// practice — mirroring the R805.1 `u64`-bitmap "≫ any real menu" rationale
+/// rather than a tight magic cap that could silently truncate live data.
+const MAX_OPEN_DEPTH: usize = 16;
 
 /// R985 — per-open-level container tags (index `d` is the popup at cascade
 /// depth `d`): level 0 is the top dropdown, deeper levels its submenus.
@@ -175,8 +182,13 @@ struct MenuState {
     /// Keyboard-focused top-level title (cursor while closed).
     bar_focus: usize,
     /// Live checked bitmap of the *top* open menu's items (bit `i` = item
-    /// `i` checked). The demo's only checkboxes are top-level, so the top
-    /// menu's bitmap is enough for the paint to reflect runtime toggles.
+    /// `i` checked). R985.1 (session-review) — DELIBERATE demo scope: this
+    /// binding's [`MENUS`] places checkboxes only at the top level, so a
+    /// single top-menu bitmap suffices to reflect runtime toggles. The core
+    /// wire DOES support nested checkboxes (`checked.<menu>.<item>.<sub>` is
+    /// readable / writable); a binding whose model nests a checkbox would
+    /// snapshot per visible level instead. Not a framework gap — a scoped
+    /// projection for this demo's model.
     checked: u64,
 }
 
@@ -329,13 +341,11 @@ impl WidgetCore for MenuView {
             Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
             _ => 0,
         };
-        // R985 — the open submenu descent ("1.2" -> [1, 2]).
+        // R985 — the open submenu descent ("1.2" -> [1, 2]), decoded via the
+        // core wire codec (R985.1: one parse home, not a re-rolled split).
         if let Some(IntrospectValue::Text(s)) = intro.query("open_path") {
-            for part in s.split('.').filter(|p| !p.is_empty()) {
-                if out.open_depth >= MAX_OPEN_DEPTH {
-                    break;
-                }
-                if let Ok(idx) = part.parse::<usize>() {
+            if let Some(descent) = parse_path(&s) {
+                for &idx in descent.iter().take(MAX_OPEN_DEPTH) {
                     out.open_path[out.open_depth] = idx;
                     out.open_depth += 1;
                 }
@@ -383,8 +393,7 @@ impl WidgetCore for MenuView {
 
     fn fmt_state_log(state: &MenuState) -> String {
         let open = state.open.map_or_else(|| "-".to_string(), |m| m.to_string());
-        let path: Vec<String> = state.open_path().iter().map(usize::to_string).collect();
-        format!("open={open} path=[{}] active={:?}", path.join("."), state.active)
+        format!("open={open} path=[{}] active={:?}", path_text(state.open_path()), state.active)
     }
 }
 
@@ -525,16 +534,14 @@ impl WidgetA11y for MenuView {
                     if let Ok(i) = rest.parse::<i64>() {
                         let _ = intro.intervene("bar_focus", IntrospectValue::Int(i));
                     }
-                } else if let Some((last, prefix)) = parse_path_rest(rest) {
-                    // Point the cursor: open_path = prefix, active = last.
-                    let _ = intro.intervene(
-                        "open_path",
-                        IntrospectValue::Text(
-                            prefix.iter().map(usize::to_string).collect::<Vec<_>>().join("."),
-                        ),
-                    );
-                    if let Ok(i) = i64::try_from(last) {
-                        let _ = intro.intervene("active", IntrospectValue::Int(i));
+                } else if let Some(mut p) = parse_path(rest) {
+                    // Point the cursor: open_path = prefix, active = last —
+                    // decode/encode via the core wire codec (R985.1).
+                    if let Some(last) = p.pop() {
+                        let _ = intro.intervene("open_path", IntrospectValue::Text(path_text(&p)));
+                        if let Ok(i) = i64::try_from(last) {
+                            let _ = intro.intervene("active", IntrospectValue::Int(i));
+                        }
                     }
                 }
                 true
@@ -569,20 +576,6 @@ fn split_sub_tag(sub_tag: &str) -> Option<(char, &str)> {
         return None;
     }
     Some((kind, chars.as_str()))
-}
-
-/// Parse a dotted item path's rest (`"1.2"` -> `(2, [1])`): the last index +
-/// the descent prefix. `None` for an empty / non-numeric path.
-fn parse_path_rest(rest: &str) -> Option<(usize, Vec<usize>)> {
-    if rest.is_empty() {
-        return None;
-    }
-    let mut p: Vec<usize> = Vec::new();
-    for part in rest.split('.') {
-        p.push(part.parse::<usize>().ok()?);
-    }
-    let last = p.pop()?;
-    Some((last, p))
 }
 
 fn main() {

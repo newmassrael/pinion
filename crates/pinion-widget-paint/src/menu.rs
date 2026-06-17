@@ -244,8 +244,9 @@ pub fn composite_item_tag(bar_tag: &str, index: usize) -> String {
 /// `send("i2.0:<Event>")` against the shared `MenuBarExternal`.
 #[must_use]
 pub fn composite_item_path_tag(bar_tag: &str, path: &[usize]) -> String {
-    let joined = path.iter().map(usize::to_string).collect::<Vec<_>>().join(".");
-    format!("{bar_tag}#i{joined}")
+    // R985.1 — reuse the core dotted-path encode (the one wire-codec home,
+    // [[wire-form-read-write-symmetry]]) rather than re-rolling the join.
+    format!("{bar_tag}#i{}", pinion_core::widgets::menu::path_text(path))
 }
 
 /// R691 §5.16 §5.50 — horizontal menubar title strip.

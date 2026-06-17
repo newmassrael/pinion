@@ -45157,6 +45157,60 @@
         "tray.rs SubMenu recursion not shared: different enum + string-id addressing (cross-enum over-merge avoided)"
       ]
     },
+    "R985.1": {
+      "decision_summary": "R985.1 session-review clearance (R985 cascading submenus): validate-before-mutate in activate_rel + wire-codec SSOT (path_text/parse_path pub) + walk_submenus_mut lift + descend_into single-pass + honest demo caps/docs; 2 adversarial reviewers, over-flags corrected",
+      "changes_bullets": [
+        "activate_rel validate-before-mutate: malformed nested send (i1.99) no longer collapses cascade as a side-effect + test",
+        "wire codec SSOT: path_text(encode)+parse_path(decode) lifted pub in core; paint composite_item_path_tag + demo reuse",
+        "demo retired parse_path_rest + 2 inline path parses/joins (read_state/access_child_invoke/fmt_state_log) onto core codec",
+        "walk_submenus_mut lift: item_at_path_mut + current_items_mut mut-mirror (2nd-consumer divergence-is-a-bug)",
+        "descend_into single-pass: dropped redundant double current_items() walk (outer Some = is-submenu verdict)",
+        "demo MAX_OPEN_DEPTH 6->16 + honest doc: core is uncapped Vec; cap is a State:Copy projection artifact, now >>-real",
+        "demo MenuState.checked doc: deliberate top-level scope (core wire supports nested checked.<path>); module wire-doc clarifies send=open-relative vs query=absolute + full-path command payload"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace: 7020 passed / 0 failed (core menu 94 incl r985_1 malformed-send invariant; paint 22; a11y 17; binding 3)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "r985 demo PASS vs rebuilt release binary",
+        "adversarial session-review: 2 reviewers + self-grep; reviewer over-flags corrected (activate_rel HIGH->MED reachable only via malformed RPC; wire-codec HIGH->MED; 'use Vec' fix infeasible under WidgetCore::State:Copy)"
+      ],
+      "impact_refs": [
+        "5.16",
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "north-star honesty: hello-menu-app (editor-shell demo) still flat; hello-menu-nested is the demonstrator; submenu = genuine capability landed-with-demo (project norm), editor-shell File>Open Recent adoption = follow-up round",
+        "is_valid_open_path keeps its own enabled-checking walk (distinct semantic from walk_submenus mechanic; intervene-path validation) - not a lift target",
+        "composite_item_tag(flat usize)/composite_item_path_tag(nested) kept separate: flat avoids a per-item Vec alloc in the paint hot path"
+      ],
+      "publishable_decision_summary": "R985.1 session-review clearance (R985 cascading submenus): validate-before-mutate in activate_rel + wire-codec SSOT (path_text/parse_path pub) + walk_submenus_mut lift + descend_into single-pass + honest demo caps/docs; 2 adversarial reviewers, over-flags corrected",
+      "publishable_changes_bullets": [
+        "activate_rel validate-before-mutate: malformed nested send (i1.99) no longer collapses cascade as a side-effect + test",
+        "wire codec SSOT: path_text(encode)+parse_path(decode) lifted pub in core; paint composite_item_path_tag + demo reuse",
+        "demo retired parse_path_rest + 2 inline path parses/joins (read_state/access_child_invoke/fmt_state_log) onto core codec",
+        "walk_submenus_mut lift: item_at_path_mut + current_items_mut mut-mirror (2nd-consumer divergence-is-a-bug)",
+        "descend_into single-pass: dropped redundant double current_items() walk (outer Some = is-submenu verdict)",
+        "demo MAX_OPEN_DEPTH 6->16 + honest doc: core is uncapped Vec; cap is a State:Copy projection artifact, now >>-real",
+        "demo MenuState.checked doc: deliberate top-level scope (core wire supports nested checked.<path>); module wire-doc clarifies send=open-relative vs query=absolute + full-path command payload"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace: 7020 passed / 0 failed (core menu 94 incl r985_1 malformed-send invariant; paint 22; a11y 17; binding 3)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: 0",
+        "r985 demo PASS vs rebuilt release binary",
+        "adversarial session-review: 2 reviewers + self-grep; reviewer over-flags corrected (activate_rel HIGH->MED reachable only via malformed RPC; wire-codec HIGH->MED; 'use Vec' fix infeasible under WidgetCore::State:Copy)"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "north-star honesty: hello-menu-app (editor-shell demo) still flat; hello-menu-nested is the demonstrator; submenu = genuine capability landed-with-demo (project norm), editor-shell File>Open Recent adoption = follow-up round",
+        "is_valid_open_path keeps its own enabled-checking walk (distinct semantic from walk_submenus mechanic; intervene-path validation) - not a lift target",
+        "composite_item_tag(flat usize)/composite_item_path_tag(nested) kept separate: flat avoids a per-item Vec alloc in the paint hot path"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
