@@ -9,6 +9,7 @@
 //! module. The JSON-RPC 2.0 wire envelope and method routing entry
 //! point live in [`dispatch`].
 
+pub mod access;
 pub mod animate_control;
 pub mod animation_state;
 pub mod cache_stats;
@@ -44,6 +45,7 @@ pub mod wait_for;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 
+pub use access::access_to_json;
 pub use animate_control::{
     animate_cancel, animate_settle, AnimateControlError, AnimateControlOutcome,
 };

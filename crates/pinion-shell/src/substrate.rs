@@ -2749,16 +2749,12 @@ impl<V: WidgetView> ShellCore<V> {
         // pre-R56.1.b.1 example) are unaffected: their access_node
         // impls ignore the Owner context.
         let owner = self.core.root_owner();
-        // R813 §5.40 — per-window node contribution (default forwards to
-        // the global `V::access_node`, so single-window bindings are
-        // unchanged). Multi-window bindings return only the addressed
-        // window's nodes, so foreign-window ghost nodes never enter this
-        // window's `TreeUpdate`.
-        let mut nodes = owner.run(|| V::access_node_for_window(window_id, cached, focused.as_deref()));
-        pinion_a11y::enrich_names_from_scene(&mut nodes, paint_scene);
-        resolve_access_bounds(paint_scene, &mut nodes);
-        let at_focus = owner.run(|| V::access_focus_target(cached, focused.as_deref()));
-        (nodes, at_focus)
+        // R813 §5.40 — per-window node contribution (the live AT emit always
+        // names a window, so `Some(window_id)`; the default forwards to the
+        // global `V::access_node` for single-window bindings). R979 — the
+        // build sequence is the `build_access_tree` SSOT the `scene/access`
+        // RPC dump also runs, so the dump cannot drift from the AT emit.
+        build_access_tree::<V>(owner, cached, Some(window_id), focused.as_deref(), Some(paint_scene))
     }
 
     /// R51.80 §5.12 §5.35 — post-render bookkeeping.
@@ -3198,8 +3194,13 @@ impl<V: WidgetView> ShellCore<V> {
                     pinion_overlay::FocusRingStyle::default(),
                 )
             };
+            // R979 §5.40 §2 #7 — `scene/access` producer (the `build_access_tree`
+            // SSOT the live AccessKit emit also runs; entry-focus `focus_before`).
+            let access_focused = focus_before.clone();
+            let mut produce_access = || build_access_tree::<V>(&root_owner, &cached_state, producer_window_id.as_deref(), access_focused.as_deref(), last_paint_scene_ref);
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
+                .with_access_producer(&mut produce_access)
                 .with_resize_request(resize_request)
                 .with_focus_manager(focus_ptr);
             // R705 §5.12 §2 #7 — thread the addressed window's stored
@@ -3979,6 +3980,36 @@ fn resolve_access_bounds(paint_scene: &Scene, nodes: &mut [AccessNode]) {
         }
         node.bounds = bounds;
     }
+}
+
+/// R979 §5.40 §2 #7 — build the enriched, bounds-resolved accessibility tree
+/// (the node list plus the AT focus target). Runs the binding's
+/// [`WidgetView::access_node_for_window`] (single-window `None` forwards to
+/// `access_node`), then [`enrich_names_from_scene`](pinion_a11y::enrich_names_from_scene)
+/// and [`resolve_access_bounds`] against `paint_scene`, then reads
+/// `access_focus_target`. This is the SSOT shared by the live AccessKit emit
+/// ([`ShellCore::collect_access_emit_inputs`]) and the `scene/access` RPC dump:
+/// the two MUST agree, or the dump would lie about what a screen reader
+/// receives (divergence-is-a-bug, lifted at the 2nd consumer rather than
+/// waiting for a 3rd). `paint_scene` is `None` only for a never-painted
+/// window, where names and bounds simply stay unresolved.
+fn build_access_tree<V: WidgetView>(
+    owner: &pinion_core::Owner,
+    state: &V::State,
+    window_id: Option<&str>,
+    focused: Option<&str>,
+    paint_scene: Option<&Scene>,
+) -> (Vec<AccessNode>, Option<AccessFocus>) {
+    let mut nodes = owner.run(|| match window_id {
+        Some(id) => V::access_node_for_window(id, state, focused),
+        None => V::access_node(state, focused),
+    });
+    if let Some(paint) = paint_scene {
+        pinion_a11y::enrich_names_from_scene(&mut nodes, paint);
+        resolve_access_bounds(paint, &mut nodes);
+    }
+    let focus = owner.run(|| V::access_focus_target(state, focused));
+    (nodes, focus)
 }
 
 #[cfg(test)]

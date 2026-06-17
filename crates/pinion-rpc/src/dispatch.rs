@@ -25,6 +25,7 @@
 //! carrying the typed [`QueryError`] variant name so AI clients can
 //! pattern-match without parsing prose.
 
+use pinion_a11y::{AccessFocus, AccessNode};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::IntrospectValue;
 use pinion_core::intent::Intent;
@@ -268,6 +269,17 @@ pub struct DispatchContext<'a> {
     /// `compute_layout` inside the closure so the returned `Scene`
     /// carries measured rects.
     pub paint_producer: Option<&'a mut (dyn FnMut(u32, u32) -> Scene + 'a)>,
+    /// R979 §5.40 §2 #7 — application-supplied accessibility-tree
+    /// producer. Invoked by `scene/access` to obtain the enriched,
+    /// bounds-resolved [`AccessNode`] list (plus the [`AccessFocus`]
+    /// target) the platform AccessKit adapter would receive — the same
+    /// build the shell runs for a live screen reader
+    /// (`V::access_node_for_window` → `enrich_names_from_scene` →
+    /// `resolve_access_bounds`). `None` causes `scene/access` to fail
+    /// with an `AccessTreeUnavailable` error; other methods ignore the
+    /// field. Mirrors [`Self::paint_producer`]: the embedder threads a
+    /// fresh closure before each dispatch.
+    pub access_producer: Option<&'a mut (dyn FnMut() -> (Vec<AccessNode>, Option<AccessFocus>) + 'a)>,
     /// R47.7.4 §5.12 — application-supplied resize request hook.
     /// Invoked by `scene/resize` with the requested logical
     /// `(width, height)`. The application typically calls
@@ -897,6 +909,7 @@ impl<'a> DispatchContext<'a> {
             previews,
             revision,
             paint_producer: None,
+            access_producer: None,
             resize_request: None,
             last_paint_scene: None,
             font_registry: None,
@@ -924,6 +937,22 @@ impl<'a> DispatchContext<'a> {
         producer: &'a mut (dyn FnMut(u32, u32) -> Scene + 'a),
     ) -> Self {
         self.paint_producer = Some(producer);
+        self
+    }
+
+    /// Builder: attach the accessibility-tree producer closure (R979
+    /// §5.40 §2 #7). The closure is invoked by `scene/access` and must
+    /// return the enriched, bounds-resolved [`AccessNode`] list (plus the
+    /// [`AccessFocus`] target) the AccessKit adapter would receive — the
+    /// embedder runs the same `V::access_node_for_window` →
+    /// `enrich_names_from_scene` → `resolve_access_bounds` build the live
+    /// AT path uses, against the addressed window's last paint scene.
+    #[must_use]
+    pub fn with_access_producer(
+        mut self,
+        producer: &'a mut (dyn FnMut() -> (Vec<AccessNode>, Option<AccessFocus>) + 'a),
+    ) -> Self {
+        self.access_producer = Some(producer);
         self
     }
 
@@ -1223,6 +1252,9 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // against `&mut Scene` without colliding on the producer slot. The
     // caller registers a fresh producer before each dispatch.
     let mut paint_producer = ctx.paint_producer.take();
+    // R979 §5.40 §2 #7 — same one-shot take for the access-tree producer:
+    // `scene/access` invokes it once to dump the AccessKit projection.
+    let mut access_producer = ctx.access_producer.take();
     let mut resize_request = ctx.resize_request.take();
     // R51.73 §5.40 — same split-borrow pattern for the focus manager:
     // `focus/set` mutates, `focus/get` reads; both need exclusive
@@ -1502,6 +1534,14 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 ),
                 HandlerKind::Read,
             )
+        }
+        "scene/access" => {
+            #[allow(
+                clippy::option_as_ref_deref,
+                reason = "dyn FnMut is not DerefMut; manual reborrow required"
+            )]
+            let producer = access_producer.as_mut().map(|p| &mut **p);
+            (handle_scene_access(producer), HandlerKind::Read)
         }
         "scene/dry_run" => (
             handle_scene_dry_run(scene, request.params.as_ref()),
@@ -2159,6 +2199,28 @@ fn handle_scene_pacing_state(state: Option<PacingState>) -> Result<Value, RpcErr
         PacingState::Override(n) => Value::Number(n.into()),
     };
     Ok(serde_json::json!({ "fps": fps }))
+}
+
+/// R979 §5.40 §2 #7 — `scene/access` handler: dump the accessibility tree.
+///
+/// Invokes the embedder's [`access_producer`](DispatchContext::access_producer)
+/// once to obtain the enriched, bounds-resolved [`AccessNode`] list (plus the
+/// [`AccessFocus`] target) the platform AccessKit adapter would receive, and
+/// serializes it via [`crate::access::access_to_json`]. `None` (no producer
+/// wired — a headless fixture without the shell's a11y build) errors with
+/// `AccessTreeUnavailable`, the `PacingStateUnavailable` honesty parity.
+/// Read-only — `HandlerKind::Read` upstream skips the [`SceneRevision`] bump.
+fn handle_scene_access(
+    producer: Option<&mut (dyn FnMut() -> (Vec<AccessNode>, Option<AccessFocus>) + '_)>,
+) -> Result<Value, RpcError> {
+    let Some(producer) = producer else {
+        return Err(
+            RpcError::invalid_params("access tree unavailable for this dispatch")
+                .with_data_string("AccessTreeUnavailable"),
+        );
+    };
+    let (nodes, focus) = producer();
+    Ok(crate::access::access_to_json(&nodes, focus.as_ref()))
 }
 
 /// R763 §5.49 §5.39 — `scene/modifiers` handler: enqueue a

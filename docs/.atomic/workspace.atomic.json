@@ -44733,6 +44733,62 @@
         "in-round self-assessment again imperfect: adversarial review caught 1 HIGH (cursor dual-fact)"
       ]
     },
+    "R979": {
+      "decision_summary": "R979 scene/access RPC accessibility-tree dump: the AI-first JSON-RPC path can now introspect the WAI-ARIA AccessNode tree every widget builds (enriched names + resolved bounds + focus target), closing the recurring RPC-invisible a11y gap (R966 value range, R967.1 reset node). build_access_tree is the SSOT shared by the live AccessKit emit and the dump so they cannot drift.",
+      "changes_bullets": [
+        "pinion-rpc: new scene/access method dumps the enriched AccessNode tree + AccessFocus as JSON",
+        "access.rs serializer: role/name/value(float min/max)/state/bounds/level/selected via aria_name SSOT",
+        "DispatchContext.access_producer closure field + with_access_producer builder (mirrors paint_producer)",
+        "pinion-rpc gains acyclic pinion-a11y dep so serialization lives beside the snapshot wire shapes",
+        "pinion-shell injects the producer; build_access_tree SSOT shared by the live AT emit and RPC dump",
+        "build_access_tree lift: collect_access_emit_inputs now calls it (2nd consumer, divergence-is-a-bug)",
+        "demo r979_access_tree: property-grid reset button becomes RPC-visible; slider value range over RPC"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 failed); 5 new tests (3 access serializer + 2 dispatch arm)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic exit 0",
+        "demo r979_access_tree PASS: property-grid tree + reset headline; hello-slider valuenow/min/max over RPC",
+        "3b self-grep: enrich/resolve/build sequence single production site build_access_tree; aria_name vocab SSOT",
+        "validate-workspace T1=0 (entries 954 -> 955)"
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.7",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "TUI shell does not wire access_producer; scene/access -> AccessTreeUnavailable on TUI (honest, GUI-path only)",
+        "focusable AT-reachable reset/format-control node now RPC-verifiable -> the R967.1 carry can land AND be verified",
+        "scene/access is read-only introspection; AT action drive stays via the existing dispatch_access_action path"
+      ],
+      "publishable_decision_summary": "R979 scene/access RPC accessibility-tree dump: the AI-first JSON-RPC path can now introspect the WAI-ARIA AccessNode tree every widget builds (enriched names + resolved bounds + focus target), closing the recurring RPC-invisible a11y gap (R966 value range, R967.1 reset node). build_access_tree is the SSOT shared by the live AccessKit emit and the dump so they cannot drift.",
+      "publishable_changes_bullets": [
+        "pinion-rpc: new scene/access method dumps the enriched AccessNode tree + AccessFocus as JSON",
+        "access.rs serializer: role/name/value(float min/max)/state/bounds/level/selected via aria_name SSOT",
+        "DispatchContext.access_producer closure field + with_access_producer builder (mirrors paint_producer)",
+        "pinion-rpc gains acyclic pinion-a11y dep so serialization lives beside the snapshot wire shapes",
+        "pinion-shell injects the producer; build_access_tree SSOT shared by the live AT emit and RPC dump",
+        "build_access_tree lift: collect_access_emit_inputs now calls it (2nd consumer, divergence-is-a-bug)",
+        "demo r979_access_tree: property-grid reset button becomes RPC-visible; slider value range over RPC"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (0 failed); 5 new tests (3 access serializer + 2 dispatch arm)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D pedantic exit 0",
+        "demo r979_access_tree PASS: property-grid tree + reset headline; hello-slider valuenow/min/max over RPC",
+        "3b self-grep: enrich/resolve/build sequence single production site build_access_tree; aria_name vocab SSOT",
+        "validate-workspace T1=0 (entries 954 -> 955)"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.7",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TUI shell does not wire access_producer; scene/access -> AccessTreeUnavailable on TUI (honest, GUI-path only)",
+        "focusable AT-reachable reset/format-control node now RPC-verifiable -> the R967.1 carry can land AND be verified",
+        "scene/access is read-only introspection; AT action drive stays via the existing dispatch_access_action path"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

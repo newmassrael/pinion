@@ -5807,6 +5807,57 @@ fn r708_box_style_to_json_emits_gradient() {
 // (`counted_scene`, `dispatch_t`, `dispatch_with_runtime_owner_*`,
 // `parse_response`, …) remain in scope.
 
+// ---- R979 §5.40 §2 #7 — `scene/access` accessibility-tree dump ----
+
+#[test]
+fn r979_scene_access_dumps_the_tree_with_focus_and_value_range() {
+    use pinion_a11y::{AccessFocus, AccessNode, AccessState, AccessValue, AriaRole};
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    // A producer mirroring what the shell runs: a focused button plus a
+    // slider whose value range was previously RPC-invisible (R966 carry).
+    let mut produce_access = || -> (Vec<AccessNode>, Option<AccessFocus>) {
+        let save = AccessNode::new("save", AriaRole::Button)
+            .with_name("Save")
+            .with_state(AccessState { focused: true, ..AccessState::default() });
+        let opacity = AccessNode::new("opacity", AriaRole::Slider)
+            .with_value(AccessValue::Float { value: 0.5, min: 0.0, max: 1.0 });
+        (vec![save, opacity], Some(AccessFocus::atomic("save")))
+    };
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_access_producer(&mut produce_access);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/access","id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let result = resp.result.unwrap();
+    assert_eq!(result["count"], 2);
+    assert_eq!(result["focus"]["tag"], "save");
+    let nodes = result["nodes"].as_array().expect("nodes array");
+    assert_eq!(nodes[0]["tag"], "save");
+    assert_eq!(nodes[0]["role"], "button");
+    assert_eq!(nodes[0]["name"], "Save");
+    assert_eq!(nodes[0]["state"]["focused"], true);
+    // The slider's valuenow / valuemin / valuemax is now over the wire.
+    assert_eq!(nodes[1]["role"], "slider");
+    assert_eq!(nodes[1]["value"]["float"]["value"], 0.5);
+    assert_eq!(nodes[1]["value"]["float"]["min"], 0.0);
+    assert_eq!(nodes[1]["value"]["float"]["max"], 1.0);
+    // A clean atomic node omits default fields (no bounds / selected here).
+    assert!(nodes[0].get("bounds").is_none());
+}
+
+#[test]
+fn r979_scene_access_without_producer_errors() {
+    // A headless fixture with no a11y build wired surfaces the honesty
+    // token rather than aliasing onto an empty tree.
+    let mut scene = counted_scene(0);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/access","id":1}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).expect("error frame"));
+    let err = resp.error.expect("no producer -> error frame");
+    assert_eq!(err.data, Some(Value::String("AccessTreeUnavailable".into())));
+}
+
 #[path = "dispatch_tests_theme.rs"]
 mod r632_theme;
 

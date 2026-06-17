@@ -10,6 +10,10 @@ description = "JSON-RPC 2.0 server with typed-hybrid method shape"
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
 pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
+# R979 §5.40 §2 #7 — `scene/access` serializes the WAI-ARIA `AccessNode`
+# tree (built by `pinion-a11y`) so the AI-first JSON-RPC path can
+# introspect the accessibility projection a screen reader receives.
+pinion-a11y = { path = "../pinion-a11y", version = "0.0.1" }
 # R908 §5.53 — Scene -> PDF renderer for the `scene/export_pdf` method.
 pinion-pdf = { path = "../pinion-pdf", version = "0.0.1" }
 pinion-text-font = { path = "../pinion-text-font", version = "0.0.1" }
