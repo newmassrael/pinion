@@ -44947,6 +44947,56 @@
         "if a 2nd grid needs rowheaders, lift the emission to the grid_table_nodes substrate (deferred substrate path)"
       ]
     },
+    "R983": {
+      "decision_summary": "Grouped data-grid treegrid emits AT-reachable cell/column/row reset affordances over its visible data sources, closing the R982 grouped carry; emit_flat_reset_affordances generalized to emit_reset_affordances (single SSOT, both modes), reset routing already mode-independent so emission only.",
+      "changes_bullets": [
+        "Grouped treegrid access_node now emits AT-reachable cell/column/row reset affordances (R982 carry)",
+        "emit_flat_reset_affordances renamed -> emit_reset_affordances; param -> visible data sources (both modes)",
+        "Grouped path feeds rows.filter_map(GroupRow::source); flat path feeds its visual order unchanged",
+        "Reset routing was already mode-independent (access_child_invoke reset-prefix -> send funnel); emission only",
+        "Iterating only VISIBLE sources keeps every reset button hung off a present node (no orphan onto a collapsed row)",
+        "No substrate lift: the rowheader scaffold stays a single emission site, so R982's deferral holds",
+        "Tests: r983 grouped emission + collapse orphan-guard unit tests; tools/demos/r983_grouped_grid_reset.py (>=30)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: pass (2 new r983 unit tests; flat r980/r982 paths unchanged)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings",
+        "demo r983_grouped_grid_reset.py PASS; flat r982/r980/r966 demos regression-free",
+        "validate-workspace: T1 reject=0, no new orphans"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "Data-grid reset (cell/column/row) now AT-reachable in BOTH flat and grouped modes (R982 grouped carry closed)",
+        "a11y valuemin/valuemax for bounded widgets still deferred (R966 audit)",
+        "node evaluation remains a Phase C boundary (out of scope)"
+      ],
+      "publishable_decision_summary": "Grouped data-grid treegrid emits AT-reachable cell/column/row reset affordances over its visible data sources, closing the R982 grouped carry; emit_flat_reset_affordances generalized to emit_reset_affordances (single SSOT, both modes), reset routing already mode-independent so emission only.",
+      "publishable_changes_bullets": [
+        "Grouped treegrid access_node now emits AT-reachable cell/column/row reset affordances (R982 carry)",
+        "emit_flat_reset_affordances renamed -> emit_reset_affordances; param -> visible data sources (both modes)",
+        "Grouped path feeds rows.filter_map(GroupRow::source); flat path feeds its visual order unchanged",
+        "Reset routing was already mode-independent (access_child_invoke reset-prefix -> send funnel); emission only",
+        "Iterating only VISIBLE sources keeps every reset button hung off a present node (no orphan onto a collapsed row)",
+        "No substrate lift: the rowheader scaffold stays a single emission site, so R982's deferral holds",
+        "Tests: r983 grouped emission + collapse orphan-guard unit tests; tools/demos/r983_grouped_grid_reset.py (>=30)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: pass (2 new r983 unit tests; flat r980/r982 paths unchanged)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings",
+        "demo r983_grouped_grid_reset.py PASS; flat r982/r980/r966 demos regression-free",
+        "validate-workspace: T1 reject=0, no new orphans"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Data-grid reset (cell/column/row) now AT-reachable in BOTH flat and grouped modes (R982 grouped carry closed)",
+        "a11y valuemin/valuemax for bounded widgets still deferred (R966 audit)",
+        "node evaluation remains a Phase C boundary (out of scope)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -3043,18 +3043,25 @@ fn external_mut<'s>(scene: &'s mut Scene, tag: &str) -> Option<&'s mut dyn Exter
     scene.find_external_with_tag_mut(tag)?.handle.introspect_mut()
 }
 
-/// R980/R982 §5.40 — augment the flat grid's a11y `nodes` with AT-reachable
-/// reset affordances: a reset `button` child for each modified CELL (on its
-/// `gridcell`), each modified COLUMN (on its `columnheader`), and each data ROW
-/// (on a `rowheader` cell prepended as the row's first child). Every button is
-/// gated on the SAME modified predicate the reset dot paints under (R886.1
-/// one-gate), and its Click routes through [`DataGridView::access_child_invoke`]'s
-/// reset-prefix `send` branch (the pointer twin). The `rowheader` is the
-/// WAI-ARIA-valid host a `button` needs (invalid as a bare `row` child, R937.1);
-/// its tag is the painted gutter (`handle_tag`) so bounds resolve in the
-/// reorder-enabled view. Flat grid only — the grouped treegrid path is a carry.
-fn emit_flat_reset_affordances(nodes: &mut Vec<AccessNode>, model: &[CellValue], order: &[usize]) {
-    for &row in order {
+/// R980/R982/R983 §5.40 — augment a data-grid's a11y `nodes` (the FLAT grid
+/// OR the grouped treegrid) with AT-reachable reset affordances over its VISIBLE
+/// data rows — `sources` is the visible source indices in visual order: a reset
+/// `button` child for each modified CELL (on its `gridcell`), each modified
+/// COLUMN (on its `columnheader`), and each data ROW (on a `rowheader` cell
+/// prepended as the row's first child). Every button is gated on the SAME
+/// modified predicate the reset dot paints under (R886.1 one-gate), and its
+/// Click routes through [`DataGridView::access_child_invoke`]'s reset-prefix
+/// `send` branch (the pointer twin) — that routing is mode-independent, so only
+/// the EMISSION (here) differs between the two grid modes (R983). The `rowheader`
+/// is the WAI-ARIA-valid host a `button` needs (invalid as a bare `row` child,
+/// R937.1); its tag is the painted gutter (`handle_tag`). Iterating only the
+/// VISIBLE `sources` (a collapsed group's members are already windowed out of the
+/// grouped flatten) keeps every button hung off a present cell / row node — no
+/// orphan buttons onto an absent node (the dangling-node class). Stays a single
+/// emission site across both modes, so the `rowheader` scaffold needs no lift
+/// (R982's deferral holds).
+fn emit_reset_affordances(nodes: &mut Vec<AccessNode>, model: &[CellValue], sources: &[usize]) {
+    for &row in sources {
         for (col, col_name) in COL_NAMES.iter().enumerate() {
             if cell_value_modified(model, row, col) {
                 attach_child_button(
@@ -3076,7 +3083,7 @@ fn emit_flat_reset_affordances(nodes: &mut Vec<AccessNode>, model: &[CellValue],
             );
         }
     }
-    for (visual_pos, &row) in order.iter().enumerate() {
+    for (visual_pos, &row) in sources.iter().enumerate() {
         let rh_tag = handle_tag(row);
         if let Some(row_node) = nodes.iter_mut().find(|n| n.tag == data_row_tag(row)) {
             row_node.children.insert(0, rh_tag.clone());
@@ -4379,8 +4386,9 @@ impl WidgetA11y for DataGridView {
             let mut nodes =
                 grid_table_nodes(GRID_TAG, "Asset table", false, "dg_header", &columns, &rows);
             // R980/R982 §5.40 — augment the flat grid with AT-reachable reset
-            // affordances (cell / column / row), the R967.1 carry.
-            emit_flat_reset_affordances(&mut nodes, &model, &order);
+            // affordances (cell / column / row), the R967.1 carry. The flat
+            // order IS the visible data sources (no group folds rows away).
+            emit_reset_affordances(&mut nodes, &model, &order);
             // R940 — the flatten is the Data-only order ungrouped (the popup gate
             // indexes the SAME visual sequence the rows paint in).
             let vis: Vec<GroupRow> =
@@ -4417,6 +4425,14 @@ impl WidgetA11y for DataGridView {
             },
             group_row_a11y_tag,
         );
+        // R983 §5.40 — augment the grouped treegrid with the SAME AT-reachable
+        // reset affordances (cell / column / row) the flat grid emits (R980/R982):
+        // a painted reset dot is now AT-reachable + activatable in BOTH grid modes.
+        // The VISIBLE data sources (group headers hold no cells; a collapsed
+        // group's members are windowed out of `rows`) feed the shared emitter, so
+        // no reset button orphans onto an absent cell / row node.
+        let visible_sources: Vec<usize> = rows.iter().filter_map(GroupRow::source).collect();
+        emit_reset_affordances(&mut nodes, &model, &visible_sources);
         // R940 — the open dropdown's `listbox` nodes (gated on the editing row
         // being present in this same grouped flatten — a collapsed group hides it).
         nodes.extend(popup_listbox_nodes(&model, &rows, editing));
@@ -4812,8 +4828,8 @@ mod tests {
         // modified gridcell / columnheader (verified over `scene/access`), and an
         // AT Click routes through the SAME `send` wire the reset-dot pointer click
         // drains — so AT reset and pointer reset are identical. The closing twin
-        // of `r966_resetcol_resetrow_pointer_send_resets_the_axis`. (The row reset
-        // awaits a `rowheader` host; grouped-treegrid likewise.)
+        // of `r966_resetcol_resetrow_pointer_send_resets_the_axis`. (R982 added the
+        // `rowheader` host for the row reset; R983 extends all three to grouped.)
         Owner::new().run(|| {
             let mut scene = boot_scene();
             // An AT Click on the Asset (col 0) reset button clears the whole column.
@@ -4852,6 +4868,153 @@ mod tests {
                 intro.query("row_modified.2"),
                 Some(IntrospectValue::Bool(false)),
                 "the AT row reset cleared row 2",
+            );
+        });
+    }
+
+    // R983 §5.40 — group the boot grid by Type (col 1): group 0 = sprite
+    // (sources 0, 2), group 1 = mesh (sources 1, 3). The boot grid is fully
+    // modified, so every visible cell / column / row is resettable.
+    fn group_by_type(scene: &mut Scene) {
+        let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+        let intro = node.handle.introspect_mut().expect("introspectable");
+        let _ = intro.invoke("set_group", IntrospectValue::Text("1".to_owned()));
+    }
+
+    #[test]
+    fn r983_grouped_treegrid_emits_reset_affordances() {
+        // R983 §5.40 — the grouped treegrid emits the SAME AT-reachable reset
+        // affordances (cell / column / row) as the flat grid (R980/R982), closing
+        // the R982 grouped carry. The reset routing is mode-independent, so only
+        // the emission was missing — this is the emission half.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            group_by_type(&mut scene);
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), None);
+            let by_tag = |tag: &str| nodes.iter().find(|n| n.tag == tag);
+
+            // (A) a treegrid with one named rowheader per VISIBLE data row (4 rows
+            // across the two expanded groups), each leading its row.
+            assert_eq!(
+                by_tag(GRID_TAG).expect("grid root").role,
+                AriaRole::TreeGrid,
+                "grouped grid is a treegrid",
+            );
+            assert_eq!(
+                nodes.iter().filter(|n| n.role == AriaRole::RowHeader).count(),
+                4,
+                "a rowheader per visible data row",
+            );
+            // Data rows are level-2 `row`s; the 2 group headers are level-1 `row`s
+            // and the column-header row carries no level.
+            let data_rows: Vec<_> = nodes
+                .iter()
+                .filter(|n| n.role == AriaRole::Row && n.level == Some(2))
+                .collect();
+            assert_eq!(data_rows.len(), 4, "4 visible data rows (2 per group)");
+            for r in &data_rows {
+                let first = by_tag(&r.children[0]).expect("first child present");
+                assert_eq!(
+                    first.role,
+                    AriaRole::RowHeader,
+                    "each grouped data row leads with its rowheader (the row-reset host)",
+                );
+            }
+
+            // (B) a modified cell, column, and row each host an AT-reachable reset
+            // button. Targets are picked from the live model (not hardcoded), so the
+            // test states the invariant, not a fixed boot layout. The sprite group's
+            // sources (0, 2) are visible.
+            let model = use_data_model().get();
+            let (mr, mc) = (0..NROWS)
+                .flat_map(|r| (0..NCOLS).map(move |c| (r, c)))
+                .find(|&(r, c)| (r == 0 || r == 2) && cell_value_modified(&model, r, c))
+                .expect("a visible sprite-group cell is modified at boot");
+            let cell = by_tag(&cell_tag(mr, mc)).expect("the modified gridcell is present");
+            assert!(
+                cell.children.contains(&reset_cell_tag(mr, mc)),
+                "a modified grouped gridcell hosts a reset button child",
+            );
+            assert_eq!(
+                by_tag(&reset_cell_tag(mr, mc)).expect("cell reset node present").role,
+                AriaRole::Button,
+                "the grouped cell reset is an AT-reachable button",
+            );
+            let modified_col =
+                (0..NCOLS).find(|&c| col_modified(&model, c)).expect("a column is modified");
+            let colh = by_tag(&col_header_tag(modified_col)).expect("columnheader present");
+            assert!(
+                colh.children.contains(&reset_col_tag(modified_col)),
+                "a modified column header hosts a reset button child",
+            );
+            let modified_row =
+                (0..NROWS).find(|&r| row_modified(&model, r)).expect("a row is modified");
+            let rh = by_tag(&handle_tag(modified_row)).expect("rowheader present");
+            assert_eq!(rh.role, AriaRole::RowHeader);
+            assert!(
+                rh.children.contains(&reset_row_tag(modified_row)),
+                "a modified row's rowheader hosts a reset button child",
+            );
+            // Every visible data row is modified at boot -> a row reset per row.
+            assert_eq!(
+                nodes
+                    .iter()
+                    .filter(|n| n.role == AriaRole::Button && n.tag.contains("#resetrow"))
+                    .count(),
+                4,
+                "one row reset per visible modified row",
+            );
+        });
+    }
+
+    #[test]
+    fn r983_grouped_collapse_windows_out_reset_affordances() {
+        // R983 §5.40 — a collapsed group's data rows window out of the flatten, so
+        // their cell + row reset buttons leave the tree with NO orphan onto an
+        // absent node (the dangling-node guard). A column reset persists — its
+        // predicate is model-wide, not window-scoped.
+        Owner::new().run(|| {
+            let mut scene = boot_scene();
+            group_by_type(&mut scene);
+            // Collapse the sprite group (0): sources 0 + 2 window out.
+            {
+                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
+                let intro = node.handle.introspect_mut().expect("introspectable");
+                let _ = intro.invoke("toggle_group", IntrospectValue::Int(0));
+            }
+            let nodes = DataGridView::access_node(&(TextFieldState::Idle, 0), None);
+            assert_eq!(
+                nodes.iter().filter(|n| n.role == AriaRole::RowHeader).count(),
+                2,
+                "only the mesh group's 2 rows remain after collapse",
+            );
+            // No cell / row reset button addresses a collapsed source (0 or 2).
+            for n in nodes.iter().filter(|n| n.role == AriaRole::Button) {
+                assert!(
+                    !n.tag.contains("#reset0_") && !n.tag.contains("#reset2_"),
+                    "no cell reset orphans onto a collapsed source: {}",
+                    n.tag,
+                );
+                assert!(
+                    n.tag != reset_row_tag(0) && n.tag != reset_row_tag(2),
+                    "no row reset orphans onto a collapsed source: {}",
+                    n.tag,
+                );
+            }
+            // The collapsed sources' gridcells / rowheaders are gone entirely.
+            assert!(
+                !nodes.iter().any(|n| n.tag == cell_tag(0, 1)),
+                "a collapsed source's gridcell is windowed out of the tree",
+            );
+            assert!(
+                !nodes.iter().any(|n| n.tag == handle_tag(0)),
+                "a collapsed source's rowheader is windowed out of the tree",
+            );
+            // A column reset is unaffected by collapse: `col_modified` reads the
+            // whole model, not the visible window, so Asset's header keeps it.
+            assert!(
+                nodes.iter().any(|n| n.tag == reset_col_tag(0)),
+                "the column reset persists through collapse (model-wide predicate)",
             );
         });
     }
