@@ -16,9 +16,10 @@ accessible action, so a human (not just the AI) can reset a whole row / column:
       resets that whole row; a press on the grip glyph still arms a drag.
   (C) **AI-first read peers**: `col_modified.<col>` / `row_modified.<row>` (the
       1-D aggregate of `modified.<row>.<col>`); a dot's presence == its query.
-  (D) the accessible twin — an AT `Click` on the dot routes to reset_row /
-      reset_col through `access_child_invoke` — is unit-tested in the binding
-      (the AccessKit tree is not on the RPC surface).
+  (D) the reset is POINTER + RPC accessible (this demo) — it is NOT exposed as
+      an AT screen-reader action: there is no focusable reset AccessNode to
+      target, so a genuinely AT-reachable reset (a focusable reset-control node,
+      covering every reset granularity) is a documented follow-up, not faked.
 
 The Asset column (col 0, leftmost) header dot + the row-0 dot (in the leading
 gutter) are fully inside the viewport, so they are exercised by POINTER click;

@@ -43859,6 +43859,48 @@
         "AT screen-reader toggle (focusable format-control node) not exposed; the toolbar aria-pressed reflects state, activation is pointer/RPC - follow-up if AT activation is needed"
       ]
     },
+    "R967.1": {
+      "decision_summary": "Session-review clearance of R966: the row/column reset's claimed AT-accessible Click was dead, unreachable production code (no focusable resetcol/resetrow AccessNode exists; the shell routes actions only to focused real nodes) - removed it + corrected the over-claim to honest pointer+RPC accessibility (AT-reachable reset = focusable-node follow-up). Lifted value_modified(value,col) so the per-cell dot gate genuinely shares the modified-from-default SSOT the queries read (the R966 doc claimed the lift but view_cell duplicated it inline). Both findings from the adversarial session review, re-verified by my own grep+read.",
+      "changes_bullets": [
+        "removed the dead access_child_invoke Click->reset branch: no focusable resetcol/resetrow AccessNode exists, the shell routes actions only to focused real nodes, so only the unit test reached it",
+        "reorder Increment/Decrement stays AT-reachable (rides the focused cell's existing node); test now asserts reset is NOT an AT action (the deliberate decision)",
+        "lifted value_modified(value, col): view_cell + cell_value_modified both read it (the R966 doc claimed this lift but view_cell duplicated it inline; guard no longer diverges)",
+        "honest doc + r966 demo: reset is pointer+RPC accessible; AT screen-reader reset = focusable reset-control node follow-up"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: exit 0 (authoritative, no pipe), 171 ok groups, 0 fail; clippy -D pedantic exit 0",
+        "r966/r960/r965 data-grid demos PASS (reset still works via pointer + RPC)",
+        "2 independent adversarial reviewers + my own grep+read; every claim re-verified before clearing (some over-flags rejected)"
+      ],
+      "impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "AT screen-reader reset (a focusable reset-control node, covering cell + row + column granularity) deferred: a real a11y design (focus order + WAI-ARIA role inside a grid); R960's per-cell reset shares this same gap",
+        "the false-green pipe trap re-bit this session: my in-round R967 'gates green' was a trailing grep|head exit, not cargo's; re-ran every gate pipe-free with the exit captured directly ([[pipe-masks-exit-code-false-green]])"
+      ],
+      "publishable_decision_summary": "Session-review clearance of R966: the row/column reset's claimed AT-accessible Click was dead, unreachable production code (no focusable resetcol/resetrow AccessNode exists; the shell routes actions only to focused real nodes) - removed it + corrected the over-claim to honest pointer+RPC accessibility (AT-reachable reset = focusable-node follow-up). Lifted value_modified(value,col) so the per-cell dot gate genuinely shares the modified-from-default SSOT the queries read (the R966 doc claimed the lift but view_cell duplicated it inline). Both findings from the adversarial session review, re-verified by my own grep+read.",
+      "publishable_changes_bullets": [
+        "removed the dead access_child_invoke Click->reset branch: no focusable resetcol/resetrow AccessNode exists, the shell routes actions only to focused real nodes, so only the unit test reached it",
+        "reorder Increment/Decrement stays AT-reachable (rides the focused cell's existing node); test now asserts reset is NOT an AT action (the deliberate decision)",
+        "lifted value_modified(value, col): view_cell + cell_value_modified both read it (the R966 doc claimed this lift but view_cell duplicated it inline; guard no longer diverges)",
+        "honest doc + r966 demo: reset is pointer+RPC accessible; AT screen-reader reset = focusable reset-control node follow-up"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: exit 0 (authoritative, no pipe), 171 ok groups, 0 fail; clippy -D pedantic exit 0",
+        "r966/r960/r965 data-grid demos PASS (reset still works via pointer + RPC)",
+        "2 independent adversarial reviewers + my own grep+read; every claim re-verified before clearing (some over-flags rejected)"
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "AT screen-reader reset (a focusable reset-control node, covering cell + row + column granularity) deferred: a real a11y design (focus order + WAI-ARIA role inside a grid); R960's per-cell reset shares this same gap",
+        "the false-green pipe trap re-bit this session: my in-round R967 'gates green' was a trailing grep|head exit, not cargo's; re-ran every gate pipe-free with the exit captured directly ([[pipe-masks-exit-code-false-green]])"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

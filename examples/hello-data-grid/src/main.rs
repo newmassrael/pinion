@@ -674,16 +674,26 @@ fn col_default(col: usize) -> CellValue {
     }
 }
 
-/// R966 — the pure "does cell `(row, col)` differ from its [`col_default`]" atom
-/// over a model slice. The single source of truth the per-cell reset dot
-/// ([`view_cell`]), the per-column / per-row header reset dots, the
-/// `modified.<row>.<col>` / `col_modified.<col>` / `row_modified.<row>` queries,
-/// and [`DataGridExternal::cell_modified`] all read, so the paint at every
-/// granularity and the wire cannot disagree (a divergence here would be a bug,
-/// not a style choice — the lift criterion). Pure over the slice so the paint
-/// path (which already borrows the model) and the coordinator both call it.
+/// R967.1 — the value-level "does this value differ from column `col`'s
+/// [`col_default`]" predicate. The single source of truth the per-cell reset dot
+/// ([`view_cell`], which has the value in hand) reads DIRECTLY, and the
+/// [`cell_value_modified`] model-indexed wrapper reads through `model.get`. One
+/// place encodes the value-vs-default comparison + its out-of-range guard, so the
+/// paint gate and the wire reads cannot diverge (a session-review caught
+/// `view_cell` duplicating this inline — divergence-is-a-bug, since the dot's
+/// presence and the `modified.<…>` query MUST agree).
+fn value_modified(value: &CellValue, col: usize) -> bool {
+    col < NCOLS && !value.value_eq(&col_default(col))
+}
+
+/// R966 — the model-indexed "does cell `(row, col)` differ from its column
+/// default" read, built on the [`value_modified`] atom. The SSOT the per-column /
+/// per-row header reset dots, the `modified.<row>.<col>` / `col_modified.<col>` /
+/// `row_modified.<row>` queries, and [`DataGridExternal::cell_modified`] all read.
+/// Pure over the slice so the paint path (which already borrows the model) and
+/// the coordinator both call it.
 fn cell_value_modified(model: &[CellValue], row: usize, col: usize) -> bool {
-    col < NCOLS && model.get(idx(row, col)).is_some_and(|v| !v.value_eq(&col_default(col)))
+    col < NCOLS && model.get(idx(row, col)).is_some_and(|v| value_modified(v, col))
 }
 
 /// R966 — whether ANY cell in column `col` differs from its column default
@@ -3350,8 +3360,10 @@ fn view_cell(
         ))
     };
     // R960 — a cell differs from its column default → paint the trailing-edge
-    // reset dot (suppressed while the inline editor owns the cell).
-    let modified = !edit_active && !value.value_eq(&col_default(col));
+    // reset dot (suppressed while the inline editor owns the cell). R967.1 — via
+    // the [`value_modified`] atom (the SSOT the `modified.<…>` queries read), so
+    // the dot's presence and the wire predicate cannot diverge.
+    let modified = !edit_active && value_modified(value, col);
     let mut children = vec![inner];
     if modified {
         children.push(reset_dot(row, col, theme));
@@ -4397,27 +4409,16 @@ impl WidgetA11y for DataGridView {
         sub_tag: &str,
         action: AccessAction,
     ) -> bool {
-        // R966 — AT activation (`Click`) of a row / column reset dot resets that
-        // row / column through the SAME `reset_row` / `reset_col` funnel the
-        // pointer dot + the RPC verb use (the visible affordance's accessible
-        // action). Reorder rides Increment / Decrement, so `Click` is free for
-        // the reset control — and R937.1 keeps a `button` OUT of the grid row,
-        // exposing the action on the grid here instead. Returns whether the
-        // reset cleared anything (a no-op on an already-default row / column).
-        if action == AccessAction::Click {
-            let (verb, index) = match sub_tag.strip_prefix(RESET_PREFIX).and_then(ResetTarget::parse) {
-                Some(ResetTarget::Row { row }) => ("reset_row", row),
-                Some(ResetTarget::Col { col }) => ("reset_col", col),
-                _ => return false,
-            };
-            let Some(intro) = external_mut(scene, GRID_TAG) else {
-                return false;
-            };
-            return matches!(
-                intro.invoke(verb, IntrospectValue::Int(int_of(index))),
-                Ok(IntrospectValue::Int(n)) if n > 0
-            );
-        }
+        // R967.1 — the row / column reset is pointer + RPC accessible (the dot's
+        // composite-tag click → `dispatch_send` → reset_row/reset_col, and the
+        // RPC verbs). It is NOT exposed as an AT action here: a session-review
+        // found there is no focusable `resetcol`/`resetrow` AccessNode for AT to
+        // target (`access_node` emits only grid / row / cell nodes), so a Click
+        // reset branch was dead production code. A genuinely AT-reachable reset
+        // needs a focusable reset-control node (a real a11y design — every reset
+        // granularity, cell included, shares this gap) — a documented follow-up,
+        // not faked here. Reorder stays AT-reachable because it rides the focused
+        // cell's existing node via Increment / Decrement.
         let delta: isize = match action {
             AccessAction::Increment => 1,
             AccessAction::Decrement => -1,
@@ -4741,34 +4742,26 @@ mod tests {
     }
 
     #[test]
-    fn r966_access_click_resets_row_and_column() {
+    fn r967_1_reset_is_pointer_and_rpc_only_not_an_at_action() {
+        // R967.1 (session-review) — the row / column reset is pointer + RPC
+        // accessible, NOT an AT action. There is no focusable resetcol/resetrow
+        // AccessNode (`access_node` emits only grid / row / cell nodes), so a
+        // Click carrying a reset sub-tag is unhandled (returns false → the shell's
+        // focus chain handles it), exactly like any non-reorder Click. An R966
+        // first cut wired a Click→reset branch here, but it was dead production
+        // code (no node could ever deliver that sub-tag); a genuinely AT-reachable
+        // reset needs a focusable reset-control node (a real a11y design covering
+        // every reset granularity) — a documented follow-up, not faked.
         Owner::new().run(|| {
             let mut scene = boot_scene();
-            {
-                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
-                let intro = node.handle.introspect_mut().expect("introspectable");
-                intro.invoke("reset_all", IntrospectValue::Null).unwrap();
-                intro.intervene("value.0.2", IntrospectValue::Int(50)).unwrap();
-                intro.intervene("value.1.2", IntrospectValue::Int(60)).unwrap();
-            }
-            // AT `Click` on the column reset dot clears the whole column (the
-            // accessible twin of the pointer dot click) and reports it cleared.
-            assert!(DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetcol2", AccessAction::Click));
-            assert_eq!(grid_intro(&scene).query("col_modified.2"), Some(IntrospectValue::Bool(false)), "column reset via AT Click");
-            // A Click on an already-clean column clears nothing -> false.
-            assert!(!DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetcol2", AccessAction::Click), "clean column Click is a false no-op");
-            // AT `Click` on a modified row's reset dot clears that row.
-            {
-                let node = scene.find_external_with_tag_mut(GRID_TAG).expect("grid present");
-                node.handle.introspect_mut().unwrap().intervene("value.3.0", IntrospectValue::Text("z".to_owned())).unwrap();
-            }
-            assert!(DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetrow3", AccessAction::Click));
-            assert_eq!(grid_intro(&scene).query("row_modified.3"), Some(IntrospectValue::Bool(false)), "row reset via AT Click");
-            // A Click on a per-CELL reset tag is not a row/col AT action (the
-            // cell dot has its pointer + RPC paths; the AT Click axis is the
-            // 1-D bulk reset), and a Click on a plain cell is not a reset.
-            assert!(!DataGridView::access_child_invoke(&mut scene, GRID_TAG, "reset0_2", AccessAction::Click), "a cell reset is not a row/col AT action");
-            assert!(!DataGridView::access_child_invoke(&mut scene, GRID_TAG, "0_0", AccessAction::Click), "a plain cell Click is not a reset");
+            assert!(
+                !DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetcol2", AccessAction::Click),
+                "column reset is not exposed as an AT Click action",
+            );
+            assert!(
+                !DataGridView::access_child_invoke(&mut scene, GRID_TAG, "resetrow3", AccessAction::Click),
+                "row reset is not exposed as an AT Click action",
+            );
         });
     }
 
