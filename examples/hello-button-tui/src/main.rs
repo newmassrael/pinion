@@ -41,7 +41,7 @@
 //! - pinion-tui's substrate compiles + links against a real
 //!   crossterm-backed terminal.
 //! - `paint::to_buffer` renders `TextNode` content at pixel→cell
-//!   coords matching the substrate's `PIXEL_PER_CELL_*` constants.
+//!   coords matching the substrate's R968 `CellMetric` (8×16).
 //! - The RAII terminal restore guard handles both `Esc` exit and
 //!   panic cleanup.
 //! - **R51.111**: real SCXML Button statechart drives the cached

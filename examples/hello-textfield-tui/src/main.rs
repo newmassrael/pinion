@@ -22,8 +22,8 @@
 //!   instead. The text content + caret byte composition still flows
 //!   through [`use_text_edit_state`] verbatim.
 //! - **Caret geometry**: the cell-based paint walker maps pixel
-//!   coords through `PIXEL_PER_CELL_X` (8 px) / `PIXEL_PER_CELL_Y`
-//!   (16 px), so the caret column is `byte_offset` cells (1 ASCII byte
+//!   coords through the R968 `CellMetric` (8 px wide / 16 px tall),
+//!   so the caret column is `byte_offset` cells (1 ASCII byte
 //!   per cell — matches every realistic TUI input). The parley
 //!   [`caret_rect_for_byte_offset`] (§5.36) helper is not used here
 //!   because TUI runs without a font shaping layer.
@@ -67,7 +67,7 @@ use pinion_tui::{TuiRenderer, WidgetViewTui};
 const TF_TAG: &str = "hello_textfield_tui";
 
 // Pixel-space coordinates the paint walker maps to cells via the
-// pinion-tui `PIXEL_PER_CELL_*` (8 / 16) constants. Field is 30
+// pinion-tui `CellMetric` (8 / 16) default. Field is 30
 // cells wide × 1 row tall starting at column 2 / row 3 of the
 // terminal — mirrors the macOS Settings input rhythm scaled to a
 // terminal aesthetic.

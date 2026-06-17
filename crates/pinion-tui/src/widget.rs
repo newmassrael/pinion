@@ -67,8 +67,8 @@ pub trait WidgetViewTui: pinion_a11y::WidgetA11y {
 /// `pinion_core::Frame` (a ZST sentinel — pinion-core's view-fn
 /// surface intentionally carries no per-frame dimensions, the
 /// scene's `rect` fields are pixel-absolute), and the paint walker
-/// (`paint::to_buffer`) maps pixel coords to cells via
-/// `PIXEL_PER_CELL_*` constants.
+/// (`paint::to_buffer`) maps pixel coords to cells via the R968
+/// §5.41 `CellMetric` (default 8×16).
 #[must_use]
 pub fn render_one_frame<V: WidgetViewTui>(state: V::State, cols: u16, rows: u16) -> Buffer {
     let frame = Frame::new();

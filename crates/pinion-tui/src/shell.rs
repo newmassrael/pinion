@@ -47,10 +47,10 @@
 //!    on exit so the user's terminal does not stay locked into mouse
 //!    reporting mode after an `Esc` or panic.
 //! 2. `crossterm::event::MouseEvent.column/row` are cell coords;
-//!    [`crate::input::cell_to_pixel`] multiplies by the
-//!    `PIXEL_PER_CELL_*` constants (same inverse the paint walker
-//!    uses) so the substrate's pixel-coord `Scene::Container.rect`
-//!    hit-tests align with the visible cells.
+//!    [`crate::input::cell_to_pixel`] maps them through the R968 §5.41
+//!    `CellMetric` (same inverse the paint walker uses) so the
+//!    substrate's pixel-coord `Scene::Container.rect` hit-tests align
+//!    with the visible cells.
 //! 3. After every paint, [`InputRouter::update_paint_scene`] retains
 //!    a fresh paint-scene snapshot so the next `MouseEvent` resolves
 //!    hover targets against the current visual state (mirrors
@@ -75,9 +75,9 @@
 //! - **`Backend::Tui` axis on `External::backends`**: today the
 //!   binding declares `Backend::Gui` because no dedicated TUI flag
 //!   exists; the §5.15 backend taxonomy round lifts it.
-//! - **Cell-native coord substrate**: `PIXEL_PER_CELL_*` placeholder
-//!   stays until the second TUI binding surfaces a real terminal
-//!   cell-size mismatch.
+//! - **Cell-native coord substrate**: the typed R968 §5.41
+//!   `CellMetric` (default 8×16) replaced the `PIXEL_PER_CELL_*`
+//!   placeholder; the per-node metric still defers to `Scene::TextGrid`.
 //!
 //! These deferrals stay textbook substrate-incompleteness-signal
 //! ([[substrate-incompleteness-signal]]) — each shell-side path

@@ -31,7 +31,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use pinion_runtime::Modifiers;
 
-use crate::paint::{PIXEL_PER_CELL_X, PIXEL_PER_CELL_Y};
+use pinion_core::CellMetric;
 
 /// R51.111 §5.41 — convert a crossterm `KeyEvent` into the W3C
 /// `KeyboardEvent.key` string the `WidgetViewTui::apply_key` /
@@ -109,20 +109,16 @@ pub fn modifiers_from_crossterm(modifiers: KeyModifiers) -> Modifiers {
 ///
 /// The substrate is pixel-coord native (DPI-aware logical pixels,
 /// same axis the Vello shell's winit `CursorMoved` reports). The TUI
-/// path multiplies cell coords by [`PIXEL_PER_CELL_X`] /
-/// [`PIXEL_PER_CELL_Y`] — the same constants
-/// [`crate::paint::to_buffer`] uses for the inverse direction — so
+/// path maps cell coords through [`CellMetric`] (R968 §5.41) — the
+/// same metric [`crate::paint`] uses for the inverse direction — so
 /// `Scene::Container.rect` hit-tests align with the visible cell
-/// geometry. Once the cell-native coord axis lands (R51.113+ carry,
-/// substrate-incompleteness-signal on a real cell mismatch), this
-/// helper folds away and the substrate becomes generic over coord
-/// units.
+/// geometry. It renders against [`CellMetric::DEFAULT`] (8×16),
+/// matching the pre-R968 `PIXEL_PER_CELL_*` behaviour. When a future
+/// `Scene::TextGrid` makes the substrate generic over coord units,
+/// this helper folds away.
 #[must_use]
 pub fn cell_to_pixel(column: u16, row: u16) -> (f64, f64) {
-    (
-        f64::from(column) * f64::from(PIXEL_PER_CELL_X),
-        f64::from(row) * f64::from(PIXEL_PER_CELL_Y),
-    )
+    CellMetric::DEFAULT.cell_to_px(column, row)
 }
 
 #[cfg(test)]

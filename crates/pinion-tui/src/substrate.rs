@@ -44,9 +44,9 @@
 //!   substrate hands `Some(V::tag())` to [`CoreShell::apply_key`]
 //!   unconditionally. The TUI `FocusManager` axis carries until a
 //!   multi-focusable TUI binding surfaces the trigger.
-//! - Cell-native coord substrate — `cell_to_pixel` still routes
-//!   through the `PIXEL_PER_CELL_*` placeholder. Carry until a
-//!   binding surfaces a real terminal cell-size mismatch.
+//! - Cell-native coord substrate — `cell_to_pixel` now routes through
+//!   the R968 §5.41 `CellMetric` type (default 8×16); a per-node
+//!   metric arrives with `Scene::TextGrid` (R968 carry).
 
 use std::cell::Cell;
 use std::io;

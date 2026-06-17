@@ -21,22 +21,20 @@
 //! pinion-core's [`pinion_core::scene::Rect`] is u32 pixel-space
 //! geometry (DPI-aware logical pixels, same axis as Vello's render
 //! target). Terminal cells are character-grid units; the conversion
-//! divides by [`PIXEL_PER_CELL_X`] / [`PIXEL_PER_CELL_Y`] which match
-//! a stock 8×16 bitmap font cell (the de-facto industry baseline for
-//! terminal layout math). The constants are a placeholder mapping
-//! pending the §5.41 R51.111+ cell-native coord axis — once the
-//! substrate-incompleteness-signal trigger (mismatched cell widths
-//! against a real terminal's reported size) fires, the conversion
-//! shifts to the application binding's `WidgetViewTui::initial_size`
-//! cell hint.
+//! goes through [`CellMetric`] (the R968 §5.41 cell-native metric).
+//! This adapter renders against [`CellMetric::DEFAULT`] — the 8×16
+//! bitmap font baseline — so behaviour is byte-unchanged from the
+//! pre-R968 `PIXEL_PER_CELL_*` constants it replaced. A future
+//! `Scene::TextGrid` supplies its own node-local metric (derived from
+//! its monospace font), at which point this walker reads it per node.
 //!
-//! R51.189 adds [`pixels_to_cell_floor`] for the signed/i64 path —
-//! scroll cascades can move content's screen-space origin to
-//! negative pixels (content scrolled past the viewport's left or
-//! top edge), so the cell index needs `div_euclid` flooring rather
-//! than the truncating `/` the unsigned [`pixel_to_cell_origin`]
-//! uses. Both helpers coexist: input mapping keeps unsigned, paint
-//! cascade uses signed.
+//! [`CellMetric::cell_at`] is the unsigned, truncating pixel→cell map.
+//! The local [`pixels_to_cell_floor`] adds the signed/i64 path the
+//! scroll cascade needs — content scrolled past the viewport's left or
+//! top edge lands at negative pixels, so the cell index needs
+//! `div_euclid` flooring toward `-∞` rather than the truncating `/`.
+//! That signed variant stays in this adapter (the Vello backend clips
+//! in pixels and never needs it).
 //!
 //! ## Grapheme cluster walk
 //!
@@ -50,21 +48,20 @@
 
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{BoxStyle, Color};
+use pinion_core::CellMetric;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect as TuiRect;
 use ratatui::style::Color as TuiColor;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// R51.110.0 §5.41 — pixels per terminal cell column (placeholder
-/// 8×16 bitmap font baseline). The cell-native axis lands R51.111+
-/// once the first hello-button TUI dogfood reports a mismatch with
-/// the real terminal's reported character cell size.
-pub const PIXEL_PER_CELL_X: u32 = 8;
-
-/// R51.110.0 §5.41 — pixels per terminal cell row (placeholder
-/// 8×16 bitmap font baseline). See [`PIXEL_PER_CELL_X`].
-pub const PIXEL_PER_CELL_Y: u32 = 16;
+/// R968 §5.41 — the cell-native metric this TUI paint adapter renders
+/// against. Sourced from [`CellMetric::DEFAULT`] (the behaviour-preserving
+/// 8×16 baseline the pre-R968 `PIXEL_PER_CELL_*` constants carried); a
+/// future `Scene::TextGrid` supplies its own node-local [`CellMetric`]
+/// derived from its monospace font, with the shared `Rect` geometry
+/// staying in logical pixels per the R968 ratify.
+const CELL: CellMetric = CellMetric::DEFAULT;
 
 // R51.130 §5.41 — Unicode light box-drawing set (U+2500..U+2518).
 // Lifted as `\u{XXXX}`-escaped constants so the Rust source carries
@@ -210,10 +207,10 @@ fn to_buffer_inner(scene: &Scene, buf: &mut Buffer, clip: CellClip, offset_px: (
             let right_px = left_px + i64::from(s.viewport.w);
             let bottom_px = top_px + i64::from(s.viewport.h);
             let viewport_clip = CellClip {
-                x0: pixels_to_cell_floor(left_px, PIXEL_PER_CELL_X),
-                y0: pixels_to_cell_floor(top_px, PIXEL_PER_CELL_Y),
-                x1: pixels_to_cell_floor(right_px, PIXEL_PER_CELL_X),
-                y1: pixels_to_cell_floor(bottom_px, PIXEL_PER_CELL_Y),
+                x0: pixels_to_cell_floor(left_px, CELL.cell_w()),
+                y0: pixels_to_cell_floor(top_px, CELL.cell_h()),
+                x1: pixels_to_cell_floor(right_px, CELL.cell_w()),
+                y1: pixels_to_cell_floor(bottom_px, CELL.cell_h()),
             };
             let new_clip = clip.intersect(viewport_clip);
             if new_clip.is_empty() {
@@ -308,10 +305,10 @@ fn paint_box_style(
     let top_px = i64::from(rect.y) + i64::from(offset_px.1);
     let right_px = left_px + i64::from(rect.w);
     let bottom_px = top_px + i64::from(rect.h);
-    let cell_left = pixels_to_cell_floor(left_px, PIXEL_PER_CELL_X);
-    let cell_top = pixels_to_cell_floor(top_px, PIXEL_PER_CELL_Y);
-    let cell_right = pixels_to_cell_floor(right_px, PIXEL_PER_CELL_X);
-    let cell_bottom = pixels_to_cell_floor(bottom_px, PIXEL_PER_CELL_Y);
+    let cell_left = pixels_to_cell_floor(left_px, CELL.cell_w());
+    let cell_top = pixels_to_cell_floor(top_px, CELL.cell_h());
+    let cell_right = pixels_to_cell_floor(right_px, CELL.cell_w());
+    let cell_bottom = pixels_to_cell_floor(bottom_px, CELL.cell_h());
     if cell_left >= cell_right || cell_top >= cell_bottom {
         return;
     }
@@ -424,8 +421,8 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
     let buf_area = buf.area;
     let screen_col_px = i64::from(t.rect.x) + i64::from(offset_px.0);
     let screen_row_px = i64::from(t.rect.y) + i64::from(offset_px.1);
-    let cell_col = pixels_to_cell_floor(screen_col_px, PIXEL_PER_CELL_X);
-    let cell_row = pixels_to_cell_floor(screen_row_px, PIXEL_PER_CELL_Y);
+    let cell_col = pixels_to_cell_floor(screen_col_px, CELL.cell_w());
+    let cell_row = pixels_to_cell_floor(screen_row_px, CELL.cell_h());
     // Quick vertical reject — entire line outside the clip strip.
     if cell_row < clip.y0 || cell_row >= clip.y1 {
         return;
@@ -460,16 +457,6 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
     }
 }
 
-/// R51.110.0 §5.41 — convert pixel-space (x, y) to cell-space
-/// (column, row), saturating at `u16::MAX` so the ratatui buffer's
-/// `Rect` (which uses u16 coords) cannot overflow. Used by the
-/// paint walker before each cell write.
-#[must_use]
-pub fn pixel_to_cell_origin(px: u32, py: u32) -> (u16, u16) {
-    let cell_x = u16::try_from(px / PIXEL_PER_CELL_X).unwrap_or(u16::MAX);
-    let cell_y = u16::try_from(py / PIXEL_PER_CELL_Y).unwrap_or(u16::MAX);
-    (cell_x, cell_y)
-}
 
 #[cfg(test)]
 mod tests {
@@ -673,14 +660,6 @@ mod tests {
         assert_eq!(buf[(0, 0)].bg, expected_bg);
         assert_eq!(buf[(1, 0)].symbol(), "i");
         assert_eq!(buf[(1, 0)].bg, expected_bg);
-    }
-
-    #[test]
-    fn pixel_to_cell_origin_saturates_at_u16_max() {
-        // Extreme pixel values saturate cleanly.
-        let (cx, cy) = pixel_to_cell_origin(u32::MAX, u32::MAX);
-        assert_eq!(cx, u16::MAX);
-        assert_eq!(cy, u16::MAX);
     }
 
     // ----- R51.189 §5.45 R55.E.2 TUI paint clipping tests -----

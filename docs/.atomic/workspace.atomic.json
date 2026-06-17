@@ -44045,6 +44045,66 @@
         "watch: codec 비디오 = §3 경계 유지 (래스터 프레임 갱신과 구분)"
       ]
     },
+    "R970": {
+      "decision_summary": "R970 §5.41 CellMetric cell-native metric substrate (S2): PIXEL_PER_CELL 고정상수 -> core CellMetric 타입(비-zero 불변식, default 8x16 동작보존, font-derivation source hook); 양 백엔드 공유 conversion",
+      "changes_bullets": [
+        "pinion-core: 신규 CellMetric{cell_w,cell_h} (private + new()->Option 비-zero + const DEFAULT 8x16)",
+        "공유 conversion 타입 귀속: cell_to_px(forward) + cell_at(reverse saturating); 양 백엔드 재사용",
+        "paint.rs: PIXEL_PER_CELL_X/Y 상수 제거 -> const CELL=DEFAULT; 10 호출처 cell_w()/cell_h()",
+        "signed scroll-floor pixels_to_cell_floor는 TUI 잔류 (Vello 픽셀-clip이라 중복 아님)",
+        "잉여 pixel_to_cell_origin 제거; coverage core cell_at 테스트 이전 (외부 사용 0)",
+        "input.rs: cell_to_pixel -> CellMetric::DEFAULT.cell_to_px delegate (public API 유지)",
+        "carry doc 3곳(substrate/shell/widget) + examples 3종 PIXEL_PER_CELL -> CellMetric 갱신",
+        "new() = R968 font-derivation source hook(S4용); default 8x16 = 동작 byte-unchanged",
+        "core-home: TextGrid 노드가 metric 보유 -> core 필수(tui-home이면 Vello 중복 강제)"
+      ],
+      "verification_bullets": [
+        "신규 cell_metric 7 테스트 pass (default/zero-reject/round-trip/비-default/포화)",
+        "cargo test --workspace -j2: exit 0, 전 크레이트 0 failed (pinion-core 837 등)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: exit 0, 0 warning",
+        "PIXEL_PER_CELL 코드 심볼 잔존 0 (역사적 doc backtick-text만); 동작-보존 확인",
+        "validate-workspace: mutation 후 신규 violation 0"
+      ],
+      "impact_refs": [
+        "5.41",
+        "5.2"
+      ],
+      "carry_forward_bullets": [
+        "S3: cell<->px round-trip 항등 property + 권위 (rows,cols) getter (R1.4 winsize / R1.8 hit-test)",
+        "S4: TextGrid geometry 스캐폴드가 CellMetric::new(font advance,line-height) 소비; per-node metric",
+        "Vello cell 렌더 도착 시 cell_to_px 2nd 소비자 = core-home 정당성 실증",
+        "CoordSpace::Cell 전역 승격 트리거 = 셀-네이티브 레이아웃 엔진 (R968 defer 유지)"
+      ],
+      "publishable_decision_summary": "R970 §5.41 CellMetric cell-native metric substrate (S2): PIXEL_PER_CELL 고정상수 -> core CellMetric 타입(비-zero 불변식, default 8x16 동작보존, font-derivation source hook); 양 백엔드 공유 conversion",
+      "publishable_changes_bullets": [
+        "pinion-core: 신규 CellMetric{cell_w,cell_h} (private + new()->Option 비-zero + const DEFAULT 8x16)",
+        "공유 conversion 타입 귀속: cell_to_px(forward) + cell_at(reverse saturating); 양 백엔드 재사용",
+        "paint.rs: PIXEL_PER_CELL_X/Y 상수 제거 -> const CELL=DEFAULT; 10 호출처 cell_w()/cell_h()",
+        "signed scroll-floor pixels_to_cell_floor는 TUI 잔류 (Vello 픽셀-clip이라 중복 아님)",
+        "잉여 pixel_to_cell_origin 제거; coverage core cell_at 테스트 이전 (외부 사용 0)",
+        "input.rs: cell_to_pixel -> CellMetric::DEFAULT.cell_to_px delegate (public API 유지)",
+        "carry doc 3곳(substrate/shell/widget) + examples 3종 PIXEL_PER_CELL -> CellMetric 갱신",
+        "new() = R968 font-derivation source hook(S4용); default 8x16 = 동작 byte-unchanged",
+        "core-home: TextGrid 노드가 metric 보유 -> core 필수(tui-home이면 Vello 중복 강제)"
+      ],
+      "publishable_verification_bullets": [
+        "신규 cell_metric 7 테스트 pass (default/zero-reject/round-trip/비-default/포화)",
+        "cargo test --workspace -j2: exit 0, 전 크레이트 0 failed (pinion-core 837 등)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello: exit 0, 0 warning",
+        "PIXEL_PER_CELL 코드 심볼 잔존 0 (역사적 doc backtick-text만); 동작-보존 확인",
+        "validate-workspace: mutation 후 신규 violation 0"
+      ],
+      "publishable_impact_refs": [
+        "5.41",
+        "5.2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S3: cell<->px round-trip 항등 property + 권위 (rows,cols) getter (R1.4 winsize / R1.8 hit-test)",
+        "S4: TextGrid geometry 스캐폴드가 CellMetric::new(font advance,line-height) 소비; per-node metric",
+        "Vello cell 렌더 도착 시 cell_to_px 2nd 소비자 = core-home 정당성 실증",
+        "CoordSpace::Cell 전역 승격 트리거 = 셀-네이티브 레이아웃 엔진 (R968 defer 유지)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

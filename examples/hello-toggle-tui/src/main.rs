@@ -17,9 +17,9 @@
 //!   The second binding confirms the duplication is structural —
 //!   lifting `ShellCore` into a backend-agnostic crate is the
 //!   textbook follow-up.
-//! - **Cell-native coord substrate**: this binding still routes
-//!   through `PIXEL_PER_CELL_*` placeholders. A real cell mismatch
-//!   here would trigger the cell-native axis.
+//! - **Cell-native coord substrate**: this binding routes through the
+//!   R968 §5.41 `CellMetric` (default 8×16); a per-node metric lands
+//!   with `Scene::TextGrid`.
 //!
 //! Run:
 //!

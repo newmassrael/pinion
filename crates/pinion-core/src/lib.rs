@@ -18,6 +18,7 @@
 
 pub mod animation;
 pub mod app;
+pub mod cell_metric;
 pub mod cell_value;
 pub mod clipboard;
 pub mod command;
@@ -60,6 +61,7 @@ pub use animation::{
     Animatable, AnimRect, AnimVec2, AnimVec4, Animation, Easing, SpringConfig, SpringState,
     Tickable, Tween, DEFAULT_REST_EPSILON,
 };
+pub use cell_metric::CellMetric;
 pub use cell_value::{CellKind, CellValue};
 pub use clipboard::{Clipboard, ClipboardSelection, InMemoryClipboard};
 pub use command::Command;
