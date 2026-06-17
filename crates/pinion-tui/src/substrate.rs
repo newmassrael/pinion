@@ -953,8 +953,35 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 let frame = Frame::new();
                 root_owner.run(|| V::view(cached_state, &frame))
             };
+            // R984 §5.40 §2 #7 — TUI `scene/access` producer, closing the
+            // §2 #6 dual-backend asymmetry (pre-R984 the TUI returned
+            // `AccessTreeUnavailable`). It runs the SAME
+            // [`pinion_a11y::build_access_tree`] SSOT the GUI shell + live
+            // AccessKit emit do: the single terminal window passes
+            // `access_node` (the GUI's multi-window `access_node_for_window`
+            // has no TUI peer), names enrich from the committed paint scene,
+            // and pixel bounds resolve from the same `rect_for_tag` lookup
+            // `scene/layout` already speaks (TUI rects are the view-fn's cell
+            // geometry). `focus_before` is the pre-dispatch focus sample, the
+            // GUI's entry-focus convention.
+            let access_focused = focus_before.clone();
+            let mut produce_access = || {
+                let (mut nodes, focus) = pinion_a11y::build_access_tree(
+                    &root_owner,
+                    last_paint_scene_ref,
+                    || V::access_node(&cached_state, access_focused.as_deref()),
+                    || V::access_focus_target(&cached_state, access_focused.as_deref()),
+                );
+                if let Some(paint) = last_paint_scene_ref {
+                    pinion_a11y::resolve_access_bounds(&mut nodes, |tag| {
+                        pinion_runtime::rect_for_tag(paint, tag)
+                    });
+                }
+                (nodes, focus)
+            };
             let mut ctx = DispatchContext::new(scene_ptr, previews, revision)
                 .with_paint_producer(&mut produce)
+                .with_access_producer(&mut produce_access)
                 .with_focus_manager(focus_ptr);
             // R890.1 §5.12 §2 #6 — one channel: snapshot from:paint,
             // layout viewport:null, and hit-test dims all read this

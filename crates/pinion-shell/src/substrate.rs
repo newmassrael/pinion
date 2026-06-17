@@ -3970,29 +3970,25 @@ fn build_tag_map(nodes: &[AccessNode]) -> HashMap<NodeId, String> {
 /// coordinate-translation authority [`rect_for_tag`] is the per-fragment
 /// resolver, so the unioned bounds inherit its scroll-offset translation +
 /// viewport clipping.
+/// R984 — bind the lifted [`pinion_a11y::resolve_access_bounds`] union-bounds
+/// policy (the TUI shell's 2nd consumer) to the GUI's
+/// [`rect_for_tag`](pinion_runtime::rect_for_tag) lookup. `rect_for_tag` lives
+/// in `pinion_runtime`, above `pinion_a11y` in the layering, so the resolver is
+/// passed in rather than depended on.
 fn resolve_access_bounds(paint_scene: &Scene, nodes: &mut [AccessNode]) {
-    for node in nodes {
-        let mut bounds = rect_for_tag(paint_scene, &node.tag);
-        for extra in &node.bounds_union_tags {
-            if let Some(rect) = rect_for_tag(paint_scene, extra) {
-                bounds = Some(bounds.map_or(rect, |b| b.union(rect)));
-            }
-        }
-        node.bounds = bounds;
-    }
+    pinion_a11y::resolve_access_bounds(nodes, |tag| rect_for_tag(paint_scene, tag));
 }
 
-/// R979 §5.40 §2 #7 — build the enriched, bounds-resolved accessibility tree
-/// (the node list plus the AT focus target). Runs the binding's
-/// [`WidgetView::access_node_for_window`] (single-window `None` forwards to
-/// `access_node`), then [`enrich_names_from_scene`](pinion_a11y::enrich_names_from_scene)
-/// and [`resolve_access_bounds`] against `paint_scene`, then reads
-/// `access_focus_target`. This is the SSOT shared by the live AccessKit emit
-/// ([`ShellCore::collect_access_emit_inputs`]) and the `scene/access` RPC dump:
-/// the two MUST agree, or the dump would lie about what a screen reader
-/// receives (divergence-is-a-bug, lifted at the 2nd consumer rather than
-/// waiting for a 3rd). `paint_scene` is `None` only for a never-painted
-/// window, where names and bounds simply stay unresolved.
+/// R979 / R984 §5.40 §2 #7 — build the enriched, bounds-resolved accessibility
+/// tree (the node list plus the AT focus target) for this window. The semantic
+/// assembly — run [`WidgetView::access_node_for_window`] (single-window `None`
+/// forwards to `access_node`), enrich names from `paint_scene`, read
+/// `access_focus_target` — is the [`pinion_a11y::build_access_tree`] SSOT the
+/// live AccessKit emit ([`ShellCore::collect_access_emit_inputs`]), the
+/// `scene/access` RPC dump, AND the TUI shell all share (the two MUST agree, so
+/// the assembly lifted to `pinion_a11y` at the TUI 2nd consumer, R984). This
+/// GUI wrapper adds the layout-engine pixel bounds. `paint_scene` is `None`
+/// only for a never-painted window, where names and bounds stay unresolved.
 fn build_access_tree<V: WidgetView>(
     owner: &pinion_core::Owner,
     state: &V::State,
@@ -4000,15 +3996,18 @@ fn build_access_tree<V: WidgetView>(
     focused: Option<&str>,
     paint_scene: Option<&Scene>,
 ) -> (Vec<AccessNode>, Option<AccessFocus>) {
-    let mut nodes = owner.run(|| match window_id {
-        Some(id) => V::access_node_for_window(id, state, focused),
-        None => V::access_node(state, focused),
-    });
+    let (mut nodes, focus) = pinion_a11y::build_access_tree(
+        owner,
+        paint_scene,
+        || match window_id {
+            Some(id) => V::access_node_for_window(id, state, focused),
+            None => V::access_node(state, focused),
+        },
+        || V::access_focus_target(state, focused),
+    );
     if let Some(paint) = paint_scene {
-        pinion_a11y::enrich_names_from_scene(&mut nodes, paint);
         resolve_access_bounds(paint, &mut nodes);
     }
-    let focus = owner.run(|| V::access_focus_target(state, focused));
     (nodes, focus)
 }
 

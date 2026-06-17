@@ -253,6 +253,46 @@ fn r670_dispatch_rpc_mutating_call_bumps_revision_counter() {
     );
 }
 
+/// R984 §5.40 §2 #7 — `scene/access` on the TUI dumps the accessibility
+/// tree, closing the §2 #6 dual-backend asymmetry. Pre-R984 the TUI had no
+/// access producer, so the method answered `AccessTreeUnavailable` (the GUI
+/// answered the enriched dump). The producer now runs the shared
+/// `pinion_a11y::build_access_tree` SSOT, so the TUI returns the same
+/// `{count, focus, nodes}` envelope shape. The atomic `ButtonFixture` carries
+/// the default-empty a11y projection, so the node list is empty here — the
+/// point is the WIRING (a success envelope, not the unavailable error); a
+/// non-trivial tree is exercised by the `hello-textfield-tui` demo.
+#[test]
+fn r984_dispatch_rpc_scene_access_returns_tree_not_unavailable() {
+    let mut core: ShellCoreTui<TestButtonView> = ShellCoreTui::new();
+    let paint = core.compute_paint_scene();
+    core.update_paint_scene(paint);
+
+    let request = r#"{"jsonrpc":"2.0","id":9,"method":"scene/access","params":{}}"#;
+    let response = core
+        .dispatch_rpc(request)
+        .expect("scene/access must produce a response");
+    assert!(
+        response.contains("\"id\":9"),
+        "id round-trips: {response}",
+    );
+    // The §2 #6 parity deliverable: the access producer is wired, so the dump
+    // is a success envelope, NOT the pre-R984 AccessTreeUnavailable error.
+    assert!(
+        !response.contains("AccessTreeUnavailable"),
+        "TUI must no longer report the access tree as unavailable: {response}",
+    );
+    assert!(
+        response.contains("\"result\""),
+        "scene/access must return a success result envelope: {response}",
+    );
+    // The envelope shape mirrors the GUI dump: count + nodes (+ focus).
+    assert!(
+        response.contains("\"count\"") && response.contains("\"nodes\""),
+        "the TUI dump carries the GUI's count + nodes shape: {response}",
+    );
+}
+
 /// R670 §5.41 §5.40 — malformed JSON-RPC frames produce a wire-form
 /// error response (per the JSON-RPC 2.0 spec) without panicking the
 /// substrate. AI clients that send corrupt frames must observe the

@@ -44997,6 +44997,58 @@
         "node evaluation remains a Phase C boundary (out of scope)"
       ]
     },
+    "R984": {
+      "decision_summary": "TUI scene/access dual-backend parity: wire the TUI access producer through a lifted pinion_a11y::build_access_tree + resolve_access_bounds SSOT (the TUI is its 2nd consumer), closing the §2 #6 AccessTreeUnavailable asymmetry; GUI live-emit + GUI RPC + TUI RPC now share one assembler.",
+      "changes_bullets": [
+        "pinion-a11y: NEW build_access_tree (node_fn+focus_fn+paint -> enriched nodes+focus) + resolve_access_bounds (resolver-closure union-bounds) = the cross-backend SSOT",
+        "pinion-tui: dispatch_rpc wires .with_access_producer -> scene/access returns the tree (was AccessTreeUnavailable, the §2 #6 asymmetry)",
+        "pinion-shell: build_access_tree<V> + resolve_access_bounds become thin wrappers delegating to the lifted SSOT (GUI multi-window closure + rect_for_tag bounds)",
+        "3 consumers now converge on one SSOT: GUI live AccessKit emit + GUI RPC dump + TUI RPC dump (the two-MUST-agree invariant)",
+        "closure-based lift: GUI passes access_node_for_window, single-window TUI passes access_node, through the same assembler",
+        "bounds resolver is a closure (rect_for_tag lives in pinion-runtime, a sibling crate pinion-a11y cannot depend on) keeping layering acyclic",
+        "Tests: pinion-a11y assemble (build + resolve) + pinion-tui rpc_ingress r984 scene/access wiring"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2: exit 0 (172 ok blocks; 3 new tests pass; GUI r863 bounds + data-grid a11y unchanged)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings",
+        "GUI parity regression demos r979 / r983 / r980 PASS (scene/access through the lifted SSOT)",
+        "TUI verified by crates/pinion-tui/tests/rpc_ingress.rs (no headless TTY for a live TUI binary demo, the r670a precedent)",
+        "validate-workspace: T1 reject=0, no new orphans"
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "TUI scene/access now at GUI parity (§2 #6 closed for the a11y dump); pre-R984 it answered AccessTreeUnavailable",
+        "a TUI LIVE-binary RPC demo still needs a real TTY (crossterm raw-mode); the substrate is unit-test verified (r670a precedent)",
+        "pinion-tui stays single-window (DEFAULT_WINDOW); the TUI producer uses access_node (no access_node_for_window peer)"
+      ],
+      "publishable_decision_summary": "TUI scene/access dual-backend parity: wire the TUI access producer through a lifted pinion_a11y::build_access_tree + resolve_access_bounds SSOT (the TUI is its 2nd consumer), closing the §2 #6 AccessTreeUnavailable asymmetry; GUI live-emit + GUI RPC + TUI RPC now share one assembler.",
+      "publishable_changes_bullets": [
+        "pinion-a11y: NEW build_access_tree (node_fn+focus_fn+paint -> enriched nodes+focus) + resolve_access_bounds (resolver-closure union-bounds) = the cross-backend SSOT",
+        "pinion-tui: dispatch_rpc wires .with_access_producer -> scene/access returns the tree (was AccessTreeUnavailable, the §2 #6 asymmetry)",
+        "pinion-shell: build_access_tree<V> + resolve_access_bounds become thin wrappers delegating to the lifted SSOT (GUI multi-window closure + rect_for_tag bounds)",
+        "3 consumers now converge on one SSOT: GUI live AccessKit emit + GUI RPC dump + TUI RPC dump (the two-MUST-agree invariant)",
+        "closure-based lift: GUI passes access_node_for_window, single-window TUI passes access_node, through the same assembler",
+        "bounds resolver is a closure (rect_for_tag lives in pinion-runtime, a sibling crate pinion-a11y cannot depend on) keeping layering acyclic",
+        "Tests: pinion-a11y assemble (build + resolve) + pinion-tui rpc_ingress r984 scene/access wiring"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2: exit 0 (172 ok blocks; 3 new tests pass; GUI r863 bounds + data-grid a11y unchanged)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello (-D pedantic): 0 warnings",
+        "GUI parity regression demos r979 / r983 / r980 PASS (scene/access through the lifted SSOT)",
+        "TUI verified by crates/pinion-tui/tests/rpc_ingress.rs (no headless TTY for a live TUI binary demo, the r670a precedent)",
+        "validate-workspace: T1 reject=0, no new orphans"
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "TUI scene/access now at GUI parity (§2 #6 closed for the a11y dump); pre-R984 it answered AccessTreeUnavailable",
+        "a TUI LIVE-binary RPC demo still needs a real TTY (crossterm raw-mode); the substrate is unit-test verified (r670a precedent)",
+        "pinion-tui stays single-window (DEFAULT_WINDOW); the TUI producer uses access_node (no access_node_for_window peer)"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [

@@ -47,6 +47,7 @@
 #![forbid(unsafe_code)]
 
 pub mod action;
+pub mod assemble;
 pub mod described;
 pub mod focus;
 pub mod grid;
@@ -74,6 +75,7 @@ pub mod widget_a11y;
 mod test_fixtures;
 
 pub use action::{translate_action, AccessAction, PinionAccessAction};
+pub use assemble::{build_access_tree, resolve_access_bounds};
 pub use described::describedby_region;
 pub use focus::AccessFocus;
 pub use grid::{grid_table_nodes, GridCell, GridColumn, GridRow};
