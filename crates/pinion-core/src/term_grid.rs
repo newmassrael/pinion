@@ -135,22 +135,12 @@ impl Palette {
         }
     }
 
-    /// Replace the 16 ANSI base colours (theme application), keeping the
-    /// default fg / bg.
-    #[must_use]
-    pub const fn with_ansi16(mut self, ansi16: [Color; 16]) -> Self {
-        self.ansi16 = ansi16;
-        self
-    }
-
-    /// Replace the default foreground / background (what
-    /// [`TermColor::Default`] resolves to).
-    #[must_use]
-    pub const fn with_defaults(mut self, fg: Color, bg: Color) -> Self {
-        self.default_fg = fg;
-        self.default_bg = bg;
-        self
-    }
+    // Theme mutators (replace the ANSI base / default fg+bg) are
+    // deliberately NOT exposed yet: this slice ships only the fixed xterm
+    // palette, and the theme-swap consumer is a later S5 slice. Per the
+    // R972 "no unconsumed surface" discipline they land with that
+    // consumer (the `indexed → rgb` resolution they would exercise is
+    // already proven against the default palette below).
 
     /// The default-foreground colour.
     #[must_use]
@@ -166,7 +156,8 @@ impl Palette {
 
     /// Resolve a 256-colour palette index to a concrete [`Color`].
     ///
-    /// - `0..=15` — the themeable ANSI base ([`Self::with_ansi16`]).
+    /// - `0..=15` — the ANSI base colours (themeable when theme support
+    ///   lands; fixed to the xterm defaults this slice).
     /// - `16..=231` — the 6×6×6 colour cube: each axis steps through
     ///   `{0, 95, 135, 175, 215, 255}`.
     /// - `232..=255` — the 24-step grayscale ramp `8, 18, …, 238`.
@@ -230,20 +221,26 @@ impl Default for Palette {
 /// booleans (mirroring [`crate::input::Modifiers`] / [`TextDecoration`]),
 /// not a bifurcating enum.
 ///
-/// [`Self::reverse`] is the only attribute that touches the colour model:
-/// at *paint* time a reversed cell swaps its effective foreground /
-/// background. This slice stores and introspects the flag; the swap
-/// itself lands with glyph paint (the grid is still paint-opaque), so a
-/// snapshot reports the *stored* colours plus `reverse` and a renderer
-/// applies the swap.
+/// [`Self::reverse`] is the attribute that most directly drives colour
+/// resolution: at *paint* time a reversed cell swaps its effective
+/// foreground / background. (`dim` / `bold` may also shift the rendered
+/// intensity depending on the renderer.) This slice stores and
+/// introspects the flags; the transforms themselves land with glyph
+/// paint (the grid is still paint-opaque), so a snapshot reports the
+/// *stored* colours plus the flags and a renderer applies them.
 ///
 /// `struct_excessive_bools` is suppressed for the same reason it is on
 /// [`crate::input::Modifiers`]: the SGR attribute set is a fixed industry
 /// vocabulary, and a bitflag would diverge from the names callers expect.
+/// `#[non_exhaustive]` per the R974.1 forward-compat hedge: later S5
+/// slices add SGR flags (e.g. an underline-style axis), and construction
+/// already routes through [`Self::empty`] + the `with_*` builders, so the
+/// hedge is free (matching the [`TextDecoration`] sibling).
 ///
 /// [`TextDecoration`]: crate::style::TextDecoration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[allow(clippy::struct_excessive_bools)]
+#[non_exhaustive]
 pub struct CellAttrs {
     /// SGR 1 — increased intensity / bold weight.
     pub bold: bool,
@@ -357,7 +354,13 @@ impl CellAttrs {
 /// base char plus combining marks / a ZWJ emoji sequence occupy one cell
 /// — `Cow<'static, str>` lets a blank cell borrow the static `" "` while
 /// produced cells own their string.
+///
+/// `#[non_exhaustive]` per the R974.1 forward-compat hedge: the follow-up
+/// slices add fields (wide-char trailer marker, cursor), and construction
+/// routes through [`Self::new`] + [`Self::with_attrs`], so the hedge is
+/// free (matching [`crate::scene::TextGridNode`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TermCell {
     /// The grapheme cluster painted in this cell. `" "` for a blank cell.
     pub cluster: Cow<'static, str>,
@@ -418,7 +421,7 @@ impl Default for TermCell {
 /// requested size vs. a received snapshot), not a dual mutable grid.
 ///
 /// The buffer is assembled by the producer and projected wholesale; it
-/// exposes construction ([`Self::new`] / [`Self::with_cell`]) and reads
+/// exposes construction ([`Self::new`] / [`Self::with_row`]) and reads
 /// ([`Self::cell`]) but the *node* that holds it never mutates it
 /// per-cell — it swaps the whole projection.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -474,16 +477,6 @@ impl GridBuffer {
         self.index(col, row).map(|i| &self.cells[i])
     }
 
-    /// Place `cell` at `(col, row)` (builder form, for the producer to
-    /// assemble a projection). Out-of-bounds coordinates are ignored.
-    #[must_use]
-    pub fn with_cell(mut self, col: u16, row: u16, cell: TermCell) -> Self {
-        if let Some(i) = self.index(col, row) {
-            self.cells[i] = cell;
-        }
-        self
-    }
-
     /// Write a whole row of cells starting at column 0 (builder form).
     /// Cells beyond the buffer width are ignored; a short row leaves the
     /// trailing cells blank.
@@ -528,18 +521,17 @@ mod tests {
     }
 
     #[test]
-    fn palette_indexed_ansi16_is_themeable() {
+    fn palette_indexed_ansi16_resolves_xterm_defaults() {
+        // The `0..=15` slots resolve through the stored ANSI base (the
+        // `indexed → rgb` SSOT — not a hardcoded table). Theme-swap
+        // restaining lands with its consumer slice (the mutator builders
+        // were not shipped speculatively).
         let p = Palette::xterm_default();
+        assert_eq!(p.indexed(0), Color::rgb(0x00, 0x00, 0x00)); // black
         assert_eq!(p.indexed(1), Color::rgb(0xcd, 0x00, 0x00)); // red
+        assert_eq!(p.indexed(7), Color::rgb(0xe5, 0xe5, 0xe5)); // white
         assert_eq!(p.indexed(9), Color::rgb(0xff, 0x00, 0x00)); // bright red
-
-        // A theme swap restains the indexed slots.
-        let mut ansi = [Color::TRANSPARENT; 16];
-        ansi[1] = Color::rgb(0xaa, 0xbb, 0xcc);
-        let themed = p.with_ansi16(ansi);
-        assert_eq!(themed.indexed(1), Color::rgb(0xaa, 0xbb, 0xcc));
-        // The cube / ramp are formula-driven and unaffected by the theme.
-        assert_eq!(themed.indexed(196), p.indexed(196));
+        assert_eq!(p.indexed(15), Color::rgb(0xff, 0xff, 0xff)); // bright white
     }
 
     #[test]
@@ -586,15 +578,18 @@ mod tests {
     }
 
     #[test]
-    fn grid_buffer_with_cell_places_row_major() {
+    fn grid_buffer_with_row_places_row_major() {
         let red = TermCell::new("X", TermColor::Indexed(1), TermColor::Default);
-        let b = GridBuffer::new(2, 2).with_cell(1, 1, red.clone());
+        // Place `red` at (col 1, row 1) by writing row 1 as [blank, red].
+        let b = GridBuffer::new(2, 2).with_row(1, [TermCell::blank(), red.clone()]);
         assert_eq!(b.cell(1, 1), Some(&red));
-        // Neighbours stay blank — confirms row-major `row*cols + col`.
+        // Neighbours stay blank — confirms row-major `row*cols + col`
+        // (red landed at row 1 / col 1, not row 0 or column 0).
         assert_eq!(b.cell(0, 1), Some(&TermCell::blank()));
         assert_eq!(b.cell(1, 0), Some(&TermCell::blank()));
-        // Out-of-bounds placement is ignored, not a panic.
-        let same = b.clone().with_cell(9, 9, red);
+        assert_eq!(b.cell(0, 0), Some(&TermCell::blank()));
+        // Writing an out-of-bounds row is ignored, not a panic.
+        let same = b.clone().with_row(9, [red]);
         assert_eq!(same, b);
     }
 

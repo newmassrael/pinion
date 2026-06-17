@@ -253,6 +253,16 @@ pub struct ImmediateModeSnapshot {
 /// colours are resolved through the grid's
 /// [`Palette`](pinion_core::Palette) here — the R969 "resolve at paint
 /// time" contract (a snapshot is a paint-time readback).
+///
+/// R974.1 §5.41 — `buffer_cols` / `buffer_rows` are the projection's OWN
+/// dimensions (the size the producer last sent), made first-class so the
+/// R969 two-facts model is fully introspectable: `cols` / `rows` are the
+/// layout-derived winsize the producer is *told* to size to, while
+/// `buffer_cols` / `buffer_rows` are what it *last delivered*. They
+/// converge at steady state; a divergence is a legitimate in-flight
+/// resize (or a producer bug) an AI client can now detect directly,
+/// rather than inferring the projection size from `grid_rows` lengths. A
+/// geometry-only grid reports `buffer_cols == buffer_rows == 0`.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextGridSnapshot {
@@ -262,6 +272,8 @@ pub struct TextGridSnapshot {
     pub cell_h: u32,
     pub cols: u16,
     pub rows: u16,
+    pub buffer_cols: u16,
+    pub buffer_rows: u16,
     pub grid_rows: Vec<GridRowSnapshot>,
 }
 
@@ -290,8 +302,16 @@ pub struct GridStyleRun {
 /// R973 §5.41 — a cell colour in a snapshot. Reports both the *stored*
 /// form (`kind` `"default"` / `"indexed"` / `"rgb"` plus the palette
 /// `index` for indexed) **and** the palette-resolved 24-bit `rgb` hex,
-/// so an AI client reads the cell's semantic colour intent and the
-/// concrete colour a painter would draw — without OCR (§2 #7).
+/// so an AI client reads the cell's semantic colour intent without OCR
+/// (§2 #7).
+///
+/// R974.1 — `rgb` is the palette-resolved colour of the **stored** slot
+/// (this cell's fg or bg), *before* any paint-time SGR transform. To
+/// derive the colour a painter actually draws, an AI client applies the
+/// run's [`attrs`](GridStyleRun::attrs): a reversed run swaps the
+/// effective fg / bg (and `dim` / `bold` may shift intensity). The
+/// snapshot deliberately does NOT pre-apply the swap — that would lose
+/// the stored intent and break the resolve-at-paint-only contract.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TermColorSnapshot {
     pub kind: &'static str,
@@ -441,6 +461,8 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
                 cell_h: metric.cell_h(),
                 cols: node.cols(),
                 rows: node.rows(),
+                buffer_cols: node.cells().cols(),
+                buffer_rows: node.cells().rows(),
                 grid_rows: text_grid_rows(node.cells(), &node.palette()),
             })
         }
@@ -486,7 +508,9 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
 
 /// R973 §5.41 — capture a cell's stored [`TermColor`] plus its
 /// palette-resolved 24-bit hex. The stored `kind` / `index` preserve the
-/// producer's semantic intent; `rgb` is what a painter would draw.
+/// producer's semantic intent; `rgb` is the resolved colour of the
+/// stored slot (R974.1 — *before* any paint-time SGR transform such as a
+/// `reverse` fg/bg swap, which a client applies from the run's `attrs`).
 fn term_color_snapshot(
     color: TermColor,
     target: ColorTarget,
@@ -540,6 +564,47 @@ mod tests {
                 assert_eq!(snap.cell_h, 16);
                 assert_eq!(snap.cols, 80);
                 assert_eq!(snap.rows, 24);
+                // R974.1 — a geometry-only grid has no projection yet: the
+                // requested winsize is 80×24 but the received buffer is 0×0.
+                assert_eq!((snap.buffer_cols, snap.buffer_rows), (0, 0));
+                assert!(snap.grid_rows.is_empty());
+            }
+            other => panic!("expected TextGrid, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn text_grid_snapshot_coalesces_style_runs() {
+        // R974.1 — the RLE run key is (fg, bg, attrs): adjacent cells with
+        // an identical triple collapse into one run; a change in any of the
+        // three — OR non-adjacency — starts a new run.
+        use pinion_core::{CellAttrs, GridBuffer, TermCell, TermColor};
+        let red = || TermCell::new("x", TermColor::Indexed(1), TermColor::Default);
+        let buf = GridBuffer::new(5, 1).with_row(
+            0,
+            [
+                red(),                                                          // col0 fg1
+                red(),                                                          // col1 fg1 (coalesce)
+                TermCell::new("y", TermColor::Indexed(2), TermColor::Default),  // col2 fg2 (new run)
+                red(),                                                          // col3 fg1 (new run: non-adjacent)
+                red().with_attrs(CellAttrs::empty().with_bold(true)),           // col4 fg1+bold (new run: attrs)
+            ],
+        );
+        let mut node = pinion_core::scene::TextGridNode::new(pinion_core::CellMetric::DEFAULT)
+            .with_cells(buf);
+        node.rect = Rect::new(0, 0, 40, 16); // 5 × 1 @ 8×16
+        match snapshot(&Scene::TextGrid(node), "").unwrap() {
+            SnapshotNode::TextGrid(snap) => {
+                assert_eq!((snap.buffer_cols, snap.buffer_rows), (5, 1));
+                assert_eq!(snap.grid_rows.len(), 1);
+                let runs = &snap.grid_rows[0].runs;
+                // [A,A,B,A,A+bold] -> 4 runs.
+                assert_eq!(runs.len(), 4, "coalesce adjacent; split on colour/attrs/gap");
+                assert_eq!((runs[0].start, runs[0].len), (0, 2)); // A,A merged
+                assert_eq!((runs[1].start, runs[1].len), (2, 1)); // B
+                assert_eq!((runs[2].start, runs[2].len), (3, 1)); // A again (not merged with run 0)
+                assert_eq!((runs[3].start, runs[3].len), (4, 1)); // A+bold (attrs break)
+                assert!(runs[3].attrs.bold && !runs[2].attrs.bold);
             }
             other => panic!("expected TextGrid, got {other:?}"),
         }

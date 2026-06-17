@@ -3127,6 +3127,12 @@ fn text_grid_snapshot_fields(obj: &mut serde_json::Map<String, Value>, snap: &Te
     obj.insert("cell_h".to_string(), Value::Number(snap.cell_h.into()));
     obj.insert("cols".to_string(), Value::Number(snap.cols.into()));
     obj.insert("rows".to_string(), Value::Number(snap.rows.into()));
+    // R974.1 §5.41 — the projection's OWN dims (size the producer last
+    // sent), distinct from the layout-derived winsize `(cols, rows)` it is
+    // told to size to; an AI compares the two to detect a resize-lag
+    // divergence directly. `0×0` for a geometry-only grid.
+    obj.insert("buffer_cols".to_string(), Value::Number(snap.buffer_cols.into()));
+    obj.insert("buffer_rows".to_string(), Value::Number(snap.buffer_rows.into()));
     // R973 §5.41 — the cell-content projection: one entry per row, each
     // with the row text and its palette-resolved style runs.
     obj.insert(

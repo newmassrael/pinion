@@ -87,6 +87,8 @@ def body() -> None:
         assert grid is not None, "content grid present in paint scene"
         assert_eq(grid["type"], "TextGrid", "content type")
         assert_eq((grid["cols"], grid["rows"]), (16, 4), "content dims 16x4")
+        # R974.1 — the projection's own dims match the winsize (steady state).
+        assert_eq((grid["buffer_cols"], grid["buffer_rows"]), (16, 4), "content buffer 16x4")
         rows = grid["grid_rows"]
         assert_eq(len(rows), 4, "grid_rows has one entry per row")
 
@@ -146,6 +148,9 @@ def body() -> None:
             g = find_by_tag(snap, tag)
             assert g is not None, f"{tag} present"
             assert_eq(g["grid_rows"], [], f"{tag} carries no cell projection")
+            # R974.1 — a geometry-only grid: winsize requested, 0x0 received.
+            assert_eq((g["buffer_cols"], g["buffer_rows"]), (0, 0), f"{tag} empty buffer")
+            assert g["cols"] > 0 and g["rows"] > 0, f"{tag} has a derived winsize"
 
 
 def main() -> int:

@@ -72,6 +72,8 @@ def body() -> None:
         grid = find_by_tag(snap, ATTRS_TAG)
         assert grid is not None, "attrs grid present in paint scene"
         assert_eq((grid["cols"], grid["rows"]), (8, 2), "attrs dims 8x2")
+        # R974.1 — projection dims match the winsize (steady state).
+        assert_eq((grid["buffer_cols"], grid["buffer_rows"]), (8, 2), "attrs buffer 8x2")
         rows = grid["grid_rows"]
         assert_eq(len(rows), 2, "attrs grid_rows has one entry per row")
 

@@ -44389,6 +44389,62 @@
         "생산자 crate(vte/alacritty_terminal) 선정=sprag측; pinion=격자+측면채널 contract만(R969)"
       ]
     },
+    "R974.1": {
+      "decision_summary": "R974.1 §5.41 적대 session-review clearance (2 reviewer + 내 grep+read): 6 실결함 청산 — CellAttrs/TermCell non_exhaustive(HIGH), paint_hash cacheability fuse(TextGrid를 External 그룹으로), rgb doc over-claim, buffer_cols/rows introspection, 미소비 builder 제거, RLE cargo 테스트; palette 공식·dual-grid·naming·SSOT는 검증 clean, over-flag 3건 기각",
+      "changes_bullets": [
+        "non_exhaustive 추가 CellAttrs+TermCell(growing public struct; TextDecoration 선례; 다음 슬라이스 break 방지)",
+        "paint_hash fuse: TextGrid를 Effect(cacheable-forever)->External(uncacheable) 그룹 이동",
+        "is_cacheable_for_paint=false + PAINT_HASH_UNCACHEABLE; glyph paint 착륙 시 stale-frame 방지(R972.1 교정)",
+        "TermColorSnapshot.rgb doc 정정: 'painter draws'는 reverse 셀서 거짓 -> 'stored slot, attrs로 swap 적용'",
+        "buffer_cols/buffer_rows를 TextGridSnapshot 1급 노출(R969 two-facts; resize-lag 검출; geometry-only=0x0)",
+        "미소비 builder 제거(with_ansi16/with_defaults/with_palette/with_cell)=R972 cell_at 규율; 소비자와 재도입",
+        "RLE coalescing cargo 테스트(adjacent merge/non-adjacent split/attrs break); 종전 python-demo만 커버",
+        "over-flag 기각: content hash now(anti-speculation 위반)/dim-bold color(paint)/drop prev(효율 유지)"
+      ],
+      "verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (172 ok/0 FAILED; +r974_1 uncacheable +RLE coalesce +2 adapted)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D warnings exit 0",
+        "r972+r973+r974 데모 PASS(무회귀; buffer dims wired)",
+        "적대 review 검증 clean: palette공식/ANSI16/dual-grid/naming/crate-home/wire-symmetry",
+        "cargo doc 잔여 경고=기존 repo 부채(제거 메서드 link 0=정정 확인); 게이트는 clippy"
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "S5 남은: cursor / wide-char trailer / alt-screen / damage (각 substrate+소비자 동반)",
+        "재도입(소비자 동반): palette theme builder(with_ansi16/defaults/palette)=theme-swap 슬라이스",
+        "GridBuffer per-cell 쓰기 = damage/producer 슬라이스; cell_mut 추가 금지(dual-grid; private cells 유지)",
+        "reverse/dim/bold paint시점 swap·intensity = glyph paint 슬라이스"
+      ],
+      "publishable_decision_summary": "R974.1 §5.41 적대 session-review clearance (2 reviewer + 내 grep+read): 6 실결함 청산 — CellAttrs/TermCell non_exhaustive(HIGH), paint_hash cacheability fuse(TextGrid를 External 그룹으로), rgb doc over-claim, buffer_cols/rows introspection, 미소비 builder 제거, RLE cargo 테스트; palette 공식·dual-grid·naming·SSOT는 검증 clean, over-flag 3건 기각",
+      "publishable_changes_bullets": [
+        "non_exhaustive 추가 CellAttrs+TermCell(growing public struct; TextDecoration 선례; 다음 슬라이스 break 방지)",
+        "paint_hash fuse: TextGrid를 Effect(cacheable-forever)->External(uncacheable) 그룹 이동",
+        "is_cacheable_for_paint=false + PAINT_HASH_UNCACHEABLE; glyph paint 착륙 시 stale-frame 방지(R972.1 교정)",
+        "TermColorSnapshot.rgb doc 정정: 'painter draws'는 reverse 셀서 거짓 -> 'stored slot, attrs로 swap 적용'",
+        "buffer_cols/buffer_rows를 TextGridSnapshot 1급 노출(R969 two-facts; resize-lag 검출; geometry-only=0x0)",
+        "미소비 builder 제거(with_ansi16/with_defaults/with_palette/with_cell)=R972 cell_at 규율; 소비자와 재도입",
+        "RLE coalescing cargo 테스트(adjacent merge/non-adjacent split/attrs break); 종전 python-demo만 커버",
+        "over-flag 기각: content hash now(anti-speculation 위반)/dim-bold color(paint)/drop prev(효율 유지)"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test --workspace -j2 exit 0 (172 ok/0 FAILED; +r974_1 uncacheable +RLE coalesce +2 adapted)",
+        "cargo clippy --workspace --all-targets --features pinion-runtime/vello -D warnings exit 0",
+        "r972+r973+r974 데모 PASS(무회귀; buffer dims wired)",
+        "적대 review 검증 clean: palette공식/ANSI16/dual-grid/naming/crate-home/wire-symmetry",
+        "cargo doc 잔여 경고=기존 repo 부채(제거 메서드 link 0=정정 확인); 게이트는 clippy"
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "S5 남은: cursor / wide-char trailer / alt-screen / damage (각 substrate+소비자 동반)",
+        "재도입(소비자 동반): palette theme builder(with_ansi16/defaults/palette)=theme-swap 슬라이스",
+        "GridBuffer per-cell 쓰기 = damage/producer 슬라이스; cell_mut 추가 금지(dual-grid; private cells 유지)",
+        "reverse/dim/bold paint시점 swap·intensity = glyph paint 슬라이스"
+      ]
+    },
     "Round 1": {
       "decision_summary": "Initial pinion-gui spec capture: 7 framework invariants, 2 opaque escapes, Analyzer dogfood, dual license, scaffold",
       "changes_bullets": [
